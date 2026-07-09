@@ -17,12 +17,16 @@ $ hive claude
 you  > add rate limiting to the public API, and have the docs updated too
 
 hive > Splitting this into 3 tasks:
-       • agent-1 (Claude Opus)  — rate-limit middleware      [window opened]
-       • agent-2 (Codex)        — apply it to the routes     [window opened]
-       • agent-3 (Haiku, cheap) — update the API docs        [window opened]
+       • maya  (Claude Opus)  — rate-limit middleware      [window opened]
+       • david (Codex)        — apply it to the routes     [window opened]
+       • sam   (Haiku, cheap) — update the API docs        [window opened]
 
-hive > agent-2 finished. agent-1 finished. Merging…
-hive > ⚠️  agent-3 wants to run `npm install express-rate-limit` — allow? (y/n)
+you  > what's david doing?
+
+hive > david finished the routes and is waiting; maya is mid-way
+       through the middleware. Merging david's work…
+
+hive > ⚠️  sam wants to run `npm install express-rate-limit` — allow? (y/n)
 ```
 
 Each agent works in its own window. Close a window any time — the agent keeps working in the background, and you can reopen its view whenever you like.
@@ -70,7 +74,7 @@ Useful commands:
 |---|---|
 | `hive claude` / `hive codex` | Start an orchestrator in the current folder |
 | `hive status` | Show all running agents and what they're doing |
-| `hive watch <agent>` | Reopen a closed agent window |
+| `hive watch <name>` | Reopen a closed agent window (e.g. `hive watch maya`) |
 | `hive stop` | Wind down all agents cleanly |
 
 ## FAQ
@@ -85,7 +89,7 @@ Whatever your Claude / OpenAI plans already cost. hive routes easy tasks to chea
 No — one is enough. With both installed, hive can mix them on one team and route each task to whichever fits best.
 
 **Can I close agent windows?**
-Yes. Windows are just live views — closing one never stops the agent. `hive watch <agent>` brings the view back.
+Yes. Windows are just live views — closing one never stops the agent. `hive watch <name>` brings the view back.
 
 **What happens to my code?**
 Agents work on isolated branches and the work is merged step by step, so your main branch is never edited by multiple agents at once. Everything stays local to your machine except the AI API calls your CLIs already make.
