@@ -81,6 +81,12 @@ export async function writeClaudeAgentConfig(
 ): Promise<void> {
   const claudeDirectory = join(worktreePath, ".claude");
   await mkdir(claudeDirectory, { recursive: true });
+  const settingsPath = join(claudeDirectory, "settings.local.json");
+  const mcpPath = join(worktreePath, ".mcp.json");
+  const [existingSettings, existingMcp] = await Promise.all([
+    readJsonObject(settingsPath),
+    readJsonObject(mcpPath),
+  ]);
 
   const eventCommand = (kind: string): string =>
     [
@@ -134,6 +140,10 @@ export async function writeClaudeAgentConfig(
     enableAllProjectMcpServers: true,
     hooks: {
       SessionStart: hook(eventCommand("session-start")),
+      ...(isRecord(existingSettings.hooks) &&
+          "UserPromptSubmit" in existingSettings.hooks
+        ? {}
+        : { UserPromptSubmit: hook(eventCommand("turn-start")) }),
       Stop: hook(eventCommand("turn-end")),
       Notification: hook(eventCommand("notification")),
     },
@@ -148,12 +158,6 @@ export async function writeClaudeAgentConfig(
     },
   };
 
-  const settingsPath = join(claudeDirectory, "settings.local.json");
-  const mcpPath = join(worktreePath, ".mcp.json");
-  const [existingSettings, existingMcp] = await Promise.all([
-    readJsonObject(settingsPath),
-    readJsonObject(mcpPath),
-  ]);
   const mergedSettings = deepMerge(existingSettings, settings);
   const mergedMcp = deepMerge(existingMcp, mcp);
 

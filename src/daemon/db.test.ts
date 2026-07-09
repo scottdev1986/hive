@@ -1,0 +1,151 @@
+import { describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type {
+  AgentMessage,
+  AgentRecord,
+  HookEvent,
+} from "../schemas";
+import { HiveDatabase, type Approval } from "./db";
+
+const home = mkdtempSync(join(tmpdir(), "hive-db-test-"));
+process.env.HIVE_HOME = home;
+
+const timestamp = "2026-07-09T12:00:00.000Z";
+
+function agent(overrides: Partial<AgentRecord> = {}): AgentRecord {
+  return {
+    id: "agent-maya",
+    name: "maya",
+    tool: "codex",
+    model: "gpt-5-codex",
+    tier: "standard",
+    status: "working",
+    taskDescription: "Build the daemon",
+    worktreePath: "/tmp/hive-maya",
+    branch: "hive/maya-daemon",
+    tmuxSession: "hive-maya",
+    contextPct: 12,
+    createdAt: timestamp,
+    lastEventAt: timestamp,
+    ...overrides,
+  };
+}
+
+describe("HiveDatabase", () => {
+  test("round-trips and updates agent records", () => {
+    const db = new HiveDatabase(join(home, "agents.db"));
+    try {
+      const inserted = db.insertAgent(agent());
+      expect(inserted).toEqual(agent());
+      expect(db.getAgentByName("maya")).toEqual(agent());
+
+      const updated = agent({ status: "idle", contextPct: 28 });
+      expect(db.upsertAgent(updated)).toEqual(updated);
+      expect(db.listAgents()).toEqual([updated]);
+      expect(db.deleteAgent(updated.id)).toEqual(true);
+      expect(db.getAgentById(updated.id)).toEqual(null);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("round-trips messages and delivery updates", () => {
+    const db = new HiveDatabase(join(home, "messages.db"));
+    const message: AgentMessage = {
+      id: "message-1",
+      from: "sam",
+      to: "maya",
+      body: "The interface is ready.",
+      createdAt: timestamp,
+      deliveredAt: null,
+    };
+    try {
+      expect(db.insertMessage(message)).toEqual(message);
+      expect(db.getUndeliveredMessages("maya")).toEqual([message]);
+      const deliveredAt = "2026-07-09T12:01:00.000Z";
+      expect(db.markMessageDelivered(message.id, deliveredAt)).toEqual({
+        ...message,
+        deliveredAt,
+      });
+      expect(db.getUndeliveredMessages("maya")).toEqual([]);
+      expect(db.deleteMessage(message.id)).toEqual(true);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("round-trips every hook event variant", () => {
+    const db = new HiveDatabase(join(home, "events.db"));
+    const events: HookEvent[] = [
+      { kind: "session-start", agentName: "maya", timestamp },
+      { kind: "turn-start", agentName: "maya", timestamp },
+      { kind: "turn-end", agentName: "maya", timestamp, contextPct: 42 },
+      { kind: "turn-end", agentName: "maya", timestamp },
+      { kind: "notification", agentName: "maya", timestamp },
+      {
+        kind: "approval-request",
+        agentName: "maya",
+        timestamp,
+        description: "Access the network",
+      },
+      { kind: "dead", agentName: "maya", timestamp },
+    ];
+    try {
+      for (const event of events) {
+        expect(db.insertEvent(event)).toEqual(event);
+      }
+      expect(db.listEvents()).toEqual(events);
+      expect(db.listEvents("maya")).toEqual(events);
+      expect(db.deleteEvents("maya")).toEqual(events.length);
+      expect(db.listEvents()).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("round-trips and resolves approvals", () => {
+    const db = new HiveDatabase(join(home, "approvals.db"));
+    const approval = {
+      id: "approval-1",
+      agentName: "maya",
+      description: "Run a network install",
+      status: "pending",
+      createdAt: timestamp,
+      resolvedAt: null,
+    } satisfies Approval;
+    try {
+      expect(db.insertApproval(approval)).toEqual(approval);
+      expect(db.listApprovals("pending")).toEqual([approval]);
+      const resolvedAt = "2026-07-09T12:02:00.000Z";
+      const resolved = {
+        ...approval,
+        status: "approved",
+        resolvedAt,
+      } satisfies Approval;
+      expect(db.resolveApproval(approval.id, "approved", resolvedAt)).toEqual(resolved);
+      expect(db.resolveApproval(approval.id, "denied", resolvedAt)).toEqual(null);
+      expect(db.listApprovals("approved")).toEqual([resolved]);
+      expect(db.deleteApproval(approval.id)).toEqual(true);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("uses HIVE_HOME and enables WAL mode", () => {
+    const isolatedHome = mkdtempSync(join(tmpdir(), "hive-home-test-"));
+    process.env.HIVE_HOME = isolatedHome;
+    const db = new HiveDatabase();
+    try {
+      expect(db.path).toEqual(join(isolatedHome, "hive.db"));
+      expect(db.database.query("PRAGMA journal_mode").get()).toEqual({
+        journal_mode: "wal",
+      });
+    } finally {
+      db.close();
+      rmSync(isolatedHome, { recursive: true, force: true });
+      process.env.HIVE_HOME = home;
+    }
+  });
+});

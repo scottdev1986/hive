@@ -7,6 +7,7 @@ const HookEventBaseSchema = z.object({
 
 export const HookEventSchema = z.discriminatedUnion("kind", [
   HookEventBaseSchema.extend({ kind: z.literal("session-start") }),
+  HookEventBaseSchema.extend({ kind: z.literal("turn-start") }),
   HookEventBaseSchema.extend({
     kind: z.literal("turn-end"),
     contextPct: z.number().min(0).max(100).optional(),

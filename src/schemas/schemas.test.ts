@@ -7,6 +7,8 @@ import {
   HiveConfigSchema,
   HookEventSchema,
   RoutingTableSchema,
+  type AgentRecord,
+  type HookEvent,
 } from ".";
 
 const timestamp = "2026-07-09T12:00:00.000Z";
@@ -59,7 +61,7 @@ describe("AgentRecordSchema", () => {
     contextPct: 25,
     createdAt: timestamp,
     lastEventAt: timestamp,
-  };
+  } satisfies AgentRecord;
 
   test("parses a valid round-trip", () => {
     const parsed = AgentRecordSchema.parse(agent);
@@ -96,6 +98,7 @@ describe("AgentMessageSchema", () => {
 describe("HookEventSchema", () => {
   const events = [
     { kind: "session-start", agentName: "agent-3", timestamp },
+    { kind: "turn-start", agentName: "agent-3", timestamp },
     { kind: "turn-end", agentName: "agent-3", timestamp, contextPct: 25 },
     { kind: "notification", agentName: "agent-3", timestamp },
     {
@@ -105,7 +108,7 @@ describe("HookEventSchema", () => {
       description: "Run a network install",
     },
     { kind: "dead", agentName: "agent-3", timestamp },
-  ];
+  ] satisfies HookEvent[];
 
   test("parses a valid round-trip", () => {
     for (const event of events) {
@@ -119,7 +122,7 @@ describe("HookEventSchema", () => {
       kind: "session-start",
       agentName: "agent-3",
       timestamp: "2026-07-09T12:00:00+02:00",
-    };
+    } satisfies HookEvent;
 
     expect(HookEventSchema.parse(event)).toEqual(event);
   });
