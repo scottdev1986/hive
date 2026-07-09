@@ -1,0 +1,48 @@
+# --- macOS ---
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+._*
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+
+# --- IDEs & editors ---
+.idea/
+*.iml
+.vscode/
+!.vscode/extensions.json
+.fleet/
+.zed/
+*.swp
+*.swo
+*~
+
+# --- Node / Bun / TypeScript ---
+node_modules/
+dist/
+build/
+out/
+*.tsbuildinfo
+coverage/
+.cache/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+*.log
+
+# --- Environment & secrets ---
+.env
+.env.*
+!.env.example
+
+# --- hive runtime (repo-local state that must not be committed) ---
+# .hive/memory and .hive/skills ARE committed by design (see SPEC.md);
+# only ephemeral agent worktrees and runtime state are ignored.
+.hive/worktrees/
+.hive/*.db
+.hive/*.pid
