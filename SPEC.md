@@ -27,7 +27,7 @@ Alternatives we rejected: a pure file inbox ("agents check for messages") fails 
 An agent in another terminal is an opaque process. The spec-fantasy version — "the orchestrator knows when agents are done, stuck, or running out of context" — needs real signals. They exist:
 
 - Claude Code has lifecycle hooks: `Stop` fires on every turn end with the session's transcript path; `Notification` fires when the agent is *waiting on an approval* (that's the stuck-at-a-prompt signal); `SessionStart` announces birth.
-- Codex has `notify` (fires a program on `agent-turn-complete` with JSON) and, as of this year, a broader hooks system.
+- Codex has `notify` (fires a program on `agent-turn-complete` with JSON) and, as of this year, a broader hooks system. One sharp edge learned the hard way: Codex ignores `notify` in project-local `.codex/config.toml` and skips project config entirely for untrusted directories — so hive passes `notify` as a spawn-time `-c` override and pre-trusts each worktree the same way, rather than writing config into the worktree and hoping.
 - Context usage is readable from disk: both tools write per-message token usage to their transcript/rollout files. No guessing.
 
 So: at spawn, hive writes hook configs into each agent. Agents self-report into the daemon; the daemon maintains a live table — agent, status, last event, context %. A slow `tmux capture-pane` heartbeat (~60s) is the fallback stuck-detector for whatever hooks miss (hung tool call, dead process). The orchestrator gets exactly one tool, `hive_status()`, and never scrapes a terminal. The alternative — orchestrator eyeballing capture-pane dumps — burns its context on screenshots and turns the conductor into a babysitter.
@@ -142,7 +142,7 @@ The sequencing principle: nothing in v1 learns. Learning features compound on to
 
 Named honestly, not papered over:
 
-- **Codex-side signal fidelity.** Claude Code's hooks are rich; Codex's `notify` is thinner. How reliably we can detect "Codex agent awaiting approval" and measure Codex context usage from rollout files is assumed, not yet proven. First spike in v1.
+- **Codex-side signal fidelity, the remaining half.** The delivery mechanics are settled (spawn-time `-c` overrides for `notify` and trust — see decision 2), but detecting "Codex agent awaiting approval" and measuring Codex context usage from rollout files is still assumed, not proven.
 - **Send-keys fragility.** Injecting text into a TUI is inherently timing-sensitive (the ecosystem's two-step workaround exists because the naive way corrupts input). If either CLI ships a real programmatic input channel, we take it immediately.
 - **Task-shape similarity** for the skills rule-of-three is undefined — embedding similarity? Orchestrator judgment over descriptors? Deferred to v2 with the feature.
 - **Build-vs-buy on durable memory.** The three-layer design is settled; whether layer three is built or adopted from agent-memory/agentmemory is a v1.1 decision.

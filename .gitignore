@@ -46,3 +46,6 @@ yarn-error.log*
 .hive/worktrees/
 .hive/*.db
 .hive/*.pid
+
+#Coding Agents
+.claude/worktrees
