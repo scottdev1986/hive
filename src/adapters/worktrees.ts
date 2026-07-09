@@ -1,0 +1,206 @@
+import { mkdir, realpath } from "node:fs/promises";
+import { basename, dirname, join, resolve } from "node:path";
+
+interface GitResult {
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+}
+
+export interface Worktree {
+  path: string;
+  branch: string | null;
+}
+
+export interface CreatedWorktree {
+  path: string;
+  branch: string;
+}
+
+export interface RemoveWorktreeOptions {
+  deleteBranch?: boolean;
+  discardTracked?: boolean;
+  force?: boolean;
+}
+
+async function runGit(repoRoot: string, args: string[]): Promise<GitResult> {
+  const process = Bun.spawn(["git", "-C", repoRoot, ...args], {
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(process.stdout).text(),
+    new Response(process.stderr).text(),
+    process.exited,
+  ]);
+
+  return { stdout, stderr, exitCode };
+}
+
+function assertGitSuccess(result: GitResult, operation: string): void {
+  if (result.exitCode !== 0) {
+    const detail = result.stderr.trim() || `exit code ${result.exitCode}`;
+    throw new Error(`git ${operation} failed: ${detail}`);
+  }
+}
+
+function assertName(value: string, label: string): void {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(value)) {
+    throw new Error(`${label} must be a single safe path component`);
+  }
+}
+
+const isMissingFileError = (error: unknown): boolean =>
+  typeof error === "object" &&
+  error !== null &&
+  "code" in error &&
+  error.code === "ENOENT";
+
+export function slugify(task: string): string {
+  const slug = task
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 30)
+    .replace(/-+$/g, "");
+  return slug || "task";
+}
+
+async function canonicalizePotentialPath(path: string): Promise<string> {
+  try {
+    return await realpath(path);
+  } catch (error) {
+    if (!isMissingFileError(error)) {
+      throw error;
+    }
+    const parent = dirname(path);
+    if (parent === path) {
+      return resolve(path);
+    }
+    return join(await canonicalizePotentialPath(parent), basename(path));
+  }
+}
+
+export async function createWorktree(
+  repoRoot: string,
+  agentName: string,
+  taskSlug: string,
+): Promise<CreatedWorktree> {
+  assertName(agentName, "agent name");
+  const safeTaskSlug = slugify(taskSlug);
+
+  const branch = `hive/${agentName}-${safeTaskSlug}`;
+  const path = join(repoRoot, ".hive", "worktrees", agentName);
+  await mkdir(join(repoRoot, ".hive", "worktrees"), { recursive: true });
+
+  const result = await runGit(repoRoot, [
+    "worktree",
+    "add",
+    "-b",
+    branch,
+    path,
+  ]);
+  assertGitSuccess(result, "worktree add");
+
+  return { path, branch };
+}
+
+export async function listWorktrees(repoRoot: string): Promise<Worktree[]> {
+  const result = await runGit(repoRoot, ["worktree", "list", "--porcelain"]);
+  assertGitSuccess(result, "worktree list");
+
+  return result.stdout
+    .trim()
+    .split(/\n\n+/)
+    .filter((record) => record.trim() !== "")
+    .map((record) => {
+      let path = "";
+      let branch: string | null = null;
+
+      for (const line of record.split("\n")) {
+        if (line.startsWith("worktree ")) {
+          path = line.slice("worktree ".length);
+        } else if (line.startsWith("branch refs/heads/")) {
+          branch = line.slice("branch refs/heads/".length);
+        }
+      }
+
+      return { path, branch };
+    });
+}
+
+export async function removeWorktree(
+  repoRoot: string,
+  worktreePath: string,
+  options: RemoveWorktreeOptions | boolean = {},
+): Promise<void> {
+  const normalizedOptions: RemoveWorktreeOptions =
+    typeof options === "boolean" ? { deleteBranch: options } : options;
+  const deleteBranch = normalizedOptions.deleteBranch ?? false;
+  const discardTracked = normalizedOptions.discardTracked ?? false;
+  const force = discardTracked || (normalizedOptions.force ?? true);
+  const requestedPath = await canonicalizePotentialPath(worktreePath);
+  const worktrees = await listWorktrees(repoRoot);
+
+  let canonicalPath: string;
+  try {
+    canonicalPath = await realpath(worktreePath);
+  } catch (error) {
+    if (!isMissingFileError(error)) {
+      throw error;
+    }
+
+    const staleWorktree = worktrees.find(
+      (candidate) => candidate.path === requestedPath,
+    );
+    const pruneResult = await runGit(repoRoot, ["worktree", "prune"]);
+    assertGitSuccess(pruneResult, "worktree prune");
+
+    if (deleteBranch && staleWorktree?.branch !== null && staleWorktree?.branch !== undefined) {
+      const branchResult = await runGit(repoRoot, [
+        "branch",
+        "-D",
+        staleWorktree.branch,
+      ]);
+      assertGitSuccess(branchResult, "branch delete");
+    }
+    return;
+  }
+
+  const worktree = worktrees.find(
+    (candidate) =>
+      candidate.path === canonicalPath || candidate.path === requestedPath,
+  );
+  const branch = worktree?.branch ?? null;
+
+  if (!discardTracked) {
+    const statusResult = await runGit(canonicalPath, [
+      "status",
+      "--porcelain",
+      "--untracked-files=all",
+    ]);
+    assertGitSuccess(statusResult, "status");
+    const trackedChanges = statusResult.stdout
+      .split("\n")
+      .filter((line) => line !== "" && !line.startsWith("?? "));
+    if (trackedChanges.length > 0) {
+      throw new Error(
+        `refusing to remove worktree with uncommitted changes to tracked files; pass { discardTracked: true } to override:\n${trackedChanges.join("\n")}`,
+      );
+    }
+  }
+
+  const removeArgs = ["worktree", "remove"];
+  if (force) {
+    removeArgs.push("--force");
+  }
+  removeArgs.push(canonicalPath);
+
+  const removeResult = await runGit(repoRoot, removeArgs);
+  assertGitSuccess(removeResult, "worktree remove");
+
+  if (deleteBranch && branch !== null) {
+    const branchResult = await runGit(repoRoot, ["branch", "-D", branch]);
+    assertGitSuccess(branchResult, "branch delete");
+  }
+}
