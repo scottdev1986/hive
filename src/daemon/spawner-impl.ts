@@ -116,6 +116,9 @@ export interface HiveSpawnerDependencies {
   port: number;
   config: Pick<HiveConfig, "terminal" | "headless"> & {
     codex?: Pick<HiveConfig["codex"], "driver">;
+    /** Writer autonomy. Absent (older callers, tests) fails safe to
+     * "sandboxed"; the parsed HiveConfig always supplies a value. */
+    autonomy?: HiveConfig["autonomy"];
   };
   routing: RouteResolver;
   tmux: TmuxSessionManager;
@@ -706,6 +709,7 @@ export class HiveSpawner implements Spawner {
       channelsEnabled: channels,
     });
 
+    const dangerous = this.dependencies.config.autonomy === "dangerous";
     let argv: string[];
     try {
       await provisionSkills(worktree.path, tool);
@@ -714,6 +718,7 @@ export class HiveSpawner implements Spawner {
           daemonPort: this.dependencies.port,
           name,
           readOnly: false,
+          dangerous,
           channels,
         });
         argv = buildClaudeSpawnCommand({
@@ -721,6 +726,7 @@ export class HiveSpawner implements Spawner {
           model,
           name,
           readOnly: false,
+          dangerous,
           worktreePath: worktree.path,
           channels,
           executable: this.claudeExecutable,
@@ -745,6 +751,7 @@ export class HiveSpawner implements Spawner {
               model,
               name,
               readOnly: false,
+              dangerous,
               worktreePath: worktree.path,
             });
       }
@@ -785,6 +792,7 @@ export class HiveSpawner implements Spawner {
             model,
             name,
             readOnly: false,
+            dangerous,
             worktreePath: worktree.path,
           });
           fallback.push(prompt);

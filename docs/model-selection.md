@@ -14,7 +14,21 @@ Routine selection: the orchestrator classifies (`deep`/`standard`/`cheap`/`revie
 model = "claude-opus-4-8"
 ```
 
-This exact pin was applied on 2026-07-10 and verified end to end: `resolveRoute("deep")` now returns `claude/claude-opus-4-8`, so a deep Claude spawn opens a 4.8 terminal. Swap the value to `"best"` or `"claude-fable-5"` to send deep work to Fable instead — explicit pins keep working after the cutoff; only the *default* stops auto-selecting Fable (`FABLE_AUTO_ROUTING_CUTOFF`, `src/schemas/routing.ts:77`).
+`~/.hive/routing.toml` now pins all four tiers across both vendors, so every model this account can reach has a standing path. Verified with `resolveRoute` after writing it:
+
+| Model | Path (tier × tool) |
+|---|---|
+| `claude-opus-4-8` | `deep` × claude |
+| `claude-sonnet-5` | `standard` × claude, `review` × claude |
+| `claude-haiku-4-5` | `cheap` × claude |
+| `claude-fable-5` | explicit `model` on `hive_spawn`; or swap the `deep.claude` pin |
+| `gpt-5.6-sol` | `deep` × codex (effort `xhigh`) |
+| `gpt-5.6-terra` | `standard` × codex, `review` × codex (effort `medium`) |
+| `gpt-5.6-luna` | `cheap` × codex (effort `low`) |
+
+Since the orchestrator can override the tool at spawn ("use a Claude agent for this"), pinning both columns of every tier is what makes the override meaningful — a route that discards its model under a tool override is a suggestion, not a route.
+
+Fable 5 is deliberately not the standing deep default: it moves to usage-only billing off the subscription on 2026-07-12 (`FABLE_AUTO_ROUTING_CUTOFF`, `src/schemas/routing.ts`). It stays fully reachable — pass `model: "claude-fable-5"` for one agent, or change the `deep.claude` pin to make it the default. Explicit selection keeps working forever, before or after the cutoff; only *auto*-selection narrows.
 
 Two rules govern what value to write. **Pins should be concrete IDs, not aliases**: `resolveConcreteModel` (`src/adapters/tools/models.ts:59-74`) maps only `best` and `default` to concrete models — any other alias (`opus`, `sonnet`) passes through verbatim and becomes the agent's recorded execution identity, so `hive_status` and terminal titles would say "opus" while telling you nothing about what a control restart would actually relaunch. Aliases are the right choice only for *shipped defaults*, where entitlement-adaptivity matters more than identity precision (SPEC §6). **The route must survive a tool override**: every tier carries both a `claude` and a `codex` entry precisely because the orchestrator can spawn "use a Claude agent for this" against a Codex-preferred tier — pin both columns if you care about both.
 
@@ -29,9 +43,10 @@ Explicit selection: `hive_spawn` takes an optional `model` (`src/daemon/spawner.
 | `claude-opus-4-8` | Opus 4.8, high effort | bare concrete ID works; the CLI may self-report `claude-opus-4-8[1m]` on Max/Team/Enterprise (1M-context upgrade, appended by the CLI — never pass `[1m]` from Hive) |
 | `opus` | Opus 4.8 | alias, entitlement-adaptive |
 | `opus[1m]` | Opus 4.8 (1M context) | explicit 1M variant; quote the brackets in a shell |
+| `claude-fable-5` | Fable 5, high effort | bare concrete ID works |
 | `best` | Fable 5 | still resolves despite being absent from the account's model menu |
-| `sonnet` | Sonnet 5 | |
-| `haiku` | Haiku 4.5 | |
+| `claude-sonnet-5` / `sonnet` | Sonnet 5 | |
+| `claude-haiku-4-5` / `haiku` | Haiku 4.5 | |
 
 **Effort is `--effort <low|medium|high|xhigh|max>`** — a real launch flag in 2.1.206 ("Effort level for the current session"), defaulting to `high`. This is the verified mechanism for the research doc's R3 (per-tier Claude effort routing).
 
@@ -46,9 +61,18 @@ The `control_response` carries an `account` block and a `models` array — each 
 
 ## Layer 3: Codex CLI (verified against codex-cli 0.144.0)
 
-**Launch-time selection is `-m/--model <MODEL>`**, or the config override form `-c model="..."`; **effort is config-only**: `-c model_reasoning_effort=<minimal|low|medium|high|xhigh>` — this is the form Hive already passes per tier. With no flag, the CLI reads `model` from `~/.codex/config.toml` — on this machine `gpt-5.6-sol` at `xhigh`, which is why Hive's `"default"` Codex routes land on the premium frontier model (the research doc's central cost finding). The current lineup is `gpt-5.6-sol` ($5/$30), `gpt-5.6-terra` ($2.50/$15), `gpt-5.6-luna` ($1/$6) (developers.openai.com/api/docs/models, fetched 2026-07-10).
+**Launch-time selection is `-m/--model <MODEL>`**, or the config override form `-c model="..."`; **effort is config-only**: `-c model_reasoning_effort=<minimal|low|medium|high|xhigh>` — this is the form Hive already passes per tier. All three current models were launched on this account and confirmed by the TUI header (`model: gpt-5.6-terra medium`): `gpt-5.6-sol` ($5/$30), `gpt-5.6-terra` ($2.50/$15), `gpt-5.6-luna` ($1/$6) (developers.openai.com/api/docs/models, fetched 2026-07-10). With no flag, the CLI reads `model` from `~/.codex/config.toml` — on this machine `gpt-5.6-sol` at `xhigh`, which is why Hive's `"default"` Codex routes landed on the premium frontier model before the routing table pinned each tier (the research doc's central cost finding).
 
-The standing caveat that shaped Hive's defaults: **naming a concrete Codex model assumes the account is entitled to it** — a ChatGPT-plan account rejects unentitled models at launch ("model not supported", SPEC §6), which is why the shipped Codex column says `"default"`. Pin a concrete Codex model in `routing.toml` only for a plan you know carries it; there is no known zero-cost Codex equivalent of Claude's initialize enumeration.
+The standing caveat that shaped Hive's *shipped* defaults: **naming a concrete Codex model assumes the account is entitled to it** — a ChatGPT-plan account rejects unentitled models at launch ("model not supported", SPEC §6), which is why the shipped Codex column says `"default"`. Pinning concrete Codex models in `routing.toml` is correct precisely because that file is the user's own and its entitlement is verifiable by launching each once; there is no known zero-cost Codex equivalent of Claude's initialize enumeration.
+
+## Autonomy: spawning without a human
+
+Writers launch fully autonomous by default (`autonomy = "dangerous"`, SPEC §4). The per-CLI mechanics, both verified on this machine:
+
+- **Claude** — set `permissions.defaultMode = "bypassPermissions"` in the worktree's `.claude/settings.local.json`. The session starts in bypass mode with no dialog. **Do not use `--dangerously-skip-permissions`**: it raises a blocking acceptance dialog on every launch that an unattended spawn cannot answer, `--allow-dangerously-skip-permissions` does not suppress it, and accepting it does not persist (nothing is written to `~/.claude.json`).
+- **Codex** — `-c approval_policy="never" -c sandbox_mode="danger-full-access"`, which the TUI renders as `permissions: YOLO mode`. The directory-trust prompt is separately suppressed by the `projects."<path>".trust_level="trusted"` override Hive already passes.
+
+`autonomy = "sandboxed"` in `~/.hive/config.toml` restores the approval queue. Read-only sessions — the orchestrator, and the replacement process a critical control spawns — ignore autonomy entirely in both adapters.
 
 ## The checklist when a model "won't open"
 
@@ -56,3 +80,4 @@ The standing caveat that shaped Hive's defaults: **naming a concrete Codex model
 2. Does the CLI accept it directly? Launch it by hand (`claude --model <id>` / `codex -m <id>`) and read the session header — this separates entitlement and CLI problems from Hive problems in one step.
 3. Is the value concrete? Aliases other than `best`/`default` pass through unresolved into the execution identity and forfeit safe control restarts.
 4. Did the spawn fail for a non-model reason? `hive_status` records `failureReason` with the pane's last lines; the 2026-07-10 morning failures ("tmux session exited") were the Channels argument bug fixed in 8ec5441, not model selection.
+5. Is the agent alive but idle at a prompt? Check the pane for an acceptance or trust dialog — that means the autonomy posture above did not reach it (a stale daemon running pre-`autonomy` code is the usual cause; restart it).

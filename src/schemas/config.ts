@@ -23,6 +23,14 @@ export const HiveConfigSchema = z.object({
   // CLI is new enough and falls back to tmux injection otherwise; "off" pins
   // every Claude session to the fallback.
   channels: z.enum(["auto", "off"]).default("auto"),
+  // Writer-agent autonomy. "dangerous" (the default) launches writers with no
+  // human input required: Claude runs with permissions.defaultMode
+  // "bypassPermissions" in its worktree settings, Codex with
+  // approval_policy="never" and sandbox_mode="danger-full-access". "sandboxed"
+  // restores decision 4's approval queue (acceptEdits allowlist,
+  // workspace-write + on-request). The read-only orchestrator and read-only
+  // control restarts are unaffected by either value.
+  autonomy: z.enum(["dangerous", "sandboxed"]).default("dangerous"),
   resources: ResourceLimitsSchema.prefault({}),
 });
 

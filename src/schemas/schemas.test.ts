@@ -30,6 +30,7 @@ describe("HiveConfigSchema", () => {
       layout: "auto",
       codex: { driver: "tui" },
       channels: "auto",
+      autonomy: "dangerous",
       resources: {
         enabled: true,
         perProcessMemoryMb: 12_288,
@@ -44,6 +45,7 @@ describe("HiveConfigSchema", () => {
     expect(() =>
       HiveConfigSchema.parse({ codex: { driver: "exec" } })
     ).toThrow();
+    expect(() => HiveConfigSchema.parse({ autonomy: "yolo" })).toThrow();
   });
 });
 

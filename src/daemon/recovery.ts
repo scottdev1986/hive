@@ -17,7 +17,7 @@ import {
   findLatestCodexSessionId,
   writeCodexAgentConfig,
 } from "../adapters/tools/codex";
-import { ORCHESTRATOR_NAME, type AgentRecord } from "../schemas";
+import { ORCHESTRATOR_NAME, type AgentRecord, type HiveConfig } from "../schemas";
 import type { HiveDatabase } from "./db";
 
 // Three auto-resumes for one agent means the process is dying on its own,
@@ -89,6 +89,9 @@ export interface CrashRecoveryDependencies {
   worktreeExists?: (path: string) => boolean;
   sleep?: Sleep;
   claudeExecutable?: string;
+  /** Writer autonomy, so a resumed agent regains the launch posture it had at
+   * spawn. Absent fails safe to the sandboxed approval queue. */
+  autonomy?: HiveConfig["autonomy"];
 }
 
 const defaultSleep: Sleep = (milliseconds) =>
@@ -261,12 +264,16 @@ export class CrashRecovery {
     const identity = record.executionIdentity;
     const model = identity?.model ?? record.model;
     const worktreePath = record.worktreePath!;
+    // A resumed writer must regain the autonomy it launched with, or an
+    // unattended crash-recovered agent silently stalls on the first prompt.
+    const dangerous = this.deps.autonomy === "dangerous";
     try {
       if (record.tool === "claude") {
         await writeClaudeAgentConfig(worktreePath, {
           daemonPort: this.deps.port,
           name: record.name,
           readOnly: false,
+          dangerous,
         }).catch(() => undefined);
         // The spawn-time config in the worktree still carries hooks and
         // permissions; only the resume flag is new.
@@ -283,6 +290,7 @@ export class CrashRecovery {
             model,
             name: record.name,
             readOnly: false,
+            dangerous,
             worktreePath,
             executable: this.claudeExecutable,
           }, sessionId)
@@ -292,6 +300,7 @@ export class CrashRecovery {
             model,
             name: record.name,
             readOnly: false,
+            dangerous,
             worktreePath,
           }, sessionId);
       await this.deps.tmux.newSession(

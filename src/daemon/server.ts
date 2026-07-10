@@ -39,6 +39,7 @@ import {
   StatuslineReportSchema,
   TerminalHandleSchema,
   type AgentRecord,
+  type HiveConfig,
   type HookEvent,
   type MemoryFact,
   type MemoryScope,
@@ -279,6 +280,9 @@ export interface HiveDaemonOptions {
     worktreeExists?: (path: string) => boolean;
     sleep?: (milliseconds: number) => Promise<void>;
   };
+  /** Writer autonomy, forwarded to crash recovery so a resumed agent relaunches
+   * with the posture it spawned with. */
+  autonomy?: HiveConfig["autonomy"];
   repoRoot?: string;
   removeWorktree?: (
     repoRoot: string,

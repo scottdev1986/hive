@@ -10,6 +10,12 @@ export interface ClaudeSpawnOptions {
   worktreePath: string;
   daemonPort: number;
   readOnly: boolean;
+  /** Writer autonomy: bypass every permission prompt so the session needs no
+   * human input. Applied through the worktree's settings
+   * (permissions.defaultMode "bypassPermissions"), which starts the session
+   * in bypass mode without the CLI flag's interactive acceptance dialog —
+   * verified against claude 2.1.206. Ignored for read-only sessions. */
+  dangerous?: boolean;
   /** Launch with the Channels research preview so the hive-channel bridge
    * can push daemon messages into the running session. */
   channels?: boolean;
@@ -21,7 +27,7 @@ export interface ClaudeSpawnOptions {
 
 export type ClaudeAgentConfigOptions = Pick<
   ClaudeSpawnOptions,
-  "name" | "daemonPort" | "readOnly" | "channels"
+  "name" | "daemonPort" | "readOnly" | "dangerous" | "channels"
 >;
 
 // The .mcp.json name of the stdio bridge Claude Code spawns as a subprocess.
@@ -246,6 +252,8 @@ export async function writeClaudeAgentConfig(
           "Grep",
         ],
       }
+    : (options.dangerous ?? false)
+    ? { defaultMode: "bypassPermissions" }
     : {
         defaultMode: "acceptEdits",
         allow: [

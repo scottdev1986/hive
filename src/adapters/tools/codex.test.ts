@@ -79,6 +79,40 @@ describe("Codex adapter", () => {
     ]);
   });
 
+  test("a dangerous writer needs no approvals and no sandbox; read-only still wins", () => {
+    const base = {
+      name: "agent-4",
+      model: "gpt-5-codex",
+      effort: "high" as const,
+      worktreePath: "/tmp/worktree",
+      daemonPort: 4317,
+    };
+
+    const dangerous = buildCodexSpawnCommand({
+      ...base,
+      readOnly: false,
+      dangerous: true,
+    });
+    expect(dangerous).toContain('sandbox_mode="danger-full-access"');
+    expect(dangerous).toContain('approval_policy="never"');
+    expect(dangerous).not.toContain('approval_policy="on-request"');
+    // The resume path replays the same posture, so a crash-recovered agent
+    // does not silently stall on a prompt nobody is watching.
+    expect(
+      buildCodexResumeCommand({ ...base, readOnly: false, dangerous: true }, "s1"),
+    ).toContain('approval_policy="never"');
+
+    // Read-only sessions (the orchestrator, control restarts) ignore autonomy.
+    const readOnly = buildCodexSpawnCommand({
+      ...base,
+      readOnly: true,
+      dangerous: true,
+    });
+    expect(readOnly).toContain("read-only");
+    expect(readOnly).not.toContain('sandbox_mode="danger-full-access"');
+    expect(readOnly).not.toContain('approval_policy="never"');
+  });
+
   test("builds trusted-project and TOML notify CLI overrides", () => {
     expect(buildCodexTrustArgs("/tmp/work tree")).toEqual([
       "-c",

@@ -10,6 +10,11 @@ export interface CodexSpawnOptions {
   worktreePath: string;
   daemonPort: number;
   readOnly: boolean;
+  /** Writer autonomy: no human input required. Uses the config-override form
+   * (approval_policy "never", sandbox_mode "danger-full-access" — values
+   * verified against codex 0.144.0, where the pair renders as "YOLO mode")
+   * so spawn and resume share one shape. Ignored for read-only sessions. */
+  dangerous?: boolean;
 }
 
 export type CodexAgentConfigOptions = Pick<
@@ -54,6 +59,13 @@ function buildCodexConfigArgs(
     } else {
       args.push("--sandbox", "read-only");
     }
+  } else if (options.dangerous ?? false) {
+    args.push(
+      "-c",
+      'sandbox_mode="danger-full-access"',
+      "-c",
+      'approval_policy="never"',
+    );
   } else {
     args.push(
       "-c",

@@ -142,6 +142,58 @@ describe("Claude adapter", () => {
       .toEqual("newer-session");
   });
 
+  test("a dangerous writer bypasses permissions via settings, not the CLI flag", async () => {
+    await writeClaudeAgentConfig(worktreePath, {
+      name: "maya",
+      daemonPort: 4317,
+      readOnly: false,
+      dangerous: true,
+    });
+
+    const settings = JSON.parse(
+      await readFile(
+        join(worktreePath, ".claude", "settings.local.json"),
+        "utf8",
+      ),
+    ) as { permissions: { defaultMode: string; allow?: string[] } };
+
+    // bypassPermissions in settings starts the session already in bypass mode.
+    // --dangerously-skip-permissions would instead raise a blocking acceptance
+    // dialog that no human is there to answer (verified on claude 2.1.206),
+    // so the launch argv must stay free of it.
+    expect(settings.permissions.defaultMode).toEqual("bypassPermissions");
+    expect(settings.permissions.allow).toBeUndefined();
+    expect(
+      buildClaudeSpawnCommand({
+        name: "maya",
+        daemonPort: 4317,
+        model: "claude-opus-4-8",
+        readOnly: false,
+        dangerous: true,
+        worktreePath,
+      }),
+    ).not.toContain("--dangerously-skip-permissions");
+  });
+
+  test("a read-only session ignores dangerous autonomy", async () => {
+    await writeClaudeAgentConfig(worktreePath, {
+      name: "orchestrator",
+      daemonPort: 4317,
+      readOnly: true,
+      dangerous: true,
+    });
+
+    const settings = JSON.parse(
+      await readFile(
+        join(worktreePath, ".claude", "settings.local.json"),
+        "utf8",
+      ),
+    ) as { permissions: { defaultMode: string; deny: string[] } };
+
+    expect(settings.permissions.defaultMode).toEqual("default");
+    expect(settings.permissions.deny).toContain("Write");
+  });
+
   test("writes read-only hooks, Bash rules, and HTTP MCP registration", async () => {
     await writeClaudeAgentConfig(worktreePath, {
       name: "orchestrator",

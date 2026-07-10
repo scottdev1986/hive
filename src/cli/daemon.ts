@@ -78,6 +78,7 @@ export async function runDaemon(): Promise<void> {
     quota,
     codexControl: codexAppServer,
     resources: config.resources,
+    autonomy: config.autonomy,
   });
   daemon.start();
 
