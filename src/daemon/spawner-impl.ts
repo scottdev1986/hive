@@ -16,7 +16,7 @@ import {
   type CreatedWorktree,
 } from "../adapters/worktrees";
 import type { HiveConfig, Route, RoutingTier } from "../schemas";
-import type { AgentRecord } from "../schemas";
+import { ORCHESTRATOR_NAME, type AgentRecord } from "../schemas";
 import type { HiveDatabase } from "./db";
 import type { SpawnRequest, Spawner } from "./spawner";
 
@@ -142,6 +142,11 @@ export function resolveAgentName(
   }
 
   const normalizedName = requestedName.toLowerCase();
+  if (normalizedName === ORCHESTRATOR_NAME) {
+    throw new Error(
+      `Agent name "${ORCHESTRATOR_NAME}" is reserved for the Hive orchestrator`,
+    );
+  }
   if (!AGENT_NAME_PATTERN.test(normalizedName)) {
     throw new Error(
       `Invalid agent name "${normalizedName}": after lowercasing, the name must match /^[a-z][a-z0-9-]{1,20}$/`,
@@ -169,6 +174,7 @@ export function buildAgentPrompt(
     `Your task: ${task}`,
     `Your file scope is your worktree at ${worktreePath}; do all code and file work there.`,
     "Use the Hive MCP tools hive_send, hive_inbox, and hive_status to message and coordinate with other named agents.",
+    'Report completion, blockers, and important findings with hive_send to "orchestrator"; the orchestrator reads those reports from its inbox.',
   ].join("\n\n");
 }
 

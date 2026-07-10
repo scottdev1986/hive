@@ -8,6 +8,22 @@ export interface KillSessionOptions {
   ignoreMissing?: boolean;
 }
 
+export type TmuxRunner = (
+  args: string[],
+  socketName?: string,
+  stdin?: Uint8Array,
+) => Promise<TmuxResult>;
+
+export interface TmuxAdapterOptions {
+  run?: TmuxRunner;
+  sleep?: (milliseconds: number) => Promise<void>;
+  enterDelayMs?: number;
+}
+
+// TUIs treat input arriving in one burst as a paste; an Enter inside that
+// window becomes a literal newline in the composer instead of a submit.
+export const SEND_ENTER_DELAY_MS = 500;
+
 const SESSION_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,99}$/;
 
 function validateSessionName(session: string): void {
@@ -28,9 +44,11 @@ export function shellJoin(argv: string[]): string {
 async function runTmux(
   args: string[],
   socketName?: string,
+  stdin?: Uint8Array,
 ): Promise<TmuxResult> {
   const socketArgs = socketName === undefined ? [] : ["-L", socketName];
   const process = Bun.spawn(["tmux", ...socketArgs, ...args], {
+    stdin: stdin ?? "ignore",
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -52,11 +70,24 @@ export function assertSuccess(result: TmuxResult, operation: string): void {
 }
 
 export class TmuxAdapter {
-  constructor(private readonly socketName?: string) {}
+  private readonly run: TmuxRunner;
+  private readonly sleep: (milliseconds: number) => Promise<void>;
+  private readonly enterDelayMs: number;
+
+  constructor(
+    private readonly socketName?: string,
+    options: TmuxAdapterOptions = {},
+  ) {
+    this.run = options.run ?? runTmux;
+    this.sleep = options.sleep ??
+      ((milliseconds) =>
+        new Promise((resolve) => setTimeout(resolve, milliseconds)));
+    this.enterDelayMs = options.enterDelayMs ?? SEND_ENTER_DELAY_MS;
+  }
 
   async hasSession(session: string): Promise<boolean> {
     validateSessionName(session);
-    const result = await runTmux(
+    const result = await this.run(
       ["has-session", "-t", `=${session}`],
       this.socketName,
     );
@@ -69,7 +100,7 @@ export class TmuxAdapter {
     command: string,
   ): Promise<void> {
     validateSessionName(name);
-    const result = await runTmux(
+    const result = await this.run(
       ["new-session", "-d", "-s", name, "-c", cwd, command],
       this.socketName,
     );
@@ -78,13 +109,29 @@ export class TmuxAdapter {
 
   async sendKeys(session: string, text: string): Promise<void> {
     validateSessionName(session);
-    const literal = await runTmux(
-      ["send-keys", "-t", `=${session}:`, "-l", "--", text],
-      this.socketName,
-    );
-    assertSuccess(literal, "send-keys");
+    if (text.length > 0) {
+      const buffer = `hive-message-${crypto.randomUUID()}`;
+      const load = await this.run(
+        ["load-buffer", "-b", buffer, "-"],
+        this.socketName,
+        new TextEncoder().encode(text),
+      );
+      assertSuccess(load, "load-buffer");
+      try {
+        const paste = await this.run(
+          ["paste-buffer", "-d", "-p", "-b", buffer, "-t", `=${session}:`],
+          this.socketName,
+        );
+        assertSuccess(paste, "paste-buffer");
+      } catch (error) {
+        await this.run(["delete-buffer", "-b", buffer], this.socketName)
+          .catch(() => undefined);
+        throw error;
+      }
+    }
 
-    const enter = await runTmux(
+    await this.sleep(this.enterDelayMs);
+    const enter = await this.run(
       ["send-keys", "-t", `=${session}:`, "Enter"],
       this.socketName,
     );
@@ -93,7 +140,7 @@ export class TmuxAdapter {
 
   async capturePane(session: string): Promise<string> {
     validateSessionName(session);
-    const result = await runTmux(
+    const result = await this.run(
       ["capture-pane", "-p", "-t", `=${session}:`],
       this.socketName,
     );
@@ -106,7 +153,7 @@ export class TmuxAdapter {
     options: KillSessionOptions = {},
   ): Promise<void> {
     validateSessionName(session);
-    const result = await runTmux(
+    const result = await this.run(
       ["kill-session", "-t", `=${session}`],
       this.socketName,
     );
@@ -121,7 +168,7 @@ export class TmuxAdapter {
   }
 
   async listSessions(): Promise<string[]> {
-    const result = await runTmux(
+    const result = await this.run(
       ["list-sessions", "-F", "#{session_name}"],
       this.socketName,
     );

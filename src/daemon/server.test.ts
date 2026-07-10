@@ -259,6 +259,30 @@ describe("HiveDaemon HTTP server", () => {
       });
       expect(missingRecipient.isError).toEqual(true);
 
+      const completionReport = await client.callTool({
+        name: "hive_send",
+        arguments: {
+          from: "sam",
+          to: "orchestrator",
+          body: "Auth review complete on hive/sam-task.",
+        },
+      });
+      expect(completionReport.isError ?? false).toEqual(false);
+      expect(
+        (textValue(completionReport) as { deliveredAt: string | null })
+          .deliveredAt,
+      ).toEqual(null);
+
+      const orchestratorInbox = textValue(await client.callTool({
+        name: "hive_inbox",
+        arguments: { agent: "orchestrator" },
+      })) as Array<{ from: string; body: string }>;
+      expect(orchestratorInbox.length).toEqual(1);
+      expect(orchestratorInbox[0]?.from).toEqual("sam");
+      expect(orchestratorInbox[0]?.body).toEqual(
+        "Auth review complete on hive/sam-task.",
+      );
+
       const sent = textValue(await client.callTool({
         name: "hive_send",
         arguments: { from: "maya", to: "sam", body: "Please check auth." },
