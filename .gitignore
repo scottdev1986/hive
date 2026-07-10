@@ -52,3 +52,8 @@ yarn-error.log*
 .codex/
 # hive writes per-worktree MCP wiring at spawn (see writeClaudeAgentConfig)
 .mcp.json
+# hive symlinks shared skills into each worktree at spawn (see
+# src/adapters/skills.ts); not anchored to .hive/worktrees/ because this
+# file is evaluated from each worktree's own root, where that path never
+# matches.
+.agents/
