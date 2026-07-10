@@ -921,6 +921,79 @@ describe("HiveSpawner wiring", () => {
     quotaDb.close();
   });
 
+  test("routes a deep-tier Claude spawn to Opus 4.8 when Fable's pool is under quota pressure", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-spawner-quota-opus-"));
+    tempRoots.push(root);
+    const quotaDb = new HiveDatabase(join(root, "quota.db"));
+    const quota = new QuotaService(
+      new QuotaLedger(quotaDb),
+      QuotaConfigSchema.parse({
+        reserveFiveHourPct: 0,
+        reserveWeeklyPct: 0,
+        limits: [
+          {
+            // Deliberately under the deep-tier estimate (20): every
+            // reservation attempt against Fable's pool must fail.
+            provider: "claude",
+            account: "default",
+            pool: "claude-fable",
+            models: ["claude-fable-5"],
+            fiveHourAllowance: 10,
+            weeklyAllowance: 10,
+          },
+          {
+            provider: "claude",
+            account: "default",
+            pool: "claude-opus",
+            models: ["claude-opus-4-8"],
+            fiveHourAllowance: 100,
+            weeklyAllowance: 100,
+          },
+          {
+            provider: "codex",
+            account: "default",
+            pool: "codex",
+            models: ["gpt-5.6-sol"],
+            fiveHourAllowance: 100,
+            weeklyAllowance: 100,
+          },
+        ],
+      }),
+      () => new Date(timestamp),
+    );
+    const store = new FakeStore();
+    const tmux = new FakeTmux();
+    const spawner = new HiveSpawner({
+      db: store,
+      repoRoot: root,
+      port: 4317,
+      config: { terminal: "auto", headless: true },
+      // Deep tier's default route still resolves "best" to Fable before the
+      // 2026-07-12 auto-routing cutoff; the release valve to Opus 4.8 is
+      // quota-pressure-driven and applies independently of that date.
+      routing: async () => DEFAULT_ROUTING.deep,
+      tmux,
+      terminal: new FakeTerminal(),
+      createWorktree: async (_repoRoot, name, slug) => {
+        const path = join(root, name);
+        await mkdir(path, { recursive: true });
+        return { path, branch: `hive/${name}-${slug}` };
+      },
+      sleep: async () => {},
+      resolveModel: fakeResolveModel,
+      quota,
+    });
+
+    const spawned = await spawner.spawn({ task: "Deep task", tier: "deep" });
+    expect(spawned.tool).toEqual("claude");
+    expect(spawned.model).toEqual("claude-opus-4-8");
+    expect(spawned.quotaReservationId).toBeString();
+    expect(
+      quota.ledger.getReservation(spawned.quotaReservationId!)?.pool,
+    ).toEqual("claude-opus");
+    quotaDb.close();
+  });
+
   test("writes tool configs, starts named sessions, opens viewers, and inserts records", async () => {
     const root = await mkdtemp(join(tmpdir(), "hive-spawner-"));
     tempRoots.push(root);

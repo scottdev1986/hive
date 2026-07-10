@@ -4,6 +4,8 @@ import {
   AgentRecordSchema,
   ClaudeRouteSchema,
   DEFAULT_ROUTING,
+  defaultRoutingTable,
+  FABLE_AUTO_ROUTING_CUTOFF,
   HandoffSchema,
   HiveConfigSchema,
   HookEventSchema,
@@ -115,6 +117,43 @@ describe("RoutingTableSchema", () => {
         deep: { ...DEFAULT_ROUTING.deep, tool: "gemini" },
       }),
     ).toThrow();
+  });
+});
+
+describe("defaultRoutingTable", () => {
+  const cutoff = new Date(FABLE_AUTO_ROUTING_CUTOFF);
+
+  test("keeps the deep tier on the best alias before the Fable cutoff", () => {
+    const justBefore = new Date(cutoff.getTime() - 1);
+    expect(defaultRoutingTable(justBefore)).toEqual(DEFAULT_ROUTING);
+    expect(defaultRoutingTable(justBefore).deep.claude.model).toEqual("best");
+  });
+
+  test("stops auto-selecting Fable for the deep tier on/after the cutoff", () => {
+    expect(defaultRoutingTable(cutoff).deep.claude.model).toEqual(
+      "claude-opus-4-8",
+    );
+    const justAfter = new Date(cutoff.getTime() + 1);
+    expect(defaultRoutingTable(justAfter).deep.claude.model).toEqual(
+      "claude-opus-4-8",
+    );
+  });
+
+  test("changes nothing but the deep tier's claude model across the cutoff", () => {
+    const before = defaultRoutingTable(new Date(cutoff.getTime() - 1));
+    const after = defaultRoutingTable(cutoff);
+    expect(after.deep.codex).toEqual(before.deep.codex);
+    expect(after.standard).toEqual(before.standard);
+    expect(after.cheap).toEqual(before.cheap);
+    expect(after.review).toEqual(before.review);
+  });
+
+  test("produces a schema-valid table on both sides of the cutoff", () => {
+    expect(() =>
+      RoutingTableSchema.parse(defaultRoutingTable(new Date(cutoff.getTime() - 1)))
+    ).not.toThrow();
+    expect(() => RoutingTableSchema.parse(defaultRoutingTable(cutoff)))
+      .not.toThrow();
   });
 });
 

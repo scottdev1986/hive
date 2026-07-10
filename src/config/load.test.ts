@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { DEFAULT_ROUTING } from "../schemas";
+import { DEFAULT_ROUTING, FABLE_AUTO_ROUTING_CUTOFF } from "../schemas";
 import {
   loadHiveConfig,
   loadQuotaConfig,
@@ -54,7 +54,10 @@ describe("config loading", () => {
         minSystemAvailableMb: 4_096,
       },
     });
-    expect(await loadRoutingTable()).toEqual(DEFAULT_ROUTING);
+    const beforeFableCutoff = new Date(
+      new Date(FABLE_AUTO_ROUTING_CUTOFF).getTime() - 1,
+    );
+    expect(await loadRoutingTable(beforeFableCutoff)).toEqual(DEFAULT_ROUTING);
     expect(await loadQuotaConfig()).toMatchObject({
       enabled: true,
       limits: [],
@@ -241,5 +244,35 @@ describe("config loading", () => {
     );
     expect(message.includes("__proto__")).toEqual(true);
     expect(Object.hasOwn(Object.prototype, pollutionKey)).toEqual(false);
+  });
+
+  describe("Fable auto-routing cutoff", () => {
+    const cutoff = new Date(FABLE_AUTO_ROUTING_CUTOFF);
+    const beforeCutoff = new Date(cutoff.getTime() - 1);
+
+    test("deep tier stays on the best alias before the cutoff", async () => {
+      await resetHome();
+      const routing = await loadRoutingTable(beforeCutoff);
+      expect(routing.deep.claude.model).toEqual("best");
+      expect(await resolveRoute("deep", beforeCutoff)).toEqual(routing.deep);
+    });
+
+    test("deep tier defaults to Opus 4.8 on/after the cutoff", async () => {
+      await resetHome();
+      const routing = await loadRoutingTable(cutoff);
+      expect(routing.deep.claude.model).toEqual("claude-opus-4-8");
+      expect(routing.deep.codex).toEqual(DEFAULT_ROUTING.deep.codex);
+      expect(await resolveRoute("deep", cutoff)).toEqual(routing.deep);
+    });
+
+    test("an explicit routing.toml pin to Fable survives the cutoff", async () => {
+      await resetHome();
+      await writeFile(
+        join(hiveHome, "routing.toml"),
+        '[deep.claude]\nmodel = "claude-fable-5"\n',
+      );
+      const routing = await loadRoutingTable(cutoff);
+      expect(routing.deep.claude.model).toEqual("claude-fable-5");
+    });
   });
 });

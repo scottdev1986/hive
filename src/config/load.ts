@@ -1,7 +1,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import {
-  DEFAULT_ROUTING,
+  defaultRoutingTable,
   DEFAULT_QUOTA_CONFIG,
   HiveConfigSchema,
   QuotaConfigSchema,
@@ -67,7 +67,9 @@ export async function loadQuotaConfig(): Promise<QuotaConfig> {
   }
 }
 
-export async function loadRoutingTable(): Promise<RoutingTable> {
+export async function loadRoutingTable(
+  now: Date = new Date(),
+): Promise<RoutingTable> {
   const path = join(hiveHome(), "routing.toml");
   const raw = await readToml(path);
 
@@ -76,7 +78,7 @@ export async function loadRoutingTable(): Promise<RoutingTable> {
   }
 
   const merged = mergeOwn();
-  for (const [tier, route] of Object.entries(DEFAULT_ROUTING)) {
+  for (const [tier, route] of Object.entries(defaultRoutingTable(now))) {
     const mergedRoute = mergeOwn(route);
     mergedRoute.claude = mergeOwn(route.claude);
     mergedRoute.codex = mergeOwn(route.codex);
@@ -108,7 +110,10 @@ export async function loadRoutingTable(): Promise<RoutingTable> {
   }
 }
 
-export async function resolveRoute(tier: RoutingTier): Promise<Route> {
-  const routing = await loadRoutingTable();
+export async function resolveRoute(
+  tier: RoutingTier,
+  now: Date = new Date(),
+): Promise<Route> {
+  const routing = await loadRoutingTable(now);
   return routing[tier];
 }

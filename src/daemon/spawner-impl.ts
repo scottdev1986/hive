@@ -17,7 +17,11 @@ import {
 } from "../adapters/tools/codex";
 import type { CodexAppServerManager } from "../adapters/tools/codex-app-server";
 import { provisionSkills } from "../adapters/skills";
-import { resolveConcreteModel } from "../adapters/tools/models";
+import {
+  CLAUDE_BEST_MODEL,
+  CLAUDE_OPUS_MODEL,
+  resolveConcreteModel,
+} from "../adapters/tools/models";
 import {
   createWorktree,
   removeWorktree,
@@ -35,7 +39,7 @@ import {
 } from "../schemas";
 import type { HiveDatabase } from "./db";
 import type { SpawnRequest, Spawner } from "./spawner";
-import type { QuotaService } from "./quota";
+import type { QuotaRouteCandidate, QuotaService } from "./quota";
 import { agentTmuxSession } from "./tmux-sessions";
 
 export const NAME_POOL = [
@@ -599,6 +603,20 @@ export class HiveSpawner implements Spawner {
         this.modelResolver("claude", configuredRoute),
         this.modelResolver("codex", configuredRoute),
       ]);
+      const candidates: QuotaRouteCandidate[] = [
+        { tool: "claude", model: claudeModel },
+        { tool: "codex", model: codexModel },
+      ];
+      // Fable draws heavy shared capacity. When a route resolves to it,
+      // offer Opus 4.8 as a same-vendor release valve: listed after Fable so
+      // ties (including the no-quota-configured default) keep preferring
+      // Fable, but real quota pressure on Fable's pool can still pick Opus
+      // when it has the better headroom. This does not require the
+      // 2026-07-12 default-routing cutover — it applies whenever a route
+      // resolves to Fable, explicitly or otherwise.
+      if (claudeModel === CLAUDE_BEST_MODEL) {
+        candidates.splice(1, 0, { tool: "claude", model: CLAUDE_OPUS_MODEL });
+      }
       const decision = await this.dependencies.quota.routeAndReserve({
         agentName: name,
         tier: request.tier,
@@ -607,10 +625,7 @@ export class HiveSpawner implements Spawner {
         ...(request.reviewOfTool === undefined
           ? {}
           : { reviewOfTool: request.reviewOfTool }),
-        candidates: [
-          { tool: "claude", model: claudeModel },
-          { tool: "codex", model: codexModel },
-        ],
+        candidates,
       });
       tool = decision.tool;
       model = decision.model;

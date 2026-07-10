@@ -3,7 +3,12 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Route } from "../../schemas";
-import { CLAUDE_BEST_MODEL, resolveConcreteModel } from "./models";
+import { defaultRoutingTable, FABLE_AUTO_ROUTING_CUTOFF } from "../../schemas";
+import {
+  CLAUDE_BEST_MODEL,
+  CLAUDE_OPUS_MODEL,
+  resolveConcreteModel,
+} from "./models";
 
 const previousClaudeConfigDir = Bun.env.CLAUDE_CONFIG_DIR;
 const previousCodexHome = Bun.env.CODEX_HOME;
@@ -119,5 +124,24 @@ describe("resolveConcreteModel", () => {
     expect(
       await resolveConcreteModel("codex", route({ tool: "codex" })),
     ).toEqual("default");
+  });
+
+  test("passes the concrete Opus 4.8 model through untouched", async () => {
+    await isolatedHomes();
+    expect(
+      await resolveConcreteModel(
+        "claude",
+        route({ claudeModel: CLAUDE_OPUS_MODEL }),
+      ),
+    ).toEqual("claude-opus-4-8");
+  });
+});
+
+describe("CLAUDE_OPUS_MODEL", () => {
+  test("matches the model the post-Fable-cutoff default routing table pins", () => {
+    // Cross-check against schemas/routing.ts's own (necessarily duplicated,
+    // since schemas cannot depend on adapters) copy of this id.
+    const table = defaultRoutingTable(new Date(FABLE_AUTO_ROUTING_CUTOFF));
+    expect(table.deep.claude.model).toEqual(CLAUDE_OPUS_MODEL);
   });
 });

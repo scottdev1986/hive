@@ -8,6 +8,16 @@ import type { Route } from "../../schemas";
 // claude-fable-5. Re-verify when the CLI's top model changes.
 export const CLAUDE_BEST_MODEL = "claude-fable-5";
 
+// A directly-launchable model id, not a CLI-resolved alias — no indirection
+// needed. Verified against the live Claude Platform docs and a local check
+// on this machine on 2026-07-10: `claude --model claude-opus-4-8` launches
+// successfully (Claude Code >= v2.1.154 required). The CLI may self-report
+// this as "claude-opus-4-8[1m]" on Max/Team/Enterprise plans, where Opus is
+// automatically upgraded to a 1 million token context window; "[1m]" names
+// that context-window variant and is appended by the CLI itself, not a
+// value Hive constructs or needs to pass on the `--model` flag.
+export const CLAUDE_OPUS_MODEL = "claude-opus-4-8";
+
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
