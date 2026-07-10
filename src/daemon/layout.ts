@@ -15,6 +15,11 @@ export interface LayoutCoordinator {
   requestLayout(): void;
 }
 
+// A single pass shells out to AppleScript for the screen read and every
+// window move; one hung call must not wedge `inFlight` forever and with it
+// every future layout pass. Far above any observed pass duration.
+const LAYOUT_PASS_TIMEOUT_MS = 30_000;
+
 const LIVE_STATUSES: ReadonlySet<AgentRecord["status"]> = new Set([
   "spawning",
   "working",
@@ -91,7 +96,7 @@ export class TerminalLayoutManager implements LayoutCoordinator {
     while (this.pending) {
       this.pending = false;
       try {
-        await this.applyOnce();
+        await this.applyOnceBounded();
       } catch (error) {
         this.logError(
           `hive layout failed: ${
@@ -99,6 +104,29 @@ export class TerminalLayoutManager implements LayoutCoordinator {
           }`,
         );
       }
+    }
+  }
+
+  private async applyOnceBounded(): Promise<void> {
+    const pass = this.applyOnce();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(
+        () =>
+          reject(
+            new Error(`layout pass timed out after ${LAYOUT_PASS_TIMEOUT_MS}ms`),
+          ),
+        LAYOUT_PASS_TIMEOUT_MS,
+      );
+    });
+    try {
+      await Promise.race([pass, timeout]);
+    } finally {
+      clearTimeout(timer);
+      // An abandoned pass may still settle later; a late rejection must not
+      // surface as an unhandled rejection. A late window move is cosmetic —
+      // the next pass re-tiles from current state.
+      pass.catch(() => undefined);
     }
   }
 

@@ -210,7 +210,7 @@ describe("event-driven orchestrator lifecycle", () => {
       expect(db.getMessage(queued.id)?.deliveredAt).not.toEqual(null);
       expect(await recovered.orchestratorInbox()).toEqual([]);
       expect(
-        db.acknowledgeMessage(queued.id, new Date().toISOString()),
+        db.markMessageDelivered(queued.id, new Date().toISOString()),
       ).toEqual(null);
     } finally {
       db.close();

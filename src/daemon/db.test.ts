@@ -422,6 +422,13 @@ describe("HiveDatabase", () => {
         ...message,
         deliveredAt,
       });
+      // A second claim returns null exactly like a missing row: a push path
+      // racing another delivery must not report a fresh delivery for a
+      // message someone else already claimed.
+      expect(
+        db.markMessageDelivered(message.id, "2026-07-09T12:02:00.000Z"),
+      ).toEqual(null);
+      expect(db.getMessage(message.id)?.deliveredAt).toEqual(deliveredAt);
       expect(db.getUndeliveredMessages("maya")).toEqual([]);
       expect(db.deleteMessage(message.id)).toEqual(true);
     } finally {

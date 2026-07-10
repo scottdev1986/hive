@@ -1193,6 +1193,9 @@ describe("HiveDaemon HTTP server", () => {
       recovery: {
         worktreeExists: () => true,
         sleep: async () => {},
+        seedClaudeTrust: async () => {},
+        writeClaudeConfig: async () => {},
+        writeCodexConfig: async () => {},
       },
     });
     db.insertAgent(agent({
@@ -1343,7 +1346,10 @@ describe("HiveDaemon HTTP server", () => {
     try {
       await daemon.reconcileAgents();
 
-      expect(tmux.checked).toEqual(["hive-maya"]);
+      // Checked once by the sweep and once again inside the recovery's
+      // exclusive section, which guards against a session appearing between
+      // the two.
+      expect(tmux.checked).toEqual(["hive-maya", "hive-maya"]);
       expect(db.getAgentByName("maya")).toMatchObject({
         status: "dead",
         failureReason: "worktree is missing; session not resumable",

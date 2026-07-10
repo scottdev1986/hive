@@ -877,20 +877,15 @@ export class HiveDatabase {
     });
   }
 
-  acknowledgeMessage(id: string, deliveredAt: string): AgentMessage | null {
+  // Returns the row only when this call actually claimed it: a message some
+  // other path already delivered comes back null, exactly like a missing one,
+  // so a push path cannot report a fresh delivery for a duplicate.
+  markMessageDelivered(id: string, deliveredAt: string): AgentMessage | null {
     const result = this.database.query(`
       UPDATE messages SET deliveredAt = ?
       WHERE id = ? AND deliveredAt IS NULL
     `).run(deliveredAt, id);
     return result.changes === 1 ? this.getMessage(id) : null;
-  }
-
-  markMessageDelivered(id: string, deliveredAt: string): AgentMessage | null {
-    this.database.query(`
-      UPDATE messages SET deliveredAt = ?
-      WHERE id = ? AND deliveredAt IS NULL
-    `).run(deliveredAt, id);
-    return this.getMessage(id);
   }
 
   deleteMessage(id: string): boolean {

@@ -329,21 +329,37 @@ export class MessageDelivery {
             message,
             currentRecipient.tmuxSession,
           ));
-        } catch {
-          // A failed pane must not prevent later queued messages from delivery.
+        } catch (error) {
+          // A failed pane must not prevent later queued messages from
+          // delivery, but a systemic failure (dead bridge, vanished tmux)
+          // dropping the whole queue must not be invisible either.
+          console.error(
+            `Hive failed to flush queued message ${queued.id} to ${agentName}: ${
+              error instanceof Error ? error.message : "unknown error"
+            }`,
+          );
         }
       }
       return delivered;
     });
   }
 
-  inbox(agentName: string): AgentMessage[] {
-    const deliveredAt = new Date().toISOString();
-    return this.db.claimUndeliveredMessages(agentName, deliveredAt).map(
-      (message) => message.priority === "normal"
-        ? this.db.transitionMessage(message.id, "applied", deliveredAt)!
-        : this.db.transitionMessage(message.id, "injected", deliveredAt)!,
-    );
+  async inbox(agentName: string): Promise<AgentMessage[]> {
+    // The pull path must hold the same per-session lane as every push path
+    // (send/flushQueued/deliver): a push that has read a row as undelivered
+    // but not yet pasted it must finish before a poll can claim that row, or
+    // the agent receives the payload twice — once pushed, once pulled.
+    const recipient = this.db.getAgentByName(agentName);
+    const claim = () => {
+      const deliveredAt = new Date().toISOString();
+      return this.db.claimUndeliveredMessages(agentName, deliveredAt).map(
+        (message) => message.priority === "normal"
+          ? this.db.transitionMessage(message.id, "applied", deliveredAt)!
+          : this.db.transitionMessage(message.id, "injected", deliveredAt)!,
+      );
+    };
+    if (recipient === null) return claim();
+    return this.withSessionLock(recipient.tmuxSession, async () => claim());
   }
 
   async orchestratorInbox(): Promise<OrchestratorMessageEnvelope[]> {
@@ -562,13 +578,21 @@ export class MessageDelivery {
         )!;
       }
       try {
-        await this.withSessionLock(recipient.tmuxSession, async () => {
+        const acted = await this.withSessionLock(recipient.tmuxSession, async () => {
+          // Re-check under the lock: this method runs from both the
+          // maintenance tick and the session-start hook, and the queued-state
+          // check above happened outside the lock. Without this, two
+          // overlapping sweeps both see "queued" and interrupt-and-restart
+          // the same agent twice.
+          const current = this.db.getMessage(message.id);
+          if (current === null || current.state !== "queued") return false;
           const latest = this.db.getAgentByName(message.to);
-          if (latest === null) return;
-          await this.controls!.interruptAndRestart(latest, message);
-          this.markInjected(message);
+          if (latest === null) return false;
+          await this.controls!.interruptAndRestart(latest, current);
+          this.markInjected(current);
+          return true;
         });
-        recovered += 1;
+        if (acted) recovered += 1;
       } catch (error) {
         const alertedAt = new Date().toISOString();
         this.db.markMessageAlerted(message.id, alertedAt);
@@ -643,5 +667,3 @@ export class MessageDelivery {
     }
   }
 }
-
-export { MessageDelivery as DeliveryService };

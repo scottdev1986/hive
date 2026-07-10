@@ -503,7 +503,12 @@ export class HiveSpawner implements Spawner {
       listInheritedCodexMcpServers;
     try {
       return await list();
-    } catch {
+    } catch (error) {
+      console.error(
+        `Hive could not read the user's Codex MCP server list; the spawned agent inherits all of them: ${
+          error instanceof Error ? error.message : "unknown error"
+        }`,
+      );
       return [];
     }
   }
@@ -585,11 +590,16 @@ export class HiveSpawner implements Spawner {
       throw error;
     }
 
-    const prepared = await this.prepareControlRestart(
-      agent,
-      message,
-      reservationId,
-    );
+    // From here to markStarted the reservation must settle on every failure
+    // path; prepare touches the DB and the terminal layer, either of which
+    // can throw before the cancel-guarded launch block below begins.
+    let prepared: { record: AgentRecord; viewersChanged: boolean };
+    try {
+      prepared = await this.prepareControlRestart(agent, message, reservationId);
+    } catch (error) {
+      await this.dependencies.quota.cancel(reservationId).catch(() => undefined);
+      throw error;
+    }
     const readOnly = true;
     // The read-only control process carries its instruction in argv and needs
     // no message channel. A safety interruption must not depend on a research
@@ -685,7 +695,12 @@ export class HiveSpawner implements Spawner {
             readOnly,
             identity.tool === "codex" ? identity.effort : "medium",
           );
-        } catch {
+        } catch (error) {
+          console.error(
+            `Hive codex app-server handshake failed for ${agent.name}; falling back to the TUI launch: ${
+              error instanceof Error ? error.message : "unknown error"
+            }`,
+          );
           this.dependencies.codexAppServer!.disconnect(agent.name);
           await this.dependencies.tmux.killSession(agent.tmuxSession, {
             ignoreMissing: true,
@@ -711,7 +726,18 @@ export class HiveSpawner implements Spawner {
       if (failureReason !== null) throw new Error(failureReason);
       this.dependencies.quota.markStarted(reservationId);
     } catch (error) {
-      await this.dependencies.quota.cancel(reservationId);
+      // The cancel must not preempt the rest of this cleanup: the session
+      // kill and the control-paused record are what keep a failed restart
+      // from leaving a live process around a revoked agent.
+      await this.dependencies.quota.cancel(reservationId).catch(
+        (cancelError: unknown) => {
+          console.error(
+            `Hive failed to cancel control reservation ${reservationId}: ${
+              cancelError instanceof Error ? cancelError.message : "unknown error"
+            }`,
+          );
+        },
+      );
       await this.dependencies.tmux.killSession(agent.tmuxSession, {
         ignoreMissing: true,
       }).catch(() => undefined);
@@ -985,7 +1011,14 @@ export class HiveSpawner implements Spawner {
     // verify commands must match the tree it is about to edit (SPEC §14). A
     // worktree with no profile yet degrades to no brief and generic landing
     // wording rather than assuming hive's own doc names or commands.
-    const profile = await loadProfile(worktree.path).catch(() => null);
+    const profile = await loadProfile(worktree.path).catch((error: unknown) => {
+      console.error(
+        `Hive could not load the repo profile for ${name}'s worktree; spawning with generic landing wording: ${
+          error instanceof Error ? error.message : "unknown error"
+        }`,
+      );
+      return null;
+    });
     const briefConfig = profile === null ? undefined : {
       briefableDocs: profile.docs.briefable,
       briefableDirectories: profile.docs.briefableDirectories,
@@ -997,7 +1030,14 @@ export class HiveSpawner implements Spawner {
         worktree.path,
         request.task,
         briefConfig === undefined ? {} : { config: briefConfig },
-      ).catch(() => ""),
+      ).catch((error: unknown) => {
+        console.error(
+          `Hive could not build a scoped brief for ${name}; spawning without one: ${
+            error instanceof Error ? error.message : "unknown error"
+          }`,
+        );
+        return "";
+      }),
     ]);
     const prompt = buildAgentPrompt(
       name,
@@ -1126,10 +1166,15 @@ export class HiveSpawner implements Spawner {
             false,
             configuredRoute.codex.effort ?? "medium",
           );
-        } catch {
+        } catch (error) {
           // The binary advertised app-server support but the control process
           // could not complete its handshake. Replace it immediately with the
           // maintained TUI path; tmux paste remains the automatic fallback.
+          console.error(
+            `Hive codex app-server handshake failed for ${name}; falling back to the TUI launch: ${
+              error instanceof Error ? error.message : "unknown error"
+            }`,
+          );
           this.dependencies.codexAppServer!.disconnect(name);
           await this.dependencies.tmux.killSession(record.tmuxSession, {
             ignoreMissing: true,

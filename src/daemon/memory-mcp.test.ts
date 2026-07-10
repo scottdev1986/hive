@@ -159,6 +159,52 @@ describe("memory MCP tools", () => {
     }
   });
 
+  test("path-shaped memory ids are rejected at the daemon boundary", async () => {
+    await makeHome();
+    const repoRoot = await mkdtemp(join(tmpdir(), "hive-memory-mcp-repo-"));
+    tempRoots.push(repoRoot);
+    const daemon = new HiveDaemon({
+      spawner: new UnusedSpawner(),
+      db: new HiveDatabase(":memory:"),
+      tmux: new NoopTmux(),
+      repoRoot,
+    });
+    const client = await connectedClient(daemon);
+    try {
+      // The adapter interpolates the id into `join(root, `${id}.md`)`, so an
+      // id carrying path components must never get past the tool schema:
+      // memory_read/memory_delete would escape the memory root, and
+      // memory_write would create files anywhere the daemon can write.
+      const hostile = [
+        "../../../outside",
+        "..",
+        "nested/child",
+        ".hidden",
+        "/absolute",
+      ];
+      for (const id of hostile) {
+        const read = await client.callTool({
+          name: "memory_read",
+          arguments: { scope: "repo", id },
+        });
+        expect(read.isError).toEqual(true);
+        const deletion = await client.callTool({
+          name: "memory_delete",
+          arguments: { scope: "repo", id },
+        });
+        expect(deletion.isError).toEqual(true);
+        const write = await client.callTool({
+          name: "memory_write",
+          arguments: { scope: "repo", id, title: "t", body: "b" },
+        });
+        expect(write.isError).toEqual(true);
+      }
+    } finally {
+      await client.close().catch(() => undefined);
+      await daemon.stop();
+    }
+  });
+
   test("source and verified provenance flow through memory_write and back on memory_read", async () => {
     await makeHome();
     const repoRoot = await mkdtemp(join(tmpdir(), "hive-memory-mcp-repo-"));

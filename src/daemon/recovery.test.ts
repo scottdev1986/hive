@@ -146,6 +146,11 @@ function harness(
     resolveCodexSessionId: async () => null,
     worktreeExists: () => true,
     sleep: async () => {},
+    // Synthetic worktrees: the real config writers would hit the filesystem
+    // (and fail the resume, by design), so the harness stubs them out.
+    seedClaudeTrust: async () => {},
+    writeClaudeConfig: async () => {},
+    writeCodexConfig: async () => {},
     ...overrides,
   });
   return {
@@ -602,6 +607,28 @@ describe("manual recovery", () => {
       sessionId: "sess-1",
     });
     expect(h.db.getAgentByName("maya")?.status).toEqual("idle");
+  });
+
+  test("concurrent recoveries of one agent resume exactly once", async () => {
+    const h = harness();
+    h.db.insertAgent(agent({
+      status: "dead",
+      toolSessionId: "sess-1",
+      failureReason: "tmux session missing (reconciled)",
+    }));
+
+    // A manual `hive recover` racing the maintenance sweep (or a second
+    // operator command) must not launch two tmux sessions around the same
+    // conversation or double-bump the attempt counter.
+    const outcomes = await Promise.all([
+      h.recovery.recoverAgent("maya"),
+      h.recovery.recoverAgent("maya"),
+    ]);
+
+    expect(outcomes.map((outcome) => outcome.action).toSorted())
+      .toEqual(["resumed", "skipped"]);
+    expect(h.tmux.created).toHaveLength(1);
+    expect(h.db.getAgentByName("maya")?.recoveryAttempts).toEqual(1);
   });
 
   test("bypasses the auto attempt cap because a human asked", async () => {

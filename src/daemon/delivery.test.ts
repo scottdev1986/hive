@@ -213,11 +213,11 @@ describe("MessageDelivery", () => {
     try {
       db.insertAgent(agent("working"));
       const queued = await delivery.send("sam", "maya", "Read later.");
-      const inbox = delivery.inbox("maya");
+      const inbox = await delivery.inbox("maya");
       expect(inbox.length).toEqual(1);
       expect(inbox[0]?.id).toEqual(queued.id);
       expect(inbox[0]?.deliveredAt === null).toEqual(false);
-      expect(delivery.inbox("maya")).toEqual([]);
+      expect(await delivery.inbox("maya")).toEqual([]);
       expect(tmux.calls).toEqual([]);
     } finally {
       db.close();
@@ -240,14 +240,14 @@ describe("MessageDelivery", () => {
 
       db.insertAgent(agent("working"));
       db.releaseAgentName("maya");
-      const inbox = delivery.inbox("maya");
+      const inbox = await delivery.inbox("maya");
       expect(inbox).toHaveLength(1);
       expect(inbox[0]).toMatchObject({
         id: queued.id,
         body: "Sent while you were spawning.",
       });
       expect(inbox[0]?.deliveredAt).not.toEqual(null);
-      expect(delivery.inbox("maya")).toEqual([]);
+      expect(await delivery.inbox("maya")).toEqual([]);
     } finally {
       db.close();
     }

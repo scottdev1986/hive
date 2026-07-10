@@ -48,7 +48,17 @@ export function readCredential(subject: string): string | null {
   let fd: number;
   try {
     fd = openSync(credentialPath(subject), constants.O_RDONLY | O_CLOEXEC);
-  } catch {
+  } catch (error) {
+    // Absence is the common, silent case; anything else (EPERM, EIO) is a
+    // real fault that would otherwise masquerade as "no credential" and
+    // demote a legitimate holder to unauthenticated with no trace.
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      console.error(
+        `Hive could not open the credential file for ${subject}: ${
+          error instanceof Error ? error.message : "unknown error"
+        }`,
+      );
+    }
     return null;
   }
   try {
@@ -56,7 +66,12 @@ export function readCredential(subject: string): string | null {
     const read = readSync(fd, buffer, 0, buffer.length, 0);
     const token = buffer.subarray(0, read).toString("utf8").trim();
     return token.length > 0 ? token : null;
-  } catch {
+  } catch (error) {
+    console.error(
+      `Hive could not read the credential file for ${subject}: ${
+        error instanceof Error ? error.message : "unknown error"
+      }`,
+    );
     return null;
   } finally {
     closeSync(fd);

@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { resolveHandshakeProject } from "./project-identity";
-import { readdir, readFile, realpath } from "node:fs/promises";
-import { join, relative, resolve } from "node:path";
+import { readdir, readFile } from "node:fs/promises";
+import { join, relative } from "node:path";
 import { HIVE_BUILD_HASH, HIVE_VERSION } from "../version";
 
 /**
@@ -63,21 +63,6 @@ function resolveSourceRoot(): string {
   // Both the source checkout and a packaged build retain this module beneath
   // `src/daemon`; resolving from import.meta.dir avoids the caller's cwd.
   return join(import.meta.dir, "..");
-}
-
-/**
- * The current CLI has no Supervisor registry yet. Until that migration lands,
- * canonical root identity is deterministic and scoped to the exact real path;
- * it is never inferred from a daemon that happened to bind first.
- */
-export async function hiveUuidForProject(projectRoot: string): Promise<string> {
-  // Embedded daemons in unit tests may use a synthetic root. Production
-  // launchers always pass an existing cwd, where realpath removes symlinks.
-  const canonicalRoot = await realpath(projectRoot).catch(() => resolve(projectRoot));
-  return `hive-${createHash("sha256")
-    .update("hive-project-v1\0")
-    .update(canonicalRoot)
-    .digest("hex")}`;
 }
 
 export async function expectedDaemonHandshake(

@@ -14,6 +14,7 @@ import {
 } from "../adapters/terminal";
 import {
   CrashRecovery,
+  type CrashRecoveryDependencies,
   type RecoveryOutcome,
   type SessionResolver,
 } from "./recovery";
@@ -56,7 +57,7 @@ import {
   type Denial,
   type Role,
 } from "./capabilities";
-import { OPERATOR_SUBJECT, writeCredential } from "./credentials";
+import { OPERATOR_SUBJECT, removeCredential, writeCredential } from "./credentials";
 import { HiveDatabase, type Approval } from "./db";
 import type { LayoutCoordinator } from "./layout";
 import { WorkspacePresence } from "./workspace-presence";
@@ -222,9 +223,26 @@ const MemorySearchRequestSchema = z.object({
   limit: z.number().int().positive().max(50).optional(),
 });
 
+// A fact id is a filename stem interpolated into `join(root, `${id}.md`)` by
+// the memory adapter, so the daemon boundary must refuse anything that could
+// name a path component: no slashes, no leading dot, nothing outside the
+// slug-plus-punctuation charset slugify and hand-authored facts actually use.
+const MemoryIdSchema = z
+  .string()
+  .min(1)
+  .max(120)
+  .regex(
+    /^[a-z0-9][a-z0-9._-]*$/i,
+    "memory id must be a filename stem: alphanumeric start, then [a-z0-9._-]",
+  );
+
 const MemoryFactRequestSchema = z.object({
   scope: MemoryScopeSchema,
-  id: z.string().min(1),
+  id: MemoryIdSchema,
+});
+
+const MemoryWriteRequestSchema = MemoryWriteInputSchema.extend({
+  id: MemoryIdSchema.optional(),
 });
 
 const ChannelRegisterSchema = z.object({
@@ -257,29 +275,59 @@ export type LandBranch = (
   branch: string,
 ) => Promise<{ commit: string }>;
 
-const landBranch: LandBranch = async (repoRoot, branch) => {
-  const merge = Bun.spawn(
-    ["git", "-C", repoRoot, "merge", "--ff-only", branch],
-    { stdout: "pipe", stderr: "pipe" },
+// Resource and control alerts are the only way daemon degradation reaches the
+// orchestrator; a failed alert send must not crash the sweep, but it must not
+// vanish either.
+function logAlertDeliveryFailure(error: unknown): undefined {
+  console.error(
+    `Hive failed to deliver a daemon alert to the orchestrator: ${
+      error instanceof Error ? error.message : "unknown error"
+    }`,
   );
-  const [exitCode, stderr] = await Promise.all([
-    merge.exited,
-    new Response(merge.stderr).text(),
-  ]);
-  if (exitCode !== 0) {
-    throw new Error(stderr.trim() || `git merge exited ${exitCode}`);
+  return undefined;
+}
+
+// A hung git (stale index.lock, filesystem stall) must fail the land, not
+// wedge the hive_land handler forever; a ff-only merge on a local repo that
+// has not finished in 30s is not going to.
+const LAND_GIT_TIMEOUT_MS = 30_000;
+
+async function runGit(
+  repoRoot: string,
+  args: string[],
+): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+  const proc = Bun.spawn(["git", "-C", repoRoot, ...args], {
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const timeout = setTimeout(() => proc.kill(), LAND_GIT_TIMEOUT_MS);
+  try {
+    const [exitCode, stdout, stderr] = await Promise.all([
+      proc.exited,
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+    ]);
+    if (proc.killed && exitCode !== 0) {
+      throw new Error(
+        `git ${args[0]} timed out after ${LAND_GIT_TIMEOUT_MS}ms`,
+      );
+    }
+    return { exitCode, stdout, stderr };
+  } finally {
+    clearTimeout(timeout);
   }
-  const revision = Bun.spawn(
-    ["git", "-C", repoRoot, "rev-parse", "HEAD"],
-    { stdout: "pipe", stderr: "pipe" },
-  );
-  const [revisionExit, stdout, revisionError] = await Promise.all([
-    revision.exited,
-    new Response(revision.stdout).text(),
-    new Response(revision.stderr).text(),
-  ]);
-  if (revisionExit !== 0) throw new Error(revisionError.trim());
-  return { commit: stdout.trim() };
+}
+
+const landBranch: LandBranch = async (repoRoot, branch) => {
+  const merge = await runGit(repoRoot, ["merge", "--ff-only", branch]);
+  if (merge.exitCode !== 0) {
+    throw new Error(
+      merge.stderr.trim() || `git merge exited ${merge.exitCode}`,
+    );
+  }
+  const revision = await runGit(repoRoot, ["rev-parse", "HEAD"]);
+  if (revision.exitCode !== 0) throw new Error(revision.stderr.trim());
+  return { commit: revision.stdout.trim() };
 };
 
 export interface HiveDaemonOptions {
@@ -299,6 +347,9 @@ export interface HiveDaemonOptions {
     resolveCodexSessionId?: SessionResolver;
     worktreeExists?: (path: string) => boolean;
     sleep?: (milliseconds: number) => Promise<void>;
+    seedClaudeTrust?: CrashRecoveryDependencies["seedClaudeTrust"];
+    writeClaudeConfig?: CrashRecoveryDependencies["writeClaudeConfig"];
+    writeCodexConfig?: CrashRecoveryDependencies["writeCodexConfig"];
   };
   /** Writer autonomy, forwarded to crash recovery so a resumed agent relaunches
    * with the posture it spawned with. */
@@ -507,6 +558,15 @@ export class HiveDaemon {
       ...(options.recovery?.sleep === undefined
         ? {}
         : { sleep: options.recovery.sleep }),
+      ...(options.recovery?.seedClaudeTrust === undefined
+        ? {}
+        : { seedClaudeTrust: options.recovery.seedClaudeTrust }),
+      ...(options.recovery?.writeClaudeConfig === undefined
+        ? {}
+        : { writeClaudeConfig: options.recovery.writeClaudeConfig }),
+      ...(options.recovery?.writeCodexConfig === undefined
+        ? {}
+        : { writeCodexConfig: options.recovery.writeCodexConfig }),
     });
     // The daemon that owns the lifecycle files owns the operator and
     // orchestrator credentials. Embedded daemons (tests, tooling) mint in
@@ -808,7 +868,24 @@ export class HiveDaemon {
       for (const kill of assessment.kills) {
         try {
           this.killProcess(kill.process.pid);
-        } catch {
+        } catch (error) {
+          // A kill the watchdog attempted and lost (EPERM, pid raced away)
+          // still counts as degradation, and degradation is never silent:
+          // the runaway may still be allocating.
+          console.error(
+            `Hive memory watchdog failed to kill pid ${kill.process.pid} under ${kill.owner}: ${
+              error instanceof Error ? error.message : "unknown error"
+            }`,
+          );
+          await this.delivery.send(
+            "hive-resources",
+            ORCHESTRATOR_NAME,
+            `Hive memory watchdog FAILED to kill pid ${kill.process.pid} under ${kill.owner} ` +
+              `(${Math.round(kill.process.rssMb)} MB resident, limit ${limits.perProcessMemoryMb} MB): ` +
+              `${kill.process.command.slice(0, 160)}. The process may still be allocating; ` +
+              `it may need to be stopped by hand.`,
+            { idempotencyKey: `resource-kill-failed:${kill.process.pid}` },
+          ).catch(logAlertDeliveryFailure);
           continue;
         }
         await this.delivery.send(
@@ -819,7 +896,7 @@ export class HiveDaemon {
             `${kill.process.command.slice(0, 160)}. The ${kill.owner} session itself is still running; ` +
             `check whether its work needs to be retried.`,
           { idempotencyKey: `resource-kill:${kill.process.pid}` },
-        ).catch(() => undefined);
+        ).catch(logAlertDeliveryFailure);
       }
       if (assessment.memoryPressure && assessment.availableMb !== null) {
         await this.delivery.send(
@@ -830,7 +907,7 @@ export class HiveDaemon {
             "Spawns resume automatically once memory pressure clears.",
           // One alert per hour of sustained pressure, not one per sweep.
           { idempotencyKey: `resource-pressure:${new Date().toISOString().slice(0, 13)}` },
-        ).catch(() => undefined);
+        ).catch(logAlertDeliveryFailure);
       }
       await this.reapCodexOrphans();
     } catch (error) {
@@ -858,7 +935,7 @@ export class HiveDaemon {
         ORCHESTRATOR_NAME,
         `Hive reaped an orphaned codex app-server (pid ${pid}) left behind by a dead agent's host process.`,
         { idempotencyKey: `resource-reap:${pid}` },
-      ).catch(() => undefined);
+      ).catch(logAlertDeliveryFailure);
     }
   }
 
@@ -887,7 +964,7 @@ export class HiveDaemon {
           `Reservation ${reservation.id} settled conservatively; the process was stopped, ` +
           "write and landing capability remain revoked, and the worktree is preserved.",
         { idempotencyKey: `control-quota-timeout:${reservation.id}` },
-      ).catch(() => undefined);
+      ).catch(logAlertDeliveryFailure);
     }
     if (viewersChanged) this.layout?.requestLayout();
     return expired.length;
@@ -1614,7 +1691,11 @@ export class HiveDaemon {
       });
       // A dead agent's credential dies with it, so a surviving descendant of
       // its process cannot keep speaking for a tenant that no longer exists.
+      // The token file goes too: revocation already makes it useless, but a
+      // plaintext credential for every agent ever spawned must not accumulate
+      // on disk for the life of the install.
       this.capabilities.revokeSubject(updated.name);
+      removeCredential(updated.name);
       this.channels.drop(updated.name);
       await this.settleAgentQuota(updated);
       return toolResult(updated, "agent");
@@ -1632,6 +1713,7 @@ export class HiveDaemon {
         throw new Error(`Hive agent not found: ${name}`);
       }
       this.capabilities.revokeSubject(agent.name);
+      removeCredential(agent.name);
 
       await this.tmux.killSession(agent.tmuxSession, { ignoreMissing: true });
       const timestamp = new Date().toISOString();
@@ -1773,7 +1855,7 @@ export class HiveDaemon {
       return toolResult(
         agent === ORCHESTRATOR_NAME
           ? await this.delivery.orchestratorInbox()
-          : this.delivery.inbox(agent),
+          : await this.delivery.inbox(agent),
         "messages",
       );
     });
@@ -1927,7 +2009,7 @@ export class HiveDaemon {
       title: "Write a Hive memory fact",
       description:
         "Create or update one durable narrative memory fact. WRITE POLICY (SPEC decision 5): a lesson earns a fact only if it is durable (true past this run), non-derivable (not recoverable from the code, git, or the profile), and load-bearing (it would change what a future agent does) — chit-chat, restatements, and anything a grep or .hive/profile.toml already answers do not qualify, and structured truth (commands, layout, entry points) belongs in the profile, never here. DEDUP-BEFORE-WRITE: memory_search first and pass that fact's scope+id to update it in place rather than adding a near-duplicate. CORRECTION-NOT-APPEND: to fix a wrong fact, overwrite it (same id) or memory_delete it — never append a contradiction; git history is the changelog. Set `source` to who is writing (agent at landing, orchestrator for its decisions, init for seeded facts, human for hand-authored) and `verified` to today when you have confirmed the fact against the repo. Omit id to create (slug derived from title); repo scope is committed and travels with the clone, global accumulates lessons across projects. Writes are serialized and immediately reflected in search.",
-      inputSchema: MemoryWriteInputSchema,
+      inputSchema: MemoryWriteRequestSchema,
     }, async (input) => {
       this.authorizeTool(capability, "memory_write", "memory:write");
       return toolResult(await this.writeMemoryFact(input), "fact");

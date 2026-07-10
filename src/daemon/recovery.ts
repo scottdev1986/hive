@@ -90,6 +90,13 @@ export interface CrashRecoveryDependencies {
   worktreeExists?: (path: string) => boolean;
   sleep?: Sleep;
   claudeExecutable?: string;
+  /** Config-writer seams so tests can resume into synthetic worktrees; the
+   * defaults write the real per-worktree agent configs. A failed write fails
+   * the resume — the spawn-time config may name a daemon port this restarted
+   * daemon no longer holds. */
+  seedClaudeTrust?: (worktreePath: string) => Promise<void>;
+  writeClaudeConfig?: typeof writeClaudeAgentConfig;
+  writeCodexConfig?: typeof writeCodexAgentConfig;
   /** Writer autonomy, so a resumed agent regains the launch posture it had at
    * spawn. Absent fails safe to the sandboxed approval queue. */
   autonomy?: HiveConfig["autonomy"];
@@ -121,6 +128,15 @@ export class CrashRecovery {
   private readonly worktreeExists: (path: string) => boolean;
   private readonly wait: Sleep;
   private readonly claudeExecutable: string;
+  private readonly seedClaudeTrust: (worktreePath: string) => Promise<void>;
+  private readonly writeClaudeConfig: typeof writeClaudeAgentConfig;
+  private readonly writeCodexConfig: typeof writeCodexAgentConfig;
+  // Agents with a recovery already in flight. The sweep (maintenance tick,
+  // startup) and manual recovery (hive_recover) share no other interlock, and
+  // resume awaits across its hasSession check — without this, both paths see
+  // "no session", both bump recoveryAttempts, and both launch a tmux session
+  // for the same conversation.
+  private readonly recovering = new Set<string>();
 
   constructor(private readonly deps: CrashRecoveryDependencies) {
     this.resolveClaude = deps.resolveClaudeSessionId ??
@@ -130,6 +146,9 @@ export class CrashRecovery {
     this.worktreeExists = deps.worktreeExists ?? existsSync;
     this.wait = deps.sleep ?? defaultSleep;
     this.claudeExecutable = deps.claudeExecutable ?? resolveWorkingClaudeExecutable().path;
+    this.seedClaudeTrust = deps.seedClaudeTrust ?? seedClaudeWorktreeTrust;
+    this.writeClaudeConfig = deps.writeClaudeConfig ?? writeClaudeAgentConfig;
+    this.writeCodexConfig = deps.writeCodexConfig ?? writeCodexAgentConfig;
   }
 
   // The maintenance sweep: classify every agent whose tmux session is gone
@@ -218,6 +237,35 @@ export class CrashRecovery {
     agent: AgentRecord,
     options: { manual: boolean },
   ): Promise<RecoveryOutcome> {
+    if (this.recovering.has(agent.id)) {
+      return {
+        agent: agent.name,
+        action: "skipped",
+        reason: "a recovery for this agent is already in flight",
+      };
+    }
+    this.recovering.add(agent.id);
+    try {
+      return await this.recoverOneExclusive(agent, options);
+    } finally {
+      this.recovering.delete(agent.id);
+    }
+  }
+
+  private async recoverOneExclusive(
+    agent: AgentRecord,
+    options: { manual: boolean },
+  ): Promise<RecoveryOutcome> {
+    // Callers checked hasSession before entering, but that check is stale by
+    // now if another recovery finished in between; resuming over a live
+    // session would fail the tmux launch and mark a healthy agent dead.
+    if (await this.deps.tmux.hasSession(agent.tmuxSession)) {
+      return {
+        agent: agent.name,
+        action: "skipped",
+        reason: "tmux session is running",
+      };
+    }
     if (!options.manual && agent.recoveryAttempts >= MAX_AUTO_RESUME_ATTEMPTS) {
       return this.markDead(
         agent,
@@ -273,21 +321,32 @@ export class CrashRecovery {
         // Re-seed rather than assume: the operator's ~/.claude.json may have
         // been reset between the crash and the resume, and an unattended
         // resume that meets the trust dialog stalls exactly like a spawn.
-        await seedClaudeWorktreeTrust(worktreePath).catch(() => undefined);
-        await writeClaudeAgentConfig(worktreePath, {
+        // Best-effort because the existing file usually already records
+        // trust — but never silently: a failed seed is the prime suspect
+        // when a resume stalls.
+        await this.seedClaudeTrust(worktreePath).catch((error: unknown) => {
+          console.error(
+            `Hive could not re-seed worktree trust for ${record.name}: ${
+              error instanceof Error ? error.message : "unknown error"
+            }`,
+          );
+        });
+        // The config write must succeed or the resume must fail: the spawn-time
+        // config carries a daemon port this restarted daemon may no longer
+        // hold, and an agent whose hooks post to a dead port can never prove
+        // life. A throw here lands in the launch-failure catch below.
+        await this.writeClaudeConfig(worktreePath, {
           daemonPort: this.deps.port,
           name: record.name,
           readOnly: false,
           dangerous,
-        }).catch(() => undefined);
-        // The spawn-time config in the worktree still carries hooks and
-        // permissions; only the resume flag is new.
+        });
       } else {
-        await writeCodexAgentConfig(worktreePath, {
+        await this.writeCodexConfig(worktreePath, {
           daemonPort: this.deps.port,
           name: record.name,
           readOnly: false,
-        }).catch(() => undefined);
+        });
       }
       const argv = record.tool === "claude"
         ? buildClaudeResumeCommand({
