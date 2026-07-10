@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { buildMemoryIndex } from "../adapters/memory";
 import { ITerm2Adapter } from "../adapters/iterm2";
 import { TerminalAppAdapter } from "../adapters/terminal-app";
+import { TmuxAdapter } from "../adapters/tmux";
 import {
   writeClaudeAgentConfig,
 } from "../adapters/tools/claude";
@@ -14,6 +15,7 @@ import type { TerminalHandle } from "../schemas";
 import { ORCHESTRATOR_BRIEF } from "./orchestrator-brief";
 
 export type OrchestratorTool = "claude" | "codex";
+export type OrchestratorTerminalApp = "auto" | "terminal" | "iterm2";
 
 const isMissingFileError = (error: unknown): boolean =>
   typeof error === "object" &&
@@ -161,7 +163,7 @@ export const captureOrchestratorTerminal: OrchestratorTerminalCapture =
     return null;
   };
 
-async function registerOrchestratorTerminal(
+export async function registerOrchestratorTerminal(
   port: number,
   handle: TerminalHandle,
 ): Promise<void> {
@@ -175,6 +177,71 @@ async function registerOrchestratorTerminal(
       `could not register the orchestrator terminal with Hive: HTTP ${response.status}`,
     );
   }
+}
+
+interface RunningTerminalRegistrationDependencies {
+  listClientTtys: (session: string) => Promise<string[]>;
+  captureTerminalApp: (tty: string) => Promise<TerminalHandle | null>;
+  captureITerm2: (tty: string) => Promise<TerminalHandle | null>;
+  register: (port: number, handle: TerminalHandle) => Promise<void>;
+}
+
+const runningTerminalRegistrationDependencies =
+  (): RunningTerminalRegistrationDependencies => ({
+    listClientTtys: async (session) =>
+      await new TmuxAdapter().listClientTtys(session),
+    captureTerminalApp: async (tty) =>
+      await new TerminalAppAdapter().captureWindowByTty(tty),
+    captureITerm2: async (tty) =>
+      await new ITerm2Adapter().captureWindowByTty(tty),
+    register: registerOrchestratorTerminal,
+  });
+
+// The recovery command asks tmux for the physical client attached to the
+// already-live root, so it identifies the orchestrator window rather than the
+// shell where `hive layout register` happens to run.
+export async function registerRunningOrchestratorTerminal(
+  port: number,
+  app: OrchestratorTerminalApp = "auto",
+  dependencies: RunningTerminalRegistrationDependencies =
+    runningTerminalRegistrationDependencies(),
+): Promise<TerminalHandle> {
+  const ttys = await dependencies.listClientTtys(orchestratorTmuxSession());
+  if (ttys.length !== 1) {
+    throw new Error(
+      ttys.length === 0
+        ? "the Hive orchestrator has no attached terminal client"
+        : "the Hive orchestrator has multiple attached terminal clients; detach all but one and retry",
+    );
+  }
+  const tty = ttys[0]!;
+  const captures = app === "terminal"
+    ? [dependencies.captureTerminalApp]
+    : app === "iterm2"
+    ? [dependencies.captureITerm2]
+    : [dependencies.captureTerminalApp, dependencies.captureITerm2];
+  const handles: TerminalHandle[] = [];
+  const errors: unknown[] = [];
+  for (const capture of captures) {
+    try {
+      const handle = await capture(tty);
+      if (handle !== null) handles.push(handle);
+    } catch (error) {
+      errors.push(error);
+    }
+  }
+  if (handles.length !== 1) {
+    if (handles.length > 1) {
+      throw new Error(`multiple terminal applications claim orchestrator TTY ${tty}`);
+    }
+    if (errors.length > 0) throw errors[0];
+    throw new Error(
+      `could not find a supported terminal window for orchestrator TTY ${tty}`,
+    );
+  }
+  const handle = handles[0]!;
+  await dependencies.register(port, handle);
+  return handle;
 }
 
 async function unregisterOrchestratorTerminal(port: number): Promise<void> {
@@ -213,13 +280,20 @@ export async function launchOrchestrator(
     : [];
 
   let registeredTerminal = false;
-  const handle = await captureTerminal();
-  if (handle !== null) {
-    // A supported terminal that cannot be scripted is configuration failure,
-    // not an unsupported-terminal opt-out. Surface the adapter's actionable
-    // macOS permission error in the foreground.
-    await registerOrchestratorTerminal(port, handle);
-    registeredTerminal = true;
+  try {
+    const handle = await captureTerminal();
+    if (handle !== null) {
+      await registerOrchestratorTerminal(port, handle);
+      registeredTerminal = true;
+    }
+  } catch (error) {
+    // Window layout is cosmetic. Adapter, permission, and daemon registration
+    // failures must never prevent the orchestrator process from launching.
+    console.warn(
+      `hive: terminal layout registration skipped: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
   }
 
   try {

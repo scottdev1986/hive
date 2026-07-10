@@ -130,7 +130,11 @@ export function buildTerminalAppSetBoundsOsascript(
 export function buildTerminalAppFindWindowByTtyOsascript(tty: string): string {
   return [
     'if application "Terminal" is not running then return ""',
-    'set terminalProcessId to do shell script "/usr/bin/pgrep -x Terminal"',
+    // pgrep uses exit 1 for an ordinary no-match result. `do shell script`
+    // turns every non-zero exit into an AppleScript error, so normalize only
+    // that result while preserving genuine pgrep failures.
+    'set terminalProcessId to do shell script "/usr/bin/pgrep -x Terminal; status=$?; if [ $status -eq 1 ]; then exit 0; fi; exit $status"',
+    'if terminalProcessId is "" then return ""',
     'tell application "Terminal"',
     "  repeat with candidateWindow in windows",
     "    repeat with candidateTab in tabs of candidateWindow",

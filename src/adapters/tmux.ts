@@ -148,6 +148,19 @@ export class TmuxAdapter {
     return result.stdout;
   }
 
+  async listClientTtys(session: string): Promise<string[]> {
+    validateSessionName(session);
+    const result = await this.run(
+      ["list-clients", "-t", `=${session}`, "-F", "#{client_tty}"],
+      this.socketName,
+    );
+    assertSuccess(result, "list-clients");
+    return [...new Set(result.stdout
+      .split("\n")
+      .map((tty) => tty.trim())
+      .filter((tty) => tty.startsWith("/dev/")))];
+  }
+
   async killSession(
     session: string,
     options: KillSessionOptions = {},

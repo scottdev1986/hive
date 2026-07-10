@@ -9,6 +9,7 @@ import {
   printStatus,
   readMemoryCli,
   recordQuotaObservation,
+  registerLayoutTerminal,
   reindexMemoryCli,
   searchMemoryCli,
   stopHive,
@@ -293,6 +294,17 @@ export function createProgram(): Command {
     .command("watch <name>")
     .description("Open a viewer for a named agent")
     .action(watchAgent);
+
+  const layout = program
+    .command("layout")
+    .description("Manage terminal window layout participation");
+
+  layout.command("register")
+    .description("Register the running orchestrator's attached terminal")
+    .option("--terminal <app>", "auto, terminal, or iterm2", "auto")
+    .action(async (options: { terminal: string }) => {
+      await registerLayoutTerminal(options.terminal);
+    });
 
   program
     .command("stop")

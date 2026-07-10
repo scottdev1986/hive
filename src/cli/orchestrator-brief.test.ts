@@ -10,6 +10,7 @@ import {
   buildOrchestratorLaunchCommand,
   launchOrchestrator,
   prepareOrchestratorConfig,
+  registerRunningOrchestratorTerminal,
 } from "./orchestrator";
 
 describe("orchestrator brief", () => {
@@ -168,9 +169,9 @@ describe("orchestrator brief", () => {
     }
   });
 
-  test("fails loudly when a supported terminal cannot be captured", async () => {
+  test("launches when Terminal.app capture reports pgrep's no-match error", async () => {
     let spawned = false;
-    await expect(launchOrchestrator(
+    const exitCode = await launchOrchestrator(
       "claude",
       4317,
       process.cwd(),
@@ -180,11 +181,47 @@ describe("orchestrator brief", () => {
       },
       async () => {
         throw new Error(
-          "macOS denied terminal automation; enable it in System Settings",
+          "could not find Terminal.app window: execution error: command exited with non-zero status (1)",
         );
       },
-    )).rejects.toThrow("System Settings");
-    expect(spawned).toEqual(false);
+    );
+    expect(exitCode).toEqual(0);
+    expect(spawned).toEqual(true);
+  });
+
+  test("re-registers the running root by its attached client's exact TTY", async () => {
+    const registered: unknown[] = [];
+    const handle = {
+      app: "terminal",
+      processId: 4242,
+      windowId: 17,
+      tty: "/dev/ttys003",
+    } as const;
+
+    await expect(registerRunningOrchestratorTerminal(4317, "auto", {
+      listClientTtys: async (session) => {
+        expect(session).toEqual(orchestratorTmuxSession());
+        return ["/dev/ttys003"];
+      },
+      captureTerminalApp: async (tty) => {
+        expect(tty).toEqual("/dev/ttys003");
+        return handle;
+      },
+      captureITerm2: async () => null,
+      register: async (port, captured) => {
+        registered.push({ port, captured });
+      },
+    })).resolves.toEqual(handle);
+    expect(registered).toEqual([{ port: 4317, captured: handle }]);
+  });
+
+  test("refuses ambiguous multi-client root registration", async () => {
+    await expect(registerRunningOrchestratorTerminal(4317, "auto", {
+      listClientTtys: async () => ["/dev/ttys003", "/dev/ttys004"],
+      captureTerminalApp: async () => null,
+      captureITerm2: async () => null,
+      register: async () => {},
+    })).rejects.toThrow("multiple attached terminal clients");
   });
 
   test("launches the orchestrator with the repo's committed memory index", async () => {

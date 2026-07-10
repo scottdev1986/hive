@@ -211,6 +211,8 @@ describe("terminal layout osascript builders", () => {
     const script = buildTerminalAppFindWindowByTtyOsascript("/dev/ttys003");
 
     expect(script).toContain('if application "Terminal" is not running then return ""');
+    expect(script).toContain("if [ $status -eq 1 ]; then exit 0");
+    expect(script).toContain('if terminalProcessId is "" then return ""');
     expect(script).toContain('if (tty of candidateTab as text) is "/dev/ttys003" then');
     expect(script).toContain(
       "return terminalProcessId & (ASCII character 9) & (id of candidateWindow as text)",

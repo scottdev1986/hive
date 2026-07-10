@@ -29,6 +29,10 @@ import {
   searchMemory,
   writeMemory,
 } from "./mcp";
+import {
+  type OrchestratorTerminalApp,
+  registerRunningOrchestratorTerminal,
+} from "./orchestrator";
 import { formatQuotaStatus, formatStatusTable } from "./status";
 
 const isLive = (agent: AgentRecord): boolean =>
@@ -215,6 +219,24 @@ export async function watchAgent(name: string): Promise<void> {
   } catch {
     // Viewer tracking is best-effort; the window is already open.
   }
+}
+
+export async function registerLayoutTerminal(
+  app: string = "auto",
+): Promise<void> {
+  if (app !== "auto" && app !== "terminal" && app !== "iterm2") {
+    throw new Error("terminal must be auto, terminal, or iterm2");
+  }
+  const terminalApp: OrchestratorTerminalApp = app;
+  const handle = await registerRunningOrchestratorTerminal(
+    requireDaemonPort(),
+    terminalApp,
+  );
+  console.log(
+    `Registered the orchestrator ${
+      handle.app === "terminal" ? "Terminal.app window" : "iTerm2 session"
+    } for layout.`,
+  );
 }
 
 export async function stopHive(): Promise<void> {

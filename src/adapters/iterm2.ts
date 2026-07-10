@@ -75,8 +75,8 @@ export function buildITerm2SetBoundsOsascript(
 export function buildITerm2FindSessionByTtyOsascript(tty: string): string {
   const escapedTty = appleScriptString(tty);
   return [
+    'if application "iTerm2" is not running then return ""',
     'tell application "iTerm2"',
-    '  if not running then return ""',
     "  repeat with candidateWindow in windows",
     "    repeat with candidateTab in tabs of candidateWindow",
     "      repeat with candidateSession in sessions of candidateTab",

@@ -183,6 +183,31 @@ describe("TmuxAdapter.sendKeys injection", () => {
 });
 
 describe("TmuxAdapter", () => {
+  test("lists the unique physical client TTYs attached to an exact session", async () => {
+    const calls: string[][] = [];
+    const adapter = new TmuxAdapter(undefined, {
+      run: async (args) => {
+        calls.push(args);
+        return {
+          stdout: "/dev/ttys003\n/dev/ttys003\nnot-a-tty\n",
+          stderr: "",
+          exitCode: 0,
+        };
+      },
+    });
+
+    expect(await adapter.listClientTtys("hive-orchestrator")).toEqual([
+      "/dev/ttys003",
+    ]);
+    expect(calls).toEqual([[
+      "list-clients",
+      "-t",
+      "=hive-orchestrator",
+      "-F",
+      "#{client_tty}",
+    ]]);
+  });
+
   test("rejects unsafe session names from every targeted public method", async () => {
     for (const invalid of ["", "sam:1", "sam.1", "sam name", "-sam"]) {
       let message = "";
