@@ -38,16 +38,34 @@ describe("terminal osascript builders", () => {
   });
 
   test("builds a Terminal.app window command without executing it", () => {
-    const script = buildTerminalAppOsascript("hive-agent-4", "Agent Four");
+    const script = buildTerminalAppOsascript(
+      "hive-agent-4",
+      "Agent Four",
+      "/tmp/Hive Agent.terminal",
+      "Hive Agent Test",
+    );
 
     expect(script.includes('tell application "Terminal"')).toEqual(true);
     expect(script.includes("tmux attach -t '=hive-agent-4'")).toEqual(true);
+    expect(script).toContain('if exists settings set "Hive Agent Test" then');
+    expect(script).toContain(
+      'set current settings of agentTab to settings set "Hive Agent Test"',
+    );
+    expect(script).toContain(
+      "set agentWindow to first window whose selected tab is agentTab",
+    );
     expect(
-      script.includes('set agentTab to do script "tmux attach'),
+      script.includes('open POSIX file "/tmp/Hive Agent.terminal"'),
     ).toEqual(true);
+    expect(script).toContain("set existingWindowIds to id of every window");
+    expect(script).toContain(
+      "if id of candidateWindow is not in existingWindowIds",
+    );
+    expect(script).toContain('do script "tmux attach');
     expect(
       script.includes('set custom title of agentTab to "Agent Four"'),
     ).toEqual(true);
+    expect(script).toContain("set title displays custom title of agentTab to true");
     expect(
       script.includes(
         "set agentWindow to first window whose selected tab is agentTab",
@@ -59,6 +77,33 @@ describe("terminal osascript builders", () => {
         "return terminalProcessId & (ASCII character 9) & agentWindowId & (ASCII character 9) & agentTty",
       ),
     ).toEqual(true);
+  });
+
+  test("ships a Terminal.app profile that suppresses generated title components", async () => {
+    const profile = await Bun.file(
+      join(import.meta.dir, "hive-agent-v1.terminal"),
+    ).text();
+    const generatedTitleKeys = [
+      "ShowComponentsWhenTabHasCustomTitle",
+      "ShowActiveProcessArgumentsInTabTitle",
+      "ShowActiveProcessArgumentsInTitle",
+      "ShowActiveProcessInTabTitle",
+      "ShowActiveProcessInTitle",
+      "ShowCommandKeyInTitle",
+      "ShowDimensionsInTitle",
+      "ShowRepresentedURLInTabTitle",
+      "ShowRepresentedURLInTitle",
+      "ShowRepresentedURLPathInTabTitle",
+      "ShowRepresentedURLPathInTitle",
+      "ShowShellCommandInTitle",
+      "ShowTTYNameInTabTitle",
+      "ShowTTYNameInTitle",
+      "ShowWindowSettingsNameInTitle",
+    ];
+
+    for (const key of generatedTitleKeys) {
+      expect(profile).toContain(`<key>${key}</key>\n  <false/>`);
+    }
   });
 
   test("shell-quotes tmux session names", () => {

@@ -2,17 +2,45 @@ import type { TerminalHandle } from "../schemas";
 import { appleScriptString, runOsascript, shellQuote } from "./osascript";
 import type { TerminalAdapter } from "./terminal";
 
+export const TERMINAL_APP_PROFILE_PATH =
+  `${import.meta.dir}/hive-agent-v1.terminal`;
+export const TERMINAL_APP_PROFILE_NAME = "hive-agent-v1";
+
 export function buildTerminalAppOsascript(
   tmuxSession: string,
   title: string,
+  profilePath = TERMINAL_APP_PROFILE_PATH,
+  profileName = TERMINAL_APP_PROFILE_NAME,
 ): string {
   const command = `tmux attach -t ${shellQuote(`=${tmuxSession}`)}`;
 
   return [
     'tell application "Terminal"',
     "  activate",
-    `  set agentTab to do script "${appleScriptString(command)}"`,
+    `  if exists settings set "${appleScriptString(profileName)}" then`,
+    '    set agentTab to do script ""',
+    "    set agentWindow to first window whose selected tab is agentTab",
+    `    set current settings of agentTab to settings set "${appleScriptString(profileName)}"`,
+    "  else",
+    "    set existingWindowIds to id of every window",
+    `    open POSIX file "${appleScriptString(profilePath)}"`,
+    "    set agentWindow to missing value",
+    "    repeat 100 times",
+    "      delay 0.05",
+    "      repeat with candidateWindow in every window",
+    "        if id of candidateWindow is not in existingWindowIds and (count tabs of candidateWindow) > 0 then",
+    "          set agentWindow to candidateWindow",
+    "          exit repeat",
+    "        end if",
+    "      end repeat",
+    "      if agentWindow is not missing value then exit repeat",
+    "    end repeat",
+    "    if agentWindow is missing value then error \"could not identify created Terminal window\"",
+    "    set agentTab to selected tab of agentWindow",
+    "  end if",
+    `  do script "${appleScriptString(command)}" in agentTab`,
     `  set custom title of agentTab to "${appleScriptString(title)}"`,
+    "  set title displays custom title of agentTab to true",
     // Terminal activates windows asynchronously. The newly created tab is not
     // guaranteed to belong to `front window` yet, particularly when several
     // agents launch close together or the user changes focus during launch.

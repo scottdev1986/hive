@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>ProfileCurrentVersion</key>
+  <real>2.09</real>
+  <key>name</key>
+  <string>Hive Agent</string>
+  <key>type</key>
+  <string>Window Settings</string>
+  <key>ShowComponentsWhenTabHasCustomTitle</key>
+  <false/>
+  <key>ShowActiveProcessArgumentsInTabTitle</key>
+  <false/>
+  <key>ShowActiveProcessArgumentsInTitle</key>
+  <false/>
+  <key>ShowActiveProcessInTabTitle</key>
+  <false/>
+  <key>ShowActiveProcessInTitle</key>
+  <false/>
+  <key>ShowCommandKeyInTitle</key>
+  <false/>
+  <key>ShowDimensionsInTitle</key>
+  <false/>
+  <key>ShowRepresentedURLInTabTitle</key>
+  <false/>
+  <key>ShowRepresentedURLInTitle</key>
+  <false/>
+  <key>ShowRepresentedURLPathInTabTitle</key>
+  <false/>
+  <key>ShowRepresentedURLPathInTitle</key>
+  <false/>
+  <key>ShowShellCommandInTitle</key>
+  <false/>
+  <key>ShowTTYNameInTabTitle</key>
+  <false/>
+  <key>ShowTTYNameInTitle</key>
+  <false/>
+  <key>ShowWindowSettingsNameInTitle</key>
+  <false/>
+</dict>
+</plist>
