@@ -10,6 +10,11 @@ import {
   type TerminalCloser,
 } from "../adapters/terminal";
 import {
+  deleteMemoryFact as deleteMemoryFactFile,
+  readMemoryFact,
+  writeMemoryFact as writeMemoryFactFile,
+} from "../adapters/memory";
+import {
   assessStrandedWork,
   removeWorktree,
   type RemoveWorktreeOptions,
@@ -18,15 +23,21 @@ import {
 import {
   HookEventSchema,
   ControlIntentSchema,
+  MemoryScopeSchema,
+  MemoryWriteInputSchema,
   MessagePrioritySchema,
   ORCHESTRATOR_NAME,
   QuotaObservationSchema,
   TerminalHandleSchema,
   type AgentRecord,
   type HookEvent,
+  type MemoryFact,
+  type MemoryScope,
+  type MemoryWriteInput,
 } from "../schemas";
 import { HiveDatabase, type Approval } from "./db";
 import type { LayoutCoordinator } from "./layout";
+import { MemoryIndex } from "./memory-index";
 import {
   BunTmuxSender,
   MessageDelivery,
@@ -130,6 +141,17 @@ const LandRequestSchema = z.object({
   capabilityEpoch: z.number().int().nonnegative(),
 });
 
+const MemorySearchRequestSchema = z.object({
+  query: z.string().min(1),
+  scope: MemoryScopeSchema.optional(),
+  limit: z.number().int().positive().max(50).optional(),
+});
+
+const MemoryFactRequestSchema = z.object({
+  scope: MemoryScopeSchema,
+  id: z.string().min(1),
+});
+
 export type LandBranch = (
   repoRoot: string,
   branch: string,
@@ -200,6 +222,8 @@ export class HiveDaemon {
   readonly db: HiveDatabase;
   readonly delivery: MessageDelivery;
   readonly spawner: Spawner;
+  readonly memory: MemoryIndex;
+  private memoryLock: Promise<unknown> = Promise.resolve();
   private readonly ownsDatabase: boolean;
   private readonly port: number;
   private readonly hostname: string;
@@ -224,6 +248,7 @@ export class HiveDaemon {
   constructor(options: HiveDaemonOptions) {
     this.ownsDatabase = options.db === undefined;
     this.db = options.db ?? new HiveDatabase();
+    this.memory = new MemoryIndex(this.db.database);
     this.spawner = options.spawner;
     this.port = options.port ?? readConfiguredPort();
     this.hostname = options.hostname ?? "127.0.0.1";
@@ -326,7 +351,49 @@ export class HiveDaemon {
         }`,
       );
     });
+    // The Markdown files are authoritative and the FTS index is disposable,
+    // so every daemon start rebuilds it rather than trusting whatever the
+    // SQLite file happened to have from a previous run.
+    void this.rebuildMemoryIndex().catch((error) => {
+      console.error(
+        `Hive memory reindex failed: ${
+          error instanceof Error ? error.message : "unknown error"
+        }`,
+      );
+    });
     return this.bunServer;
+  }
+
+  // Memory writes/deletes/reindexes are serialized through one promise
+  // chain (SPEC.md decision 5: "the daemon serializes writes") so concurrent
+  // MCP calls never race on slug generation or interleave a rebuild with an
+  // in-flight upsert.
+  private serializeMemory<T>(operation: () => Promise<T>): Promise<T> {
+    const run = this.memoryLock.then(operation, operation);
+    this.memoryLock = run.then(() => undefined, () => undefined);
+    return run;
+  }
+
+  async writeMemoryFact(input: MemoryWriteInput): Promise<MemoryFact> {
+    return this.serializeMemory(async () => {
+      const fact = await writeMemoryFactFile(this.repoRoot, input);
+      this.memory.upsertFact(fact);
+      return fact;
+    });
+  }
+
+  async deleteMemoryFact(scope: MemoryScope, id: string): Promise<boolean> {
+    return this.serializeMemory(async () => {
+      const deleted = await deleteMemoryFactFile(this.repoRoot, scope, id);
+      if (deleted) {
+        this.memory.removeFact(scope, id);
+      }
+      return deleted;
+    });
+  }
+
+  async rebuildMemoryIndex(): Promise<number> {
+    return this.serializeMemory(() => this.memory.rebuild(this.repoRoot));
   }
 
   private async runMaintenance(): Promise<void> {
@@ -951,6 +1018,50 @@ export class HiveDaemon {
         "result",
       );
     });
+
+    server.registerTool("memory_search", {
+      title: "Search Hive memory",
+      description:
+        'Full-text search durable memory facts across repo (".hive/memory/", committed) and global ("~/.hive/memory/") scope. Returns short snippets only; pull a full fact with memory_read before relying on it.',
+      inputSchema: MemorySearchRequestSchema,
+    }, async ({ query, scope, limit }) =>
+      toolResult(this.memory.search(query, { scope, limit }), "results"));
+
+    server.registerTool("memory_write", {
+      title: "Write a Hive memory fact",
+      description:
+        "Create or update one durable Markdown memory fact. Omit id to create a new fact (a slug is derived from the title); pass an existing scope+id to overwrite that fact in place. Repo scope is committed and travels with the clone; global scope accumulates lessons across every project. Writes are serialized and immediately reflected in search.",
+      inputSchema: MemoryWriteInputSchema,
+    }, async (input) => toolResult(await this.writeMemoryFact(input), "fact"));
+
+    server.registerTool("memory_read", {
+      title: "Read a full Hive memory fact",
+      description:
+        "Read one full memory fact by scope and id, as referenced by the injected index or a memory_search result.",
+      inputSchema: MemoryFactRequestSchema,
+    }, async ({ scope, id }) => {
+      const fact = await readMemoryFact(this.repoRoot, scope, id);
+      if (fact === null) {
+        throw new Error(`Memory fact not found: [${scope}] ${id}`);
+      }
+      return toolResult(fact, "fact");
+    });
+
+    server.registerTool("memory_delete", {
+      title: "Delete a Hive memory fact",
+      description:
+        "Delete one memory fact's Markdown file and remove it from the search index. Use for pruning stale facts.",
+      inputSchema: MemoryFactRequestSchema,
+    }, async ({ scope, id }) =>
+      toolResult({ deleted: await this.deleteMemoryFact(scope, id) }, "result"));
+
+    server.registerTool("memory_reindex", {
+      title: "Rebuild the Hive memory search index",
+      description:
+        "Rebuild the SQLite FTS index for this repo's committed and global memory facts from the Markdown files on disk. The files are authoritative and the index is always disposable, so this is safe to call any time.",
+      inputSchema: z.object({}),
+    }, async () =>
+      toolResult({ count: await this.rebuildMemoryIndex() }, "result"));
 
     return server;
   }

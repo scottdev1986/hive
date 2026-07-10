@@ -896,6 +896,65 @@ describe("HiveSpawner wiring", () => {
     );
   });
 
+  test("injects the merged repo+global memory index into a freshly spawned agent's prompt", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-spawner-memory-"));
+    tempRoots.push(root);
+    const globalHome = await mkdtemp(join(tmpdir(), "hive-spawner-memory-home-"));
+    tempRoots.push(globalHome);
+    const previousHome = process.env.HIVE_HOME;
+    process.env.HIVE_HOME = globalHome;
+    try {
+      const worktreePath = join(root, "maya");
+      const repoMemory = join(worktreePath, ".hive", "memory");
+      await mkdir(repoMemory, { recursive: true });
+      await Bun.write(
+        join(repoMemory, "flaky-login-test.md"),
+        "---\ntitle: The login test is flaky\ndate: 2026-06-01\ntags: [testing]\n---\n\nRace condition in session setup.\n",
+      );
+      const globalMemory = join(globalHome, "memory");
+      await mkdir(globalMemory, { recursive: true });
+      await Bun.write(
+        join(globalMemory, "cli-distribution.md"),
+        "---\ntitle: Python has a bad CLI distribution story\ndate: 2026-05-12\ntags: []\n---\n\nUse Bun instead.\n",
+      );
+
+      const store = new FakeStore();
+      const tmux = new FakeTmux();
+      const spawner = new HiveSpawner({
+        db: store,
+        repoRoot: root,
+        port: 4317,
+        config: { terminal: "auto", headless: true },
+        routing: async () => DEFAULT_ROUTING.standard,
+        tmux,
+        terminal: new FakeTerminal(),
+        createWorktree: async () => ({
+          path: worktreePath,
+          branch: "hive/maya-memory",
+        }),
+        resolveModel: fakeResolveModel,
+        sleep: async () => {},
+      });
+
+      await spawner.spawn({ task: "Fix the flaky test", tier: "standard" });
+
+      const launched = tmux.sessions[0]?.[2] ?? "";
+      expect(launched).toContain("Hive memory index");
+      expect(launched).toContain(
+        "[repo] flaky-login-test (2026-06-01): The login test is flaky",
+      );
+      expect(launched).toContain(
+        "[global] cli-distribution (2026-05-12): Python has a bad CLI distribution story",
+      );
+    } finally {
+      if (previousHome === undefined) {
+        delete process.env.HIVE_HOME;
+      } else {
+        process.env.HIVE_HOME = previousHome;
+      }
+    }
+  });
+
   test("short-circuits readiness when the persisted status leaves spawning", async () => {
     const root = await mkdtemp(join(tmpdir(), "hive-spawner-ready-"));
     tempRoots.push(root);
@@ -1277,6 +1336,21 @@ describe("agent landing protocol", () => {
     const prompt = buildAgentPrompt("maya", "Build auth API", worktree, "/repo");
     expect(prompt).toContain("You are maya");
     expect(prompt).toContain(buildLandingProtocol(worktree.branch, "/repo"));
+  });
+
+  test("appends the merged memory index only when it is non-empty", () => {
+    const bare = buildAgentPrompt("maya", "Build auth API", worktree, "/repo");
+    expect(bare).not.toContain("Hive memory index");
+
+    const withIndex = buildAgentPrompt(
+      "maya",
+      "Build auth API",
+      worktree,
+      "/repo",
+      "Hive memory index — durable facts from past runs.\n- [repo] flaky-login-test (2026-06-01): login flaky test",
+    );
+    expect(withIndex).toContain("Hive memory index");
+    expect(withIndex).toContain("flaky-login-test");
   });
 
   test("spells out rebase, retest, ff-only merge, and cleanup ownership", () => {

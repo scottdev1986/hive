@@ -1,3 +1,4 @@
+import { buildMemoryIndex } from "../adapters/memory";
 import {
   buildAgentTerminalTitle,
   type TerminalAdapter,
@@ -216,6 +217,7 @@ export function buildAgentPrompt(
   task: string,
   worktree: CreatedWorktree,
   repoRoot: string,
+  memoryIndex = "",
 ): string {
   return [
     `You are ${name}, a Hive writer agent.`,
@@ -224,6 +226,7 @@ export function buildAgentPrompt(
     "Use the Hive MCP tools hive_send, hive_inbox, and hive_status to message and coordinate with other named agents.",
     `Send concise completion reports, blockers, and important findings to "${ORCHESTRATOR_NAME}" with hive_send; reference large artifacts instead of pasting them.`,
     buildLandingProtocol(worktree.branch, repoRoot, "main", name, 0),
+    ...(memoryIndex === "" ? [] : [memoryIndex]),
   ].join("\n\n");
 }
 
@@ -550,11 +553,13 @@ export class HiveSpawner implements Spawner {
       }
       throw error;
     }
+    const memoryIndex = await buildMemoryIndex(worktree.path);
     const prompt = buildAgentPrompt(
       name,
       request.task,
       worktree,
       this.dependencies.repoRoot,
+      memoryIndex,
     );
     const timestamp = new Date().toISOString();
     const record = this.dependencies.db.insertAgent({

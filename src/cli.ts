@@ -3,15 +3,21 @@
 import { Command, CommanderError } from "commander";
 import { ensureStarted } from "./daemon/lifecycle";
 import {
+  deleteMemoryCli,
   printQuotaStatus,
   printStatus,
+  readMemoryCli,
   recordQuotaObservation,
+  reindexMemoryCli,
+  searchMemoryCli,
   stopHive,
   watchAgent,
+  writeMemoryCli,
 } from "./cli/control";
 import { runDaemon } from "./cli/daemon";
 import { runHiveEvent, type HookEventOptions } from "./cli/event";
 import { launchOrchestrator } from "./cli/orchestrator";
+import type { MemoryScope } from "./schemas";
 
 export interface EventCliOptions {
   agent?: string;
@@ -40,6 +46,13 @@ function parseNonnegative(value: string, label: string): number {
     throw new Error(`${label} must be a nonnegative number`);
   }
   return number;
+}
+
+function parseMemoryScope(value: string): MemoryScope {
+  if (value !== "repo" && value !== "global") {
+    throw new Error(`Invalid memory scope "${value}": expected repo or global`);
+  }
+  return value;
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -197,6 +210,76 @@ export function createProgram(): Command {
         confidence: "reported",
       });
     });
+
+  const memory = program
+    .command("memory")
+    .description(
+      "Search, read, write, delete, and reindex durable Hive memory facts",
+    );
+
+  memory.command("search <query>")
+    .description("Full-text search memory facts")
+    .option("--scope <scope>", "repo or global")
+    .option("--limit <n>", "max results")
+    .action(async (
+      query: string,
+      options: { scope?: string; limit?: string },
+    ) => {
+      await searchMemoryCli(query, {
+        ...(options.scope === undefined
+          ? {}
+          : { scope: parseMemoryScope(options.scope) }),
+        ...(options.limit === undefined
+          ? {}
+          : { limit: parseNonnegative(options.limit, "limit") }),
+      });
+    });
+
+  memory.command("write <title>")
+    .description("Create or update a memory fact")
+    .requiredOption("--scope <scope>", "repo or global")
+    .requiredOption("--body <text>", "fact body (Markdown)")
+    .option("--id <id>", "existing fact id to overwrite")
+    .option("--tags <tags>", "comma-separated tags")
+    .option("--date <yyyy-mm-dd>", "fact date (defaults to today)")
+    .action(async (title: string, options: {
+      scope: string;
+      body: string;
+      id?: string;
+      tags?: string;
+      date?: string;
+    }) => {
+      await writeMemoryCli({
+        scope: parseMemoryScope(options.scope),
+        title,
+        body: options.body,
+        ...(options.id === undefined ? {} : { id: options.id }),
+        ...(options.tags === undefined ? {} : {
+          tags: options.tags.split(",").map((tag) => tag.trim()).filter((
+            tag,
+          ) => tag.length > 0),
+        }),
+        ...(options.date === undefined ? {} : { date: options.date }),
+      });
+    });
+
+  memory.command("read <scope> <id>")
+    .description("Print one full memory fact")
+    .action(async (scope: string, id: string) => {
+      await readMemoryCli(parseMemoryScope(scope), id);
+    });
+
+  memory.command("delete <scope> <id>")
+    .description("Delete one memory fact")
+    .action(async (scope: string, id: string) => {
+      await deleteMemoryCli(parseMemoryScope(scope), id);
+    });
+
+  memory.command("reindex")
+    .description(
+      "Rebuild the memory search index from the Markdown files on disk",
+    )
+    .action(reindexMemoryCli);
 
   program
     .command("watch <name>")

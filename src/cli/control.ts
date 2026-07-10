@@ -10,13 +10,23 @@ import {
   getPidFilePath,
   readDaemonPort,
 } from "../daemon/lifecycle";
-import type { AgentRecord, QuotaObservation } from "../schemas";
+import type {
+  AgentRecord,
+  MemoryScope,
+  MemoryWriteInput,
+  QuotaObservation,
+} from "../schemas";
 import { ORCHESTRATOR_TMUX_SESSION } from "../daemon/orchestrator-lifecycle";
 import {
+  deleteMemory,
   fetchAgentStatus,
   fetchQuotaStatus,
   markAgentDead,
+  readMemory,
   reconcileQuota,
+  reindexMemory,
+  searchMemory,
+  writeMemory,
 } from "./mcp";
 import { formatQuotaStatus, formatStatusTable } from "./status";
 
@@ -119,6 +129,52 @@ export async function recordQuotaObservation(
     `Recorded ${recorded.source} quota observation for ` +
       `${recorded.provider}/${recorded.account}/${recorded.pool} at ${recorded.observedAt}.`,
   );
+}
+
+export async function searchMemoryCli(
+  query: string,
+  options?: { scope?: MemoryScope; limit?: number },
+): Promise<void> {
+  const results = await searchMemory(requireDaemonPort(), query, options);
+  if (results.length === 0) {
+    console.log("No matching memory facts.");
+    return;
+  }
+  for (const result of results) {
+    console.log(
+      `[${result.scope}] ${result.id} (${result.date}) — ${result.title}\n  ${result.snippet}`,
+    );
+  }
+}
+
+export async function writeMemoryCli(input: MemoryWriteInput): Promise<void> {
+  const fact = await writeMemory(requireDaemonPort(), input);
+  console.log(`Wrote [${fact.scope}] ${fact.id} — ${fact.path}`);
+}
+
+export async function readMemoryCli(
+  scope: MemoryScope,
+  id: string,
+): Promise<void> {
+  const fact = await readMemory(requireDaemonPort(), scope, id);
+  console.log(`# ${fact.title}\n\ndate: ${fact.date}\ntags: ${fact.tags.join(", ")}\n\n${fact.body}`);
+}
+
+export async function deleteMemoryCli(
+  scope: MemoryScope,
+  id: string,
+): Promise<void> {
+  const deleted = await deleteMemory(requireDaemonPort(), scope, id);
+  console.log(
+    deleted
+      ? `Deleted [${scope}] ${id}.`
+      : `No memory fact found at [${scope}] ${id}.`,
+  );
+}
+
+export async function reindexMemoryCli(): Promise<void> {
+  const count = await reindexMemory(requireDaemonPort());
+  console.log(`Rebuilt the memory search index from ${count} fact(s).`);
 }
 
 export async function watchAgent(name: string): Promise<void> {

@@ -3,8 +3,14 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { z } from "zod";
 import {
   AgentRecordSchema,
+  MemoryFactSchema,
+  MemorySearchResultSchema,
   QuotaObservationSchema,
   type AgentRecord,
+  type MemoryFact,
+  type MemoryScope,
+  type MemorySearchResult,
+  type MemoryWriteInput,
   type QuotaObservation,
   type QuotaStatus,
 } from "../schemas";
@@ -130,4 +136,62 @@ export async function reconcileQuota(
     "observation",
     fetcher,
   ));
+}
+
+export async function searchMemory(
+  port: number,
+  query: string,
+  options?: { scope?: MemoryScope; limit?: number },
+  fetcher?: McpFetcher,
+): Promise<MemorySearchResult[]> {
+  return MemorySearchResultSchema.array().parse(await callHiveTool(
+    port,
+    "memory_search",
+    { query, ...options },
+    "results",
+    fetcher,
+  ));
+}
+
+export async function writeMemory(
+  port: number,
+  input: MemoryWriteInput,
+  fetcher?: McpFetcher,
+): Promise<MemoryFact> {
+  return MemoryFactSchema.parse(
+    await callHiveTool(port, "memory_write", input, "fact", fetcher),
+  );
+}
+
+export async function readMemory(
+  port: number,
+  scope: MemoryScope,
+  id: string,
+  fetcher?: McpFetcher,
+): Promise<MemoryFact> {
+  return MemoryFactSchema.parse(
+    await callHiveTool(port, "memory_read", { scope, id }, "fact", fetcher),
+  );
+}
+
+export async function deleteMemory(
+  port: number,
+  scope: MemoryScope,
+  id: string,
+  fetcher?: McpFetcher,
+): Promise<boolean> {
+  const result = z.object({ deleted: z.boolean() }).parse(
+    await callHiveTool(port, "memory_delete", { scope, id }, "result", fetcher),
+  );
+  return result.deleted;
+}
+
+export async function reindexMemory(
+  port: number,
+  fetcher?: McpFetcher,
+): Promise<number> {
+  const result = z.object({ count: z.number() }).parse(
+    await callHiveTool(port, "memory_reindex", {}, "result", fetcher),
+  );
+  return result.count;
 }

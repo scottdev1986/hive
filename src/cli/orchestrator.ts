@@ -1,5 +1,6 @@
 import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { buildMemoryIndex } from "../adapters/memory";
 import { ITerm2Adapter } from "../adapters/iterm2";
 import { TerminalAppAdapter } from "../adapters/terminal-app";
 import {
@@ -103,9 +104,13 @@ export async function prepareOrchestratorConfig(
 export function buildOrchestratorCommand(
   tool: OrchestratorTool,
   port: number,
+  memoryIndex = "",
 ): string[] {
+  const brief = memoryIndex === ""
+    ? ORCHESTRATOR_BRIEF
+    : `${ORCHESTRATOR_BRIEF}\n\n${memoryIndex}`;
   if (tool === "claude") {
-    return ["claude", "--append-system-prompt", ORCHESTRATOR_BRIEF];
+    return ["claude", "--append-system-prompt", brief];
   }
   return [
     "codex",
@@ -113,7 +118,7 @@ export function buildOrchestratorCommand(
     `mcp_servers.hive.url="http://127.0.0.1:${port}/mcp"`,
     "--sandbox",
     "read-only",
-    ORCHESTRATOR_BRIEF,
+    brief,
   ];
 }
 
@@ -182,6 +187,7 @@ export function buildOrchestratorLaunchCommand(
   tool: OrchestratorTool,
   port: number,
   cwd: string,
+  memoryIndex = "",
 ): string[] {
   return [
     "tmux",
@@ -191,7 +197,7 @@ export function buildOrchestratorLaunchCommand(
     ORCHESTRATOR_TMUX_SESSION,
     "-c",
     cwd,
-    ...buildOrchestratorCommand(tool, port),
+    ...buildOrchestratorCommand(tool, port, memoryIndex),
   ];
 }
 
@@ -218,12 +224,16 @@ export async function launchOrchestrator(
 
   try {
     await prepareOrchestratorConfig(tool, port, cwd);
-    const child = spawn(buildOrchestratorLaunchCommand(tool, port, cwd), {
-      cwd,
-      stdin: "inherit",
-      stdout: "inherit",
-      stderr: "inherit",
-    });
+    const memoryIndex = await buildMemoryIndex(cwd).catch(() => "");
+    const child = spawn(
+      buildOrchestratorLaunchCommand(tool, port, cwd, memoryIndex),
+      {
+        cwd,
+        stdin: "inherit",
+        stdout: "inherit",
+        stderr: "inherit",
+      },
+    );
     return await child.exited;
   } finally {
     await Promise.all(snapshots.map(restoreFile));

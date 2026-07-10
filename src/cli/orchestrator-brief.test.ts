@@ -56,6 +56,22 @@ describe("orchestrator brief", () => {
     ]);
   });
 
+  test("appends a supplied memory index to the system prompt for both tools", () => {
+    const index = "Hive memory index — durable facts.\n- [repo] x (2026-06-01): note";
+    expect(buildOrchestratorCommand("claude", 4317, index)).toEqual([
+      "claude",
+      "--append-system-prompt",
+      `${ORCHESTRATOR_BRIEF}\n\n${index}`,
+    ]);
+    const codexCommand = buildOrchestratorCommand("codex", 4317, index);
+    expect(codexCommand.at(-1)).toEqual(`${ORCHESTRATOR_BRIEF}\n\n${index}`);
+    expect(buildOrchestratorCommand("claude", 4317)).toEqual([
+      "claude",
+      "--append-system-prompt",
+      ORCHESTRATOR_BRIEF,
+    ]);
+  });
+
   test("runs the root in the fixed attachable tmux session used for wakes", () => {
     const command = buildOrchestratorLaunchCommand("claude", 4317, "/repo");
     expect(command.slice(0, 8)).toEqual([
@@ -168,5 +184,45 @@ describe("orchestrator brief", () => {
       },
     )).rejects.toThrow("System Settings");
     expect(spawned).toEqual(false);
+  });
+
+  test("launches the orchestrator with the repo's committed memory index", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-orchestrator-memory-"));
+    const previousHome = process.env.HIVE_HOME;
+    process.env.HIVE_HOME = await mkdtemp(
+      join(tmpdir(), "hive-orchestrator-memory-home-"),
+    );
+    try {
+      await mkdir(join(root, ".hive", "memory"), { recursive: true });
+      await writeFile(
+        join(root, ".hive", "memory", "flaky-login-test.md"),
+        "---\ntitle: The login test is flaky\ndate: 2026-06-01\ntags: []\n---\n\nRace condition.\n",
+      );
+
+      let capturedCommand: string[] = [];
+      await launchOrchestrator(
+        "claude",
+        4317,
+        root,
+        (command) => {
+          capturedCommand = command;
+          return { exited: Promise.resolve(0) };
+        },
+        async () => null,
+      );
+
+      expect(capturedCommand.at(-1)).toContain("Hive memory index");
+      expect(capturedCommand.at(-1)).toContain(
+        "[repo] flaky-login-test (2026-06-01): The login test is flaky",
+      );
+      expect(capturedCommand.at(-1)).toContain(ORCHESTRATOR_BRIEF);
+    } finally {
+      if (previousHome === undefined) {
+        delete process.env.HIVE_HOME;
+      } else {
+        process.env.HIVE_HOME = previousHome;
+      }
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });
