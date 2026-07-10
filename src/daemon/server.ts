@@ -271,7 +271,7 @@ export class HiveDaemon {
       }
     });
 
-    if (value.kind === "turn-end") {
+    if (value.kind === "session-start" || value.kind === "turn-end") {
       await this.delivery.flushQueued(value.agentName);
     }
   }

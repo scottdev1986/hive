@@ -33,7 +33,16 @@ export class MessageDelivery {
   async send(from: string, to: string, body: string): Promise<AgentMessage> {
     const recipient = to === ORCHESTRATOR_NAME
       ? null
-      : this.requireLiveRecipient(to);
+      : this.db.getAgentByName(to);
+    if (
+      to !== ORCHESTRATOR_NAME && recipient === null &&
+      !this.db.isAgentNameReserved(to)
+    ) {
+      throw new Error(`Recipient agent not found: ${to}`);
+    }
+    if (recipient !== null) {
+      this.requireLiveRecipient(to);
+    }
     const message = AgentMessageSchema.parse({
       id: crypto.randomUUID(),
       from,
@@ -44,9 +53,13 @@ export class MessageDelivery {
     });
     this.db.insertMessage(message);
 
-    if (recipient === null) {
+    if (to === ORCHESTRATOR_NAME) {
       await this.wakeOrchestrator().catch(() => undefined);
       return this.getStoredMessage(message.id);
+    }
+
+    if (recipient === null) {
+      return message;
     }
 
     if (recipient.status !== "idle") {
@@ -72,7 +85,10 @@ export class MessageDelivery {
       return this.wakeOrchestrator();
     }
     const recipient = this.db.getAgentByName(agentName);
-    if (recipient === null || recipient.status === "dead") {
+    if (
+      recipient === null || recipient.status === "dead" ||
+      recipient.status === "done" || recipient.status === "failed"
+    ) {
       return [];
     }
 
@@ -173,8 +189,11 @@ export class MessageDelivery {
     if (recipient === null) {
       throw new Error(`Recipient agent not found: ${name}`);
     }
-    if (recipient.status === "dead") {
-      throw new Error(`Recipient agent is dead: ${name}`);
+    if (
+      recipient.status === "dead" || recipient.status === "done" ||
+      recipient.status === "failed"
+    ) {
+      throw new Error(`Recipient agent is ${recipient.status}: ${name}`);
     }
     return recipient;
   }

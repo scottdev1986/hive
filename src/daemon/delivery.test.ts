@@ -157,7 +157,74 @@ describe("MessageDelivery", () => {
     }
   });
 
-  test("rejects messages to missing and dead recipients", async () => {
+  test("queues before registration and delivers on the recipient's first inbox poll", async () => {
+    const db = new HiveDatabase(join(home, "send-before-register.db"));
+    const tmux = new RecordingTmuxSender();
+    const delivery = new MessageDelivery(db, tmux);
+    try {
+      expect(db.reserveAgentName("maya", timestamp)).toEqual(true);
+      const queued = await delivery.send(
+        "sam",
+        "maya",
+        "Sent while you were spawning.",
+      );
+      expect(queued.deliveredAt).toEqual(null);
+      expect(tmux.calls).toEqual([]);
+
+      db.insertAgent(agent("working"));
+      db.releaseAgentName("maya");
+      const inbox = delivery.inbox("maya");
+      expect(inbox).toHaveLength(1);
+      expect(inbox[0]).toMatchObject({
+        id: queued.id,
+        body: "Sent while you were spawning.",
+      });
+      expect(inbox[0]?.deliveredAt).not.toEqual(null);
+      expect(delivery.inbox("maya")).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("flushes a pre-registration message when the recipient session starts", async () => {
+    const db = new HiveDatabase(join(home, "register-and-wake.db"));
+    const tmux = new RecordingTmuxSender();
+    const daemon = new HiveDaemon({
+      db,
+      spawner: unusedSpawner,
+      tmuxSender: tmux,
+    });
+    try {
+      db.reserveAgentName("maya", timestamp);
+      const queued = await daemon.delivery.send(
+        "sam",
+        "maya",
+        "Welcome online.",
+      );
+      db.insertAgent(agent("spawning"));
+      db.releaseAgentName("maya");
+
+      const response = await daemon.fetch(new Request("http://hive/event", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          kind: "session-start",
+          agentName: "maya",
+          timestamp: "2026-07-09T12:00:30.000Z",
+        }),
+      }));
+
+      expect(response.status).toEqual(200);
+      expect(tmux.calls).toEqual([
+        ["hive-maya", "📨 message from sam: Welcome online."],
+      ]);
+      expect(db.getMessage(queued.id)?.deliveredAt).not.toEqual(null);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("rejects messages to names that are neither registered nor spawning", async () => {
     const db = new HiveDatabase(join(home, "invalid-recipient.db"));
     const delivery = new MessageDelivery(db, new RecordingTmuxSender());
     try {

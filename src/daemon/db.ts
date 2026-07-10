@@ -124,6 +124,10 @@ export class HiveDatabase {
       );
       CREATE INDEX IF NOT EXISTS messages_recipient_delivery
         ON messages("to", deliveredAt, createdAt);
+      CREATE TABLE IF NOT EXISTS agent_name_reservations (
+        name TEXT PRIMARY KEY,
+        createdAt TEXT NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         kind TEXT NOT NULL,
@@ -270,6 +274,25 @@ export class HiveDatabase {
 
   deleteAgent(id: string): boolean {
     return this.database.query("DELETE FROM agents WHERE id = ?").run(id).changes > 0;
+  }
+
+  reserveAgentName(name: string, createdAt = new Date().toISOString()): boolean {
+    return this.database.query(`
+      INSERT OR IGNORE INTO agent_name_reservations (name, createdAt)
+      VALUES (?, ?)
+    `).run(name, createdAt).changes === 1;
+  }
+
+  isAgentNameReserved(name: string): boolean {
+    return this.database.query(`
+      SELECT 1 FROM agent_name_reservations WHERE name = ?
+    `).get(name) !== null;
+  }
+
+  releaseAgentName(name: string): boolean {
+    return this.database.query(`
+      DELETE FROM agent_name_reservations WHERE name = ?
+    `).run(name).changes === 1;
   }
 
   insertMessage(message: AgentMessage): AgentMessage {

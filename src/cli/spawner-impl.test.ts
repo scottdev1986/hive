@@ -57,6 +57,7 @@ function agent(
 
 class FakeStore {
   readonly agents: AgentRecord[];
+  readonly reservations = new Set<string>();
 
   constructor(agents: AgentRecord[] = []) {
     this.agents = [...agents];
@@ -68,6 +69,18 @@ class FakeStore {
 
   getAgentById(id: string): AgentRecord | null {
     return this.agents.find((candidate) => candidate.id === id) ?? null;
+  }
+
+  reserveAgentName(name: string): boolean {
+    if (this.reservations.has(name)) {
+      return false;
+    }
+    this.reservations.add(name);
+    return true;
+  }
+
+  releaseAgentName(name: string): boolean {
+    return this.reservations.delete(name);
   }
 
   insertAgent(record: AgentRecord): AgentRecord {
@@ -189,6 +202,47 @@ describe("HiveSpawner name pool", () => {
       agent("david", "dead"),
       agent("sam", "done"),
     ])).toEqual("david");
+  });
+
+  test("reserves a requested name before asynchronous spawn setup", async () => {
+    const store = new FakeStore();
+    let continueRouting!: () => void;
+    const routingGate = new Promise<void>((resolve) => {
+      continueRouting = resolve;
+    });
+    const spawner = new HiveSpawner({
+      db: store,
+      repoRoot: "/tmp/hive-reservation-race",
+      port: 4317,
+      config: { terminal: "auto", headless: true },
+      routing: async () => {
+        await routingGate;
+        return DEFAULT_ROUTING.standard;
+      },
+      tmux: new FakeTmux(),
+      terminal: new FakeTerminal(),
+      createWorktree: async () => {
+        throw new Error("stop after routing");
+      },
+      sleep: async () => {},
+      resolveModel: fakeResolveModel,
+    });
+
+    const first = spawner.spawn({
+      task: "First task",
+      tier: "standard",
+      name: "cara",
+    });
+    expect(store.reservations.has("cara")).toEqual(true);
+    await expect(spawner.spawn({
+      task: "Conflicting task",
+      tier: "standard",
+      name: "cara",
+    })).rejects.toThrow('"cara" is already being assigned');
+
+    continueRouting();
+    await expect(first).rejects.toThrow("stop after routing");
+    expect(store.reservations.has("cara")).toEqual(false);
   });
 
   test("reports exhaustion when every pool name is live", () => {

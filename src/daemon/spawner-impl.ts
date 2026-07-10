@@ -74,7 +74,12 @@ export const NAME_POOL = [
 
 type AgentStore = Pick<
   HiveDatabase,
-  "attachTerminalHandle" | "getAgentById" | "insertAgent" | "listAgents"
+  | "attachTerminalHandle"
+  | "getAgentById"
+  | "insertAgent"
+  | "listAgents"
+  | "releaseAgentName"
+  | "reserveAgentName"
 >;
 type RouteResolver = (tier: RoutingTier) => Promise<Route>;
 type WorktreeCreator = (
@@ -206,6 +211,23 @@ export class HiveSpawner implements Spawner {
     const existingAgents = this.dependencies.db.listAgents();
     const name = resolveAgentName(request.name, existingAgents);
     const previousRecord = existingAgents.find((agent) => agent.name === name);
+    if (!this.dependencies.db.reserveAgentName(name)) {
+      throw new Error(
+        `Agent name collision: "${name}" is already being assigned to a spawning agent`,
+      );
+    }
+    try {
+      return await this.spawnReserved(request, name, previousRecord);
+    } finally {
+      this.dependencies.db.releaseAgentName(name);
+    }
+  }
+
+  private async spawnReserved(
+    request: SpawnRequest,
+    name: string,
+    previousRecord: AgentRecord | undefined,
+  ): Promise<AgentRecord> {
     const configuredRoute = await this.dependencies.routing(request.tier);
     const tool = request.tool ?? configuredRoute.tool;
     // The record (and thus the terminal title and hive_status) carries the

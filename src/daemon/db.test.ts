@@ -164,6 +164,23 @@ describe("HiveDatabase", () => {
     }
   });
 
+  test("durably reserves agent names during spawn", () => {
+    const path = join(home, "agent-name-reservations.db");
+    let db = new HiveDatabase(path);
+    expect(db.reserveAgentName("cara", timestamp)).toEqual(true);
+    expect(db.reserveAgentName("cara", timestamp)).toEqual(false);
+    db.close();
+
+    db = new HiveDatabase(path);
+    try {
+      expect(db.isAgentNameReserved("cara")).toEqual(true);
+      expect(db.releaseAgentName("cara")).toEqual(true);
+      expect(db.isAgentNameReserved("cara")).toEqual(false);
+    } finally {
+      db.close();
+    }
+  });
+
   test("round-trips every hook event variant", () => {
     const db = new HiveDatabase(join(home, "events.db"));
     const events: HookEvent[] = [
