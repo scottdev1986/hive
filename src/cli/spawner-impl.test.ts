@@ -1736,6 +1736,28 @@ describe("agent landing protocol", () => {
     expect(protocol).toContain("Do not delete your branch or worktree");
   });
 
+  test("lets a docs-only rebase skip the retest, but not the merge gate", () => {
+    const protocol = buildLandingProtocol(worktree.branch, "/repo");
+    expect(protocol).toContain("git diff --name-only ORIG_HEAD..HEAD");
+    // The escape hatch is bounded: only `.md` files, only when untested, and
+    // it skips the rerun — never the fast-forward gate or the red-tests rule.
+    expect(protocol).toContain("only when");
+    expect(protocol).toContain("nothing but `.md` files that no test reads");
+    expect(protocol).toContain("go straight to step 4");
+    expect(protocol).toContain("Red tests never merge");
+  });
+
+  test("tells the agent to scope its reading and escalate instead of grinding", () => {
+    const prompt = buildAgentPrompt("maya", "Build auth API", worktree, "/repo");
+    expect(prompt).toContain("Read only what the task needs");
+    expect(prompt).toContain("instead of reading large files whole");
+    expect(prompt).toContain("substantially larger than briefed");
+    // The tripwire must route to the orchestrator, not to a silent stop.
+    expect(prompt).toContain(
+      'stop and report to "orchestrator" rather than grinding',
+    );
+  });
+
   test("bounds retries and escalates conflicts to the orchestrator", () => {
     const protocol = buildLandingProtocol(worktree.branch, "/repo");
     expect(protocol).toContain("git rebase --abort");
