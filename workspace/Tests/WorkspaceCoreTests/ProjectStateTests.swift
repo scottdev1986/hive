@@ -20,6 +20,28 @@ final class ProjectStateTests: XCTestCase {
             TerminalScrollRequest(direction: .down, lineCount: 40))
     }
 
+    func testTerminalScrollSessionUsesLaunchMetadataForOrchestrator() throws {
+        let state = ProjectState(projectID: ProjectID("project"), displayName: "Project")
+        state.addOrchestrator()
+        let pane = try XCTUnwrap(state.panes[ProjectState.orchestratorPaneID])
+
+        XCTAssertEqual(
+            terminalScrollSession(for: pane, orchestratorSession: "hive-orchestrator-instance"),
+            "hive-orchestrator-instance")
+        XCTAssertNil(terminalScrollSession(for: pane, orchestratorSession: nil))
+    }
+
+    func testTerminalScrollSessionUsesFeedMetadataForAgent() throws {
+        let state = ProjectState(projectID: ProjectID("project"), displayName: "Project")
+        state.addOrchestrator()
+        state.apply(feed: [agent("worker", session: "hive-worker-instance")])
+        let pane = try XCTUnwrap(state.panes[ProjectState.paneID(forAgent: "worker")])
+
+        XCTAssertEqual(
+            terminalScrollSession(for: pane, orchestratorSession: "hive-orchestrator-instance"),
+            "hive-worker-instance")
+    }
+
     private func agent(_ name: String, status: String = "working",
                        tool: String = "claude", model: String = "opus",
                        task: String = "do things", session: String? = nil,

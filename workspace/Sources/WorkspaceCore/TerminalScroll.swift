@@ -1,5 +1,20 @@
 import CoreGraphics
 
+/// Resolves the authoritative tmux session whose history backs a terminal
+/// pane. Worker sessions arrive on the agent feed; the orchestrator session
+/// is launch metadata because the feed intentionally describes workers only.
+public func terminalScrollSession(
+    for pane: PaneState,
+    orchestratorSession: String?
+) -> String? {
+    switch pane.kind {
+    case .orchestrator:
+        return orchestratorSession
+    case .agent:
+        return pane.tmuxSession
+    }
+}
+
 /// A normalized terminal scroll gesture. The AppKit terminal host translates
 /// this into tmux copy-mode commands for panes attached to tmux sessions.
 public struct TerminalScrollRequest: Equatable, Sendable {
