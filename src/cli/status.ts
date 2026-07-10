@@ -1,6 +1,7 @@
 import type { AgentRecord } from "../schemas";
 
 const TASK_WIDTH = 48;
+const FAILURE_WIDTH = 40;
 
 function truncate(value: string, width: number): string {
   if (value.length <= width) {
@@ -17,8 +18,20 @@ export function formatStatusTable(agents: AgentRecord[]): string {
     agent.status,
     `${Math.round(agent.contextPct)}%`,
     truncate(agent.taskDescription.replaceAll(/\s+/g, " ").trim(), TASK_WIDTH),
+    truncate(
+      (agent.failureReason ?? "").replaceAll(/\s+/g, " ").trim(),
+      FAILURE_WIDTH,
+    ),
   ]);
-  const headers = ["NAME", "TOOL", "MODEL", "STATUS", "CONTEXT", "TASK"];
+  const headers = [
+    "NAME",
+    "TOOL",
+    "MODEL",
+    "STATUS",
+    "CONTEXT",
+    "TASK",
+    "FAILURE",
+  ];
   const widths = headers.map((header, index) =>
     Math.max(
       header.length,

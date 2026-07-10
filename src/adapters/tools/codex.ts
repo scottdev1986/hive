@@ -36,13 +36,11 @@ export function buildCodexTrustArgs(worktreePath: string): string[] {
 }
 
 export function buildCodexSpawnCommand(options: CodexSpawnOptions): string[] {
-  const command = [
-    "codex",
-    "-c",
-    `model=${options.model}`,
-    "-c",
-    `model_reasoning_effort=${options.effort}`,
-  ];
+  const command = ["codex"];
+  if (options.model !== "default") {
+    command.push("-c", `model=${options.model}`);
+  }
+  command.push("-c", `model_reasoning_effort=${options.effort}`);
 
   if (options.readOnly) {
     command.push("--sandbox", "read-only");

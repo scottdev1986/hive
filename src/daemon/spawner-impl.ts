@@ -11,6 +11,7 @@ import {
 } from "../adapters/tools/codex";
 import {
   createWorktree,
+  removeWorktree,
   slugify,
   type CreatedWorktree,
 } from "../adapters/worktrees";
@@ -62,14 +63,22 @@ export const NAME_POOL = [
   "ben",
 ] as const;
 
-type AgentStore = Pick<HiveDatabase, "insertAgent" | "listAgents">;
+type AgentStore = Pick<
+  HiveDatabase,
+  "getAgentById" | "insertAgent" | "listAgents"
+>;
 type RouteResolver = (tier: RoutingTier) => Promise<Route>;
 type WorktreeCreator = (
   repoRoot: string,
   agentName: string,
   taskSlug: string,
 ) => Promise<CreatedWorktree>;
-type TmuxSessionCreator = Pick<TmuxAdapter, "newSession">;
+type WorktreeRemover = typeof removeWorktree;
+type TmuxSessionManager = Pick<
+  TmuxAdapter,
+  "newSession" | "hasSession" | "capturePane" | "killSession"
+>;
+type Sleep = (milliseconds: number) => Promise<void>;
 
 export interface HiveSpawnerDependencies {
   db: AgentStore;
@@ -77,13 +86,39 @@ export interface HiveSpawnerDependencies {
   port: number;
   config: HiveConfig;
   routing: RouteResolver;
-  tmux: TmuxSessionCreator;
+  tmux: TmuxSessionManager;
   terminal: TerminalAdapter;
   createWorktree?: WorktreeCreator;
+  removeWorktree?: WorktreeRemover;
+  keepWorktreeOnFailure?: boolean;
+  sleep?: Sleep;
 }
 
 const isLive = (agent: AgentRecord): boolean =>
-  agent.status !== "dead" && agent.status !== "done";
+  agent.status !== "dead" &&
+  agent.status !== "done" &&
+  agent.status !== "failed";
+
+const AGENT_NAME_PATTERN = /^[a-z][a-z0-9-]{1,20}$/;
+const READINESS_POLL_MS = 1_000;
+const READINESS_ATTEMPTS = 15;
+const LAUNCH_FAILURE_PATTERNS = [
+  /^(Error|error):/m,
+  /command not found/,
+  /not supported/i,
+  /not found\.?$/m,
+];
+
+const sleep: Sleep = (milliseconds) =>
+  new Promise((resolve) => setTimeout(resolve, milliseconds));
+
+function tailLines(value: string, count: number): string {
+  const trimmed = value.trimEnd();
+  if (trimmed.length === 0) {
+    return "";
+  }
+  return trimmed.split(/\r?\n/).slice(-count).join("\n").trim();
+}
 
 export function selectAgentName(agents: AgentRecord[]): string {
   const liveNames = new Set(
@@ -96,6 +131,32 @@ export function selectAgentName(agents: AgentRecord[]): string {
     );
   }
   return name;
+}
+
+export function resolveAgentName(
+  requestedName: string | undefined,
+  agents: AgentRecord[],
+): string {
+  if (requestedName === undefined) {
+    return selectAgentName(agents);
+  }
+
+  const normalizedName = requestedName.toLowerCase();
+  if (!AGENT_NAME_PATTERN.test(normalizedName)) {
+    throw new Error(
+      `Invalid agent name "${normalizedName}": after lowercasing, the name must match /^[a-z][a-z0-9-]{1,20}$/`,
+    );
+  }
+  if (
+    agents.some((agent) =>
+      isLive(agent) && agent.name === normalizedName
+    )
+  ) {
+    throw new Error(
+      `Agent name collision: "${normalizedName}" is already assigned to a live agent`,
+    );
+  }
+  return normalizedName;
 }
 
 export function buildAgentPrompt(
@@ -113,66 +174,32 @@ export function buildAgentPrompt(
 
 export class HiveSpawner implements Spawner {
   private readonly makeWorktree: WorktreeCreator;
+  private readonly cleanupWorktree: WorktreeRemover;
+  private readonly wait: Sleep;
 
   constructor(private readonly dependencies: HiveSpawnerDependencies) {
     this.makeWorktree = dependencies.createWorktree ?? createWorktree;
+    this.cleanupWorktree = dependencies.removeWorktree ?? removeWorktree;
+    this.wait = dependencies.sleep ?? sleep;
   }
 
   async spawn(request: SpawnRequest): Promise<AgentRecord> {
     const existingAgents = this.dependencies.db.listAgents();
-    const name = selectAgentName(existingAgents);
+    const name = resolveAgentName(request.name, existingAgents);
     const previousRecord = existingAgents.find((agent) => agent.name === name);
-    const route = await this.dependencies.routing(request.tier);
+    const configuredRoute = await this.dependencies.routing(request.tier);
+    const route: Route = request.tool !== undefined &&
+        request.tool !== configuredRoute.tool
+      ? { ...configuredRoute, tool: request.tool, model: "default" }
+      : configuredRoute;
     const worktree = await this.makeWorktree(
       this.dependencies.repoRoot,
       name,
       slugify(request.task),
     );
     const prompt = buildAgentPrompt(name, request.task, worktree.path);
-
-    let argv: string[];
-    if (route.tool === "claude") {
-      await writeClaudeAgentConfig(worktree.path, {
-        daemonPort: this.dependencies.port,
-        name,
-        readOnly: false,
-      });
-      argv = buildClaudeSpawnCommand({
-        daemonPort: this.dependencies.port,
-        model: route.model,
-        name,
-        readOnly: false,
-        worktreePath: worktree.path,
-      });
-    } else {
-      await writeCodexAgentConfig(worktree.path, {
-        daemonPort: this.dependencies.port,
-        name,
-        readOnly: false,
-      });
-      argv = buildCodexSpawnCommand({
-        daemonPort: this.dependencies.port,
-        effort: route.effort ?? "medium",
-        model: route.model,
-        name,
-        readOnly: false,
-        worktreePath: worktree.path,
-      });
-    }
-    argv.push(prompt);
-
-    const tmuxSession = `hive-${name}`;
-    await this.dependencies.tmux.newSession(
-      tmuxSession,
-      worktree.path,
-      shellJoin(argv),
-    );
-    if (!this.dependencies.config.headless) {
-      await this.dependencies.terminal.openWindow(tmuxSession, tmuxSession);
-    }
-
     const timestamp = new Date().toISOString();
-    const record: AgentRecord = {
+    const record = this.dependencies.db.insertAgent({
       id: previousRecord?.id ?? crypto.randomUUID(),
       name,
       tool: route.tool,
@@ -182,11 +209,166 @@ export class HiveSpawner implements Spawner {
       taskDescription: request.task,
       worktreePath: worktree.path,
       branch: worktree.branch,
-      tmuxSession,
+      tmuxSession: `hive-${name}`,
       contextPct: 0,
       createdAt: timestamp,
       lastEventAt: timestamp,
-    };
-    return this.dependencies.db.insertAgent(record);
+    });
+
+    let argv: string[];
+    try {
+      if (route.tool === "claude") {
+        await writeClaudeAgentConfig(worktree.path, {
+          daemonPort: this.dependencies.port,
+          name,
+          readOnly: false,
+        });
+        argv = buildClaudeSpawnCommand({
+          daemonPort: this.dependencies.port,
+          model: route.model,
+          name,
+          readOnly: false,
+          worktreePath: worktree.path,
+        });
+      } else {
+        await writeCodexAgentConfig(worktree.path, {
+          daemonPort: this.dependencies.port,
+          name,
+          readOnly: false,
+        });
+        argv = buildCodexSpawnCommand({
+          daemonPort: this.dependencies.port,
+          effort: route.effort ?? "medium",
+          model: route.model,
+          name,
+          readOnly: false,
+          worktreePath: worktree.path,
+        });
+      }
+      argv.push(prompt);
+
+      await this.dependencies.tmux.newSession(
+        record.tmuxSession,
+        worktree.path,
+        shellJoin(argv),
+      );
+      const failureReason = await this.monitorReadiness(record);
+      if (failureReason !== null) {
+        return await this.failSpawnIfStillSpawning(
+          record,
+          worktree,
+          failureReason,
+        );
+      }
+    } catch (error) {
+      const reason = error instanceof Error
+        ? error.message
+        : "Agent launch failed";
+      return await this.failSpawnIfStillSpawning(record, worktree, reason);
+    }
+
+    if (!this.dependencies.config.headless) {
+      try {
+        await this.dependencies.terminal.openWindow(
+          record.tmuxSession,
+          record.tmuxSession,
+        );
+      } catch {
+        // Opening a viewer is cosmetic and does not affect agent readiness.
+      }
+    }
+    return this.dependencies.db.getAgentById(record.id) ?? record;
+  }
+
+  private async monitorReadiness(record: AgentRecord): Promise<string | null> {
+    const session = record.tmuxSession;
+    for (let attempt = 0; attempt < READINESS_ATTEMPTS; attempt += 1) {
+      await this.wait(READINESS_POLL_MS);
+      if (!this.isStillSpawning(record.id)) {
+        return null;
+      }
+      if (!(await this.dependencies.tmux.hasSession(session))) {
+        return "tmux session exited";
+      }
+      let pane: string;
+      try {
+        pane = await this.dependencies.tmux.capturePane(session);
+      } catch (error) {
+        if (!(await this.dependencies.tmux.hasSession(session))) {
+          return "tmux session exited";
+        }
+        continue;
+      }
+      const paneTail = tailLines(pane, 5);
+      if (LAUNCH_FAILURE_PATTERNS.some((pattern) => pattern.test(paneTail))) {
+        return tailLines(pane, 15) || "Agent launch error";
+      }
+    }
+    return null;
+  }
+
+  private isStillSpawning(agentId: string): boolean {
+    const current = this.dependencies.db.getAgentById(agentId);
+    return current === null || current.status === "spawning";
+  }
+
+  private async failSpawnIfStillSpawning(
+    record: AgentRecord,
+    worktree: CreatedWorktree,
+    failureReason: string,
+  ): Promise<AgentRecord> {
+    const current = this.dependencies.db.getAgentById(record.id);
+    if (current !== null && current.status !== "spawning") {
+      return current;
+    }
+    return await this.failSpawn(record, worktree, failureReason);
+  }
+
+  private async failSpawn(
+    record: AgentRecord,
+    worktree: CreatedWorktree,
+    failureReason: string,
+  ): Promise<AgentRecord> {
+    const failedAt = new Date().toISOString();
+    let failed = this.dependencies.db.insertAgent({
+      ...record,
+      status: "failed",
+      failureReason,
+      failedAt,
+      lastEventAt: failedAt,
+    });
+    const cleanupErrors: string[] = [];
+
+    try {
+      await this.dependencies.tmux.killSession(record.tmuxSession, {
+        ignoreMissing: true,
+      });
+    } catch (error) {
+      cleanupErrors.push(
+        error instanceof Error ? error.message : "tmux cleanup failed",
+      );
+    }
+
+    if (!(this.dependencies.keepWorktreeOnFailure ?? false)) {
+      try {
+        await this.cleanupWorktree(
+          this.dependencies.repoRoot,
+          worktree.path,
+          { deleteBranch: true },
+        );
+      } catch (error) {
+        cleanupErrors.push(
+          error instanceof Error ? error.message : "worktree cleanup failed",
+        );
+      }
+    }
+
+    if (cleanupErrors.length > 0) {
+      failed = this.dependencies.db.insertAgent({
+        ...failed,
+        failureReason: `${failureReason}\nCleanup failed: ${cleanupErrors.join("; ")}`,
+      });
+    }
+    return failed;
   }
 }

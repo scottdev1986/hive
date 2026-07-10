@@ -42,6 +42,26 @@ class SilentTmuxSender implements TmuxSender {
   }
 }
 
+class FakeDaemonTmux {
+  readonly sessions = new Set<string>();
+  readonly killed: string[] = [];
+  readonly checked: string[] = [];
+
+  async hasSession(session: string): Promise<boolean> {
+    this.checked.push(session);
+    return this.sessions.has(session);
+  }
+
+  async capturePane(_session: string): Promise<string> {
+    return "";
+  }
+
+  async killSession(session: string): Promise<void> {
+    this.killed.push(session);
+    this.sessions.delete(session);
+  }
+}
+
 class StubSpawner implements Spawner {
   readonly requests: SpawnRequest[] = [];
 
@@ -55,6 +75,18 @@ class StubSpawner implements Spawner {
       tmuxSession: `hive-${request.name ?? "sam"}`,
       worktreePath: `/tmp/hive-${request.name ?? "sam"}`,
       branch: `hive/${request.name ?? "sam"}-task`,
+    });
+  }
+}
+
+class FailedSpawner implements Spawner {
+  async spawn(request: SpawnRequest): Promise<AgentRecord> {
+    return agent({
+      status: "failed",
+      tier: request.tier,
+      taskDescription: request.task,
+      failureReason: "Error: model not supported",
+      failedAt: timestamp,
     });
   }
 }
@@ -160,10 +192,17 @@ describe("HiveDaemon HTTP server", () => {
     const db = new HiveDatabase(join(home, "mcp.db"));
     const spawner = new StubSpawner();
     const tmux = new SilentTmuxSender();
+    const daemonTmux = new FakeDaemonTmux();
+    const removedWorktrees: Array<[string, string]> = [];
     const daemon = new HiveDaemon({
       db,
       spawner,
       tmuxSender: tmux,
+      tmux: daemonTmux,
+      repoRoot: "/tmp/repo",
+      removeWorktree: async (repoRoot, worktreePath) => {
+        removedWorktrees.push([repoRoot, worktreePath]);
+      },
     });
     const baseUrl = "http://hive";
     const transport = new StreamableHTTPClientTransport(
@@ -178,7 +217,12 @@ describe("HiveDaemon HTTP server", () => {
 
       const spawned = textValue(await client.callTool({
         name: "hive_spawn",
-        arguments: { task: "Review auth", tier: "review", name: "sam" },
+        arguments: {
+          task: "Review auth",
+          tier: "review",
+          name: "sam",
+          tool: "claude",
+        },
       }));
       expect(spawned).toEqual(agent({
         id: "agent-sam",
@@ -190,7 +234,12 @@ describe("HiveDaemon HTTP server", () => {
         branch: "hive/sam-task",
       }));
       expect(spawner.requests).toEqual([
-        { task: "Review auth", tier: "review", name: "sam" },
+        {
+          task: "Review auth",
+          tier: "review",
+          name: "sam",
+          tool: "claude",
+        },
       ]);
 
       const status = textValue(await client.callTool({
@@ -261,12 +310,141 @@ describe("HiveDaemon HTTP server", () => {
         ["hive-sam", "📨 message from maya: After approval."],
       ]);
 
+      const killed = textValue(await client.callTool({
+        name: "hive_kill",
+        arguments: { name: "sam", removeWorktree: true },
+      })) as {
+        agent: AgentRecord;
+        cleaned: {
+          tmuxSession: string;
+          worktreePath: string | null;
+          branch: string | null;
+        };
+      };
+      expect(killed.agent.status).toEqual("dead");
+      expect(killed.agent.worktreePath).toEqual(null);
+      expect(killed.cleaned).toEqual({
+        tmuxSession: "hive-sam",
+        worktreePath: "/tmp/hive-sam",
+        branch: "hive/sam-task",
+      });
+      expect(daemonTmux.killed).toEqual(["hive-sam"]);
+      expect(removedWorktrees).toEqual([
+        ["/tmp/repo", "/tmp/hive-sam"],
+      ]);
+
       const stopped = textValue(await client.callTool({
         name: "hive_mark_dead",
         arguments: { agent: "sam" },
       })) as AgentRecord;
       expect(stopped.status).toEqual("dead");
       expect(db.getAgentByName("sam")?.status).toEqual("dead");
+    } finally {
+      await client.close();
+      await daemon.stop();
+      db.close();
+    }
+  });
+
+  test("reconciliation marks a vanished live session dead", async () => {
+    const db = new HiveDatabase(join(home, "reconcile.db"));
+    const tmux = new FakeDaemonTmux();
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new StubSpawner(),
+      tmux,
+    });
+    db.insertAgent(agent({ status: "idle" }));
+    try {
+      await daemon.reconcileAgents();
+
+      expect(db.getAgentByName("maya")).toMatchObject({
+        status: "dead",
+        failureReason: "tmux session missing (reconciled)",
+      });
+    } finally {
+      db.close();
+    }
+  });
+
+  test("reconciliation ignores spawning agents", async () => {
+    const db = new HiveDatabase(join(home, "reconcile-spawning.db"));
+    const tmux = new FakeDaemonTmux();
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new StubSpawner(),
+      tmux,
+    });
+    db.insertAgent(agent({ status: "spawning" }));
+    try {
+      await daemon.reconcileAgents();
+
+      expect(db.getAgentByName("maya")?.status).toEqual("spawning");
+      expect(tmux.checked).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("reconciliation handles stuck agents as live", async () => {
+    const db = new HiveDatabase(join(home, "reconcile-stuck.db"));
+    const tmux = new FakeDaemonTmux();
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new StubSpawner(),
+      tmux,
+    });
+    db.insertAgent(agent({ status: "stuck" }));
+    try {
+      await daemon.reconcileAgents();
+
+      expect(tmux.checked).toEqual(["hive-maya"]);
+      expect(db.getAgentByName("maya")).toMatchObject({
+        status: "dead",
+        failureReason: "tmux session missing (reconciled)",
+      });
+    } finally {
+      db.close();
+    }
+  });
+
+  test("hive_spawn returns a tool error for a failed verdict", async () => {
+    const db = new HiveDatabase(join(home, "failed-spawn.db"));
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new FailedSpawner(),
+      tmux: new FakeDaemonTmux(),
+    });
+    const transport = new StreamableHTTPClientTransport(
+      new URL("http://hive/mcp"),
+      {
+        fetch: (input, init) => daemon.fetch(new Request(input, init)),
+      },
+    );
+    const client = new Client({ name: "hive-test", version: "1.0.0" });
+    try {
+      await client.connect(transport);
+      const result = await client.callTool({
+        name: "hive_spawn",
+        arguments: { task: "Unsupported launch", tier: "standard" },
+      });
+      const content = (result as {
+        content: Array<{ type: string; text?: string }>;
+      }).content;
+
+      expect(result.isError).toEqual(true);
+      expect(content[0]?.text).toContain("Error: model not supported");
+      expect(db.getAgentByName("maya")).toMatchObject({
+        status: "failed",
+        failureReason: "Error: model not supported",
+      });
+      const statuses = textValue(await client.callTool({
+        name: "hive_status",
+        arguments: {},
+      })) as AgentRecord[];
+      expect(statuses[0]?.failureReason).toEqual(
+        "Error: model not supported",
+      );
     } finally {
       await client.close();
       await daemon.stop();

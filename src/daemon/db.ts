@@ -23,6 +23,20 @@ export const ApprovalSchema = z.object({
 
 export type Approval = z.infer<typeof ApprovalSchema>;
 
+const AgentDatabaseRowSchema = AgentRecordSchema.extend({
+  failureReason: z.string().nullable(),
+  failedAt: z.string().nullable(),
+});
+
+function parseAgentRow(row: unknown): AgentRecord {
+  const value = AgentDatabaseRowSchema.parse(row);
+  return AgentRecordSchema.parse({
+    ...value,
+    failureReason: value.failureReason ?? undefined,
+    failedAt: value.failedAt ?? undefined,
+  });
+}
+
 export function getHiveHome(): string {
   return process.env.HIVE_HOME ?? join(homedir(), ".hive");
 }
@@ -89,7 +103,9 @@ export class HiveDatabase {
         tmuxSession TEXT NOT NULL,
         contextPct REAL NOT NULL,
         createdAt TEXT NOT NULL,
-        lastEventAt TEXT NOT NULL
+        lastEventAt TEXT NOT NULL,
+        failureReason TEXT,
+        failedAt TEXT
       );
       CREATE TABLE IF NOT EXISTS messages (
         id TEXT PRIMARY KEY,
@@ -122,6 +138,16 @@ export class HiveDatabase {
       CREATE INDEX IF NOT EXISTS approvals_status_created
         ON approvals(status, createdAt);
     `);
+    const agentColumns = z.array(z.object({ name: z.string() })).parse(
+      this.database.query("PRAGMA table_info(agents)").all(),
+    );
+    const agentColumnNames = new Set(agentColumns.map((column) => column.name));
+    if (!agentColumnNames.has("failureReason")) {
+      this.database.exec("ALTER TABLE agents ADD COLUMN failureReason TEXT");
+    }
+    if (!agentColumnNames.has("failedAt")) {
+      this.database.exec("ALTER TABLE agents ADD COLUMN failedAt TEXT");
+    }
   }
 
   close(): void {
@@ -137,8 +163,9 @@ export class HiveDatabase {
     this.database.query(`
       INSERT INTO agents (
         id, name, tool, model, tier, status, taskDescription,
-        worktreePath, branch, tmuxSession, contextPct, createdAt, lastEventAt
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        worktreePath, branch, tmuxSession, contextPct, createdAt, lastEventAt,
+        failureReason, failedAt
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         name = excluded.name,
         tool = excluded.tool,
@@ -151,7 +178,9 @@ export class HiveDatabase {
         tmuxSession = excluded.tmuxSession,
         contextPct = excluded.contextPct,
         createdAt = excluded.createdAt,
-        lastEventAt = excluded.lastEventAt
+        lastEventAt = excluded.lastEventAt,
+        failureReason = excluded.failureReason,
+        failedAt = excluded.failedAt
     `).run(
       value.id,
       value.name,
@@ -166,6 +195,8 @@ export class HiveDatabase {
       value.contextPct,
       value.createdAt,
       value.lastEventAt,
+      value.failureReason ?? null,
+      value.failedAt ?? null,
     );
     return this.getAgentById(value.id)!;
   }
@@ -176,18 +207,18 @@ export class HiveDatabase {
 
   getAgentById(id: string): AgentRecord | null {
     const row = this.database.query("SELECT * FROM agents WHERE id = ?").get(id);
-    return row === null ? null : AgentRecordSchema.parse(row);
+    return row === null ? null : parseAgentRow(row);
   }
 
   getAgentByName(name: string): AgentRecord | null {
     const row = this.database.query("SELECT * FROM agents WHERE name = ?").get(name);
-    return row === null ? null : AgentRecordSchema.parse(row);
+    return row === null ? null : parseAgentRow(row);
   }
 
   listAgents(): AgentRecord[] {
     return this.database.query("SELECT * FROM agents ORDER BY createdAt, name")
       .all()
-      .map((row) => AgentRecordSchema.parse(row));
+      .map(parseAgentRow);
   }
 
   deleteAgent(id: string): boolean {

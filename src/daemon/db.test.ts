@@ -41,7 +41,12 @@ describe("HiveDatabase", () => {
       expect(inserted).toEqual(agent());
       expect(db.getAgentByName("maya")).toEqual(agent());
 
-      const updated = agent({ status: "idle", contextPct: 28 });
+      const updated = agent({
+        status: "failed",
+        contextPct: 28,
+        failureReason: "Error: model not supported",
+        failedAt: "2026-07-09T12:01:00.000Z",
+      });
       expect(db.upsertAgent(updated)).toEqual(updated);
       expect(db.listAgents()).toEqual([updated]);
       expect(db.deleteAgent(updated.id)).toEqual(true);

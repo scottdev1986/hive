@@ -79,7 +79,10 @@ function deepMerge(
 export function buildClaudeSpawnCommand(
   options: ClaudeSpawnOptions,
 ): string[] {
-  const command = ["claude", "--model", options.model];
+  const command = ["claude"];
+  if (options.model !== "default") {
+    command.push("--model", options.model);
+  }
   if (options.readOnly) {
     command.push("--permission-mode", "default");
   }

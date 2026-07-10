@@ -13,6 +13,7 @@ describe("status table", () => {
       model: "gpt-test",
       tier: "standard",
       status: "working",
+      failureReason: "A deliberately long startup failure explaining that the selected model is not supported",
       taskDescription: "Implement a deliberately long task description that cannot fit in the status table without truncation",
       worktreePath: "/tmp/maya",
       branch: "hive/maya-task",
@@ -30,12 +31,14 @@ describe("status table", () => {
     expect(header).toContain("STATUS");
     expect(header).toContain("CONTEXT");
     expect(header).toContain("TASK");
+    expect(header).toContain("FAILURE");
     expect(row).toContain("maya");
     expect(row).toContain("codex");
     expect(row).toContain("gpt-test");
     expect(row).toContain("working");
     expect(row).toContain("38%");
-    expect(row).toEndWith("…");
     expect(row).not.toContain("without truncation");
+    expect(row).toEndWith("…");
+    expect(row).not.toContain("selected model is not supported");
   });
 });

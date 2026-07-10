@@ -29,6 +29,8 @@ export async function runDaemon(): Promise<void> {
     db,
     spawner,
     tmuxSender,
+    tmux,
+    repoRoot: process.cwd(),
     port,
     manageLifecycle: true,
   });

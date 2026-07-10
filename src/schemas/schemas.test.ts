@@ -36,6 +36,20 @@ describe("RoutingTableSchema", () => {
     expect(RoutingTableSchema.parse(roundTrip(parsed))).toEqual(DEFAULT_ROUTING);
   });
 
+  test("accepts the CLI account default while preserving pinned models", () => {
+    expect(RoutingTableSchema.parse(DEFAULT_ROUTING).standard.model).toEqual(
+      "default",
+    );
+    expect(RoutingTableSchema.parse({
+      ...DEFAULT_ROUTING,
+      standard: {
+        tool: "codex",
+        model: "gpt-pinned",
+        effort: "medium",
+      },
+    }).standard.model).toEqual("gpt-pinned");
+  });
+
   test("rejects an invalid routing table", () => {
     expect(() =>
       RoutingTableSchema.parse({
@@ -70,6 +84,16 @@ describe("AgentRecordSchema", () => {
 
   test("rejects an invalid agent", () => {
     expect(() => AgentRecordSchema.parse({ ...agent, contextPct: 101 })).toThrow();
+  });
+
+  test("parses persisted spawn failure details", () => {
+    const failed = {
+      ...agent,
+      status: "failed",
+      failureReason: "Error: model not supported",
+      failedAt: timestamp,
+    } satisfies AgentRecord;
+    expect(AgentRecordSchema.parse(roundTrip(failed))).toEqual(failed);
   });
 });
 

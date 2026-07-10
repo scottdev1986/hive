@@ -4,6 +4,11 @@ import {
 } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import type { Server } from "bun";
 import { z } from "zod";
+import { TmuxAdapter } from "../adapters/tmux";
+import {
+  removeWorktree,
+  type RemoveWorktreeOptions,
+} from "../adapters/worktrees";
 import {
   HookEventSchema,
   type AgentRecord,
@@ -42,6 +47,11 @@ const MarkDeadRequestSchema = z.object({
   agent: z.string().min(1),
 });
 
+const KillRequestSchema = z.object({
+  name: z.string().min(1),
+  removeWorktree: z.boolean().optional(),
+});
+
 const ApprovalDecisionSchema = z.object({
   id: z.string().min(1),
   decision: z.enum(["approve", "deny"]),
@@ -51,6 +61,13 @@ export interface HiveDaemonOptions {
   spawner: Spawner;
   db?: HiveDatabase;
   tmuxSender?: TmuxSender;
+  tmux?: Pick<TmuxAdapter, "hasSession" | "killSession" | "capturePane">;
+  repoRoot?: string;
+  removeWorktree?: (
+    repoRoot: string,
+    worktreePath: string,
+    options?: RemoveWorktreeOptions | boolean,
+  ) => Promise<void>;
   port?: number;
   hostname?: string;
   manageLifecycle?: boolean;
@@ -75,7 +92,14 @@ export class HiveDaemon {
   private readonly port: number;
   private readonly hostname: string;
   private readonly manageLifecycle: boolean;
+  private readonly tmux: Pick<
+    TmuxAdapter,
+    "hasSession" | "killSession" | "capturePane"
+  >;
+  private readonly repoRoot: string;
+  private readonly cleanupWorktree: typeof removeWorktree;
   private bunServer: Server<undefined> | null = null;
+  private reconciliationTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(options: HiveDaemonOptions) {
     this.ownsDatabase = options.db === undefined;
@@ -88,6 +112,9 @@ export class HiveDaemon {
     this.port = options.port ?? readConfiguredPort();
     this.hostname = options.hostname ?? "127.0.0.1";
     this.manageLifecycle = options.manageLifecycle ?? false;
+    this.tmux = options.tmux ?? new TmuxAdapter();
+    this.repoRoot = options.repoRoot ?? process.cwd();
+    this.cleanupWorktree = options.removeWorktree ?? removeWorktree;
   }
 
   get server(): Server<undefined> | null {
@@ -114,10 +141,24 @@ export class HiveDaemon {
     if (this.manageLifecycle) {
       writeLifecycleFiles(listeningPort);
     }
+    this.reconciliationTimer = setInterval(() => {
+      void this.reconcileAgents().catch((error) => {
+        console.error(
+          `Hive reconciliation failed: ${
+            error instanceof Error ? error.message : "unknown error"
+          }`,
+        );
+      });
+    }, 30_000);
+    this.reconciliationTimer.unref?.();
     return this.bunServer;
   }
 
   async stop(): Promise<void> {
+    if (this.reconciliationTimer !== null) {
+      clearInterval(this.reconciliationTimer);
+      this.reconciliationTimer = null;
+    }
     this.bunServer?.stop(true);
     this.bunServer = null;
     if (this.manageLifecycle) {
@@ -125,6 +166,32 @@ export class HiveDaemon {
     }
     if (this.ownsDatabase) {
       this.db.close();
+    }
+  }
+
+  async reconcileAgents(): Promise<void> {
+    const liveStatuses: AgentRecord["status"][] = [
+      "working",
+      "idle",
+      "awaiting-approval",
+      "stuck",
+    ];
+    for (const agent of this.db.listAgents()) {
+      if (agent.status === "spawning") {
+        continue;
+      }
+      if (!liveStatuses.includes(agent.status)) {
+        continue;
+      }
+      if (await this.tmux.hasSession(agent.tmuxSession)) {
+        continue;
+      }
+      this.db.upsertAgent({
+        ...agent,
+        status: "dead",
+        failureReason: "tmux session missing (reconciled)",
+        lastEventAt: new Date().toISOString(),
+      });
     }
   }
 
@@ -148,7 +215,12 @@ export class HiveDaemon {
       this.db.insertEvent(value);
 
       const agent = this.db.getAgentByName(value.agentName);
-      if (agent !== null) {
+      if (
+        agent !== null &&
+        agent.status !== "dead" &&
+        agent.status !== "done" &&
+        agent.status !== "failed"
+      ) {
         const updated: AgentRecord = {
           ...agent,
           status: value.kind === "dead"
@@ -241,6 +313,50 @@ export class HiveDaemon {
       return toolResult(updated, "agent");
     });
 
+    server.registerTool("hive_kill", {
+      title: "Kill Hive agent",
+      description:
+        "Kill a named Hive agent's tmux session, mark it dead, and optionally remove its worktree and branch.",
+      inputSchema: KillRequestSchema,
+    }, async ({ name, removeWorktree: shouldRemoveWorktree }) => {
+      const agent = this.db.getAgentByName(name);
+      if (agent === null) {
+        throw new Error(`Hive agent not found: ${name}`);
+      }
+
+      await this.tmux.killSession(agent.tmuxSession, { ignoreMissing: true });
+      const timestamp = new Date().toISOString();
+      let updated = this.db.upsertAgent({
+        ...agent,
+        status: "dead",
+        lastEventAt: timestamp,
+      });
+      const cleaned: {
+        tmuxSession: string;
+        worktreePath: string | null;
+        branch: string | null;
+      } = {
+        tmuxSession: agent.tmuxSession,
+        worktreePath: null,
+        branch: null,
+      };
+
+      if ((shouldRemoveWorktree ?? false) && agent.worktreePath !== null) {
+        await this.cleanupWorktree(this.repoRoot, agent.worktreePath, {
+          deleteBranch: true,
+        });
+        cleaned.worktreePath = agent.worktreePath;
+        cleaned.branch = agent.branch;
+        updated = this.db.upsertAgent({
+          ...updated,
+          worktreePath: null,
+          branch: null,
+        });
+      }
+
+      return toolResult({ agent: updated, cleaned }, "result");
+    });
+
     server.registerTool("hive_send", {
       title: "Send agent message",
       description: "Send or queue a message for a named Hive agent.",
@@ -261,8 +377,19 @@ export class HiveDaemon {
       inputSchema: SpawnRequestSchema,
     }, async (request: SpawnRequest) => {
       const agent = await this.spawner.spawn(request);
-      this.db.upsertAgent(agent);
-      return toolResult(agent, "agent");
+      const current = this.db.getAgentById(agent.id);
+      const persisted = current !== null &&
+          current.lastEventAt >= agent.lastEventAt
+        ? current
+        : this.db.upsertAgent(agent);
+      if (persisted.status === "failed") {
+        throw new Error(
+          `Hive agent ${persisted.name} failed to spawn: ${
+            persisted.failureReason ?? "unknown launch failure"
+          }`,
+        );
+      }
+      return toolResult(persisted, "agent");
     });
 
     server.registerTool("hive_approvals", {

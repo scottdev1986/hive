@@ -106,6 +106,20 @@ describe("Codex adapter", () => {
     });
   });
 
+  test("omits the model override for the account default", () => {
+    const command = buildCodexSpawnCommand({
+      name: "agent-4",
+      model: "default",
+      effort: "low",
+      worktreePath: "/tmp/worktree",
+      daemonPort: 4317,
+      readOnly: false,
+    });
+
+    expect(command).not.toContain("model=default");
+    expect(command).toContain("model_reasoning_effort=low");
+  });
+
   test("writes notify wrapper and streamable HTTP MCP config", async () => {
     await writeCodexAgentConfig(worktreePath, {
       name: "agent-4",

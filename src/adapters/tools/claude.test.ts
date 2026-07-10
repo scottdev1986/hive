@@ -64,6 +64,16 @@ describe("Claude adapter", () => {
     ]);
   });
 
+  test("omits the model flag for the account default", () => {
+    expect(buildClaudeSpawnCommand({
+      name: "agent-3",
+      model: "default",
+      worktreePath: "/tmp/worktree",
+      daemonPort: 4317,
+      readOnly: false,
+    })).toEqual(["claude"]);
+  });
+
   test("writes read-only hooks, Bash rules, and HTTP MCP registration", async () => {
     await writeClaudeAgentConfig(worktreePath, {
       name: "orchestrator",

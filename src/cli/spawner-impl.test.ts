@@ -45,6 +45,10 @@ class FakeStore {
     return [...this.agents];
   }
 
+  getAgentById(id: string): AgentRecord | null {
+    return this.agents.find((candidate) => candidate.id === id) ?? null;
+  }
+
   insertAgent(record: AgentRecord): AgentRecord {
     const index = this.agents.findIndex((candidate) =>
       candidate.id === record.id
@@ -60,9 +64,31 @@ class FakeStore {
 
 class FakeTmux {
   readonly sessions: Array<[string, string, string]> = [];
+  readonly active = new Set<string>();
+  readonly killed: string[] = [];
+  hasSessionCalls = 0;
+  capturePaneCalls = 0;
+
+  constructor(readonly pane = "") {}
 
   async newSession(name: string, cwd: string, command: string): Promise<void> {
     this.sessions.push([name, cwd, command]);
+    this.active.add(name);
+  }
+
+  async hasSession(name: string): Promise<boolean> {
+    this.hasSessionCalls += 1;
+    return this.active.has(name);
+  }
+
+  async capturePane(_name: string): Promise<string> {
+    this.capturePaneCalls += 1;
+    return this.pane;
+  }
+
+  async killSession(name: string): Promise<void> {
+    this.killed.push(name);
+    this.active.delete(name);
   }
 }
 
@@ -71,6 +97,22 @@ class FakeTerminal implements TerminalAdapter {
 
   async openWindow(session: string, title: string): Promise<void> {
     this.windows.push([session, title]);
+  }
+}
+
+class FlakyCaptureTmux extends FakeTmux {
+  override async capturePane(name: string): Promise<string> {
+    this.capturePaneCalls += 1;
+    if (this.capturePaneCalls === 1) {
+      throw new Error(`capture failed for ${name}`);
+    }
+    return this.pane;
+  }
+}
+
+class FailingTerminal implements TerminalAdapter {
+  async openWindow(_session: string, _title: string): Promise<void> {
+    throw new Error("viewer unavailable");
   }
 }
 
@@ -111,11 +153,59 @@ describe("HiveSpawner name pool", () => {
         attemptedWorktree = true;
         return { path: "/tmp/unused", branch: "hive/unused-task" };
       },
+      sleep: async () => {},
     });
 
     await expect(spawner.spawn({ task: "One task too many", tier: "deep" }))
       .rejects.toThrow("name pool exhausted");
     expect(attemptedWorktree).toEqual(false);
+  });
+
+  test("rejects an invalid requested name before creating a worktree", async () => {
+    let attemptedWorktree = false;
+    const spawner = new HiveSpawner({
+      db: new FakeStore(),
+      repoRoot: "/tmp/hive-invalid-name",
+      port: 4317,
+      config: { terminal: "auto", headless: true },
+      routing: async () => ({ tool: "codex", model: "default" }),
+      tmux: new FakeTmux(),
+      terminal: new FakeTerminal(),
+      createWorktree: async () => {
+        attemptedWorktree = true;
+        return { path: "/tmp/unused", branch: "hive/unused-task" };
+      },
+      sleep: async () => {},
+    });
+
+    await expect(spawner.spawn({
+      task: "Bad name",
+      tier: "standard",
+      name: "1Maya",
+    })).rejects.toThrow("must match /^[a-z][a-z0-9-]{1,20}$/");
+    expect(attemptedWorktree).toEqual(false);
+  });
+
+  test("rejects a requested name held by a live agent", async () => {
+    const spawner = new HiveSpawner({
+      db: new FakeStore([agent("maya")]),
+      repoRoot: "/tmp/hive-collision",
+      port: 4317,
+      config: { terminal: "auto", headless: true },
+      routing: async () => ({ tool: "codex", model: "default" }),
+      tmux: new FakeTmux(),
+      terminal: new FakeTerminal(),
+      createWorktree: async () => {
+        throw new Error("worktree must not be created");
+      },
+      sleep: async () => {},
+    });
+
+    await expect(spawner.spawn({
+      task: "Duplicate name",
+      tier: "standard",
+      name: "MAYA",
+    })).rejects.toThrow('"maya" is already assigned to a live agent');
   });
 });
 
@@ -154,6 +244,7 @@ describe("HiveSpawner wiring", () => {
       tmux,
       terminal,
       createWorktree,
+      sleep: async () => {},
     });
 
     const claude = await spawner.spawn({ task: "Build auth API", tier: "deep" });
@@ -192,5 +283,229 @@ describe("HiveSpawner wiring", () => {
     expect(claudeSettings).toContain("acceptEdits");
     expect(claudeSettings).toContain("hive event session-start --agent maya");
     expect(codexConfig).toContain("http://127.0.0.1:4317/mcp");
+  });
+
+  test("short-circuits readiness when the persisted status leaves spawning", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-spawner-ready-"));
+    tempRoots.push(root);
+    const worktreePath = join(root, "maya");
+    await mkdir(worktreePath, { recursive: true });
+    const store = new FakeStore();
+    const tmux = new FakeTmux();
+    let polls = 0;
+    const spawner = new HiveSpawner({
+      db: store,
+      repoRoot: root,
+      port: 4317,
+      config: { terminal: "auto", headless: true },
+      routing: async () => ({
+        tool: "codex",
+        model: "default",
+        effort: "medium",
+      }),
+      tmux,
+      terminal: new FakeTerminal(),
+      createWorktree: async () => ({
+        path: worktreePath,
+        branch: "hive/maya-ready",
+      }),
+      sleep: async () => {
+        polls += 1;
+        const current = store.listAgents()[0];
+        if (current !== undefined) {
+          store.insertAgent({ ...current, status: "working" });
+        }
+      },
+    });
+
+    const spawned = await spawner.spawn({
+      task: "Become ready during polling",
+      tier: "standard",
+    });
+
+    expect(spawned.status).toEqual("working");
+    expect(polls).toEqual(1);
+    expect(tmux.hasSessionCalls).toEqual(0);
+    expect(tmux.capturePaneCalls).toEqual(0);
+    expect(tmux.killed).toEqual([]);
+  });
+
+  test("honors requested names and applies cross-vendor tool overrides", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-spawner-override-"));
+    tempRoots.push(root);
+    const store = new FakeStore();
+    const tmux = new FakeTmux();
+    const createWorktree = async (
+      _repoRoot: string,
+      name: string,
+      slug: string,
+    ) => {
+      const path = join(root, name);
+      await mkdir(path, { recursive: true });
+      return { path, branch: `hive/${name}-${slug}` };
+    };
+    const spawner = new HiveSpawner({
+      db: store,
+      repoRoot: root,
+      port: 4317,
+      config: { terminal: "auto", headless: true },
+      routing: async (tier) => tier === "deep"
+        ? { tool: "claude", model: "opus", effort: "high" }
+        : { tool: "codex", model: "default", effort: "medium" },
+      tmux,
+      terminal: new FakeTerminal(),
+      createWorktree,
+      sleep: async () => {},
+    });
+
+    const claude = await spawner.spawn({
+      task: "Use Claude",
+      tier: "standard",
+      name: "Quinn-2",
+      tool: "claude",
+    });
+    const codex = await spawner.spawn({
+      task: "Use Codex",
+      tier: "deep",
+      name: "Riley",
+      tool: "codex",
+    });
+
+    expect(claude.name).toEqual("quinn-2");
+    expect(claude.tool).toEqual("claude");
+    expect(claude.model).toEqual("default");
+    expect(tmux.sessions[0]?.[2]).toContain("'claude'");
+    expect(tmux.sessions[0]?.[2]).not.toContain("'--model'");
+    expect(codex.name).toEqual("riley");
+    expect(codex.tool).toEqual("codex");
+    expect(codex.model).toEqual("default");
+    expect(tmux.sessions[1]?.[2]).toContain(
+      "'model_reasoning_effort=high'",
+    );
+    expect(tmux.sessions[1]?.[2]).not.toContain("'model=default'");
+  });
+
+  test("marks pane errors failed, cleans up, and never opens a viewer", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-spawner-failed-"));
+    tempRoots.push(root);
+    const worktreePath = join(root, "maya");
+    await mkdir(worktreePath, { recursive: true });
+    const pane = [
+      ...Array.from({ length: 16 }, (_, index) => `startup line ${index + 1}`),
+      "Error: model not supported for this account",
+    ].join("\n");
+    const store = new FakeStore();
+    const tmux = new FakeTmux(pane);
+    const terminal = new FakeTerminal();
+    const removals: Array<[string, string]> = [];
+    const spawner = new HiveSpawner({
+      db: store,
+      repoRoot: root,
+      port: 4317,
+      config: { terminal: "auto", headless: false },
+      routing: async () => ({
+        tool: "codex",
+        model: "default",
+        effort: "medium",
+      }),
+      tmux,
+      terminal,
+      createWorktree: async () => ({
+        path: worktreePath,
+        branch: "hive/maya-failing-launch",
+      }),
+      removeWorktree: async (repoRoot, path) => {
+        removals.push([repoRoot, path]);
+      },
+      sleep: async () => {},
+    });
+
+    const failed = await spawner.spawn({
+      task: "Fail at startup",
+      tier: "standard",
+    });
+
+    expect(failed.status).toEqual("failed");
+    expect(failed.failureReason).toContain("Error: model not supported");
+    expect(failed.failureReason).not.toContain("startup line 1\n");
+    expect(failed.failedAt).toBeDefined();
+    expect(store.agents).toEqual([failed]);
+    expect(tmux.killed).toEqual(["hive-maya"]);
+    expect(removals).toEqual([[root, worktreePath]]);
+    expect(terminal.windows).toEqual([]);
+  });
+
+  test("does not treat incidental error text as a launch failure", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-spawner-error-text-"));
+    tempRoots.push(root);
+    const worktreePath = join(root, "maya");
+    await mkdir(worktreePath, { recursive: true });
+    const store = new FakeStore();
+    const tmux = new FakeTmux([
+      "Task: fix the error handling",
+      "typecheck complete: 2 errors found",
+    ].join("\n"));
+    const spawner = new HiveSpawner({
+      db: store,
+      repoRoot: root,
+      port: 4317,
+      config: { terminal: "auto", headless: true },
+      routing: async () => ({
+        tool: "codex",
+        model: "default",
+        effort: "medium",
+      }),
+      tmux,
+      terminal: new FakeTerminal(),
+      createWorktree: async () => ({
+        path: worktreePath,
+        branch: "hive/maya-error-handling",
+      }),
+      sleep: async () => {},
+    });
+
+    const spawned = await spawner.spawn({
+      task: "Fix the error handling",
+      tier: "standard",
+    });
+
+    expect(spawned.status).toEqual("spawning");
+    expect(tmux.capturePaneCalls).toEqual(15);
+    expect(tmux.killed).toEqual([]);
+  });
+
+  test("tolerates transient pane capture and viewer failures", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-spawner-transient-"));
+    tempRoots.push(root);
+    const worktreePath = join(root, "maya");
+    await mkdir(worktreePath, { recursive: true });
+    const tmux = new FlakyCaptureTmux();
+    const spawner = new HiveSpawner({
+      db: new FakeStore(),
+      repoRoot: root,
+      port: 4317,
+      config: { terminal: "auto", headless: false },
+      routing: async () => ({
+        tool: "codex",
+        model: "default",
+        effort: "medium",
+      }),
+      tmux,
+      terminal: new FailingTerminal(),
+      createWorktree: async () => ({
+        path: worktreePath,
+        branch: "hive/maya-transient",
+      }),
+      sleep: async () => {},
+    });
+
+    const spawned = await spawner.spawn({
+      task: "Survive cosmetic failures",
+      tier: "standard",
+    });
+
+    expect(spawned.status).toEqual("spawning");
+    expect(tmux.capturePaneCalls).toEqual(15);
+    expect(tmux.killed).toEqual([]);
   });
 });

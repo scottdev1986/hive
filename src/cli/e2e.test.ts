@@ -18,6 +18,21 @@ class FakeTmux implements TmuxSender {
     this.sessions.push(name);
   }
 
+  async hasSession(session: string): Promise<boolean> {
+    return this.sessions.includes(session);
+  }
+
+  async capturePane(_session: string): Promise<string> {
+    return "";
+  }
+
+  async killSession(session: string): Promise<void> {
+    const index = this.sessions.indexOf(session);
+    if (index !== -1) {
+      this.sessions.splice(index, 1);
+    }
+  }
+
   async sendMessage(session: string, text: string): Promise<void> {
     this.messages.push([session, text]);
   }
@@ -50,6 +65,7 @@ describe("CLI-to-daemon smoke", () => {
         path: worktreePath,
         branch: `hive/${name}-${slug}`,
       }),
+      sleep: async () => {},
     });
     let daemon: HiveDaemon | null = null;
     try {

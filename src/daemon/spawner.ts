@@ -7,7 +7,8 @@ import {
 export const SpawnRequestSchema = z.object({
   task: z.string().min(1),
   tier: RoutingTierSchema,
-  name: z.string().min(1).optional(),
+  name: z.string().optional(),
+  tool: z.enum(["claude", "codex"]).optional(),
 });
 
 export type SpawnRequest = z.infer<typeof SpawnRequestSchema>;
