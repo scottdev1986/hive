@@ -36,6 +36,7 @@ const AgentDatabaseRowSchema = AgentRecordSchema.extend({
   terminalHandle: z.string().nullable(),
   capabilityEpoch: z.number().int().nonnegative().default(0),
   writeRevoked: z.union([z.boolean(), z.number().int()]).default(0),
+  channelsEnabled: z.union([z.boolean(), z.number().int()]).default(0),
 });
 
 function parseAgentRow(row: unknown): AgentRecord {
@@ -54,6 +55,8 @@ function parseAgentRow(row: unknown): AgentRecord {
       ? undefined
       : TerminalHandleSchema.parse(JSON.parse(value.terminalHandle)),
     writeRevoked: value.writeRevoked === true || value.writeRevoked === 1,
+    channelsEnabled: value.channelsEnabled === true ||
+      value.channelsEnabled === 1,
   });
 }
 
@@ -237,6 +240,11 @@ export class HiveDatabase {
         "ALTER TABLE agents ADD COLUMN writeRevoked INTEGER NOT NULL DEFAULT 0",
       );
     }
+    if (!agentColumnNames.has("channelsEnabled")) {
+      this.database.exec(
+        "ALTER TABLE agents ADD COLUMN channelsEnabled INTEGER NOT NULL DEFAULT 0",
+      );
+    }
     const messageColumns = z.array(z.object({ name: z.string() })).parse(
       this.database.query("PRAGMA table_info(messages)").all(),
     );
@@ -311,8 +319,8 @@ export class HiveDatabase {
         worktreePath, branch, tmuxSession, terminalHandle, contextPct,
         createdAt, lastEventAt, failureReason, failedAt,
         quotaReservationId, controlQuotaReservationId, controlMessageId,
-        executionIdentity, capabilityEpoch, writeRevoked
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        executionIdentity, capabilityEpoch, writeRevoked, channelsEnabled
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         name = excluded.name,
         tool = excluded.tool,
@@ -334,7 +342,8 @@ export class HiveDatabase {
         controlMessageId = excluded.controlMessageId,
         executionIdentity = excluded.executionIdentity,
         capabilityEpoch = excluded.capabilityEpoch,
-        writeRevoked = excluded.writeRevoked
+        writeRevoked = excluded.writeRevoked,
+        channelsEnabled = excluded.channelsEnabled
     `).run(
       value.id,
       value.name,
@@ -362,6 +371,7 @@ export class HiveDatabase {
         : JSON.stringify(value.executionIdentity),
       value.capabilityEpoch,
       value.writeRevoked ? 1 : 0,
+      value.channelsEnabled ? 1 : 0,
     );
     return this.getAgentById(value.id)!;
   }

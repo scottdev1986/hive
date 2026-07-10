@@ -27,6 +27,7 @@ describe("HiveConfigSchema", () => {
       headless: false,
       layout: "auto",
       codex: { driver: "tui" },
+      channels: "auto",
     });
   });
 
@@ -129,6 +130,7 @@ describe("AgentRecordSchema", () => {
     lastEventAt: timestamp,
     capabilityEpoch: 0,
     writeRevoked: false,
+    channelsEnabled: false,
   } satisfies AgentRecord;
 
   test("parses a valid round-trip", () => {

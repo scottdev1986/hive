@@ -7,8 +7,10 @@ import { shellJoin } from "../adapters/tmux";
 import type { TmuxAdapter } from "../adapters/tmux";
 import {
   buildClaudeSpawnCommand,
+  detectClaudeCliVersion,
   writeClaudeAgentConfig,
 } from "../adapters/tools/claude";
+import { CHANNELS_MIN_VERSION, versionAtLeast } from "./channels";
 import {
   buildCodexSpawnCommand,
   writeCodexAgentConfig,
@@ -101,6 +103,7 @@ type TmuxSessionManager = Pick<
 >;
 type Sleep = (milliseconds: number) => Promise<void>;
 type ModelResolver = typeof resolveConcreteModel;
+type ClaudeVersionDetector = () => Promise<string | null>;
 
 export interface HiveSpawnerDependencies {
   db: AgentStore;
@@ -117,6 +120,11 @@ export interface HiveSpawnerDependencies {
   keepWorktreeOnFailure?: boolean;
   sleep?: Sleep;
   resolveModel?: ModelResolver;
+  /** Reads the installed Claude CLI version to gate the Channels preview.
+   * Returning null (or an old version) keeps the tmux fallback. */
+  detectClaudeVersion?: ClaudeVersionDetector;
+  /** Operator opt-out for the research preview; the fallback stays maintained. */
+  channelsEnabled?: boolean;
   /** Fires after a viewer window is attached so the daemon can re-tile the
    * window wall. */
   onTerminalsChanged?: () => void;
@@ -243,12 +251,28 @@ export class HiveSpawner implements Spawner {
   private readonly cleanupWorktree: WorktreeRemover;
   private readonly wait: Sleep;
   private readonly modelResolver: ModelResolver;
+  private readonly detectClaudeVersion: ClaudeVersionDetector;
 
   constructor(private readonly dependencies: HiveSpawnerDependencies) {
     this.makeWorktree = dependencies.createWorktree ?? createWorktree;
     this.cleanupWorktree = dependencies.removeWorktree ?? removeWorktree;
     this.wait = dependencies.sleep ?? sleep;
     this.modelResolver = dependencies.resolveModel ?? resolveConcreteModel;
+    this.detectClaudeVersion = dependencies.detectClaudeVersion ??
+      (() => detectClaudeCliVersion());
+  }
+
+  /**
+   * Decide whether this Claude session launches with Channels. The capability
+   * handshake still gates delivery at runtime (the bridge must register and
+   * the CLI must accept the capability), so a false positive here degrades to
+   * the tmux fallback rather than dropping messages.
+   */
+  private async useChannels(tool: "claude" | "codex"): Promise<boolean> {
+    if (tool !== "claude") return false;
+    if (this.dependencies.channelsEnabled === false) return false;
+    const version = await this.detectClaudeVersion().catch(() => null);
+    return version !== null && versionAtLeast(version, CHANNELS_MIN_VERSION);
   }
 
   async restartForControl(
@@ -309,6 +333,11 @@ export class HiveSpawner implements Spawner {
       reservationId,
     );
     const readOnly = true;
+    // The read-only control process carries its instruction in argv and needs
+    // no message channel. A safety interruption must not depend on a research
+    // preview, so the replacement never launches Channels — ordinary traffic
+    // to a control-paused agent queues exactly as it did before.
+    const channels = false;
     let argv: string[];
     try {
       await provisionSkills(agent.worktreePath, identity.tool);
@@ -317,6 +346,7 @@ export class HiveSpawner implements Spawner {
           daemonPort: this.dependencies.port,
           name: agent.name,
           readOnly,
+          channels,
         });
         argv = buildClaudeSpawnCommand({
           daemonPort: this.dependencies.port,
@@ -324,6 +354,7 @@ export class HiveSpawner implements Spawner {
           name: agent.name,
           readOnly,
           worktreePath: agent.worktreePath,
+          channels,
         });
       } else {
         await writeCodexAgentConfig(agent.worktreePath, {
@@ -481,6 +512,9 @@ export class HiveSpawner implements Spawner {
       controlQuotaReservationId: reservationId,
       failureReason,
       lastEventAt: new Date().toISOString(),
+      // The replacement process launches without Channels; the record must
+      // agree so the registry never accepts a bridge for this session.
+      channelsEnabled: false,
     });
     if (previousHandle !== undefined) {
       try {
@@ -612,6 +646,7 @@ export class HiveSpawner implements Spawner {
       this.dependencies.repoRoot,
       memoryIndex,
     );
+    const channels = await this.useChannels(tool);
     const timestamp = new Date().toISOString();
     const record = this.dependencies.db.insertAgent({
       id: previousRecord?.id ?? crypto.randomUUID(),
@@ -631,6 +666,7 @@ export class HiveSpawner implements Spawner {
       ...(executionIdentity === undefined ? {} : { executionIdentity }),
       capabilityEpoch: 0,
       writeRevoked: false,
+      channelsEnabled: channels,
     });
 
     let argv: string[];
@@ -641,6 +677,7 @@ export class HiveSpawner implements Spawner {
           daemonPort: this.dependencies.port,
           name,
           readOnly: false,
+          channels,
         });
         argv = buildClaudeSpawnCommand({
           daemonPort: this.dependencies.port,
@@ -648,6 +685,7 @@ export class HiveSpawner implements Spawner {
           name,
           readOnly: false,
           worktreePath: worktree.path,
+          channels,
         });
       } else {
         await writeCodexAgentConfig(worktree.path, {

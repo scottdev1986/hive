@@ -23,6 +23,7 @@ describe("status table", () => {
       lastEventAt: timestamp,
       capabilityEpoch: 0,
       writeRevoked: false,
+      channelsEnabled: false,
     }];
 
     const table = formatStatusTable(agents);

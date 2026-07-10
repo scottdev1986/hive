@@ -9,12 +9,52 @@ export interface ClaudeSpawnOptions {
   worktreePath: string;
   daemonPort: number;
   readOnly: boolean;
+  /** Launch with the Channels research preview so the hive-channel bridge
+   * can push daemon messages into the running session. */
+  channels?: boolean;
 }
 
 export type ClaudeAgentConfigOptions = Pick<
   ClaudeSpawnOptions,
-  "name" | "daemonPort" | "readOnly"
+  "name" | "daemonPort" | "readOnly" | "channels"
 >;
+
+// The .mcp.json name of the stdio bridge Claude Code spawns as a subprocess.
+// Channels only work over stdio servers, so the HTTP hive daemon cannot push
+// directly; the bridge relays daemon deliveries into the session.
+export const HIVE_CHANNEL_SERVER_NAME = "hive-channel";
+
+// During the research preview, `server:` channel entries are only accepted
+// behind the development flag; hive is not an allowlisted channel plugin.
+export const CLAUDE_CHANNELS_FLAG = "--dangerously-load-development-channels";
+
+export type CommandRunner = (argv: string[]) => Promise<{
+  stdout: string;
+  exitCode: number;
+}>;
+
+const runCommand: CommandRunner = async (argv) => {
+  const child = Bun.spawn(argv, { stdout: "pipe", stderr: "ignore" });
+  const [stdout, exitCode] = await Promise.all([
+    new Response(child.stdout).text(),
+    child.exited,
+  ]);
+  return { stdout, exitCode };
+};
+
+/** Read the installed Claude CLI version (e.g. "2.1.206"), or null when the
+ * CLI is missing or unparseable — callers must then skip Channels. */
+export async function detectClaudeCliVersion(
+  run: CommandRunner = runCommand,
+): Promise<string | null> {
+  try {
+    const result = await run(["claude", "--version"]);
+    if (result.exitCode !== 0) return null;
+    return /(\d+\.\d+\.\d+)/.exec(result.stdout)?.[1] ?? null;
+  } catch {
+    return null;
+  }
+}
 
 const shellToken = (value: string): string => {
   if (/^[A-Za-z0-9_./:@+-]+$/.test(value)) {
@@ -86,6 +126,12 @@ export function buildClaudeSpawnCommand(
   if (options.readOnly) {
     command.push("--permission-mode", "default");
   }
+  if (options.channels ?? false) {
+    command.push(
+      CLAUDE_CHANNELS_FLAG,
+      `server:${HIVE_CHANNEL_SERVER_NAME}`,
+    );
+  }
   return command;
 }
 
@@ -153,6 +199,19 @@ export async function writeClaudeAgentConfig(
       Stop: hook(eventCommand("turn-end")),
       Notification: hook(eventCommand("notification")),
     },
+    // The statusLine JSON carries the subscriber's five-hour/weekly usage;
+    // the command forwards it to the daemon as semi-official quota telemetry.
+    statusLine: {
+      type: "command",
+      command: [
+        "hive",
+        "statusline",
+        "--agent",
+        shellToken(options.name),
+        "--port",
+        String(options.daemonPort),
+      ].join(" "),
+    },
     permissions,
   };
   const mcp = {
@@ -161,6 +220,21 @@ export async function writeClaudeAgentConfig(
         type: "http",
         url: `http://127.0.0.1:${options.daemonPort}/mcp`,
       },
+      ...((options.channels ?? false)
+        ? {
+            [HIVE_CHANNEL_SERVER_NAME]: {
+              type: "stdio",
+              command: "hive",
+              args: [
+                "channel-bridge",
+                "--agent",
+                options.name,
+                "--port",
+                String(options.daemonPort),
+              ],
+            },
+          }
+        : {}),
     },
   };
 

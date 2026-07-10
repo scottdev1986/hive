@@ -79,10 +79,26 @@ export const QuotaObservationSchema = z.strictObject({
   observedAt: z.iso.datetime({ offset: true }),
   fiveHourResetAt: z.iso.datetime({ offset: true }).nullable().default(null),
   weeklyResetAt: z.iso.datetime({ offset: true }).nullable().default(null),
-  source: z.enum(["provider", "gateway", "manual"]),
+  source: z.enum(["provider", "gateway", "manual", "statusline"]),
   confidence: z.enum(["authoritative", "reported"]),
 });
 export type QuotaObservation = z.infer<typeof QuotaObservationSchema>;
+
+// The subscriber usage block Claude Code passes to its statusLine command:
+// used percentage and reset time per rolling window, each window optionally
+// absent (API-key accounts, or before the session's first response).
+export const StatuslineRateWindowSchema = z.object({
+  usedPct: z.number().min(0).max(100),
+  resetsAt: z.iso.datetime({ offset: true }).nullable().default(null),
+});
+
+export const StatuslineReportSchema = z.object({
+  agent: z.string().min(1),
+  fiveHour: StatuslineRateWindowSchema.optional(),
+  sevenDay: StatuslineRateWindowSchema.optional(),
+  observedAt: z.iso.datetime({ offset: true }).optional(),
+});
+export type StatuslineReport = z.infer<typeof StatuslineReportSchema>;
 
 export interface QuotaScope {
   provider: "claude" | "codex";
@@ -103,7 +119,7 @@ export interface QuotaPoolStatus extends QuotaScope {
   models: string[];
   confidence: QuotaConfidence;
   freshness: "fresh" | "stale" | "missing";
-  source: "provider" | "gateway" | "manual" | "ledger" | "none";
+  source: "provider" | "gateway" | "manual" | "statusline" | "ledger" | "none";
   fiveHour: QuotaWindowStatus;
   weekly: QuotaWindowStatus;
 }

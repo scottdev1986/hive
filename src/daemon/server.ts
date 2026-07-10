@@ -28,6 +28,7 @@ import {
   MessagePrioritySchema,
   ORCHESTRATOR_NAME,
   QuotaObservationSchema,
+  StatuslineReportSchema,
   TerminalHandleSchema,
   type AgentRecord,
   type HookEvent,
@@ -35,6 +36,7 @@ import {
   type MemoryScope,
   type MemoryWriteInput,
 } from "../schemas";
+import { ChannelRegistry } from "./channels";
 import { HiveDatabase, type Approval } from "./db";
 import type { LayoutCoordinator } from "./layout";
 import { MemoryIndex } from "./memory-index";
@@ -153,6 +155,31 @@ const MemoryFactRequestSchema = z.object({
   id: z.string().min(1),
 });
 
+const ChannelRegisterSchema = z.object({
+  agent: z.string().min(1),
+  clientName: z.string().min(1).default("unknown"),
+  clientVersion: z.string().min(1),
+});
+
+const ChannelPollSchema = z.object({
+  agent: z.string().min(1),
+  waitMs: z.number().int().nonnegative().max(60_000).default(25_000),
+});
+
+const ChannelAckSchema = z.object({
+  agent: z.string().min(1),
+  deliveryId: z.string().min(1),
+  ok: z.boolean(),
+});
+
+const ChannelPermissionRequestSchema = z.object({
+  agent: z.string().min(1),
+  requestId: z.string().min(1),
+  toolName: z.string().min(1).default("tool"),
+  description: z.string().default(""),
+  inputPreview: z.string().default(""),
+});
+
 export type LandBranch = (
   repoRoot: string,
   branch: string,
@@ -233,6 +260,7 @@ function toolResult(value: unknown, key: string) {
 export class HiveDaemon {
   readonly db: HiveDatabase;
   readonly delivery: MessageDelivery;
+  readonly channels: ChannelRegistry;
   readonly spawner: Spawner;
   readonly memory: MemoryIndex;
   private memoryLock: Promise<unknown> = Promise.resolve();
@@ -269,6 +297,7 @@ export class HiveDaemon {
     this.tmux = options.tmux ?? new TmuxAdapter();
     this.quota = options.quota;
     this.codexControl = options.codexControl;
+    this.channels = new ChannelRegistry(this.db);
     this.delivery = new MessageDelivery(
       this.db,
       options.tmuxSender ?? new BunTmuxSender(),
@@ -311,6 +340,7 @@ export class HiveDaemon {
         },
       },
       this.codexControl,
+      this.channels,
     );
     this.quota?.setAlertSink(async (body) => {
       await this.delivery.send("hive-quota", ORCHESTRATOR_NAME, body);
@@ -518,6 +548,7 @@ export class HiveDaemon {
         new Date().toISOString(),
         "tmux session missing (reconciled)",
       );
+      this.channels.drop(agent.name);
       await this.settleAgentQuota(agent);
       // The tmux session is already gone, so the viewer shows nothing but a
       // dead shell; close it instead of leaving a stale window on the wall.
@@ -624,10 +655,158 @@ export class HiveDaemon {
     if (url.pathname === "/viewer" && request.method === "POST") {
       return this.attachViewer(request);
     }
+    if (url.pathname === "/statusline" && request.method === "POST") {
+      return this.receiveStatusline(request);
+    }
+    if (request.method === "POST" && url.pathname.startsWith("/channel/")) {
+      return this.handleChannel(url.pathname, request);
+    }
     if (url.pathname === "/mcp") {
       return this.handleMcp(request);
     }
     return json({ error: "Not found" }, { status: 404 });
+  }
+
+  private async handleChannel(
+    pathname: string,
+    request: Request,
+  ): Promise<Response> {
+    let body: unknown;
+    try {
+      body = await request.json();
+    } catch {
+      return json({ error: "Invalid channel request" }, { status: 400 });
+    }
+    try {
+      if (pathname === "/channel/register") {
+        const parsed = ChannelRegisterSchema.parse(body);
+        return json(this.channels.register(
+          parsed.agent,
+          parsed.clientName,
+          parsed.clientVersion,
+        ));
+      }
+      if (pathname === "/channel/poll") {
+        const parsed = ChannelPollSchema.parse(body);
+        try {
+          const events = await this.channels.poll(parsed.agent, parsed.waitMs);
+          return json({ events });
+        } catch (error) {
+          // An unknown connection (daemon restart) tells the bridge to
+          // re-register rather than spin.
+          return json(
+            {
+              error: error instanceof Error
+                ? error.message
+                : "channel poll failed",
+            },
+            { status: 404 },
+          );
+        }
+      }
+      if (pathname === "/channel/ack") {
+        const parsed = ChannelAckSchema.parse(body);
+        this.channels.ack(parsed.agent, parsed.deliveryId, parsed.ok);
+        return json({ ok: true });
+      }
+      if (pathname === "/channel/permission-request") {
+        const parsed = ChannelPermissionRequestSchema.parse(body);
+        return this.receiveChannelPermissionRequest(parsed);
+      }
+    } catch (error) {
+      return json(
+        {
+          error: error instanceof Error
+            ? error.message
+            : "Invalid channel request",
+        },
+        { status: 400 },
+      );
+    }
+    return json({ error: "Not found" }, { status: 404 });
+  }
+
+  private receiveChannelPermissionRequest(request: {
+    agent: string;
+    requestId: string;
+    toolName: string;
+    description: string;
+    inputPreview: string;
+  }): Response {
+    const agent = this.db.getAgentByName(request.agent);
+    if (
+      agent === null || agent.status === "dead" || agent.status === "done" ||
+      agent.status === "failed"
+    ) {
+      return json(
+        { error: `Hive agent not found or not live: ${request.agent}` },
+        { status: 404 },
+      );
+    }
+    const timestamp = new Date().toISOString();
+    const approval = this.db.transaction(() => {
+      const created = this.db.insertApproval({
+        id: crypto.randomUUID(),
+        agentName: agent.name,
+        description: [
+          `${request.toolName}: ${request.description}`.trim(),
+          request.inputPreview.slice(0, 500),
+        ].filter((part) => part.length > 0).join("\n"),
+        status: "pending",
+        createdAt: timestamp,
+        resolvedAt: null,
+      });
+      if (!agent.writeRevoked) {
+        this.db.upsertAgent({
+          ...agent,
+          status: "awaiting-approval",
+          lastEventAt: timestamp,
+        });
+      }
+      return created;
+    });
+    this.channels.notePermissionRequest(
+      agent.name,
+      request.requestId,
+      approval.id,
+    );
+    return json({ approval });
+  }
+
+  private async receiveStatusline(request: Request): Promise<Response> {
+    let body: unknown;
+    try {
+      body = await request.json();
+    } catch {
+      return json({ error: "Invalid statusline report" }, { status: 400 });
+    }
+    const parsed = StatuslineReportSchema.safeParse(body);
+    if (!parsed.success) {
+      return json(
+        { error: "Invalid statusline report", issues: parsed.error.issues },
+        { status: 400 },
+      );
+    }
+    const agent = this.db.getAgentByName(parsed.data.agent);
+    if (agent === null) {
+      return json(
+        { error: `Hive agent not found: ${parsed.data.agent}` },
+        { status: 404 },
+      );
+    }
+    const observation = await this.quota?.observeStatusline(
+      { tool: agent.tool, model: agent.model },
+      {
+        ...(parsed.data.fiveHour === undefined
+          ? {}
+          : { fiveHour: parsed.data.fiveHour }),
+        ...(parsed.data.sevenDay === undefined
+          ? {}
+          : { sevenDay: parsed.data.sevenDay }),
+        observedAt: parsed.data.observedAt ?? new Date().toISOString(),
+      },
+    ) ?? null;
+    return json({ observation });
   }
 
   private async registerOrchestratorTerminal(
@@ -845,6 +1024,7 @@ export class HiveDaemon {
         status: "dead",
         lastEventAt: new Date().toISOString(),
       });
+      this.channels.drop(updated.name);
       await this.settleAgentQuota(updated);
       return toolResult(updated, "agent");
     });
@@ -869,6 +1049,7 @@ export class HiveDaemon {
       if (killed === null) {
         throw new Error(`Hive agent not found: ${name}`);
       }
+      this.channels.drop(killed.agent.name);
       await this.settleAgentQuota(killed.agent, timestamp);
       if (killed.terminalHandle !== undefined) {
         try {
@@ -1053,6 +1234,16 @@ export class HiveDaemon {
         approval.id,
         decision === "approve",
       );
+      // A relayed claude/channel permission is actually answered here: the
+      // decision rides back to the CLI's still-open dialog (first answer wins).
+      const relay = this.channels.takePermissionByApproval(id);
+      if (relay !== null) {
+        this.channels.pushPermissionDecision(
+          relay.agentName,
+          relay.requestId,
+          decision === "approve" ? "allow" : "deny",
+        );
+      }
       const agent = this.db.getAgentByName(approval.agentName);
       if (agent?.status === "awaiting-approval") {
         this.db.upsertAgent({

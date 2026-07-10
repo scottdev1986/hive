@@ -16,9 +16,11 @@ import {
   watchAgent,
   writeMemoryCli,
 } from "./cli/control";
+import { runChannelBridge } from "./cli/channel-bridge";
 import { runDaemon } from "./cli/daemon";
 import { runHiveEvent, type HookEventOptions } from "./cli/event";
 import { launchOrchestrator } from "./cli/orchestrator";
+import { runStatusline } from "./cli/statusline";
 import type { MemoryScope } from "./schemas";
 
 export interface EventCliOptions {
@@ -334,6 +336,29 @@ export function createProgram(): Command {
       } catch {
         // Commander option parsing and hook delivery must not break agent turns.
       }
+    });
+
+  program
+    .command("statusline")
+    .description("Render an agent status line and forward subscriber quota")
+    .requiredOption("--agent <name>", "agent name")
+    .requiredOption("--port <number>", "daemon port")
+    .action(async (options: { agent: string; port: string }) => {
+      const stdin = await Bun.stdin.text().catch(() => "");
+      process.stdout.write(
+        await runStatusline(options.agent, parsePort(options.port), stdin),
+      );
+    });
+
+  program
+    .command("channel-bridge")
+    .description(
+      "Run the stdio MCP bridge that pushes Hive messages into a Claude session",
+    )
+    .requiredOption("--agent <name>", "agent name")
+    .requiredOption("--port <number>", "daemon port")
+    .action(async (options: { agent: string; port: string }) => {
+      await runChannelBridge(options.agent, parsePort(options.port));
     });
 
   program

@@ -19,6 +19,50 @@ export interface TmuxSender {
   sendMessage(session: string, text: string): Promise<void>;
 }
 
+/**
+ * Vendor-native push channel (Claude Code Channels). deliverMessage resolves
+ * true only when the bridge confirmed the notification was written to the
+ * CLI's transport; the CLI queues it for its next turn. There is no vendor
+ * acknowledgement beyond that, so callers must not claim more than
+ * "injected" for a channel delivery.
+ */
+export interface ChannelDeliverer {
+  isLive(agentName: string): boolean;
+  deliverMessage(
+    agentName: string,
+    content: string,
+    meta: Record<string, string>,
+  ): Promise<boolean>;
+}
+
+export function formatChannelMessage(message: AgentMessage): {
+  content: string;
+  meta: Record<string, string>;
+} {
+  const content = message.priority === "normal"
+    ? message.body
+    : [
+        message.body,
+        `Acknowledge with hive_ack_message agent=${JSON.stringify(message.to)} messageId=${JSON.stringify(message.id)}${
+          message.capabilityEpoch === null
+            ? ""
+            : ` capabilityEpoch=${message.capabilityEpoch}`
+        } applied=true.`,
+      ].join("\n");
+  return {
+    content,
+    // Channel meta keys must be bare identifiers; anything else the CLI
+    // silently drops from the rendered <channel> tag.
+    meta: {
+      sender: message.from,
+      priority: message.priority,
+      intent: message.intent,
+      message_id: message.id,
+      sequence: String(message.sequence),
+    },
+  };
+}
+
 export interface SendOptions {
   priority?: MessagePriority;
   intent?: ControlIntent;
@@ -59,6 +103,7 @@ export class MessageDelivery {
     private readonly tmux: TmuxSender,
     private readonly controls?: CriticalControlRuntime,
     private readonly nativeControl?: NativeAgentControl,
+    private readonly channels?: ChannelDeliverer,
   ) {}
 
   async send(
@@ -190,7 +235,12 @@ export class MessageDelivery {
       });
     }
 
-    if (recipient.status !== "idle") return message;
+    // A live verified channel accepts messages mid-turn (the CLI queues them
+    // for its next turn), so only a channel-less busy recipient short-circuits.
+    const channelLive = this.channels?.isLive(to) ?? false;
+    if (!channelLive && recipient.status !== "idle") {
+      return message;
+    }
 
     return this.withSessionLock(recipient.tmuxSession, async () => {
       const current = this.getStoredMessage(message.id);
@@ -198,12 +248,34 @@ export class MessageDelivery {
         return current;
       }
 
-      const currentRecipient = this.requireLiveRecipient(to);
-      if (currentRecipient.status !== "idle") {
+      // The recipient can die between the pre-insert check and this lock. The
+      // message row is already durable, so leave it queued rather than failing
+      // a send whose persistence already succeeded.
+      if (!this.isDeliverable(this.db.getAgentByName(to))) {
+        return current;
+      }
+      const viaChannel = await this.deliverViaChannel(current);
+      if (viaChannel !== null) {
+        return viaChannel;
+      }
+      // Re-read after the channel round trip: the agent may have died while
+      // the push was in flight, and nothing may be pasted into a dead session.
+      const currentRecipient = this.db.getAgentByName(to);
+      if (
+        !this.isDeliverable(currentRecipient) ||
+        currentRecipient.status !== "idle"
+      ) {
         return current;
       }
       return this.deliver(current, currentRecipient.tmuxSession);
     });
+  }
+
+  private isDeliverable(
+    recipient: AgentRecord | null,
+  ): recipient is AgentRecord {
+    return recipient !== null && recipient.status !== "dead" &&
+      recipient.status !== "done" && recipient.status !== "failed";
   }
 
   async flushQueued(agentName: string): Promise<AgentMessage[]> {
@@ -235,11 +307,19 @@ export class MessageDelivery {
           if (message === null || message.deliveredAt !== null) {
             continue;
           }
-          delivered.push(
-            this.nativeControl?.hasAgent(currentRecipient.name)
-              ? await this.deliverNative(message, currentRecipient)
-              : await this.deliver(message, currentRecipient.tmuxSession),
-          );
+          if (this.nativeControl?.hasAgent(currentRecipient.name)) {
+            delivered.push(await this.deliverNative(message, currentRecipient));
+            continue;
+          }
+          const viaChannel = await this.deliverViaChannel(message);
+          if (viaChannel !== null) {
+            delivered.push(viaChannel);
+            continue;
+          }
+          delivered.push(await this.deliver(
+            message,
+            currentRecipient.tmuxSession,
+          ));
         } catch {
           // A failed pane must not prevent later queued messages from delivery.
         }
@@ -301,6 +381,35 @@ export class MessageDelivery {
       }
       return delivered;
     });
+  }
+
+  /**
+   * Attempt vendor-channel delivery. Returns the updated message when the
+   * bridge confirmed the write, or null when no live channel exists (the
+   * caller falls back to tmux). Channel-delivered messages stop at
+   * "injected": the CLI queues the event for its next turn and provides no
+   * application signal, so hive does not claim one — unlike the tmux path,
+   * where paste-and-submit into an idle prompt structurally starts the turn.
+   */
+  private async deliverViaChannel(
+    message: AgentMessage,
+  ): Promise<AgentMessage | null> {
+    if (this.channels === undefined || !this.channels.isLive(message.to)) {
+      return null;
+    }
+    const { content, meta } = formatChannelMessage(message);
+    const confirmed = await this.channels
+      .deliverMessage(message.to, content, meta)
+      .catch(() => false);
+    if (!confirmed) {
+      return null;
+    }
+    const now = new Date().toISOString();
+    const injected = this.db.markMessageDelivered(message.id, now);
+    if (injected === null) {
+      throw new Error(`Message disappeared during delivery: ${message.id}`);
+    }
+    return this.db.transitionMessage(message.id, "injected", now)!;
   }
 
   private async deliver(

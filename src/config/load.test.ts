@@ -47,6 +47,7 @@ describe("config loading", () => {
       headless: false,
       layout: "auto",
       codex: { driver: "tui" },
+      channels: "auto",
     });
     expect(await loadRoutingTable()).toEqual(DEFAULT_ROUTING);
     expect(await loadQuotaConfig()).toMatchObject({
@@ -136,6 +137,7 @@ describe("config loading", () => {
       headless: true,
       layout: "auto",
       codex: { driver: "app-server" },
+      channels: "auto",
     });
     const routing = await loadRoutingTable();
     expect(routing.deep).toEqual({

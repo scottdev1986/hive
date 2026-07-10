@@ -62,6 +62,7 @@ function agent(
     lastEventAt: timestamp,
     capabilityEpoch: 0,
     writeRevoked: false,
+    channelsEnabled: false,
   };
 }
 

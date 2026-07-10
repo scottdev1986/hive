@@ -11,7 +11,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   buildClaudeSpawnCommand,
+  detectClaudeCliVersion,
   writeClaudeAgentConfig,
+  CLAUDE_CHANNELS_FLAG,
+  HIVE_CHANNEL_SERVER_NAME,
 } from "./claude";
 
 let tempRoot = "";
@@ -250,5 +253,118 @@ describe("Claude adapter", () => {
     expect(settings.permissions.defaultMode).toEqual("acceptEdits");
     expect(settings.permissions.allow.includes("Edit")).toEqual(true);
     expect(settings.permissions.allow.includes("Bash(bun test:*)")).toEqual(true);
+  });
+
+  test("registers the statusLine command that forwards subscriber quota", async () => {
+    await writeClaudeAgentConfig(worktreePath, {
+      name: "maya",
+      daemonPort: 4317,
+      readOnly: false,
+    });
+    const settings = JSON.parse(
+      await readFile(
+        join(worktreePath, ".claude", "settings.local.json"),
+        "utf8",
+      ),
+    ) as { statusLine: { type: string; command: string } };
+
+    expect(settings.statusLine).toEqual({
+      type: "command",
+      command: "hive statusline --agent maya --port 4317",
+    });
+  });
+});
+
+describe("Claude Channels", () => {
+  test("adds the development-channels flag naming the hive bridge", () => {
+    expect(buildClaudeSpawnCommand({
+      name: "maya",
+      model: "sonnet",
+      worktreePath: "/tmp/worktree",
+      daemonPort: 4317,
+      readOnly: false,
+      channels: true,
+    })).toEqual([
+      "claude",
+      "--model",
+      "sonnet",
+      // During the research preview a `server:` entry needs the development
+      // flag; hive is not an allowlisted channel plugin.
+      CLAUDE_CHANNELS_FLAG,
+      `server:${HIVE_CHANNEL_SERVER_NAME}`,
+    ]);
+  });
+
+  test("omits the flag entirely when channels are off", () => {
+    expect(buildClaudeSpawnCommand({
+      name: "maya",
+      model: "sonnet",
+      worktreePath: "/tmp/worktree",
+      daemonPort: 4317,
+      readOnly: false,
+    })).toEqual(["claude", "--model", "sonnet"]);
+  });
+
+  test("registers the stdio bridge alongside the HTTP daemon server", async () => {
+    await writeClaudeAgentConfig(worktreePath, {
+      name: "maya",
+      daemonPort: 4317,
+      readOnly: false,
+      channels: true,
+    });
+    const mcp = JSON.parse(
+      await readFile(join(worktreePath, ".mcp.json"), "utf8"),
+    ) as { mcpServers: Record<string, Record<string, unknown>> };
+
+    // Channels only work over stdio, so the HTTP daemon cannot push directly.
+    expect(mcp.mcpServers.hive).toEqual({
+      type: "http",
+      url: "http://127.0.0.1:4317/mcp",
+    });
+    expect(mcp.mcpServers[HIVE_CHANNEL_SERVER_NAME]).toEqual({
+      type: "stdio",
+      command: "hive",
+      args: ["channel-bridge", "--agent", "maya", "--port", "4317"],
+    });
+  });
+
+  test("omits the bridge server when channels are off", async () => {
+    await writeClaudeAgentConfig(worktreePath, {
+      name: "maya",
+      daemonPort: 4317,
+      readOnly: false,
+    });
+    const mcp = JSON.parse(
+      await readFile(join(worktreePath, ".mcp.json"), "utf8"),
+    ) as { mcpServers: Record<string, unknown> };
+    expect(Object.keys(mcp.mcpServers)).toEqual(["hive"]);
+  });
+});
+
+describe("detectClaudeCliVersion", () => {
+  test("reads the version from `claude --version`", async () => {
+    expect(
+      await detectClaudeCliVersion(async () => ({
+        stdout: "2.1.206 (Claude Code)\n",
+        exitCode: 0,
+      })),
+    ).toBe("2.1.206");
+  });
+
+  test("returns null when the CLI is missing, fails, or is unparseable", async () => {
+    expect(
+      await detectClaudeCliVersion(async () => ({ stdout: "", exitCode: 1 })),
+    ).toBeNull();
+    expect(
+      await detectClaudeCliVersion(async () => ({
+        stdout: "unknown",
+        exitCode: 0,
+      })),
+    ).toBeNull();
+    expect(
+      await detectClaudeCliVersion(async () => {
+        throw new Error("ENOENT");
+      }),
+    ).toBeNull();
   });
 });

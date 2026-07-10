@@ -34,6 +34,7 @@ function agent(status: AgentRecord["status"]): AgentRecord {
     lastEventAt: timestamp,
     capabilityEpoch: 0,
     writeRevoked: false,
+    channelsEnabled: false,
   };
 }
 

@@ -72,6 +72,9 @@ export const AgentRecordSchema = z.object({
   lastEventAt: z.iso.datetime(),
   capabilityEpoch: z.number().int().nonnegative().default(0),
   writeRevoked: z.boolean().default(false),
+  // True only when hive launched this agent's CLI with the Channels research
+  // preview enabled; channel delivery is never trusted for other sessions.
+  channelsEnabled: z.boolean().default(false),
 });
 
 export type AgentRecord = z.infer<typeof AgentRecordSchema>;

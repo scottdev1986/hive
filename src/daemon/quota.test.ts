@@ -370,6 +370,7 @@ describe("quota persistence and reservations", () => {
       lastEventAt: "2026-07-09T12:00:00.000Z",
       capabilityEpoch: 0,
       writeRevoked: false,
+      channelsEnabled: false,
     });
     const daemon = new HiveDaemon({
       db,

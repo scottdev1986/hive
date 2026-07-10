@@ -1,4 +1,5 @@
 import {
+  QuotaObservationSchema,
   type QuotaConfig,
   type QuotaLimit,
   type QuotaObservation,
@@ -801,6 +802,70 @@ export class QuotaService {
       await this.cancel(reservation.id, iso(now));
     }
     return expired;
+  }
+
+  /**
+   * Record a Claude Code statusLine subscriber reading (five-hour/weekly used
+   * percentage plus reset timestamps) as a semi-official "reported"
+   * observation. Percentages are mapped onto the configured pool allowance.
+   * Returns null when no pool is configured for the agent's model — the
+   * conservative local estimates then remain the only Claude-side signal —
+   * and never overwrites an equally fresh authoritative feed.
+   */
+  async observeStatusline(
+    agent: { tool: "claude" | "codex"; model: string },
+    report: {
+      fiveHour?: { usedPct: number; resetsAt: string | null };
+      sevenDay?: { usedPct: number; resetsAt: string | null };
+      observedAt: string;
+    },
+  ): Promise<QuotaObservation | null> {
+    if (report.fiveHour === undefined && report.sevenDay === undefined) {
+      return null;
+    }
+    const limit = this.limitFor({ tool: agent.tool, model: agent.model });
+    if (limit === null) return null;
+    const prior = this.ledger.getObservation(limit);
+    if (
+      prior !== null && prior.confidence === "authoritative" &&
+      prior.observedAt >= report.observedAt
+    ) {
+      return null;
+    }
+    const observation = QuotaObservationSchema.parse({
+      provider: limit.provider,
+      account: limit.account,
+      pool: limit.pool,
+      fiveHourUsed: report.fiveHour === undefined
+        ? prior?.fiveHourUsed ?? 0
+        : (report.fiveHour.usedPct / 100) * limit.fiveHourAllowance,
+      weeklyUsed: report.sevenDay === undefined
+        ? prior?.weeklyUsed ?? 0
+        : (report.sevenDay.usedPct / 100) * limit.weeklyAllowance,
+      observedAt: report.observedAt,
+      fiveHourResetAt: report.fiveHour?.resetsAt ??
+        prior?.fiveHourResetAt ?? null,
+      weeklyResetAt: report.sevenDay?.resetsAt ?? prior?.weeklyResetAt ?? null,
+      source: "statusline",
+      confidence: "reported",
+    });
+    // The statusLine refreshes every few hundred milliseconds; unchanged
+    // readings are re-recorded at most every five minutes to keep freshness
+    // current without write and alert churn.
+    if (
+      prior !== null && prior.source === "statusline" &&
+      prior.fiveHourUsed === observation.fiveHourUsed &&
+      prior.weeklyUsed === observation.weeklyUsed &&
+      prior.fiveHourResetAt === observation.fiveHourResetAt &&
+      prior.weeklyResetAt === observation.weeklyResetAt &&
+      new Date(observation.observedAt).getTime() -
+          new Date(prior.observedAt).getTime() < 5 * 60_000
+    ) {
+      return prior;
+    }
+    const value = this.ledger.upsertObservation(observation);
+    await this.alertPool(limit, new Date(report.observedAt));
+    return value;
   }
 
   async observe(observation: QuotaObservation): Promise<QuotaObservation> {

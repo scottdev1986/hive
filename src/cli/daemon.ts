@@ -55,6 +55,7 @@ export async function runDaemon(): Promise<void> {
     terminal,
     onTerminalsChanged: () => layout.requestLayout(),
     onTerminalError: reportTerminalError,
+    channelsEnabled: config.channels === "auto",
     // Even when quota-aware routing is disabled, critical read-only restarts
     // require a durable accounting lifecycle.
     quota,
