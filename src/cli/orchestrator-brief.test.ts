@@ -42,12 +42,11 @@ describe("orchestrator brief", () => {
     expect(ORCHESTRATOR_BRIEF).toContain("never merge or edit files yourself");
   });
 
-  test("builds read-only foreground commands for both tools", () => {
-    expect(buildOrchestratorCommand("claude", 4317)).toEqual([
-      "claude",
-      "--append-system-prompt",
-      ORCHESTRATOR_BRIEF,
-    ]);
+  test("builds a read-only Claude command with the required Channels bridge", () => {
+    const claude = buildOrchestratorCommand("claude", 4317);
+    expect(claude).toContain("--dangerously-load-development-channels");
+    expect(claude).toContain("server:hive-channel");
+    expect(claude.at(-1)).toEqual(ORCHESTRATOR_BRIEF);
     expect(buildOrchestratorCommand("codex", 4317)).toEqual([
       "codex",
       "-c",
@@ -58,20 +57,14 @@ describe("orchestrator brief", () => {
     ]);
   });
 
-  test("appends a supplied memory index to the system prompt for both tools", () => {
+  test("appends a supplied memory index to the root prompt", () => {
     const index = "Hive memory index — durable facts.\n- [repo] x (2026-06-01): note";
-    expect(buildOrchestratorCommand("claude", 4317, index)).toEqual([
-      "claude",
-      "--append-system-prompt",
+    expect(buildOrchestratorCommand("claude", 4317, index).at(-1)).toEqual(
       `${ORCHESTRATOR_BRIEF}\n\n${index}`,
-    ]);
+    );
     const codexCommand = buildOrchestratorCommand("codex", 4317, index);
     expect(codexCommand.at(-1)).toEqual(`${ORCHESTRATOR_BRIEF}\n\n${index}`);
-    expect(buildOrchestratorCommand("claude", 4317)).toEqual([
-      "claude",
-      "--append-system-prompt",
-      ORCHESTRATOR_BRIEF,
-    ]);
+    expect(buildOrchestratorCommand("claude", 4317).at(-1)).toEqual(ORCHESTRATOR_BRIEF);
   });
 
   test("runs the root in the fixed attachable tmux session used for wakes", () => {

@@ -316,7 +316,7 @@ describe("MessageDelivery", () => {
       const report = "Task complete.\nRoot cause: enter race.\nBranch: hive/maya-delivery";
       const queued = await delivery.send("maya", "orchestrator", report);
       expect(queued.deliveredAt).toEqual(null);
-      expect(tmux.calls).toHaveLength(1);
+      expect(tmux.calls).toEqual([]);
 
       const inbox = await delivery.orchestratorInbox();
       expect(inbox.length).toEqual(1);
@@ -339,7 +339,7 @@ describe("MessageDelivery", () => {
         "orchestrator",
         "Still reachable.",
       );
-      expect(db.getMessage(queued.id)?.deliveredAt).not.toEqual(null);
+      expect(db.getMessage(queued.id)?.deliveredAt).toEqual(null);
     } finally {
       db.close();
     }

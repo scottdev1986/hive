@@ -224,8 +224,11 @@ describe("priority control messages", () => {
       expect(await recoveredDelivery.alertExpiredControls(future)).toEqual(1);
       expect(await recoveredDelivery.alertExpiredControls(future)).toEqual(0);
       expect(db.getMessage(urgent.id)?.alertAt).not.toEqual(null);
-      expect(sender.calls.some(([session, text]) =>
-        session === orchestratorTmuxSession() && text.includes("missed its acknowledgement deadline")
+      expect(sender.calls).toEqual([]);
+      expect(db.listMessages().some((message) =>
+        message.to === "orchestrator" &&
+        message.body.includes("missed its acknowledgement deadline") &&
+        message.deliveredAt === null
       )).toEqual(true);
     } finally {
       db.close();

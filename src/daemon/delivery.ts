@@ -17,13 +17,6 @@ import {
 
 export interface TmuxSender {
   sendMessage(session: string, text: string): Promise<void>;
-  /**
-   * A root pane is also a human-owned composer. Unlike an agent pane, it must
-   * be observed before Hive pastes a submitted wake into it. Undefined keeps
-   * lightweight test/native senders compatible; the production sender always
-   * implements the check.
-   */
-  isComposerEmpty?(session: string): Promise<boolean>;
 }
 
 /**
@@ -97,29 +90,12 @@ const DEFAULT_URGENT_DEADLINE_MS = 30_000;
 const DEFAULT_CRITICAL_DEADLINE_MS = 10_000;
 
 export class BunTmuxSender implements TmuxSender {
-  constructor(
-    private readonly tmux: Pick<TmuxAdapter, "sendKeys" | "capturePane"> =
-      new TmuxAdapter(),
-  ) {}
+  constructor(private readonly tmux: Pick<TmuxAdapter, "sendKeys"> = new TmuxAdapter()) {}
 
   async sendMessage(session: string, text: string): Promise<void> {
     await this.tmux.sendKeys(session, text);
   }
 
-  async isComposerEmpty(session: string): Promise<boolean> {
-    return isEmptyTmuxComposer(await this.tmux.capturePane(session));
-  }
-}
-
-/**
- * Codex and Claude render an empty composer as a final prompt-only line. A
- * prompt followed by any non-whitespace is human draft text and is unsafe to
- * paste into; an unrecognised pane is unsafe too. This deliberately biases
- * toward deferral rather than guessing and submitting a human turn.
- */
-export function isEmptyTmuxComposer(pane: string): boolean {
-  const line = pane.replace(/\n+$/, "").split("\n").at(-1) ?? "";
-  return /^\s*(?:›|>)\s*$/.test(line);
 }
 
 export class MessageDelivery {
@@ -386,35 +362,38 @@ export class MessageDelivery {
   }
 
   async wakeOrchestrator(): Promise<AgentMessage[]> {
-    const session = orchestratorTmuxSession();
-    return this.withSessionLock(session, async () => {
-      // The root pane belongs to a human as well as the orchestrator. Never
-      // paste and submit over a draft; leave the durable row queued and let a
-      // later maintenance boundary try again after the composer is empty.
-      if (this.tmux.isComposerEmpty !== undefined) {
-        const empty = await this.tmux.isComposerEmpty(session).catch(() => false);
-        if (!empty) return [];
-      }
+    return this.withSessionLock(orchestratorTmuxSession(), async () => {
       const delivered: AgentMessage[] = [];
       for (const message of this.db.getUndeliveredMessages(ORCHESTRATOR_NAME)) {
-        await this.tmux.sendMessage(
-          session,
-          formatOrchestratorWake(createOrchestratorEnvelope(message)),
-        );
-        const acknowledged = this.db.acknowledgeMessage(
-          message.id,
-          new Date().toISOString(),
-        );
-        if (acknowledged !== null) {
-          delivered.push(this.db.transitionMessage(
-            acknowledged.id,
-            "applied",
-            acknowledged.deliveredAt!,
-          )!);
-        }
+        const injected = await this.deliverRootViaChannel(message);
+        if (injected !== null) delivered.push(injected);
       }
       return delivered;
     });
+  }
+
+  private async deliverRootViaChannel(
+    message: AgentMessage,
+  ): Promise<AgentMessage | null> {
+    if (this.channels === undefined || !this.channels.isLive(ORCHESTRATOR_NAME)) {
+      return null;
+    }
+    const confirmed = await this.channels.deliverMessage(
+      ORCHESTRATOR_NAME,
+      formatOrchestratorWake(createOrchestratorEnvelope(message)),
+      {
+        sender: message.from,
+        message_id: message.id,
+        sequence: String(message.sequence),
+      },
+    ).catch(() => false);
+    if (!confirmed) return null;
+    const now = new Date().toISOString();
+    const injected = this.db.markMessageDelivered(message.id, now);
+    if (injected === null) {
+      throw new Error(`Message disappeared during root channel delivery: ${message.id}`);
+    }
+    return this.db.transitionMessage(message.id, "injected", now)!;
   }
 
   /**

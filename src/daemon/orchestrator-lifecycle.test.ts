@@ -10,8 +10,8 @@ import {
 } from "../schemas";
 import { HiveDatabase } from "./db";
 import {
-  isEmptyTmuxComposer,
   MessageDelivery,
+  type ChannelDeliverer,
   type TmuxSender,
 } from "./delivery";
 import {
@@ -21,7 +21,6 @@ import {
   orchestratorTmuxSession,
 } from "./orchestrator-lifecycle";
 import { HiveDaemon } from "./server";
-import { actingAs } from "./testing";
 import type { Spawner } from "./spawner";
 
 const home = mkdtempSync(join(tmpdir(), "hive-orchestrator-lifecycle-"));
@@ -52,14 +51,24 @@ function agent(overrides: Partial<AgentRecord> = {}): AgentRecord {
 
 class RecordingSender implements TmuxSender {
   readonly calls: Array<[string, string]> = [];
-  composerEmpty = true;
-
-  async isComposerEmpty(): Promise<boolean> {
-    return this.composerEmpty;
-  }
 
   async sendMessage(session: string, text: string): Promise<void> {
     this.calls.push([session, text]);
+  }
+}
+
+class RecordingChannel implements ChannelDeliverer {
+  readonly calls: Array<{ content: string; meta: Record<string, string> }> = [];
+  live = true;
+  confirmed = true;
+  isLive(): boolean { return this.live; }
+  async deliverMessage(
+    _agent: string,
+    content: string,
+    meta: Record<string, string>,
+  ): Promise<boolean> {
+    this.calls.push({ content, meta });
+    return this.confirmed;
   }
 }
 
@@ -89,12 +98,6 @@ function textValue(result: Awaited<ReturnType<Client["callTool"]>>): unknown {
 }
 
 describe("event-driven orchestrator lifecycle", () => {
-  test("recognizes only an empty interactive composer as safe to inject", () => {
-    expect(isEmptyTmuxComposer("previous turn\n› \n")).toEqual(true);
-    expect(isEmptyTmuxComposer("previous turn\n› ship the patch")).toEqual(false);
-    expect(isEmptyTmuxComposer("provider output without a composer")).toEqual(false);
-  });
-
   test("stays idle and does not wake for ordinary agent state changes", async () => {
     const db = new HiveDatabase(join(home, "idle.db"));
     const sender = new RecordingSender();
@@ -124,48 +127,32 @@ describe("event-driven orchestrator lifecycle", () => {
     }
   });
 
-  test("an agent message wakes the reserved orchestrator destination", async () => {
+  test("an agent message reaches the root over Channels without touching tmux", async () => {
     const db = new HiveDatabase(join(home, "wake.db"));
     const sender = new RecordingSender();
-    const daemon = new HiveDaemon({
-      db,
-      spawner: unusedSpawner,
-      tmuxSender: sender,
-    });
-    const transport = new StreamableHTTPClientTransport(
-      new URL("http://hive/mcp"),
-      // hive_send is subject-bound to `from`, so the agent speaks, not the root.
-      { fetch: actingAs(daemon, "maya", "writer") },
-    );
-    const client = new Client({ name: "wake-test", version: "1.0.0" });
+    const channel = new RecordingChannel();
+    const delivery = new MessageDelivery(db, sender, undefined, undefined, channel);
     try {
-      await client.connect(transport);
-      const message = textValue(await client.callTool({
-        name: "hive_send",
-        arguments: {
-          from: "maya",
-          to: ORCHESTRATOR_NAME,
-          body: "The implementation is ready for review.",
-        },
-      })) as { deliveredAt: string | null };
+      const message = await delivery.send(
+        "maya", ORCHESTRATOR_NAME, "The implementation is ready for review.",
+      );
 
       expect(message.deliveredAt).not.toEqual(null);
-      expect(sender.calls).toHaveLength(1);
-      expect(sender.calls[0]?.[0]).toEqual(orchestratorTmuxSession());
-      expect(sender.calls[0]?.[1]).toContain('"kind":"hive.message"');
-      expect(sender.calls[0]?.[1]).toContain('"from":"maya"');
-      expect(sender.calls[0]?.[1]).not.toContain("Build the event bridge");
+      expect(message.state).toEqual("injected");
+      expect(sender.calls).toEqual([]);
+      expect(channel.calls[0]?.content).toContain('"kind":"hive.message"');
+      expect(channel.calls[0]?.content).toContain('"from":"maya"');
     } finally {
-      await client.close().catch(() => undefined);
       db.close();
     }
   });
 
-  test("defers a root wake while the human has draft text and preserves it", async () => {
-    const db = new HiveDatabase(join(home, "draft-is-preserved.db"));
+  test("keeps a root report durable until its verified channel is live", async () => {
+    const db = new HiveDatabase(join(home, "root-channel-unavailable.db"));
     const sender = new RecordingSender();
-    sender.composerEmpty = false;
-    const delivery = new MessageDelivery(db, sender);
+    const channel = new RecordingChannel();
+    channel.live = false;
+    const delivery = new MessageDelivery(db, sender, undefined, undefined, channel);
     try {
       const queued = await delivery.send(
         "maya",
@@ -175,28 +162,27 @@ describe("event-driven orchestrator lifecycle", () => {
 
       expect(sender.calls).toEqual([]);
       expect(db.getMessage(queued.id)?.deliveredAt).toEqual(null);
-      // The sender's captured composer remains untouched: no paste/Enter was
-      // attempted while it reported a human draft.
-      expect(sender.composerEmpty).toEqual(false);
     } finally {
       db.close();
     }
   });
 
-  test("delivers a deferred root envelope once the composer becomes empty", async () => {
-    const db = new HiveDatabase(join(home, "deferred-eventual-delivery.db"));
+  test("delivers a durable root report once its channel registers", async () => {
+    const db = new HiveDatabase(join(home, "root-channel-eventual-delivery.db"));
     const sender = new RecordingSender();
-    sender.composerEmpty = false;
-    const delivery = new MessageDelivery(db, sender);
+    const channel = new RecordingChannel();
+    channel.live = false;
+    const delivery = new MessageDelivery(db, sender, undefined, undefined, channel);
     try {
       const queued = await delivery.send("maya", ORCHESTRATOR_NAME, "Ready.");
       expect(db.getMessage(queued.id)?.deliveredAt).toEqual(null);
 
-      sender.composerEmpty = true;
+      channel.live = true;
       const delivered = await delivery.wakeOrchestrator();
 
       expect(delivered).toHaveLength(1);
-      expect(sender.calls).toHaveLength(1);
+      expect(sender.calls).toEqual([]);
+      expect(channel.calls).toHaveLength(1);
       expect(db.getMessage(queued.id)?.deliveredAt).not.toEqual(null);
     } finally {
       db.close();
@@ -234,7 +220,8 @@ describe("event-driven orchestrator lifecycle", () => {
   test("orders and deduplicates concurrent root messages by durable insertion", async () => {
     const db = new HiveDatabase(join(home, "ordering.db"));
     const sender = new RecordingSender();
-    const delivery = new MessageDelivery(db, sender);
+    const channel = new RecordingChannel();
+    const delivery = new MessageDelivery(db, sender, undefined, undefined, channel);
     try {
       const delivered = await Promise.all([
         delivery.send("maya", ORCHESTRATOR_NAME, "first"),
@@ -242,8 +229,8 @@ describe("event-driven orchestrator lifecycle", () => {
         delivery.send("nina", ORCHESTRATOR_NAME, "third"),
       ]);
 
-      expect(sender.calls.map((call) =>
-        JSON.parse(call[1].slice(3)) as { body: string }
+      expect(channel.calls.map((call) =>
+        JSON.parse(call.content.slice(3)) as { body: string }
       ).map((envelope) => envelope.body)).toEqual([
         "first",
         "second",
@@ -254,7 +241,8 @@ describe("event-driven orchestrator lifecycle", () => {
         true,
       );
       expect(await delivery.wakeOrchestrator()).toEqual([]);
-      expect(sender.calls).toHaveLength(3);
+      expect(sender.calls).toEqual([]);
+      expect(channel.calls).toHaveLength(3);
     } finally {
       db.close();
     }
@@ -263,7 +251,8 @@ describe("event-driven orchestrator lifecycle", () => {
   test("bounds injected context and leaves the full report behind a reference", async () => {
     const db = new HiveDatabase(join(home, "bounded.db"));
     const sender = new RecordingSender();
-    const delivery = new MessageDelivery(db, sender);
+    const channel = new RecordingChannel();
+    const delivery = new MessageDelivery(db, sender, undefined, undefined, channel);
     const body = `${'"\\n'.repeat(20_000)}${"🚀".repeat(20_000)}`;
     try {
       const stored = await delivery.send("maya", ORCHESTRATOR_NAME, body);
@@ -276,7 +265,8 @@ describe("event-driven orchestrator lifecycle", () => {
       expect(envelope.truncated).toEqual(true);
       expect(envelope.ref).toContain("hive_read_message");
       expect(delivery.readOrchestratorMessage(stored.id)?.body).toEqual(body);
-      expect(sender.calls[0]?.[1]).toEqual(wake);
+      expect(sender.calls).toEqual([]);
+      expect(channel.calls[0]?.content).toEqual(wake);
     } finally {
       db.close();
     }
@@ -295,9 +285,16 @@ describe("event-driven orchestrator lifecycle", () => {
       tmuxSession: "hive-sam",
     }));
     const listSpy = spyOn(db, "listAgents");
+    const capability = daemon.issueCredential("test-orchestrator", "operator", 0);
     const transport = new StreamableHTTPClientTransport(
       new URL("http://hive/mcp"),
-      { fetch: actingAs(daemon, "orchestrator", "orchestrator") },
+      {
+        fetch: (input, init) => {
+          const headers = new Headers(init?.headers);
+          headers.set("authorization", `Bearer ${capability}`);
+          return daemon.fetch(new Request(input, { ...init, headers }));
+        },
+      },
     );
     const client = new Client({ name: "status-test", version: "1.0.0" });
     try {

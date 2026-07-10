@@ -6,7 +6,7 @@ import {
   parseCliVersion,
   versionAtLeast,
 } from "./channels";
-import type { AgentRecord } from "../schemas";
+import { ORCHESTRATOR_NAME, type AgentRecord } from "../schemas";
 
 const timestamp = "2026-07-09T12:00:00.000Z";
 
@@ -65,6 +65,12 @@ describe("version gates", () => {
 });
 
 describe("ChannelRegistry.register", () => {
+  test("accepts the reserved root without an agent row", () => {
+    const registry = new ChannelRegistry(new FakeAgents(null));
+    expect(registry.register(ORCHESTRATOR_NAME, "claude-code", "2.1.206"))
+      .toMatchObject({ enabled: true, retryable: false });
+    expect(registry.isLive(ORCHESTRATOR_NAME)).toEqual(true);
+  });
   test("accepts a live channels-enabled agent on a supported CLI", () => {
     const registry = new ChannelRegistry(new FakeAgents(agent()));
     expect(register(registry)).toEqual({

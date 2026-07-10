@@ -5,8 +5,11 @@ import { ITerm2Adapter } from "../adapters/iterm2";
 import { TerminalAppAdapter } from "../adapters/terminal-app";
 import { TmuxAdapter } from "../adapters/tmux";
 import {
+  buildClaudeSpawnCommand,
+  detectClaudeCliVersion,
   writeClaudeAgentConfig,
 } from "../adapters/tools/claude";
+import { CHANNELS_MIN_VERSION, versionAtLeast } from "../daemon/channels";
 import {
   writeCodexAgentConfig,
 } from "../adapters/tools/codex";
@@ -103,6 +106,7 @@ export async function prepareOrchestratorConfig(
       daemonPort: port,
       name: "orchestrator",
       readOnly: true,
+      channels: true,
     });
     return;
   }
@@ -118,7 +122,18 @@ export function buildOrchestratorCommand(
     ? ORCHESTRATOR_BRIEF
     : `${ORCHESTRATOR_BRIEF}\n\n${memoryIndex}`;
   if (tool === "claude") {
-    return ["claude", "--append-system-prompt", brief];
+    return [
+      ...buildClaudeSpawnCommand({
+        name: "orchestrator",
+        model: "default",
+        worktreePath: process.cwd(),
+        daemonPort: port,
+        readOnly: true,
+        channels: true,
+      }),
+      "--append-system-prompt",
+      brief,
+    ];
   }
   return [
     "codex",
@@ -281,6 +296,17 @@ export async function launchOrchestrator(
   spawn: OrchestratorSpawn = spawnOrchestrator,
   captureTerminal: OrchestratorTerminalCapture = captureOrchestratorTerminal,
 ): Promise<number> {
+  if (tool !== "claude") {
+    throw new Error(
+      "The Hive orchestrator currently requires Claude Channels; Codex root delivery via app-server + --remote is planned.",
+    );
+  }
+  const version = await detectClaudeCliVersion();
+  if (version === null || !versionAtLeast(version, CHANNELS_MIN_VERSION)) {
+    throw new Error(
+      `The Hive orchestrator requires Claude Channels (Claude >= ${CHANNELS_MIN_VERSION}).`,
+    );
+  }
   const snapshots = tool === "claude"
     ? await Promise.all(claudeConfigPaths(cwd).map(snapshotFile))
     : [];

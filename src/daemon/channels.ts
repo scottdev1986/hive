@@ -1,4 +1,4 @@
-import type { AgentRecord } from "../schemas";
+import { ORCHESTRATOR_NAME, type AgentRecord } from "../schemas";
 
 // Claude Code gained Channels (research preview) in 2.1.80 and the
 // claude/channel/permission relay in 2.1.81. Older CLIs silently drop the
@@ -125,6 +125,29 @@ export class ChannelRegistry {
           `${clientName} ${clientVersion} predates Channels (${CHANNELS_MIN_VERSION})`,
       };
     }
+    // The root is not an agent row, but it is launched by Hive with the same
+    // verified Claude Channels bridge. It is the one interactive recipient
+    // that must never fall back to pane input.
+    if (agentName === ORCHESTRATOR_NAME) {
+      const existing = this.connections.get(agentName);
+      if (existing !== undefined) this.disconnect(agentName, existing);
+      this.connections.set(agentName, {
+        clientVersion,
+        lastPollAt: this.now(),
+        queue: [],
+        waiter: null,
+        waiterTimer: null,
+        pendingAcks: new Map(),
+      });
+      return {
+        enabled: true,
+        retryable: false,
+        permissionRelay: versionAtLeast(
+          clientVersion,
+          PERMISSION_RELAY_MIN_VERSION,
+        ),
+      };
+    }
     const agent = this.db.getAgentByName(agentName);
     if (agent !== null && !agent.channelsEnabled) {
       return {
@@ -176,6 +199,7 @@ export class ChannelRegistry {
     ) {
       return false;
     }
+    if (agentName === ORCHESTRATOR_NAME) return true;
     const agent = this.db.getAgentByName(agentName);
     return agent !== null && agent.channelsEnabled &&
       LIVE_STATUSES.has(agent.status);

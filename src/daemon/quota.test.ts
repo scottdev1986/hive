@@ -632,9 +632,9 @@ describe("quota telemetry and alerts", () => {
     expect(db.listMessages()).toMatchObject([{
       from: "hive-quota",
       to: "orchestrator",
-      deliveredAt: expect.any(String),
+      deliveredAt: null,
     }]);
-    expect(sender.calls[0]).toContain('"kind":"hive.message"');
+    expect(sender.calls).toEqual([]);
     db.close();
   });
 
