@@ -1064,6 +1064,9 @@ describe("HiveSpawner wiring", () => {
     expect(tmux.sessions[0]?.[2]).toContain(
       "'--model' 'claude-fable-5'",
     );
+    expect(tmux.sessions[0]?.[2]).toContain(
+      "'server:hive-channel' '--' 'You are maya",
+    );
     expect(tmux.sessions[0]?.[2]).toContain("You are maya");
     // Every writer agent carries the landing protocol for its own branch.
     expect(tmux.sessions[0]?.[2]).toContain(

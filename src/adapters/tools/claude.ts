@@ -147,6 +147,10 @@ export function buildClaudeSpawnCommand(
     command.push(
       CLAUDE_CHANNELS_FLAG,
       `server:${HIVE_CHANNEL_SERVER_NAME}`,
+      // This option is variadic (`<channels...>`) in Claude 2.1.206. Without
+      // a terminator it consumes Hive's positional task prompt and rejects
+      // the prompt as an untagged channel entry.
+      "--",
     );
   }
   return command;

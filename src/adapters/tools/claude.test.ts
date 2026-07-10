@@ -357,6 +357,25 @@ describe("Claude Channels", () => {
       // flag; hive is not an allowlisted channel plugin.
       CLAUDE_CHANNELS_FLAG,
       `server:${HIVE_CHANNEL_SERVER_NAME}`,
+      "--",
+    ]);
+  });
+
+  test("terminates the variadic Channels option before an appended prompt", () => {
+    const command = buildClaudeSpawnCommand({
+      name: "maya",
+      model: "sonnet",
+      worktreePath: "/tmp/worktree",
+      daemonPort: 4317,
+      readOnly: false,
+      channels: true,
+    });
+    command.push("SANITIZED REVIEW PROMPT");
+
+    expect(command.slice(-3)).toEqual([
+      `server:${HIVE_CHANNEL_SERVER_NAME}`,
+      "--",
+      "SANITIZED REVIEW PROMPT",
     ]);
   });
 
