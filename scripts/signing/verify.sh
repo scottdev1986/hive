@@ -15,8 +15,12 @@
 #                        which only holds once Apple has notarized it. This is
 #                        what CI passes.
 #
-# Standalone CLI binaries cannot be stapled, so their notarization is proven by
-# an online `spctl --assess`; only the .app is checked for a stapled ticket.
+# Standalone CLI binaries cannot be stapled, and `spctl --assess --type execute`
+# rejects ANY bare Mach-O — notarized or not — with "does not seem to be an app"
+# (verified against Anthropic's and Docker's notarized CLIs). Their notarization
+# is instead proven by `codesign --check-notarization -R="notarized"`, which
+# looks the CDHash up against Apple's ticket service online. Only the .app is a
+# bundle, so only it gets `spctl --assess` and a stapled-ticket check.
 set -eu
 
 DIST="${1:?usage: verify.sh <dist-dir> [--require-notarization]}"
@@ -39,22 +43,34 @@ verify_signature() {
     || fail "$path is not signed with the hardened runtime"
 }
 
-# spctl --assess: what Gatekeeper itself decides. Only meaningful once notarized.
+# spctl --assess: what Gatekeeper itself decides. Bundles only — it rejects any
+# bare Mach-O regardless of notarization, so this is reserved for the .app.
 assess_gatekeeper() {
   path="$1"
   note "spctl --assess --type execute $path"
-  if spctl --assess --type execute --verbose=4 "$path" 2>&1 | grep -q "accepted"; then
+  out="$(spctl --assess --type execute --verbose=4 "$path" 2>&1)" || true
+  if printf '%s' "$out" | grep -q "accepted"; then
     note "$path accepted by Gatekeeper"
   else
+    printf '%s\n' "$out" >&2
     fail "$path was not accepted by Gatekeeper (spctl --assess rejected it)"
   fi
+}
+
+# The notarization proof for a standalone binary: codesign resolves its CDHash
+# against Apple's ticket service. Rejects a signed-but-unnotarized binary.
+check_notarized_binary() {
+  path="$1"
+  note "codesign --check-notarization $path"
+  codesign --verify --check-notarization -R="notarized" --verbose=2 "$path" \
+    || fail "$path has no notarization ticket (codesign --check-notarization rejected it)"
 }
 
 for arch in arm64 x64; do
   bin="$DIST/hive-darwin-$arch"
   [ -f "$bin" ] || fail "missing $bin"
   verify_signature "$bin"
-  [ "$REQUIRE_NOTARIZATION" = 1 ] && assess_gatekeeper "$bin"
+  [ "$REQUIRE_NOTARIZATION" = 1 ] && check_notarized_binary "$bin"
 done
 
 # Prove the arm64 slice still runs after signing — a hardened-runtime crash from

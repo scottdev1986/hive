@@ -214,9 +214,11 @@ jobs:
           HIVE_RELEASE_PRIVATE_KEY: ${{ secrets.HIVE_RELEASE_PRIVATE_KEY }}
         run: bun run scripts/signing/sign-manifest.ts dist/hive-release.json
 
-      # The Gatekeeper gate. codesign --verify --strict and spctl --assess on the
-      # exact bytes a user downloads; any signing defect exits non-zero here,
-      # before the tag exists, so a broken signature never burns a version.
+      # The Gatekeeper gate, on the exact bytes a user downloads: codesign
+      # --verify --strict everywhere, codesign --check-notarization on the CLI
+      # slices (spctl rejects any bare Mach-O, notarized or not), and spctl
+      # --assess plus a stapled ticket on the .app. Any defect exits non-zero
+      # here, before the tag exists, so a broken signature never burns a version.
       - name: Verify signing and notarization
         if: steps.plan.outputs.action == 'release' && steps.cfg.outputs.apple == 'true'
         run: scripts/signing/verify.sh dist --require-notarization
