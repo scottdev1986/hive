@@ -94,9 +94,10 @@ final class TerminalPaneView: NSView, LocalProcessTerminalViewDelegate {
     private(set) var childRunning = false
     var onChildExit: ((Int32?) -> Void)?
 
-    init(tmuxSession: String? = nil) {
+    init(tmuxSession: String? = nil, allowsMouseReporting: Bool = true) {
         tmuxScroller = tmuxSession.map(TmuxScrollController.init)
         super.init(frame: .zero)
+        terminal.allowMouseReporting = allowsMouseReporting
         terminal.processDelegate = self
         terminal.translatesAutoresizingMaskIntoConstraints = false
         addSubview(terminal)

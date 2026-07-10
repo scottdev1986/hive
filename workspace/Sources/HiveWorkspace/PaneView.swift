@@ -23,10 +23,13 @@ final class PaneView: NSView {
     private var pulsing = false
 
     init(paneID: PaneID, title: String, tmuxSession: String? = nil,
+         allowsMouseReporting: Bool = true,
          dispatch: @escaping (WorkspaceCommand) -> Void) {
         self.paneID = paneID
         self.dispatch = dispatch
-        self.contentView = TerminalPaneView(tmuxSession: tmuxSession)
+        self.contentView = TerminalPaneView(
+            tmuxSession: tmuxSession,
+            allowsMouseReporting: allowsMouseReporting)
         super.init(frame: .zero)
         wantsLayer = true
         setup(title: title)
