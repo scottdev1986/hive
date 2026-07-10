@@ -4,7 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentRecord } from "../schemas";
 import { HiveDatabase } from "./db";
-import { MessageDelivery, type TmuxSender } from "./delivery";
+import {
+  MessageDelivery,
+  type NativeAgentControl,
+  type TmuxSender,
+} from "./delivery";
 import { HiveDaemon } from "./server";
 import type { Spawner } from "./spawner";
 
@@ -81,6 +85,26 @@ class UnavailableTmuxSender implements TmuxSender {
   }
 }
 
+class RecordingNativeControl implements NativeAgentControl {
+  readonly calls: Array<{ agent: string; text: string; interrupt: boolean }> = [];
+
+  hasAgent(agentName: string): boolean {
+    return agentName === "maya";
+  }
+
+  async deliver(
+    value: AgentRecord,
+    text: string,
+    options: { interrupt?: boolean } = {},
+  ): Promise<void> {
+    this.calls.push({
+      agent: value.name,
+      text,
+      interrupt: options.interrupt === true,
+    });
+  }
+}
+
 const unusedSpawner: Spawner = {
   async spawn() {
     throw new Error("not used");
@@ -88,6 +112,44 @@ const unusedSpawner: Spawner = {
 };
 
 describe("MessageDelivery", () => {
+  test("steers a working native Codex session and interrupts it for urgent control", async () => {
+    const db = new HiveDatabase(join(home, "native-codex.db"));
+    const tmux = new RecordingTmuxSender();
+    const native = new RecordingNativeControl();
+    const delivery = new MessageDelivery(db, tmux, undefined, native);
+    try {
+      db.insertAgent(agent("working"));
+      const normal = await delivery.send(
+        "orchestrator",
+        "maya",
+        "Focus on the failing test.",
+      );
+      const urgent = await delivery.send(
+        "orchestrator",
+        "maya",
+        "Pause and report current state.",
+        { priority: "urgent" },
+      );
+      expect(native.calls).toEqual([
+        {
+          agent: "maya",
+          text: "📨 message from orchestrator: Focus on the failing test.",
+          interrupt: false,
+        },
+        {
+          agent: "maya",
+          text: expect.stringContaining("URGENT HIVE CONTROL"),
+          interrupt: true,
+        },
+      ]);
+      expect(normal.state).toEqual("applied");
+      expect(urgent.state).toEqual("injected");
+      expect(tmux.calls).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
+
   test("stores and immediately delivers to an idle agent", async () => {
     const db = new HiveDatabase(join(home, "immediate.db"));
     const tmux = new RecordingTmuxSender();

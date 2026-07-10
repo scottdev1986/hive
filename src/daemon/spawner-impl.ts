@@ -13,6 +13,7 @@ import {
   buildCodexSpawnCommand,
   writeCodexAgentConfig,
 } from "../adapters/tools/codex";
+import type { CodexAppServerManager } from "../adapters/tools/codex-app-server";
 import { provisionSkills } from "../adapters/skills";
 import { resolveConcreteModel } from "../adapters/tools/models";
 import {
@@ -120,6 +121,10 @@ export interface HiveSpawnerDependencies {
    * process itself as failed. */
   onTerminalError?: (message: string) => void;
   quota?: QuotaService;
+  codexAppServer?: Pick<
+    CodexAppServerManager,
+    "isAvailable" | "buildHostCommand" | "startAgent" | "disconnect"
+  >;
 }
 
 const isLive = (agent: AgentRecord): boolean =>
@@ -323,28 +328,70 @@ export class HiveSpawner implements Spawner {
           name: agent.name,
           readOnly,
         });
-        argv = buildCodexSpawnCommand({
-          daemonPort: this.dependencies.port,
-          effort: identity.effort,
-          model: identity.model,
-          name: agent.name,
-          readOnly,
-          worktreePath: agent.worktreePath,
-        });
+        const useAppServer = await this.dependencies.codexAppServer?.isAvailable() ??
+          false;
+        if (useAppServer) {
+          argv = this.dependencies.codexAppServer!.buildHostCommand(
+            prepared.record,
+            this.dependencies.port,
+          );
+        } else {
+          argv = buildCodexSpawnCommand({
+            daemonPort: this.dependencies.port,
+            effort: identity.effort,
+            model: identity.model,
+            name: agent.name,
+            readOnly,
+            worktreePath: agent.worktreePath,
+          });
+        }
       }
-      argv.push([
+      const controlPrompt = [
         `CRITICAL HIVE CONTROL ${message.id} (capability epoch ${message.capabilityEpoch}).`,
         message.body,
         "Your prior process was stopped and its worktree was preserved.",
         "This process is read-only. Do not resume implementation or landing.",
         `Acknowledge with hive_ack_message using agent=${JSON.stringify(agent.name)}, messageId=${JSON.stringify(message.id)}, capabilityEpoch=${message.capabilityEpoch}.`,
         `Previous assignment for context only: ${agent.taskDescription}`,
-      ].join("\n\n"));
+      ].join("\n\n");
+      const nativeCodex = identity.tool === "codex" &&
+        this.dependencies.codexAppServer !== undefined &&
+        argv[1] === "codex-app-server-host";
+      if (!nativeCodex) argv.push(controlPrompt);
       await this.dependencies.tmux.newSession(
         agent.tmuxSession,
         agent.worktreePath,
         shellJoin(argv),
       );
+      if (nativeCodex) {
+        try {
+          await this.dependencies.codexAppServer!.startAgent(
+            prepared.record,
+            controlPrompt,
+            readOnly,
+            identity.tool === "codex" ? identity.effort : "medium",
+          );
+        } catch {
+          this.dependencies.codexAppServer!.disconnect(agent.name);
+          await this.dependencies.tmux.killSession(agent.tmuxSession, {
+            ignoreMissing: true,
+          });
+          const fallback = buildCodexSpawnCommand({
+            daemonPort: this.dependencies.port,
+            effort: identity.tool === "codex" ? identity.effort : "medium",
+            model: identity.model,
+            name: agent.name,
+            readOnly,
+            worktreePath: agent.worktreePath,
+          });
+          fallback.push(controlPrompt);
+          await this.dependencies.tmux.newSession(
+            agent.tmuxSession,
+            agent.worktreePath,
+            shellJoin(fallback),
+          );
+        }
+      }
       const failureReason = await this.monitorControlReadiness(prepared.record);
       if (failureReason !== null) throw new Error(failureReason);
       this.dependencies.quota.markStarted(reservationId);
@@ -604,22 +651,69 @@ export class HiveSpawner implements Spawner {
           name,
           readOnly: false,
         });
-        argv = buildCodexSpawnCommand({
-          daemonPort: this.dependencies.port,
-          effort: configuredRoute.codex.effort ?? "medium",
-          model,
-          name,
-          readOnly: false,
-          worktreePath: worktree.path,
-        });
+        const useAppServer = await this.dependencies.codexAppServer?.isAvailable() ??
+          false;
+        argv = useAppServer
+          ? this.dependencies.codexAppServer!.buildHostCommand(
+              record,
+              this.dependencies.port,
+            )
+          : buildCodexSpawnCommand({
+              daemonPort: this.dependencies.port,
+              effort: configuredRoute.codex.effort ?? "medium",
+              model,
+              name,
+              readOnly: false,
+              worktreePath: worktree.path,
+            });
       }
-      argv.push(prompt);
+      const nativeCodex = tool === "codex" &&
+        this.dependencies.codexAppServer !== undefined &&
+        argv[1] === "codex-app-server-host";
+      if (!nativeCodex) argv.push(prompt);
 
       await this.dependencies.tmux.newSession(
         record.tmuxSession,
         worktree.path,
         shellJoin(argv),
       );
+      if (nativeCodex) {
+        try {
+          await this.dependencies.codexAppServer!.startAgent(
+            record,
+            prompt,
+            false,
+            configuredRoute.codex.effort ?? "medium",
+          );
+        } catch {
+          // The binary advertised app-server support but the control process
+          // could not complete its handshake. Replace it immediately with the
+          // maintained TUI path; tmux paste remains the automatic fallback.
+          this.dependencies.codexAppServer!.disconnect(name);
+          await this.dependencies.tmux.killSession(record.tmuxSession, {
+            ignoreMissing: true,
+          });
+          this.dependencies.db.insertAgent({
+            ...record,
+            status: "spawning",
+            lastEventAt: new Date().toISOString(),
+          });
+          const fallback = buildCodexSpawnCommand({
+            daemonPort: this.dependencies.port,
+            effort: configuredRoute.codex.effort ?? "medium",
+            model,
+            name,
+            readOnly: false,
+            worktreePath: worktree.path,
+          });
+          fallback.push(prompt);
+          await this.dependencies.tmux.newSession(
+            record.tmuxSession,
+            worktree.path,
+            shellJoin(fallback),
+          );
+        }
+      }
       const failureReason = await this.monitorReadiness(record);
       if (failureReason !== null) {
         return await this.failSpawnIfStillSpawning(

@@ -506,6 +506,73 @@ describe("quota-aware routing", () => {
 });
 
 describe("quota telemetry and alerts", () => {
+  test("records Codex app-server windows as authoritative configured-pool observations", async () => {
+    const { db } = await fileDatabase("codex-app-server");
+    const ledger = new QuotaLedger(db);
+    const service = new QuotaService(
+      ledger,
+      config([limit("codex", 200, {
+        pool: "codex",
+        weeklyAllowance: 1_000,
+      })]),
+      () => new Date("2026-07-10T12:00:00.000Z"),
+    );
+    const reading = await service.observeCodexRateLimits("codex-model", {
+      rateLimits: {
+        limitId: "codex",
+        primary: {
+          usedPercent: 25,
+          windowDurationMins: 300,
+          resetsAt: 1_800_000_000,
+        },
+        secondary: {
+          usedPercent: 40,
+          windowDurationMins: 10_080,
+          resetsAt: 1_800_500_000,
+        },
+      },
+    });
+    expect(reading).toEqual({ fiveHourUsed: 50, weeklyUsed: 400 });
+    expect(ledger.getObservation({
+      provider: "codex",
+      account: "personal",
+      pool: "codex",
+    })).toMatchObject({
+      fiveHourUsed: 50,
+      weeklyUsed: 400,
+      source: "provider",
+      confidence: "authoritative",
+    });
+    expect(service.statuses()[0]).toMatchObject({
+      confidence: "authoritative",
+      freshness: "fresh",
+      source: "provider",
+    });
+    db.close();
+  });
+
+  test("does not invent an authoritative weekly value from a partial Codex snapshot", async () => {
+    const { db } = await fileDatabase("codex-partial");
+    const ledger = new QuotaLedger(db);
+    const service = new QuotaService(
+      ledger,
+      config([limit("codex")]),
+      () => new Date("2026-07-10T12:00:00.000Z"),
+    );
+    expect(await service.observeCodexRateLimits("codex-model", {
+      rateLimits: {
+        primary: {
+          usedPercent: 25,
+          windowDurationMins: 300,
+          resetsAt: null,
+        },
+        secondary: null,
+      },
+    })).toEqual(null);
+    expect(ledger.getObservation(limit("codex"))).toEqual(null);
+    db.close();
+  });
+
   test("fails closed before reservation when persisted telemetry is corrupt", async () => {
     const { db } = await fileDatabase("corrupt");
     const ledger = new QuotaLedger(db);

@@ -706,6 +706,105 @@ describe("HiveSpawner name pool", () => {
 });
 
 describe("HiveSpawner wiring", () => {
+  test("launches Codex through the app-server host and delivers the assignment with turn/start", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-spawner-app-server-"));
+    tempRoots.push(root);
+    const store = new FakeStore();
+    const tmux = new FakeTmux();
+    const starts: Array<{ name: string; prompt: string; effort: string }> = [];
+    const spawner = new HiveSpawner({
+      db: store,
+      repoRoot: root,
+      port: 4317,
+      config: { terminal: "auto", headless: true },
+      routing: async () => ({
+        ...DEFAULT_ROUTING.standard,
+        tool: "codex",
+        codex: { model: "gpt-test", effort: "high" },
+      }),
+      tmux,
+      terminal: new FakeTerminal(),
+      createWorktree: async (_repoRoot, name, slug) => {
+        const path = join(root, name);
+        await mkdir(path, { recursive: true });
+        return { path, branch: `hive/${name}-${slug}` };
+      },
+      sleep: async () => {},
+      resolveModel: fakeResolveModel,
+      codexAppServer: {
+        isAvailable: async () => true,
+        buildHostCommand: (value) => [
+          "hive",
+          "codex-app-server-host",
+          "--agent",
+          value.name,
+        ],
+        startAgent: async (value, prompt, _readOnly, effort) => {
+          starts.push({ name: value.name, prompt, effort });
+          store.insertAgent({ ...value, status: "working" });
+        },
+        disconnect: () => undefined,
+      },
+    });
+
+    const spawned = await spawner.spawn({
+      task: "Implement native control",
+      tier: "standard",
+    });
+    expect(tmux.sessions[0]?.[2]).toContain("'codex-app-server-host'");
+    expect(tmux.sessions[0]?.[2]).not.toContain("Implement native control");
+    expect(starts).toHaveLength(1);
+    expect(starts[0]).toMatchObject({ name: "maya", effort: "high" });
+    expect(starts[0]?.prompt).toContain("Implement native control");
+    expect(spawned.status).toEqual("working");
+  });
+
+  test("automatically replaces a failed app-server handshake with the tmux TUI", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-spawner-app-fallback-"));
+    tempRoots.push(root);
+    const store = new FakeStore();
+    const tmux = new FakeTmux();
+    const disconnected: string[] = [];
+    const spawner = new HiveSpawner({
+      db: store,
+      repoRoot: root,
+      port: 4317,
+      config: { terminal: "auto", headless: true },
+      routing: async () => ({
+        ...DEFAULT_ROUTING.standard,
+        tool: "codex",
+        codex: { model: "gpt-test", effort: "medium" },
+      }),
+      tmux,
+      terminal: new FakeTerminal(),
+      createWorktree: async (_repoRoot, name, slug) => {
+        const path = join(root, name);
+        await mkdir(path, { recursive: true });
+        return { path, branch: `hive/${name}-${slug}` };
+      },
+      sleep: async () => {},
+      resolveModel: fakeResolveModel,
+      codexAppServer: {
+        isAvailable: async () => true,
+        buildHostCommand: () => ["hive", "codex-app-server-host"],
+        startAgent: async () => {
+          throw new Error("handshake failed");
+        },
+        disconnect: (name) => {
+          disconnected.push(name);
+        },
+      },
+    });
+
+    await spawner.spawn({ task: "Fallback task", tier: "standard" });
+    expect(disconnected).toEqual(["maya"]);
+    expect(tmux.killed).toEqual(["hive-maya"]);
+    expect(tmux.sessions).toHaveLength(2);
+    expect(tmux.sessions[1]?.[2]).toContain("'codex'");
+    expect(tmux.sessions[1]?.[2]).toContain("notify=");
+    expect(tmux.sessions[1]?.[2]).toContain("Fallback task");
+  });
+
   test("reserves quota before worktree creation and launches the selected fallback model", async () => {
     const root = await mkdtemp(join(tmpdir(), "hive-spawner-quota-"));
     tempRoots.push(root);

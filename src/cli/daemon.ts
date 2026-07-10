@@ -1,4 +1,5 @@
 import { TmuxAdapter } from "../adapters/tmux";
+import { CodexAppServerManager } from "../adapters/tools/codex-app-server";
 import { resolveTerminal } from "../adapters/terminal";
 import {
   loadHiveConfig,
@@ -9,7 +10,7 @@ import { HiveDatabase } from "../daemon/db";
 import type { TmuxSender } from "../daemon/delivery";
 import { TerminalLayoutManager } from "../daemon/layout";
 import { readConfiguredPort } from "../daemon/lifecycle";
-import { startDaemon } from "../daemon/server";
+import { HiveDaemon } from "../daemon/server";
 import { HiveSpawner } from "../daemon/spawner-impl";
 import { QuotaLedger } from "../daemon/quota-ledger";
 import { QuotaService } from "../daemon/quota";
@@ -23,7 +24,7 @@ export async function runDaemon(): Promise<void> {
   const tmux = new TmuxAdapter();
   const terminal = resolveTerminal(config);
   const port = readConfiguredPort();
-  let daemon: ReturnType<typeof startDaemon> | undefined;
+  let daemon: HiveDaemon;
   const reportTerminalError = (message: string): void => {
     console.error(message);
     // The detached daemon has no visible stderr. Put terminal failures on the
@@ -36,6 +37,13 @@ export async function runDaemon(): Promise<void> {
     db,
     enabled: config.layout === "auto" && !config.headless,
     logError: reportTerminalError,
+  });
+  const codexAppServer = new CodexAppServerManager({
+    onEvent: (event) => daemon.processEvent(event),
+    queueApproval: ({ agentName, description }) =>
+      daemon.queueCodexApproval(agentName, description),
+    observeRateLimits: (model, response, observedAt) =>
+      quota.observeCodexRateLimits(model, response, observedAt),
   });
   const spawner = new HiveSpawner({
     db,
@@ -50,11 +58,12 @@ export async function runDaemon(): Promise<void> {
     // Even when quota-aware routing is disabled, critical read-only restarts
     // require a durable accounting lifecycle.
     quota,
+    codexAppServer,
   });
   const tmuxSender: TmuxSender = {
     sendMessage: (session, text) => tmux.sendKeys(session, text),
   };
-  daemon = startDaemon({
+  daemon = new HiveDaemon({
     db,
     spawner,
     tmuxSender,
@@ -64,7 +73,9 @@ export async function runDaemon(): Promise<void> {
     manageLifecycle: true,
     layout,
     quota,
+    codexControl: codexAppServer,
   });
+  daemon.start();
 
   let stopping = false;
   const stop = async (): Promise<void> => {
@@ -72,7 +83,7 @@ export async function runDaemon(): Promise<void> {
       return;
     }
     stopping = true;
-    await daemon!.stop();
+    await daemon.stop();
     db.close();
     process.exit(0);
   };

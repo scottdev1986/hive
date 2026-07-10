@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 
 import { Command, CommanderError } from "commander";
+import { runCodexAppServerHost } from "./adapters/tools/codex-app-server";
 import { ensureStarted } from "./daemon/lifecycle";
 import {
   deleteMemoryCli,
@@ -38,6 +39,13 @@ interface QuotaReconcileOptions {
   observedAt?: string;
   fiveHourResetAt?: string;
   weeklyResetAt?: string;
+}
+
+interface CodexAppServerHostCliOptions {
+  socket: string;
+  worktree: string;
+  port: string;
+  agent: string;
 }
 
 function parseNonnegative(value: string, label: string): number {
@@ -320,6 +328,21 @@ export function createProgram(): Command {
     .command("daemon")
     .description("Run the Hive daemon in the foreground")
     .action(runDaemon);
+
+  program
+    .command("codex-app-server-host", { hidden: true })
+    .requiredOption("--socket <path>")
+    .requiredOption("--worktree <path>")
+    .requiredOption("--port <number>")
+    .requiredOption("--agent <name>")
+    .action(async (options: CodexAppServerHostCliOptions) => {
+      process.exitCode = await runCodexAppServerHost({
+        socket: options.socket,
+        worktree: options.worktree,
+        daemonPort: parsePort(options.port),
+        agentName: options.agent,
+      });
+    });
 
   return program;
 }

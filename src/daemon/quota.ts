@@ -57,6 +57,11 @@ function add(date: Date, milliseconds: number): string {
   return new Date(date.getTime() + milliseconds).toISOString();
 }
 
+function unixSecondsToIso(value: number | null): string | null {
+  if (value === null || !Number.isFinite(value) || value < 0) return null;
+  return new Date(value * 1_000).toISOString();
+}
+
 function zonedParts(date: Date, timeZone: string): Record<string, number> {
   const values: Record<string, number> = {};
   for (const part of new Intl.DateTimeFormat("en-US", {
@@ -192,6 +197,28 @@ export class QuotaExhaustedError extends Error {
   }
 }
 
+export interface CodexRateLimitWindow {
+  usedPercent: number;
+  windowDurationMins: number | null;
+  resetsAt: number | null;
+}
+
+export interface CodexRateLimitSnapshot {
+  limitId?: string | null;
+  primary: CodexRateLimitWindow | null;
+  secondary: CodexRateLimitWindow | null;
+}
+
+export interface CodexRateLimitsResponse {
+  rateLimits: CodexRateLimitSnapshot;
+  rateLimitsByLimitId?: Record<string, CodexRateLimitSnapshot> | null;
+}
+
+export interface CodexQuotaReading {
+  fiveHourUsed: number;
+  weeklyUsed: number;
+}
+
 export class QuotaService {
   private alertSink: QuotaAlertSink | null = null;
 
@@ -224,6 +251,56 @@ export class QuotaService {
 
   setAlertSink(sink: QuotaAlertSink): void {
     this.alertSink = sink;
+  }
+
+  /**
+   * Convert Codex app-server percentages into this ledger's configured units.
+   * The provider windows are identified by duration instead of position: the
+   * shortest window is the rolling five-hour bucket and the longest is the
+   * weekly bucket. A partial snapshot is not promoted to authoritative data.
+   */
+  async observeCodexRateLimits(
+    model: string,
+    response: CodexRateLimitsResponse,
+    observedAt = iso(this.clock()),
+  ): Promise<CodexQuotaReading | null> {
+    const limit = this.limitFor({ tool: "codex", model });
+    if (limit === null) return null;
+
+    const byId = response.rateLimitsByLimitId ?? {};
+    const snapshot = byId[limit.pool] ??
+      Object.values(byId).find((candidate) =>
+        candidate.limitId === limit.pool
+      ) ?? response.rateLimits;
+    const windows = [snapshot.primary, snapshot.secondary]
+      .filter((window): window is CodexRateLimitWindow => window !== null)
+      .filter((window) =>
+        Number.isFinite(window.usedPercent) && window.usedPercent >= 0 &&
+        window.windowDurationMins !== null &&
+        Number.isFinite(window.windowDurationMins)
+      )
+      .sort((left, right) =>
+        left.windowDurationMins! - right.windowDurationMins!
+      );
+    if (windows.length < 2) return null;
+    const fiveHour = windows[0]!;
+    const weekly = windows.at(-1)!;
+    const reading = {
+      fiveHourUsed: limit.fiveHourAllowance * fiveHour.usedPercent / 100,
+      weeklyUsed: limit.weeklyAllowance * weekly.usedPercent / 100,
+    };
+    await this.observe({
+      provider: "codex",
+      account: limit.account,
+      pool: limit.pool,
+      ...reading,
+      observedAt,
+      fiveHourResetAt: unixSecondsToIso(fiveHour.resetsAt),
+      weeklyResetAt: unixSecondsToIso(weekly.resetsAt),
+      source: "provider",
+      confidence: "authoritative",
+    });
+    return reading;
   }
 
   private limitFor(candidate: QuotaRouteCandidate): QuotaLimit | null {

@@ -33,6 +33,15 @@ export interface CriticalControlRuntime {
   ): Promise<void>;
 }
 
+export interface NativeAgentControl {
+  hasAgent(agentName: string): boolean;
+  deliver(
+    agent: AgentRecord,
+    text: string,
+    options?: { interrupt?: boolean },
+  ): Promise<void>;
+}
+
 const DEFAULT_URGENT_DEADLINE_MS = 30_000;
 const DEFAULT_CRITICAL_DEADLINE_MS = 10_000;
 
@@ -49,6 +58,7 @@ export class MessageDelivery {
     private readonly db: HiveDatabase,
     private readonly tmux: TmuxSender,
     private readonly controls?: CriticalControlRuntime,
+    private readonly nativeControl?: NativeAgentControl,
   ) {}
 
   async send(
@@ -163,9 +173,24 @@ export class MessageDelivery {
       return message;
     }
 
-    if (recipient.status !== "idle") {
-      return message;
+    if (this.nativeControl?.hasAgent(recipient.name)) {
+      return this.withSessionLock(recipient.tmuxSession, async () => {
+        const current = this.getStoredMessage(message.id);
+        if (current.deliveredAt !== null) return current;
+        const currentRecipient = this.requireLiveRecipient(to);
+        try {
+          return await this.deliverNative(current, currentRecipient);
+        } catch {
+          // A native connection can disappear after liveness was checked. An
+          // idle TUI remains a safe compatibility target; a busy headless
+          // session keeps the durable message queued for recovery.
+          if (currentRecipient.status !== "idle") return current;
+          return this.deliver(current, currentRecipient.tmuxSession);
+        }
+      });
     }
+
+    if (recipient.status !== "idle") return message;
 
     return this.withSessionLock(recipient.tmuxSession, async () => {
       const current = this.getStoredMessage(message.id);
@@ -195,7 +220,11 @@ export class MessageDelivery {
 
     return this.withSessionLock(recipient.tmuxSession, async () => {
       const currentRecipient = this.db.getAgentByName(agentName);
-      if (currentRecipient?.status !== "idle") {
+      if (
+        currentRecipient?.status !== "idle" &&
+        !(currentRecipient !== null &&
+          this.nativeControl?.hasAgent(currentRecipient.name))
+      ) {
         return [];
       }
 
@@ -206,10 +235,11 @@ export class MessageDelivery {
           if (message === null || message.deliveredAt !== null) {
             continue;
           }
-          delivered.push(await this.deliver(
-            message,
-            currentRecipient.tmuxSession,
-          ));
+          delivered.push(
+            this.nativeControl?.hasAgent(currentRecipient.name)
+              ? await this.deliverNative(message, currentRecipient)
+              : await this.deliver(message, currentRecipient.tmuxSession),
+          );
         } catch {
           // A failed pane must not prevent later queued messages from delivery.
         }
@@ -295,6 +325,34 @@ export class MessageDelivery {
       throw new Error(`Message disappeared during delivery: ${message.id}`);
     }
     return delivered;
+  }
+
+  private async deliverNative(
+    message: AgentMessage,
+    agent: AgentRecord,
+  ): Promise<AgentMessage> {
+    const text = this.formatAgentMessage(message);
+    await this.nativeControl!.deliver(agent, text, {
+      interrupt: message.priority === "urgent",
+    });
+    const delivered = this.markInjected(message);
+    if (delivered === null) {
+      throw new Error(`Message disappeared during native delivery: ${message.id}`);
+    }
+    return delivered;
+  }
+
+  private formatAgentMessage(message: AgentMessage): string {
+    return message.priority === "normal"
+      ? `📨 message from ${message.from}: ${message.body}`
+      : [
+          `⚠️ ${message.priority.toUpperCase()} HIVE CONTROL ${message.id} from ${message.from}: ${message.body}`,
+          `Acknowledge with hive_ack_message agent=${JSON.stringify(message.to)} messageId=${JSON.stringify(message.id)}${
+            message.capabilityEpoch === null
+              ? ""
+              : ` capabilityEpoch=${message.capabilityEpoch}`
+          } applied=true.`,
+        ].join("\n");
   }
 
   acknowledge(

@@ -55,6 +55,7 @@ import {
   type Spawner,
 } from "./spawner";
 import type { QuotaService } from "./quota";
+import type { CodexAppServerManager } from "../adapters/tools/codex-app-server";
 
 export const HIVE_VERSION = "0.1.0";
 
@@ -205,6 +206,17 @@ export interface HiveDaemonOptions {
   manageLifecycle?: boolean;
   layout?: LayoutCoordinator;
   quota?: QuotaService;
+  codexControl?: Pick<
+    CodexAppServerManager,
+    | "hasAgent"
+    | "isTurnActive"
+    | "deliver"
+    | "interrupt"
+    | "denyAgentApprovals"
+    | "disconnect"
+    | "resolveApproval"
+    | "close"
+  >;
 }
 
 function json(value: unknown, init?: ResponseInit): Response {
@@ -240,6 +252,7 @@ export class HiveDaemon {
   private readonly closeTerminal: TerminalCloser;
   private readonly layout: LayoutCoordinator | null;
   private readonly quota: QuotaService | undefined;
+  private readonly codexControl: HiveDaemonOptions["codexControl"];
   private readonly land: LandBranch;
   private bunServer: Server<undefined> | null = null;
   private reconciliationTimer: ReturnType<typeof setInterval> | null = null;
@@ -255,6 +268,7 @@ export class HiveDaemon {
     this.manageLifecycle = options.manageLifecycle ?? false;
     this.tmux = options.tmux ?? new TmuxAdapter();
     this.quota = options.quota;
+    this.codexControl = options.codexControl;
     this.delivery = new MessageDelivery(
       this.db,
       options.tmuxSender ?? new BunTmuxSender(),
@@ -273,6 +287,11 @@ export class HiveDaemon {
             return;
           }
           if (!sameControlAttempt) {
+            if (agent.tool === "codex" && this.codexControl?.hasAgent(agent.name)) {
+              await this.codexControl.denyAgentApprovals(agent.name);
+              await this.codexControl.interrupt(agent).catch(() => undefined);
+              this.codexControl.disconnect(agent.name);
+            }
             await this.tmux.killSession(agent.tmuxSession, {
               ignoreMissing: true,
             });
@@ -291,6 +310,7 @@ export class HiveDaemon {
           await this.spawner.restartForControl(agent, message);
         },
       },
+      this.codexControl,
     );
     this.quota?.setAlertSink(async (body) => {
       await this.delivery.send("hive-quota", ORCHESTRATOR_NAME, body);
@@ -457,6 +477,7 @@ export class HiveDaemon {
     }
     this.bunServer?.stop(true);
     this.bunServer = null;
+    this.codexControl?.close();
     if (this.manageLifecycle) {
       cleanupLifecycleFiles();
     }
@@ -551,6 +572,36 @@ export class HiveDaemon {
       await this.quota?.cancel(record.controlQuotaReservationId);
     }
     return message;
+  }
+
+  async queueCodexApproval(
+    agentName: string,
+    description: string,
+  ): Promise<string> {
+    const id = crypto.randomUUID();
+    const createdAt = new Date().toISOString();
+    this.db.transaction(() => {
+      this.db.insertApproval({
+        id,
+        agentName,
+        description,
+        status: "pending",
+        createdAt,
+        resolvedAt: null,
+      });
+      const agent = this.db.getAgentByName(agentName);
+      if (
+        agent !== null && agent.status !== "dead" && agent.status !== "done" &&
+        agent.status !== "failed"
+      ) {
+        this.db.upsertAgent({
+          ...agent,
+          status: agent.writeRevoked ? "control-paused" : "awaiting-approval",
+          lastEventAt: createdAt,
+        });
+      }
+    });
+    return id;
   }
 
   async fetch(request: Request): Promise<Response> {
@@ -999,9 +1050,18 @@ export class HiveDaemon {
       if (approval === null) {
         throw new Error(`Pending approval not found: ${id}`);
       }
+      await this.codexControl?.resolveApproval(
+        approval.id,
+        decision === "approve",
+      );
       const agent = this.db.getAgentByName(approval.agentName);
       if (agent?.status === "awaiting-approval") {
-        this.db.upsertAgent({ ...agent, status: "idle" });
+        this.db.upsertAgent({
+          ...agent,
+          status: this.codexControl?.isTurnActive(approval.agentName)
+            ? "working"
+            : "idle",
+        });
         await this.delivery.flushQueued(approval.agentName);
       }
       return toolResult(approval, "approval");
