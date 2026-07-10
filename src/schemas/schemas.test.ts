@@ -140,6 +140,39 @@ describe("AgentRecordSchema", () => {
     } satisfies AgentRecord;
     expect(AgentRecordSchema.parse(roundTrip(failed))).toEqual(failed);
   });
+
+  test("parses native terminal handles and remains compatible without one", () => {
+    const itermAgent = {
+      ...agent,
+      terminalHandle: { app: "iterm2", sessionId: "session-uuid" },
+    } satisfies AgentRecord;
+    const terminalAgent = {
+      ...agent,
+      terminalHandle: {
+        app: "terminal",
+        processId: 4242,
+        windowId: 42,
+        tty: "/dev/ttys004",
+      },
+    } satisfies AgentRecord;
+
+    expect(AgentRecordSchema.parse(roundTrip(itermAgent))).toEqual(itermAgent);
+    expect(AgentRecordSchema.parse(roundTrip(terminalAgent))).toEqual(
+      terminalAgent,
+    );
+    expect(AgentRecordSchema.parse(roundTrip(agent))).toEqual(agent);
+    expect(() =>
+      AgentRecordSchema.parse({
+        ...agent,
+        terminalHandle: {
+          app: "terminal",
+          processId: 0,
+          windowId: 0,
+          tty: "",
+        },
+      })
+    ).toThrow();
+  });
 });
 
 describe("AgentMessageSchema", () => {

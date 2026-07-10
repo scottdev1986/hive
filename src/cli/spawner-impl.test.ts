@@ -4,7 +4,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { TerminalAdapter } from "../adapters/terminal";
 import { DEFAULT_ROUTING } from "../schemas";
-import type { AgentRecord, Route, RoutingTier } from "../schemas";
+import type {
+  AgentRecord,
+  Route,
+  RoutingTier,
+  TerminalHandle,
+} from "../schemas";
 import {
   HiveSpawner,
   NAME_POOL,
@@ -75,6 +80,20 @@ class FakeStore {
     }
     return record;
   }
+
+  attachTerminalHandle(
+    id: string,
+    handle: TerminalHandle,
+  ): AgentRecord | null {
+    const record = this.getAgentById(id);
+    if (
+      record === null || record.status === "dead" || record.status === "done" ||
+      record.status === "failed"
+    ) {
+      return null;
+    }
+    return this.insertAgent({ ...record, terminalHandle: handle });
+  }
 }
 
 class FakeTmux {
@@ -109,9 +128,21 @@ class FakeTmux {
 
 class FakeTerminal implements TerminalAdapter {
   readonly windows: Array<[string, string]> = [];
+  readonly closed: TerminalHandle[] = [];
 
-  async openWindow(session: string, title: string): Promise<void> {
+  constructor(private readonly onOpen: () => void = () => {}) {}
+
+  async openWindow(
+    session: string,
+    title: string,
+  ): Promise<TerminalHandle> {
     this.windows.push([session, title]);
+    this.onOpen();
+    return { app: "iterm2", sessionId: `session-${session}` };
+  }
+
+  async closeWindow(handle: TerminalHandle): Promise<void> {
+    this.closed.push(handle);
   }
 }
 
@@ -126,9 +157,14 @@ class FlakyCaptureTmux extends FakeTmux {
 }
 
 class FailingTerminal implements TerminalAdapter {
-  async openWindow(_session: string, _title: string): Promise<void> {
+  async openWindow(
+    _session: string,
+    _title: string,
+  ): Promise<TerminalHandle> {
     throw new Error("viewer unavailable");
   }
+
+  async closeWindow(_handle: TerminalHandle): Promise<void> {}
 }
 
 afterEach(async () => {
@@ -301,6 +337,14 @@ describe("HiveSpawner wiring", () => {
     expect(claude.status).toEqual("spawning");
     expect(claude.contextPct).toEqual(0);
     expect(codex.name).toEqual("david");
+    expect(claude.terminalHandle).toEqual({
+      app: "iterm2",
+      sessionId: "session-hive-maya",
+    });
+    expect(codex.terminalHandle).toEqual({
+      app: "iterm2",
+      sessionId: "session-hive-david",
+    });
     expect(store.agents).toEqual([claude, codex]);
     expect(tmux.sessions.map(([name]) => name)).toEqual([
       "hive-maya",
@@ -613,5 +657,47 @@ describe("HiveSpawner wiring", () => {
     expect(spawned.status).toEqual("spawning");
     expect(tmux.capturePaneCalls).toEqual(15);
     expect(tmux.killed).toEqual([]);
+  });
+
+  test("closes a viewer that races with the agent being marked dead", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-spawner-viewer-race-"));
+    tempRoots.push(root);
+    const worktreePath = join(root, "maya");
+    await mkdir(worktreePath, { recursive: true });
+    const store = new FakeStore();
+    const terminal = new FakeTerminal(() => {
+      const current = store.listAgents()[0];
+      if (current !== undefined) {
+        store.insertAgent({ ...current, status: "dead" });
+      }
+    });
+    const spawner = new HiveSpawner({
+      db: store,
+      repoRoot: root,
+      port: 4317,
+      config: { terminal: "auto", headless: false },
+      routing: async () => DEFAULT_ROUTING.standard,
+      tmux: new FakeTmux(),
+      terminal,
+      createWorktree: async () => ({
+        path: worktreePath,
+        branch: "hive/maya-viewer-race",
+      }),
+      sleep: async () => {},
+    });
+
+    const spawned = await spawner.spawn({
+      task: "Race terminal launch with kill",
+      tier: "standard",
+    });
+
+    const handle = {
+      app: "iterm2",
+      sessionId: "session-hive-maya",
+    } as const;
+    expect(spawned.status).toEqual("dead");
+    expect(spawned.terminalHandle).toBeUndefined();
+    expect(terminal.closed).toEqual([handle]);
+    expect(store.getAgentById(spawned.id)?.terminalHandle).toBeUndefined();
   });
 });

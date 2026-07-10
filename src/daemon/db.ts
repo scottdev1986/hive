@@ -7,9 +7,11 @@ import {
   AgentMessageSchema,
   AgentRecordSchema,
   HookEventSchema,
+  TerminalHandleSchema,
   type AgentMessage,
   type AgentRecord,
   type HookEvent,
+  type TerminalHandle,
 } from "../schemas";
 
 export const ApprovalSchema = z.object({
@@ -26,6 +28,7 @@ export type Approval = z.infer<typeof ApprovalSchema>;
 const AgentDatabaseRowSchema = AgentRecordSchema.extend({
   failureReason: z.string().nullable(),
   failedAt: z.string().nullable(),
+  terminalHandle: z.string().nullable(),
 });
 
 function parseAgentRow(row: unknown): AgentRecord {
@@ -34,6 +37,9 @@ function parseAgentRow(row: unknown): AgentRecord {
     ...value,
     failureReason: value.failureReason ?? undefined,
     failedAt: value.failedAt ?? undefined,
+    terminalHandle: value.terminalHandle === null
+      ? undefined
+      : TerminalHandleSchema.parse(JSON.parse(value.terminalHandle)),
   });
 }
 
@@ -101,6 +107,7 @@ export class HiveDatabase {
         worktreePath TEXT,
         branch TEXT,
         tmuxSession TEXT NOT NULL,
+        terminalHandle TEXT,
         contextPct REAL NOT NULL,
         createdAt TEXT NOT NULL,
         lastEventAt TEXT NOT NULL,
@@ -148,6 +155,9 @@ export class HiveDatabase {
     if (!agentColumnNames.has("failedAt")) {
       this.database.exec("ALTER TABLE agents ADD COLUMN failedAt TEXT");
     }
+    if (!agentColumnNames.has("terminalHandle")) {
+      this.database.exec("ALTER TABLE agents ADD COLUMN terminalHandle TEXT");
+    }
   }
 
   close(): void {
@@ -163,9 +173,9 @@ export class HiveDatabase {
     this.database.query(`
       INSERT INTO agents (
         id, name, tool, model, tier, status, taskDescription,
-        worktreePath, branch, tmuxSession, contextPct, createdAt, lastEventAt,
-        failureReason, failedAt
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        worktreePath, branch, tmuxSession, terminalHandle, contextPct,
+        createdAt, lastEventAt, failureReason, failedAt
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         name = excluded.name,
         tool = excluded.tool,
@@ -176,6 +186,7 @@ export class HiveDatabase {
         worktreePath = excluded.worktreePath,
         branch = excluded.branch,
         tmuxSession = excluded.tmuxSession,
+        terminalHandle = excluded.terminalHandle,
         contextPct = excluded.contextPct,
         createdAt = excluded.createdAt,
         lastEventAt = excluded.lastEventAt,
@@ -192,6 +203,9 @@ export class HiveDatabase {
       value.worktreePath,
       value.branch,
       value.tmuxSession,
+      value.terminalHandle === undefined
+        ? null
+        : JSON.stringify(value.terminalHandle),
       value.contextPct,
       value.createdAt,
       value.lastEventAt,
@@ -203,6 +217,39 @@ export class HiveDatabase {
 
   insertAgent(agent: AgentRecord): AgentRecord {
     return this.upsertAgent(agent);
+  }
+
+  attachTerminalHandle(
+    agentId: string,
+    handle: TerminalHandle,
+  ): AgentRecord | null {
+    const value = TerminalHandleSchema.parse(handle);
+    const updated = this.database.query(`
+      UPDATE agents
+      SET terminalHandle = ?
+      WHERE id = ? AND status NOT IN ('dead', 'done', 'failed')
+    `).run(JSON.stringify(value), agentId);
+    return updated.changes === 0 ? null : this.getAgentById(agentId);
+  }
+
+  markAgentDeadAndDetachTerminal(
+    agentId: string,
+    timestamp: string,
+  ): { agent: AgentRecord; terminalHandle: TerminalHandle | undefined } | null {
+    return this.transaction(() => {
+      const current = this.getAgentById(agentId);
+      if (current === null) {
+        return null;
+      }
+      const terminalHandle = current.terminalHandle;
+      const agent = this.upsertAgent({
+        ...current,
+        status: "dead",
+        terminalHandle: undefined,
+        lastEventAt: timestamp,
+      });
+      return { agent, terminalHandle };
+    });
   }
 
   getAgentById(id: string): AgentRecord | null {

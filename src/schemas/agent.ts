@@ -6,6 +6,21 @@ import { RoutingTierSchema } from "./routing";
 // addressed to it always queue and are drained via hive_inbox.
 export const ORCHESTRATOR_NAME = "orchestrator";
 
+export const TerminalHandleSchema = z.discriminatedUnion("app", [
+  z.object({
+    app: z.literal("iterm2"),
+    sessionId: z.string().min(1),
+  }).strict(),
+  z.object({
+    app: z.literal("terminal"),
+    processId: z.number().int().positive(),
+    windowId: z.number().int().positive(),
+    tty: z.string().min(1),
+  }).strict(),
+]);
+
+export type TerminalHandle = z.infer<typeof TerminalHandleSchema>;
+
 export const AgentRecordSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
@@ -28,6 +43,7 @@ export const AgentRecordSchema = z.object({
   worktreePath: z.string().nullable(),
   branch: z.string().nullable(),
   tmuxSession: z.string().min(1),
+  terminalHandle: TerminalHandleSchema.optional(),
   contextPct: z.number().min(0).max(100),
   createdAt: z.iso.datetime(),
   lastEventAt: z.iso.datetime(),

@@ -6,6 +6,10 @@ import type { Server } from "bun";
 import { z } from "zod";
 import { TmuxAdapter } from "../adapters/tmux";
 import {
+  closeTerminal,
+  type TerminalCloser,
+} from "../adapters/terminal";
+import {
   removeWorktree,
   type RemoveWorktreeOptions,
 } from "../adapters/worktrees";
@@ -62,6 +66,7 @@ export interface HiveDaemonOptions {
   db?: HiveDatabase;
   tmuxSender?: TmuxSender;
   tmux?: Pick<TmuxAdapter, "hasSession" | "killSession" | "capturePane">;
+  closeTerminal?: TerminalCloser;
   repoRoot?: string;
   removeWorktree?: (
     repoRoot: string,
@@ -98,6 +103,7 @@ export class HiveDaemon {
   >;
   private readonly repoRoot: string;
   private readonly cleanupWorktree: typeof removeWorktree;
+  private readonly closeTerminal: TerminalCloser;
   private bunServer: Server<undefined> | null = null;
   private reconciliationTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -113,6 +119,7 @@ export class HiveDaemon {
     this.hostname = options.hostname ?? "127.0.0.1";
     this.manageLifecycle = options.manageLifecycle ?? false;
     this.tmux = options.tmux ?? new TmuxAdapter();
+    this.closeTerminal = options.closeTerminal ?? closeTerminal;
     this.repoRoot = options.repoRoot ?? process.cwd();
     this.cleanupWorktree = options.removeWorktree ?? removeWorktree;
   }
@@ -326,11 +333,21 @@ export class HiveDaemon {
 
       await this.tmux.killSession(agent.tmuxSession, { ignoreMissing: true });
       const timestamp = new Date().toISOString();
-      let updated = this.db.upsertAgent({
-        ...agent,
-        status: "dead",
-        lastEventAt: timestamp,
-      });
+      const killed = this.db.markAgentDeadAndDetachTerminal(
+        agent.id,
+        timestamp,
+      );
+      if (killed === null) {
+        throw new Error(`Hive agent not found: ${name}`);
+      }
+      if (killed.terminalHandle !== undefined) {
+        try {
+          await this.closeTerminal(killed.terminalHandle);
+        } catch {
+          // Terminal cleanup is best-effort; killing and marking dead must win.
+        }
+      }
+      let updated = killed.agent;
       const cleaned: {
         tmuxSession: string;
         worktreePath: string | null;

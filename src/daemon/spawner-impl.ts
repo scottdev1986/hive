@@ -69,7 +69,7 @@ export const NAME_POOL = [
 
 type AgentStore = Pick<
   HiveDatabase,
-  "getAgentById" | "insertAgent" | "listAgents"
+  "attachTerminalHandle" | "getAgentById" | "insertAgent" | "listAgents"
 >;
 type RouteResolver = (tier: RoutingTier) => Promise<Route>;
 type WorktreeCreator = (
@@ -283,13 +283,33 @@ export class HiveSpawner implements Spawner {
     }
 
     if (!this.dependencies.config.headless) {
+      let handle: Awaited<ReturnType<TerminalAdapter["openWindow"]>> | null =
+        null;
       try {
-        await this.dependencies.terminal.openWindow(
+        handle = await this.dependencies.terminal.openWindow(
           record.tmuxSession,
           buildAgentTerminalTitle(record.name, record.model),
         );
+        const attached = this.dependencies.db.attachTerminalHandle(
+          record.id,
+          handle,
+        );
+        if (attached === null) {
+          const orphanedHandle = handle;
+          handle = null;
+          await this.dependencies.terminal.closeWindow(orphanedHandle);
+        } else {
+          handle = null;
+        }
       } catch {
         // Opening a viewer is cosmetic and does not affect agent readiness.
+        if (handle !== null) {
+          try {
+            await this.dependencies.terminal.closeWindow(handle);
+          } catch {
+            // A viewer that vanished during launch needs no further cleanup.
+          }
+        }
       }
     }
     return this.dependencies.db.getAgentById(record.id) ?? record;

@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -51,6 +52,88 @@ describe("HiveDatabase", () => {
       expect(db.listAgents()).toEqual([updated]);
       expect(db.deleteAgent(updated.id)).toEqual(true);
       expect(db.getAgentById(updated.id)).toEqual(null);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("attaches terminal handles only while an agent is live", () => {
+    const db = new HiveDatabase(join(home, "terminal-handles.db"));
+    const handle = { app: "iterm2", sessionId: "session-agent-maya" } as const;
+    try {
+      db.insertAgent(agent());
+      expect(db.attachTerminalHandle("agent-maya", handle)?.terminalHandle)
+        .toEqual(handle);
+
+      const killed = db.markAgentDeadAndDetachTerminal(
+        "agent-maya",
+        "2026-07-09T12:02:00.000Z",
+      );
+      expect(killed?.terminalHandle).toEqual(handle);
+      expect(killed?.agent).toMatchObject({
+        status: "dead",
+        lastEventAt: "2026-07-09T12:02:00.000Z",
+      });
+      expect(killed?.agent.terminalHandle).toBeUndefined();
+      expect(db.attachTerminalHandle("agent-maya", handle)).toEqual(null);
+      expect(db.getAgentByName("maya")?.terminalHandle).toBeUndefined();
+    } finally {
+      db.close();
+    }
+  });
+
+  test("migrates legacy agent rows with no terminal handle", () => {
+    const path = join(home, "legacy-agents.db");
+    const legacy = new Database(path, { create: true });
+    legacy.exec(`
+      CREATE TABLE agents (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL UNIQUE,
+        tool TEXT NOT NULL,
+        model TEXT NOT NULL,
+        tier TEXT NOT NULL,
+        status TEXT NOT NULL,
+        taskDescription TEXT NOT NULL,
+        worktreePath TEXT,
+        branch TEXT,
+        tmuxSession TEXT NOT NULL,
+        contextPct REAL NOT NULL,
+        createdAt TEXT NOT NULL,
+        lastEventAt TEXT NOT NULL,
+        failureReason TEXT,
+        failedAt TEXT
+      );
+    `);
+    const value = agent();
+    legacy.query(`
+      INSERT INTO agents VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      value.id,
+      value.name,
+      value.tool,
+      value.model,
+      value.tier,
+      value.status,
+      value.taskDescription,
+      value.worktreePath,
+      value.branch,
+      value.tmuxSession,
+      value.contextPct,
+      value.createdAt,
+      value.lastEventAt,
+      null,
+      null,
+    );
+    legacy.close();
+
+    const db = new HiveDatabase(path);
+    try {
+      expect(db.getAgentByName("maya")).toEqual(value);
+      expect(
+        db.database.query("PRAGMA table_info(agents)").all().some(
+          (column) => (column as { name: string }).name === "terminalHandle",
+        ),
+      ).toEqual(true);
     } finally {
       db.close();
     }
