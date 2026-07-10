@@ -1,4 +1,5 @@
 import { readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildMemoryIndex } from "../adapters/memory";
 import { ITerm2Adapter } from "../adapters/iterm2";
@@ -17,6 +18,7 @@ import {
 import { readCredential } from "../daemon/credentials";
 import { operatorHeaders } from "./credential";
 import { orchestratorTmuxSession } from "../daemon/orchestrator-lifecycle";
+import { hiveInstanceSuffix } from "../daemon/tmux-sessions";
 import type { TerminalHandle } from "../schemas";
 import { ORCHESTRATOR_BRIEF, orchestratorDocGuidance } from "./orchestrator-brief";
 import { loadProfile } from "../adapters/profile";
@@ -24,9 +26,24 @@ import { loadProfile } from "../adapters/profile";
 export type OrchestratorTool = "claude" | "codex";
 export type OrchestratorTerminalApp = "auto" | "terminal" | "iterm2";
 
-export function codexRootSocketPath(home = Bun.env.HIVE_HOME ?? "~/.hive"): string {
-  const safe = home.replaceAll(/[^A-Za-z0-9_-]/g, "-");
-  return `/tmp/hive-codex-root-${safe}.sock`;
+/** The Codex root app-server socket. It lives in the per-user temp dir (0700
+ * on macOS), never world-writable /tmp where any local user could pre-bind the
+ * name, and is keyed by the same resolved-home hash the tmux session names use
+ * — so two spellings of the same HIVE_HOME can no longer name two sockets. */
+export function codexRootSocketPath(hiveHome?: string): string {
+  const socket = join(
+    tmpdir(),
+    `hive-codex-root-${hiveInstanceSuffix(hiveHome)}.sock`,
+  );
+  // macOS caps sun_path at 104 bytes; an over-long TMPDIR must fail here with
+  // its cause, not as an inscrutable bind error inside the tmux shell command.
+  if (Buffer.byteLength(socket) > 103) {
+    throw new Error(
+      `Codex root socket path exceeds the AF_UNIX length limit: ${socket}. ` +
+        "Point TMPDIR at a shorter directory.",
+    );
+  }
+  return socket;
 }
 
 /** Authority-first command for the Codex root driver. */
@@ -42,14 +59,15 @@ export function buildCodexRootAuthorityCommand(
     `unix://${socketPath}`,
     ...codexArguments,
   ].map(shellQuote).join(" ");
+  const quotedSocket = shellQuote(socketPath);
   return [
     "sh",
     "-lc",
-    `codex app-server --listen unix://${socketPath} & authority=$!; ` +
+    `codex app-server --listen ${shellQuote(`unix://${socketPath}`)} & authority=$!; ` +
       `trap 'kill "$authority" 2>/dev/null || true' EXIT INT TERM; ` +
       `for attempt in $(seq 1 50); do ` +
-      `test -S '${socketPath}' && break; sleep 0.1; done; ` +
-      `test -S '${socketPath}' || { echo 'Codex app-server failed to become ready' >&2; exit 1; }; ` +
+      `test -S ${quotedSocket} && break; sleep 0.1; done; ` +
+      `test -S ${quotedSocket} || { echo 'Codex app-server failed to become ready' >&2; exit 1; }; ` +
       `exec ${remoteCommand}`,
   ];
 }

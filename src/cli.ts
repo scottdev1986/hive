@@ -213,7 +213,7 @@ export function createProgram(): Command {
   // Outside a git repo it launches the app standalone (placeholder window) —
   // the project-neutral home a Dock click gets. Never a dev Workspace build.
   program.action(async () => {
-    await runWorkspace();
+    process.exitCode = await runWorkspace();
   });
 
   program

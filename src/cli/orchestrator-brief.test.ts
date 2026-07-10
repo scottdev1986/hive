@@ -25,7 +25,7 @@ describe("orchestrator brief", () => {
   test("builds an authority-first Codex root command without enabling it yet", () => {
     const command = buildCodexRootAuthorityCommand("/tmp/hive-root.sock");
     expect(command.slice(0, 2)).toEqual(["sh", "-lc"]);
-    expect(command[2]).toContain("codex app-server --listen unix:///tmp/hive-root.sock");
+    expect(command[2]).toContain("codex app-server --listen 'unix:///tmp/hive-root.sock'");
     expect(command[2]).toContain(
       "exec 'codex' '--remote' 'unix:///tmp/hive-root.sock'",
     );
@@ -122,7 +122,7 @@ describe("orchestrator brief", () => {
       "tmux", "new-session", "-s", orchestratorTmuxSession(), "-c", "/repo", "sh",
     ]);
     const shellCommand = command.at(-1)!;
-    expect(shellCommand).toContain("codex app-server --listen unix://");
+    expect(shellCommand).toContain("codex app-server --listen 'unix://");
     expect(shellCommand).toContain("'codex' '--remote' 'unix://");
     expect(shellCommand).toContain("mcp_servers.hive.url=");
     expect(shellCommand).toContain("'--sandbox' 'read-only'");
