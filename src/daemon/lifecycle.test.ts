@@ -9,6 +9,7 @@ import {
   writeLifecycleFiles,
 } from "./lifecycle";
 import type { DaemonHandshake } from "./handshake";
+import { handshakeMismatch } from "./handshake";
 
 const handshake: DaemonHandshake = {
   productVersion: "0.1.0",
@@ -23,6 +24,16 @@ const handshake: DaemonHandshake = {
 };
 
 describe("daemon lifecycle", () => {
+  test("a confirmed move retains its opaque handshake identity", () => {
+    const moved = { ...handshake, identityKey: "project-b" };
+    expect(handshakeMismatch(handshake, moved)).toEqual("project identity key");
+    expect(handshakeMismatch({ ...handshake, identityKey: "project-b" }, moved)).toBeNull();
+  });
+
+  test("a recreated path cannot inherit the prior HiveUUID", () => {
+    const recreated = { ...handshake, hiveUuid: "hive-new", identityKey: "project-a" };
+    expect(handshakeMismatch(handshake, recreated)).toEqual("project identity (HiveUUID)");
+  });
   test("accepts a healthy daemon even when its pidfile is missing", async () => {
     const previousHome = process.env.HIVE_HOME;
     const home = mkdtempSync(join(tmpdir(), "hive-lifecycle-health-"));
