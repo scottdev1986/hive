@@ -4,9 +4,11 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AgentRecord, HookEvent } from "../schemas";
+import { QuotaConfigSchema, type AgentRecord, type HookEvent } from "../schemas";
 import { HiveDatabase } from "./db";
 import type { TmuxSender } from "./delivery";
+import { QuotaLedger } from "./quota-ledger";
+import { QuotaService } from "./quota";
 import { HIVE_VERSION, HiveDaemon } from "./server";
 import type { SpawnRequest, Spawner } from "./spawner";
 
@@ -629,6 +631,85 @@ describe("HiveDaemon HTTP server", () => {
 
       // A second sweep with nothing to do stays quiet.
       await daemon.reconcileAgents();
+      expect(layoutRequests).toEqual(1);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("reconciliation settles a dead agent's quota reservation while closing its viewer", async () => {
+    const db = new HiveDatabase(join(home, "reconcile-quota.db"));
+    const ledger = new QuotaLedger(db);
+    const quota = new QuotaService(
+      ledger,
+      QuotaConfigSchema.parse({
+        limits: [
+          {
+            provider: "codex",
+            pool: "codex-premium",
+            models: ["gpt-5-codex"],
+            fiveHourAllowance: 100,
+            weeklyAllowance: 1000,
+          },
+          {
+            provider: "claude",
+            pool: "claude-premium",
+            models: ["claude-model"],
+            fiveHourAllowance: 100,
+            weeklyAllowance: 1000,
+          },
+        ],
+      }),
+      () => new Date(timestamp),
+    );
+    const decision = await quota.routeAndReserve({
+      agentName: "maya",
+      tier: "standard",
+      preferredTool: "codex",
+      explicitTool: "codex",
+      candidates: [
+        { tool: "claude", model: "claude-model" },
+        { tool: "codex", model: "gpt-5-codex" },
+      ],
+    });
+    quota.markStarted(decision.reservation.id);
+    const closedTerminals: AgentRecord["terminalHandle"][] = [];
+    let layoutRequests = 0;
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new StubSpawner(),
+      tmuxSender: new SilentTmuxSender(),
+      tmux: new FakeDaemonTmux(),
+      closeTerminal: async (handle) => {
+        closedTerminals.push(handle);
+      },
+      layout: {
+        requestLayout: () => {
+          layoutRequests += 1;
+        },
+      },
+      quota,
+    });
+    const terminalHandle = { app: "iterm2", sessionId: "viewer-1" } as const;
+    db.insertAgent(agent({
+      status: "working",
+      terminalHandle,
+      quotaReservationId: decision.reservation.id,
+    }));
+    try {
+      await daemon.reconcileAgents();
+
+      expect(db.getAgentByName("maya")).toMatchObject({
+        status: "dead",
+        failureReason: "tmux session missing (reconciled)",
+      });
+      expect(db.getAgentByName("maya")?.terminalHandle).toBeUndefined();
+      // A started agent that dies keeps its conservative estimate.
+      expect(ledger.getReservation(decision.reservation.id)).toMatchObject({
+        status: "reconciled",
+        source: "estimated",
+      });
+      expect(closedTerminals).toEqual([terminalHandle]);
       expect(layoutRequests).toEqual(1);
     } finally {
       db.close();
