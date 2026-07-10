@@ -1,7 +1,7 @@
 /**
  * `hive` — bring the session up, then open the installed release Workspace.
  *
- * Bare `hive` is not a shortcut around `hive start`; it *is* `hive start`
+ * Bare `hive` is not a shortcut around `hive init`; it *is* `hive init`
  * followed by attaching the app. It runs the same session boundary (update
  * notice, stale-daemon restart, daemon bring-up, init-once profile line) and
  * only then launches the app, handing it everything it needs on argv:
@@ -92,7 +92,7 @@ export interface RunWorkspaceDeps {
   readonly launch?: (deps: LaunchDeps) => Promise<number>;
 }
 
-/** Bare `hive`: the `hive start` session boundary, then the app attached to
+/** Bare `hive`: the `hive init` session boundary, then the app attached to
  * exactly the port that boundary produced. */
 export async function runWorkspace(deps: RunWorkspaceDeps = {}): Promise<number> {
   const session = await (deps.start ?? startSession)();

@@ -200,7 +200,7 @@ Five, each falsifiable in under a week, ordered by how much they would change th
 
 **Phase 1.** Prototypes 1 and 5. Replace Claude's tmux-and-Channels delivery with the stream-json control channel behind a flag, keeping tmux as the fallback SPEC already maintains. Replace `CLAUDE_BEST_MODEL` with a live `initialize` probe. Ungate Claude Code as a ring-1 orchestrator on fixture evidence.
 
-**Phase 2.** Supervisor, registry, `hive start`, quota arbiter, tenant brokers. Prototypes 3 and 4 gate this. Migration with rollback. No UI yet — the CLI keeps working.
+**Phase 2.** Supervisor, registry, `hive init`, quota arbiter, tenant brokers. Prototypes 3 and 4 gate this. Migration with rollback. No UI yet — the CLI keeps working.
 
 **Phase 3.** Workspace UI: one process, tiled split tree, transcript panes, deterministic promotion and focus, semantic attention borders driven by broker events, `CoreAnimation` layout generations, multi-display consolidation. Prototype 2 gates the pane model. SwiftTerm arrives only for the shell pane.
 
@@ -212,7 +212,7 @@ Twelve, each falsifiable, each tied to a failure that has happened or would be u
 
 1. Nested paths and symlink aliases resolve to one HiveUUID; user-created linked worktrees resolve to distinct HiveUUIDs; separate clones distinct; bare repo refused.
 2. A moved project is detected by path disagreement and prompts rebind; a deleted-and-recreated path never inherits the old HiveUUID.
-3. Twenty simultaneous `hive start` calls on one project produce exactly one HiveUUID, one broker, one orchestrator.
+3. Twenty simultaneous `hive init` calls on one project produce exactly one HiveUUID, one broker, one orchestrator.
 4. Two projects with identically named agents never cross-route a message; stopping A cannot signal B.
 5. A peer whose build hash differs but whose marketing version matches is rejected. (This is our own bug, written as a gate.)
 6. No unauthenticated local process can reach any mutating endpoint. An agent's capability authorizes an explicit subject-action set: a writer can land only its own branch at its current epoch, once, and cannot spawn, approve, kill another agent, or read the global inbox. A revoked epoch is refused. An agent's grandchild inherits no reusable credential.

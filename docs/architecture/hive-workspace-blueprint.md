@@ -72,11 +72,11 @@ The losing alternative was a Hive-owned semantic transcript. Its prototype evide
 
 Named pasteboards and OSC 52 mediation may prevent accidents, but they are not tenant security: any same-user process can reach a named or general pasteboard. The UI must describe that honestly.
 
-## `hive start` and immutable project identity
+## `hive init` and immutable project identity
 
-Bare `hive` is the front door: it runs the session boundary — update notice, daemon up, repo profile bootstrap or staleness check (SPEC §14) — and opens the project's Workspace window, passing the resolved project directory and daemon port to the app. `hive start` is the same boundary without a window; `hive claude` and `hive codex` attach an orchestrator in a plain terminal for people who don't want the app. While a Workspace is attached, the daemon opens no external viewer windows — the app is the viewer, and the window wall (SPEC §10) stays dormant.
+Bare `hive` is the graphical front door: it runs the session boundary — update notice, daemon up, repo profile bootstrap or staleness check (SPEC §14) — and opens the project's Workspace window, passing the resolved project directory and daemon port to the app. `hive init` is the headless onboarding boundary: it creates or refreshes the profile when needed and brings the daemon up without a window; `hive init --refresh` performs profile maintenance only. The deprecated `hive start` alias forwards to ordinary init. `hive claude` and `hive codex` attach an orchestrator in a plain terminal for people who don't want the app. While a Workspace is attached, the daemon opens no external viewer windows — the app is the viewer, and the window wall (SPEC §10) stays dormant.
 
-`hive start` is an idempotent request to resolve, create, attach, and focus a project. The thin signed CLI sends a directory locator and idempotency key to the Supervisor. The Supervisor resolves identity before it returns a tenant endpoint.
+`hive init` is an idempotent request to profile, resolve, create, and attach a project. The thin signed CLI sends a directory locator and idempotency key to the Supervisor. The Supervisor resolves identity before it returns a tenant endpoint.
 
 The resolver follows this order:
 
@@ -193,7 +193,7 @@ The project switcher lists sanitized cards: display name, last active time, prov
 
 Migration is transactional, versioned, backed up, resumable, and rollbackable. The Supervisor detects the default `~/.hive` once and imports `config.toml`, `routing.toml`, `quota.toml`, and `hive.db` only after the user confirms the resolved project. A custom `HIVE_HOME` requires an explicit import path. Hive never mutates two homes or silently merges them. After migration, `HIVE_HOME` is an import hint, not tenant routing.
 
-Safe global values become global defaults; project/session/worktree records become one tenant. Terminal, headless, and layout settings are legacy compatibility, not flagship architecture. Old `hive claude` and `hive codex` become deprecated `hive start` launch preferences that still pass conformance. Model aliases resolve to concrete IDs with an alias-policy revision; unresolved aliases stop for user input.
+Safe global values become global defaults; project/session/worktree records become one tenant. Terminal, headless, and layout settings are legacy compatibility, not flagship architecture. Old `hive claude` and `hive codex` become deprecated `hive init` launch preferences that still pass conformance. Model aliases resolve to concrete IDs with an alias-policy revision; unresolved aliases stop for user input.
 
 Live tmux sessions cannot move between tmux servers, so migration adopts them in place: the broker records each session's locator and the Workspace attaches panes to them where they run. tmux is not a legacy layer being drained — it is the survival substrate agent panes attach to; only driven headless sessions use AgentHost. New shell panes use the tenant's tmux namespace. Worktrees and branches are never deleted as a migration side effect.
 
@@ -215,7 +215,7 @@ The flagship does not pass its safety gate until all twelve statements are falsi
 12. Interrupted migration rolls back to a working prior state.
 13. No release bundle contains a fixture-driven surface. The Workspace ships only when a headless end-to-end run against the release build — real daemon, real tmux sessions, real panes, a keystroke round-trip — passes. A mock reaching a user as the product is a release-blocking defect, not a placeholder.
 
-Performance and polish remain release targets rather than safety gates: warm `hive start` to focused UI p95 under 400 ms; cold broker/UI under two seconds excluding provider startup; recovery under two seconds when AgentHost survives; bounded logs and no identity loss in a 50-pane eight-hour soak; idle CPU under two percent on the reference machine; Reduce Motion honored; transcript VoiceOver parity with native text; and no PTY resize storms in shell panes.
+Performance and polish remain release targets rather than safety gates: warm `hive init` to an attached project p95 under 400 ms; cold broker/UI under two seconds excluding provider startup; recovery under two seconds when AgentHost survives; bounded logs and no identity loss in a 50-pane eight-hour soak; idle CPU under two percent on the reference machine; Reduce Motion honored; transcript VoiceOver parity with native text; and no PTY resize storms in shell panes.
 
 ## Superseded proposals
 

@@ -14,7 +14,7 @@ const available = (over: Partial<Extract<UpdateCheck, { state: "update-available
 const start = (check: UpdateCheck, over: Record<string, unknown> = {}): string =>
   plain(renderStartNotice({ check, installMethod: "native", ...over }));
 
-describe("hive start notice", () => {
+describe("hive init session notice", () => {
   test("names the current and the latest version and the command", () => {
     expect(start(available())).toEqual(
       "hive 0.0.7 available (you have 0.0.4) — run hive update",

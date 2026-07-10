@@ -97,4 +97,4 @@ case ":$PATH:" in
   *":$BIN_DIR:"*) ;;
   *) printf 'Add %s to your PATH.\n' "$BIN_DIR" ;;
 esac
-printf 'Run `hive start` in a project, then `hive` to open the Workspace.\n'
+printf 'Run `hive init` in a project, then `hive` to open the Workspace.\n'

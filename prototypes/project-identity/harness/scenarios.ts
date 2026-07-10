@@ -74,7 +74,7 @@ function newContext(root: string, bookmarks: BookmarkProvider): Ctx {
   };
 }
 
-/** Register a project the way `hive start` would, and return its HiveUUID. */
+/** Register a project the way `hive init` would, and return its HiveUUID. */
 function register(ctx: Ctx, dir: string, idempotencyKey = dir): string {
   const result = resolveOrCreate(dir, ctx.options, idempotencyKey);
   if (result.status !== "RESOLVED") {

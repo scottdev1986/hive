@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { announceProfile, startSession } from "./start";
 import { loadProfile } from "../adapters/profile";
 
-// `hive start`'s single profile line (SPEC §14). Exercised directly rather than
+// `hive init`'s single profile line (SPEC §14). Exercised directly rather than
 // through the full daemon bring-up, which `runStart` owns.
 
 function git(root: string, args: string[]): void {
@@ -32,7 +32,7 @@ async function repoWithSpec(): Promise<string> {
   return root;
 }
 
-// The session boundary shared by `hive start` and bare `hive`. The daemon
+// The session boundary shared by `hive init` and bare `hive`. The daemon
 // bring-up itself is a subprocess concern (covered end-to-end in
 // e2e-real.test.ts); here the seams prove the boundary's shape: order, the
 // returned port, and the best-effort steps staying best-effort.

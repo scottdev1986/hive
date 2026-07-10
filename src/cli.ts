@@ -208,7 +208,7 @@ export function createProgram(): Command {
   // what bug reports need. The richer facts belong to `hive update status`.
   program.version(versionLine(), "-v, --version", "Print the Hive version");
 
-  // Bare `hive` runs the `hive start` session boundary (daemon up, profile
+  // Bare `hive` runs the shared session boundary (daemon up, profile
   // announced), then opens the installed release Workspace against that
   // daemon. Never a dev build.
   program.action(async () => {
@@ -217,20 +217,19 @@ export function createProgram(): Command {
 
   program
     .command("start")
-    .description(
-      "Check for updates and bring this project's Hive daemon up",
-    )
+    .description("Deprecated alias for `hive init`")
     .action(async () => {
+      console.error("`hive start` is deprecated; use `hive init`.");
+      await runInitCli({});
       await runStart();
     });
 
   program
     .command("init")
     .description(
-      "Profile this repo: write/refresh .hive/profile.toml, optionally " +
-        "scaffold AGENTS.md, and seed narrative memory facts",
+      "Initialize or refresh this repo profile, then bring its Hive daemon up",
     )
-    .option("--refresh", "re-scan and rewrite an existing profile")
+    .option("--refresh", "re-scan the profile only; do not start the daemon")
     .option("--scaffold-agents", "offer to scaffold an AGENTS.md when none exists")
     .option("--seed-facts <path>", "JSON file of narrative facts to seed (source: init)")
     .action(async (options: {
@@ -247,6 +246,7 @@ export function createProgram(): Command {
           ? {}
           : { seedFacts: options.seedFacts }),
       });
+      if (options.refresh !== true) await runStart();
     });
 
   const update = program

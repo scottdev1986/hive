@@ -635,7 +635,7 @@ export class HiveDaemon {
         }`,
       );
     });
-    // Every hive start reads the providers' real limits before the first spawn
+    // Every daemon start reads the providers' real limits before the first spawn
     // can reserve against a number nobody measured. A provider that will not
     // answer leaves its pool honestly unknown rather than blocking startup.
     void this.refreshQuota({ force: true }).catch((error) => {
@@ -702,11 +702,11 @@ export class HiveDaemon {
 
   /**
    * The repo profile's start-time duties the daemon owns (SPEC §14). It has the
-   * repo root, the message bus, and no terminal — the complement of `hive start`,
+   * repo root, the message bus, and no terminal — the complement of `hive init`,
    * which has a terminal but wants the durable note to survive it:
    *   - Uninitialized: write the deterministic profile, so a repo entered through
-   *     `hive claude` (never `hive start`) still gets un-hardcoded briefs. The
-   *     idempotent, atomic write converges with any concurrent `hive start`.
+   *     `hive claude` (never `hive init`) still gets un-hardcoded briefs. The
+   *     idempotent, atomic write converges with any concurrent `hive init`.
    *   - Stale: enqueue exactly one durable orchestrator note. The idempotency key
    *     is the profile's own fingerprint, so re-boots at the same staleness never
    *     spam, and a `hive init --refresh` (new fingerprint) re-arms the note.

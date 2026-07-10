@@ -1,7 +1,7 @@
 /**
- * `hive start` — the session boundary.
+ * `hive init` — the session boundary.
  *
- * Per the Workspace blueprint, `hive start` is an idempotent request to resolve,
+ * Per the Workspace blueprint, `hive init` is an idempotent request to resolve,
  * create, attach, and focus a project. It is also the one moment Hive reliably
  * owns the terminal, so it is where the update notice belongs: printed before
  * any work, on stderr, dim, one line. Claude Code's contract exactly — you learn
@@ -101,20 +101,21 @@ export async function ensureDaemonForBuild(cwd = process.cwd()): Promise<void> {
 }
 
 /**
- * Meet the repo (SPEC §14). `hive start` never profiles on the hot path; it does
- * one cheap thing every start — recompute the fingerprint and compare:
+ * Meet the repo at the shared session boundary (SPEC §14). Bare `hive` and
+ * direct orchestrator entry can reach this without the richer init pass, so it
+ * recomputes the fingerprint and compares:
  *   - Uninitialized: run the deterministic, zero-quota bootstrap, write the
  *     profile, and print the single line that says it was written.
  *   - Stale (inputs drifted): proceed on the existing profile — a slightly stale
  *     allowlist beats none — and print the one-line `hive init --refresh` note.
  *     The durable orchestrator note is enqueued by the daemon on the same start.
  *   - Fresh: proceed in silence.
- * Any failure here is swallowed by the caller: profiling must never stop a start.
+ * Any failure here is swallowed by the caller: profiling must never stop a session.
  *
  * This runs *before* the daemon comes up. The daemon bootstraps the profile
  * too (server.ts `checkRepoProfile`, for repos entered through `hive claude`),
  * and by the time `ensureStarted` has seen /health that bootstrap has usually
- * already won — evaluated afterwards, a first start reads as "fresh" and the
+ * already won — evaluated afterwards, a first session reads as "fresh" and the
  * one line that says the profile was written is silently lost. Both writers
  * are deterministic and idempotent, so ordering the terminal-owning one first
  * costs nothing and makes the announcement reliable.
@@ -143,12 +144,12 @@ export interface StartedSession {
 }
 
 /**
- * The session boundary itself, shared by `hive start` and bare `hive`: update
+ * The session boundary itself, shared by `hive init` and bare `hive`: update
  * notice (best-effort), stale-daemon restart, daemon bring-up, and the
  * init-once profile line (best-effort). Everything a session needs before
  * anything attaches to it — and nothing about *what* attaches, which is why
  * bare `hive` can run this and then hand the port to the Workspace app while
- * `hive start` just prints where the daemon is.
+ * `hive init` just prints where the daemon is.
  */
 export async function startSession(deps: StartDeps = {}): Promise<StartedSession> {
   await printStartNotice(deps).catch(() => {

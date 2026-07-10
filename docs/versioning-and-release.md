@@ -1,6 +1,6 @@
 # Versioning, release, and update
 
-Hive's version is a fact about what a user is running, not a label someone remembers to change. One push to `main` publishes exactly one release, one patch above the last, and that release is the only thing `hive`, `hive start`, and `hive update` ever talk about. Nobody types a version number, and no commit contains one.
+Hive's version is a fact about what a user is running, not a label someone remembers to change. One push to `main` publishes exactly one release, one patch above the last, and that release is the only thing `hive`, `hive init`, and `hive update` ever talk about. Nobody types a version number, and no commit contains one.
 
 This document owns the versioning contract. [distribution-auto-update.md](../research/distribution-auto-update.md) owns *how* releases reach machines; [update-experience.md](../research/update-experience.md) owns *what the user sees*. Where this document and those disagree, this one is the implementation and they are the design; fix whichever is wrong.
 
@@ -53,7 +53,7 @@ Stapling is where the CLI and the app diverge. A notarization ticket staples int
 
 Ownership decides who may write. A Homebrew-owned install is told `brew upgrade hive` and is never rewritten, because two owners for one install is how a package receipt starts lying; Codex does the same thing, dispatching to the package manager that installed it. A binary sitting somewhere Hive did not put it is `unmanaged` and refused rather than guessed at. A source checkout is a source checkout wherever it sits, including inside the install root.
 
-The daemon is the reason activation is not a file copy. A Unix process keeps executing its already-open image after the symlink moves, so after an update the old daemon is still serving, still presenting the old build hash. The handshake refuses to adopt it — that is detection, and detection alone is a dead end, leaving the user with a new `hive` that will not speak to the daemon it just updated past. So `hive update` and `hive start` both close the loop: they stop a daemon that is provably *ours* (same `HiveUUID`) and provably *idle* (no live agents), and the next start spawns the new binary. Three distinctions do all the work here, and conflating any two is a bug:
+The daemon is the reason activation is not a file copy. A Unix process keeps executing its already-open image after the symlink moves, so after an update the old daemon is still serving, still presenting the old build hash. The handshake refuses to adopt it — that is detection, and detection alone is a dead end, leaving the user with a new `hive` that will not speak to the daemon it just updated past. So `hive update` and `hive init` both close the loop: they stop a daemon that is provably *ours* (same `HiveUUID`) and provably *idle* (no live agents), and the next start spawns the new binary. Three distinctions do all the work here, and conflating any two is a bug:
 
 - **stale** — same project, different build. Ours to restart.
 - **foreign** — a different project's daemon on our port. Never ours to kill.
@@ -63,7 +63,7 @@ The daemon is the reason activation is not a file copy. A Unix process keeps exe
 
 `hive` with no arguments opens the installed release Workspace. There is deliberately no development fallback — no symlink into `workspace/.build`, no `swift run`, no environment variable that quietly prefers a debug bundle. A `hive` that sometimes launches a debug build is a `hive` whose bug reports cannot be trusted, and the one thing worse than "Workspace is not installed" is "Workspace launched, and nobody can say which one".
 
-`hive start` checks for updates and prints one line before doing anything else. It is the session boundary, and the last moment Hive owns the terminal. The check is best-effort and never blocks: a machine with no network prints `could not check for updates (…)` and starts anyway. It never prints "up to date" on a failed check, because that sentence is a claim about the world and we would not have looked. A cached answer is still evidence — we observed that version exist — so an offline machine keeps telling the truth it last learned. But a stale cache saying "you are current" is downgraded to "could not check", because "nothing was newer yesterday" is not evidence that nothing is newer today.
+`hive init` checks for updates and prints one line before doing anything else. It is the session boundary, and the last moment Hive owns the terminal. The check is best-effort and never blocks: a machine with no network prints `could not check for updates (…)` and starts anyway. It never prints "up to date" on a failed check, because that sentence is a claim about the world and we would not have looked. A cached answer is still evidence — we observed that version exist — so an offline machine keeps telling the truth it last learned. But a stale cache saying "you are current" is downgraded to "could not check", because "nothing was newer yesterday" is not evidence that nothing is newer today.
 
 ## What Scott still has to do
 
@@ -125,7 +125,7 @@ Set `HIVE_RELEASE_PUBLIC_KEY` and `HIVE_RELEASE_PRIVATE_KEY` as repository secre
 
 ## Open questions
 
-**Who checks in the background.** [update-experience.md](../research/update-experience.md) argues the daemon should own checking on a jittered ~24-hour timer while the CLI owns telling, which is Hive's structural advantage over `gh` and `npm`: checks happen every 24 hours of use rather than once per invocation burst. Today the check runs in `hive start` against a 24-hour cache, and `checkForUpdate` is written so the daemon can call it unchanged. Until it does, a long-running daemon learns about a release only when someone types `hive start`. The passive one-line notice on `hive status`, `hive claude`, and the rest is built and tested but wired to nothing.
+**Who checks in the background.** [update-experience.md](../research/update-experience.md) argues the daemon should own checking on a jittered ~24-hour timer while the CLI owns telling, which is Hive's structural advantage over `gh` and `npm`: checks happen every 24 hours of use rather than once per invocation burst. Today the check runs in `hive init` against a 24-hour cache, and `checkForUpdate` is written so the daemon can call it unchanged. Until it does, a long-running daemon learns about a release only when someone types `hive init`. The passive one-line notice on `hive status`, `hive claude`, and the rest is built and tested but wired to nothing.
 
 **Automatic activation at quiescence.** A staged update currently waits for a human to run `hive update` again. The design says the daemon should activate it itself when the team drains. That needs a daemon-side quiescence hook, and it is the difference between "updates happen while you use the tool" and "updates happen when you ask twice".
 

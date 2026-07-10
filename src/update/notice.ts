@@ -1,7 +1,7 @@
 /**
  * The one line the user reads.
  *
- * Two surfaces, deliberately different. `hive start` is a session boundary and
+ * Two surfaces, deliberately different. `hive init` is a session boundary and
  * the last moment Hive owns the terminal, so it answers out loud — including
  * "I could not check", which is the whole point of asking. Every other human
  * command gets the passive notice: at most one dim line, only when there is
@@ -31,7 +31,7 @@ const yellow = (text: string): string => `${ESC}[33m${text}${ESC}[0m`;
 
 /**
  * The body of an update-available notice, before colour. Split out because
- * `hive start` and the passive notice differ in *when* they speak, not in what
+ * `hive init` and the passive notice differ in *when* they speak, not in what
  * they say.
  */
 function availableLine(
@@ -55,7 +55,7 @@ function availableLine(
 }
 
 /**
- * The notice for `hive start`: always says something, because the user just
+ * The notice for `hive init`: always says something, because the user just
  * asked Hive to start and deserves to know what it knows.
  */
 export function renderStartNotice(context: NoticeContext): string {

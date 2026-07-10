@@ -5,6 +5,7 @@ import { join } from "node:path";
 import {
   readSeedFactsFile,
   runInit,
+  runInitProfile,
   scaffoldAgentsMd,
   seedInitFacts,
 } from "./init";
@@ -155,6 +156,21 @@ describe("runInit", () => {
       const result = await runInit(root, { refresh: true });
       expect(result.profileWritten).toBe(true);
       expect(result.messages.some((m) => m.includes("Refreshed"))).toBe(true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("ordinary CLI init refreshes a stale profile without --refresh", async () => {
+    const root = await tsRepo();
+    try {
+      await runInit(root, {});
+      await writeFile(join(root, "SPEC.md"), "# Spec\n\nchanged\n");
+      git(root, ["add", "-A"]);
+      git(root, ["commit", "-m", "drift", "--no-gpg-sign"]);
+      const result = await runInitProfile(root, {});
+      expect(result.profileWritten).toBe(true);
+      expect(result.messages.some((message) => message.includes("Refreshed"))).toBe(true);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

@@ -71,7 +71,7 @@ curl -fsSL https://raw.githubusercontent.com/scottdev1986/hive/main/install.sh |
 
 The script downloads the latest release, verifies every artifact's SHA-256 against the release manifest, checks that the binary runs, and only then links `~/.local/bin/hive`. It's [short enough to read first](install.sh), and you should. Binaries are signed with a Developer ID and notarized by Apple, so macOS runs them without a Gatekeeper prompt.
 
-To update later, run `hive update`. Hive also checks for new versions on `hive start` and prints one line if there is one; set `HIVE_NO_UPDATE_CHECK=1` to silence the check or `HIVE_DISABLE_UPDATES=1` to turn self-update off entirely.
+To update later, run `hive update`. Hive also checks for new versions on `hive init` and prints one line if there is one; set `HIVE_NO_UPDATE_CHECK=1` to silence the check or `HIVE_DISABLE_UPDATES=1` to turn self-update off entirely.
 
 ## Quick start
 
@@ -87,7 +87,8 @@ Prefer plain terminals? `hive claude` / `hive codex` run the same orchestrator i
 | Command | What it does |
 |---|---|
 | `hive` | Open the project's Workspace — daemon, orchestrator, and agent panes in one window |
-| `hive start` | Bring up the project's daemon without opening a window |
+| `hive init` | Initialize or refresh the repo profile, then bring up its daemon without opening a window (`--refresh` updates the profile only) |
+| `hive start` | Deprecated alias for `hive init` |
 | `hive claude` / `hive codex` | Start a terminal orchestrator in the current folder |
 | `hive status` | Show all running agents and what they're doing |
 | `hive quota` | Show remaining capacity per provider, with reset times |

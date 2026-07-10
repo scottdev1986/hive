@@ -1,7 +1,7 @@
 /**
  * `hive init` — the richer, gated profiling pass (SPEC.md decision 14).
  *
- * The deterministic bootstrap (run silently on first `hive start`) already
+ * The deterministic bootstrap used by every session boundary already
  * un-hardcodes the brief mechanism for zero quota. `hive init` is the pass that
  * does what the bootstrap cannot and must be paid for or confirmed:
  *   - (Re)write the profile, refreshing its fingerprint against the current tree
@@ -25,6 +25,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
   bootstrapProfile,
+  evaluateProfile,
   loadProfile,
   PROFILE_RELATIVE_PATH,
   writeProfile,
@@ -284,20 +285,35 @@ export async function runInitCli(options: {
   scaffoldAgents?: boolean;
   seedFacts?: string;
 }): Promise<void> {
-  const facts = options.seedFacts === undefined
-    ? []
-    : await readSeedFactsFile(options.seedFacts);
-  const result = await runInit(process.cwd(), {
-    ...(options.refresh === undefined ? {} : { refresh: options.refresh }),
-    ...(options.scaffoldAgents === undefined
-      ? {}
-      : { scaffoldAgents: options.scaffoldAgents }),
-    facts,
-  });
+  const result = await runInitProfile(process.cwd(), options);
   for (const line of result.messages) console.log(line);
   if (result.factsSeeded.length > 0) {
     console.log(
       "Run `hive memory reindex` (or restart the daemon) to index the seeded facts.",
     );
   }
+}
+
+/** Apply the CLI policy: a normal init refreshes a stale profile automatically;
+ * `--refresh` forces the same pass. Session startup remains at registration so
+ * this profile operation is independently testable. */
+export async function runInitProfile(
+  cwd: string,
+  options: { refresh?: boolean; scaffoldAgents?: boolean; seedFacts?: string },
+): Promise<InitResult> {
+  // Ordinary init refreshes only when declared inputs drift. `--refresh`
+  // forces that same profile pass and is handled by the command registration
+  // as profile-only (no session start).
+  const status = await evaluateProfile(cwd);
+  const refresh = options.refresh === true || status.state === "stale";
+  const facts = options.seedFacts === undefined
+    ? []
+    : await readSeedFactsFile(options.seedFacts);
+  return runInit(cwd, {
+    ...(refresh ? { refresh: true } : {}),
+    ...(options.scaffoldAgents === undefined
+      ? {}
+      : { scaffoldAgents: options.scaffoldAgents }),
+    facts,
+  });
 }

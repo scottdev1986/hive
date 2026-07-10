@@ -11,7 +11,7 @@
  *
  * Two tiers, per the derive-then-refine split:
  *   - `bootstrapProfile` is the **deterministic** pass — zero model tokens,
- *     instant, run on first `hive start` in an uninitialized repo. It reads the
+ *     instant, run at the first session boundary in an uninitialized repo. It reads the
  *     package manager and commands out of the manifests, inventories docs, picks
  *     the most-cited as primary, and sizes the index budget from the file count.
  *   - `hive init` (src/cli/init.ts) is the richer, gated pass that enriches what

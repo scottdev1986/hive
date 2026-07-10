@@ -14,7 +14,7 @@
  *     PATH. CI sets HIVE_E2E=1; locally run `HIVE_E2E=1 bun test`.
  *
  * The scenarios are ordered and share one daemon lifetime on purpose — the
- * second `hive start` being a no-op *is* the regression under test, and it is
+ * second `hive init` being a no-op on the profile *is* the regression under test, and it is
  * only meaningful against the daemon the first start brought up.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
@@ -236,8 +236,8 @@ afterAll(async () => {
 });
 
 e2e("real hive CLI against a real daemon and real tmux", () => {
-  test("hive start in a fresh repo writes the profile once and brings the daemon up", async () => {
-    const run = await runCli(["start"]);
+  test("hive init in a fresh repo writes the profile once and brings the daemon up", async () => {
+    const run = await runCli(["init"]);
     const output = run.stdout + run.stderr;
     expect(run.exitCode).toEqual(0);
     // The init-once bootstrap announced itself…
@@ -249,12 +249,12 @@ e2e("real hive CLI against a real daemon and real tmux", () => {
     await until(health, "daemon /health");
   }, MINUTE);
 
-  test("a second hive start is a no-op on the profile — the field-test regression", async () => {
+  test("a second hive init is a no-op on a fresh profile — the field-test regression", async () => {
     const profilePath = join(repo, ".hive", "profile.toml");
     const before = await readFile(profilePath, "utf8");
     const mtimeBefore = (await stat(profilePath)).mtimeMs;
 
-    const run = await runCli(["start"]);
+    const run = await runCli(["init"]);
     const output = run.stdout + run.stderr;
     expect(run.exitCode).toEqual(0);
     expect(output).not.toContain("Wrote .hive/profile.toml");
@@ -262,6 +262,14 @@ e2e("real hive CLI against a real daemon and real tmux", () => {
     expect(await readFile(profilePath, "utf8")).toEqual(before);
     expect((await stat(profilePath)).mtimeMs).toEqual(mtimeBefore);
     expect(await health()).toEqual(true);
+  }, MINUTE);
+
+  test("hive start remains a deprecated alias for hive init", async () => {
+    const run = await runCli(["start"]);
+    const output = run.stdout + run.stderr;
+    expect(run.exitCode).toEqual(0);
+    expect(output).toContain("`hive start` is deprecated; use `hive init`.");
+    expect(output).toContain(`daemon port ${port}`);
   }, MINUTE);
 
   test("workspace-feed streams NDJSON snapshots and holds the presence lease", async () => {
