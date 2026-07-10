@@ -14,6 +14,7 @@ import {
   buildClaudeSpawnCommand,
   claudeProjectDirectory,
   detectClaudeCliVersion,
+  resolveClaudeExecutable,
   findLatestClaudeSessionId,
   writeClaudeAgentConfig,
   CLAUDE_CHANNELS_FLAG,
@@ -68,6 +69,25 @@ describe("Claude adapter", () => {
       "--permission-mode",
       "default",
     ]);
+  });
+
+  test("uses the daemon-resolved executable instead of tmux PATH", () => {
+    expect(buildClaudeSpawnCommand({
+      name: "agent-3",
+      model: "sonnet",
+      worktreePath: "/tmp/worktree",
+      daemonPort: 4317,
+      readOnly: false,
+      executable: "/home/user/.local/bin/claude",
+    })).toEqual([
+      "/home/user/.local/bin/claude",
+      "--model",
+      "sonnet",
+    ]);
+    expect(resolveClaudeExecutable(() => "/native/claude")).toBe(
+      "/native/claude",
+    );
+    expect(resolveClaudeExecutable(() => null)).toBe("claude");
   });
 
   test("omits the model flag for the account default", () => {
@@ -388,12 +408,17 @@ describe("Claude Channels", () => {
 
 describe("detectClaudeCliVersion", () => {
   test("reads the version from `claude --version`", async () => {
+    let argv: string[] = [];
     expect(
-      await detectClaudeCliVersion(async () => ({
-        stdout: "2.1.206 (Claude Code)\n",
-        exitCode: 0,
-      })),
+      await detectClaudeCliVersion(async (command) => {
+        argv = command;
+        return {
+          stdout: "2.1.206 (Claude Code)\n",
+          exitCode: 0,
+        };
+      }, "/native/claude"),
     ).toBe("2.1.206");
+    expect(argv).toEqual(["/native/claude", "--version"]);
   });
 
   test("returns null when the CLI is missing, fails, or is unparseable", async () => {

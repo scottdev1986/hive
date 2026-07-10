@@ -13,6 +13,10 @@ export interface ClaudeSpawnOptions {
   /** Launch with the Channels research preview so the hive-channel bridge
    * can push daemon messages into the running session. */
   channels?: boolean;
+  /** Absolute path selected by the daemon. tmux servers can outlive the
+   * daemon and retain a different PATH, so production launches must not ask
+   * the pane to resolve `claude` again. */
+  executable?: string;
 }
 
 export type ClaudeAgentConfigOptions = Pick<
@@ -47,14 +51,26 @@ const runCommand: CommandRunner = async (argv) => {
  * CLI is missing or unparseable — callers must then skip Channels. */
 export async function detectClaudeCliVersion(
   run: CommandRunner = runCommand,
+  executable = "claude",
 ): Promise<string | null> {
   try {
-    const result = await run(["claude", "--version"]);
+    const result = await run([executable, "--version"]);
     if (result.exitCode !== 0) return null;
     return /(\d+\.\d+\.\d+)/.exec(result.stdout)?.[1] ?? null;
   } catch {
     return null;
   }
+}
+
+export type ExecutableFinder = (command: string) => string | null;
+
+/** Bind launches to the executable visible to the daemon. A long-lived tmux
+ * server has its own environment and may otherwise resolve the same bare
+ * command to a stale or broken installation. */
+export function resolveClaudeExecutable(
+  find: ExecutableFinder = Bun.which,
+): string {
+  return find("claude") ?? "claude";
 }
 
 const shellToken = (value: string): string => {
@@ -120,7 +136,7 @@ function deepMerge(
 export function buildClaudeSpawnCommand(
   options: ClaudeSpawnOptions,
 ): string[] {
-  const command = ["claude"];
+  const command = [options.executable ?? "claude"];
   if (options.model !== "default") {
     command.push("--model", options.model);
   }

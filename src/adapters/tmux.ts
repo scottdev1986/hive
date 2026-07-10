@@ -23,6 +23,7 @@ export interface TmuxAdapterOptions {
 // TUIs treat input arriving in one burst as a paste; an Enter inside that
 // window becomes a literal newline in the composer instead of a submit.
 export const SEND_ENTER_DELAY_MS = 500;
+export const FAILED_PROCESS_HOLD_SECONDS = 5;
 
 const SESSION_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,99}$/;
 
@@ -39,6 +40,21 @@ const shellQuote = (value: string): string =>
 
 export function shellJoin(argv: string[]): string {
   return argv.map(shellQuote).join(" ");
+}
+
+/** Keep a failed pane alive briefly so readiness monitoring can capture the
+ * real stderr instead of reporting only that the tmux session vanished. */
+export function holdPaneOnFailure(
+  command: string,
+  seconds = FAILED_PROCESS_HOLD_SECONDS,
+): string {
+  if (!Number.isSafeInteger(seconds) || seconds < 1) {
+    throw new Error("failure hold must be a positive whole number of seconds");
+  }
+  return `${command}; hive_status=$?; ` +
+    `if [ "$hive_status" -ne 0 ]; then ` +
+    `printf '\\n[hive] process exited with status %s\\n' "$hive_status" >&2; ` +
+    `sleep ${seconds}; fi; exit "$hive_status"`;
 }
 
 async function runTmux(
@@ -101,7 +117,15 @@ export class TmuxAdapter {
   ): Promise<void> {
     validateSessionName(name);
     const result = await this.run(
-      ["new-session", "-d", "-s", name, "-c", cwd, command],
+      [
+        "new-session",
+        "-d",
+        "-s",
+        name,
+        "-c",
+        cwd,
+        holdPaneOnFailure(command),
+      ],
       this.socketName,
     );
     assertSuccess(result, "new-session");

@@ -9,6 +9,7 @@ import type { TmuxAdapter } from "../adapters/tmux";
 import {
   buildClaudeResumeCommand,
   findLatestClaudeSessionId,
+  resolveClaudeExecutable,
   writeClaudeAgentConfig,
 } from "../adapters/tools/claude";
 import {
@@ -28,6 +29,7 @@ const RESUME_READY_POLL_MS = 1_000;
 const RESUME_READY_ATTEMPTS = 10;
 const RESUME_FAILURE_PATTERNS = [
   /^(Error|error):/m,
+  /^\[hive\] process exited with status \d+$/m,
   /command not found/,
   /not supported/i,
   /not found\.?$/m,
@@ -86,6 +88,7 @@ export interface CrashRecoveryDependencies {
   resolveCodexSessionId?: SessionResolver;
   worktreeExists?: (path: string) => boolean;
   sleep?: Sleep;
+  claudeExecutable?: string;
 }
 
 const defaultSleep: Sleep = (milliseconds) =>
@@ -113,6 +116,7 @@ export class CrashRecovery {
   private readonly resolveCodex: SessionResolver;
   private readonly worktreeExists: (path: string) => boolean;
   private readonly wait: Sleep;
+  private readonly claudeExecutable: string;
 
   constructor(private readonly deps: CrashRecoveryDependencies) {
     this.resolveClaude = deps.resolveClaudeSessionId ??
@@ -121,6 +125,7 @@ export class CrashRecovery {
       ((worktreePath) => findLatestCodexSessionId(worktreePath));
     this.worktreeExists = deps.worktreeExists ?? existsSync;
     this.wait = deps.sleep ?? defaultSleep;
+    this.claudeExecutable = deps.claudeExecutable ?? resolveClaudeExecutable();
   }
 
   // The maintenance sweep: classify every agent whose tmux session is gone
@@ -279,6 +284,7 @@ export class CrashRecovery {
             name: record.name,
             readOnly: false,
             worktreePath,
+            executable: this.claudeExecutable,
           }, sessionId)
         : buildCodexResumeCommand({
             daemonPort: this.deps.port,

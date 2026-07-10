@@ -1062,7 +1062,7 @@ describe("HiveSpawner wiring", () => {
       agentTmuxSession("david"),
     ]);
     expect(tmux.sessions[0]?.[2]).toContain(
-      "'claude' '--model' 'claude-fable-5'",
+      "'--model' 'claude-fable-5'",
     );
     expect(tmux.sessions[0]?.[2]).toContain("You are maya");
     // Every writer agent carries the landing protocol for its own branch.
@@ -1247,6 +1247,7 @@ describe("HiveSpawner wiring", () => {
       tmux,
       terminal: new FakeTerminal(),
       createWorktree,
+      claudeExecutable: "/daemon/native/claude",
       sleep: async () => {},
       resolveModel: fakeResolveModel,
     });
@@ -1267,7 +1268,9 @@ describe("HiveSpawner wiring", () => {
     expect(claude.name).toEqual("quinn-2");
     expect(claude.tool).toEqual("claude");
     expect(claude.model).toEqual("sonnet");
-    expect(tmux.sessions[0]?.[2]).toContain("'claude'");
+    expect(tmux.sessions[0]?.[2]).toContain(
+      "'/daemon/native/claude' '--model' 'sonnet'",
+    );
     expect(tmux.sessions[0]?.[2]).toContain("'--model' 'sonnet'");
     expect(codex.name).toEqual("riley");
     expect(codex.tool).toEqual("codex");
@@ -1384,6 +1387,43 @@ describe("HiveSpawner wiring", () => {
     expect(tmux.killed).toEqual([agentTmuxSession("maya")]);
     expect(removals).toEqual([[root, worktreePath]]);
     expect(terminal.windows).toEqual([]);
+  });
+
+  test("reports a short-lived process exit marker instead of a raw tmux exit", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-spawner-exit-status-"));
+    tempRoots.push(root);
+    const worktreePath = join(root, "maya");
+    await mkdir(worktreePath, { recursive: true });
+    const store = new FakeStore();
+    const tmux = new FakeTmux([
+      "The provider CLI could not initialize.",
+      "[hive] process exited with status 1",
+    ].join("\n"));
+    const spawner = new HiveSpawner({
+      db: store,
+      repoRoot: root,
+      port: 4317,
+      config: { terminal: "auto", headless: true },
+      routing: async () => DEFAULT_ROUTING.standard,
+      tmux,
+      terminal: new FakeTerminal(),
+      createWorktree: async () => ({
+        path: worktreePath,
+        branch: "hive/maya-short-lived-launch",
+      }),
+      resolveModel: fakeResolveModel,
+      sleep: async () => {},
+    });
+
+    const failed = await spawner.spawn({
+      task: "Fail before readiness",
+      tier: "standard",
+    });
+
+    expect(failed.status).toEqual("failed");
+    expect(failed.failureReason).toContain("provider CLI could not initialize");
+    expect(failed.failureReason).toContain("process exited with status 1");
+    expect(failed.failureReason).not.toEqual("tmux session exited");
   });
 
   test("does not treat incidental error text as a launch failure", async () => {

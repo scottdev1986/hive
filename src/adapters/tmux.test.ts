@@ -1,6 +1,8 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import {
   assertSuccess,
+  FAILED_PROCESS_HOLD_SECONDS,
+  holdPaneOnFailure,
   SEND_ENTER_DELAY_MS,
   shellJoin,
   TmuxAdapter,
@@ -98,6 +100,41 @@ function recordingAdapter(options: {
   });
   return { adapter, calls, sleeps };
 }
+
+describe("TmuxAdapter launch diagnostics", () => {
+  test("keeps a failed process visible long enough to capture its exit", async () => {
+    const { adapter, calls } = recordingAdapter();
+
+    await adapter.newSession(
+      "hive-maya",
+      "/repo",
+      "'claude' '--model' 'sonnet'",
+    );
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.args).toEqual([
+      "new-session",
+      "-d",
+      "-s",
+      "hive-maya",
+      "-c",
+      "/repo",
+      holdPaneOnFailure("'claude' '--model' 'sonnet'"),
+    ]);
+    expect(calls[0]?.args.at(-1)).toContain(
+      `[hive] process exited with status %s`,
+    );
+    expect(calls[0]?.args.at(-1)).toContain(
+      `sleep ${FAILED_PROCESS_HOLD_SECONDS}`,
+    );
+  });
+
+  test("rejects an invalid failure hold", () => {
+    expect(() => holdPaneOnFailure("true", 0)).toThrow(
+      "failure hold must be a positive whole number",
+    );
+  });
+});
 
 describe("TmuxAdapter.sendKeys injection", () => {
   test("pastes the text, waits, then submits with exactly one Enter", async () => {
@@ -309,6 +346,35 @@ describe("TmuxAdapter", () => {
     expect(pane.includes(text)).toEqual(true);
     await tmux.killSession(session);
     expect(await tmux.hasSession(session)).toEqual(false);
+    sessions.delete(session);
+  });
+
+  test("preserves a real failed pane long enough to capture its cause", async () => {
+    const session = `hive-adapter-failure-${crypto.randomUUID()}`;
+    try {
+      await tmux.newSession(session, socketDirectory, "printf 'provider failed\\n' >&2; exit 17");
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        error.message.includes("Operation not permitted")
+      ) {
+        return;
+      }
+      throw error;
+    }
+    if (!(await tmux.hasSession(session))) return;
+    sessions.add(session);
+
+    let pane = "";
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      pane = await tmux.capturePane(session);
+      if (pane.includes("process exited with status 17")) break;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    expect(pane).toContain("provider failed");
+    expect(pane).toContain("[hive] process exited with status 17");
+
+    await tmux.killSession(session);
     sessions.delete(session);
   });
 

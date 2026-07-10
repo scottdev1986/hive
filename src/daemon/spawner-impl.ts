@@ -8,6 +8,7 @@ import type { TmuxAdapter } from "../adapters/tmux";
 import {
   buildClaudeSpawnCommand,
   detectClaudeCliVersion,
+  resolveClaudeExecutable,
   writeClaudeAgentConfig,
 } from "../adapters/tools/claude";
 import { CHANNELS_MIN_VERSION, versionAtLeast } from "./channels";
@@ -127,6 +128,8 @@ export interface HiveSpawnerDependencies {
   /** Reads the installed Claude CLI version to gate the Channels preview.
    * Returning null (or an old version) keeps the tmux fallback. */
   detectClaudeVersion?: ClaudeVersionDetector;
+  /** Test seam for the daemon-resolved Claude binary. */
+  claudeExecutable?: string;
   /** Operator opt-out for the research preview; the fallback stays maintained. */
   channelsEnabled?: boolean;
   /** Fires after a viewer window is attached so the daemon can re-tile the
@@ -152,6 +155,7 @@ const READINESS_POLL_MS = 1_000;
 const READINESS_ATTEMPTS = 15;
 const LAUNCH_FAILURE_PATTERNS = [
   /^(Error|error):/m,
+  /^\[hive\] process exited with status \d+$/m,
   /command not found/,
   /not supported/i,
   /not found\.?$/m,
@@ -256,14 +260,17 @@ export class HiveSpawner implements Spawner {
   private readonly wait: Sleep;
   private readonly modelResolver: ModelResolver;
   private readonly detectClaudeVersion: ClaudeVersionDetector;
+  private readonly claudeExecutable: string;
 
   constructor(private readonly dependencies: HiveSpawnerDependencies) {
     this.makeWorktree = dependencies.createWorktree ?? createWorktree;
     this.cleanupWorktree = dependencies.removeWorktree ?? removeWorktree;
     this.wait = dependencies.sleep ?? sleep;
     this.modelResolver = dependencies.resolveModel ?? resolveConcreteModel;
+    this.claudeExecutable = dependencies.claudeExecutable ??
+      resolveClaudeExecutable();
     this.detectClaudeVersion = dependencies.detectClaudeVersion ??
-      (() => detectClaudeCliVersion());
+      (() => detectClaudeCliVersion(undefined, this.claudeExecutable));
   }
 
   /**
@@ -359,6 +366,7 @@ export class HiveSpawner implements Spawner {
           readOnly,
           worktreePath: agent.worktreePath,
           channels,
+          executable: this.claudeExecutable,
         });
       } else {
         await writeCodexAgentConfig(agent.worktreePath, {
@@ -702,6 +710,7 @@ export class HiveSpawner implements Spawner {
           readOnly: false,
           worktreePath: worktree.path,
           channels,
+          executable: this.claudeExecutable,
         });
       } else {
         await writeCodexAgentConfig(worktree.path, {
