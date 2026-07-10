@@ -44,7 +44,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let controller = ProjectWindowController(
             state: state, attentionCenter: attentionCenter,
             projectDirectory: projectDirectory, hivePath: hivePath,
-            daemonPort: daemonPort, orchestrator: config.orchestrator)
+            daemonPort: daemonPort, orchestrator: config.orchestrator,
+            orchestratorSession: config.orchestratorSession)
         self.controller = controller
 
         projectSwitcher.register(state: state) { [weak controller] in

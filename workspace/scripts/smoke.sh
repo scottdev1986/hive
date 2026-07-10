@@ -60,14 +60,12 @@ done
 EOF
 chmod +x "$FEED"
 
-# --- Fake hive binary: only the `claude` subcommand the master pane runs ----
-# `tmux new-session -A` mirrors the real CLI: attach if alive, create if not —
-# which also proves the app's relaunch-reattaches path.
+# --- Fake hive binary: private Workspace orchestrator boundary --------------
 FAKE_HIVE="$SUPPORT_DIR/hive"
 cat > "$FAKE_HIVE" <<EOF
 #!/bin/sh
 case "\${1:-}" in
-  claude) exec tmux new-session -A -s "$SESS_ORCH" ;;
+  workspace-orchestrator) exec tmux attach-session -t "$SESS_ORCH" ;;
   *) echo "fake hive: unexpected subcommand: \$*" >&2; exit 64 ;;
 esac
 EOF
@@ -83,7 +81,8 @@ HIVE_SMOKE_ORCH_MARKER="ORCH-ALIVE" \
 HIVE_SMOKE_TYPE_INTO="agent-one" \
 HIVE_SMOKE_RT_MARKER="$RT_MARKER" \
 HIVE_SMOKE_CLOSE="agent-two" \
-"$BIN" --smoke --project "$PROJECT_DIR" --port 0 --hive "$FAKE_HIVE" --feed "$FEED"
+"$BIN" --smoke --project "$PROJECT_DIR" --port 0 --hive "$FAKE_HIVE" \
+  --orchestrator-session "$SESS_ORCH" --feed "$FEED"
 app_status=$?
 [ "$app_status" -eq 0 ] || fail "app smoke exited $app_status"
 

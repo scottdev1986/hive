@@ -47,6 +47,24 @@ final class SmokeRunner {
         return condition()
     }
 
+    private func tmuxPaneIsInCopyMode(_ session: String) -> Bool {
+        let process = Process()
+        let output = Pipe()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.arguments = ["tmux", "display-message", "-p", "-t", "=\(session):", "#{pane_in_mode}"]
+        process.standardOutput = output
+        process.standardError = FileHandle.nullDevice
+        do {
+            try process.run()
+            process.waitUntilExit()
+            let data = output.fileHandleForReading.readDataToEndOfFile()
+            return process.terminationStatus == 0
+                && String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) == "1"
+        } catch {
+            return false
+        }
+    }
+
     func run() {
         let env = ProcessInfo.processInfo.environment
         let expectedAgents: [(name: String, marker: String)] = (env["HIVE_SMOKE_AGENTS"] ?? "")
@@ -94,7 +112,24 @@ final class SmokeRunner {
                   "orchestrator terminal shows '\(orchMarker)'")
         }
 
-        // 4. Layout solves master + satellites: master in the 55–60% band,
+
+        // 4. Wheel events in both pane kinds enter authoritative tmux
+        // copy-mode through the running terminal pane's gesture path.
+        if let agent = expectedAgents.first,
+           let session = controller.state.panes[ProjectState.paneID(forAgent: agent.name)]?.tmuxSession {
+            controller.postScrollWheel(deltaY: 10, pane: ProjectState.paneID(forAgent: agent.name))
+            check(waitUntil(5) { self.tmuxPaneIsInCopyMode(session) },
+                  "agent wheel enters tmux copy-mode")
+        }
+        if let session = config.orchestratorSession {
+            controller.postScrollWheel(deltaY: 10, pane: ProjectState.orchestratorPaneID)
+            check(waitUntil(5) { self.tmuxPaneIsInCopyMode(session) },
+                  "orchestrator wheel enters tmux copy-mode")
+        } else {
+            failures.append("smoke launch provides orchestrator tmux session")
+        }
+
+        // 5. Layout solves master + satellites: master in the 55–60% band,
         //    satellites strictly to its right, nothing overlapping.
         let frames = controller.currentPaneFrames()
         check(frames.count == controller.state.panes.count, "solved frame per pane")
@@ -109,7 +144,7 @@ final class SmokeRunner {
             }
         }
 
-        // 5. Keystrokes reach the real tmux pane: type an echo whose *output*
+        // 6. Keystrokes reach the real tmux pane: type an echo whose *output*
         //    is the only place the full marker can appear.
         if let typeInto, let rtMarker, rtMarker.count > 2 {
             let paneID = ProjectState.paneID(forAgent: typeInto)
@@ -119,7 +154,7 @@ final class SmokeRunner {
                   "keystroke round trip through tmux ('\(rtMarker)')")
         }
 
-        // 6. Closing a pane detaches: the attach client dies, the pane view
+        // 7. Closing a pane detaches: the attach client dies, the pane view
         //    goes away, and the harness asserts the session survived.
         if let closeTarget {
             let paneID = ProjectState.paneID(forAgent: closeTarget)

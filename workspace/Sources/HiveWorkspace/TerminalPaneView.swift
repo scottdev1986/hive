@@ -125,14 +125,21 @@ final class TerminalPaneView: NSView, LocalProcessTerminalViewDelegate {
         scrollMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
             guard let self, event.window === self.window,
                   self.bounds.contains(self.convert(event.locationInWindow, from: nil)),
-                  let tmuxScroller = self.tmuxScroller,
-                  let request = TerminalScrollRequest(
-                    deltaY: event.scrollingDeltaY,
-                    visibleRows: self.terminal.getTerminal().rows)
+                  self.submitScroll(deltaY: event.scrollingDeltaY)
             else { return event }
-            tmuxScroller.submit(request)
             return nil
         }
+    }
+
+    @discardableResult
+    func submitScroll(deltaY: CGFloat) -> Bool {
+        guard let tmuxScroller,
+              let request = TerminalScrollRequest(
+                deltaY: deltaY,
+                visibleRows: terminal.getTerminal().rows)
+        else { return false }
+        tmuxScroller.submit(request)
+        return true
     }
 
     // MARK: Child process lifecycle

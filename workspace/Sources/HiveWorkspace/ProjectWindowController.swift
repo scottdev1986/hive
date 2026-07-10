@@ -13,6 +13,7 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
     private let hivePath: String
     private let daemonPort: Int
     private let orchestrator: String
+    private let orchestratorSession: String?
     private let container = LayoutContainerView()
     private let animator = LayoutAnimator()
     private var paneViews: [PaneID: PaneView] = [:]
@@ -28,13 +29,14 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
 
     init(state: ProjectState, attentionCenter: AttentionCenter,
          projectDirectory: String, hivePath: String, daemonPort: Int,
-         orchestrator: String) {
+         orchestrator: String, orchestratorSession: String?) {
         self.state = state
         self.attentionCenter = attentionCenter
         self.projectDirectory = projectDirectory
         self.hivePath = hivePath
         self.daemonPort = daemonPort
         self.orchestrator = orchestrator
+        self.orchestratorSession = orchestratorSession
 
         let window = NSWindow(
             contentRect: NSRect(x: 120, y: 80, width: 1280, height: 800),
@@ -139,7 +141,9 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
 
     private func addPaneView(for paneID: PaneID) {
         guard let pane = state.panes[paneID] else { return }
-        let scrollSession = pane.kind == .agent ? pane.tmuxSession : nil
+        let scrollSession = terminalScrollSession(
+            for: pane,
+            orchestratorSession: orchestratorSession)
         let allowsMouseReporting = pane.kind != .orchestrator
         let view = PaneView(
             paneID: paneID,
@@ -238,6 +242,11 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
 
     func sendText(_ text: String, pane: PaneID) {
         paneViews[pane]?.contentView.send(text: text)
+    }
+
+    /// Exercises the wheel gesture path in the running terminal pane.
+    func postScrollWheel(deltaY: CGFloat, pane: PaneID) {
+        paneViews[pane]?.contentView.submitScroll(deltaY: deltaY)
     }
 
     func terminalChildRunning(pane: PaneID) -> Bool {
