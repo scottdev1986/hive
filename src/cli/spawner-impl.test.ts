@@ -994,6 +994,107 @@ describe("HiveSpawner wiring", () => {
     quotaDb.close();
   });
 
+  test("launches an explicit request model verbatim on the route's preferred tool", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-spawner-explicit-model-"));
+    tempRoots.push(root);
+    const store = new FakeStore();
+    const tmux = new FakeTmux();
+    const spawner = new HiveSpawner({
+      db: store,
+      repoRoot: root,
+      port: 4317,
+      config: { terminal: "auto", headless: true },
+      routing: async () => DEFAULT_ROUTING.deep,
+      tmux,
+      terminal: new FakeTerminal(),
+      createWorktree: async (_repoRoot, name, slug) => {
+        const path = join(root, name);
+        await mkdir(path, { recursive: true });
+        return { path, branch: `hive/${name}-${slug}` };
+      },
+      sleep: async () => {},
+      resolveModel: fakeResolveModel,
+    });
+
+    const spawned = await spawner.spawn({
+      task: "Open an Opus terminal",
+      tier: "deep",
+      model: "claude-opus-4-8",
+    });
+    expect(spawned.tool).toEqual("claude");
+    expect(spawned.model).toEqual("claude-opus-4-8");
+    expect(spawned.executionIdentity).toEqual({
+      tool: "claude",
+      model: "claude-opus-4-8",
+    });
+    expect(tmux.sessions[0]?.[2]).toContain("'--model' 'claude-opus-4-8'");
+  });
+
+  test("never substitutes another model for an explicit request model under quota pressure", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-spawner-explicit-quota-"));
+    tempRoots.push(root);
+    const quotaDb = new HiveDatabase(join(root, "quota.db"));
+    const quota = new QuotaService(
+      new QuotaLedger(quotaDb),
+      QuotaConfigSchema.parse({
+        reserveFiveHourPct: 0,
+        reserveWeeklyPct: 0,
+        limits: [
+          {
+            // Deliberately under the deep-tier estimate (20): the explicit
+            // Fable request cannot be reserved.
+            provider: "claude",
+            account: "default",
+            pool: "claude-fable",
+            models: ["claude-fable-5"],
+            fiveHourAllowance: 10,
+            weeklyAllowance: 10,
+          },
+          {
+            // The release valve target has plenty of headroom — but a
+            // user-named model must fail rather than silently become Opus.
+            provider: "claude",
+            account: "default",
+            pool: "claude-opus",
+            models: ["claude-opus-4-8"],
+            fiveHourAllowance: 100,
+            weeklyAllowance: 100,
+          },
+        ],
+      }),
+      () => new Date(timestamp),
+    );
+    const store = new FakeStore();
+    const tmux = new FakeTmux();
+    const spawner = new HiveSpawner({
+      db: store,
+      repoRoot: root,
+      port: 4317,
+      config: { terminal: "auto", headless: true },
+      routing: async () => DEFAULT_ROUTING.deep,
+      tmux,
+      terminal: new FakeTerminal(),
+      createWorktree: async (_repoRoot, name, slug) => {
+        const path = join(root, name);
+        await mkdir(path, { recursive: true });
+        return { path, branch: `hive/${name}-${slug}` };
+      },
+      sleep: async () => {},
+      resolveModel: fakeResolveModel,
+      quota,
+    });
+
+    await expect(
+      spawner.spawn({
+        task: "Deep task",
+        tier: "deep",
+        model: "claude-fable-5",
+      }),
+    ).rejects.toThrow(/Quota pressure makes this spawn unsafe/);
+    expect(tmux.sessions).toHaveLength(0);
+    quotaDb.close();
+  });
+
   test("writes tool configs, starts named sessions, opens viewers, and inserts records", async () => {
     const root = await mkdtemp(join(tmpdir(), "hive-spawner-"));
     tempRoots.push(root);

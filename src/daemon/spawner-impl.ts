@@ -603,33 +603,46 @@ export class HiveSpawner implements Spawner {
     // The process, durable identity, terminal title, and hive_status all use
     // the same concrete model. A later control restart can therefore replay
     // the launch without consulting aliases or mutable tool defaults.
-    let model = await this.modelResolver(tool, configuredRoute);
+    // An explicit request model is a user directive: it launches verbatim
+    // (no alias resolution) on the spawn's tool and is never substituted.
+    let model = request.model ?? await this.modelResolver(tool, configuredRoute);
     let executionIdentity: ExecutionIdentity | undefined;
     let quotaReservationId: string | undefined;
     if (this.dependencies.quota?.config.enabled === true) {
-      const [claudeModel, codexModel] = await Promise.all([
-        this.modelResolver("claude", configuredRoute),
-        this.modelResolver("codex", configuredRoute),
-      ]);
-      const candidates: QuotaRouteCandidate[] = [
-        { tool: "claude", model: claudeModel },
-        { tool: "codex", model: codexModel },
-      ];
-      // Fable draws heavy shared capacity. When a route resolves to it,
-      // offer Opus 4.8 as a same-vendor release valve: listed after Fable so
-      // ties (including the no-quota-configured default) keep preferring
-      // Fable, but real quota pressure on Fable's pool can still pick Opus
-      // when it has the better headroom. This does not require the
-      // 2026-07-12 default-routing cutover — it applies whenever a route
-      // resolves to Fable, explicitly or otherwise.
-      if (claudeModel === CLAUDE_BEST_MODEL) {
-        candidates.splice(1, 0, { tool: "claude", model: CLAUDE_OPUS_MODEL });
+      let candidates: QuotaRouteCandidate[];
+      if (request.model !== undefined) {
+        // The pinned model is the only candidate, and the spawn is bound to
+        // its vendor: switching vendors away from a user-named model would
+        // launch something other than what was asked for, and the Fable→Opus
+        // release valve is equally a substitution, so neither applies here.
+        // Unsafe quota still fails the spawn with the capacity report.
+        candidates = [{ tool, model: request.model }];
+      } else {
+        const [claudeModel, codexModel] = await Promise.all([
+          this.modelResolver("claude", configuredRoute),
+          this.modelResolver("codex", configuredRoute),
+        ]);
+        candidates = [
+          { tool: "claude", model: claudeModel },
+          { tool: "codex", model: codexModel },
+        ];
+        // Fable draws heavy shared capacity. When a route resolves to it,
+        // offer Opus 4.8 as a same-vendor release valve: listed after Fable so
+        // ties (including the no-quota-configured default) keep preferring
+        // Fable, but real quota pressure on Fable's pool can still pick Opus
+        // when it has the better headroom. This does not require the
+        // 2026-07-12 default-routing cutover — it applies whenever a route
+        // resolves to Fable, explicitly or otherwise.
+        if (claudeModel === CLAUDE_BEST_MODEL) {
+          candidates.splice(1, 0, { tool: "claude", model: CLAUDE_OPUS_MODEL });
+        }
       }
+      const explicitTool = request.model !== undefined ? tool : request.tool;
       const decision = await this.dependencies.quota.routeAndReserve({
         agentName: name,
         tier: request.tier,
         preferredTool: configuredRoute.tool,
-        ...(request.tool === undefined ? {} : { explicitTool: request.tool }),
+        ...(explicitTool === undefined ? {} : { explicitTool }),
         ...(request.reviewOfTool === undefined
           ? {}
           : { reviewOfTool: request.reviewOfTool }),
