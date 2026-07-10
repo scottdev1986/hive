@@ -25,11 +25,11 @@ monorepo = false
 ranked = ["src/cli.ts"]
 
 [index_budget]
-file_count = 252
-map_tokens = 1008
+file_count = 271
+map_tokens = 1084
 
 [fingerprint]
 generated = "2026-07-10"
-hive_version = "0.0.1"
-commit = "5a091056b59212bee26548dca0757c6157dada78"
-inputs_hash = "bd0ae16aff46617f6f54051627d522ffb6492abaf36c85723f32b6ed3a5b4352"
+hive_version = "0.0.5"
+commit = "d08e6da4c1a218762591fde5f9aed6c495eebb2c"
+inputs_hash = "639f2240dcece4eea930a51f252d1d314f2aec9827ea89eadb5612dba3f2577b"

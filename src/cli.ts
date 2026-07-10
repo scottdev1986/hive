@@ -27,6 +27,7 @@ import {
 } from "./cli/event";
 import { launchOrchestrator } from "./cli/orchestrator";
 import { runInitCli } from "./cli/init";
+import { projectRootOrCwd } from "./cli/project-root";
 import { runStart } from "./cli/start";
 import { runStatusline } from "./cli/statusline";
 import {
@@ -208,10 +209,10 @@ export function createProgram(): Command {
   // what bug reports need. The richer facts belong to `hive update status`.
   program.version(versionLine(), "-v, --version", "Print the Hive version");
 
-  // Bare `hive` is the standalone application launcher. Project discovery,
-  // profiling, and daemon startup belong to the explicit `hive init` path;
-  // launching the app must not inspect whichever repo the shell happens to be
-  // in. Never launch a development Workspace build.
+  // Bare `hive` opens the project the shell is in: resolve the repo root, run
+  // the shared session boundary, and hand the app the project and daemon port.
+  // Outside a git repo it launches the app standalone (placeholder window) —
+  // the project-neutral home a Dock click gets. Never a dev Workspace build.
   program.action(async () => {
     await runWorkspace();
   });
@@ -229,7 +230,9 @@ export function createProgram(): Command {
       scaffoldAgents?: boolean;
       seedFacts?: string;
     }) => {
+      const root = projectRootOrCwd();
       await runInitCli({
+        cwd: root,
         ...(options.refresh === undefined ? {} : { refresh: options.refresh }),
         ...(options.scaffoldAgents === undefined
           ? {}
@@ -238,7 +241,7 @@ export function createProgram(): Command {
           ? {}
           : { seedFacts: options.seedFacts }),
       });
-      if (options.refresh !== true) await runStart();
+      if (options.refresh !== true) await runStart({ cwd: root });
     });
 
   const update = program

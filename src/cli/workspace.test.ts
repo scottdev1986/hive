@@ -41,7 +41,7 @@ describe("hive opens the installed release Workspace", () => {
     expect(opened).toEqual([join(root, "current", "HiveWorkspace.app")]);
   });
 
-  test("passes no project or daemon data to the standalone app", async () => {
+  test("with no session it launches the app with no args (placeholder window)", async () => {
     install("0.0.7");
     const argLists: (readonly string[])[] = [];
     await launchWorkspace({
@@ -49,6 +49,36 @@ describe("hive opens the installed release Workspace", () => {
       open: async (_app, args) => (argLists.push(args), 0),
     });
     expect(argLists).toEqual([[]]);
+  });
+
+  test("with a session it hands the app the project, port, and hive binary", async () => {
+    install("0.0.7");
+    const argLists: (readonly string[])[] = [];
+    await launchWorkspace({
+      root,
+      open: async (_app, args) => (argLists.push(args), 0),
+      session: { cwd: "/tmp/proj", port: 4567, hivePath: "/opt/hive/bin/hive" },
+    });
+    expect(argLists).toEqual([[
+      "--project", "/tmp/proj",
+      "--port", "4567",
+      "--hive", "/opt/hive/bin/hive",
+    ]]);
+  });
+
+  test("--hive defaults to this very process, never PATH lookup", async () => {
+    install("0.0.7");
+    const argLists: (readonly string[])[] = [];
+    await launchWorkspace({
+      root,
+      open: async (_app, args) => (argLists.push(args), 0),
+      session: { cwd: "/tmp/proj", port: 4567 },
+    });
+    expect(argLists).toEqual([[
+      "--project", "/tmp/proj",
+      "--port", "4567",
+      "--hive", process.execPath,
+    ]]);
   });
 
   test("with no release installed it refuses rather than launching a dev build", async () => {
@@ -80,11 +110,35 @@ describe("hive opens the installed release Workspace", () => {
   });
 });
 
-describe("bare hive is a standalone app launcher", () => {
-  test("offers an available update, then launches without repo data", async () => {
+describe("bare hive opens the project you're in", () => {
+  test("in a repo it runs the session boundary and launches against it", async () => {
+    const resolved: string[] = [];
+    const started: (string | undefined)[] = [];
+    const launches: LaunchDeps[] = [];
+    await runWorkspace({
+      cwd: "/repo/root/some/subdir",
+      resolveRoot: (cwd) => (resolved.push(cwd), "/repo/root"),
+      start: async (deps) => {
+        started.push(deps.cwd);
+        return { port: 4483, cwd: "/repo/root" };
+      },
+      checkUpdate: async () => {
+        // startSession already prints the start notice; a second, forced
+        // check here would print it twice.
+        throw new Error("the forced update check must not run in-project");
+      },
+      launch: async (deps) => (launches.push(deps), 0),
+    });
+    expect(resolved).toEqual(["/repo/root/some/subdir"]);
+    expect(started).toEqual(["/repo/root"]);
+    expect(launches).toEqual([{ session: { cwd: "/repo/root", port: 4483 } }]);
+  });
+
+  test("outside a repo it offers an available update, then launches standalone", async () => {
     const launches: LaunchDeps[] = [];
     const lines: string[] = [];
     await runWorkspace({
+      resolveRoot: () => null,
       checkUpdate: async () => ({
         state: "update-available", current: "0.0.3", latest: "0.0.4",
         securityCritical: false, stale: false,
@@ -96,10 +150,11 @@ describe("bare hive is a standalone app launcher", () => {
     expect(launches).toEqual([{}]);
   });
 
-  test("a failed update check is silent and still launches the app", async () => {
+  test("outside a repo a failed update check is silent and still launches", async () => {
     let launched = false;
     const lines: string[] = [];
     await runWorkspace({
+      resolveRoot: () => null,
       checkUpdate: async () => {
         throw new Error("offline");
       },

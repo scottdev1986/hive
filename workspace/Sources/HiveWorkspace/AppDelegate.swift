@@ -141,7 +141,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         title.alignment = .center
 
         let body = NSTextField(wrappingLabelWithString:
-            "No project is open.\n\nRun `hive init` in a project directory to initialize it and start its Hive daemon.")
+            "No project is open.\n\nRun `hive` from a project directory to open it here. New project? Run `hive init` there first.")
         body.font = Theme.bodyFont
         body.textColor = .secondaryLabelColor
         body.alignment = .center

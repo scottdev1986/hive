@@ -36,6 +36,7 @@ import {
   type MemoryWriteFileInput,
 } from "../adapters/memory";
 import type { RepoProfile } from "../schemas/profile";
+import { projectRootOrCwd } from "./project-root";
 
 /** A narrative fact for init to seed. Structured truth never comes through here
  * — it lives in the profile (SPEC §14). A stable id keeps a `hive init --refresh`
@@ -281,11 +282,15 @@ export async function readSeedFactsFile(path: string): Promise<InitFact[]> {
 
 /** CLI entry: `hive init [--refresh] [--scaffold-agents] [--seed-facts <path>]`. */
 export async function runInitCli(options: {
+  /** The project root; defaults to the git toplevel of process.cwd(), so
+   * `hive init` from a repo subdirectory profiles the repo, not the
+   * subdirectory. */
+  cwd?: string;
   refresh?: boolean;
   scaffoldAgents?: boolean;
   seedFacts?: string;
 }): Promise<void> {
-  const result = await runInitProfile(process.cwd(), options);
+  const result = await runInitProfile(options.cwd ?? projectRootOrCwd(), options);
   for (const line of result.messages) console.log(line);
   if (result.factsSeeded.length > 0) {
     console.log(
