@@ -707,6 +707,50 @@ describe("HiveSpawner name pool", () => {
 });
 
 describe("HiveSpawner wiring", () => {
+  test("launches the interactive Codex TUI by default even when app-server is available", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-spawner-tui-default-"));
+    tempRoots.push(root);
+    const tmux = new FakeTmux();
+    let probedAppServer = false;
+    const spawner = new HiveSpawner({
+      db: new FakeStore(),
+      repoRoot: root,
+      port: 4317,
+      config: { terminal: "auto", headless: true },
+      routing: async () => ({
+        ...DEFAULT_ROUTING.standard,
+        tool: "codex",
+        codex: { model: "gpt-test", effort: "high" },
+      }),
+      tmux,
+      terminal: new FakeTerminal(),
+      createWorktree: async (_repoRoot, name, slug) => {
+        const path = join(root, name);
+        await mkdir(path, { recursive: true });
+        return { path, branch: `hive/${name}-${slug}` };
+      },
+      sleep: async () => {},
+      resolveModel: fakeResolveModel,
+      codexAppServer: {
+        isAvailable: async () => {
+          probedAppServer = true;
+          return true;
+        },
+        buildHostCommand: () => ["hive", "codex-app-server-host"],
+        startAgent: async () => {},
+        disconnect: () => undefined,
+      },
+    });
+
+    await spawner.spawn({ task: "Visible interactive task", tier: "standard" });
+    expect(probedAppServer).toEqual(false);
+    expect(tmux.sessions).toHaveLength(1);
+    expect(tmux.sessions[0]?.[2]).toContain("'codex'");
+    expect(tmux.sessions[0]?.[2]).toContain("notify=");
+    expect(tmux.sessions[0]?.[2]).toContain("Visible interactive task");
+    expect(tmux.sessions[0]?.[2]).not.toContain("codex-app-server-host");
+  });
+
   test("launches Codex through the app-server host and delivers the assignment with turn/start", async () => {
     const root = await mkdtemp(join(tmpdir(), "hive-spawner-app-server-"));
     tempRoots.push(root);
@@ -717,7 +761,11 @@ describe("HiveSpawner wiring", () => {
       db: store,
       repoRoot: root,
       port: 4317,
-      config: { terminal: "auto", headless: true },
+      config: {
+        terminal: "auto",
+        headless: true,
+        codex: { driver: "app-server" },
+      },
       routing: async () => ({
         ...DEFAULT_ROUTING.standard,
         tool: "codex",
@@ -770,7 +818,11 @@ describe("HiveSpawner wiring", () => {
       db: store,
       repoRoot: root,
       port: 4317,
-      config: { terminal: "auto", headless: true },
+      config: {
+        terminal: "auto",
+        headless: true,
+        codex: { driver: "app-server" },
+      },
       routing: async () => ({
         ...DEFAULT_ROUTING.standard,
         tool: "codex",

@@ -26,12 +26,16 @@ describe("HiveConfigSchema", () => {
       terminal: "auto",
       headless: false,
       layout: "auto",
+      codex: { driver: "tui" },
     });
   });
 
   test("rejects an invalid config", () => {
     expect(() => HiveConfigSchema.parse({ terminal: "xterm" })).toThrow();
     expect(() => HiveConfigSchema.parse({ layout: "stack" })).toThrow();
+    expect(() =>
+      HiveConfigSchema.parse({ codex: { driver: "exec" } })
+    ).toThrow();
   });
 });
 

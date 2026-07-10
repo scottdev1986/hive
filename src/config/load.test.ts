@@ -46,6 +46,7 @@ describe("config loading", () => {
       terminal: "auto",
       headless: false,
       layout: "auto",
+      codex: { driver: "tui" },
     });
     expect(await loadRoutingTable()).toEqual(DEFAULT_ROUTING);
     expect(await loadQuotaConfig()).toMatchObject({
@@ -105,7 +106,14 @@ describe("config loading", () => {
     await resetHome();
     await writeFile(
       join(hiveHome, "config.toml"),
-      'terminal = "iterm2"\nheadless = true\n',
+      [
+        'terminal = "iterm2"',
+        "headless = true",
+        "",
+        "[codex]",
+        'driver = "app-server"',
+        "",
+      ].join("\n"),
     );
     await writeFile(
       join(hiveHome, "routing.toml"),
@@ -127,6 +135,7 @@ describe("config loading", () => {
       terminal: "iterm2",
       headless: true,
       layout: "auto",
+      codex: { driver: "app-server" },
     });
     const routing = await loadRoutingTable();
     expect(routing.deep).toEqual({

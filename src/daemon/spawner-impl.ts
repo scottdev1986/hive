@@ -106,7 +106,9 @@ export interface HiveSpawnerDependencies {
   db: AgentStore;
   repoRoot: string;
   port: number;
-  config: Pick<HiveConfig, "terminal" | "headless">;
+  config: Pick<HiveConfig, "terminal" | "headless"> & {
+    codex?: Pick<HiveConfig["codex"], "driver">;
+  };
   routing: RouteResolver;
   tmux: TmuxSessionManager;
   terminal: TerminalAdapter;
@@ -329,8 +331,9 @@ export class HiveSpawner implements Spawner {
           name: agent.name,
           readOnly,
         });
-        const useAppServer = await this.dependencies.codexAppServer?.isAvailable() ??
-          false;
+        const useAppServer =
+          this.dependencies.config.codex?.driver === "app-server" &&
+          (await this.dependencies.codexAppServer?.isAvailable() ?? false);
         if (useAppServer) {
           argv = this.dependencies.codexAppServer!.buildHostCommand(
             prepared.record,
@@ -652,8 +655,9 @@ export class HiveSpawner implements Spawner {
           name,
           readOnly: false,
         });
-        const useAppServer = await this.dependencies.codexAppServer?.isAvailable() ??
-          false;
+        const useAppServer =
+          this.dependencies.config.codex?.driver === "app-server" &&
+          (await this.dependencies.codexAppServer?.isAvailable() ?? false);
         argv = useAppServer
           ? this.dependencies.codexAppServer!.buildHostCommand(
               record,
