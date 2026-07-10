@@ -76,7 +76,7 @@ describe("channel-first delivery", () => {
     const db = freshDb();
     const tmux = new RecordingTmuxSender();
     const channel = new FakeChannel(true);
-    const delivery = new MessageDelivery(db, tmux, undefined, channel);
+    const delivery = new MessageDelivery(db, tmux, undefined, undefined, channel);
     try {
       db.insertAgent(agent("idle"));
       const message = await delivery.send("sam", "maya", "reuse the middleware");
@@ -102,7 +102,7 @@ describe("channel-first delivery", () => {
     const db = freshDb();
     const tmux = new RecordingTmuxSender();
     const channel = new FakeChannel(true);
-    const delivery = new MessageDelivery(db, tmux, undefined, channel);
+    const delivery = new MessageDelivery(db, tmux, undefined, undefined, channel);
     try {
       db.insertAgent(agent("working"));
       const message = await delivery.send("sam", "maya", "heads up");
@@ -118,7 +118,7 @@ describe("channel-first delivery", () => {
     const db = freshDb();
     const tmux = new RecordingTmuxSender();
     const channel = new FakeChannel(false);
-    const delivery = new MessageDelivery(db, tmux, undefined, channel);
+    const delivery = new MessageDelivery(db, tmux, undefined, undefined, channel);
     try {
       db.insertAgent(agent("idle"));
       const message = await delivery.send("sam", "maya", "reuse the middleware");
@@ -137,7 +137,7 @@ describe("channel-first delivery", () => {
     const db = freshDb();
     const tmux = new RecordingTmuxSender();
     const channel = new FakeChannel(true, false);
-    const delivery = new MessageDelivery(db, tmux, undefined, channel);
+    const delivery = new MessageDelivery(db, tmux, undefined, undefined, channel);
     try {
       db.insertAgent(agent("idle"));
       const message = await delivery.send("sam", "maya", "hello");
@@ -153,7 +153,7 @@ describe("channel-first delivery", () => {
     const db = freshDb();
     const tmux = new RecordingTmuxSender();
     const channel = new FakeChannel(true, "throw");
-    const delivery = new MessageDelivery(db, tmux, undefined, channel);
+    const delivery = new MessageDelivery(db, tmux, undefined, undefined, channel);
     try {
       db.insertAgent(agent("idle"));
       const message = await delivery.send("sam", "maya", "hello");
@@ -168,7 +168,7 @@ describe("channel-first delivery", () => {
     const db = freshDb();
     const tmux = new RecordingTmuxSender();
     const channel = new FakeChannel(true, false);
-    const delivery = new MessageDelivery(db, tmux, undefined, channel);
+    const delivery = new MessageDelivery(db, tmux, undefined, undefined, channel);
     try {
       db.insertAgent(agent("working"));
       const message = await delivery.send("sam", "maya", "hello");
@@ -185,7 +185,7 @@ describe("channel-first delivery", () => {
     const db = freshDb();
     const tmux = new RecordingTmuxSender();
     const channel = new FakeChannel(false);
-    const delivery = new MessageDelivery(db, tmux, undefined, channel);
+    const delivery = new MessageDelivery(db, tmux, undefined, undefined, channel);
     try {
       db.insertAgent(agent("working"));
       const queued = await delivery.send("sam", "maya", "later");
@@ -208,7 +208,7 @@ describe("channel-first delivery", () => {
     const db = freshDb();
     const tmux = new RecordingTmuxSender();
     const channel = new FakeChannel(true);
-    const delivery = new MessageDelivery(db, tmux, undefined, channel);
+    const delivery = new MessageDelivery(db, tmux, undefined, undefined, channel);
     try {
       db.insertAgent(agent("idle"));
       await delivery.send("sam", "maya", "once");
@@ -223,7 +223,7 @@ describe("channel-first delivery", () => {
     const db = freshDb();
     const tmux = new RecordingTmuxSender();
     const channel = new FakeChannel(true);
-    const delivery = new MessageDelivery(db, tmux, undefined, channel);
+    const delivery = new MessageDelivery(db, tmux, undefined, undefined, channel);
     try {
       db.insertAgent(agent("idle"));
       const message = await delivery.send("sam", "maya", "pivot now", {
@@ -249,7 +249,7 @@ describe("channel-first delivery", () => {
         return false;
       },
     };
-    const delivery = new MessageDelivery(db, tmux, undefined, channel);
+    const delivery = new MessageDelivery(db, tmux, undefined, undefined, channel);
     try {
       db.insertAgent(agent("idle"));
       const message = await delivery.send("sam", "maya", "hello");
