@@ -86,6 +86,23 @@ class FakeDaemonTmux {
   }
 }
 
+test("managed daemon shutdown reaps the orchestrator session", async () => {
+  const db = new HiveDatabase(join(home, "managed-stop-root.db"));
+  const tmux = new FakeDaemonTmux();
+  const daemon = new HiveDaemon({
+    db,
+    spawner: new StubSpawner(),
+    tmux,
+    manageLifecycle: true,
+  });
+  try {
+    await daemon.stop();
+    expect(tmux.killed).toContain(orchestratorTmuxSession());
+  } finally {
+    db.close();
+  }
+});
+
 class StubSpawner implements Spawner {
   readonly requests: SpawnRequest[] = [];
 

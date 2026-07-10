@@ -10,9 +10,16 @@ import {
   buildOrchestratorLaunchCommand,
   buildCodexRootAuthorityCommand,
   launchOrchestrator,
+  prepareFreshOrchestratorSession,
   prepareOrchestratorConfig,
   registerRunningOrchestratorTerminal,
 } from "./orchestrator";
+
+const noExistingRoot = {
+  hasSession: async () => false,
+  listClientTtys: async () => [],
+  killSession: async () => {},
+};
 
 describe("orchestrator brief", () => {
   test("builds an authority-first Codex root command without enabling it yet", () => {
@@ -74,28 +81,48 @@ describe("orchestrator brief", () => {
     expect(buildOrchestratorCommand("claude", 4317).at(-1)).toEqual(ORCHESTRATOR_BRIEF);
   });
 
-  test("runs the root in the fixed attachable tmux session used for wakes", () => {
+  test("starts a fresh root in the fixed instance-scoped tmux session", () => {
     const command = buildOrchestratorLaunchCommand("claude", 4317, "/repo");
-    expect(command.slice(0, 8)).toEqual([
+    expect(command.slice(0, 7)).toEqual([
       "tmux",
       "new-session",
-      "-A",
       "-s",
       orchestratorTmuxSession(),
       "-c",
       "/repo",
       "claude",
     ]);
+    expect(command).not.toContain("-A");
     expect(command).toContain(ORCHESTRATOR_BRIEF);
   });
 
   test("runs Codex root through an app-server authority and remote TUI", () => {
     const command = buildOrchestratorLaunchCommand("codex", 4317, "/repo");
-    expect(command.slice(0, 8)).toEqual([
-      "tmux", "new-session", "-A", "-s", orchestratorTmuxSession(), "-c", "/repo", "sh",
+    expect(command.slice(0, 7)).toEqual([
+      "tmux", "new-session", "-s", orchestratorTmuxSession(), "-c", "/repo", "sh",
     ]);
     expect(command.at(-1)).toContain("codex app-server --listen unix://");
     expect(command.at(-1)).toContain("exec codex --remote unix://");
+  });
+
+  test("kills an unattached stale root before launch", async () => {
+    const killed: string[] = [];
+    await prepareFreshOrchestratorSession({
+      hasSession: async () => true,
+      listClientTtys: async () => [],
+      killSession: async (session) => { killed.push(session); },
+    });
+    expect(killed).toEqual([orchestratorTmuxSession()]);
+  });
+
+  test("refuses to replace a root with an attached client", async () => {
+    let killed = false;
+    await expect(prepareFreshOrchestratorSession({
+      hasSession: async () => true,
+      listClientTtys: async () => ["/dev/ttys003"],
+      killSession: async () => { killed = true; },
+    })).rejects.toThrow("already active");
+    expect(killed).toEqual(false);
   });
 
   test("forbids background polling and makes status explicitly on-demand", () => {
@@ -204,6 +231,8 @@ describe("orchestrator brief", () => {
         },
         async () => null,
         async () => "2.1.80",
+        undefined,
+        noExistingRoot,
       );
 
       expect(exitCode).toEqual(17);
@@ -226,6 +255,8 @@ describe("orchestrator brief", () => {
         () => ({ exited: Promise.reject(new Error("claude failed")) }),
         async () => null,
         async () => "2.1.80",
+        undefined,
+        noExistingRoot,
       )).rejects.toThrow("claude failed");
 
       expect(existsSync(settingsPath)).toEqual(false);
@@ -264,6 +295,8 @@ describe("orchestrator brief", () => {
         );
       },
       async () => "2.1.80",
+      undefined,
+      noExistingRoot,
     );
     expect(exitCode).toEqual(0);
     expect(spawned).toEqual(true);
@@ -328,6 +361,8 @@ describe("orchestrator brief", () => {
         },
         async () => null,
         async () => "2.1.80",
+        undefined,
+        noExistingRoot,
       );
 
       expect(capturedCommand.at(-1)).toContain("Hive memory index");

@@ -80,6 +80,27 @@ type OrchestratorSpawn = (
 const spawnOrchestrator: OrchestratorSpawn = (command, options) =>
   Bun.spawn(command, options);
 
+type OrchestratorTmux = Pick<
+  TmuxAdapter,
+  "hasSession" | "listClientTtys" | "killSession"
+>;
+
+export async function prepareFreshOrchestratorSession(
+  tmux: OrchestratorTmux = new TmuxAdapter(),
+): Promise<void> {
+  const session = orchestratorTmuxSession();
+  if (!(await tmux.hasSession(session))) return;
+
+  const clients = await tmux.listClientTtys(session);
+  if (clients.length > 0) {
+    throw new Error(
+      `A Hive orchestrator is already active in tmux session ${session}; ` +
+        "close it or run `hive stop` before starting another.",
+    );
+  }
+  await tmux.killSession(session, { ignoreMissing: true });
+}
+
 async function snapshotFile(path: string): Promise<FileSnapshot> {
   return { path, contents: await readExisting(path) };
 }
@@ -318,13 +339,12 @@ export function buildOrchestratorLaunchCommand(
   executable = "claude",
 ): string[] {
   if (tool === "codex") {
-    return ["tmux", "new-session", "-A", "-s", orchestratorTmuxSession(), "-c", cwd,
+    return ["tmux", "new-session", "-s", orchestratorTmuxSession(), "-c", cwd,
       ...buildCodexRootAuthorityCommand()];
   }
   return [
     "tmux",
     "new-session",
-    "-A",
     "-s",
     orchestratorTmuxSession(),
     "-c",
@@ -341,6 +361,7 @@ export async function launchOrchestrator(
   captureTerminal: OrchestratorTerminalCapture = captureOrchestratorTerminal,
   detectVersion?: () => Promise<string | null>,
   resolveExecutable: () => ResolvedClaudeExecutable = resolveWorkingClaudeExecutable,
+  tmux: OrchestratorTmux = new TmuxAdapter(),
 ): Promise<number> {
   if (tool !== "claude") {
     // The authority command performs the handshake gate before attaching the
@@ -380,6 +401,7 @@ export async function launchOrchestrator(
   }
 
   try {
+    await prepareFreshOrchestratorSession(tmux);
     await prepareOrchestratorConfig(tool, port, cwd);
     const [memoryIndex, docGuidance] = await Promise.all([
       buildMemoryIndex(cwd).catch(() => ""),

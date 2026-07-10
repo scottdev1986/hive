@@ -913,6 +913,9 @@ export class HiveDaemon {
     this.bunServer = null;
     this.codexControl?.close();
     if (this.manageLifecycle) {
+      await this.tmux.killSession(orchestratorTmuxSession(), {
+        ignoreMissing: true,
+      });
       cleanupLifecycleFiles();
     }
     if (this.ownsDatabase) {
