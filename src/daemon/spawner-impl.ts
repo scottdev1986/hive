@@ -1,3 +1,5 @@
+import { join } from "node:path";
+import { buildScopedBrief } from "../adapters/brief";
 import { buildMemoryIndex } from "../adapters/memory";
 import {
   buildAgentTerminalTitle,
@@ -16,6 +18,7 @@ import {
   buildCodexSpawnCommand,
   writeCodexAgentConfig,
 } from "../adapters/tools/codex";
+import { listInheritedCodexMcpServers } from "../adapters/tools/mcp-scope";
 import type { CodexAppServerManager } from "../adapters/tools/codex-app-server";
 import { provisionSkills } from "../adapters/skills";
 import {
@@ -143,6 +146,8 @@ export interface HiveSpawnerDependencies {
   detectClaudeVersion?: ClaudeVersionDetector;
   /** Test seam for the daemon-resolved Claude binary. */
   claudeExecutable?: string;
+  /** Test seam for reading the user's global Codex MCP server names. */
+  listCodexMcpServers?: () => Promise<string[]>;
   /** Operator opt-out for the research preview; the fallback stays maintained. */
   channelsEnabled?: boolean;
   /** Fires after a viewer window is attached so the daemon can re-tile the
@@ -231,13 +236,41 @@ export function resolveAgentName(
 
 export const LANDING_MAX_ATTEMPTS = 3;
 
+/** Tiers whose prompt is trimmed to essentials. A `cheap` agent runs mechanical
+ * work on a small model: it needs every *rule* the full prompt carries, but
+ * none of the narration that justifies them. The trimmed text below is a
+ * rewrite, not a subset — no step, bound, or prohibition is dropped, because
+ * the landing protocol is Hive's safety stack and a cheap model is exactly the
+ * one that must not have to infer a missing step. */
+const CONCISE_TIERS: readonly RoutingTier[] = ["cheap"];
+
+/** Reporting a landing is not finishing. Agents were observed idling at their
+ * prompt while still holding authorized work, needing a nudge per stage — the
+ * mirror image of the escalate-don't-grind tripwire (grind → escalate;
+ * idle-with-work → continue). A live session is also the cheapest place to do
+ * the next piece: a respawn re-reads everything from zero. */
+const CONTINUOUS_EXECUTION =
+  `After reporting a landing or milestone, immediately continue with the next authorized piece of your assignment in this same session. Stop only for a genuine blocker, an escalation, or an explicit hold from "${ORCHESTRATOR_NAME}".`;
+
 export function buildLandingProtocol(
   branch: string,
   repoRoot: string,
   mainBranch = "main",
   agentName = branch.split("/")[1]?.split("-")[0] ?? "agent",
   capabilityEpoch = 0,
+  concise = false,
 ): string {
+  if (concise) {
+    return [
+      `When your task is done and tests are green, land it on ${mainBranch} — unlanded work is lost work:`,
+      `1. Commit everything on \`${branch}\`.`,
+      `2. \`git rebase ${mainBranch}\` in your worktree. On conflict: \`git rebase --abort\`, message "${ORCHESTRATOR_NAME}" with the conflicting file names, stop. Never force, never resolve another agent's code.`,
+      "3. Re-run the tests. Skip that rerun only if `git diff --name-only ORIG_HEAD..HEAD` lists `.md` files alone. Red tests never merge: fix them, or commit and report the failure.",
+      `4. Call \`hive_land\` with agent \`${agentName}\`, capabilityEpoch \`${capabilityEpoch}\`. Never merge into the primary checkout yourself.`,
+      `5. Rejected because ${mainBranch} moved? Back to step 2, at most ${LANDING_MAX_ATTEMPTS} attempts, then message "${ORCHESTRATOR_NAME}".`,
+      `6. Report the merge commit hash. Leave your branch and worktree in place.`,
+    ].join("\n");
+  }
   return [
     `When your task is complete and the tests are green, land your work on ${mainBranch} immediately — finished work left on your branch is lost work:`,
     `1. Commit everything on your branch (${branch}); never leave work uncommitted.`,
@@ -249,23 +282,55 @@ export function buildLandingProtocol(
   ].join("\n");
 }
 
+export interface AgentPromptOptions {
+  /** Drives the prompt diet. Absent (tests, older callers) keeps the full text. */
+  tier?: RoutingTier;
+  /** Doc sections the task named, extracted at spawn. See adapters/brief.ts. */
+  brief?: string;
+}
+
 export function buildAgentPrompt(
   name: string,
   task: string,
   worktree: CreatedWorktree,
   repoRoot: string,
   memoryIndex = "",
+  options: AgentPromptOptions = {},
 ): string {
+  const concise = options.tier !== undefined &&
+    CONCISE_TIERS.includes(options.tier);
+  const preamble = concise
+    ? [
+        `You are ${name}, a Hive writer agent.`,
+        `Your task: ${task}`,
+        `Work only inside your worktree at ${worktree.path}.`,
+        `Report completion, blockers, and findings to "${ORCHESTRATOR_NAME}" with hive_send (hive_inbox and hive_status are also available). Reference artifacts by path; never paste them.`,
+        `Read only what the task names. Search for the lines that matter rather than reading files whole. If the task is substantially bigger than briefed, stop and report rather than grinding.`,
+        CONTINUOUS_EXECUTION,
+      ]
+    : [
+        `You are ${name}, a Hive writer agent.`,
+        `Your task: ${task}`,
+        `Your file scope is your worktree at ${worktree.path}; do all code and file work there.`,
+        "Use the Hive MCP tools hive_send, hive_inbox, and hive_status to message and coordinate with other named agents.",
+        `Send concise completion reports, blockers, and important findings to "${ORCHESTRATOR_NAME}" with hive_send; reference large artifacts instead of pasting them.`,
+        `Read only what the task needs: search for the lines that matter instead of reading large files whole, and reuse artifacts other agents already wrote instead of re-deriving them. If the task proves substantially larger than briefed, stop and report to "${ORCHESTRATOR_NAME}" rather than grinding.`,
+        CONTINUOUS_EXECUTION,
+      ];
   return [
-    `You are ${name}, a Hive writer agent.`,
-    `Your task: ${task}`,
-    `Your file scope is your worktree at ${worktree.path}; do all code and file work there.`,
-    "Use the Hive MCP tools hive_send, hive_inbox, and hive_status to message and coordinate with other named agents.",
-    `Send concise completion reports, blockers, and important findings to "${ORCHESTRATOR_NAME}" with hive_send; reference large artifacts instead of pasting them.`,
-    `Read only what the task needs: search for the lines that matter instead of reading large files whole, and reuse artifacts other agents already wrote instead of re-deriving them. If the task proves substantially larger than briefed, stop and report to "${ORCHESTRATOR_NAME}" rather than grinding.`,
-    buildLandingProtocol(worktree.branch, repoRoot, "main", name, 0),
+    ...preamble,
+    buildLandingProtocol(worktree.branch, repoRoot, "main", name, 0, concise),
+    ...(options.brief === undefined || options.brief === ""
+      ? []
+      : [options.brief]),
     ...(memoryIndex === "" ? [] : [memoryIndex]),
   ].join("\n\n");
+}
+
+/** The worktree's own `.mcp.json`, written by `writeClaudeAgentConfig`. Naming
+ * it explicitly is what lets `--strict-mcp-config` drop everything else. */
+export function claudeMcpConfigPath(worktreePath: string): string {
+  return join(worktreePath, ".mcp.json");
 }
 
 export class HiveSpawner implements Spawner {
@@ -285,6 +350,19 @@ export class HiveSpawner implements Spawner {
       resolveClaudeExecutable();
     this.detectClaudeVersion = dependencies.detectClaudeVersion ??
       (() => detectClaudeCliVersion(undefined, this.claudeExecutable));
+  }
+
+  /** Servers a Codex spawn would inherit from the user's global config. Read
+   * once per spawn, never written. A read failure means "inherit nothing to
+   * exclude" — the agent keeps today's surface rather than failing to launch. */
+  private async inheritedCodexMcpServers(): Promise<string[]> {
+    const list = this.dependencies.listCodexMcpServers ??
+      listInheritedCodexMcpServers;
+    try {
+      return await list();
+    } catch {
+      return [];
+    }
   }
 
   /**
@@ -372,6 +450,12 @@ export class HiveSpawner implements Spawner {
       "reader",
       prepared.record.capabilityEpoch,
     );
+    // The replacement process only has to read the control message and
+    // acknowledge it through Hive's own server; the human's servers would be
+    // pure context cost on a process that must not act.
+    const excludeMcpServers = identity.tool === "codex"
+      ? await this.inheritedCodexMcpServers()
+      : [];
     try {
       await provisionSkills(agent.worktreePath, identity.tool);
       if (identity.tool === "claude") {
@@ -389,6 +473,7 @@ export class HiveSpawner implements Spawner {
           worktreePath: agent.worktreePath,
           channels,
           executable: this.claudeExecutable,
+          scopedMcpConfigPath: claudeMcpConfigPath(agent.worktreePath),
         });
       } else {
         await writeCodexAgentConfig(agent.worktreePath, {
@@ -413,6 +498,7 @@ export class HiveSpawner implements Spawner {
             name: agent.name,
             readOnly,
             worktreePath: agent.worktreePath,
+            excludeMcpServers,
           });
         }
       }
@@ -453,6 +539,7 @@ export class HiveSpawner implements Spawner {
             name: agent.name,
             readOnly,
             worktreePath: agent.worktreePath,
+            excludeMcpServers,
           });
           fallback.push(controlPrompt);
           await this.dependencies.tmux.newSession(
@@ -697,13 +784,19 @@ export class HiveSpawner implements Spawner {
       }
       throw error;
     }
-    const memoryIndex = await buildMemoryIndex(worktree.path);
+    const [memoryIndex, brief] = await Promise.all([
+      buildMemoryIndex(worktree.path),
+      // The brief reads the repo's own docs, so it is built from the worktree:
+      // an agent's excerpt must match the tree it is about to edit.
+      buildScopedBrief(worktree.path, request.task).catch(() => ""),
+    ]);
     const prompt = buildAgentPrompt(
       name,
       request.task,
       worktree,
       this.dependencies.repoRoot,
       memoryIndex,
+      { tier: request.tier, brief },
     );
     const channels = await this.useChannels(tool);
     const timestamp = new Date().toISOString();
@@ -730,6 +823,12 @@ export class HiveSpawner implements Spawner {
     });
 
     const dangerous = this.dependencies.config.autonomy === "dangerous";
+    // Servers the human attached to their own Codex sessions. This agent did
+    // not ask for them and pays for them on every message it sends, so the
+    // spawn detaches them for its process only.
+    const excludeMcpServers = tool === "codex"
+      ? await this.inheritedCodexMcpServers()
+      : [];
     let argv: string[];
     // A fresh writer is minted at epoch 0 with exactly one landing right, for
     // its own branch. It cannot spawn, approve, kill, or name another agent.
@@ -757,6 +856,7 @@ export class HiveSpawner implements Spawner {
           worktreePath: worktree.path,
           channels,
           executable: this.claudeExecutable,
+          scopedMcpConfigPath: claudeMcpConfigPath(worktree.path),
         });
       } else {
         await writeCodexAgentConfig(worktree.path, {
@@ -781,6 +881,7 @@ export class HiveSpawner implements Spawner {
               readOnly: false,
               dangerous,
               worktreePath: worktree.path,
+              excludeMcpServers,
             });
       }
       const nativeCodex = tool === "codex" &&
@@ -822,6 +923,7 @@ export class HiveSpawner implements Spawner {
             readOnly: false,
             dangerous,
             worktreePath: worktree.path,
+            excludeMcpServers,
           });
           fallback.push(prompt);
           await this.dependencies.tmux.newSession(

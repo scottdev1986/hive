@@ -1767,3 +1767,120 @@ describe("agent landing protocol", () => {
     expect(protocol).toContain("never force");
   });
 });
+
+describe("spawn prompt diet", () => {
+  const worktree = {
+    path: "/repo/.hive/worktrees/maya",
+    branch: "hive/maya-auth-api",
+  };
+  const prompt = (tier?: "deep" | "standard" | "cheap" | "review"): string =>
+    buildAgentPrompt("maya", "Rename a flag", worktree, "/repo", "", { tier });
+
+  test("cheap tier is materially shorter than the full prompt", () => {
+    expect(prompt("cheap").length).toBeLessThan(prompt("standard").length * 0.8);
+  });
+
+  test("every other tier keeps the full prompt verbatim", () => {
+    const full = buildAgentPrompt("maya", "Rename a flag", worktree, "/repo");
+    for (const tier of ["deep", "standard", "review"] as const) {
+      expect(prompt(tier)).toBe(full);
+    }
+  });
+
+  // The landing protocol is Hive's safety stack. The cheap prompt rewrites its
+  // prose but may never drop a rule: a small model is the one that would have
+  // to infer the missing step.
+  test("the concise landing protocol keeps every safety rule", () => {
+    const concise = buildLandingProtocol(
+      worktree.branch,
+      "/repo",
+      "main",
+      "maya",
+      0,
+      true,
+    );
+    expect(concise).toContain("git rebase main");
+    expect(concise).toContain("git rebase --abort");
+    expect(concise).toContain("Red tests never merge");
+    expect(concise).toContain("git diff --name-only ORIG_HEAD..HEAD");
+    expect(concise).toContain(
+      "`hive_land` with agent `maya`, capabilityEpoch `0`",
+    );
+    expect(concise).toContain("Never merge into the primary checkout");
+    expect(concise).toContain(`at most ${LANDING_MAX_ATTEMPTS} attempts`);
+    expect(concise).toContain("merge commit hash");
+    expect(concise).toContain("Leave your branch and worktree in place");
+    expect(concise).toContain("Never force");
+    expect((concise.match(/"orchestrator"/g) ?? []).length)
+      .toBeGreaterThanOrEqual(2);
+    expect(concise.length).toBeLessThan(
+      buildLandingProtocol(worktree.branch, "/repo").length,
+    );
+  });
+
+  test("cheap tier still carries the read-scoping and escalation tripwire", () => {
+    expect(prompt("cheap")).toContain("Read only what the task names");
+    expect(prompt("cheap")).toContain("stop and report rather than grinding");
+    expect(prompt("cheap")).toContain("hive_send");
+  });
+
+  // Idle-with-work is the mirror of grind-past-scope: both waste a live
+  // session, and every tier gets the clause because every tier can idle.
+  test("every tier is told to continue after reporting a landing", () => {
+    for (const tier of ["deep", "standard", "cheap", "review"] as const) {
+      expect(prompt(tier)).toContain(
+        "immediately continue with the next authorized piece",
+      );
+      expect(prompt(tier)).toContain("Stop only for a genuine blocker");
+    }
+  });
+
+  test("an omitted tier keeps today's prompt exactly", () => {
+    expect(buildAgentPrompt("maya", "Rename a flag", worktree, "/repo")).toBe(
+      prompt(undefined),
+    );
+  });
+});
+
+describe("scoped brief in the spawn prompt", () => {
+  const worktree = {
+    path: "/repo/.hive/worktrees/maya",
+    branch: "hive/maya-auth-api",
+  };
+
+  test("is embedded when the task names a doc", () => {
+    const prompt = buildAgentPrompt(
+      "maya",
+      "Rework SPEC §6",
+      worktree,
+      "/repo",
+      "",
+      { brief: "--- SPEC.md:97-126 ---\n### 6. Who picks the model" },
+    );
+    expect(prompt).toContain("--- SPEC.md:97-126 ---");
+    expect(prompt).toContain("### 6. Who picks the model");
+  });
+
+  test("adds nothing when the task names no doc", () => {
+    const bare = buildAgentPrompt("maya", "Rename a flag", worktree, "/repo");
+    expect(
+      buildAgentPrompt("maya", "Rename a flag", worktree, "/repo", "", {
+        brief: "",
+      }),
+    ).toBe(bare);
+  });
+
+  test("the memory index still comes last, after the brief", () => {
+    const prompt = buildAgentPrompt(
+      "maya",
+      "Rework SPEC §6",
+      worktree,
+      "/repo",
+      "Hive memory index — durable facts",
+      { brief: "SCOPED BRIEF BODY" },
+    );
+    expect(prompt.indexOf("SCOPED BRIEF BODY")).toBeLessThan(
+      prompt.indexOf("Hive memory index"),
+    );
+  });
+});

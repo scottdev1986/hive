@@ -23,6 +23,11 @@ export interface ClaudeSpawnOptions {
    * daemon and retain a different PATH, so production launches must not ask
    * the pane to resolve `claude` again. */
   executable?: string;
+  /** Restrict the session to the worktree's own `.mcp.json` — Hive's `hive`
+   * server plus the channel bridge — instead of also inheriting every server
+   * configured for the human's interactive sessions. Absent means today's
+   * inherit-everything behavior. */
+  scopedMcpConfigPath?: string;
 }
 
 export type ClaudeAgentConfigOptions = Pick<
@@ -149,13 +154,27 @@ export function buildClaudeSpawnCommand(
   if (options.readOnly) {
     command.push("--permission-mode", "default");
   }
+  if (options.scopedMcpConfigPath !== undefined) {
+    // `--mcp-config <configs...>` is variadic in Claude 2.1.206, so the
+    // non-variadic `--strict-mcp-config` must follow it to terminate the list.
+    // Verified on this machine: with both flags a session exposes only the
+    // servers in the named file (5 inherited servers and 41 MCP tools drop to
+    // 1 server and 0 — `claude -p --output-format stream-json` init message).
+    command.push(
+      "--mcp-config",
+      options.scopedMcpConfigPath,
+      "--strict-mcp-config",
+    );
+  }
   if (options.channels ?? false) {
     command.push(
       CLAUDE_CHANNELS_FLAG,
       `server:${HIVE_CHANNEL_SERVER_NAME}`,
       // This option is variadic (`<channels...>`) in Claude 2.1.206. Without
       // a terminator it consumes Hive's positional task prompt and rejects
-      // the prompt as an untagged channel entry.
+      // the prompt as an untagged channel entry. `--strict-mcp-config` already
+      // terminates the `--mcp-config` list above, so exactly one `--` is
+      // needed here — a second would itself be read as prompt text.
       "--",
     );
   }

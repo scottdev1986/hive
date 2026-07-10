@@ -71,6 +71,76 @@ describe("Claude adapter", () => {
     ]);
   });
 
+  describe("spawn-scoped MCP surface", () => {
+    const base = {
+      name: "agent-3",
+      model: "sonnet",
+      worktreePath: "/tmp/worktree",
+      daemonPort: 4317,
+      readOnly: false,
+    };
+
+    test("restricts the session to the worktree's own .mcp.json", () => {
+      expect(
+        buildClaudeSpawnCommand({
+          ...base,
+          scopedMcpConfigPath: "/tmp/worktree/.mcp.json",
+        }),
+      ).toEqual([
+        "claude",
+        "--model",
+        "sonnet",
+        "--mcp-config",
+        "/tmp/worktree/.mcp.json",
+        "--strict-mcp-config",
+      ]);
+    });
+
+    // `--mcp-config <configs...>` is variadic: the non-variadic
+    // `--strict-mcp-config` must follow it, or the flag list swallows whatever
+    // argv holds next — including Hive's positional task prompt.
+    test("terminates the variadic config list with the strict flag", () => {
+      const command = buildClaudeSpawnCommand({
+        ...base,
+        scopedMcpConfigPath: "/tmp/worktree/.mcp.json",
+      });
+      expect(command.indexOf("--strict-mcp-config")).toBe(
+        command.indexOf("--mcp-config") + 2,
+      );
+      command.push("the task prompt");
+      expect(command.at(-1)).toBe("the task prompt");
+    });
+
+    test("emits exactly one `--` when channels and scoping are both on", () => {
+      const command = buildClaudeSpawnCommand({
+        ...base,
+        channels: true,
+        scopedMcpConfigPath: "/tmp/worktree/.mcp.json",
+      });
+      // A second `--` would be read as prompt text rather than a terminator.
+      expect(command.filter((argument) => argument === "--")).toHaveLength(1);
+      expect(command.at(-1)).toBe("--");
+      expect(command.indexOf("--mcp-config")).toBeLessThan(
+        command.indexOf(CLAUDE_CHANNELS_FLAG),
+      );
+    });
+
+    test("omits the flags entirely when no scoped config is given", () => {
+      const command = buildClaudeSpawnCommand(base);
+      expect(command).not.toContain("--strict-mcp-config");
+      expect(command).not.toContain("--mcp-config");
+    });
+
+    test("a resumed session keeps the same scoped surface", () => {
+      const command = buildClaudeResumeCommand(
+        { ...base, scopedMcpConfigPath: "/tmp/worktree/.mcp.json" },
+        "session-9",
+      );
+      expect(command.slice(0, 3)).toEqual(["claude", "--resume", "session-9"]);
+      expect(command).toContain("--strict-mcp-config");
+    });
+  });
+
   test("uses the daemon-resolved executable instead of tmux PATH", () => {
     expect(buildClaudeSpawnCommand({
       name: "agent-3",

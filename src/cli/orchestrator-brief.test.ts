@@ -105,6 +105,25 @@ describe("orchestrator brief", () => {
     expect(ORCHESTRATOR_BRIEF).toContain("Wake only");
   });
 
+  test("makes reusing a live agent the default over respawning", () => {
+    expect(ORCHESTRATOR_BRIEF).toContain(
+      "Prefer a follow-up to a live agent over a new spawn",
+    );
+    expect(ORCHESTRATOR_BRIEF).toContain("re-reads the repo from zero");
+    // The reuse test is the two facts hive_status already reports, so no
+    // second source of truth about reusability can go stale.
+    expect(ORCHESTRATOR_BRIEF).toContain("contextPct is under 65");
+    expect(ORCHESTRATOR_BRIEF).toContain("file scopes would collide");
+  });
+
+  test("tells the orchestrator to cite doc sections rather than whole docs", () => {
+    expect(ORCHESTRATOR_BRIEF).toContain("SPEC §6");
+    expect(ORCHESTRATOR_BRIEF).toContain("file:line pointers");
+    expect(ORCHESTRATOR_BRIEF).toContain(
+      "never tell an agent to read a document whole",
+    );
+  });
+
   test("preserves an existing Codex project config while preparing MCP overrides", async () => {
     const root = await mkdtemp(join(tmpdir(), "hive-orchestrator-"));
     const codexDirectory = join(root, ".codex");

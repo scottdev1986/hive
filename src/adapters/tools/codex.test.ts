@@ -35,6 +35,66 @@ afterAll(async () => {
   }
 });
 
+describe("Codex spawn-scoped MCP surface", () => {
+  const base = {
+    name: "agent-4",
+    model: "gpt-5.6-terra",
+    effort: "medium" as const,
+    worktreePath: "/tmp/worktree",
+    daemonPort: 4317,
+    readOnly: false,
+  };
+
+  test("detaches each inherited server for this process only", () => {
+    const command = buildCodexSpawnCommand({
+      ...base,
+      excludeMcpServers: ["idea", "openaiDeveloperDocs"],
+    });
+    expect(command).toContain("mcp_servers.idea.enabled=false");
+    expect(command).toContain("mcp_servers.openaiDeveloperDocs.enabled=false");
+    // Hive's own server is still attached, and by URL, not by inheritance.
+    expect(command).toContain('mcp_servers.hive.url="http://127.0.0.1:4317/mcp"');
+    expect(command).not.toContain("mcp_servers.hive.enabled=false");
+  });
+
+  test("changes nothing when the user has no servers of their own", () => {
+    expect(buildCodexSpawnCommand({ ...base, excludeMcpServers: [] })).toEqual(
+      buildCodexSpawnCommand(base),
+    );
+  });
+
+  test("never detaches Hive's own servers even if asked", () => {
+    const command = buildCodexSpawnCommand({
+      ...base,
+      excludeMcpServers: ["hive", "hive-channel", "idea"],
+    });
+    expect(command.join(" ")).not.toContain("mcp_servers.hive.enabled=false");
+    expect(command.join(" ")).not.toContain(
+      "mcp_servers.hive-channel.enabled=false",
+    );
+    expect(command).toContain("mcp_servers.idea.enabled=false");
+  });
+
+  // codex-cli 0.144.0 cannot address a quoted key through `-c`; emitting the
+  // override would make the CLI refuse to load its config at all.
+  test("leaves an unaddressable server name attached", () => {
+    const command = buildCodexSpawnCommand({
+      ...base,
+      excludeMcpServers: ["odd.name"],
+    });
+    expect(command.join(" ")).not.toContain("odd.name");
+  });
+
+  test("a resumed session keeps the same scoped surface", () => {
+    const command = buildCodexResumeCommand(
+      { ...base, excludeMcpServers: ["idea"] },
+      "session-7",
+    );
+    expect(command).toContain("mcp_servers.idea.enabled=false");
+    expect(command.at(-1)).toBe("session-7");
+  });
+});
+
 describe("Codex adapter", () => {
   test("builds writer and read-only spawn argv", () => {
     const base = {

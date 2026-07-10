@@ -2,6 +2,7 @@ import { chmod, mkdir, open, readdir, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import type { CodexRoute } from "../../schemas";
+import { buildCodexMcpExclusionArgs } from "./mcp-scope";
 
 export interface CodexSpawnOptions {
   name: string;
@@ -15,6 +16,11 @@ export interface CodexSpawnOptions {
    * verified against codex 0.144.0, where the pair renders as "YOLO mode")
    * so spawn and resume share one shape. Ignored for read-only sessions. */
   dangerous?: boolean;
+  /** Names of MCP servers this spawn inherits from the user's global
+   * `~/.codex/config.toml` and does not need. Each is detached for this
+   * process only, via a config override; the user's file is never touched.
+   * Hive's own `hive` server is never in this list. */
+  excludeMcpServers?: readonly string[];
 }
 
 export type CodexAgentConfigOptions = Pick<
@@ -92,6 +98,9 @@ function buildCodexConfigArgs(
     `mcp_servers.hive.url=${tomlString(`http://127.0.0.1:${options.daemonPort}/mcp`)}`,
     "-c",
     `notify=[${tomlString(notifyPath)}]`,
+    // Detach the human's own servers from this agent. Same override channel as
+    // notify and trust, so spawn and resume stay one shape.
+    ...buildCodexMcpExclusionArgs(options.excludeMcpServers ?? []).args,
   );
 
   return args;

@@ -1,0 +1,130 @@
+import { readFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { join } from "node:path";
+
+// Every MCP server attached to an agent spends context on every message it
+// sends (OpenAI states this outright for Codex; Claude Code defers the tool
+// *definitions* but still lists the names). A spawned agent inherits the
+// human's own servers — an IDE bridge, a vendor docs endpoint — none of which
+// its task asked for. Hive scopes that surface per spawn, and does it without
+// ever writing to the user's global config.
+
+/** Hive's own server. Always attached: it is how the agent reports, lands, and
+ * reads memory. Scoping never removes it. */
+export const HIVE_MCP_SERVER = "hive";
+/** The stdio bridge that pushes daemon messages into a Channels session. */
+export const HIVE_CHANNEL_MCP_SERVER = "hive-channel";
+
+export const HIVE_MCP_SERVERS: readonly string[] = [
+  HIVE_MCP_SERVER,
+  HIVE_CHANNEL_MCP_SERVER,
+];
+
+// Verified against codex-cli 0.144.0: `-c` splits a dotted path on "." with no
+// TOML-quoting support, so `-c 'mcp_servers."a.b".enabled=false'` does not
+// address the server named `a.b` — it creates a *new* server literally keyed
+// `"a.b"` with no transport, and Codex then refuses to start:
+//   Error: failed to load configuration
+//   Caused by: invalid transport in `mcp_servers."a.b"`
+// A name Hive cannot address is therefore left attached rather than risking a
+// config that fails to load. Bare TOML keys are exactly [A-Za-z0-9_-]+.
+const CODEX_ADDRESSABLE_NAME = /^[A-Za-z0-9_-]+$/;
+
+export function isCodexAddressableServerName(name: string): boolean {
+  return CODEX_ADDRESSABLE_NAME.test(name);
+}
+
+export function codexHome(env: Record<string, string | undefined> = Bun.env, home = homedir()): string {
+  return env.CODEX_HOME ?? join(home, ".codex");
+}
+
+// `[mcp_servers.idea]`, `[mcp_servers.hive.http_headers]` (first segment wins),
+// `[mcp_servers."odd.name"]`, and the inline `mcp_servers.x = { ... }` form.
+const TABLE_HEADER = /^\s*\[\s*mcp_servers\s*\.\s*(.+?)\s*\]\s*$/;
+const INLINE_ASSIGNMENT = /^\s*mcp_servers\s*\.\s*([^\s=.]+)\s*(?:\.|=)/;
+
+const firstSegment = (path: string): string => {
+  // Split on the first unquoted dot so `hive.http_headers` → `hive` while
+  // `"odd.name"` stays whole (and is later rejected as unaddressable).
+  if (path.startsWith('"') || path.startsWith("'")) {
+    const quote = path[0]!;
+    const end = path.indexOf(quote, 1);
+    return end === -1 ? path : path.slice(1, end);
+  }
+  const dot = path.indexOf(".");
+  return dot === -1 ? path : path.slice(0, dot);
+};
+
+/** Names of the MCP servers a `~/.codex/config.toml` attaches to every session.
+ * Parsed with a line scanner rather than a TOML library: Hive only needs the
+ * table names, and a parse failure here must never block a spawn. */
+export function parseCodexMcpServerNames(source: string): string[] {
+  const names = new Set<string>();
+  for (const line of source.split("\n")) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith("#")) {
+      continue;
+    }
+    const header = TABLE_HEADER.exec(line);
+    if (header !== null) {
+      names.add(firstSegment(header[1]!));
+      continue;
+    }
+    const inline = INLINE_ASSIGNMENT.exec(line);
+    if (inline !== null) {
+      names.add(inline[1]!);
+    }
+  }
+  return [...names];
+}
+
+/** Read the user's global Codex config to learn which servers a spawn would
+ * inherit. Never writes. A missing or unreadable config means nothing is
+ * inherited, which is the safe answer. */
+export async function listInheritedCodexMcpServers(
+  home = codexHome(),
+): Promise<string[]> {
+  try {
+    return parseCodexMcpServerNames(await readFile(join(home, "config.toml"), "utf8"));
+  } catch {
+    return [];
+  }
+}
+
+export interface CodexMcpExclusion {
+  /** `-c mcp_servers.<name>.enabled=false` pairs, ready to append to argv. */
+  args: string[];
+  /** Servers excluded from this spawn. */
+  excluded: string[];
+  /** Servers left attached because `-c` cannot address their names. */
+  unaddressable: string[];
+}
+
+/**
+ * Spawn-scoped config overrides that detach every inherited server the task
+ * does not need. Verified against codex-cli 0.144.0: `-c` *deep-merges* into
+ * the global config, so neither `-c 'mcp_servers={}'` nor a replacement inline
+ * table removes anything — `mcp_servers.<name>.enabled=false` is the only
+ * override that detaches a server, and `codex mcp list` reports it `disabled`.
+ */
+export function buildCodexMcpExclusionArgs(
+  inherited: readonly string[],
+  keep: readonly string[] = HIVE_MCP_SERVERS,
+): CodexMcpExclusion {
+  const kept = new Set(keep);
+  const args: string[] = [];
+  const excluded: string[] = [];
+  const unaddressable: string[] = [];
+  for (const name of inherited) {
+    if (kept.has(name)) {
+      continue;
+    }
+    if (!isCodexAddressableServerName(name)) {
+      unaddressable.push(name);
+      continue;
+    }
+    args.push("-c", `mcp_servers.${name}.enabled=false`);
+    excluded.push(name);
+  }
+  return { args, excluded, unaddressable };
+}
