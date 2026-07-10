@@ -107,9 +107,15 @@ jobs:
 
       # Import the Developer ID certificate into a throwaway keychain and write
       # the App Store Connect API key to disk, both under RUNNER_TEMP so they
-      # vanish with the runner. codesign finds the identity by name from the
-      # search list; sign.ts reads the key path from the build step's env.
+      # vanish with the runner. The signing identity is read back out of the
+      # imported certificate and handed to the build step as an output —
+      # codesign matches on the certificate's common name and nothing else, so
+      # a hand-typed identity string is a second copy of a string the
+      # certificate already carries, and drift between them fails the build
+      # with a bare "no identity found". Deriving it also makes the certificate
+      # secret the single switch for Apple signing end to end.
       - name: Set up signing keychain and notary key
+        id: keychain
         if: steps.plan.outputs.action == 'release' && steps.cfg.outputs.apple == 'true'
         env:
           CERT_P12: ${{ secrets.MACOS_CERT_P12_BASE64 }}
@@ -134,6 +140,24 @@ jobs:
             $(security list-keychains -d user | sed 's/["]//g')
           rm -f "$RUNNER_TEMP/cert.p12"
 
+          # Resolve the identity from what was actually imported. Zero valid
+          # identities here means the .p12 carries the leaf certificate without
+          # the "Developer ID Certification Authority" intermediate, so the
+          # chain cannot validate — fail with that diagnosis now instead of
+          # letting codesign die mid-build with "no identity found". awk, not
+          # grep: an empty match must reach the explicit check below, not trip
+          # pipefail inside the substitution.
+          security find-identity -v -p codesigning "$KEYCHAIN"
+          identity="$(
+            security find-identity -v -p codesigning "$KEYCHAIN" \
+              | awk -F'"' '/Developer ID Application/ {print $2; exit}'
+          )"
+          if [ -z "$identity" ]; then
+            echo "::error::The certificate imported but holds no valid 'Developer ID Application' identity. Re-export the .p12 from Keychain Access with the 'Developer ID Certification Authority' intermediate included."
+            exit 1
+          fi
+          echo "identity=$identity" >> "$GITHUB_OUTPUT"
+
           printf '%s' "$NOTARY_P8" | base64 --decode > "$RUNNER_TEMP/notary.p8"
 
       # Build before tagging. A build that fails must not burn a version number,
@@ -141,14 +165,15 @@ jobs:
       #
       # BUN_NO_CODESIGN_MACHO_BINARY is set only when signing: it makes the
       # compiled binary re-signable (oven-sh/bun#29120). The signing env is
-      # harmless when the secrets are empty — sign.ts takes the unsigned branch.
+      # harmless when signing is off — a skipped keychain step yields an empty
+      # identity, and sign.ts takes the unsigned branch.
       # --public-key is passed only when the offline key exists, which is what
       # flips `hive update` verification to fail-closed.
       - name: Build release artifacts
         if: steps.plan.outputs.action == 'release'
         env:
           BUN_NO_CODESIGN_MACHO_BINARY: ${{ steps.cfg.outputs.apple == 'true' && '1' || '' }}
-          MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+          MACOS_SIGN_IDENTITY: ${{ steps.keychain.outputs.identity }}
           MACOS_TEAM_ID: ${{ secrets.MACOS_TEAM_ID }}
           MACOS_NOTARY_KEY_PATH: ${{ steps.cfg.outputs.apple == 'true' && format('{0}/notary.p8', runner.temp) || '' }}
           MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}

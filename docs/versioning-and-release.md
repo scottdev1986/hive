@@ -83,11 +83,12 @@ The pipeline is built and waits on credentials, not code. With no secrets set it
    |---|---|
    | `MACOS_CERT_P12_BASE64` | `base64 -i DeveloperID.p12 \| pbcopy` |
    | `MACOS_CERT_PASSWORD` | the `.p12` password from step 2 |
-   | `MACOS_SIGN_IDENTITY` | the identity string exactly as `security find-identity -v -p codesigning` prints it, e.g. `Developer ID Application: Your Name (TEAMID)` |
    | `MACOS_TEAM_ID` | the 10-character Team ID |
    | `MACOS_NOTARY_KEY_P8_BASE64` | `base64 -i AuthKey_XXXXXXXXXX.p8 \| pbcopy` |
    | `MACOS_NOTARY_KEY_ID` | the 10-character Key ID |
    | `MACOS_NOTARY_ISSUER_ID` | the Issuer UUID |
+
+   There is deliberately no identity secret. The workflow reads the signing identity out of the certificate it just imported and fails loudly if the keychain holds no valid `Developer ID Application` identity (the symptom of a `.p12` exported without its intermediate chain). The alternative — a `MACOS_SIGN_IDENTITY` secret holding the identity string — was rejected because codesign matches the certificate's common name exactly, and a hand-typed copy of that name can only ever agree with the certificate or break the build with a bare "no identity found".
 
 6. **Prove your certificate works before trusting CI.** On your Mac, with the certificate in your login keychain, from a Hive checkout:
 

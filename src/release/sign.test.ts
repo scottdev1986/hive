@@ -152,6 +152,14 @@ describe("the release workflow's signing steps", () => {
     expect(workflow).toMatch(/manifest=/);
   });
 
+  test("resolves the signing identity from the imported certificate, not a secret", () => {
+    // A hand-typed identity secret can drift from the certificate's common
+    // name; codesign's only symptom for that drift is "no identity found".
+    expect(workflow).toContain("security find-identity");
+    expect(workflow).toContain("steps.keychain.outputs.identity");
+    expect(workflow).not.toContain("secrets.MACOS_SIGN_IDENTITY");
+  });
+
   test("builds re-signable Bun binaries only when signing (bun#29120 workaround)", () => {
     expect(workflow).toContain("BUN_NO_CODESIGN_MACHO_BINARY");
   });
