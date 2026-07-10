@@ -6,6 +6,7 @@ import type {
   CodexQuotaReading,
   CodexRateLimitsResponse,
 } from "../../daemon/quota";
+import { HIVE_VERSION } from "../../daemon/version";
 
 type JsonObject = Record<string, unknown>;
 type RpcId = string | number;
@@ -174,7 +175,7 @@ export class CodexAppServerThreadConnection {
 // accumulation point in this file now has a ceiling).
 export const MAX_FRAME_BUFFER_BYTES = 4 * 1024 * 1024;
 
-class SocketTransport implements CodexAppServerTransport {
+export class SocketTransport implements CodexAppServerTransport {
   private buffer = "";
   private messageHandler: (message: RpcMessage) => void = () => undefined;
   private closeHandler: (error?: Error) => void = () => undefined;
@@ -237,6 +238,49 @@ class SocketTransport implements CodexAppServerTransport {
         // keep the control connection alive for subsequent valid frames.
       }
     }
+  }
+}
+
+/** Root-session protocol driver. It is intentionally explicit about the
+ * thread identity: the remote TUI and this connection must resume the same
+ * thread before Hive can claim delivery. */
+export class CodexRootProtocolDriver {
+  private live = false;
+  private constructor(
+    private readonly connection: CodexAppServerThreadConnection,
+    private readonly threadId: string,
+  ) {}
+
+  static async connect(socketPath: string, threadId: string): Promise<CodexRootProtocolDriver> {
+    const transport = await SocketTransport.connect(socketPath);
+    const client = new CodexAppServerClient(transport, {
+      notification: () => undefined,
+      request: async () => ({}),
+    });
+    const connection = new CodexAppServerThreadConnection(client);
+    await connection.initialize("hive-root-delivery");
+    await connection.resume(threadId);
+    const driver = new CodexRootProtocolDriver(connection, threadId);
+    driver.live = true;
+    return driver;
+  }
+
+  isLive(): boolean { return this.live; }
+
+  async deliverMessage(content: string): Promise<boolean> {
+    if (!this.live) return false;
+    try {
+      await this.connection.injectItems(this.threadId, content);
+      return true;
+    } catch {
+      this.live = false;
+      return false;
+    }
+  }
+
+  async close(): Promise<void> {
+    this.live = false;
+    await this.connection.close();
   }
 }
 

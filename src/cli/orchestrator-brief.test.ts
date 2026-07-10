@@ -89,6 +89,15 @@ describe("orchestrator brief", () => {
     expect(command).toContain(ORCHESTRATOR_BRIEF);
   });
 
+  test("runs Codex root through an app-server authority and remote TUI", () => {
+    const command = buildOrchestratorLaunchCommand("codex", 4317, "/repo");
+    expect(command.slice(0, 8)).toEqual([
+      "tmux", "new-session", "-A", "-s", orchestratorTmuxSession(), "-c", "/repo", "sh",
+    ]);
+    expect(command.at(-1)).toContain("codex app-server --listen unix://");
+    expect(command.at(-1)).toContain("exec codex --remote unix://");
+  });
+
   test("forbids background polling and makes status explicitly on-demand", () => {
     expect(ORCHESTRATOR_BRIEF).toContain("never poll");
     expect(ORCHESTRATOR_BRIEF).toContain('detail "active"');

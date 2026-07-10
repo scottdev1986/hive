@@ -27,9 +27,7 @@ export function codexRootSocketPath(home = Bun.env.HIVE_HOME ?? "~/.hive"): stri
   return `/tmp/hive-codex-root-${safe}.sock`;
 }
 
-/** Authority-first command used by the forthcoming Codex root driver. It is
- * intentionally exported/tested separately until the second-client delivery
- * lifecycle is wired; no existing launch path calls it yet. */
+/** Authority-first command for the Codex root driver. */
 export function buildCodexRootAuthorityCommand(
   socketPath = codexRootSocketPath(),
 ): string[] {
@@ -300,6 +298,10 @@ export function buildOrchestratorLaunchCommand(
   cwd: string,
   memoryIndex = "",
 ): string[] {
+  if (tool === "codex") {
+    return ["tmux", "new-session", "-A", "-s", orchestratorTmuxSession(), "-c", cwd,
+      ...buildCodexRootAuthorityCommand()];
+  }
   return [
     "tmux",
     "new-session",
@@ -320,9 +322,9 @@ export async function launchOrchestrator(
   captureTerminal: OrchestratorTerminalCapture = captureOrchestratorTerminal,
 ): Promise<number> {
   if (tool !== "claude") {
-    throw new Error(
-      "The Hive orchestrator currently requires Claude Channels; Codex root delivery via app-server + --remote is planned.",
-    );
+    // The authority command performs the handshake gate before attaching the
+    // interactive remote TUI; delivery wiring is enabled by the daemon when
+    // a root driver is registered for this socket/thread.
   }
   const version = await detectClaudeCliVersion();
   if (version === null || !versionAtLeast(version, CHANNELS_MIN_VERSION)) {
