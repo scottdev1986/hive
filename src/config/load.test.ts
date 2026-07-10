@@ -3,7 +3,12 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DEFAULT_ROUTING } from "../schemas";
-import { loadHiveConfig, loadRoutingTable, resolveRoute } from "./load";
+import {
+  loadHiveConfig,
+  loadQuotaConfig,
+  loadRoutingTable,
+  resolveRoute,
+} from "./load";
 
 let tempRoot = "";
 let hiveHome = "";
@@ -42,6 +47,57 @@ describe("config loading", () => {
       headless: false,
     });
     expect(await loadRoutingTable()).toEqual(DEFAULT_ROUTING);
+    expect(await loadQuotaConfig()).toMatchObject({
+      enabled: true,
+      limits: [],
+      estimates: { deep: 20, standard: 10, cheap: 4, review: 8 },
+    });
+  });
+
+  test("parses model-specific quota pools and rejects invalid timezone configuration", async () => {
+    await resetHome();
+    await writeFile(
+      join(hiveHome, "quota.toml"),
+      [
+        "warningRemainingPct = 0.3",
+        "criticalRemainingPct = 0.1",
+        "",
+        "[[limits]]",
+        'provider = "claude"',
+        'account = "work"',
+        'pool = "premium"',
+        'models = ["opus", "sonnet"]',
+        "fiveHourAllowance = 100",
+        "weeklyAllowance = 500",
+        'weeklyWindow = "calendar"',
+        'timezone = "America/New_York"',
+        "resetWeekday = 1",
+      ].join("\n"),
+    );
+    expect(await loadQuotaConfig()).toMatchObject({
+      warningRemainingPct: 0.3,
+      limits: [{
+        provider: "claude",
+        account: "work",
+        pool: "premium",
+        models: ["opus", "sonnet"],
+        weeklyWindow: "calendar",
+        timezone: "America/New_York",
+      }],
+    });
+
+    await writeFile(
+      join(hiveHome, "quota.toml"),
+      [
+        "[[limits]]",
+        'provider = "codex"',
+        'pool = "agentic"',
+        "fiveHourAllowance = 100",
+        "weeklyAllowance = 500",
+        'timezone = "Mars/Olympus"',
+      ].join("\n"),
+    );
+    expect(loadQuotaConfig()).rejects.toThrow("unknown timezone");
   });
 
   test("parses config and merges partial routes over defaults", async () => {

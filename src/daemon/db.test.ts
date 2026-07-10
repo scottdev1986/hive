@@ -134,6 +134,12 @@ describe("HiveDatabase", () => {
           (column) => (column as { name: string }).name === "terminalHandle",
         ),
       ).toEqual(true);
+      expect(
+        db.database.query("PRAGMA table_info(agents)").all().some(
+          (column) =>
+            (column as { name: string }).name === "quotaReservationId",
+        ),
+      ).toEqual(true);
     } finally {
       db.close();
     }

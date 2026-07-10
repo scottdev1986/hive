@@ -2,7 +2,13 @@
 
 import { Command, CommanderError } from "commander";
 import { ensureStarted } from "./daemon/lifecycle";
-import { printStatus, stopHive, watchAgent } from "./cli/control";
+import {
+  printQuotaStatus,
+  printStatus,
+  recordQuotaObservation,
+  stopHive,
+  watchAgent,
+} from "./cli/control";
 import { runDaemon } from "./cli/daemon";
 import { runHiveEvent, type HookEventOptions } from "./cli/event";
 import { launchOrchestrator } from "./cli/orchestrator";
@@ -13,6 +19,27 @@ export interface EventCliOptions {
   payload?: string;
   contextPct?: string;
   description?: string;
+  usageUnits?: string;
+  usageSource?: "provider" | "gateway" | "estimated";
+}
+
+interface QuotaReconcileOptions {
+  provider: "claude" | "codex";
+  account: string;
+  pool: string;
+  fiveHourUsed: string;
+  weeklyUsed: string;
+  observedAt?: string;
+  fiveHourResetAt?: string;
+  weeklyResetAt?: string;
+}
+
+function parseNonnegative(value: string, label: string): number {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number < 0) {
+    throw new Error(`${label} must be a nonnegative number`);
+  }
+  return number;
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -69,6 +96,21 @@ function parseEventPayload(value: string | undefined): HookEventOptions {
     }
     payload.description = parsed.description;
   }
+  const usageUnits = parsed.usageUnits ?? parsed.usage_units;
+  if (usageUnits !== undefined) {
+    if (typeof usageUnits !== "number" || usageUnits < 0) {
+      throw new Error("Event payload usageUnits must be a nonnegative number");
+    }
+    payload.usageUnits = usageUnits;
+  }
+  const usageSource = parsed.usageSource ?? parsed.usage_source;
+  if (usageSource !== undefined) {
+    if (usageSource !== "provider" && usageSource !== "gateway" &&
+      usageSource !== "estimated") {
+      throw new Error("Event payload usageSource is invalid");
+    }
+    payload.usageSource = usageSource;
+  }
   return payload;
 }
 
@@ -82,6 +124,12 @@ export function buildEventOptions(options: EventCliOptions): HookEventOptions {
     ...(options.description === undefined
       ? {}
       : { description: options.description }),
+    ...(options.usageUnits === undefined
+      ? {}
+      : { usageUnits: parseNonnegative(options.usageUnits, "usage-units") }),
+    ...(options.usageSource === undefined
+      ? {}
+      : { usageSource: options.usageSource }),
   };
 }
 
@@ -114,6 +162,42 @@ export function createProgram(): Command {
     .description("Show Hive agent status")
     .action(printStatus);
 
+  const quota = program
+    .command("quota")
+    .description("Show quota capacity, reservations, telemetry, and resets")
+    .action(printQuotaStatus);
+
+  quota.command("reconcile")
+    .description("Record a manual provider dashboard observation")
+    .requiredOption("--provider <provider>", "claude or codex")
+    .option("--account <account>", "account scope", "default")
+    .requiredOption("--pool <pool>", "configured quota pool")
+    .requiredOption("--five-hour-used <units>", "used 5-hour units")
+    .requiredOption("--weekly-used <units>", "used weekly units")
+    .option("--observed-at <iso>", "observation time")
+    .option("--five-hour-reset-at <iso>", "known 5-hour reset time")
+    .option("--weekly-reset-at <iso>", "known weekly reset time")
+    .action(async (options: QuotaReconcileOptions) => {
+      if (options.provider !== "claude" && options.provider !== "codex") {
+        throw new Error("provider must be claude or codex");
+      }
+      await recordQuotaObservation({
+        provider: options.provider,
+        account: options.account,
+        pool: options.pool,
+        fiveHourUsed: parseNonnegative(
+          options.fiveHourUsed,
+          "five-hour-used",
+        ),
+        weeklyUsed: parseNonnegative(options.weeklyUsed, "weekly-used"),
+        observedAt: options.observedAt ?? new Date().toISOString(),
+        fiveHourResetAt: options.fiveHourResetAt ?? null,
+        weeklyResetAt: options.weeklyResetAt ?? null,
+        source: "manual",
+        confidence: "reported",
+      });
+    });
+
   program
     .command("watch <name>")
     .description("Open a viewer for a named agent")
@@ -132,6 +216,11 @@ export function createProgram(): Command {
     .option("--payload <json>", "tool hook JSON payload")
     .option("--context-pct <number>", "agent context utilization")
     .option("--description <text>", "approval description")
+    .option("--usage-units <number>", "provider or gateway usage units")
+    .option(
+      "--usage-source <source>",
+      "provider, gateway, or estimated",
+    )
     .action(async (kind: string, options: EventCliOptions) => {
       try {
         await runHiveEvent(

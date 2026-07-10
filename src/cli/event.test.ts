@@ -17,12 +17,16 @@ describe("hive event", () => {
       payload: JSON.stringify({
         contextPct: 64,
         description: "Payload description",
+        usage_units: 7,
+        usage_source: "gateway",
         ignored: "value",
       }),
     })).toEqual({
       agent: "maya",
       contextPct: 64,
       description: "Payload description",
+      usageUnits: 7,
+      usageSource: "gateway",
     });
     expect(buildEventOptions({
       agent: "maya",
@@ -55,7 +59,12 @@ describe("hive event", () => {
       buildHookEvent("turn-start", { agent: "maya" }, timestamp),
       buildHookEvent(
         "turn-end",
-        { agent: "maya", contextPct: 42 },
+        {
+          agent: "maya",
+          contextPct: 42,
+          usageUnits: 7,
+          usageSource: "provider",
+        },
         timestamp,
       ),
       buildHookEvent("notification", { agent: "maya" }, timestamp),
@@ -71,7 +80,12 @@ describe("hive event", () => {
       const encoded = JSON.stringify(event);
       expect(HookEventSchema.parse(JSON.parse(encoded))).toEqual(event);
     }
-    expect(events[2]).toMatchObject({ kind: "turn-end", contextPct: 42 });
+    expect(events[2]).toMatchObject({
+      kind: "turn-end",
+      contextPct: 42,
+      usageUnits: 7,
+      usageSource: "provider",
+    });
     expect(events[4]).toMatchObject({
       kind: "approval-request",
       description: "Publish package",

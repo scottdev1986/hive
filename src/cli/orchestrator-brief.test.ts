@@ -17,6 +17,7 @@ describe("orchestrator brief", () => {
     for (const tool of [
       "hive_spawn",
       "hive_status",
+      "hive_quota_status",
       "hive_send",
       "hive_inbox",
       "hive_read_message",
@@ -27,6 +28,8 @@ describe("orchestrator brief", () => {
     }
     expect(ORCHESTRATOR_BRIEF).toContain("never write");
     expect(ORCHESTRATOR_BRIEF).toContain("integrator");
+    expect(ORCHESTRATOR_BRIEF).toContain("quota pressure");
+    expect(ORCHESTRATOR_BRIEF).toContain("silently changing vendors");
   });
 
   test("makes agents land their own work and reserves integrators for escalations", () => {

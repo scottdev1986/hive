@@ -1,7 +1,13 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { z } from "zod";
-import { AgentRecordSchema, type AgentRecord } from "../schemas";
+import {
+  AgentRecordSchema,
+  QuotaObservationSchema,
+  type AgentRecord,
+  type QuotaObservation,
+  type QuotaStatus,
+} from "../schemas";
 
 export type McpFetcher = (
   input: string | URL,
@@ -77,4 +83,51 @@ export async function markAgentDead(
   } finally {
     await client.close().catch(() => undefined);
   }
+}
+
+async function callHiveTool(
+  port: number,
+  name: string,
+  args: Record<string, unknown>,
+  key: string,
+  fetcher?: McpFetcher,
+): Promise<unknown> {
+  const transport = new StreamableHTTPClientTransport(
+    new URL(`http://127.0.0.1:${port}/mcp`),
+    fetcher === undefined ? undefined : { fetch: fetcher },
+  );
+  const client = new Client({ name: "hive-cli", version: "0.1.0" });
+  try {
+    await client.connect(transport);
+    const result = await client.callTool({ name, arguments: args });
+    if (result.isError === true) throw new Error(`${name} failed`);
+    const structured = z.record(z.string(), z.unknown()).optional()
+      .parse(result.structuredContent);
+    return structured?.[key] ?? textToolValue(result.content, name);
+  } finally {
+    await client.close().catch(() => undefined);
+  }
+}
+
+export async function fetchQuotaStatus(
+  port: number,
+  fetcher?: McpFetcher,
+): Promise<QuotaStatus[]> {
+  return z.array(z.unknown()).parse(
+    await callHiveTool(port, "hive_quota_status", {}, "quotas", fetcher),
+  ) as QuotaStatus[];
+}
+
+export async function reconcileQuota(
+  port: number,
+  observation: QuotaObservation,
+  fetcher?: McpFetcher,
+): Promise<QuotaObservation> {
+  return QuotaObservationSchema.parse(await callHiveTool(
+    port,
+    "hive_quota_reconcile",
+    observation,
+    "observation",
+    fetcher,
+  ));
 }

@@ -1,15 +1,23 @@
 import { TmuxAdapter } from "../adapters/tmux";
 import { resolveTerminal } from "../adapters/terminal";
-import { loadHiveConfig, resolveRoute } from "../config/load";
+import {
+  loadHiveConfig,
+  loadQuotaConfig,
+  resolveRoute,
+} from "../config/load";
 import { HiveDatabase } from "../daemon/db";
 import type { TmuxSender } from "../daemon/delivery";
 import { readConfiguredPort } from "../daemon/lifecycle";
 import { startDaemon } from "../daemon/server";
 import { HiveSpawner } from "../daemon/spawner-impl";
+import { QuotaLedger } from "../daemon/quota-ledger";
+import { QuotaService } from "../daemon/quota";
 
 export async function runDaemon(): Promise<void> {
   const config = await loadHiveConfig();
+  const quotaConfig = await loadQuotaConfig();
   const db = new HiveDatabase();
+  const quota = new QuotaService(new QuotaLedger(db), quotaConfig);
   const tmux = new TmuxAdapter();
   const terminal = resolveTerminal(config);
   const port = readConfiguredPort();
@@ -21,6 +29,7 @@ export async function runDaemon(): Promise<void> {
     routing: resolveRoute,
     tmux,
     terminal,
+    ...(quotaConfig.enabled ? { quota } : {}),
   });
   const tmuxSender: TmuxSender = {
     sendMessage: (session, text) => tmux.sendKeys(session, text),
@@ -33,6 +42,7 @@ export async function runDaemon(): Promise<void> {
     repoRoot: process.cwd(),
     port,
     manageLifecycle: true,
+    ...(quotaConfig.enabled ? { quota } : {}),
   });
 
   let stopping = false;

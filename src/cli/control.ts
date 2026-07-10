@@ -10,10 +10,15 @@ import {
   getPidFilePath,
   readDaemonPort,
 } from "../daemon/lifecycle";
-import type { AgentRecord } from "../schemas";
+import type { AgentRecord, QuotaObservation } from "../schemas";
 import { ORCHESTRATOR_TMUX_SESSION } from "../daemon/orchestrator-lifecycle";
-import { fetchAgentStatus, markAgentDead } from "./mcp";
-import { formatStatusTable } from "./status";
+import {
+  fetchAgentStatus,
+  fetchQuotaStatus,
+  markAgentDead,
+  reconcileQuota,
+} from "./mcp";
+import { formatQuotaStatus, formatStatusTable } from "./status";
 
 const isLive = (agent: AgentRecord): boolean =>
   agent.status !== "dead" && agent.status !== "done";
@@ -98,6 +103,22 @@ function readDaemonPid(): number | null {
 export async function printStatus(): Promise<void> {
   const agents = await fetchAgentStatus(requireDaemonPort());
   console.log(formatStatusTable(agents));
+}
+
+export async function printQuotaStatus(): Promise<void> {
+  console.log(formatQuotaStatus(
+    await fetchQuotaStatus(requireDaemonPort()),
+  ));
+}
+
+export async function recordQuotaObservation(
+  observation: QuotaObservation,
+): Promise<void> {
+  const recorded = await reconcileQuota(requireDaemonPort(), observation);
+  console.log(
+    `Recorded ${recorded.source} quota observation for ` +
+      `${recorded.provider}/${recorded.account}/${recorded.pool} at ${recorded.observedAt}.`,
+  );
 }
 
 export async function watchAgent(name: string): Promise<void> {

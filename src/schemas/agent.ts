@@ -39,6 +39,7 @@ export const AgentRecordSchema = z.object({
   ]),
   failureReason: z.string().optional(),
   failedAt: z.iso.datetime().optional(),
+  quotaReservationId: z.string().min(1).optional(),
   taskDescription: z.string(),
   worktreePath: z.string().nullable(),
   branch: z.string().nullable(),

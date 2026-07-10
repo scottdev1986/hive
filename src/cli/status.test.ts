@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { AgentRecord } from "../schemas";
-import { formatStatusTable } from "./status";
+import { formatQuotaStatus, formatStatusTable } from "./status";
 
 const timestamp = "2026-07-09T12:00:00.000Z";
 
@@ -40,5 +40,40 @@ describe("status table", () => {
     expect(row).not.toContain("without truncation");
     expect(row).toEndWith("…");
     expect(row).not.toContain("selected model is not supported");
+  });
+});
+
+describe("quota status", () => {
+  test("shows capacity, reservations, confidence, freshness, and resets", () => {
+    const output = formatQuotaStatus([{
+      provider: "codex",
+      account: "personal",
+      pool: "agentic",
+      models: ["*"],
+      confidence: "reported",
+      freshness: "fresh",
+      source: "manual",
+      fiveHour: {
+        allowance: 100,
+        used: 60,
+        reserved: 10,
+        remaining: 30,
+        remainingPct: 0.3,
+        resetsAt: "2026-07-09T18:00:00.000Z",
+      },
+      weekly: {
+        allowance: 500,
+        used: 100,
+        reserved: 10,
+        remaining: 390,
+        remainingPct: 0.78,
+        resetsAt: null,
+      },
+    }]);
+    expect(output).toContain("codex/personal/agentic");
+    expect(output).toContain("reported, fresh, manual");
+    expect(output).toContain("30.0/100.0 remaining");
+    expect(output).toContain("10.0 reserved");
+    expect(output).toContain("reset unknown");
   });
 });

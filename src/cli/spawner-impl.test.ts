@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, readFile, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { TerminalAdapter } from "../adapters/terminal";
-import { DEFAULT_ROUTING } from "../schemas";
+import { DEFAULT_ROUTING, QuotaConfigSchema } from "../schemas";
 import type {
   AgentRecord,
   Route,
@@ -19,6 +19,9 @@ import {
   resolveAgentName,
   selectAgentName,
 } from "../daemon/spawner-impl";
+import { HiveDatabase } from "../daemon/db";
+import { QuotaLedger } from "../daemon/quota-ledger";
+import { QuotaService } from "../daemon/quota";
 
 const timestamp = "2026-07-09T12:00:00.000Z";
 const tempRoots: string[] = [];
@@ -350,6 +353,67 @@ describe("HiveSpawner name pool", () => {
 });
 
 describe("HiveSpawner wiring", () => {
+  test("reserves quota before worktree creation and launches the selected fallback model", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-spawner-quota-"));
+    tempRoots.push(root);
+    const quotaDb = new HiveDatabase(join(root, "quota.db"));
+    const quota = new QuotaService(
+      new QuotaLedger(quotaDb),
+      QuotaConfigSchema.parse({
+        reserveFiveHourPct: 0,
+        reserveWeeklyPct: 0,
+        limits: [
+          {
+            provider: "claude",
+            account: "default",
+            pool: "claude",
+            models: ["claude-fable-5"],
+            fiveHourAllowance: 20,
+            weeklyAllowance: 20,
+          },
+          {
+            provider: "codex",
+            account: "default",
+            pool: "codex",
+            models: ["gpt-5.6-sol"],
+            fiveHourAllowance: 100,
+            weeklyAllowance: 100,
+          },
+        ],
+      }),
+      () => new Date(timestamp),
+    );
+    const store = new FakeStore();
+    const tmux = new FakeTmux();
+    const spawner = new HiveSpawner({
+      db: store,
+      repoRoot: root,
+      port: 4317,
+      config: { terminal: "auto", headless: true },
+      routing: async () => DEFAULT_ROUTING.deep,
+      tmux,
+      terminal: new FakeTerminal(),
+      createWorktree: async (_repoRoot, name, slug) => {
+        const path = join(root, name);
+        await mkdir(path, { recursive: true });
+        return { path, branch: `hive/${name}-${slug}` };
+      },
+      sleep: async () => {},
+      resolveModel: fakeResolveModel,
+      quota,
+    });
+
+    const spawned = await spawner.spawn({ task: "Deep task", tier: "deep" });
+    expect(spawned.tool).toEqual("codex");
+    expect(spawned.model).toEqual("gpt-5.6-sol");
+    expect(spawned.quotaReservationId).toBeString();
+    expect(tmux.sessions[0]?.[2]).toContain("'codex'");
+    expect(
+      quota.ledger.getReservation(spawned.quotaReservationId!)?.startedAt,
+    ).not.toEqual(null);
+    quotaDb.close();
+  });
+
   test("writes tool configs, starts named sessions, opens viewers, and inserts records", async () => {
     const root = await mkdtemp(join(tmpdir(), "hive-spawner-"));
     tempRoots.push(root);
