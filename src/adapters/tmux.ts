@@ -51,7 +51,9 @@ export function holdPaneOnFailure(
   if (!Number.isSafeInteger(seconds) || seconds < 1) {
     throw new Error("failure hold must be a positive whole number of seconds");
   }
-  return `${command}; hive_status=$?; ` +
+  // Run the provider in a subshell: a provider is allowed to call `exit`, and
+  // that must not bypass the diagnostic/hold wrapper in tmux's shell.
+  return `(${command}); hive_status=$?; ` +
     `if [ "$hive_status" -ne 0 ]; then ` +
     `printf '\\n[hive] process exited with status %s\\n' "$hive_status" >&2; ` +
     `sleep ${seconds}; fi; exit "$hive_status"`;

@@ -127,6 +127,7 @@ describe("TmuxAdapter launch diagnostics", () => {
     expect(calls[0]?.args.at(-1)).toContain(
       `sleep ${FAILED_PROCESS_HOLD_SECONDS}`,
     );
+    expect(holdPaneOnFailure("exit 17")).toStartWith("(exit 17);");
   });
 
   test("rejects an invalid failure hold", () => {
