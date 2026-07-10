@@ -10,3 +10,17 @@ export const AgentMessageSchema = z.object({
 });
 
 export type AgentMessage = z.infer<typeof AgentMessageSchema>;
+
+export const OrchestratorMessageEnvelopeSchema = z.object({
+  kind: z.literal("hive.message"),
+  id: z.string().min(1),
+  from: z.string().min(1),
+  createdAt: z.iso.datetime(),
+  body: z.string(),
+  truncated: z.boolean(),
+  ref: z.string().min(1),
+});
+
+export type OrchestratorMessageEnvelope = z.infer<
+  typeof OrchestratorMessageEnvelopeSchema
+>;

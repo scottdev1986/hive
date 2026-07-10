@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { ORCHESTRATOR_BRIEF } from "./orchestrator-brief";
 import {
   buildOrchestratorCommand,
+  buildOrchestratorLaunchCommand,
   launchOrchestrator,
   prepareOrchestratorConfig,
 } from "./orchestrator";
@@ -18,6 +19,7 @@ describe("orchestrator brief", () => {
       "hive_status",
       "hive_send",
       "hive_inbox",
+      "hive_read_message",
       "hive_approvals",
       "hive_approve",
     ]) {
@@ -41,6 +43,28 @@ describe("orchestrator brief", () => {
       "read-only",
       ORCHESTRATOR_BRIEF,
     ]);
+  });
+
+  test("runs the root in the fixed attachable tmux session used for wakes", () => {
+    const command = buildOrchestratorLaunchCommand("claude", 4317, "/repo");
+    expect(command.slice(0, 8)).toEqual([
+      "tmux",
+      "new-session",
+      "-A",
+      "-s",
+      "hive-orchestrator",
+      "-c",
+      "/repo",
+      "claude",
+    ]);
+    expect(command).toContain(ORCHESTRATOR_BRIEF);
+  });
+
+  test("forbids background polling and makes status explicitly on-demand", () => {
+    expect(ORCHESTRATOR_BRIEF).toContain("never poll");
+    expect(ORCHESTRATOR_BRIEF).toContain('detail "active"');
+    expect(ORCHESTRATOR_BRIEF).toContain("only when the user explicitly");
+    expect(ORCHESTRATOR_BRIEF).toContain("Wake only");
   });
 
   test("preserves an existing Codex project config while preparing MCP overrides", async () => {

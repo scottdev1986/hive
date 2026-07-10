@@ -19,8 +19,13 @@ import {
   slugify,
   type CreatedWorktree,
 } from "../adapters/worktrees";
-import type { HiveConfig, Route, RoutingTier } from "../schemas";
-import { ORCHESTRATOR_NAME, type AgentRecord } from "../schemas";
+import {
+  ORCHESTRATOR_NAME,
+  type AgentRecord,
+  type HiveConfig,
+  type Route,
+  type RoutingTier,
+} from "../schemas";
 import type { HiveDatabase } from "./db";
 import type { SpawnRequest, Spawner } from "./spawner";
 
@@ -180,7 +185,7 @@ export function buildAgentPrompt(
     `Your task: ${task}`,
     `Your file scope is your worktree at ${worktreePath}; do all code and file work there.`,
     "Use the Hive MCP tools hive_send, hive_inbox, and hive_status to message and coordinate with other named agents.",
-    'Report completion, blockers, and important findings with hive_send to "orchestrator"; the orchestrator reads those reports from its inbox.',
+    `Send concise completion reports, blockers, and important findings to "${ORCHESTRATOR_NAME}" with hive_send; reference large artifacts instead of pasting them.`,
   ].join("\n\n");
 }
 

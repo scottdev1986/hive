@@ -2,8 +2,8 @@ import { z } from "zod";
 import { RoutingTierSchema } from "./routing";
 
 // Reserved recipient name for the root orchestrator. It is not a spawned
-// agent: it has no tmux session and no row in the agents table, so messages
-// addressed to it always queue and are drained via hive_inbox.
+// agent and has no row in the agents table; delivery routes it through the
+// dedicated root wake bridge instead of ordinary agent liveness checks.
 export const ORCHESTRATOR_NAME = "orchestrator";
 
 export const TerminalHandleSchema = z.discriminatedUnion("app", [

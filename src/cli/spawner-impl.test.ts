@@ -13,6 +13,7 @@ import type {
 import {
   HiveSpawner,
   NAME_POOL,
+  resolveAgentName,
   selectAgentName,
 } from "../daemon/spawner-impl";
 
@@ -176,6 +177,12 @@ afterEach(async () => {
 });
 
 describe("HiveSpawner name pool", () => {
+  test("reserves the orchestrator destination from agent assignment", () => {
+    expect(() => resolveAgentName("orchestrator", [])).toThrow(
+      'Agent name "orchestrator" is reserved',
+    );
+  });
+
   test("selects the first name not held by a live agent", () => {
     expect(selectAgentName([
       agent("maya"),
