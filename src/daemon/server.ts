@@ -1800,7 +1800,7 @@ export class HiveDaemon {
     server.registerTool("memory_write", {
       title: "Write a Hive memory fact",
       description:
-        "Create or update one durable Markdown memory fact. Omit id to create a new fact (a slug is derived from the title); pass an existing scope+id to overwrite that fact in place. Repo scope is committed and travels with the clone; global scope accumulates lessons across every project. Writes are serialized and immediately reflected in search.",
+        "Create or update one durable narrative memory fact. WRITE POLICY (SPEC decision 5): a lesson earns a fact only if it is durable (true past this run), non-derivable (not recoverable from the code, git, or the profile), and load-bearing (it would change what a future agent does) — chit-chat, restatements, and anything a grep or .hive/profile.toml already answers do not qualify, and structured truth (commands, layout, entry points) belongs in the profile, never here. DEDUP-BEFORE-WRITE: memory_search first and pass that fact's scope+id to update it in place rather than adding a near-duplicate. CORRECTION-NOT-APPEND: to fix a wrong fact, overwrite it (same id) or memory_delete it — never append a contradiction; git history is the changelog. Set `source` to who is writing (agent at landing, orchestrator for its decisions, init for seeded facts, human for hand-authored) and `verified` to today when you have confirmed the fact against the repo. Omit id to create (slug derived from title); repo scope is committed and travels with the clone, global accumulates lessons across projects. Writes are serialized and immediately reflected in search.",
       inputSchema: MemoryWriteInputSchema,
     }, async (input) => {
       this.authorizeTool(capability, "memory_write", "memory:write");
@@ -1810,7 +1810,7 @@ export class HiveDaemon {
     server.registerTool("memory_read", {
       title: "Read a full Hive memory fact",
       description:
-        "Read one full memory fact by scope and id, as referenced by the injected index or a memory_search result.",
+        "Read one full memory fact by scope and id, as referenced by the injected index or a memory_search result. The returned fact carries `source` and `verified`; if `verified` is absent or older than `date`, or the fact names a concrete path/command/flag, re-check it against the repo before acting on it (SPEC decision 5: the index is a pointer, the fact is a claim, the repo is truth).",
       inputSchema: MemoryFactRequestSchema,
     }, async ({ scope, id }) => {
       this.authorizeTool(capability, "memory_read", "memory:read", undefined, false);

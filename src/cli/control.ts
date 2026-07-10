@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { factVerificationFlag } from "../adapters/memory";
 import { TmuxAdapter } from "../adapters/tmux";
 import {
   buildAgentTerminalTitle,
@@ -167,7 +168,20 @@ export async function readMemoryCli(
   id: string,
 ): Promise<void> {
   const fact = await readMemory(requireDaemonPort(), scope, id);
-  console.log(`# ${fact.title}\n\ndate: ${fact.date}\ntags: ${fact.tags.join(", ")}\n\n${fact.body}`);
+  // Provenance surfaces on read (SPEC decision 5), where the load-bearing
+  // check happens: show source and verification, and flag a fact whose
+  // concrete claims must be re-checked against the repo before acting.
+  const flag = factVerificationFlag(fact);
+  const provenance = [
+    `date: ${fact.date}`,
+    `source: ${fact.source ?? "unknown (legacy — treated as earned)"}`,
+    `verified: ${fact.verified ?? "never"}`,
+    `tags: ${fact.tags.join(", ")}`,
+  ].join("\n");
+  const notice = flag === null
+    ? ""
+    : `\n⚠ ${flag}: re-check any path, command, or flag this fact names against the repo before acting on it.`;
+  console.log(`# ${fact.title}\n\n${provenance}${notice}\n\n${fact.body}`);
 }
 
 export async function deleteMemoryCli(

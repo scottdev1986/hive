@@ -37,7 +37,8 @@ import {
 } from "./cli/update";
 import { launchWorkspace } from "./cli/workspace";
 import { versionLine } from "./version";
-import type { MemoryScope } from "./schemas";
+import type { MemoryScope, MemorySource } from "./schemas";
+import { MemorySourceSchema } from "./schemas";
 
 export interface EventCliOptions {
   agent?: string;
@@ -80,6 +81,16 @@ function parseMemoryScope(value: string): MemoryScope {
     throw new Error(`Invalid memory scope "${value}": expected repo or global`);
   }
   return value;
+}
+
+function parseMemorySource(value: string): MemorySource {
+  const parsed = MemorySourceSchema.safeParse(value);
+  if (!parsed.success) {
+    throw new Error(
+      `Invalid memory source "${value}": expected init, agent, orchestrator, or human`,
+    );
+  }
+  return parsed.data;
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -322,12 +333,22 @@ export function createProgram(): Command {
     .option("--id <id>", "existing fact id to overwrite")
     .option("--tags <tags>", "comma-separated tags")
     .option("--date <yyyy-mm-dd>", "fact date (defaults to today)")
+    .option(
+      "--source <source>",
+      "provenance: init, agent, orchestrator, or human",
+    )
+    .option(
+      "--verified <yyyy-mm-dd>",
+      "date the fact was last confirmed true against the repo",
+    )
     .action(async (title: string, options: {
       scope: string;
       body: string;
       id?: string;
       tags?: string;
       date?: string;
+      source?: string;
+      verified?: string;
     }) => {
       await writeMemoryCli({
         scope: parseMemoryScope(options.scope),
@@ -340,6 +361,10 @@ export function createProgram(): Command {
           ) => tag.length > 0),
         }),
         ...(options.date === undefined ? {} : { date: options.date }),
+        ...(options.source === undefined
+          ? {}
+          : { source: parseMemorySource(options.source) }),
+        ...(options.verified === undefined ? {} : { verified: options.verified }),
       });
     });
 

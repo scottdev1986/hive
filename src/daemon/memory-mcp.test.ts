@@ -159,6 +159,48 @@ describe("memory MCP tools", () => {
     }
   });
 
+  test("source and verified provenance flow through memory_write and back on memory_read", async () => {
+    await makeHome();
+    const repoRoot = await mkdtemp(join(tmpdir(), "hive-memory-mcp-repo-"));
+    tempRoots.push(repoRoot);
+    const daemon = new HiveDaemon({
+      spawner: new UnusedSpawner(),
+      db: new HiveDatabase(":memory:"),
+      tmux: new NoopTmux(),
+      repoRoot,
+    });
+    const client = await connectedClient(daemon);
+    try {
+      const written = textValue(await client.callTool({
+        name: "memory_write",
+        arguments: {
+          scope: "repo",
+          id: "seeded-fact",
+          title: "Seeded by init",
+          body: "A derived, re-derivable lesson.",
+          source: "init",
+          verified: "2026-06-01",
+        },
+      })) as { source: string; verified: string; path: string };
+      expect(written.source).toEqual("init");
+      expect(written.verified).toEqual("2026-06-01");
+      // The provenance is persisted to the Markdown file, not just the response.
+      const onDisk = await readFile(written.path, "utf8");
+      expect(onDisk).toContain("source: init");
+      expect(onDisk).toContain("verified: 2026-06-01");
+
+      const read = textValue(await client.callTool({
+        name: "memory_read",
+        arguments: { scope: "repo", id: "seeded-fact" },
+      })) as { source: string; verified: string };
+      expect(read.source).toEqual("init");
+      expect(read.verified).toEqual("2026-06-01");
+    } finally {
+      await client.close().catch(() => undefined);
+      await daemon.stop();
+    }
+  });
+
   test("memory_reindex rebuilds the search index from files edited outside the daemon", async () => {
     await makeHome();
     const repoRoot = await mkdtemp(join(tmpdir(), "hive-memory-mcp-repo-"));
