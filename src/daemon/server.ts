@@ -577,6 +577,10 @@ export class HiveDaemon {
     try {
       await this.recoverQuotaReservations();
       await this.delivery.recoverCriticalControls();
+      // Root wakes deferred behind a human draft are retried only at this
+      // bounded daemon boundary. The row remains queued until tmux confirms
+      // the composer is empty, so no report silently rots.
+      await this.delivery.wakeOrchestrator();
       await this.reconcileAgents();
       await this.sweepResources();
       this.db.pruneHistory(new Date().toISOString());

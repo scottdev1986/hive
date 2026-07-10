@@ -9,7 +9,11 @@ import {
   type AgentRecord,
 } from "../schemas";
 import { HiveDatabase } from "./db";
-import { MessageDelivery, type TmuxSender } from "./delivery";
+import {
+  isEmptyTmuxComposer,
+  MessageDelivery,
+  type TmuxSender,
+} from "./delivery";
 import {
   createOrchestratorEnvelope,
   formatOrchestratorWake,
@@ -47,6 +51,11 @@ function agent(overrides: Partial<AgentRecord> = {}): AgentRecord {
 
 class RecordingSender implements TmuxSender {
   readonly calls: Array<[string, string]> = [];
+  composerEmpty = true;
+
+  async isComposerEmpty(): Promise<boolean> {
+    return this.composerEmpty;
+  }
 
   async sendMessage(session: string, text: string): Promise<void> {
     this.calls.push([session, text]);
@@ -79,6 +88,12 @@ function textValue(result: Awaited<ReturnType<Client["callTool"]>>): unknown {
 }
 
 describe("event-driven orchestrator lifecycle", () => {
+  test("recognizes only an empty interactive composer as safe to inject", () => {
+    expect(isEmptyTmuxComposer("previous turn\n› \n")).toEqual(true);
+    expect(isEmptyTmuxComposer("previous turn\n› ship the patch")).toEqual(false);
+    expect(isEmptyTmuxComposer("provider output without a composer")).toEqual(false);
+  });
+
   test("stays idle and does not wake for ordinary agent state changes", async () => {
     const db = new HiveDatabase(join(home, "idle.db"));
     const sender = new RecordingSender();
@@ -140,6 +155,48 @@ describe("event-driven orchestrator lifecycle", () => {
       expect(sender.calls[0]?.[1]).not.toContain("Build the event bridge");
     } finally {
       await client.close().catch(() => undefined);
+      db.close();
+    }
+  });
+
+  test("defers a root wake while the human has draft text and preserves it", async () => {
+    const db = new HiveDatabase(join(home, "draft-is-preserved.db"));
+    const sender = new RecordingSender();
+    sender.composerEmpty = false;
+    const delivery = new MessageDelivery(db, sender);
+    try {
+      const queued = await delivery.send(
+        "maya",
+        ORCHESTRATOR_NAME,
+        "The test suite is green.",
+      );
+
+      expect(sender.calls).toEqual([]);
+      expect(db.getMessage(queued.id)?.deliveredAt).toEqual(null);
+      // The sender's captured composer remains untouched: no paste/Enter was
+      // attempted while it reported a human draft.
+      expect(sender.composerEmpty).toEqual(false);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("delivers a deferred root envelope once the composer becomes empty", async () => {
+    const db = new HiveDatabase(join(home, "deferred-eventual-delivery.db"));
+    const sender = new RecordingSender();
+    sender.composerEmpty = false;
+    const delivery = new MessageDelivery(db, sender);
+    try {
+      const queued = await delivery.send("maya", ORCHESTRATOR_NAME, "Ready.");
+      expect(db.getMessage(queued.id)?.deliveredAt).toEqual(null);
+
+      sender.composerEmpty = true;
+      const delivered = await delivery.wakeOrchestrator();
+
+      expect(delivered).toHaveLength(1);
+      expect(sender.calls).toHaveLength(1);
+      expect(db.getMessage(queued.id)?.deliveredAt).not.toEqual(null);
+    } finally {
       db.close();
     }
   });
