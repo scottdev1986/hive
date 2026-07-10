@@ -253,6 +253,66 @@ describe("HiveSpawner name pool", () => {
     }
   });
 
+  test("control restart swaps the stale viewer for a fresh one and re-tiles", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-control-viewer-"));
+    tempRoots.push(root);
+    const staleHandle: TerminalHandle = {
+      app: "iterm2",
+      sessionId: "stale-viewer",
+    };
+    const controlled = {
+      ...agent("maya", "working"),
+      worktreePath: root,
+      terminalHandle: staleHandle,
+    } satisfies AgentRecord;
+    const store = new FakeStore([controlled]);
+    const terminal = new FakeTerminal();
+    let layoutRequests = 0;
+    const spawner = new HiveSpawner({
+      db: store,
+      repoRoot: root,
+      port: 4317,
+      config: { terminal: "auto", headless: false },
+      routing: async () => DEFAULT_ROUTING.standard,
+      tmux: new FakeTmux(),
+      terminal,
+      sleep: async () => {},
+      resolveModel: fakeResolveModel,
+      onTerminalsChanged: () => {
+        layoutRequests += 1;
+      },
+    });
+    const restarted = await spawner.restartForControl(controlled, {
+      id: "control-viewer",
+      from: "orchestrator",
+      to: "maya",
+      body: "Pause before coding.",
+      createdAt: timestamp,
+      deliveredAt: null,
+      priority: "critical",
+      intent: "pause",
+      state: "queued",
+      injectedAt: null,
+      acknowledgedAt: null,
+      appliedAt: null,
+      deadlineAt: timestamp,
+      alertAt: null,
+      sequence: 1,
+      idempotencyKey: null,
+      capabilityEpoch: 1,
+    });
+    // The old lens pointed at the killed session; only the fresh one remains.
+    expect(terminal.closed).toEqual([staleHandle]);
+    expect(terminal.windows).toHaveLength(1);
+    expect(terminal.windows[0]?.[0]).toEqual("hive-maya");
+    expect(terminal.windows[0]?.[1]).toContain("maya");
+    expect(restarted.terminalHandle).toEqual({
+      app: "iterm2",
+      sessionId: "session-hive-maya",
+    });
+    expect(layoutRequests).toEqual(1);
+  });
+
   test("reserves the orchestrator destination from agent assignment", () => {
     expect(() => resolveAgentName("orchestrator", [])).toThrow(
       'Agent name "orchestrator" is reserved',

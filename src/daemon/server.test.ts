@@ -182,6 +182,72 @@ describe("HiveDaemon HTTP server", () => {
     }
   });
 
+  test("critical interruption settles the target's quota reservation", async () => {
+    const db = new HiveDatabase(join(home, "critical-quota.db"));
+    const ledger = new QuotaLedger(db);
+    const quota = new QuotaService(
+      ledger,
+      QuotaConfigSchema.parse({
+        limits: [
+          {
+            provider: "codex",
+            pool: "codex-premium",
+            models: ["gpt-5-codex"],
+            fiveHourAllowance: 100,
+            weeklyAllowance: 1000,
+          },
+          {
+            provider: "claude",
+            pool: "claude-premium",
+            models: ["claude-model"],
+            fiveHourAllowance: 100,
+            weeklyAllowance: 1000,
+          },
+        ],
+      }),
+      () => new Date(timestamp),
+    );
+    const decision = await quota.routeAndReserve({
+      agentName: "maya",
+      tier: "standard",
+      preferredTool: "codex",
+      explicitTool: "codex",
+      candidates: [
+        { tool: "claude", model: "claude-model" },
+        { tool: "codex", model: "gpt-5-codex" },
+      ],
+    });
+    quota.markStarted(decision.reservation.id);
+    const tmux = new FakeDaemonTmux();
+    tmux.sessions.add("hive-maya");
+    const spawner = new RestartingSpawner();
+    const daemon = new HiveDaemon({
+      db,
+      spawner,
+      tmux,
+      tmuxSender: new SilentTmuxSender(),
+      quota,
+    });
+    try {
+      db.insertAgent(agent({
+        quotaReservationId: decision.reservation.id,
+      }));
+      await daemon.delivery.send("orchestrator", "maya", "Stop now.", {
+        priority: "critical",
+        intent: "stop",
+      });
+      expect(spawner.restarts).toHaveLength(1);
+      // The interrupted run keeps its conservative estimate instead of
+      // holding live headroom until the reservation TTL expires.
+      expect(ledger.getReservation(decision.reservation.id)).toMatchObject({
+        status: "reconciled",
+        source: "estimated",
+      });
+    } finally {
+      db.close();
+    }
+  });
+
   test("landing is epoch-gated and cannot run after critical revocation", async () => {
     const db = new HiveDatabase(join(home, "capability-land.db"));
     const landed: string[] = [];
