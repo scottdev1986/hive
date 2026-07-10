@@ -9,6 +9,7 @@ export const SpawnRequestSchema = z.object({
   tier: RoutingTierSchema,
   name: z.string().optional(),
   tool: z.enum(["claude", "codex"]).optional(),
+  reviewOfTool: z.enum(["claude", "codex"]).optional(),
 });
 
 export type SpawnRequest = z.infer<typeof SpawnRequestSchema>;

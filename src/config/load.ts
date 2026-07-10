@@ -2,9 +2,12 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import {
   DEFAULT_ROUTING,
+  DEFAULT_QUOTA_CONFIG,
   HiveConfigSchema,
+  QuotaConfigSchema,
   RoutingTableSchema,
   type HiveConfig,
+  type QuotaConfig,
   type Route,
   type RoutingTable,
   type RoutingTier,
@@ -42,6 +45,25 @@ export async function loadHiveConfig(): Promise<HiveConfig> {
     return HiveConfigSchema.parse(raw ?? {});
   } catch (error) {
     throw new Error(`Invalid hive config at ${path}: ${errorMessage(error)}`);
+  }
+}
+
+export async function loadQuotaConfig(): Promise<QuotaConfig> {
+  const path = join(hiveHome(), "quota.toml");
+  const raw = await readToml(path);
+
+  try {
+    const config = QuotaConfigSchema.parse(raw ?? DEFAULT_QUOTA_CONFIG);
+    for (const limit of config.limits) {
+      try {
+        new Intl.DateTimeFormat("en-US", { timeZone: limit.timezone }).format();
+      } catch {
+        throw new Error(`unknown timezone ${limit.timezone}`);
+      }
+    }
+    return config;
+  } catch (error) {
+    throw new Error(`Invalid quota config at ${path}: ${errorMessage(error)}`);
   }
 }
 

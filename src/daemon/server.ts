@@ -18,6 +18,7 @@ import {
 import {
   HookEventSchema,
   ORCHESTRATOR_NAME,
+  QuotaObservationSchema,
   TerminalHandleSchema,
   type AgentRecord,
   type HookEvent,
@@ -40,6 +41,7 @@ import {
   type SpawnRequest,
   type Spawner,
 } from "./spawner";
+import type { QuotaService } from "./quota";
 
 export const HIVE_VERSION = "0.1.0";
 
@@ -59,6 +61,12 @@ const ReadMessageRequestSchema = z.object({
 
 const StatusRequestSchema = z.object({
   detail: z.enum(["full", "active"]).optional(),
+});
+
+const QuotaObservationRequestSchema = QuotaObservationSchema.omit({
+  observedAt: true,
+}).extend({
+  observedAt: z.iso.datetime({ offset: true }).optional(),
 });
 
 const MarkDeadRequestSchema = z.object({
@@ -106,6 +114,7 @@ export interface HiveDaemonOptions {
   hostname?: string;
   manageLifecycle?: boolean;
   layout?: LayoutCoordinator;
+  quota?: QuotaService;
 }
 
 function json(value: unknown, init?: ResponseInit): Response {
@@ -138,6 +147,7 @@ export class HiveDaemon {
   >;
   private readonly closeTerminal: TerminalCloser;
   private readonly layout: LayoutCoordinator | null;
+  private readonly quota: QuotaService | undefined;
   private bunServer: Server<undefined> | null = null;
   private reconciliationTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -149,6 +159,10 @@ export class HiveDaemon {
       this.db,
       options.tmuxSender ?? new BunTmuxSender(),
     );
+    this.quota = options.quota;
+    this.quota?.setAlertSink(async (body) => {
+      await this.delivery.send("hive-quota", ORCHESTRATOR_NAME, body);
+    });
     this.port = options.port ?? readConfiguredPort();
     this.hostname = options.hostname ?? "127.0.0.1";
     this.manageLifecycle = options.manageLifecycle ?? false;
@@ -185,7 +199,10 @@ export class HiveDaemon {
       writeLifecycleFiles(listeningPort);
     }
     this.reconciliationTimer = setInterval(() => {
-      void this.reconcileAgents().catch((error) => {
+      void Promise.all([
+        this.reconcileAgents(),
+        this.quota?.recoverExpired() ?? Promise.resolve(0),
+      ]).catch((error) => {
         console.error(
           `Hive reconciliation failed: ${
             error instanceof Error ? error.message : "unknown error"
@@ -194,6 +211,13 @@ export class HiveDaemon {
       });
     }, 30_000);
     this.reconciliationTimer.unref?.();
+    void this.quota?.recoverExpired().catch((error) => {
+      console.error(
+        `Hive quota recovery failed: ${
+          error instanceof Error ? error.message : "unknown error"
+        }`,
+      );
+    });
     return this.bunServer;
   }
 
@@ -235,6 +259,9 @@ export class HiveDaemon {
         new Date().toISOString(),
         "tmux session missing (reconciled)",
       );
+      if (agent.quotaReservationId !== undefined) {
+        await this.quota?.cancel(agent.quotaReservationId);
+      }
       // The tmux session is already gone, so the viewer shows nothing but a
       // dead shell; close it instead of leaving a stale window on the wall.
       if (reconciled?.terminalHandle !== undefined) {
@@ -384,6 +411,22 @@ export class HiveDaemon {
       }
     });
 
+    const agent = this.db.getAgentByName(value.agentName);
+    if (agent?.quotaReservationId !== undefined) {
+      if (value.kind === "session-start" || value.kind === "turn-start") {
+        this.quota?.markStarted(agent.quotaReservationId, value.timestamp);
+      } else if (value.kind === "turn-end") {
+        await this.quota?.reconcile(
+          agent.quotaReservationId,
+          value.usageUnits,
+          value.usageSource ?? "estimated",
+          value.timestamp,
+        );
+      } else if (value.kind === "dead") {
+        await this.quota?.cancel(agent.quotaReservationId, value.timestamp);
+      }
+    }
+
     if (value.kind === "session-start" || value.kind === "turn-end") {
       await this.delivery.flushQueued(value.agentName);
     }
@@ -433,6 +476,29 @@ export class HiveDaemon {
       );
     });
 
+    server.registerTool("hive_quota_status", {
+      title: "Hive quota status",
+      description:
+        "Show configured provider/account/model-pool capacity, reservations, telemetry confidence, freshness, and reset estimates.",
+      inputSchema: z.object({}),
+    }, async () => toolResult(this.quota?.statuses() ?? [], "quotas"));
+
+    server.registerTool("hive_quota_reconcile", {
+      title: "Reconcile Hive quota",
+      description:
+        "Record a provider, gateway, or manual usage observation for one configured quota pool.",
+      inputSchema: QuotaObservationRequestSchema,
+    }, async (observation) => {
+      if (this.quota === undefined) {
+        throw new Error("Quota tracking is unavailable");
+      }
+      const value = await this.quota.observe({
+        ...observation,
+        observedAt: observation.observedAt ?? new Date().toISOString(),
+      });
+      return toolResult(value, "observation");
+    });
+
     server.registerTool("hive_mark_dead", {
       title: "Mark Hive agent dead",
       description: "Mark a stopped Hive agent as dead in the status table.",
@@ -447,6 +513,9 @@ export class HiveDaemon {
         status: "dead",
         lastEventAt: new Date().toISOString(),
       });
+      if (updated.quotaReservationId !== undefined) {
+        await this.quota?.cancel(updated.quotaReservationId);
+      }
       return toolResult(updated, "agent");
     });
 
@@ -469,6 +538,9 @@ export class HiveDaemon {
       );
       if (killed === null) {
         throw new Error(`Hive agent not found: ${name}`);
+      }
+      if (killed.agent.quotaReservationId !== undefined) {
+        await this.quota?.cancel(killed.agent.quotaReservationId, timestamp);
       }
       if (killed.terminalHandle !== undefined) {
         try {

@@ -68,12 +68,70 @@ Until then, this repository contains the project's design and documentation.
 3. Tell the orchestrator what you want done, in plain English.
 4. Watch the agent windows, and answer the occasional approval prompt in the orchestrator window.
 
+### Quota-aware routing
+
+Hive reserves capacity before launching an agent, then reconciles it when the turn ends. Automatic routing considers the task tier, each concrete model's five-hour and weekly headroom, in-flight reservations, and configurable reserves for deep work. A safe explicit Claude or Codex choice is honored. An unsafe explicit choice fails before launch with the remaining capacity, reset estimate, and a recommended fallback; it is never silently changed. Reviews can name the tool that authored the work so Hive prefers the other vendor when both have capacity.
+
+Provider subscription limits vary by plan and can share capacity across models or products. Hive does not scrape either CLI's terminal UI and does not claim that local estimates are exact provider telemetry. Configure the real account and pool topology in `~/.hive/quota.toml`; without it, upgrades preserve legacy routing, track estimates, and emit one deduplicated unknown-data warning:
+
+```toml
+warningRemainingPct = 0.25
+criticalRemainingPct = 0.10
+hysteresisPct = 0.05
+reserveFiveHourPct = 0.15
+reserveWeeklyPct = 0.20
+reservationTtlMinutes = 360
+
+[estimates]
+deep = 20
+standard = 10
+cheap = 4
+review = 8
+
+[[limits]]
+provider = "claude"
+account = "personal"
+pool = "claude-subscription"
+models = ["*"]
+fiveHourAllowance = 100
+weeklyAllowance = 500
+weeklyWindow = "rolling"
+
+[[limits]]
+provider = "codex"
+account = "personal"
+pool = "agentic-usage"
+models = ["*"]
+fiveHourAllowance = 100
+weeklyAllowance = 500
+weeklyWindow = "calendar"
+timezone = "America/New_York"
+resetWeekday = 1 # Sunday=0, Monday=1
+resetHour = 0
+```
+
+Allowances and estimates use operator-defined planning units. Models sharing a vendor limit should point to the same pool; models with distinct caps should use distinct pools. Rolling windows include usage exactly on the cutoff and expire it immediately after. Calendar weeks use the configured IANA timezone; a reset minute skipped by daylight saving moves to the first valid local minute after the gap. A fresh provider or gateway observation is authoritative, a manually entered dashboard reading is reported, and a Hive run estimate is estimated. Stale observations remain visible and are combined conservatively with newer ledger entries.
+
+For Claude, a gateway or hook that reports normalized run usage is the best machine source; the stock subscription CLI has per-run JSON output but Hive has no supported remaining-plan-capacity API to call. For Codex, provider/gateway credits or normalized token usage are authoritative when supplied, while consumer-plan remaining capacity is exposed in the official Usage panel rather than a Hive-integrated local API. The stock Codex notification payload is used only when it explicitly contains `usageUnits`; Hive does not reinterpret an arbitrary token count as a percentage of a plan limit. In both cases the fallback is the conservative tier estimate plus manual reconciliation, with its lower confidence shown everywhere.
+
+Record a dashboard reading without editing state:
+
+```sh
+hive quota reconcile --provider codex --account personal \
+  --pool agentic-usage --five-hour-used 62 --weekly-used 180 \
+  --five-hour-reset-at 2026-07-09T18:00:00-04:00
+```
+
+Warning and critical alerts travel through the same durable orchestrator inbox as agent reports. Each pool/window alert fires on a threshold crossing, escalates once from warning to critical, and rearms only after the reset changes or capacity recovers past the threshold plus hysteresis. `hive quota` shows confidence, freshness, reservations, and known reset times without exposing raw SQLite state. See [SPEC.md](SPEC.md#6-who-picks-the-model) for the policy and limitations.
+
 Useful commands:
 
 | Command | What it does |
 |---|---|
 | `hive claude` / `hive codex` | Start an orchestrator in the current folder |
 | `hive status` | Show all running agents and what they're doing |
+| `hive quota` | Show quota headroom, reservations, reset estimates, and telemetry confidence |
+| `hive quota reconcile …` | Record a provider-dashboard usage observation |
 | `hive watch <name>` | Reopen a closed agent window (e.g. `hive watch maya`) |
 | `hive stop` | Wind down all agents cleanly |
 

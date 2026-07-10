@@ -7,6 +7,8 @@ export interface HookEventOptions {
   agent?: string;
   contextPct?: number;
   description?: string;
+  usageUnits?: number;
+  usageSource?: "provider" | "gateway" | "estimated";
 }
 
 export type EventFetcher = (
@@ -30,6 +32,12 @@ export function buildHookEvent(
       ...(options.contextPct === undefined
         ? {}
         : { contextPct: options.contextPct }),
+      ...(options.usageUnits === undefined
+        ? {}
+        : { usageUnits: options.usageUnits }),
+      ...(options.usageSource === undefined
+        ? {}
+        : { usageSource: options.usageSource }),
     });
   }
   if (kind === "approval-request") {

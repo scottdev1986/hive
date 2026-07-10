@@ -28,6 +28,7 @@ export type Approval = z.infer<typeof ApprovalSchema>;
 const AgentDatabaseRowSchema = AgentRecordSchema.extend({
   failureReason: z.string().nullable(),
   failedAt: z.string().nullable(),
+  quotaReservationId: z.string().nullable(),
   terminalHandle: z.string().nullable(),
 });
 
@@ -37,6 +38,7 @@ function parseAgentRow(row: unknown): AgentRecord {
     ...value,
     failureReason: value.failureReason ?? undefined,
     failedAt: value.failedAt ?? undefined,
+    quotaReservationId: value.quotaReservationId ?? undefined,
     terminalHandle: value.terminalHandle === null
       ? undefined
       : TerminalHandleSchema.parse(JSON.parse(value.terminalHandle)),
@@ -58,6 +60,8 @@ function parseEventRow(row: unknown): HookEvent {
     timestamp: z.string(),
     contextPct: z.number().nullable(),
     description: z.string().nullable(),
+    usageUnits: z.number().nullable(),
+    usageSource: z.string().nullable(),
   }).parse(row);
 
   if (value.kind === "turn-end") {
@@ -66,6 +70,8 @@ function parseEventRow(row: unknown): HookEvent {
       agentName: value.agentName,
       timestamp: value.timestamp,
       ...(value.contextPct === null ? {} : { contextPct: value.contextPct }),
+      ...(value.usageUnits === null ? {} : { usageUnits: value.usageUnits }),
+      ...(value.usageSource === null ? {} : { usageSource: value.usageSource }),
     });
   }
   if (value.kind === "approval-request") {
@@ -112,7 +118,8 @@ export class HiveDatabase {
         createdAt TEXT NOT NULL,
         lastEventAt TEXT NOT NULL,
         failureReason TEXT,
-        failedAt TEXT
+        failedAt TEXT,
+        quotaReservationId TEXT
       );
       CREATE TABLE IF NOT EXISTS messages (
         id TEXT PRIMARY KEY,
@@ -134,7 +141,9 @@ export class HiveDatabase {
         agentName TEXT NOT NULL,
         timestamp TEXT NOT NULL,
         contextPct REAL,
-        description TEXT
+        description TEXT,
+        usageUnits REAL,
+        usageSource TEXT
       );
       CREATE INDEX IF NOT EXISTS events_agent_timestamp
         ON events(agentName, timestamp);
@@ -166,6 +175,19 @@ export class HiveDatabase {
     if (!agentColumnNames.has("terminalHandle")) {
       this.database.exec("ALTER TABLE agents ADD COLUMN terminalHandle TEXT");
     }
+    if (!agentColumnNames.has("quotaReservationId")) {
+      this.database.exec("ALTER TABLE agents ADD COLUMN quotaReservationId TEXT");
+    }
+    const eventColumns = z.array(z.object({ name: z.string() })).parse(
+      this.database.query("PRAGMA table_info(events)").all(),
+    );
+    const eventColumnNames = new Set(eventColumns.map((column) => column.name));
+    if (!eventColumnNames.has("usageUnits")) {
+      this.database.exec("ALTER TABLE events ADD COLUMN usageUnits REAL");
+    }
+    if (!eventColumnNames.has("usageSource")) {
+      this.database.exec("ALTER TABLE events ADD COLUMN usageSource TEXT");
+    }
   }
 
   close(): void {
@@ -182,8 +204,9 @@ export class HiveDatabase {
       INSERT INTO agents (
         id, name, tool, model, tier, status, taskDescription,
         worktreePath, branch, tmuxSession, terminalHandle, contextPct,
-        createdAt, lastEventAt, failureReason, failedAt
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        createdAt, lastEventAt, failureReason, failedAt,
+        quotaReservationId
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         name = excluded.name,
         tool = excluded.tool,
@@ -199,7 +222,8 @@ export class HiveDatabase {
         createdAt = excluded.createdAt,
         lastEventAt = excluded.lastEventAt,
         failureReason = excluded.failureReason,
-        failedAt = excluded.failedAt
+        failedAt = excluded.failedAt,
+        quotaReservationId = excluded.quotaReservationId
     `).run(
       value.id,
       value.name,
@@ -219,6 +243,7 @@ export class HiveDatabase {
       value.lastEventAt,
       value.failureReason ?? null,
       value.failedAt ?? null,
+      value.quotaReservationId ?? null,
     );
     return this.getAgentById(value.id)!;
   }
@@ -410,14 +435,18 @@ export class HiveDatabase {
   insertEvent(event: HookEvent): HookEvent {
     const value = HookEventSchema.parse(event);
     this.database.query(`
-      INSERT INTO events (kind, agentName, timestamp, contextPct, description)
-      VALUES (?, ?, ?, ?, ?)
+      INSERT INTO events (
+        kind, agentName, timestamp, contextPct, description,
+        usageUnits, usageSource
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
     `).run(
       value.kind,
       value.agentName,
       value.timestamp,
       value.kind === "turn-end" ? value.contextPct ?? null : null,
       value.kind === "approval-request" ? value.description : null,
+      value.kind === "turn-end" ? value.usageUnits ?? null : null,
+      value.kind === "turn-end" ? value.usageSource ?? null : null,
     );
     return value;
   }
@@ -425,11 +454,13 @@ export class HiveDatabase {
   listEvents(agentName?: string): HookEvent[] {
     const rows = agentName === undefined
       ? this.database.query(`
-          SELECT kind, agentName, timestamp, contextPct, description
+          SELECT kind, agentName, timestamp, contextPct, description,
+                 usageUnits, usageSource
           FROM events ORDER BY id
         `).all()
       : this.database.query(`
-          SELECT kind, agentName, timestamp, contextPct, description
+          SELECT kind, agentName, timestamp, contextPct, description,
+                 usageUnits, usageSource
           FROM events WHERE agentName = ? ORDER BY id
         `).all(agentName);
     return rows.map(parseEventRow);

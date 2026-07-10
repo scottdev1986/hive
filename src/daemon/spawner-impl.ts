@@ -29,6 +29,7 @@ import {
 } from "../schemas";
 import type { HiveDatabase } from "./db";
 import type { SpawnRequest, Spawner } from "./spawner";
+import type { QuotaService } from "./quota";
 
 export const NAME_POOL = [
   "maya",
@@ -112,6 +113,7 @@ export interface HiveSpawnerDependencies {
   /** Fires after a viewer window is attached so the daemon can re-tile the
    * window wall. */
   onTerminalsChanged?: () => void;
+  quota?: QuotaService;
 }
 
 const isLive = (agent: AgentRecord): boolean =>
@@ -253,16 +255,47 @@ export class HiveSpawner implements Spawner {
     previousRecord: AgentRecord | undefined,
   ): Promise<AgentRecord> {
     const configuredRoute = await this.dependencies.routing(request.tier);
-    const tool = request.tool ?? configuredRoute.tool;
+    let tool = request.tool ?? configuredRoute.tool;
     // The record (and thus the terminal title and hive_status) carries the
     // concrete model; the spawn command below still receives the configured
     // route value, so alias-driven CLI behavior is unchanged.
-    const model = await this.modelResolver(tool, configuredRoute);
-    const worktree = await this.makeWorktree(
-      this.dependencies.repoRoot,
-      name,
-      slugify(request.task),
-    );
+    let model = await this.modelResolver(tool, configuredRoute);
+    let quotaReservationId: string | undefined;
+    if (this.dependencies.quota !== undefined) {
+      const [claudeModel, codexModel] = await Promise.all([
+        this.modelResolver("claude", configuredRoute),
+        this.modelResolver("codex", configuredRoute),
+      ]);
+      const decision = await this.dependencies.quota.routeAndReserve({
+        agentName: name,
+        tier: request.tier,
+        preferredTool: configuredRoute.tool,
+        ...(request.tool === undefined ? {} : { explicitTool: request.tool }),
+        ...(request.reviewOfTool === undefined
+          ? {}
+          : { reviewOfTool: request.reviewOfTool }),
+        candidates: [
+          { tool: "claude", model: claudeModel },
+          { tool: "codex", model: codexModel },
+        ],
+      });
+      tool = decision.tool;
+      model = decision.model;
+      quotaReservationId = decision.reservation.id;
+    }
+    let worktree: CreatedWorktree;
+    try {
+      worktree = await this.makeWorktree(
+        this.dependencies.repoRoot,
+        name,
+        slugify(request.task),
+      );
+    } catch (error) {
+      if (quotaReservationId !== undefined) {
+        await this.dependencies.quota?.cancel(quotaReservationId);
+      }
+      throw error;
+    }
     const prompt = buildAgentPrompt(
       name,
       request.task,
@@ -284,6 +317,7 @@ export class HiveSpawner implements Spawner {
       contextPct: 0,
       createdAt: timestamp,
       lastEventAt: timestamp,
+      ...(quotaReservationId === undefined ? {} : { quotaReservationId }),
     });
 
     let argv: string[];
@@ -331,6 +365,9 @@ export class HiveSpawner implements Spawner {
           worktree,
           failureReason,
         );
+      }
+      if (quotaReservationId !== undefined) {
+        this.dependencies.quota?.markStarted(quotaReservationId);
       }
     } catch (error) {
       const reason = error instanceof Error
@@ -430,6 +467,9 @@ export class HiveSpawner implements Spawner {
       failedAt,
       lastEventAt: failedAt,
     });
+    if (record.quotaReservationId !== undefined) {
+      await this.dependencies.quota?.cancel(record.quotaReservationId, failedAt);
+    }
     const cleanupErrors: string[] = [];
 
     try {

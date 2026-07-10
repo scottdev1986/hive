@@ -11,6 +11,8 @@ export const HookEventSchema = z.discriminatedUnion("kind", [
   HookEventBaseSchema.extend({
     kind: z.literal("turn-end"),
     contextPct: z.number().min(0).max(100).optional(),
+    usageUnits: z.number().nonnegative().optional(),
+    usageSource: z.enum(["provider", "gateway", "estimated"]).optional(),
   }),
   HookEventBaseSchema.extend({ kind: z.literal("notification") }),
   HookEventBaseSchema.extend({
