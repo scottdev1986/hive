@@ -9,6 +9,18 @@ import type {
   ScenarioResult,
 } from "./types";
 
+/** Root Codex is enabled only for the exact executable binding whose
+ * dual-client scenario passed; a version label alone is not sufficient. */
+export function codexRootEligible(report: ConformanceReport, bindingSha256: string): boolean {
+  return report.results.some((result) =>
+    result.provider === "codex" &&
+    result.scenario === "dual-client" &&
+    result.outcome === "pass" &&
+    result.binding.sha256 === bindingSha256 &&
+    result.assertions.every((assertion) => assertion.pass)
+  );
+}
+
 const HERE = dirname(fileURLToPath(import.meta.url));
 const KEPT_EVENTS = new Set([
   "session.started",

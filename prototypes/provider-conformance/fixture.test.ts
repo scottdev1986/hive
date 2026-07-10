@@ -4,7 +4,7 @@ import { evaluate } from "./evaluator";
 import { expectedCost, INVALID_MODEL, PROMPTS } from "./prompts";
 import { join } from "node:path";
 import { JsonWebSocket, redact } from "./transport";
-import { compactReport } from "./promote";
+import { compactReport, codexRootEligible } from "./promote";
 import { scenarioApplies, type AdapterRun, type EventType, type NormalizedEvent, type Scenario } from "./types";
 
 let sequence = 0;
@@ -190,5 +190,18 @@ describe("billing and probe safety", () => {
     expect(() => compactReport({ live: true, results: [] } as any)).toThrow(
       "Promotion requires one complete live all-provider run",
     );
+  });
+
+  test("gates Codex root on a passing dual-client result for the exact binding", () => {
+    const result = {
+      provider: "codex", scenario: "dual-client", outcome: "pass",
+      binding: { sha256: "binding-a", version: "0.144.0", executablePath: "/codex" },
+      assertions: [{ id: "inject", pass: true }],
+    } as any;
+    const report = { results: [result] } as any;
+    expect(codexRootEligible(report, "binding-a")).toBe(true);
+    expect(codexRootEligible(report, "binding-b")).toBe(false);
+    result.outcome = "fail";
+    expect(codexRootEligible(report, "binding-a")).toBe(false);
   });
 });
