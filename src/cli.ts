@@ -36,6 +36,10 @@ import {
   runUpdateCheck,
   runUpdateSkip,
 } from "./cli/update";
+import {
+  wantsUpdateNotice,
+  withTrailingUpdateNotice,
+} from "./cli/update-notice";
 import { runWorkspace } from "./cli/workspace";
 import { runWorkspaceFeedCli } from "./cli/workspace-feed";
 import { versionLine } from "./version";
@@ -551,7 +555,13 @@ export function createProgram(): Command {
 
 export async function main(argv = process.argv): Promise<number> {
   try {
-    await createProgram().parseAsync(argv);
+    // The passive update notice trails user-facing commands (npm/gh shape):
+    // the check runs alongside the command, the line prints after it, and a
+    // failed or slow check is silence, never an error or a stall.
+    await withTrailingUpdateNotice(
+      wantsUpdateNotice(argv),
+      () => createProgram().parseAsync(argv),
+    );
     const exitCode = process.exitCode;
     return typeof exitCode === "number" ? exitCode : Number(exitCode ?? 0);
   } catch (error) {
