@@ -26,6 +26,7 @@ import {
   type HookEventOptions,
 } from "./cli/event";
 import { launchOrchestrator } from "./cli/orchestrator";
+import { runInitCli } from "./cli/init";
 import { runStart } from "./cli/start";
 import { runStatusline } from "./cli/statusline";
 import {
@@ -218,6 +219,31 @@ export function createProgram(): Command {
     )
     .action(async () => {
       await runStart();
+    });
+
+  program
+    .command("init")
+    .description(
+      "Profile this repo: write/refresh .hive/profile.toml, optionally " +
+        "scaffold AGENTS.md, and seed narrative memory facts",
+    )
+    .option("--refresh", "re-scan and rewrite an existing profile")
+    .option("--scaffold-agents", "offer to scaffold an AGENTS.md when none exists")
+    .option("--seed-facts <path>", "JSON file of narrative facts to seed (source: init)")
+    .action(async (options: {
+      refresh?: boolean;
+      scaffoldAgents?: boolean;
+      seedFacts?: string;
+    }) => {
+      await runInitCli({
+        ...(options.refresh === undefined ? {} : { refresh: options.refresh }),
+        ...(options.scaffoldAgents === undefined
+          ? {}
+          : { scaffoldAgents: options.scaffoldAgents }),
+        ...(options.seedFacts === undefined
+          ? {}
+          : { seedFacts: options.seedFacts }),
+      });
     });
 
   const update = program

@@ -136,8 +136,9 @@ export function resolveBriefablePath(
   return absolute;
 }
 
-// `SPEC.md`, `docs/research/x.md`. Trailing punctuation is stripped by the
-// character class, so "read SPEC.md, then..." yields "SPEC.md".
+// A `.md` path anywhere: `DESIGN.md`, `docs/research/x.md`. Trailing punctuation
+// is stripped by the character class, so "read DESIGN.md, then..." yields
+// "DESIGN.md". Which of these are actually briefable is the profile's call.
 const DOC_PATH = /\b((?:[A-Za-z0-9_-]+\/)*[A-Za-z0-9_.-]+\.md)\b/g;
 // `§6`, `§ 6`, `section 6`, `sections 6 and 7`, `§6.2` (major number wins).
 const SECTION_SELECTOR =
@@ -163,7 +164,7 @@ export function findTaskDocReferences(
     if (!isBriefable(path, config)) {
       continue;
     }
-    // Selectors may precede ("§6 of SPEC.md") or follow ("SPEC.md §6") the
+    // Selectors may precede ("§6 of DESIGN.md") or follow ("DESIGN.md §6") the
     // path, so scan a window on both sides of the mention.
     const from = Math.max(0, match.index - SELECTOR_WINDOW);
     const to = match.index + path.length + SELECTOR_WINDOW;
