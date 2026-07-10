@@ -706,10 +706,11 @@ export class QuotaService {
         weeklyObservedAt: observation?.weeklyObservedAt ?? null,
       },
     );
-    const fresh = (observedAt: string | null): boolean =>
-      observedAt !== null &&
-      now.getTime() - new Date(observedAt).getTime() <=
-        limit.observationMaxAgeMinutes * 60_000;
+    const fresh = (observedAt: string | null): boolean => {
+      if (observedAt === null) return false;
+      const age = now.getTime() - new Date(observedAt).getTime();
+      return age >= 0 && age <= limit.observationMaxAgeMinutes * 60_000;
+    };
     const valid = (resetAt: string | null | undefined): boolean =>
       resetAt === null || resetAt === undefined || new Date(resetAt) > now;
 

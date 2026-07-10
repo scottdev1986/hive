@@ -6,17 +6,17 @@ import { z } from "zod";
 // typechecks) has been observed above ~2 GB. The floor keeps enough headroom
 // that the daemon, the orchestrator, and macOS itself stay responsive while
 // hive refuses to add load.
-export const ResourceLimitsSchema = z.object({
+export const ResourceLimitsSchema = z.strictObject({
   enabled: z.boolean().default(true),
   perProcessMemoryMb: z.number().int().positive().default(12_288),
   minSystemAvailableMb: z.number().int().positive().default(4_096),
 });
 
-export const HiveConfigSchema = z.object({
+export const HiveConfigSchema = z.strictObject({
   terminal: z.enum(["iterm2", "terminal", "auto"]).default("auto"),
   headless: z.boolean().default(false),
   layout: z.enum(["auto", "off"]).default("auto"),
-  codex: z.object({
+  codex: z.strictObject({
     driver: z.enum(["tui", "app-server"]).default("tui"),
   }).default({ driver: "tui" }),
   // Claude Code's Channels research preview. "auto" uses it when the installed

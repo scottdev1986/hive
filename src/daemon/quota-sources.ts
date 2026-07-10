@@ -1,6 +1,7 @@
 import { tmpdir } from "node:os";
 import type { CodexRateLimitsResponse, CodexRateLimitSnapshot } from "./quota";
 import { HIVE_VERSION } from "../version";
+import { z } from "zod";
 
 /**
  * Live quota discovery.
@@ -66,10 +67,13 @@ export interface QuotaProbe {
   read(): Promise<QuotaProbeResult>;
 }
 
-const unixSecondsToIso = (value: number | null | undefined): string | null =>
-  typeof value === "number" && Number.isFinite(value) && value >= 0
-    ? new Date(value * 1_000).toISOString()
-    : null;
+const unixSecondsToIso = (value: number | null | undefined): string | null => {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    return null;
+  }
+  const date = new Date(value * 1_000);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+};
 
 /**
  * Order the two reported windows by duration rather than by the name the
@@ -88,6 +92,7 @@ export function orderRateLimitWindows(
     .filter((window) => window !== null && window !== undefined)
     .filter((window) =>
       Number.isFinite(window!.usedPercent) && window!.usedPercent >= 0 &&
+      window!.usedPercent <= 100 &&
       typeof window!.windowDurationMins === "number" &&
       Number.isFinite(window!.windowDurationMins) &&
       window!.windowDurationMins > 0
@@ -124,6 +129,9 @@ export function readingsFromCodexResponse(
   account: string,
   observedAt: string,
 ): DiscoveredPoolReading[] {
+  const parsed = CodexRateLimitsResponseSchema.safeParse(response);
+  if (!parsed.success) return [];
+  response = parsed.data;
   const base = (
     snapshot: CodexRateLimitSnapshot,
     pool: string,
@@ -391,6 +399,44 @@ export interface ClaudeModelScopedLimit {
   resets_at: string | null;
 }
 
+const CodexRateLimitWindowSchema = z.object({
+  usedPercent: z.number(),
+  windowDurationMins: z.number().positive().nullable(),
+  resetsAt: z.number().nonnegative().nullable(),
+}).passthrough();
+
+const CodexRateLimitSnapshotSchema = z.object({
+  limitId: z.string().nullable().optional(),
+  limitName: z.string().nullable().optional(),
+  planType: z.string().nullable().optional(),
+  primary: CodexRateLimitWindowSchema.nullable(),
+  secondary: CodexRateLimitWindowSchema.nullable(),
+}).passthrough();
+
+const CodexRateLimitsResponseSchema = z.object({
+  rateLimits: CodexRateLimitSnapshotSchema,
+  rateLimitsByLimitId: z.record(z.string(), CodexRateLimitSnapshotSchema).nullable().optional(),
+}).passthrough();
+
+const ClaudeUsageWindowSchema = z.object({
+  utilization: z.number().nullable(),
+  resets_at: z.string().nullable(),
+}).passthrough();
+
+const ClaudeUsageResponseSchema = z.object({
+  subscription_type: z.string().nullable(),
+  rate_limits_available: z.boolean(),
+  rate_limits: z.object({
+    five_hour: ClaudeUsageWindowSchema.nullable().optional(),
+    seven_day: ClaudeUsageWindowSchema.nullable().optional(),
+    model_scoped: z.array(z.object({
+      display_name: z.string().nullable(),
+      utilization: z.number().nullable(),
+      resets_at: z.string().nullable(),
+    }).passthrough()).nullable().optional(),
+  }).passthrough().nullable(),
+}).passthrough();
+
 const isoOrNull = (value: string | null | undefined): string | null => {
   if (typeof value !== "string" || value.length === 0) return null;
   const parsed = new Date(value);
@@ -403,7 +449,8 @@ const claudeWindow = (
 ): DiscoveredWindow | null =>
   window === null || window === undefined ||
     typeof window.utilization !== "number" ||
-    !Number.isFinite(window.utilization) || window.utilization < 0
+    !Number.isFinite(window.utilization) || window.utilization < 0 ||
+    window.utilization > 100
     ? null
     : {
       usedPct: window.utilization,
@@ -426,6 +473,9 @@ export function readingsFromClaudeUsage(
   account: string,
   observedAt: string,
 ): DiscoveredPoolReading[] {
+  const parsed = ClaudeUsageResponseSchema.safeParse(response);
+  if (!parsed.success) return [];
+  response = parsed.data;
   if (response.rate_limits_available !== true || response.rate_limits === null) {
     return [];
   }

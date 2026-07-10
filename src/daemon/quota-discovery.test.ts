@@ -10,6 +10,7 @@ import {
   ClaudeQuotaProbe,
   CodexQuotaProbe,
   readingsFromClaudeUsage,
+  readingsFromCodexResponse,
   orderRateLimitWindows,
   type ClaudeUsageResponse,
   type QuotaProbe,
@@ -144,6 +145,35 @@ describe("window ordering", () => {
     });
     expect(windows.fiveHour).toBeNull();
     expect(windows.weekly).toBeNull();
+  });
+
+  test("rejects percentages outside the provider's 0-100 scale", () => {
+    const windows = orderRateLimitWindows({
+      primary: { usedPercent: 101, windowDurationMins: 300, resetsAt: null },
+      secondary: { usedPercent: 20, windowDurationMins: 10_080, resetsAt: null },
+    });
+    expect(windows.fiveHour).toBeNull();
+    expect(windows.weekly?.usedPct).toBe(20);
+  });
+
+  test("treats an unrepresentable reset epoch as unknown", () => {
+    const windows = orderRateLimitWindows({
+      primary: {
+        usedPercent: 10,
+        windowDurationMins: 300,
+        resetsAt: Number.MAX_VALUE,
+      },
+      secondary: null,
+    });
+    expect(windows.fiveHour?.resetsAt).toBeNull();
+  });
+
+  test("drops malformed Codex response shapes instead of throwing", () => {
+    expect(readingsFromCodexResponse(
+      { rateLimits: null } as unknown as CodexRateLimitsResponse,
+      "default",
+      now.toISOString(),
+    )).toEqual([]);
   });
 });
 
@@ -419,6 +449,20 @@ describe("per-window accounting", () => {
 });
 
 describe("staleness", () => {
+  test("does not treat a future-dated observation as fresh", async () => {
+    const codex = new StubProbe("codex", await codexPools());
+    const { quota, db } = await service([codex]);
+    try {
+      await quota.refreshFromProviders(now);
+      const beforeObservation = new Date(now.getTime() - 1);
+      const status = pool(quota, "codex", beforeObservation);
+      expect(status.freshness).toBe("stale");
+      expect(status.fiveHour.confidence).toBe("stale");
+    } finally {
+      db.close();
+    }
+  });
+
   test("keeps the number but downgrades its confidence once it ages out", async () => {
     const codex = new StubProbe("codex", await codexPools());
     const { quota, db } = await service([codex]);
@@ -664,6 +708,25 @@ describe("claude usage probe", () => {
     }, "default", now.toISOString());
     expect(pools[0]?.fiveHour?.usedPct).toBe(10);
     expect(pools[0]?.weekly).toBeNull();
+  });
+
+  test("drops malformed and out-of-range usage instead of inventing headroom", () => {
+    const partial = readingsFromClaudeUsage({
+      subscription_type: "max",
+      rate_limits_available: true,
+      rate_limits: {
+        five_hour: { utilization: 101, resets_at: null },
+        seven_day: { utilization: 20, resets_at: null },
+      },
+    }, "default", now.toISOString());
+    expect(partial).toHaveLength(1);
+    expect(partial[0]?.fiveHour).toBeNull();
+    expect(partial[0]?.weekly?.usedPct).toBe(20);
+    expect(readingsFromClaudeUsage({
+      subscription_type: "max",
+      rate_limits_available: true,
+      rate_limits: { model_scoped: {} },
+    } as unknown as ClaudeUsageResponse, "default", now.toISOString())).toEqual([]);
   });
 });
 

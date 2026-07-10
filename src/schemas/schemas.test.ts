@@ -46,6 +46,9 @@ describe("HiveConfigSchema", () => {
       HiveConfigSchema.parse({ codex: { driver: "exec" } })
     ).toThrow();
     expect(() => HiveConfigSchema.parse({ autonomy: "yolo" })).toThrow();
+    expect(() => HiveConfigSchema.parse({ terminl: "auto" })).toThrow();
+    expect(() => HiveConfigSchema.parse({ codex: { driver: "tui", typo: true } })).toThrow();
+    expect(() => HiveConfigSchema.parse({ resources: { typo: true } })).toThrow();
   });
 });
 
