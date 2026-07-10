@@ -316,6 +316,44 @@ describe("resilience", () => {
     ).toBe("after restart");
   });
 
+  test("an instantly-resolving poll cannot spin the loop unbounded", async () => {
+    // Regression for the 2026-07-10 OOM: a fake poll() that always resolves
+    // immediately with an event turned the pump loop into a microtask-speed
+    // allocator. Real polls take up to pollWaitMs, so this shape is never
+    // legitimate and the floor-delay guard must bound it.
+    const transport = new FakeTransport();
+    let pollCount = 0;
+    const daemon: DaemonClient = {
+      async register() {
+        return { enabled: true, permissionRelay: true };
+      },
+      async poll() {
+        pollCount += 1;
+        return {
+          ok: true,
+          events: [{
+            kind: "message",
+            deliveryId: `d${pollCount}`,
+            content: "spin",
+            meta: {},
+          }],
+        };
+      },
+      async ack() {},
+      async permissionRequest() {},
+    };
+
+    bridge(daemon, transport);
+    transport.receive(initialize);
+    transport.receive({ jsonrpc: "2.0", method: "notifications/initialized" });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    // Unbounded, this would run into the tens of thousands of iterations in
+    // 100ms; the floor delay keeps it to a handful of bursts.
+    expect(pollCount).toBeGreaterThan(0);
+    expect(pollCount).toBeLessThan(100);
+  });
+
   test("stops pumping once stdin closes", async () => {
     const transport = new FakeTransport();
     const daemon = new FakeDaemon({ batches: [[]] });

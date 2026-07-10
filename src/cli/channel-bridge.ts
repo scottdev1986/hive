@@ -71,8 +71,19 @@ export interface ChannelBridgeOptions {
   pollWaitMs?: number;
   reconnectDelayMs?: number;
   sleep?: (ms: number) => Promise<void>;
+  now?: () => number;
   log?: (line: string) => void;
 }
+
+// The real daemon long-poll takes up to pollWaitMs (25s) to return, so the
+// success path has no reason to add delay. But a broken or faked poller (the
+// 2026-07-10 OOM: a unit test's poll() always resolved instantly with an
+// event) turns the loop into a microtask-speed allocator. This is a backstop
+// against that, not a redesign: a handful of consecutive suspiciously-fast
+// iterations trip a small floor delay, then the counter resets.
+const FAST_ITERATION_THRESHOLD_MS = 5;
+const FAST_ITERATION_LIMIT = 3;
+const FAST_ITERATION_FLOOR_MS = 20;
 
 export class ChannelBridge {
   private readonly agent: string;
@@ -81,11 +92,13 @@ export class ChannelBridge {
   private readonly pollWaitMs: number;
   private readonly reconnectDelayMs: number;
   private readonly sleep: (ms: number) => Promise<void>;
+  private readonly now: () => number;
   private readonly log: (line: string) => void;
   private registered = false;
   private running = false;
   private closed = false;
   private clientVersion = "0.0.0";
+  private fastIterations = 0;
 
   constructor(options: ChannelBridgeOptions) {
     this.agent = options.agent;
@@ -95,6 +108,7 @@ export class ChannelBridge {
     this.reconnectDelayMs = options.reconnectDelayMs ?? 2_000;
     this.sleep = options.sleep ?? ((ms) =>
       new Promise((resolve) => setTimeout(resolve, ms)));
+    this.now = options.now ?? (() => Date.now());
     this.log = options.log ?? (() => undefined);
   }
 
@@ -210,6 +224,7 @@ export class ChannelBridge {
         }
         this.registered = true;
       }
+      const iterationStart = this.now();
       const result = await this.daemon
         .poll(this.agent, this.pollWaitMs)
         .catch(() => ({ ok: false as const }));
@@ -221,7 +236,26 @@ export class ChannelBridge {
       for (const event of result.events) {
         await this.dispatch(event);
       }
+      await this.enforceMinimumIterationInterval(iterationStart);
     }
+  }
+
+  // A poll() that resolves instantly, over and over, is never legitimate: the
+  // real daemon either waits up to pollWaitMs or returns a queued backlog
+  // after real network latency. Tripping this a few times in a row is the
+  // signature of a fake/broken poller, so only then does it cost a delay.
+  private async enforceMinimumIterationInterval(
+    iterationStart: number,
+  ): Promise<void> {
+    const elapsed = this.now() - iterationStart;
+    if (elapsed >= FAST_ITERATION_THRESHOLD_MS) {
+      this.fastIterations = 0;
+      return;
+    }
+    this.fastIterations += 1;
+    if (this.fastIterations < FAST_ITERATION_LIMIT) return;
+    this.fastIterations = 0;
+    await this.sleep(FAST_ITERATION_FLOOR_MS);
   }
 
   private async dispatch(event: ChannelEventWire): Promise<void> {
