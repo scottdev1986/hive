@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, mkdir, readFile, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { TerminalAdapter } from "../adapters/terminal";
@@ -376,6 +376,9 @@ describe("HiveSpawner wiring", () => {
     ) => {
       const path = join(root, name);
       await mkdir(path, { recursive: true });
+      const skillPath = join(path, ".hive", "skills", "test-skill");
+      await mkdir(skillPath, { recursive: true });
+      await Bun.write(join(skillPath, "SKILL.md"), "# Test skill\n");
       return { path, branch: `hive/${name}-${slug}` };
     };
     const spawner = new HiveSpawner({
@@ -453,6 +456,16 @@ describe("HiveSpawner wiring", () => {
     expect(claudeSettings).toContain("acceptEdits");
     expect(claudeSettings).toContain("hive event session-start --agent maya");
     expect(codexConfig).toContain("http://127.0.0.1:4317/mcp");
+    expect(
+      await realpath(join(root, "maya", ".claude", "skills", "test-skill")),
+    ).toEqual(
+      await realpath(join(root, "maya", ".hive", "skills", "test-skill")),
+    );
+    expect(
+      await realpath(join(root, "david", ".agents", "skills", "test-skill")),
+    ).toEqual(
+      await realpath(join(root, "david", ".hive", "skills", "test-skill")),
+    );
   });
 
   test("short-circuits readiness when the persisted status leaves spawning", async () => {

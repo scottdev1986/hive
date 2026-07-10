@@ -12,6 +12,7 @@ import {
   buildCodexSpawnCommand,
   writeCodexAgentConfig,
 } from "../adapters/tools/codex";
+import { provisionSkills } from "../adapters/skills";
 import { resolveConcreteModel } from "../adapters/tools/models";
 import {
   createWorktree,
@@ -284,6 +285,7 @@ export class HiveSpawner implements Spawner {
 
     let argv: string[];
     try {
+      await provisionSkills(worktree.path, tool);
       if (tool === "claude") {
         await writeClaudeAgentConfig(worktree.path, {
           daemonPort: this.dependencies.port,
