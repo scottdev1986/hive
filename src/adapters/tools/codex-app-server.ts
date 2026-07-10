@@ -342,6 +342,7 @@ const stringField = (value: JsonObject, key: string): string => {
 };
 
 const timestamp = (): string => new Date().toISOString();
+const AVAILABILITY_PROBE_TIMEOUT_MS = 5_000;
 
 export class CodexAppServerManager {
   private readonly sessions = new Map<string, CodexSession>();
@@ -356,7 +357,12 @@ export class CodexAppServerManager {
     this.socketPath = options.socketPath ?? defaultSocketPath;
     this.transport = options.transport ?? SocketTransport.connect;
     this.commandRunner = options.commandRunner ?? (async (argv) => {
-      const child = Bun.spawn(argv, { stdout: "ignore", stderr: "ignore" });
+      const child = Bun.spawn(argv, {
+        stdout: "ignore",
+        stderr: "ignore",
+        timeout: AVAILABILITY_PROBE_TIMEOUT_MS,
+        killSignal: "SIGKILL",
+      });
       return child.exited;
     });
     this.sleep = options.sleep ?? ((milliseconds) => Bun.sleep(milliseconds));

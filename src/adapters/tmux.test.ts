@@ -221,6 +221,18 @@ describe("TmuxAdapter.sendKeys injection", () => {
 });
 
 describe("TmuxAdapter", () => {
+  test("rejects malformed pane PIDs instead of partially parsing them", async () => {
+    const adapter = new TmuxAdapter(undefined, {
+      run: async () => ({
+        stdout: "42\n12oops\n-7\n0\n9007199254740992\n73\n",
+        stderr: "",
+        exitCode: 0,
+      }),
+    });
+
+    expect(await adapter.listPanePids("hive-maya")).toEqual([42, 73]);
+  });
+
   test("lists the unique physical client TTYs attached to an exact session", async () => {
     const calls: string[][] = [];
     const adapter = new TmuxAdapter(undefined, {

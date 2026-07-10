@@ -66,8 +66,15 @@ export type CommandRunner = (argv: string[]) => Promise<{
   exitCode: number;
 }>;
 
+const VERSION_PROBE_TIMEOUT_MS = 5_000;
+
 const runCommand: CommandRunner = async (argv) => {
-  const child = Bun.spawn(argv, { stdout: "pipe", stderr: "ignore" });
+  const child = Bun.spawn(argv, {
+    stdout: "pipe",
+    stderr: "ignore",
+    timeout: VERSION_PROBE_TIMEOUT_MS,
+    killSignal: "SIGKILL",
+  });
   const [stdout, exitCode] = await Promise.all([
     new Response(child.stdout).text(),
     child.exited,
@@ -99,6 +106,8 @@ export function probeClaudeVersion(executable: string): string | null {
       stdin: "ignore",
       stdout: "pipe",
       stderr: "ignore",
+      timeout: VERSION_PROBE_TIMEOUT_MS,
+      killSignal: "SIGKILL",
     });
     if (result.exitCode !== 0) return null;
     return /(\d+\.\d+\.\d+)/.exec(result.stdout.toString())?.[1] ?? null;

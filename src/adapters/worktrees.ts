@@ -7,6 +7,8 @@ interface GitResult {
   exitCode: number;
 }
 
+const GIT_TIMEOUT_MS = 30_000;
+
 export interface Worktree {
   path: string;
   branch: string | null;
@@ -32,6 +34,8 @@ async function runGit(repoRoot: string, args: string[]): Promise<GitResult> {
   const process = Bun.spawn(["git", "-C", repoRoot, ...args], {
     stdout: "pipe",
     stderr: "pipe",
+    timeout: GIT_TIMEOUT_MS,
+    killSignal: "SIGKILL",
   });
   const [stdout, stderr, exitCode] = await Promise.all([
     new Response(process.stdout).text(),
@@ -131,7 +135,8 @@ export async function listWorktrees(repoRoot: string): Promise<Worktree[]> {
       }
 
       return { path, branch };
-    });
+    })
+    .filter((worktree) => worktree.path.length > 0);
 }
 
 async function branchExists(repoRoot: string, branch: string): Promise<boolean> {
@@ -174,7 +179,14 @@ export async function assessStrandedWork(
       `${mainBranch}..${branch}`,
     ]);
     assertGitSuccess(revListResult, "rev-list");
-    unmergedCommits = Number.parseInt(revListResult.stdout.trim(), 10);
+    const count = revListResult.stdout.trim();
+    if (!/^[0-9]+$/.test(count)) {
+      throw new Error(`git rev-list failed: invalid count "${count}"`);
+    }
+    unmergedCommits = Number(count);
+    if (!Number.isSafeInteger(unmergedCommits)) {
+      throw new Error(`git rev-list failed: count exceeds safe integer range`);
+    }
   }
 
   return { dirtyFiles, unmergedCommits };

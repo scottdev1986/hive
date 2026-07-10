@@ -219,6 +219,8 @@ function git(root: string, args: string[]): string | null {
     const result = Bun.spawnSync(["git", "-C", root, ...args], {
       stdout: "pipe",
       stderr: "ignore",
+      timeout: 5_000,
+      killSignal: "SIGKILL",
     });
     if (result.exitCode !== 0) return null;
     return result.stdout.toString().trim();
@@ -244,7 +246,7 @@ export function commitsBehind(root: string, recorded: string | null): number | n
   const count = git(root, ["rev-list", "--count", `${recorded}..HEAD`]);
   if (count === null) return null;
   const n = Number(count);
-  return Number.isInteger(n) ? n : null;
+  return Number.isSafeInteger(n) && n >= 0 ? n : null;
 }
 
 // ---------------------------------------------------------------------------

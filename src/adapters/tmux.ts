@@ -24,6 +24,7 @@ export interface TmuxAdapterOptions {
 // window becomes a literal newline in the composer instead of a submit.
 export const SEND_ENTER_DELAY_MS = 500;
 export const FAILED_PROCESS_HOLD_SECONDS = 5;
+export const TMUX_TIMEOUT_MS = 10_000;
 
 const SESSION_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,99}$/;
 
@@ -69,6 +70,8 @@ async function runTmux(
     stdin: stdin ?? "ignore",
     stdout: "pipe",
     stderr: "pipe",
+    timeout: TMUX_TIMEOUT_MS,
+    killSignal: "SIGKILL",
   });
 
   const [stdout, stderr, exitCode] = await Promise.all([
@@ -199,7 +202,9 @@ export class TmuxAdapter {
     assertSuccess(result, "list-panes");
     return result.stdout
       .split("\n")
-      .map((pid) => Number.parseInt(pid.trim(), 10))
+      .map((pid) => pid.trim())
+      .filter((pid) => /^[1-9][0-9]*$/.test(pid))
+      .map((pid) => Number(pid))
       .filter((pid) => Number.isSafeInteger(pid) && pid > 0);
   }
 
