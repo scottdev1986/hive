@@ -4,15 +4,35 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { TerminalAdapter } from "../adapters/terminal";
 import { DEFAULT_ROUTING } from "../schemas";
-import type { AgentRecord, Route, RoutingTier } from "../schemas";
+import type {
+  AgentRecord,
+  Route,
+  RoutingTier,
+  TerminalHandle,
+} from "../schemas";
 import {
   HiveSpawner,
   NAME_POOL,
+  resolveAgentName,
   selectAgentName,
 } from "../daemon/spawner-impl";
 
 const timestamp = "2026-07-09T12:00:00.000Z";
 const tempRoots: string[] = [];
+
+const fakeResolveModel = async (
+  tool: Route["tool"],
+  route: Route,
+): Promise<string> => {
+  const configured = route[tool].model;
+  if (tool === "claude" && configured === "best") {
+    return "claude-fable-5";
+  }
+  if (configured === "default") {
+    return tool === "claude" ? "claude-fable-5[1m]" : "gpt-5.6-sol";
+  }
+  return configured;
+};
 
 function agent(
   name: string,
@@ -61,6 +81,20 @@ class FakeStore {
     }
     return record;
   }
+
+  attachTerminalHandle(
+    id: string,
+    handle: TerminalHandle,
+  ): AgentRecord | null {
+    const record = this.getAgentById(id);
+    if (
+      record === null || record.status === "dead" || record.status === "done" ||
+      record.status === "failed"
+    ) {
+      return null;
+    }
+    return this.insertAgent({ ...record, terminalHandle: handle });
+  }
 }
 
 class FakeTmux {
@@ -95,9 +129,21 @@ class FakeTmux {
 
 class FakeTerminal implements TerminalAdapter {
   readonly windows: Array<[string, string]> = [];
+  readonly closed: TerminalHandle[] = [];
 
-  async openWindow(session: string, title: string): Promise<void> {
+  constructor(private readonly onOpen: () => void = () => {}) {}
+
+  async openWindow(
+    session: string,
+    title: string,
+  ): Promise<TerminalHandle> {
     this.windows.push([session, title]);
+    this.onOpen();
+    return { app: "iterm2", sessionId: `session-${session}` };
+  }
+
+  async closeWindow(handle: TerminalHandle): Promise<void> {
+    this.closed.push(handle);
   }
 }
 
@@ -112,9 +158,14 @@ class FlakyCaptureTmux extends FakeTmux {
 }
 
 class FailingTerminal implements TerminalAdapter {
-  async openWindow(_session: string, _title: string): Promise<void> {
+  async openWindow(
+    _session: string,
+    _title: string,
+  ): Promise<TerminalHandle> {
     throw new Error("viewer unavailable");
   }
+
+  async closeWindow(_handle: TerminalHandle): Promise<void> {}
 }
 
 afterEach(async () => {
@@ -126,6 +177,12 @@ afterEach(async () => {
 });
 
 describe("HiveSpawner name pool", () => {
+  test("reserves the orchestrator destination from agent assignment", () => {
+    expect(() => resolveAgentName("orchestrator", [])).toThrow(
+      'Agent name "orchestrator" is reserved',
+    );
+  });
+
   test("selects the first name not held by a live agent", () => {
     expect(selectAgentName([
       agent("maya"),
@@ -208,6 +265,31 @@ describe("HiveSpawner name pool", () => {
       name: "MAYA",
     })).rejects.toThrow('"maya" is already assigned to a live agent');
   });
+
+  test("rejects the reserved orchestrator name before creating a worktree", async () => {
+    let attemptedWorktree = false;
+    const spawner = new HiveSpawner({
+      db: new FakeStore(),
+      repoRoot: "/tmp/hive-reserved-name",
+      port: 4317,
+      config: { terminal: "auto", headless: true },
+      routing: async () => DEFAULT_ROUTING.standard,
+      tmux: new FakeTmux(),
+      terminal: new FakeTerminal(),
+      createWorktree: async () => {
+        attemptedWorktree = true;
+        return { path: "/tmp/unused", branch: "hive/unused-task" };
+      },
+      sleep: async () => {},
+    });
+
+    await expect(spawner.spawn({
+      task: "Impersonate the boss",
+      tier: "standard",
+      name: "Orchestrator",
+    })).rejects.toThrow('"orchestrator" is reserved');
+    expect(attemptedWorktree).toEqual(false);
+  });
 });
 
 describe("HiveSpawner wiring", () => {
@@ -249,6 +331,7 @@ describe("HiveSpawner wiring", () => {
       terminal,
       createWorktree,
       sleep: async () => {},
+      resolveModel: fakeResolveModel,
     });
 
     const claude = await spawner.spawn({ task: "Build auth API", tier: "deep" });
@@ -261,6 +344,14 @@ describe("HiveSpawner wiring", () => {
     expect(claude.status).toEqual("spawning");
     expect(claude.contextPct).toEqual(0);
     expect(codex.name).toEqual("david");
+    expect(claude.terminalHandle).toEqual({
+      app: "iterm2",
+      sessionId: "session-hive-maya",
+    });
+    expect(codex.terminalHandle).toEqual({
+      app: "iterm2",
+      sessionId: "session-hive-david",
+    });
     expect(store.agents).toEqual([claude, codex]);
     expect(tmux.sessions.map(([name]) => name)).toEqual([
       "hive-maya",
@@ -271,10 +362,24 @@ describe("HiveSpawner wiring", () => {
     expect(tmux.sessions[1]?.[2]).toContain("'codex'");
     expect(tmux.sessions[1]?.[2]).toContain("notify=");
     expect(tmux.sessions[1]?.[2]).toContain("You are david");
+    expect(claude.model).toEqual("claude-fable-5");
     expect(terminal.windows).toEqual([
-      ["hive-maya", "hive-maya"],
-      ["hive-david", "hive-david"],
+      ["hive-maya", "maya — claude-fable-5"],
+      ["hive-david", "david — gpt-test"],
     ]);
+    for (const [, title] of terminal.windows) {
+      // Routing aliases must never surface: the title carries the concrete
+      // model the tool actually runs.
+      expect(title).not.toContain("best");
+      expect(title).not.toContain("default");
+      expect(title).not.toContain("hive-");
+      expect(title).not.toContain("Build auth API");
+      expect(title).not.toContain("Add route tests");
+      expect(title).not.toContain(root);
+      expect(title).not.toContain("deep");
+      expect(title).not.toContain("standard");
+      expect(title).not.toContain("tmux");
+    }
 
     const claudeSettings = await readFile(
       join(root, "maya", ".claude", "settings.local.json"),
@@ -309,6 +414,7 @@ describe("HiveSpawner wiring", () => {
         path: worktreePath,
         branch: "hive/maya-ready",
       }),
+      resolveModel: fakeResolveModel,
       sleep: async () => {
         polls += 1;
         const current = store.listAgents()[0];
@@ -354,6 +460,7 @@ describe("HiveSpawner wiring", () => {
       terminal: new FakeTerminal(),
       createWorktree,
       sleep: async () => {},
+      resolveModel: fakeResolveModel,
     });
 
     const claude = await spawner.spawn({
@@ -376,7 +483,7 @@ describe("HiveSpawner wiring", () => {
     expect(tmux.sessions[0]?.[2]).toContain("'--model' 'sonnet'");
     expect(codex.name).toEqual("riley");
     expect(codex.tool).toEqual("codex");
-    expect(codex.model).toEqual("default");
+    expect(codex.model).toEqual("gpt-5.6-sol");
     expect(tmux.sessions[1]?.[2]).toContain(
       "'model_reasoning_effort=high'",
     );
@@ -472,6 +579,7 @@ describe("HiveSpawner wiring", () => {
       removeWorktree: async (repoRoot, path) => {
         removals.push([repoRoot, path]);
       },
+      resolveModel: fakeResolveModel,
       sleep: async () => {},
     });
 
@@ -512,6 +620,7 @@ describe("HiveSpawner wiring", () => {
         path: worktreePath,
         branch: "hive/maya-error-handling",
       }),
+      resolveModel: fakeResolveModel,
       sleep: async () => {},
     });
 
@@ -543,6 +652,7 @@ describe("HiveSpawner wiring", () => {
         path: worktreePath,
         branch: "hive/maya-transient",
       }),
+      resolveModel: fakeResolveModel,
       sleep: async () => {},
     });
 
@@ -554,5 +664,47 @@ describe("HiveSpawner wiring", () => {
     expect(spawned.status).toEqual("spawning");
     expect(tmux.capturePaneCalls).toEqual(15);
     expect(tmux.killed).toEqual([]);
+  });
+
+  test("closes a viewer that races with the agent being marked dead", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-spawner-viewer-race-"));
+    tempRoots.push(root);
+    const worktreePath = join(root, "maya");
+    await mkdir(worktreePath, { recursive: true });
+    const store = new FakeStore();
+    const terminal = new FakeTerminal(() => {
+      const current = store.listAgents()[0];
+      if (current !== undefined) {
+        store.insertAgent({ ...current, status: "dead" });
+      }
+    });
+    const spawner = new HiveSpawner({
+      db: store,
+      repoRoot: root,
+      port: 4317,
+      config: { terminal: "auto", headless: false },
+      routing: async () => DEFAULT_ROUTING.standard,
+      tmux: new FakeTmux(),
+      terminal,
+      createWorktree: async () => ({
+        path: worktreePath,
+        branch: "hive/maya-viewer-race",
+      }),
+      sleep: async () => {},
+    });
+
+    const spawned = await spawner.spawn({
+      task: "Race terminal launch with kill",
+      tier: "standard",
+    });
+
+    const handle = {
+      app: "iterm2",
+      sessionId: "session-hive-maya",
+    } as const;
+    expect(spawned.status).toEqual("dead");
+    expect(spawned.terminalHandle).toBeUndefined();
+    expect(terminal.closed).toEqual([handle]);
+    expect(store.getAgentById(spawned.id)?.terminalHandle).toBeUndefined();
   });
 });

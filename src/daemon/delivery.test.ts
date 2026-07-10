@@ -70,6 +70,15 @@ class FailingTmuxSender implements TmuxSender {
   }
 }
 
+class UnavailableTmuxSender implements TmuxSender {
+  readonly calls: Array<[string, string]> = [];
+
+  async sendMessage(session: string, text: string): Promise<void> {
+    this.calls.push([session, text]);
+    throw new Error("tmux session unavailable");
+  }
+}
+
 const unusedSpawner: Spawner = {
   async spawn() {
     throw new Error("not used");
@@ -160,6 +169,103 @@ describe("MessageDelivery", () => {
         delivery.send("sam", "maya", "Are you there?"),
       ).rejects.toThrow("Recipient agent is dead: maya");
       expect(db.listMessages()).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("keeps reports unread when root is unavailable and drains them exactly once", async () => {
+    const db = new HiveDatabase(join(home, "orchestrator-inbox.db"));
+    const tmux = new UnavailableTmuxSender();
+    const delivery = new MessageDelivery(db, tmux);
+    try {
+      const report = "Task complete.\nRoot cause: enter race.\nBranch: hive/maya-delivery";
+      const queued = await delivery.send("maya", "orchestrator", report);
+      expect(queued.deliveredAt).toEqual(null);
+      expect(tmux.calls).toHaveLength(1);
+
+      const inbox = await delivery.orchestratorInbox();
+      expect(inbox.length).toEqual(1);
+      expect(inbox[0]?.id).toEqual(queued.id);
+      expect(inbox[0]?.body).toEqual(report);
+      expect(await delivery.orchestratorInbox()).toEqual([]);
+      expect(db.getMessage(queued.id)?.deliveredAt).not.toEqual(null);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("orchestrator stays a valid recipient even when agents are dead", async () => {
+    const db = new HiveDatabase(join(home, "orchestrator-always.db"));
+    const delivery = new MessageDelivery(db, new RecordingTmuxSender());
+    try {
+      db.insertAgent(agent("dead"));
+      const queued = await delivery.send(
+        "maya",
+        "orchestrator",
+        "Still reachable.",
+      );
+      expect(db.getMessage(queued.id)?.deliveredAt).not.toEqual(null);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("orchestrator messages reach an idle agent immediately", async () => {
+    const db = new HiveDatabase(join(home, "orchestrator-to-idle.db"));
+    const tmux = new RecordingTmuxSender();
+    const delivery = new MessageDelivery(db, tmux);
+    try {
+      db.insertAgent(agent("idle"));
+      const message = await delivery.send(
+        "orchestrator",
+        "maya",
+        "Start with the auth module.",
+      );
+      expect(tmux.calls).toEqual([
+        ["hive-maya", "📨 message from orchestrator: Start with the auth module."],
+      ]);
+      expect(message.deliveredAt === null).toEqual(false);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("orchestrator messages to a working agent queue and flush on turn-end", async () => {
+    const db = new HiveDatabase(join(home, "orchestrator-to-working.db"));
+    const tmux = new RecordingTmuxSender();
+    const daemon = new HiveDaemon({
+      db,
+      spawner: unusedSpawner,
+      tmuxSender: tmux,
+    });
+    try {
+      db.insertAgent(agent("working"));
+      const queued = await daemon.delivery.send(
+        "orchestrator",
+        "maya",
+        "When done, also update the docs.",
+      );
+      expect(queued.deliveredAt).toEqual(null);
+      expect(tmux.calls).toEqual([]);
+
+      const response = await daemon.fetch(new Request("http://hive/event", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          kind: "turn-end",
+          agentName: "maya",
+          timestamp: "2026-07-09T12:02:00.000Z",
+        }),
+      }));
+      expect(response.status).toEqual(200);
+      expect(tmux.calls).toEqual([
+        [
+          "hive-maya",
+          "📨 message from orchestrator: When done, also update the docs.",
+        ],
+      ]);
+      expect(db.getMessage(queued.id)?.deliveredAt === null).toEqual(false);
     } finally {
       db.close();
     }

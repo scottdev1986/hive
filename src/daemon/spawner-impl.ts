@@ -1,4 +1,7 @@
-import type { TerminalAdapter } from "../adapters/terminal";
+import {
+  buildAgentTerminalTitle,
+  type TerminalAdapter,
+} from "../adapters/terminal";
 import { shellJoin } from "../adapters/tmux";
 import type { TmuxAdapter } from "../adapters/tmux";
 import {
@@ -9,14 +12,20 @@ import {
   buildCodexSpawnCommand,
   writeCodexAgentConfig,
 } from "../adapters/tools/codex";
+import { resolveConcreteModel } from "../adapters/tools/models";
 import {
   createWorktree,
   removeWorktree,
   slugify,
   type CreatedWorktree,
 } from "../adapters/worktrees";
-import type { HiveConfig, Route, RoutingTier } from "../schemas";
-import type { AgentRecord } from "../schemas";
+import {
+  ORCHESTRATOR_NAME,
+  type AgentRecord,
+  type HiveConfig,
+  type Route,
+  type RoutingTier,
+} from "../schemas";
 import type { HiveDatabase } from "./db";
 import type { SpawnRequest, Spawner } from "./spawner";
 
@@ -65,7 +74,7 @@ export const NAME_POOL = [
 
 type AgentStore = Pick<
   HiveDatabase,
-  "getAgentById" | "insertAgent" | "listAgents"
+  "attachTerminalHandle" | "getAgentById" | "insertAgent" | "listAgents"
 >;
 type RouteResolver = (tier: RoutingTier) => Promise<Route>;
 type WorktreeCreator = (
@@ -79,6 +88,7 @@ type TmuxSessionManager = Pick<
   "newSession" | "hasSession" | "capturePane" | "killSession"
 >;
 type Sleep = (milliseconds: number) => Promise<void>;
+type ModelResolver = typeof resolveConcreteModel;
 
 export interface HiveSpawnerDependencies {
   db: AgentStore;
@@ -92,6 +102,7 @@ export interface HiveSpawnerDependencies {
   removeWorktree?: WorktreeRemover;
   keepWorktreeOnFailure?: boolean;
   sleep?: Sleep;
+  resolveModel?: ModelResolver;
 }
 
 const isLive = (agent: AgentRecord): boolean =>
@@ -142,6 +153,11 @@ export function resolveAgentName(
   }
 
   const normalizedName = requestedName.toLowerCase();
+  if (normalizedName === ORCHESTRATOR_NAME) {
+    throw new Error(
+      `Agent name "${ORCHESTRATOR_NAME}" is reserved for the Hive orchestrator`,
+    );
+  }
   if (!AGENT_NAME_PATTERN.test(normalizedName)) {
     throw new Error(
       `Invalid agent name "${normalizedName}": after lowercasing, the name must match /^[a-z][a-z0-9-]{1,20}$/`,
@@ -169,6 +185,7 @@ export function buildAgentPrompt(
     `Your task: ${task}`,
     `Your file scope is your worktree at ${worktreePath}; do all code and file work there.`,
     "Use the Hive MCP tools hive_send, hive_inbox, and hive_status to message and coordinate with other named agents.",
+    `Send concise completion reports, blockers, and important findings to "${ORCHESTRATOR_NAME}" with hive_send; reference large artifacts instead of pasting them.`,
   ].join("\n\n");
 }
 
@@ -176,11 +193,13 @@ export class HiveSpawner implements Spawner {
   private readonly makeWorktree: WorktreeCreator;
   private readonly cleanupWorktree: WorktreeRemover;
   private readonly wait: Sleep;
+  private readonly modelResolver: ModelResolver;
 
   constructor(private readonly dependencies: HiveSpawnerDependencies) {
     this.makeWorktree = dependencies.createWorktree ?? createWorktree;
     this.cleanupWorktree = dependencies.removeWorktree ?? removeWorktree;
     this.wait = dependencies.sleep ?? sleep;
+    this.modelResolver = dependencies.resolveModel ?? resolveConcreteModel;
   }
 
   async spawn(request: SpawnRequest): Promise<AgentRecord> {
@@ -189,7 +208,10 @@ export class HiveSpawner implements Spawner {
     const previousRecord = existingAgents.find((agent) => agent.name === name);
     const configuredRoute = await this.dependencies.routing(request.tier);
     const tool = request.tool ?? configuredRoute.tool;
-    const model = configuredRoute[tool].model;
+    // The record (and thus the terminal title and hive_status) carries the
+    // concrete model; the spawn command below still receives the configured
+    // route value, so alias-driven CLI behavior is unchanged.
+    const model = await this.modelResolver(tool, configuredRoute);
     const worktree = await this.makeWorktree(
       this.dependencies.repoRoot,
       name,
@@ -266,13 +288,33 @@ export class HiveSpawner implements Spawner {
     }
 
     if (!this.dependencies.config.headless) {
+      let handle: Awaited<ReturnType<TerminalAdapter["openWindow"]>> | null =
+        null;
       try {
-        await this.dependencies.terminal.openWindow(
+        handle = await this.dependencies.terminal.openWindow(
           record.tmuxSession,
-          record.tmuxSession,
+          buildAgentTerminalTitle(record.name, record.model),
         );
+        const attached = this.dependencies.db.attachTerminalHandle(
+          record.id,
+          handle,
+        );
+        if (attached === null) {
+          const orphanedHandle = handle;
+          handle = null;
+          await this.dependencies.terminal.closeWindow(orphanedHandle);
+        } else {
+          handle = null;
+        }
       } catch {
         // Opening a viewer is cosmetic and does not affect agent readiness.
+        if (handle !== null) {
+          try {
+            await this.dependencies.terminal.closeWindow(handle);
+          } catch {
+            // A viewer that vanished during launch needs no further cleanup.
+          }
+        }
       }
     }
     return this.dependencies.db.getAgentById(record.id) ?? record;

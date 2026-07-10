@@ -1,9 +1,16 @@
 import {
   AgentMessageSchema,
+  ORCHESTRATOR_NAME,
   type AgentMessage,
+  type OrchestratorMessageEnvelope,
 } from "../schemas";
 import { sendKeys } from "../adapters/tmux";
 import { HiveDatabase } from "./db";
+import {
+  createOrchestratorEnvelope,
+  formatOrchestratorWake,
+  ORCHESTRATOR_TMUX_SESSION,
+} from "./orchestrator-lifecycle";
 
 export interface TmuxSender {
   sendMessage(session: string, text: string): Promise<void>;
@@ -24,7 +31,9 @@ export class MessageDelivery {
   ) {}
 
   async send(from: string, to: string, body: string): Promise<AgentMessage> {
-    const recipient = this.requireLiveRecipient(to);
+    const recipient = to === ORCHESTRATOR_NAME
+      ? null
+      : this.requireLiveRecipient(to);
     const message = AgentMessageSchema.parse({
       id: crypto.randomUUID(),
       from,
@@ -34,6 +43,11 @@ export class MessageDelivery {
       deliveredAt: null,
     });
     this.db.insertMessage(message);
+
+    if (recipient === null) {
+      await this.wakeOrchestrator().catch(() => undefined);
+      return this.getStoredMessage(message.id);
+    }
 
     if (recipient.status !== "idle") {
       return message;
@@ -54,6 +68,9 @@ export class MessageDelivery {
   }
 
   async flushQueued(agentName: string): Promise<AgentMessage[]> {
+    if (agentName === ORCHESTRATOR_NAME) {
+      return this.wakeOrchestrator();
+    }
     const recipient = this.db.getAgentByName(agentName);
     if (recipient === null || recipient.status === "dead") {
       return [];
@@ -86,9 +103,41 @@ export class MessageDelivery {
 
   inbox(agentName: string): AgentMessage[] {
     const deliveredAt = new Date().toISOString();
-    return this.db.getUndeliveredMessages(agentName).map((message) =>
-      this.db.markMessageDelivered(message.id, deliveredAt)!,
+    return this.db.claimUndeliveredMessages(agentName, deliveredAt);
+  }
+
+  async orchestratorInbox(): Promise<OrchestratorMessageEnvelope[]> {
+    return this.withSessionLock(ORCHESTRATOR_TMUX_SESSION, async () =>
+      this.db.claimUndeliveredMessages(
+        ORCHESTRATOR_NAME,
+        new Date().toISOString(),
+      ).map(createOrchestratorEnvelope)
     );
+  }
+
+  readOrchestratorMessage(id: string): AgentMessage | null {
+    const message = this.db.getMessage(id);
+    return message?.to === ORCHESTRATOR_NAME ? message : null;
+  }
+
+  async wakeOrchestrator(): Promise<AgentMessage[]> {
+    return this.withSessionLock(ORCHESTRATOR_TMUX_SESSION, async () => {
+      const delivered: AgentMessage[] = [];
+      for (const message of this.db.getUndeliveredMessages(ORCHESTRATOR_NAME)) {
+        await this.tmux.sendMessage(
+          ORCHESTRATOR_TMUX_SESSION,
+          formatOrchestratorWake(createOrchestratorEnvelope(message)),
+        );
+        const acknowledged = this.db.acknowledgeMessage(
+          message.id,
+          new Date().toISOString(),
+        );
+        if (acknowledged !== null) {
+          delivered.push(acknowledged);
+        }
+      }
+      return delivered;
+    });
   }
 
   private async deliver(

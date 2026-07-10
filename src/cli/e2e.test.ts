@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { TerminalAdapter } from "../adapters/terminal";
+import type { TerminalHandle } from "../schemas";
 import { HiveDatabase } from "../daemon/db";
 import type { TmuxSender } from "../daemon/delivery";
 import { HiveDaemon } from "../daemon/server";
@@ -39,7 +40,14 @@ class FakeTmux implements TmuxSender {
 }
 
 class FakeTerminal implements TerminalAdapter {
-  async openWindow(_session: string, _title: string): Promise<void> {}
+  async openWindow(
+    _session: string,
+    _title: string,
+  ): Promise<TerminalHandle> {
+    return { app: "iterm2", sessionId: "unused-headless-session" };
+  }
+
+  async closeWindow(_handle: TerminalHandle): Promise<void> {}
 }
 
 describe("CLI-to-daemon smoke", () => {

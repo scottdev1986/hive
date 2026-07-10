@@ -42,6 +42,15 @@ class SilentTmuxSender implements TmuxSender {
   }
 }
 
+class RootUnavailableTmuxSender extends SilentTmuxSender {
+  override async sendMessage(session: string, text: string): Promise<void> {
+    if (session === "hive-orchestrator") {
+      throw new Error("root session unavailable");
+    }
+    await super.sendMessage(session, text);
+  }
+}
+
 class FakeDaemonTmux {
   readonly sessions = new Set<string>();
   readonly killed: string[] = [];
@@ -191,9 +200,10 @@ describe("HiveDaemon HTTP server", () => {
   test("all MCP tools work through StreamableHTTPClientTransport", async () => {
     const db = new HiveDatabase(join(home, "mcp.db"));
     const spawner = new StubSpawner();
-    const tmux = new SilentTmuxSender();
+    const tmux = new RootUnavailableTmuxSender();
     const daemonTmux = new FakeDaemonTmux();
     const removedWorktrees: Array<[string, string]> = [];
+    const closedTerminals: AgentRecord["terminalHandle"][] = [];
     const daemon = new HiveDaemon({
       db,
       spawner,
@@ -202,6 +212,14 @@ describe("HiveDaemon HTTP server", () => {
       repoRoot: "/tmp/repo",
       removeWorktree: async (repoRoot, worktreePath) => {
         removedWorktrees.push([repoRoot, worktreePath]);
+      },
+      closeTerminal: async (handle) => {
+        expect(db.getAgentByName("sam")).toMatchObject({
+          status: "dead",
+          terminalHandle: undefined,
+        });
+        closedTerminals.push(handle);
+        throw new Error("terminal handle is already stale");
       },
     });
     const baseUrl = "http://hive";
@@ -259,6 +277,30 @@ describe("HiveDaemon HTTP server", () => {
       });
       expect(missingRecipient.isError).toEqual(true);
 
+      const completionReport = await client.callTool({
+        name: "hive_send",
+        arguments: {
+          from: "sam",
+          to: "orchestrator",
+          body: "Auth review complete on hive/sam-task.",
+        },
+      });
+      expect(completionReport.isError ?? false).toEqual(false);
+      expect(
+        (textValue(completionReport) as { deliveredAt: string | null })
+          .deliveredAt,
+      ).toEqual(null);
+
+      const orchestratorInbox = textValue(await client.callTool({
+        name: "hive_inbox",
+        arguments: { agent: "orchestrator" },
+      })) as Array<{ from: string; body: string }>;
+      expect(orchestratorInbox.length).toEqual(1);
+      expect(orchestratorInbox[0]?.from).toEqual("sam");
+      expect(orchestratorInbox[0]?.body).toEqual(
+        "Auth review complete on hive/sam-task.",
+      );
+
       const sent = textValue(await client.callTool({
         name: "hive_send",
         arguments: { from: "maya", to: "sam", body: "Please check auth." },
@@ -310,6 +352,17 @@ describe("HiveDaemon HTTP server", () => {
         ["hive-sam", "📨 message from maya: After approval."],
       ]);
 
+      const terminalHandle = {
+        app: "terminal",
+        processId: 4242,
+        windowId: 731,
+        tty: "/dev/ttys009",
+      } as const;
+      db.upsertAgent({
+        ...db.getAgentByName("sam")!,
+        terminalHandle,
+      });
+
       const killed = textValue(await client.callTool({
         name: "hive_kill",
         arguments: { name: "sam", removeWorktree: true },
@@ -323,6 +376,7 @@ describe("HiveDaemon HTTP server", () => {
       };
       expect(killed.agent.status).toEqual("dead");
       expect(killed.agent.worktreePath).toEqual(null);
+      expect(killed.agent.terminalHandle).toBeUndefined();
       expect(killed.cleaned).toEqual({
         tmuxSession: "hive-sam",
         worktreePath: "/tmp/hive-sam",
@@ -332,6 +386,14 @@ describe("HiveDaemon HTTP server", () => {
       expect(removedWorktrees).toEqual([
         ["/tmp/repo", "/tmp/hive-sam"],
       ]);
+      expect(closedTerminals).toEqual([terminalHandle]);
+
+      await client.callTool({
+        name: "hive_kill",
+        arguments: { name: "sam" },
+      });
+      expect(closedTerminals).toEqual([terminalHandle]);
+      expect(daemonTmux.killed).toEqual(["hive-sam", "hive-sam"]);
 
       const stopped = textValue(await client.callTool({
         name: "hive_mark_dead",

@@ -1,6 +1,9 @@
 import { readFileSync } from "node:fs";
 import { TmuxAdapter } from "../adapters/tmux";
-import { resolveTerminal } from "../adapters/terminal";
+import {
+  buildAgentTerminalTitle,
+  resolveTerminal,
+} from "../adapters/terminal";
 import { loadHiveConfig } from "../config/load";
 import {
   cleanupLifecycleFiles,
@@ -8,6 +11,7 @@ import {
   readDaemonPort,
 } from "../daemon/lifecycle";
 import type { AgentRecord } from "../schemas";
+import { ORCHESTRATOR_TMUX_SESSION } from "../daemon/orchestrator-lifecycle";
 import { fetchAgentStatus, markAgentDead } from "./mcp";
 import { formatStatusTable } from "./status";
 
@@ -113,13 +117,17 @@ export async function watchAgent(name: string): Promise<void> {
     );
   }
   const config = await loadHiveConfig();
-  await resolveTerminal(config).openWindow(agent.tmuxSession, agent.tmuxSession);
+  await resolveTerminal(config).openWindow(
+    agent.tmuxSession,
+    buildAgentTerminalTitle(agent.name, agent.model),
+  );
 }
 
 export async function stopHive(): Promise<void> {
   const port = readDaemonPort();
   const tmux = new TmuxAdapter();
   const stoppedAgentCount = await stopAgentSessions(port, { tmux });
+  await tmux.killSession(ORCHESTRATOR_TMUX_SESSION, { ignoreMissing: true });
 
   const pid = readDaemonPid();
   if (pid !== null) {

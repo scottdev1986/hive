@@ -6,11 +6,16 @@ import type { Server } from "bun";
 import { z } from "zod";
 import { TmuxAdapter } from "../adapters/tmux";
 import {
+  closeTerminal,
+  type TerminalCloser,
+} from "../adapters/terminal";
+import {
   removeWorktree,
   type RemoveWorktreeOptions,
 } from "../adapters/worktrees";
 import {
   HookEventSchema,
+  ORCHESTRATOR_NAME,
   type AgentRecord,
   type HookEvent,
 } from "../schemas";
@@ -25,6 +30,7 @@ import {
   readConfiguredPort,
   writeLifecycleFiles,
 } from "./lifecycle";
+import { compactActiveTeam } from "./orchestrator-lifecycle";
 import {
   SpawnRequestSchema,
   type SpawnRequest,
@@ -41,6 +47,14 @@ const SendRequestSchema = z.object({
 
 const InboxRequestSchema = z.object({
   agent: z.string().min(1),
+});
+
+const ReadMessageRequestSchema = z.object({
+  id: z.string().min(1),
+});
+
+const StatusRequestSchema = z.object({
+  detail: z.enum(["full", "active"]).optional(),
 });
 
 const MarkDeadRequestSchema = z.object({
@@ -62,6 +76,7 @@ export interface HiveDaemonOptions {
   db?: HiveDatabase;
   tmuxSender?: TmuxSender;
   tmux?: Pick<TmuxAdapter, "hasSession" | "killSession" | "capturePane">;
+  closeTerminal?: TerminalCloser;
   repoRoot?: string;
   removeWorktree?: (
     repoRoot: string,
@@ -98,6 +113,7 @@ export class HiveDaemon {
   >;
   private readonly repoRoot: string;
   private readonly cleanupWorktree: typeof removeWorktree;
+  private readonly closeTerminal: TerminalCloser;
   private bunServer: Server<undefined> | null = null;
   private reconciliationTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -113,6 +129,7 @@ export class HiveDaemon {
     this.hostname = options.hostname ?? "127.0.0.1";
     this.manageLifecycle = options.manageLifecycle ?? false;
     this.tmux = options.tmux ?? new TmuxAdapter();
+    this.closeTerminal = options.closeTerminal ?? closeTerminal;
     this.repoRoot = options.repoRoot ?? process.cwd();
     this.cleanupWorktree = options.removeWorktree ?? removeWorktree;
   }
@@ -292,9 +309,16 @@ export class HiveDaemon {
 
     server.registerTool("hive_status", {
       title: "Hive agent status",
-      description: "List all Hive agents and their current execution status.",
-      inputSchema: z.object({}),
-    }, async () => toolResult(this.db.listAgents(), "agents"));
+      description:
+        'Fetch agent status on demand. Use detail "active" for a compact active-team summary; omitted detail preserves the full legacy response.',
+      inputSchema: StatusRequestSchema,
+    }, async ({ detail }) => {
+      const agents = this.db.listAgents();
+      return toolResult(
+        detail === "active" ? compactActiveTeam(agents) : agents,
+        "agents",
+      );
+    });
 
     server.registerTool("hive_mark_dead", {
       title: "Mark Hive agent dead",
@@ -326,11 +350,21 @@ export class HiveDaemon {
 
       await this.tmux.killSession(agent.tmuxSession, { ignoreMissing: true });
       const timestamp = new Date().toISOString();
-      let updated = this.db.upsertAgent({
-        ...agent,
-        status: "dead",
-        lastEventAt: timestamp,
-      });
+      const killed = this.db.markAgentDeadAndDetachTerminal(
+        agent.id,
+        timestamp,
+      );
+      if (killed === null) {
+        throw new Error(`Hive agent not found: ${name}`);
+      }
+      if (killed.terminalHandle !== undefined) {
+        try {
+          await this.closeTerminal(killed.terminalHandle);
+        } catch {
+          // Terminal cleanup is best-effort; killing and marking dead must win.
+        }
+      }
+      let updated = killed.agent;
       const cleaned: {
         tmuxSession: string;
         worktreePath: string | null;
@@ -359,17 +393,36 @@ export class HiveDaemon {
 
     server.registerTool("hive_send", {
       title: "Send agent message",
-      description: "Send or queue a message for a named Hive agent.",
+      description:
+        'Send or queue a message for a named Hive agent, or wake the root with recipient "orchestrator".',
       inputSchema: SendRequestSchema,
     }, async ({ from, to, body }) =>
       toolResult(await this.delivery.send(from, to, body), "message"));
 
     server.registerTool("hive_inbox", {
       title: "Read agent inbox",
-      description: "Read and acknowledge queued messages for a Hive agent.",
+      description:
+        'Read and atomically acknowledge queued messages. Recipient "orchestrator" returns bounded envelopes.',
       inputSchema: InboxRequestSchema,
-    }, async ({ agent }) =>
-      toolResult(this.delivery.inbox(agent), "messages"));
+    }, async ({ agent }) => toolResult(
+      agent === ORCHESTRATOR_NAME
+        ? await this.delivery.orchestratorInbox()
+        : this.delivery.inbox(agent),
+      "messages",
+    ));
+
+    server.registerTool("hive_read_message", {
+      title: "Read full orchestrator message",
+      description:
+        "Read one full agent report by the id referenced in a bounded orchestrator envelope.",
+      inputSchema: ReadMessageRequestSchema,
+    }, async ({ id }) => {
+      const message = this.delivery.readOrchestratorMessage(id);
+      if (message === null) {
+        throw new Error(`Orchestrator message not found: ${id}`);
+      }
+      return toolResult(message, "message");
+    });
 
     server.registerTool("hive_spawn", {
       title: "Spawn Hive agent",
