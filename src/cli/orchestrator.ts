@@ -335,13 +335,14 @@ export async function launchOrchestrator(
   cwd = process.cwd(),
   spawn: OrchestratorSpawn = spawnOrchestrator,
   captureTerminal: OrchestratorTerminalCapture = captureOrchestratorTerminal,
+  detectVersion: () => Promise<string | null> = detectClaudeCliVersion,
 ): Promise<number> {
   if (tool !== "claude") {
     // The authority command performs the handshake gate before attaching the
     // interactive remote TUI; delivery wiring is enabled by the daemon when
     // a root driver is registered for this socket/thread.
   }
-  const version = await detectClaudeCliVersion();
+  const version = await detectVersion();
   if (version === null || !versionAtLeast(version, CHANNELS_MIN_VERSION)) {
     throw new Error(
       `The Hive orchestrator requires Claude Channels (Claude >= ${CHANNELS_MIN_VERSION}).`,

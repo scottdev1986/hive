@@ -31,7 +31,7 @@ jobs:
     # and notarization need the same real macOS tools (codesign, notarytool).
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           # planRelease needs every tag to find the highest patch, and the tags
           # are what make the bump idempotent.
@@ -46,6 +46,11 @@ jobs:
           bun-version: "1.3.14"
 
       - run: bun install --frozen-lockfile
+
+      # The tmux adapter tests drive a real private tmux server; the runner
+      # image does not ship tmux.
+      - name: Install tmux
+        run: brew install tmux
 
       - name: Typecheck
         run: bun run typecheck

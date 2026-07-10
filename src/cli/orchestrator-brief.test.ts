@@ -202,6 +202,8 @@ describe("orchestrator brief", () => {
           );
           return { exited: Promise.resolve(17) };
         },
+        async () => null,
+        async () => "2.1.80",
       );
 
       expect(exitCode).toEqual(17);
@@ -222,6 +224,8 @@ describe("orchestrator brief", () => {
         4317,
         root,
         () => ({ exited: Promise.reject(new Error("claude failed")) }),
+        async () => null,
+        async () => "2.1.80",
       )).rejects.toThrow("claude failed");
 
       expect(existsSync(settingsPath)).toEqual(false);
@@ -229,6 +233,19 @@ describe("orchestrator brief", () => {
     } finally {
       await rm(root, { recursive: true, force: true });
     }
+  });
+
+  test("refuses to launch without a Channels-capable Claude CLI", async () => {
+    await expect(launchOrchestrator(
+      "claude",
+      4317,
+      process.cwd(),
+      () => {
+        throw new Error("must not spawn");
+      },
+      async () => null,
+      async () => null,
+    )).rejects.toThrow("requires Claude Channels");
   });
 
   test("launches when Terminal.app capture reports pgrep's no-match error", async () => {
@@ -246,6 +263,7 @@ describe("orchestrator brief", () => {
           "could not find Terminal.app window: execution error: command exited with non-zero status (1)",
         );
       },
+      async () => "2.1.80",
     );
     expect(exitCode).toEqual(0);
     expect(spawned).toEqual(true);
@@ -309,6 +327,7 @@ describe("orchestrator brief", () => {
           return { exited: Promise.resolve(0) };
         },
         async () => null,
+        async () => "2.1.80",
       );
 
       expect(capturedCommand.at(-1)).toContain("Hive memory index");
