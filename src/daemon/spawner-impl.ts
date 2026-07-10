@@ -180,17 +180,37 @@ export function resolveAgentName(
   return normalizedName;
 }
 
+export const LANDING_MAX_ATTEMPTS = 3;
+
+export function buildLandingProtocol(
+  branch: string,
+  repoRoot: string,
+  mainBranch = "main",
+): string {
+  return [
+    `When your task is complete and the tests are green, land your work on ${mainBranch} immediately — finished work left on your branch is lost work:`,
+    `1. Commit everything on your branch (${branch}); never leave work uncommitted.`,
+    `2. Rebase onto the latest ${mainBranch}: run \`git rebase ${mainBranch}\` in your worktree. If the rebase hits conflicts, run \`git rebase --abort\` and message "${ORCHESTRATOR_NAME}" naming the conflicting files — never force anything and never resolve another agent's code alone.`,
+    "3. Re-run the tests on the rebased branch. Red tests never merge: fix them on your branch, or commit what you have and report the failure instead.",
+    `4. Fast-forward merge into ${mainBranch} via the primary checkout: \`git -C ${repoRoot} merge --ff-only ${branch}\`.`,
+    `5. If that merge is rejected because ${mainBranch} moved, return to step 2. After ${LANDING_MAX_ATTEMPTS} failed attempts, stop and message "${ORCHESTRATOR_NAME}".`,
+    `6. Include the merge commit hash in your completion report. Do not delete your branch or worktree; hive cleans up landed branches.`,
+  ].join("\n");
+}
+
 export function buildAgentPrompt(
   name: string,
   task: string,
-  worktreePath: string,
+  worktree: CreatedWorktree,
+  repoRoot: string,
 ): string {
   return [
     `You are ${name}, a Hive writer agent.`,
     `Your task: ${task}`,
-    `Your file scope is your worktree at ${worktreePath}; do all code and file work there.`,
+    `Your file scope is your worktree at ${worktree.path}; do all code and file work there.`,
     "Use the Hive MCP tools hive_send, hive_inbox, and hive_status to message and coordinate with other named agents.",
     `Send concise completion reports, blockers, and important findings to "${ORCHESTRATOR_NAME}" with hive_send; reference large artifacts instead of pasting them.`,
+    buildLandingProtocol(worktree.branch, repoRoot),
   ].join("\n\n");
 }
 
@@ -239,7 +259,12 @@ export class HiveSpawner implements Spawner {
       name,
       slugify(request.task),
     );
-    const prompt = buildAgentPrompt(name, request.task, worktree.path);
+    const prompt = buildAgentPrompt(
+      name,
+      request.task,
+      worktree,
+      this.dependencies.repoRoot,
+    );
     const timestamp = new Date().toISOString();
     const record = this.dependencies.db.insertAgent({
       id: previousRecord?.id ?? crypto.randomUUID(),

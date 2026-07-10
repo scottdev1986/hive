@@ -23,6 +23,11 @@ export interface RemoveWorktreeOptions {
   force?: boolean;
 }
 
+export interface StrandedWork {
+  dirtyFiles: string[];
+  unmergedCommits: number;
+}
+
 async function runGit(repoRoot: string, args: string[]): Promise<GitResult> {
   const process = Bun.spawn(["git", "-C", repoRoot, ...args], {
     stdout: "pipe",
@@ -127,6 +132,52 @@ export async function listWorktrees(repoRoot: string): Promise<Worktree[]> {
 
       return { path, branch };
     });
+}
+
+async function branchExists(repoRoot: string, branch: string): Promise<boolean> {
+  const result = await runGit(repoRoot, [
+    "rev-parse",
+    "--verify",
+    "--quiet",
+    `refs/heads/${branch}`,
+  ]);
+  return result.exitCode === 0;
+}
+
+export async function assessStrandedWork(
+  repoRoot: string,
+  worktreePath: string | null,
+  branch: string | null,
+  mainBranch = "main",
+): Promise<StrandedWork> {
+  let dirtyFiles: string[] = [];
+  if (worktreePath !== null) {
+    const statusResult = await runGit(worktreePath, [
+      "status",
+      "--porcelain",
+    ]);
+    if (statusResult.exitCode === 0) {
+      dirtyFiles = statusResult.stdout
+        .split("\n")
+        .filter((line) => line !== "")
+        .map((line) => line.slice(3));
+    }
+    // A missing or already-pruned worktree has no dirty files by definition;
+    // any commits it made still show up in the unmerged count below.
+  }
+
+  let unmergedCommits = 0;
+  if (branch !== null && await branchExists(repoRoot, branch)) {
+    const revListResult = await runGit(repoRoot, [
+      "rev-list",
+      "--count",
+      `${mainBranch}..${branch}`,
+    ]);
+    assertGitSuccess(revListResult, "rev-list");
+    unmergedCommits = Number.parseInt(revListResult.stdout.trim(), 10);
+  }
+
+  return { dirtyFiles, unmergedCommits };
 }
 
 export async function removeWorktree(

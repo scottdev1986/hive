@@ -10,8 +10,10 @@ import {
   type TerminalCloser,
 } from "../adapters/terminal";
 import {
+  assessStrandedWork,
   removeWorktree,
   type RemoveWorktreeOptions,
+  type StrandedWork,
 } from "../adapters/worktrees";
 import {
   HookEventSchema,
@@ -64,6 +66,7 @@ const MarkDeadRequestSchema = z.object({
 const KillRequestSchema = z.object({
   name: z.string().min(1),
   removeWorktree: z.boolean().optional(),
+  discardWork: z.boolean().optional(),
 });
 
 const ApprovalDecisionSchema = z.object({
@@ -83,6 +86,11 @@ export interface HiveDaemonOptions {
     worktreePath: string,
     options?: RemoveWorktreeOptions | boolean,
   ) => Promise<void>;
+  assessStrandedWork?: (
+    repoRoot: string,
+    worktreePath: string | null,
+    branch: string | null,
+  ) => Promise<StrandedWork>;
   port?: number;
   hostname?: string;
   manageLifecycle?: boolean;
@@ -113,6 +121,9 @@ export class HiveDaemon {
   >;
   private readonly repoRoot: string;
   private readonly cleanupWorktree: typeof removeWorktree;
+  private readonly assessStranded: NonNullable<
+    HiveDaemonOptions["assessStrandedWork"]
+  >;
   private readonly closeTerminal: TerminalCloser;
   private bunServer: Server<undefined> | null = null;
   private reconciliationTimer: ReturnType<typeof setInterval> | null = null;
@@ -132,6 +143,7 @@ export class HiveDaemon {
     this.closeTerminal = options.closeTerminal ?? closeTerminal;
     this.repoRoot = options.repoRoot ?? process.cwd();
     this.cleanupWorktree = options.removeWorktree ?? removeWorktree;
+    this.assessStranded = options.assessStrandedWork ?? assessStrandedWork;
   }
 
   get server(): Server<undefined> | null {
@@ -340,9 +352,9 @@ export class HiveDaemon {
     server.registerTool("hive_kill", {
       title: "Kill Hive agent",
       description:
-        "Kill a named Hive agent's tmux session, mark it dead, and optionally remove its worktree and branch.",
+        "Kill a named Hive agent's tmux session, mark it dead, and optionally remove its worktree and branch. Removal refuses to delete unmerged commits or dirty files and reports them as stranded work instead; pass discardWork to delete them anyway.",
       inputSchema: KillRequestSchema,
-    }, async ({ name, removeWorktree: shouldRemoveWorktree }) => {
+    }, async ({ name, removeWorktree: shouldRemoveWorktree, discardWork }) => {
       const agent = this.db.getAgentByName(name);
       if (agent === null) {
         throw new Error(`Hive agent not found: ${name}`);
@@ -375,9 +387,56 @@ export class HiveDaemon {
         branch: null,
       };
 
-      if ((shouldRemoveWorktree ?? false) && agent.worktreePath !== null) {
+      // Work is either merged or explicitly surfaced — never silently lost.
+      // A kill therefore always reports stranded work (unmerged commits or
+      // uncommitted files), and removal refuses to delete it unless the
+      // caller passes discardWork.
+      let stranded:
+        | {
+          branch: string | null;
+          worktreePath: string | null;
+          dirtyFiles: string[];
+          unmergedCommits: number;
+          note: string;
+        }
+        | null = null;
+      if (agent.worktreePath !== null || agent.branch !== null) {
+        try {
+          const work = await this.assessStranded(
+            this.repoRoot,
+            agent.worktreePath,
+            agent.branch,
+          );
+          if (work.dirtyFiles.length > 0 || work.unmergedCommits > 0) {
+            stranded = {
+              branch: agent.branch,
+              worktreePath: agent.worktreePath,
+              dirtyFiles: work.dirtyFiles,
+              unmergedCommits: work.unmergedCommits,
+              note:
+                `${agent.name} left work that is not on main; merge it via an integrator agent or pass discardWork to delete it.`,
+            };
+          }
+        } catch (error) {
+          stranded = {
+            branch: agent.branch,
+            worktreePath: agent.worktreePath,
+            dirtyFiles: [],
+            unmergedCommits: 0,
+            note: `stranded-work check failed (${
+              error instanceof Error ? error.message : "unknown error"
+            }); worktree kept.`,
+          };
+        }
+      }
+
+      if (
+        (shouldRemoveWorktree ?? false) && agent.worktreePath !== null &&
+        (stranded === null || (discardWork ?? false))
+      ) {
         await this.cleanupWorktree(this.repoRoot, agent.worktreePath, {
           deleteBranch: true,
+          discardTracked: discardWork ?? false,
         });
         cleaned.worktreePath = agent.worktreePath;
         cleaned.branch = agent.branch;
@@ -388,7 +447,7 @@ export class HiveDaemon {
         });
       }
 
-      return toolResult({ agent: updated, cleaned }, "result");
+      return toolResult({ agent: updated, cleaned, stranded }, "result");
     });
 
     server.registerTool("hive_send", {

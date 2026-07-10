@@ -11,7 +11,10 @@ import type {
   TerminalHandle,
 } from "../schemas";
 import {
+  buildAgentPrompt,
+  buildLandingProtocol,
   HiveSpawner,
+  LANDING_MAX_ATTEMPTS,
   NAME_POOL,
   resolveAgentName,
   selectAgentName,
@@ -413,6 +416,10 @@ describe("HiveSpawner wiring", () => {
     ]);
     expect(tmux.sessions[0]?.[2]).toContain("'claude' '--model' 'best'");
     expect(tmux.sessions[0]?.[2]).toContain("You are maya");
+    // Every writer agent carries the landing protocol for its own branch.
+    expect(tmux.sessions[0]?.[2]).toContain(
+      `merge --ff-only hive/maya-build-auth-api`,
+    );
     expect(tmux.sessions[1]?.[2]).toContain("'codex'");
     expect(tmux.sessions[1]?.[2]).toContain("notify=");
     expect(tmux.sessions[1]?.[2]).toContain("You are david");
@@ -760,5 +767,38 @@ describe("HiveSpawner wiring", () => {
     expect(spawned.terminalHandle).toBeUndefined();
     expect(terminal.closed).toEqual([handle]);
     expect(store.getAgentById(spawned.id)?.terminalHandle).toBeUndefined();
+  });
+});
+
+describe("agent landing protocol", () => {
+  const worktree = {
+    path: "/repo/.hive/worktrees/maya",
+    branch: "hive/maya-auth-api",
+  };
+
+  test("is part of every writer agent prompt", () => {
+    const prompt = buildAgentPrompt("maya", "Build auth API", worktree, "/repo");
+    expect(prompt).toContain("You are maya");
+    expect(prompt).toContain(buildLandingProtocol(worktree.branch, "/repo"));
+  });
+
+  test("spells out rebase, retest, ff-only merge, and cleanup ownership", () => {
+    const protocol = buildLandingProtocol(worktree.branch, "/repo");
+    expect(protocol).toContain("git rebase main");
+    expect(protocol).toContain("Re-run the tests on the rebased branch");
+    expect(protocol).toContain("Red tests never merge");
+    expect(protocol).toContain(
+      "git -C /repo merge --ff-only hive/maya-auth-api",
+    );
+    expect(protocol).toContain("Do not delete your branch or worktree");
+  });
+
+  test("bounds retries and escalates conflicts to the orchestrator", () => {
+    const protocol = buildLandingProtocol(worktree.branch, "/repo");
+    expect(protocol).toContain("git rebase --abort");
+    expect(protocol).toContain(`After ${LANDING_MAX_ATTEMPTS} failed attempts`);
+    const escalations = protocol.match(/"orchestrator"/g) ?? [];
+    expect(escalations.length).toBeGreaterThanOrEqual(2);
+    expect(protocol).toContain("never force");
   });
 });

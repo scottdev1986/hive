@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  assessStrandedWork,
   createWorktree,
   listWorktrees,
   removeWorktree,
@@ -140,6 +141,61 @@ describe("git worktree manager", () => {
       ),
     ).toEqual(false);
     expect((await git("branch", "--list", created.branch)).trim()).toEqual("");
+  });
+
+  test("reports no stranded work for a clean, fully merged branch", async () => {
+    const created = await createWorktree(repoRoot, "agent-7", "clean-landing");
+
+    expect(await assessStrandedWork(repoRoot, created.path, created.branch))
+      .toEqual({ dirtyFiles: [], unmergedCommits: 0 });
+
+    await removeWorktree(repoRoot, created.path, { deleteBranch: true });
+  });
+
+  test("counts unmerged commits and lists dirty files as stranded work", async () => {
+    const created = await createWorktree(repoRoot, "agent-8", "stranded");
+    const worktreeGit = async (...args: string[]) => {
+      const process = Bun.spawn(["git", "-C", created.path, ...args], {
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([
+        new Response(process.stderr).text(),
+        process.exited,
+      ]);
+      if (exitCode !== 0) {
+        throw new Error(stderr.trim());
+      }
+    };
+    await writeFile(join(created.path, "committed.txt"), "landed nowhere\n");
+    await worktreeGit("add", "committed.txt");
+    await worktreeGit("commit", "-m", "stranded commit");
+    await writeFile(join(created.path, "uncommitted.txt"), "dirty\n");
+    await writeFile(join(created.path, "README.md"), "tracked edit\n");
+
+    const stranded = await assessStrandedWork(
+      repoRoot,
+      created.path,
+      created.branch,
+    );
+    expect(stranded.unmergedCommits).toEqual(1);
+    expect(stranded.dirtyFiles.sort()).toEqual([
+      "README.md",
+      "uncommitted.txt",
+    ]);
+
+    await removeWorktree(repoRoot, created.path, {
+      deleteBranch: true,
+      discardTracked: true,
+    });
+  });
+
+  test("treats a deleted worktree directory and missing branch as nothing stranded", async () => {
+    expect(await assessStrandedWork(
+      repoRoot,
+      join(repoRoot, ".hive", "worktrees", "gone"),
+      "hive/gone-task",
+    )).toEqual({ dirtyFiles: [], unmergedCommits: 0 });
   });
 
   test("surfaces git stderr", async () => {

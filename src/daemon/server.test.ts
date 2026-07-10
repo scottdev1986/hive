@@ -213,6 +213,10 @@ describe("HiveDaemon HTTP server", () => {
       removeWorktree: async (repoRoot, worktreePath) => {
         removedWorktrees.push([repoRoot, worktreePath]);
       },
+      assessStrandedWork: async () => ({
+        dirtyFiles: [],
+        unmergedCommits: 0,
+      }),
       closeTerminal: async (handle) => {
         expect(db.getAgentByName("sam")).toMatchObject({
           status: "dead",
@@ -373,6 +377,7 @@ describe("HiveDaemon HTTP server", () => {
           worktreePath: string | null;
           branch: string | null;
         };
+        stranded: unknown;
       };
       expect(killed.agent.status).toEqual("dead");
       expect(killed.agent.worktreePath).toEqual(null);
@@ -382,6 +387,7 @@ describe("HiveDaemon HTTP server", () => {
         worktreePath: "/tmp/hive-sam",
         branch: "hive/sam-task",
       });
+      expect(killed.stranded).toEqual(null);
       expect(daemonTmux.killed).toEqual(["hive-sam"]);
       expect(removedWorktrees).toEqual([
         ["/tmp/repo", "/tmp/hive-sam"],
@@ -401,6 +407,118 @@ describe("HiveDaemon HTTP server", () => {
       })) as AgentRecord;
       expect(stopped.status).toEqual("dead");
       expect(db.getAgentByName("sam")?.status).toEqual("dead");
+    } finally {
+      await client.close();
+      await daemon.stop();
+      db.close();
+    }
+  });
+
+  test("hive_kill surfaces stranded work and refuses to delete it without discardWork", async () => {
+    const db = new HiveDatabase(join(home, "stranded.db"));
+    const removed: Array<[string, boolean]> = [];
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new StubSpawner(),
+      tmuxSender: new SilentTmuxSender(),
+      tmux: new FakeDaemonTmux(),
+      repoRoot: "/tmp/repo",
+      removeWorktree: async (_repoRoot, worktreePath, options) => {
+        const discardTracked = typeof options === "object" &&
+          (options?.discardTracked ?? false);
+        removed.push([worktreePath, discardTracked]);
+      },
+      assessStrandedWork: async () => ({
+        dirtyFiles: ["src/wip.ts"],
+        unmergedCommits: 2,
+      }),
+    });
+    db.insertAgent(agent());
+    const transport = new StreamableHTTPClientTransport(
+      new URL("http://hive/mcp"),
+      { fetch: (input, init) => daemon.fetch(new Request(input, init)) },
+    );
+    const client = new Client({ name: "hive-test", version: "1.0.0" });
+    try {
+      await client.connect(transport);
+
+      const refused = textValue(await client.callTool({
+        name: "hive_kill",
+        arguments: { name: "maya", removeWorktree: true },
+      })) as {
+        agent: AgentRecord;
+        cleaned: { worktreePath: string | null; branch: string | null };
+        stranded: {
+          branch: string;
+          worktreePath: string;
+          dirtyFiles: string[];
+          unmergedCommits: number;
+          note: string;
+        } | null;
+      };
+      expect(refused.agent.status).toEqual("dead");
+      expect(refused.agent.worktreePath).toEqual("/tmp/hive-maya");
+      expect(refused.cleaned.worktreePath).toEqual(null);
+      expect(refused.stranded).toMatchObject({
+        branch: "hive/maya-server",
+        worktreePath: "/tmp/hive-maya",
+        dirtyFiles: ["src/wip.ts"],
+        unmergedCommits: 2,
+      });
+      expect(refused.stranded?.note).toContain("discardWork");
+      expect(removed).toEqual([]);
+
+      const discarded = textValue(await client.callTool({
+        name: "hive_kill",
+        arguments: { name: "maya", removeWorktree: true, discardWork: true },
+      })) as typeof refused;
+      expect(discarded.cleaned.worktreePath).toEqual("/tmp/hive-maya");
+      expect(discarded.agent.worktreePath).toEqual(null);
+      // The discard is still recorded so the orchestrator sees what was lost.
+      expect(discarded.stranded?.unmergedCommits).toEqual(2);
+      expect(removed).toEqual([["/tmp/hive-maya", true]]);
+    } finally {
+      await client.close();
+      await daemon.stop();
+      db.close();
+    }
+  });
+
+  test("hive_kill still wins when the stranded-work check itself fails", async () => {
+    const db = new HiveDatabase(join(home, "stranded-error.db"));
+    const removed: string[] = [];
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new StubSpawner(),
+      tmuxSender: new SilentTmuxSender(),
+      tmux: new FakeDaemonTmux(),
+      repoRoot: "/tmp/repo",
+      removeWorktree: async (_repoRoot, worktreePath) => {
+        removed.push(worktreePath);
+      },
+      assessStrandedWork: async () => {
+        throw new Error("git exploded");
+      },
+    });
+    db.insertAgent(agent());
+    const transport = new StreamableHTTPClientTransport(
+      new URL("http://hive/mcp"),
+      { fetch: (input, init) => daemon.fetch(new Request(input, init)) },
+    );
+    const client = new Client({ name: "hive-test", version: "1.0.0" });
+    try {
+      await client.connect(transport);
+      const killed = textValue(await client.callTool({
+        name: "hive_kill",
+        arguments: { name: "maya", removeWorktree: true },
+      })) as {
+        agent: AgentRecord;
+        stranded: { note: string } | null;
+      };
+      expect(killed.agent.status).toEqual("dead");
+      expect(killed.stranded?.note).toContain("git exploded");
+      // An unverifiable worktree is kept, never deleted on a guess.
+      expect(removed).toEqual([]);
     } finally {
       await client.close();
       await daemon.stop();

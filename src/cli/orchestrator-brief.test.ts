@@ -29,6 +29,14 @@ describe("orchestrator brief", () => {
     expect(ORCHESTRATOR_BRIEF).toContain("integrator");
   });
 
+  test("makes agents land their own work and reserves integrators for escalations", () => {
+    expect(ORCHESTRATOR_BRIEF).toContain("land their own finished work");
+    expect(ORCHESTRATOR_BRIEF).toContain("fast-forward merge");
+    expect(ORCHESTRATOR_BRIEF).toContain("do not restate it");
+    expect(ORCHESTRATOR_BRIEF).toContain("stranded work");
+    expect(ORCHESTRATOR_BRIEF).toContain("never merge or edit files yourself");
+  });
+
   test("builds read-only foreground commands for both tools", () => {
     expect(buildOrchestratorCommand("claude", 4317)).toEqual([
       "claude",
