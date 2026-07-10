@@ -53,31 +53,113 @@ describe("quota status", () => {
       provider: "codex",
       account: "personal",
       pool: "agentic",
+      origin: "manual",
+      overridesDiscovered: false,
       models: ["*"],
+      label: null,
+      routable: true,
       confidence: "reported",
       freshness: "fresh",
       source: "manual",
       fiveHour: {
+        unit: "units",
         allowance: 100,
         used: 60,
         reserved: 10,
+        reservedIsEstimate: true,
         remaining: 30,
         remainingPct: 0.3,
         resetsAt: "2026-07-09T18:00:00.000Z",
+        confidence: "reported",
+        source: "manual",
+        observedAt: "2026-07-09T12:00:00.000Z",
+        windowMinutes: 300,
       },
       weekly: {
+        unit: "units",
         allowance: 500,
         used: 100,
         reserved: 10,
+        reservedIsEstimate: true,
         remaining: 390,
         remainingPct: 0.78,
         resetsAt: null,
+        confidence: "reported",
+        source: "manual",
+        observedAt: "2026-07-09T12:00:00.000Z",
+        windowMinutes: 10_080,
       },
     }]);
     expect(output).toContain("codex/personal/agentic");
-    expect(output).toContain("reported, fresh, manual");
-    expect(output).toContain("30.0/100.0 remaining");
-    expect(output).toContain("10.0 reserved");
+    expect(output).toContain("manual");
+    expect(output).toContain("30.0 of 100.0 remaining");
+    expect(output).toContain("10.0 reserved (est)");
     expect(output).toContain("reset unknown");
+  });
+
+  test("renders an unmeasured window as unknown rather than as a number", () => {
+    const output = formatQuotaStatus([{
+      provider: "claude",
+      account: "default",
+      pool: "subscription",
+      origin: "discovered",
+      overridesDiscovered: false,
+      models: ["*"],
+      label: "max",
+      routable: true,
+      confidence: "missing",
+      freshness: "missing",
+      source: "none",
+      fiveHour: {
+        unit: "percent",
+        allowance: 100,
+        used: 6,
+        reserved: 8,
+        reservedIsEstimate: true,
+        remaining: 86,
+        remainingPct: 0.86,
+        resetsAt: "2026-07-10T19:00:00.000Z",
+        confidence: "reported",
+        source: "provider",
+        observedAt: "2026-07-10T14:00:00.000Z",
+        windowMinutes: 300,
+      },
+      weekly: {
+        unit: "percent",
+        allowance: null,
+        used: null,
+        reserved: 1.5,
+        reservedIsEstimate: true,
+        remaining: null,
+        remainingPct: null,
+        resetsAt: null,
+        confidence: "missing",
+        source: "none",
+        observedAt: null,
+        windowMinutes: null,
+      },
+    }]);
+    expect(output).toContain("86.0% of 100.0% remaining");
+    expect(output).toContain("week: unknown remaining");
+    expect(output).not.toMatch(/week: [\d.]/);
+  });
+
+  test("names a provider gap without blaming a missing config file", () => {
+    const output = formatQuotaStatus([{
+      provider: "claude",
+      model: "*",
+      configured: false,
+      confidence: "missing",
+      reason: "Live limits from claude are unavailable: not signed in",
+      probeError: "not signed in",
+      reserved: 0,
+      fiveHourRecorded: 4,
+      weeklyRecorded: 12,
+      recordedIsLocalEstimate: true,
+    }]);
+    expect(output).toContain("LIMITS UNKNOWN");
+    expect(output).toContain("not signed in");
+    expect(output).toContain("not the account's usage");
+    expect(output).not.toContain("quota.toml");
   });
 });

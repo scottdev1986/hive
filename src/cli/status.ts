@@ -1,4 +1,4 @@
-import type { AgentRecord, QuotaStatus } from "../schemas";
+import type { AgentRecord, QuotaStatus, QuotaWindowStatus } from "../schemas";
 
 const TASK_WIDTH = 48;
 const FAILURE_WIDTH = 40;
@@ -49,28 +49,46 @@ export function formatStatusTable(agents: AgentRecord[]): string {
     .join("\n");
 }
 
+/**
+ * Render one window. A window Hive never measured prints the word `unknown`,
+ * and Hive's own in-flight reservation is always marked as the estimate it is.
+ * Nothing here can print a capacity number that no provider reported.
+ */
+function formatQuotaWindow(label: string, window: QuotaWindowStatus): string {
+  const unit = window.unit === "percent" ? "%" : "";
+  const reserved = `${window.reserved.toFixed(1)}${unit} reserved (est)`;
+  const reset = window.resetsAt ?? "unknown";
+  const capacity = window.remaining === null || window.allowance === null
+    ? "unknown remaining"
+    : `${window.remaining.toFixed(1)}${unit} of ${window.allowance.toFixed(1)}${unit} remaining`;
+  return `  ${label}: ${capacity}, ${reserved}, reset ${reset} ` +
+    `[${window.confidence} from ${window.source}]`;
+}
+
 export function formatQuotaStatus(statuses: QuotaStatus[]): string {
   if (statuses.length === 0) return "Quota tracking is disabled.";
   const lines: string[] = [];
   for (const status of statuses) {
     if ("configured" in status) {
       lines.push(
-        `${status.provider}/default/${status.model}: UNCONFIGURED — ${status.reason}; ` +
-          `${status.reserved.toFixed(1)} reserved, ` +
-          `${status.fiveHourRecorded.toFixed(1)} recorded in 5h, ` +
-          `${status.weeklyRecorded.toFixed(1)} recorded in week`,
+        `${status.provider}/default/${status.model}: LIMITS UNKNOWN — ${status.reason}`,
+        `  hive-local estimate only: ${status.reserved.toFixed(1)} reserved, ` +
+          `${status.fiveHourRecorded.toFixed(1)} spent by hive in 5h, ` +
+          `${status.weeklyRecorded.toFixed(1)} spent by hive in week ` +
+          "(not the account's usage)",
       );
       continue;
     }
-    const fiveReset = status.fiveHour.resetsAt ?? "unknown";
-    const weekReset = status.weekly.resetsAt ?? "unknown";
+    const origin = status.overridesDiscovered
+      ? "manual override"
+      : status.origin;
+    const routing = status.routable ? "" : ", informational";
     lines.push(
-      `${status.provider}/${status.account}/${status.pool} ` +
-        `[${status.confidence}, ${status.freshness}, ${status.source}]`,
-      `  5h: ${status.fiveHour.remaining.toFixed(1)}/${status.fiveHour.allowance.toFixed(1)} remaining, ` +
-        `${status.fiveHour.reserved.toFixed(1)} reserved, reset ${fiveReset}`,
-      `  week: ${status.weekly.remaining.toFixed(1)}/${status.weekly.allowance.toFixed(1)} remaining, ` +
-        `${status.weekly.reserved.toFixed(1)} reserved, reset ${weekReset}`,
+      `${status.provider}/${status.account}/${status.pool}` +
+        `${status.label === null ? "" : ` (${status.label})`} ` +
+        `[${origin}${routing}, ${status.freshness}]`,
+      formatQuotaWindow("5h", status.fiveHour),
+      formatQuotaWindow("week", status.weekly),
     );
   }
   return lines.join("\n");

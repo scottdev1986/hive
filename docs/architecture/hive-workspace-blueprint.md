@@ -101,7 +101,7 @@ Linked worktrees share refs, so the Supervisor also holds a repo-family landing 
 
 The destination has four Hive-owned authorities and one provider-owned authority.
 
-**Supervisor.** A signed per-user `SMAppService` agent owns the `ProjectKey ↔ HiveUUID` registry and creation leases, immutable executable bindings, repo-family landing leases, build negotiation, and sanitized global overview. A colocated quota arbiter sees only an allowlist: provider, account, pool, concrete model, estimated units, and HiveUUID. “Content-blind” means it never receives prompts, transcript events, repository names, paths, or branches; it does not mean it learns nothing.
+**Supervisor.** A signed per-user `SMAppService` agent owns the `ProjectKey ↔ HiveUUID` registry and creation leases, immutable executable bindings, repo-family landing leases, build negotiation, and sanitized global overview. A colocated quota arbiter sees only an allowlist: provider, account, pool, concrete model, the estimated fraction of each window a run will consume, and HiveUUID. “Content-blind” means it never receives prompts, transcript events, repository names, paths, or branches; it does not mean it learns nothing.
 
 **Tenant Broker.** One broker per `HiveUUID` owns canonical semantic state, the project event log, settings, worktree ownership, approvals, capability epochs, landing policy, and the UI snapshot. It never owns anonymous provider pipes.
 

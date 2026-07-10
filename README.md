@@ -81,35 +81,40 @@ Until then, this repository contains the project's design, documentation, daemon
 
 Hive reserves capacity before launching an agent, then reconciles it when the turn ends. Automatic routing considers the task tier, each concrete model's five-hour and weekly headroom, in-flight reservations, and configurable reserves for deep work. A safe explicit Claude or Codex choice is honored. An unsafe explicit choice fails before launch with the remaining capacity, reset estimate, and a recommended fallback; it is never silently changed. Reviews can name the tool that authored the work so Hive prefers the other vendor when both have capacity.
 
-Provider subscription limits vary by plan and can share capacity across models or products. Hive does not scrape either CLI's terminal UI and does not claim that local estimates are exact provider telemetry. Configure the real account and pool topology in `~/.hive/quota.toml`; without it, upgrades preserve legacy routing, track estimates, and emit one deduplicated unknown-data warning:
+**There is nothing to configure.** Hive reads your real limits from the providers themselves, at every start and periodically thereafter. Codex answers `account/rateLimits/read` over its app-server; Claude Code answers a `get_usage` control request. Neither call starts a model turn, so neither costs a token. Both report the *percentage* of each window consumed and the moment it resets, so Hive discovers your pools, denominates them in percent, and reserves against measured headroom:
+
+```
+$ hive quota
+claude/default/subscription (max) [discovered, fresh]
+  5h: 91.0% of 100.0% remaining, 8.0% reserved (est), reset 2026-07-10T19:00:00Z [reported from provider]
+  week: 57.0% of 100.0% remaining, 1.5% reserved (est), reset 2026-07-11T19:00:00Z [reported from provider]
+codex/default/codex (prolite) [discovered, fresh]
+  5h: 41.0% of 100.0% remaining, 0.0% reserved (est), reset 2026-07-10T18:25:18Z [authoritative from provider]
+  week: 59.0% of 100.0% remaining, 0.0% reserved (est), reset 2026-07-16T22:11:53Z [authoritative from provider]
+```
+
+Accurate numbers only. A window Hive has not measured prints `unknown`, never a zero — and a reading whose reset has passed is discarded rather than carried forward, because you spend these accounts outside Hive too. The one number Hive authors itself is the reservation, its guess at what a run will consume, and it is labelled `(est)` wherever it appears. Codex's stable rate-limit method is `authoritative`; Claude's `get_usage`, which the CLI marks experimental, is `reported`; Hive's own ledger is `estimated`; anything absent or aged out says so. Hive does not scrape either CLI's terminal display, and it does not call Anthropic's undocumented usage endpoint directly.
+
+When a provider cannot answer — not signed in, probe failed — Hive says which provider and why, keeps routing on the legacy path, and adopts real numbers the moment the provider answers. It never invents an allowance, because allowances decide when spawns are *refused*, and a wrong number there stops work rather than merely misleading a dashboard.
+
+Model-scoped caps (a premium model with its own weekly ceiling) are discovered and displayed, but Hive will not route on them: providers name them `"Fable"` or `"GPT-5.3-Codex-Spark"` without a concrete model id, and guessing which model that means could refuse a spawn for the wrong reason.
+
+Optionally, `~/.hive/quota.toml` can override a discovered pool with your own planning units and thresholds. It is never required, and Hive maps the provider's percentages onto whatever allowance you declare:
 
 ```toml
 warningRemainingPct = 0.25
 criticalRemainingPct = 0.10
-hysteresisPct = 0.05
-reserveFiveHourPct = 0.15
-reserveWeeklyPct = 0.20
-reservationTtlMinutes = 360
+refreshIntervalMinutes = 15
 
-[estimates]
-deep = 20
-standard = 10
-cheap = 4
-review = 8
-
-[[limits]]
-provider = "claude"
-account = "personal"
-pool = "claude-subscription"
-models = ["*"]
-fiveHourAllowance = 100
-weeklyAllowance = 500
-weeklyWindow = "rolling"
+# Hive's own estimate of what one run costs, as a percent of each window.
+[estimatesPct.deep]
+fiveHour = 8
+weekly = 1.5
 
 [[limits]]
 provider = "codex"
-account = "personal"
-pool = "agentic-usage"
+account = "default"
+pool = "codex"           # must match the discovered pool to override it
 models = ["*"]
 fiveHourAllowance = 100
 weeklyAllowance = 500
@@ -119,15 +124,13 @@ resetWeekday = 1 # Sunday=0, Monday=1
 resetHour = 0
 ```
 
-Allowances and estimates use operator-defined planning units. Models sharing a vendor limit should point to the same pool; models with distinct caps should use distinct pools. Rolling windows include usage exactly on the cutoff and expire it immediately after. Calendar weeks use the configured IANA timezone; a reset minute skipped by daylight saving moves to the first valid local minute after the gap. A fresh provider or gateway observation is authoritative, a manually entered dashboard reading is reported, and a Hive run estimate is estimated. Stale observations remain visible and are combined conservatively with newer ledger entries.
+Rolling windows include usage exactly on the cutoff and expire it immediately after. Calendar weeks use the configured IANA timezone; a reset minute skipped by daylight saving moves to the first valid local minute after the gap. Stale observations remain visible and are combined conservatively with newer ledger entries.
 
-For Claude, a gateway or hook that reports normalized run usage is the best machine source; the stock subscription CLI has per-run JSON output but Hive has no supported remaining-plan-capacity API to call. For Codex, provider/gateway credits or normalized token usage are authoritative when supplied, while consumer-plan remaining capacity is exposed in the official Usage panel rather than a Hive-integrated local API. The stock Codex notification payload is used only when it explicitly contains `usageUnits`; Hive does not reinterpret an arbitrary token count as a percentage of a plan limit. In both cases the fallback is the conservative tier estimate plus manual reconciliation, with its lower confidence shown everywhere.
-
-Record a dashboard reading without editing state:
+Record a dashboard reading by hand, if you ever need to:
 
 ```sh
-hive quota reconcile --provider codex --account personal \
-  --pool agentic-usage --five-hour-used 62 --weekly-used 180 \
+hive quota reconcile --provider codex --account default \
+  --pool codex --five-hour-used 62 --weekly-used 180 \
   --five-hour-reset-at 2026-07-09T18:00:00-04:00
 ```
 

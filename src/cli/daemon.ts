@@ -14,6 +14,12 @@ import { HiveDaemon } from "../daemon/server";
 import { HiveSpawner } from "../daemon/spawner-impl";
 import { QuotaLedger } from "../daemon/quota-ledger";
 import { QuotaService } from "../daemon/quota";
+import {
+  ClaudeQuotaProbe,
+  ClaudeStdioProbeTransport,
+  CodexQuotaProbe,
+  CodexStdioProbeTransport,
+} from "../daemon/quota-sources";
 import { ORCHESTRATOR_NAME } from "../schemas";
 
 export async function runDaemon(): Promise<void> {
@@ -21,7 +27,17 @@ export async function runDaemon(): Promise<void> {
   const config = await loadHiveConfig();
   const quotaConfig = await loadQuotaConfig();
   const db = new HiveDatabase();
-  const quota = new QuotaService(new QuotaLedger(db), quotaConfig);
+  // Live limits come from the providers themselves. Both probes are read-only
+  // and start no model turn, so a startup refresh costs nothing but a subprocess.
+  const quota = new QuotaService(
+    new QuotaLedger(db),
+    quotaConfig,
+    () => new Date(),
+    [
+      new CodexQuotaProbe(new CodexStdioProbeTransport()),
+      new ClaudeQuotaProbe(new ClaudeStdioProbeTransport()),
+    ],
+  );
   const tmux = new TmuxAdapter();
   const terminal = resolveTerminal(config);
   const port = readConfiguredPort();

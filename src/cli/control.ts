@@ -14,7 +14,7 @@ import type {
   AgentRecord,
   MemoryScope,
   MemoryWriteInput,
-  QuotaObservation,
+  QuotaObservationInput,
 } from "../schemas";
 import { orchestratorTmuxSession } from "../daemon/orchestrator-lifecycle";
 import { isTmuxSessionForInstance } from "../daemon/tmux-sessions";
@@ -132,7 +132,7 @@ export async function printQuotaStatus(): Promise<void> {
 }
 
 export async function recordQuotaObservation(
-  observation: QuotaObservation,
+  observation: QuotaObservationInput,
 ): Promise<void> {
   const recorded = await reconcileQuota(requireDaemonPort(), observation);
   console.log(

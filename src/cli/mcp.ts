@@ -13,6 +13,7 @@ import {
   type MemorySearchResult,
   type MemoryWriteInput,
   type QuotaObservation,
+  type QuotaObservationInput,
   type QuotaStatus,
 } from "../schemas";
 
@@ -127,7 +128,7 @@ export async function fetchQuotaStatus(
 
 export async function reconcileQuota(
   port: number,
-  observation: QuotaObservation,
+  observation: QuotaObservationInput,
   fetcher?: McpFetcher,
 ): Promise<QuotaObservation> {
   return QuotaObservationSchema.parse(await callHiveTool(

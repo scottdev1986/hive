@@ -205,7 +205,7 @@ describe("statusLine quota telemetry", () => {
     }
   });
 
-  test("ignores a report with no windows and an unconfigured model", async () => {
+  test("ignores a report that carries no windows at all", async () => {
     const { quota, db } = await service();
     try {
       expect(
@@ -213,17 +213,43 @@ describe("statusLine quota telemetry", () => {
           observedAt: now.toISOString(),
         }),
       ).toBeNull();
-      expect(
-        await quota.observeStatusline(
-          { tool: "claude", model: "some-other-model" },
-          {
-            fiveHour: { usedPct: 50, resetsAt: null },
-            observedAt: now.toISOString(),
-          },
-        ),
-      ).toBeNull();
       // With no observation, the local estimate remains the only signal.
       expect(poolStatus(quota).confidence).toBe("estimated");
+    } finally {
+      db.close();
+    }
+  });
+
+  // A reading is never thrown away for want of a hand-written pool. The account
+  // windows a statusLine reports belong to the subscription, not to one model.
+  test("discovers a subscription pool for a model with no configured pool", async () => {
+    const { quota, db } = await service();
+    try {
+      const observation = await quota.observeStatusline(
+        { tool: "claude", model: "some-other-model" },
+        {
+          fiveHour: { usedPct: 50, resetsAt: null },
+          observedAt: now.toISOString(),
+        },
+      );
+      expect(observation).not.toBeNull();
+      expect(observation?.pool).toBe("subscription");
+      expect(observation?.fiveHourUsed).toBe(50);
+
+      const discovered = quota.statuses(now).find((status) =>
+        !("configured" in status) && status.pool === "subscription"
+      );
+      if (discovered === undefined || "configured" in discovered) {
+        throw new Error("expected a discovered subscription pool");
+      }
+      expect(discovered.origin).toBe("discovered");
+      expect(discovered.fiveHour.unit).toBe("percent");
+      expect(discovered.fiveHour.used).toBe(50);
+      expect(discovered.fiveHour.source).toBe("statusline");
+      // The weekly window was never reported, so it stays honestly unknown.
+      expect(discovered.weekly.used).toBeNull();
+      expect(discovered.weekly.remaining).toBeNull();
+      expect(discovered.weekly.confidence).toBe("missing");
     } finally {
       db.close();
     }

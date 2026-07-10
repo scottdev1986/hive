@@ -127,6 +127,7 @@ describe("quota windows", () => {
     ledger.reconcile(
       reservation.id,
       10,
+      10,
       "estimated",
       "2026-07-09T07:00:00.000Z",
     );

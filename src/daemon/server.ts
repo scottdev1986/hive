@@ -622,6 +622,16 @@ export class HiveDaemon {
         }`,
       );
     });
+    // Every hive start reads the providers' real limits before the first spawn
+    // can reserve against a number nobody measured. A provider that will not
+    // answer leaves its pool honestly unknown rather than blocking startup.
+    void this.refreshQuota({ force: true }).catch((error) => {
+      console.error(
+        `Hive quota discovery failed: ${
+          error instanceof Error ? error.message : "unknown error"
+        }`,
+      );
+    });
     // The Markdown files are authoritative and the FTS index is disposable,
     // so every daemon start rebuilds it rather than trusting whatever the
     // SQLite file happened to have from a previous run.
@@ -667,10 +677,30 @@ export class HiveDaemon {
     return this.serializeMemory(() => this.memory.rebuild(this.repoRoot));
   }
 
+  /**
+   * Re-read live provider limits. Reservations then reconcile against the real
+   * numbers on the next status read, because an observation and the local ledger
+   * combine by max() — a fresh provider reading tightens the picture, and a
+   * missing one never loosens it.
+   */
+  async refreshQuota(options: { force?: boolean } = {}): Promise<void> {
+    if (this.quota === undefined) return;
+    await this.quota.refreshFromProviders(undefined, options);
+  }
+
   private async runMaintenance(): Promise<void> {
     if (this.maintenanceRunning) return;
     this.maintenanceRunning = true;
     try {
+      if (this.quota?.needsRefresh() === true) {
+        await this.refreshQuota().catch((error) => {
+          console.error(
+            `Hive quota refresh failed: ${
+              error instanceof Error ? error.message : "unknown error"
+            }`,
+          );
+        });
+      }
       await this.recoverQuotaReservations();
       await this.delivery.recoverCriticalControls();
       // Root wakes deferred behind a human draft are retried only at this

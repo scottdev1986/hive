@@ -10,6 +10,26 @@ export const QuotaConfidenceSchema = z.enum([
 ]);
 export type QuotaConfidence = z.infer<typeof QuotaConfidenceSchema>;
 
+export const QuotaSourceSchema = z.enum([
+  "provider",
+  "gateway",
+  "manual",
+  "statusline",
+  "ledger",
+  "none",
+]);
+export type QuotaSource = z.infer<typeof QuotaSourceSchema>;
+
+/**
+ * Where a pool's shape came from. `discovered` pools are read from the provider
+ * at startup and are denominated in percent of the window, because no provider
+ * reports an absolute capacity — only the fraction consumed. `manual` pools come
+ * from `quota.toml`, are denominated in the operator's own planning units, and
+ * exist purely as an explicit override; Hive never requires one.
+ */
+export const QuotaPoolOriginSchema = z.enum(["discovered", "manual"]);
+export type QuotaPoolOrigin = z.infer<typeof QuotaPoolOriginSchema>;
+
 export const QuotaLimitSchema = z.strictObject({
   provider: z.enum(["claude", "codex"]),
   account: z.string().min(1).default("default"),
@@ -28,8 +48,42 @@ export type QuotaLimit = z.infer<typeof QuotaLimitSchema>;
 
 const EstimateSchema = z.record(RoutingTierSchema, z.number().positive());
 
+/**
+ * How much of each window one run of a tier is expected to consume, as a percent
+ * of that window. This is Hive's own workload guess — never a provider number —
+ * so every reservation built from it is surfaced as `estimated`. It is separate
+ * from `estimates` because a discovered pool is percent-denominated, and a run
+ * is a much larger fraction of a five-hour bucket than of a week: a week does
+ * not hold 33 five-hour buckets' worth of capacity.
+ *
+ * Defaults ship so that no operator ever has to enter one. Provider observations
+ * overwrite the *usage* these estimates stand in for as soon as a real number
+ * arrives; the estimate only ever governs in-flight reservations.
+ */
+const PercentEstimateSchema = z.strictObject({
+  fiveHour: z.number().positive().max(100),
+  weekly: z.number().positive().max(100),
+});
+
+const PercentEstimateTableSchema = z.record(
+  RoutingTierSchema,
+  PercentEstimateSchema,
+);
+
+export const DEFAULT_PERCENT_ESTIMATES = {
+  deep: { fiveHour: 8, weekly: 1.5 },
+  standard: { fiveHour: 4, weekly: 0.75 },
+  cheap: { fiveHour: 1.5, weekly: 0.3 },
+  review: { fiveHour: 3, weekly: 0.6 },
+} as const;
+
 export const QuotaConfigSchema = z.strictObject({
   enabled: z.boolean().default(true),
+  /** Read live limits from the providers at daemon start and on refresh. */
+  discovery: z.boolean().default(true),
+  /** How often the daemon re-reads provider limits, in minutes. */
+  refreshIntervalMinutes: z.number().positive().default(15),
+  estimatesPct: PercentEstimateTableSchema.default(DEFAULT_PERCENT_ESTIMATES),
   warningRemainingPct: z.number().min(0).max(1).default(0.25),
   criticalRemainingPct: z.number().min(0).max(1).default(0.1),
   hysteresisPct: z.number().min(0).max(0.5).default(0.05),
@@ -70,6 +124,22 @@ export type QuotaConfig = z.infer<typeof QuotaConfigSchema>;
 
 export const DEFAULT_QUOTA_CONFIG: QuotaConfig = QuotaConfigSchema.parse({});
 
+const ObservedSourceSchema = z.enum([
+  "provider",
+  "gateway",
+  "manual",
+  "statusline",
+]);
+const ObservedConfidenceSchema = z.enum(["authoritative", "reported"]);
+
+/**
+ * A stored observation carries provenance *per window*, not per row. A Claude
+ * statusLine payload can report the five-hour window while the weekly one is
+ * still absent; stamping one row-level `observedAt` across both would backdate
+ * freshness onto a fact nobody observed. A null `*ObservedAt` means "never
+ * observed" — the corresponding `*Used` value is meaningless and is reported as
+ * unknown rather than as the zero that happens to sit in the column.
+ */
 export const QuotaObservationSchema = z.strictObject({
   provider: z.enum(["claude", "codex"]),
   account: z.string().min(1).default("default"),
@@ -79,10 +149,18 @@ export const QuotaObservationSchema = z.strictObject({
   observedAt: z.iso.datetime({ offset: true }),
   fiveHourResetAt: z.iso.datetime({ offset: true }).nullable().default(null),
   weeklyResetAt: z.iso.datetime({ offset: true }).nullable().default(null),
-  source: z.enum(["provider", "gateway", "manual", "statusline"]),
-  confidence: z.enum(["authoritative", "reported"]),
+  source: ObservedSourceSchema,
+  confidence: ObservedConfidenceSchema,
+  fiveHourObservedAt: z.iso.datetime({ offset: true }).nullable().default(null),
+  fiveHourSource: ObservedSourceSchema.nullable().default(null),
+  fiveHourConfidence: ObservedConfidenceSchema.nullable().default(null),
+  weeklyObservedAt: z.iso.datetime({ offset: true }).nullable().default(null),
+  weeklySource: ObservedSourceSchema.nullable().default(null),
+  weeklyConfidence: ObservedConfidenceSchema.nullable().default(null),
 });
 export type QuotaObservation = z.infer<typeof QuotaObservationSchema>;
+/** What a caller may hand in: per-window provenance fields are optional. */
+export type QuotaObservationInput = z.input<typeof QuotaObservationSchema>;
 
 // The subscriber usage block Claude Code passes to its statusLine command:
 // used percentage and reset time per rolling window, each window optionally
@@ -106,33 +184,65 @@ export interface QuotaScope {
   pool: string;
 }
 
+/**
+ * One window of one pool. Every number here is either a real measurement or
+ * `null`; a window Hive has no observation for reports `used: null`, never `0`.
+ * `reserved` is the exception that proves the rule: it is Hive's own in-flight
+ * bookkeeping, is always known, and is always an estimate — hence
+ * `reservedIsEstimate`, which is `true` unconditionally so no renderer can
+ * mistake it for provider truth.
+ */
 export interface QuotaWindowStatus {
-  allowance: number;
-  used: number;
+  /** `percent` for provider-discovered pools; `units` for manual overrides. */
+  unit: "percent" | "units";
+  /** Provider capacity. Always 100 for percent pools; null when unknowable. */
+  allowance: number | null;
+  used: number | null;
   reserved: number;
-  remaining: number;
-  remainingPct: number;
+  reservedIsEstimate: true;
+  remaining: number | null;
+  remainingPct: number | null;
   resetsAt: string | null;
+  /** Per-fact provenance: this window's own confidence, source, and freshness. */
+  confidence: QuotaConfidence;
+  source: QuotaSource;
+  observedAt: string | null;
+  windowMinutes: number | null;
 }
 
 export interface QuotaPoolStatus extends QuotaScope {
+  origin: QuotaPoolOrigin;
+  /** True when a manual `quota.toml` pool overrides a discovered one. */
+  overridesDiscovered: boolean;
   models: string[];
+  label: string | null;
+  /** Whether this pool participates in routing. Informational pools do not. */
+  routable: boolean;
   confidence: QuotaConfidence;
   freshness: "fresh" | "stale" | "missing";
-  source: "provider" | "gateway" | "manual" | "statusline" | "ledger" | "none";
+  source: QuotaSource;
   fiveHour: QuotaWindowStatus;
   weekly: QuotaWindowStatus;
 }
 
+/**
+ * A provider whose real limits Hive could not read. Nothing here is a capacity
+ * number: `fiveHourRecorded` is what Hive itself spent through this daemon, not
+ * what the account has consumed, and it is labelled as such everywhere it is
+ * rendered. `probeError` carries the provider's own reason for the gap.
+ */
 export interface QuotaUnconfiguredStatus {
   provider: "claude" | "codex";
   model: string;
   configured: false;
   confidence: "missing";
   reason: string;
+  probeError: string | null;
   reserved: number;
+  /** Units Hive spent through its own ledger. Never the account's usage. */
   fiveHourRecorded: number;
   weeklyRecorded: number;
+  recordedIsLocalEstimate: true;
 }
 
 export type QuotaStatus = QuotaPoolStatus | QuotaUnconfiguredStatus;
