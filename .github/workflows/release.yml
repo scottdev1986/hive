@@ -39,8 +39,8 @@ jobs:
           fetch-tags: true
 
       # Pinned, not floating: the release binary embeds this Bun's runtime.
-      # `src/release/toolchain.test.ts` fails if this drifts from package.json's
-      # `packageManager` field.
+      # `src/release/contract.test.ts` ("pins the same Bun the project pins")
+      # fails if this drifts from package.json's `packageManager` field.
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: "1.3.14"
