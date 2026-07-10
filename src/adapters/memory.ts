@@ -15,6 +15,21 @@ const isMissingFileError = (error: unknown): boolean =>
   "code" in error &&
   error.code === "ENOENT";
 
+/** Defense-in-depth validation of memory fact IDs. The daemon rejects invalid
+ * IDs at the MCP boundary (MemoryIdSchema in src/daemon/server.ts), but this
+ * adapter validates before any path join so direct calls cannot traverse
+ * directories with ../ paths. The regex mirrors MemoryIdSchema: alphanumeric
+ * start, then [a-z0-9._-], max 120 chars. */
+function validateMemoryId(id: string): void {
+  const MEMORY_ID_PATTERN = /^[a-z0-9][a-z0-9._-]*$/i;
+  if (!MEMORY_ID_PATTERN.test(id) || id.length > 120) {
+    throw new Error(
+      `Invalid memory id: must be 1–120 characters, alphanumeric start, ` +
+        `then [a-z0-9._-], got "${id}"`,
+    );
+  }
+}
+
 function hiveHome(): string {
   return Bun.env.HIVE_HOME ?? join(homedir(), ".hive");
 }
@@ -181,6 +196,7 @@ export async function readMemoryFact(
   scope: MemoryScope,
   id: string,
 ): Promise<MemoryFact | null> {
+  validateMemoryId(id);
   const path = join(scopeRoot(root, scope), `${id}.md`);
   try {
     const contents = await readFile(path, "utf8");
@@ -225,6 +241,7 @@ export async function writeMemoryFact(
       suffix += 1;
     }
   }
+  validateMemoryId(id);
 
   const fact = MemoryFactSchema.parse({
     id,
@@ -246,6 +263,7 @@ export async function deleteMemoryFact(
   scope: MemoryScope,
   id: string,
 ): Promise<boolean> {
+  validateMemoryId(id);
   const path = join(scopeRoot(root, scope), `${id}.md`);
   try {
     await rm(path);

@@ -90,6 +90,59 @@ describe("Markdown fact serialization", () => {
   });
 });
 
+describe("Memory ID validation", () => {
+  test("rejects IDs with directory traversal patterns", async () => {
+    const root = await makeRoot();
+    const traversalIds = [
+      "../etc/passwd",
+      "../../etc/hosts",
+      "../../../root/.ssh/id_rsa",
+      "fact/../../../etc/shadow",
+      "normal/with/slashes",
+    ];
+    for (const id of traversalIds) {
+      await expect(
+        readMemoryFact(root, "repo", id),
+      ).rejects.toThrow("Invalid memory id");
+      await expect(
+        writeMemoryFact(root, {
+          scope: "repo",
+          id,
+          title: "Test",
+          body: "Test",
+        }),
+      ).rejects.toThrow("Invalid memory id");
+      await expect(
+        deleteMemoryFact(root, "repo", id),
+      ).rejects.toThrow("Invalid memory id");
+    }
+  });
+
+  test("rejects empty IDs and IDs starting with non-alphanumeric", async () => {
+    const root = await makeRoot();
+    const invalidIds = ["", "-starts-with-dash", "_starts-with-underscore"];
+    for (const id of invalidIds) {
+      await expect(
+        readMemoryFact(root, "repo", id),
+      ).rejects.toThrow("Invalid memory id");
+    }
+  });
+
+  test("allows valid IDs with alphanumeric start and [a-z0-9._-] chars", async () => {
+    const root = await makeRoot();
+    const validId = "valid-id_with.dots";
+    const fact = await writeMemoryFact(root, {
+      scope: "repo",
+      id: validId,
+      title: "Valid",
+      body: "Test",
+    });
+    expect(fact.id).toEqual(validId);
+    expect(await readMemoryFact(root, "repo", validId)).not.toBeNull();
+    expect(await deleteMemoryFact(root, "repo", validId)).toEqual(true);
+  });
+});
+
 describe("Markdown fact CRUD", () => {
   test("writes a new repo fact with a slug derived from the title", async () => {
     const root = await makeRoot();
