@@ -22,6 +22,7 @@ import {
 } from "../adapters/worktrees";
 import {
   ORCHESTRATOR_NAME,
+  type AgentMessage,
   type AgentRecord,
   type HiveConfig,
   type Route,
@@ -187,13 +188,15 @@ export function buildLandingProtocol(
   branch: string,
   repoRoot: string,
   mainBranch = "main",
+  agentName = branch.split("/")[1]?.split("-")[0] ?? "agent",
+  capabilityEpoch = 0,
 ): string {
   return [
     `When your task is complete and the tests are green, land your work on ${mainBranch} immediately — finished work left on your branch is lost work:`,
     `1. Commit everything on your branch (${branch}); never leave work uncommitted.`,
     `2. Rebase onto the latest ${mainBranch}: run \`git rebase ${mainBranch}\` in your worktree. If the rebase hits conflicts, run \`git rebase --abort\` and message "${ORCHESTRATOR_NAME}" naming the conflicting files — never force anything and never resolve another agent's code alone.`,
     "3. Re-run the tests on the rebased branch. Red tests never merge: fix them on your branch, or commit what you have and report the failure instead.",
-    `4. Fast-forward merge into ${mainBranch} via the primary checkout: \`git -C ${repoRoot} merge --ff-only ${branch}\`.`,
+    `4. Land through Hive's capability gate: call \`hive_land\` with agent \`${agentName}\` and capabilityEpoch \`${capabilityEpoch}\`. The daemon performs the fast-forward-only merge of \`${branch}\` into \`${mainBranch}\`; never merge into the primary checkout directly.`,
     `5. If that merge is rejected because ${mainBranch} moved, return to step 2. After ${LANDING_MAX_ATTEMPTS} failed attempts, stop and message "${ORCHESTRATOR_NAME}".`,
     `6. Include the merge commit hash in your completion report. Do not delete your branch or worktree; hive cleans up landed branches.`,
   ].join("\n");
@@ -211,7 +214,7 @@ export function buildAgentPrompt(
     `Your file scope is your worktree at ${worktree.path}; do all code and file work there.`,
     "Use the Hive MCP tools hive_send, hive_inbox, and hive_status to message and coordinate with other named agents.",
     `Send concise completion reports, blockers, and important findings to "${ORCHESTRATOR_NAME}" with hive_send; reference large artifacts instead of pasting them.`,
-    buildLandingProtocol(worktree.branch, repoRoot),
+    buildLandingProtocol(worktree.branch, repoRoot, "main", name, 0),
   ].join("\n\n");
 }
 
@@ -226,6 +229,67 @@ export class HiveSpawner implements Spawner {
     this.cleanupWorktree = dependencies.removeWorktree ?? removeWorktree;
     this.wait = dependencies.sleep ?? sleep;
     this.modelResolver = dependencies.resolveModel ?? resolveConcreteModel;
+  }
+
+  async restartForControl(
+    agent: AgentRecord,
+    message: AgentMessage,
+  ): Promise<AgentRecord> {
+    if (agent.worktreePath === null) {
+      throw new Error(`Cannot restart ${agent.name}: worktree is unavailable`);
+    }
+    const configuredRoute = await this.dependencies.routing(agent.tier);
+    const readOnly = true;
+    await provisionSkills(agent.worktreePath, agent.tool);
+    let argv: string[];
+    if (agent.tool === "claude") {
+      await writeClaudeAgentConfig(agent.worktreePath, {
+        daemonPort: this.dependencies.port,
+        name: agent.name,
+        readOnly,
+      });
+      argv = buildClaudeSpawnCommand({
+        daemonPort: this.dependencies.port,
+        model: configuredRoute.claude.model,
+        name: agent.name,
+        readOnly,
+        worktreePath: agent.worktreePath,
+      });
+    } else {
+      await writeCodexAgentConfig(agent.worktreePath, {
+        daemonPort: this.dependencies.port,
+        name: agent.name,
+        readOnly,
+      });
+      argv = buildCodexSpawnCommand({
+        daemonPort: this.dependencies.port,
+        effort: configuredRoute.codex.effort ?? "medium",
+        model: configuredRoute.codex.model,
+        name: agent.name,
+        readOnly,
+        worktreePath: agent.worktreePath,
+      });
+    }
+    argv.push([
+      `CRITICAL HIVE CONTROL ${message.id} (capability epoch ${message.capabilityEpoch}).`,
+      message.body,
+      "Your prior process was stopped and its worktree was preserved.",
+      "This process is read-only. Do not resume implementation or landing.",
+      `Acknowledge with hive_ack_message using agent=${JSON.stringify(agent.name)}, messageId=${JSON.stringify(message.id)}, capabilityEpoch=${message.capabilityEpoch}.`,
+      `Previous assignment for context only: ${agent.taskDescription}`,
+    ].join("\n\n"));
+    await this.dependencies.tmux.newSession(
+      agent.tmuxSession,
+      agent.worktreePath,
+      shellJoin(argv),
+    );
+    const now = new Date().toISOString();
+    return this.dependencies.db.insertAgent({
+      ...agent,
+      status: "control-paused",
+      writeRevoked: true,
+      lastEventAt: now,
+    });
   }
 
   async spawn(request: SpawnRequest): Promise<AgentRecord> {
@@ -281,6 +345,8 @@ export class HiveSpawner implements Spawner {
       contextPct: 0,
       createdAt: timestamp,
       lastEventAt: timestamp,
+      capabilityEpoch: 0,
+      writeRevoked: false,
     });
 
     let argv: string[];

@@ -7,7 +7,7 @@ import { join } from "node:path";
 import type { AgentRecord, HookEvent } from "../schemas";
 import { HiveDatabase } from "./db";
 import type { TmuxSender } from "./delivery";
-import { HIVE_VERSION, HiveDaemon } from "./server";
+import { HIVE_VERSION, HiveDaemon, inferLegacyControl } from "./server";
 import type { SpawnRequest, Spawner } from "./spawner";
 
 const home = mkdtempSync(join(tmpdir(), "hive-server-test-"));
@@ -30,6 +30,8 @@ function agent(overrides: Partial<AgentRecord> = {}): AgentRecord {
     contextPct: 14,
     createdAt: timestamp,
     lastEventAt: timestamp,
+    capabilityEpoch: 0,
+    writeRevoked: false,
     ...overrides,
   };
 }
@@ -100,6 +102,17 @@ class FailedSpawner implements Spawner {
   }
 }
 
+class RestartingSpawner extends StubSpawner {
+  readonly restarts: Array<{ agent: AgentRecord; messageId: string }> = [];
+  async restartForControl(
+    value: AgentRecord,
+    message: import("../schemas").AgentMessage,
+  ): Promise<AgentRecord> {
+    this.restarts.push({ agent: value, messageId: message.id });
+    return value;
+  }
+}
+
 async function postEvent(
   daemon: HiveDaemon,
   event: Record<string, unknown>,
@@ -122,6 +135,80 @@ function textValue(result: Awaited<ReturnType<Client["callTool"]>>): unknown {
 }
 
 describe("HiveDaemon HTTP server", () => {
+  test("classifies only conservative legacy control phrases as critical", () => {
+    expect(inferLegacyControl("Pause before coding; propose a design first."))
+      .toEqual({ priority: "critical", intent: "pause" });
+    expect(inferLegacyControl("Do not modify files until approval."))
+      .toEqual({ priority: "critical", intent: "restrict-writes" });
+    expect(inferLegacyControl("stop now")).toEqual({
+      priority: "critical",
+      intent: "stop",
+    });
+    expect(inferLegacyControl("Can you stop by the docs too?")).toEqual(null);
+  });
+
+  test("critical delivery kills only the target session and restarts read-only after revocation", async () => {
+    const db = new HiveDatabase(join(home, "critical-runtime.db"));
+    const tmux = new FakeDaemonTmux();
+    tmux.sessions.add("hive-maya");
+    tmux.sessions.add("hive-unrelated");
+    const spawner = new RestartingSpawner();
+    const daemon = new HiveDaemon({
+      db,
+      spawner,
+      tmux,
+      tmuxSender: new SilentTmuxSender(),
+    });
+    try {
+      db.insertAgent(agent());
+      const message = await daemon.delivery.send(
+        "orchestrator",
+        "maya",
+        "Do not modify files.",
+        { priority: "critical", intent: "restrict-writes" },
+      );
+      expect(tmux.killed).toEqual(["hive-maya"]);
+      expect(tmux.sessions.has("hive-unrelated")).toEqual(true);
+      expect(spawner.restarts).toHaveLength(1);
+      expect(spawner.restarts[0]?.agent).toMatchObject({
+        writeRevoked: true,
+        capabilityEpoch: 1,
+      });
+      expect(message.state).toEqual("injected");
+    } finally {
+      db.close();
+    }
+  });
+
+  test("landing is epoch-gated and cannot run after critical revocation", async () => {
+    const db = new HiveDatabase(join(home, "capability-land.db"));
+    const landed: string[] = [];
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new RestartingSpawner(),
+      tmux: new FakeDaemonTmux(),
+      tmuxSender: new SilentTmuxSender(),
+      repoRoot: "/repo",
+      port: 0,
+      landBranch: async (_root, branch) => {
+        landed.push(branch);
+        return { commit: "abc123" };
+      },
+    });
+    try {
+      db.insertAgent(agent());
+      await daemon.landAgent("maya", 0);
+      expect(landed).toEqual(["hive/maya-server"]);
+
+      db.revokeAgentCapabilities("maya", new Date().toISOString());
+      await expect(daemon.landAgent("maya", 0)).rejects.toThrow(
+        /revoked or stale/,
+      );
+      expect(landed).toHaveLength(1);
+    } finally {
+      db.close();
+    }
+  });
   test("event ingestion drives every status and creates approvals", async () => {
     const db = new HiveDatabase(join(home, "events.db"));
     const daemon = new HiveDaemon({

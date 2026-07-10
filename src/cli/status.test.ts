@@ -21,6 +21,8 @@ describe("status table", () => {
       contextPct: 37.6,
       createdAt: timestamp,
       lastEventAt: timestamp,
+      capabilityEpoch: 0,
+      writeRevoked: false,
     }];
 
     const table = formatStatusTable(agents);

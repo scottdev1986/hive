@@ -10,6 +10,7 @@ import {
   RouteSchema,
   RoutingTableSchema,
   type AgentRecord,
+  type AgentMessage,
   type HookEvent,
 } from ".";
 
@@ -120,6 +121,8 @@ describe("AgentRecordSchema", () => {
     contextPct: 25,
     createdAt: timestamp,
     lastEventAt: timestamp,
+    capabilityEpoch: 0,
+    writeRevoked: false,
   } satisfies AgentRecord;
 
   test("parses a valid round-trip", () => {
@@ -183,7 +186,18 @@ describe("AgentMessageSchema", () => {
     body: "The interface is ready.",
     createdAt: timestamp,
     deliveredAt: null,
-  };
+    priority: "normal",
+    intent: "instruction",
+    state: "queued",
+    injectedAt: null,
+    acknowledgedAt: null,
+    appliedAt: null,
+    deadlineAt: null,
+    alertAt: null,
+    sequence: 0,
+    idempotencyKey: null,
+    capabilityEpoch: null,
+  } satisfies AgentMessage;
 
   test("parses a valid round-trip", () => {
     const parsed = AgentMessageSchema.parse(message);

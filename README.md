@@ -77,6 +77,12 @@ Useful commands:
 | `hive watch <name>` | Reopen a closed agent window (e.g. `hive watch maya`) |
 | `hive stop` | Wind down all agents cleanly |
 
+### Changing direction while an agent works
+
+Hive distinguishes ordinary coordination from controls that reduce an agent's authority. Normal messages wait for the next turn boundary. Urgent directions interrupt at the next safe boundary and require acknowledgement. Critical controls—pause, stop, cancel, or do-not-modify—revoke the agent's write and landing capability first, preserve its worktree, stop only its process, and restart it read-only with the instruction already in context.
+
+The orchestrator sends these as structured `hive_send` requests with `priority` and `intent`; those fields are preferred over prose. Send results report `queued`, `injected`, `agent-acknowledged`, or `applied`. A queued result means exactly that: the agent has not seen it yet. Missed urgent or critical acknowledgement deadlines wake the orchestrator once without polling. For compatibility, a small set of unambiguous commands such as “stop now” and “pause before coding” are promoted to critical, but operators should rely on structured intent.
+
 ## FAQ
 
 **Is it safe to let agents run on my machine?**

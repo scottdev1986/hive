@@ -2,6 +2,9 @@ import {
   AgentMessageSchema,
   ORCHESTRATOR_NAME,
   type AgentMessage,
+  type AgentRecord,
+  type ControlIntent,
+  type MessagePriority,
   type OrchestratorMessageEnvelope,
 } from "../schemas";
 import { sendKeys } from "../adapters/tmux";
@@ -16,6 +19,23 @@ export interface TmuxSender {
   sendMessage(session: string, text: string): Promise<void>;
 }
 
+export interface SendOptions {
+  priority?: MessagePriority;
+  intent?: ControlIntent;
+  idempotencyKey?: string;
+  deadlineMs?: number;
+}
+
+export interface CriticalControlRuntime {
+  interruptAndRestart(
+    agent: AgentRecord,
+    message: AgentMessage,
+  ): Promise<void>;
+}
+
+const DEFAULT_URGENT_DEADLINE_MS = 30_000;
+const DEFAULT_CRITICAL_DEADLINE_MS = 10_000;
+
 export class BunTmuxSender implements TmuxSender {
   async sendMessage(session: string, text: string): Promise<void> {
     await sendKeys(session, text);
@@ -28,9 +48,22 @@ export class MessageDelivery {
   constructor(
     private readonly db: HiveDatabase,
     private readonly tmux: TmuxSender,
+    private readonly controls?: CriticalControlRuntime,
   ) {}
 
-  async send(from: string, to: string, body: string): Promise<AgentMessage> {
+  async send(
+    from: string,
+    to: string,
+    body: string,
+    options: SendOptions = {},
+  ): Promise<AgentMessage> {
+    if (options.idempotencyKey !== undefined) {
+      const existing = this.db.findMessageByIdempotency(
+        from,
+        options.idempotencyKey,
+      );
+      if (existing !== null) return existing;
+    }
     const recipient = to === ORCHESTRATOR_NAME
       ? null
       : this.db.getAgentByName(to);
@@ -43,19 +76,83 @@ export class MessageDelivery {
     if (recipient !== null) {
       this.requireLiveRecipient(to);
     }
-    const message = AgentMessageSchema.parse({
-      id: crypto.randomUUID(),
-      from,
-      to,
-      body,
-      createdAt: new Date().toISOString(),
-      deliveredAt: null,
-    });
-    this.db.insertMessage(message);
+    let priority = options.priority ?? "normal";
+    const intent = options.intent ?? "instruction";
+    if (["pause", "stop", "cancel", "restrict-writes"].includes(intent)) {
+      priority = "critical";
+    }
+    const now = new Date();
+    const capabilityEpoch = priority === "critical" && recipient !== null
+      ? recipient.capabilityEpoch + 1
+      : null;
+    const deadlineMs = options.deadlineMs ??
+      (priority === "critical"
+        ? DEFAULT_CRITICAL_DEADLINE_MS
+        : priority === "urgent"
+          ? DEFAULT_URGENT_DEADLINE_MS
+          : null);
+    let currentRecipient = recipient;
+    let message: AgentMessage;
+    try {
+      message = this.db.transaction(() => {
+        if (priority === "critical" && recipient !== null) {
+          currentRecipient = this.db.revokeAgentCapabilities(
+            to,
+            now.toISOString(),
+          );
+        }
+        const value = AgentMessageSchema.parse({
+          id: crypto.randomUUID(),
+          from,
+          to,
+          body,
+          createdAt: now.toISOString(),
+          deliveredAt: null,
+          priority,
+          intent,
+          state: "queued",
+          deadlineAt: deadlineMs === null
+            ? null
+            : new Date(now.getTime() + deadlineMs).toISOString(),
+          sequence: this.db.nextMessageSequence(to),
+          idempotencyKey: options.idempotencyKey ?? null,
+          capabilityEpoch,
+        });
+        return this.db.insertMessage(value);
+      });
+    } catch (error) {
+      const existing = options.idempotencyKey === undefined
+        ? null
+        : this.db.findMessageByIdempotency(from, options.idempotencyKey);
+      if (existing !== null) return existing;
+      throw error;
+    }
 
     if (to === ORCHESTRATOR_NAME) {
       await this.wakeOrchestrator().catch(() => undefined);
       return this.getStoredMessage(message.id);
+    }
+
+    if (priority === "critical") {
+      if (currentRecipient === null || this.controls === undefined) {
+        return this.getStoredMessage(message.id);
+      }
+      try {
+        await this.controls.interruptAndRestart(currentRecipient, message);
+      } catch (error) {
+        const alertedAt = new Date().toISOString();
+        this.db.markMessageAlerted(message.id, alertedAt);
+        await this.send(
+          "hive-control",
+          ORCHESTRATOR_NAME,
+          `Critical control ${message.id} revoked ${to}'s capability epoch but process restart failed: ${
+            error instanceof Error ? error.message : "unknown error"
+          }. Worktree was preserved; operator attention is required.`,
+          { idempotencyKey: `control-restart-failed:${message.id}` },
+        ).catch(() => undefined);
+        return this.getStoredMessage(message.id);
+      }
+      return this.markInjected(message);
     }
 
     if (recipient === null) {
@@ -119,7 +216,11 @@ export class MessageDelivery {
 
   inbox(agentName: string): AgentMessage[] {
     const deliveredAt = new Date().toISOString();
-    return this.db.claimUndeliveredMessages(agentName, deliveredAt);
+    return this.db.claimUndeliveredMessages(agentName, deliveredAt).map(
+      (message) => message.priority === "normal"
+        ? this.db.transitionMessage(message.id, "applied", deliveredAt)!
+        : this.db.transitionMessage(message.id, "injected", deliveredAt)!,
+    );
   }
 
   async orchestratorInbox(): Promise<OrchestratorMessageEnvelope[]> {
@@ -127,7 +228,14 @@ export class MessageDelivery {
       this.db.claimUndeliveredMessages(
         ORCHESTRATOR_NAME,
         new Date().toISOString(),
-      ).map(createOrchestratorEnvelope)
+      ).map((message) => {
+        const applied = this.db.transitionMessage(
+          message.id,
+          "applied",
+          message.deliveredAt!,
+        )!;
+        return createOrchestratorEnvelope(applied);
+      })
     );
   }
 
@@ -149,7 +257,11 @@ export class MessageDelivery {
           new Date().toISOString(),
         );
         if (acknowledged !== null) {
-          delivered.push(acknowledged);
+          delivered.push(this.db.transitionMessage(
+            acknowledged.id,
+            "applied",
+            acknowledged.deliveredAt!,
+          )!);
         }
       }
       return delivered;
@@ -160,18 +272,125 @@ export class MessageDelivery {
     message: AgentMessage,
     session: string,
   ): Promise<AgentMessage> {
+    const text = message.priority === "normal"
+      ? `📨 message from ${message.from}: ${message.body}`
+      : [
+          `⚠️ ${message.priority.toUpperCase()} HIVE CONTROL ${message.id} from ${message.from}: ${message.body}`,
+          `Acknowledge with hive_ack_message agent=${JSON.stringify(message.to)} messageId=${JSON.stringify(message.id)}${
+            message.capabilityEpoch === null
+              ? ""
+              : ` capabilityEpoch=${message.capabilityEpoch}`
+          } applied=true.`,
+        ].join("\n");
     await this.tmux.sendMessage(
       session,
-      `📨 message from ${message.from}: ${message.body}`,
+      text,
     );
-    const delivered = this.db.markMessageDelivered(
-      message.id,
-      new Date().toISOString(),
-    );
+    const delivered = this.markInjected(message);
     if (delivered === null) {
       throw new Error(`Message disappeared during delivery: ${message.id}`);
     }
     return delivered;
+  }
+
+  acknowledge(
+    agentName: string,
+    messageId: string,
+    capabilityEpoch: number | undefined,
+    applied: boolean,
+  ): AgentMessage {
+    const message = this.getStoredMessage(messageId);
+    if (message.to !== agentName) {
+      throw new Error(`Message ${messageId} is not addressed to ${agentName}`);
+    }
+    if (message.state === "queued") {
+      throw new Error(`Message ${messageId} has not been injected`);
+    }
+    if (
+      message.capabilityEpoch !== null &&
+      capabilityEpoch !== message.capabilityEpoch
+    ) {
+      throw new Error(`Stale capability epoch for message ${messageId}`);
+    }
+    const now = new Date().toISOString();
+    let updated = this.db.transitionMessage(
+      messageId,
+      "agent-acknowledged",
+      now,
+    )!;
+    if (applied || message.priority === "critical") {
+      updated = this.db.transitionMessage(messageId, "applied", now)!;
+    }
+    return updated;
+  }
+
+  async alertExpiredControls(now = new Date().toISOString()): Promise<number> {
+    let count = 0;
+    for (const message of this.db.listExpiredUnacknowledged(now)) {
+      if (this.db.markMessageAlerted(message.id, now)?.alertAt !== now) continue;
+      await this.send(
+        "hive-control",
+        ORCHESTRATOR_NAME,
+        `Control ${message.id} for ${message.to} (${message.priority}/${message.intent}) missed its acknowledgement deadline; current state=${message.state}.`,
+        { idempotencyKey: `control-deadline:${message.id}` },
+      );
+      count += 1;
+    }
+    return count;
+  }
+
+  async recoverCriticalControls(): Promise<number> {
+    if (this.controls === undefined) return 0;
+    let recovered = 0;
+    for (const queued of this.db.listMessages()) {
+      let message = queued;
+      if (message.priority !== "critical" || message.state !== "queued") {
+        continue;
+      }
+      let recipient = this.db.getAgentByName(message.to);
+      if (recipient === null) continue;
+      if (!recipient.writeRevoked) {
+        recipient = this.db.revokeAgentCapabilities(
+          recipient.name,
+          new Date().toISOString(),
+        );
+        if (recipient === null) continue;
+        message = this.db.assignMessageCapabilityEpoch(
+          message.id,
+          recipient.capabilityEpoch,
+        )!;
+      }
+      try {
+        await this.controls.interruptAndRestart(recipient, message);
+        this.markInjected(message);
+        recovered += 1;
+      } catch (error) {
+        const alertedAt = new Date().toISOString();
+        this.db.markMessageAlerted(message.id, alertedAt);
+        await this.send(
+          "hive-control",
+          ORCHESTRATOR_NAME,
+          `Recovery of critical control ${message.id} for ${message.to} failed: ${
+            error instanceof Error ? error.message : "unknown error"
+          }. Capability remains revoked and the worktree is preserved.`,
+          { idempotencyKey: `control-recovery-failed:${message.id}` },
+        ).catch(() => undefined);
+      }
+    }
+    return recovered;
+  }
+
+  private markInjected(message: AgentMessage): AgentMessage {
+    const now = new Date().toISOString();
+    const injected = this.db.markMessageDelivered(message.id, now);
+    if (injected === null) {
+      throw new Error(`Message disappeared during delivery: ${message.id}`);
+    }
+    return this.db.transitionMessage(
+      message.id,
+      message.priority === "normal" ? "applied" : "injected",
+      now,
+    )!;
   }
 
   private getStoredMessage(id: string): AgentMessage {
