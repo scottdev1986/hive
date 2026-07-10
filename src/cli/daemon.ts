@@ -49,6 +49,11 @@ export async function runDaemon(): Promise<void> {
     db,
     repoRoot: process.cwd(),
     port,
+    // Only the daemon mints. The spawner asks for a credential, it never
+    // creates one, and the token is written to a 0600 file rather than handed
+    // to the agent process through its environment.
+    issueCredential: (name, role, epoch) =>
+      daemon.issueCredential(name, role, epoch),
     config,
     routing: resolveRoute,
     tmux,

@@ -214,7 +214,10 @@ describe("Claude adapter", () => {
     const mcp = JSON.parse(
       await readFile(join(worktreePath, ".mcp.json"), "utf8"),
     ) as {
-      mcpServers: Record<string, { type: string; url: string }>;
+      mcpServers: Record<
+        string,
+        { type: string; url: string; headersHelper?: string }
+      >;
     };
 
     expect(settings.permissions).toEqual({
@@ -241,6 +244,9 @@ describe("Claude adapter", () => {
         hive: {
           type: "http",
           url: "http://127.0.0.1:4317/mcp",
+          // The capability is fetched at connect time, never from the
+          // environment, so descendants inherit no credential.
+          headersHelper: "hive credential --agent orchestrator",
         },
       },
     });
@@ -456,6 +462,7 @@ describe("Claude Channels", () => {
     expect(mcp.mcpServers.hive).toEqual({
       type: "http",
       url: "http://127.0.0.1:4317/mcp",
+      headersHelper: "hive credential --agent maya",
     });
     expect(mcp.mcpServers[HIVE_CHANNEL_SERVER_NAME]).toEqual({
       type: "stdio",

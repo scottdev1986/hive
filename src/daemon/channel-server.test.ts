@@ -10,6 +10,7 @@ import type { TmuxSender } from "./delivery";
 import { QuotaLedger } from "./quota-ledger";
 import { QuotaService } from "./quota";
 import { HiveDaemon } from "./server";
+import { actingAs } from "./testing";
 import type { SpawnRequest, Spawner } from "./spawner";
 
 const home = mkdtempSync(join(tmpdir(), "hive-channel-server-"));
@@ -83,18 +84,26 @@ function daemon(withQuota = false): { daemon: HiveDaemon; db: HiveDatabase } {
   };
 }
 
+// Channel and statusline routes are subject-bound, so a test posts as the
+// agent its body names — exactly as that agent's bridge or hook would.
 const post = (
   instance: HiveDaemon,
   path: string,
   body: unknown,
-): Promise<Response> =>
-  instance.fetch(
-    new Request(`http://127.0.0.1/${path.replace(/^\//, "")}`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-    }),
-  );
+): Promise<Response> => {
+  const named = typeof body === "object" && body !== null && "agent" in body &&
+      typeof body.agent === "string" && body.agent.length > 0
+    ? body.agent
+    : null;
+  const fetcher = named === null
+    ? actingAs(instance, "operator")
+    : actingAs(instance, named, "writer");
+  return fetcher(`http://127.0.0.1/${path.replace(/^\//, "")}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+};
 
 /** Drive a real MCP tool call against the daemon, as the orchestrator does. */
 async function callTool(
@@ -104,7 +113,7 @@ async function callTool(
 ): Promise<void> {
   const transport = new StreamableHTTPClientTransport(
     new URL("http://hive/mcp"),
-    { fetch: (input, init) => instance.fetch(new Request(input, init)) },
+    { fetch: actingAs(instance, "orchestrator", "orchestrator") },
   );
   const client = new Client({ name: "channel-test", version: "1.0.0" });
   await client.connect(transport);

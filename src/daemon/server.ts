@@ -46,6 +46,16 @@ import {
   type MemoryWriteInput,
 } from "../schemas";
 import { ChannelRegistry } from "./channels";
+import {
+  bearerToken,
+  CapabilityStore,
+  type Action,
+  type Capability,
+  type Decision,
+  type Denial,
+  type Role,
+} from "./capabilities";
+import { OPERATOR_SUBJECT, writeCredential } from "./credentials";
 import { HiveDatabase, type Approval } from "./db";
 import type { LayoutCoordinator } from "./layout";
 import { MemoryIndex } from "./memory-index";
@@ -86,6 +96,8 @@ import {
 import type { ResourceLimits } from "../schemas";
 
 export const HIVE_VERSION = "0.1.0";
+
+const OPERATOR_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 // Codex app-server hosts drop their pidfiles beside their sockets in /tmp
 // (see defaultSocketPath); the daemon reaps children whose host died without
@@ -341,6 +353,7 @@ export class HiveDaemon {
   readonly channels: ChannelRegistry;
   readonly spawner: Spawner;
   readonly memory: MemoryIndex;
+  readonly capabilities: CapabilityStore;
   private memoryLock: Promise<unknown> = Promise.resolve();
   private readonly ownsDatabase: boolean;
   private readonly port: number;
@@ -377,6 +390,13 @@ export class HiveDaemon {
     this.db = options.db ?? new HiveDatabase();
     this.memory = new MemoryIndex(this.db.database);
     this.spawner = options.spawner;
+    this.capabilities = new CapabilityStore(this.db, (name) => {
+      const record = this.db.getAgentByName(name);
+      return record === null ? null : {
+        capabilityEpoch: record.capabilityEpoch,
+        writeRevoked: record.writeRevoked,
+      };
+    });
     this.port = options.port ?? readConfiguredPort();
     this.hostname = options.hostname ?? "127.0.0.1";
     this.manageLifecycle = options.manageLifecycle ?? false;
@@ -472,6 +492,79 @@ export class HiveDaemon {
         ? {}
         : { sleep: options.recovery.sleep }),
     });
+    // The daemon that owns the lifecycle files owns the operator and
+    // orchestrator credentials. Embedded daemons (tests, tooling) mint in
+    // memory and never touch disk, so an in-process test can never overwrite a
+    // live operator's token.
+    if (this.manageLifecycle) {
+      this.issueCredential(OPERATOR_SUBJECT, "operator", 0, OPERATOR_TTL_MS);
+      this.issueCredential(ORCHESTRATOR_NAME, "orchestrator", 0, OPERATOR_TTL_MS);
+    }
+  }
+
+  /** Mints a credential for one subject and writes it to its 0600 file,
+   * revoking whatever that subject held before. This is the only path by which
+   * a token comes into existence outside the daemon's own process: there is no
+   * mint tool, no token exchange, and no delegation. */
+  issueCredential(
+    subject: string,
+    role: Role,
+    epoch: number,
+    ttlMs?: number,
+  ): string {
+    this.capabilities.revokeSubject(subject);
+    const { token } = this.capabilities.mint(subject, role, {
+      epoch,
+      ...(ttlMs === undefined ? {} : { ttlMs }),
+    });
+    writeCredential(subject, token);
+    return token;
+  }
+
+  private denied(decision: Denial): Response {
+    return json(
+      { error: decision.message, reason: decision.reason },
+      { status: decision.status },
+    );
+  }
+
+  /** Authenticate before touching the request body: a caller with no
+   * credential is turned away without the daemon reading what it asked for. */
+  private authenticate(request: Request, route: string): Decision {
+    return this.capabilities.authenticateAndAudit(bearerToken(request), route);
+  }
+
+  private authorize(
+    capability: Capability,
+    route: string,
+    action: Action,
+    subject: string | undefined,
+    auditAllow = true,
+  ): Decision {
+    return this.capabilities.authorizeAndAudit(
+      capability,
+      { route, action, ...(subject === undefined ? {} : { subject }) },
+      auditAllow,
+    );
+  }
+
+  /** The MCP transport has no place for an HTTP status, so a denial becomes a
+   * tool error. The message names the rule that refused, never the token. */
+  private authorizeTool(
+    capability: Capability,
+    tool: string,
+    action: Action,
+    subject?: string,
+    auditAllow = true,
+  ): void {
+    const decision = this.authorize(
+      capability,
+      `/mcp:${tool}`,
+      action,
+      subject,
+      auditAllow,
+    );
+    if (!decision.ok) throw new Error(decision.message);
   }
 
   get server(): Server<undefined> | null {
@@ -833,9 +926,14 @@ export class HiveDaemon {
 
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
+    // Public and non-authorizing. Health proves liveness and nothing else; it
+    // must never grow a side effect, because a route that mutates needs a
+    // capability and no launcher has one before it decides to talk to us.
     if (url.pathname === "/health" && request.method === "GET") {
       return json({ ok: true, version: HIVE_VERSION });
     }
+    // Everything below mutates state or reads another tenant's data, so every
+    // one of them authenticates first. See the capability rights matrix.
     if (url.pathname === "/event" && request.method === "POST") {
       return this.receiveEvent(request);
     }
@@ -844,6 +942,15 @@ export class HiveDaemon {
         return this.registerOrchestratorTerminal(request);
       }
       if (request.method === "DELETE") {
+        const authenticated = this.authenticate(request, "/orchestrator-terminal");
+        if (!authenticated.ok) return this.denied(authenticated);
+        const decision = this.authorize(
+          authenticated.capability,
+          "/orchestrator-terminal",
+          "terminal:register",
+          undefined,
+        );
+        if (!decision.ok) return this.denied(decision);
         this.db.clearOrchestratorTerminal();
         return json({ ok: true });
       }
@@ -870,11 +977,28 @@ export class HiveDaemon {
     pathname: string,
     request: Request,
   ): Promise<Response> {
+    const authenticated = this.authenticate(request, pathname);
+    if (!authenticated.ok) return this.denied(authenticated);
     let body: unknown;
     try {
       body = await request.json();
     } catch {
       return json({ error: "Invalid channel request" }, { status: 400 });
+    }
+    // Every channel route names its agent, and a bridge may only speak for the
+    // agent it was launched for. Poll and ack are not audited on allow: they
+    // are the long-poll heartbeat and would bury every other row.
+    const named = z.object({ agent: z.string().min(1) }).safeParse(body);
+    if (named.success) {
+      const decision = this.authorize(
+        authenticated.capability,
+        pathname,
+        "channel:use",
+        named.data.agent,
+        pathname === "/channel/register" ||
+          pathname === "/channel/permission-request",
+      );
+      if (!decision.ok) return this.denied(decision);
     }
     try {
       if (pathname === "/channel/register") {
@@ -973,6 +1097,8 @@ export class HiveDaemon {
   }
 
   private async receiveStatusline(request: Request): Promise<Response> {
+    const authenticated = this.authenticate(request, "/statusline");
+    if (!authenticated.ok) return this.denied(authenticated);
     let body: unknown;
     try {
       body = await request.json();
@@ -986,6 +1112,14 @@ export class HiveDaemon {
         { status: 400 },
       );
     }
+    const decision = this.authorize(
+      authenticated.capability,
+      "/statusline",
+      "telemetry:report",
+      parsed.data.agent,
+      false,
+    );
+    if (!decision.ok) return this.denied(decision);
     const agent = this.db.getAgentByName(parsed.data.agent);
     if (agent === null) {
       return json(
@@ -1011,6 +1145,15 @@ export class HiveDaemon {
   private async registerOrchestratorTerminal(
     request: Request,
   ): Promise<Response> {
+    const authenticated = this.authenticate(request, "/orchestrator-terminal");
+    if (!authenticated.ok) return this.denied(authenticated);
+    const authorized = this.authorize(
+      authenticated.capability,
+      "/orchestrator-terminal",
+      "terminal:register",
+      undefined,
+    );
+    if (!authorized.ok) return this.denied(authorized);
     let body: unknown;
     try {
       body = await request.json();
@@ -1039,6 +1182,8 @@ export class HiveDaemon {
   }
 
   private async recoverEndpoint(request: Request): Promise<Response> {
+    const authenticated = this.authenticate(request, "/recover");
+    if (!authenticated.ok) return this.denied(authenticated);
     let body: unknown;
     try {
       body = await request.json();
@@ -1053,6 +1198,13 @@ export class HiveDaemon {
         { status: 400 },
       );
     }
+    const decision = this.authorize(
+      authenticated.capability,
+      "/recover",
+      "agent:recover",
+      parsed.data.agent,
+    );
+    if (!decision.ok) return this.denied(decision);
     try {
       const outcomes = await this.recoverCrashedAgents(parsed.data.agent);
       return json({ outcomes });
@@ -1065,6 +1217,8 @@ export class HiveDaemon {
   }
 
   private async attachViewer(request: Request): Promise<Response> {
+    const authenticated = this.authenticate(request, "/viewer");
+    if (!authenticated.ok) return this.denied(authenticated);
     let body: unknown;
     try {
       body = await request.json();
@@ -1078,6 +1232,13 @@ export class HiveDaemon {
         { status: 400 },
       );
     }
+    const decision = this.authorize(
+      authenticated.capability,
+      "/viewer",
+      "viewer:attach",
+      parsed.data.agent,
+    );
+    if (!decision.ok) return this.denied(decision);
     const agent = this.db.getAgentByName(parsed.data.agent);
     if (agent === null) {
       return json(
@@ -1180,6 +1341,8 @@ export class HiveDaemon {
   }
 
   private async receiveEvent(request: Request): Promise<Response> {
+    const authenticated = this.authenticate(request, "/event");
+    if (!authenticated.ok) return this.denied(authenticated);
     let body: unknown;
     try {
       body = await request.json();
@@ -1193,6 +1356,16 @@ export class HiveDaemon {
         { status: 400 },
       );
     }
+    // A hook may only report on the agent it was installed for. Hooks fire at
+    // every turn boundary, so allows are not audited.
+    const decision = this.authorize(
+      authenticated.capability,
+      "/event",
+      "event:report",
+      event.data.agentName,
+      false,
+    );
+    if (!decision.ok) return this.denied(decision);
     try {
       await this.processEvent(event.data);
       return json({ ok: true });
@@ -1204,7 +1377,7 @@ export class HiveDaemon {
     }
   }
 
-  private createMcpServer(): McpServer {
+  private createMcpServer(capability: Capability): McpServer {
     const server = new McpServer({
       name: "hive-daemon",
       version: HIVE_VERSION,
@@ -1216,6 +1389,7 @@ export class HiveDaemon {
         'Fetch agent status on demand. Use detail "active" for a compact active-team summary; omitted detail preserves the full legacy response.',
       inputSchema: StatusRequestSchema,
     }, async ({ detail }) => {
+      this.authorizeTool(capability, "hive_status", "status:read", undefined, false);
       const agents = this.db.listAgents();
       return toolResult(
         detail === "active" ? compactActiveTeam(agents) : agents,
@@ -1228,7 +1402,10 @@ export class HiveDaemon {
       description:
         "Show configured provider/account/model-pool capacity, reservations, telemetry confidence, freshness, and reset estimates.",
       inputSchema: z.object({}),
-    }, async () => toolResult(this.quota?.statuses() ?? [], "quotas"));
+    }, async () => {
+      this.authorizeTool(capability, "hive_quota_status", "quota:read", undefined, false);
+      return toolResult(this.quota?.statuses() ?? [], "quotas");
+    });
 
     server.registerTool("hive_quota_reconcile", {
       title: "Reconcile Hive quota",
@@ -1236,6 +1413,7 @@ export class HiveDaemon {
         "Record a provider, gateway, or manual usage observation for one configured quota pool.",
       inputSchema: QuotaObservationRequestSchema,
     }, async (observation) => {
+      this.authorizeTool(capability, "hive_quota_reconcile", "quota:write");
       if (this.quota === undefined) {
         throw new Error("Quota tracking is unavailable");
       }
@@ -1251,14 +1429,17 @@ export class HiveDaemon {
       description:
         "Resume crashed agent sessions with their conversation context restored (native tool resume in the same worktree). Omit agent to sweep all recoverable agents; name one — including an agent already marked dead — for a manual retry.",
       inputSchema: z.object({ agent: z.string().min(1).optional() }),
-    }, async ({ agent }) =>
-      toolResult(await this.recoverCrashedAgents(agent), "outcomes"));
+    }, async ({ agent }) => {
+      this.authorizeTool(capability, "hive_recover", "agent:recover", agent);
+      return toolResult(await this.recoverCrashedAgents(agent), "outcomes");
+    });
 
     server.registerTool("hive_mark_dead", {
       title: "Mark Hive agent dead",
       description: "Mark a stopped Hive agent as dead in the status table.",
       inputSchema: MarkDeadRequestSchema,
     }, async ({ agent: agentName }) => {
+      this.authorizeTool(capability, "hive_mark_dead", "agent:mark-dead", agentName);
       const agent = this.db.getAgentByName(agentName);
       if (agent === null) {
         throw new Error(`Hive agent not found: ${agentName}`);
@@ -1268,6 +1449,9 @@ export class HiveDaemon {
         status: "dead",
         lastEventAt: new Date().toISOString(),
       });
+      // A dead agent's credential dies with it, so a surviving descendant of
+      // its process cannot keep speaking for a tenant that no longer exists.
+      this.capabilities.revokeSubject(updated.name);
       this.channels.drop(updated.name);
       await this.settleAgentQuota(updated);
       return toolResult(updated, "agent");
@@ -1279,10 +1463,12 @@ export class HiveDaemon {
         "Kill a named Hive agent's tmux session, mark it dead, and optionally remove its worktree and branch. Removal refuses to delete unmerged commits or dirty files and reports them as stranded work instead; pass discardWork to delete them anyway.",
       inputSchema: KillRequestSchema,
     }, async ({ name, removeWorktree: shouldRemoveWorktree, discardWork }) => {
+      this.authorizeTool(capability, "hive_kill", "agent:kill", name);
       const agent = this.db.getAgentByName(name);
       if (agent === null) {
         throw new Error(`Hive agent not found: ${name}`);
       }
+      this.capabilities.revokeSubject(agent.name);
 
       await this.tmux.killSession(agent.tmuxSession, { ignoreMissing: true });
       const timestamp = new Date().toISOString();
@@ -1383,6 +1569,9 @@ export class HiveDaemon {
         'Send a durable message and return its real lifecycle state. normal waits for an ordinary boundary; urgent interrupts at the next safe boundary and requires acknowledgement; critical revokes write/landing authority and restarts the target read-only. Prefer structured priority and intent. Recipient "orchestrator" wakes the root.',
       inputSchema: SendRequestSchema,
     }, async ({ from, to, body, ...requested }) => {
+      // `from` is a claim about identity, so it is checked against the bound
+      // subject rather than trusted. No agent can forge a message from another.
+      this.authorizeTool(capability, "hive_send", "message:send", from, false);
       const inferred = requested.priority === undefined &&
           requested.intent === undefined
         ? inferLegacyControl(body)
@@ -1399,6 +1588,7 @@ export class HiveDaemon {
         "Acknowledge an injected urgent or critical control using its capability epoch; optionally confirm it has been applied.",
       inputSchema: MessageAcknowledgementSchema,
     }, async ({ agent, messageId, capabilityEpoch, applied }) => {
+      this.authorizeTool(capability, "hive_ack_message", "message:ack", agent);
       const message = await this.acknowledgeControlMessage(
         agent,
         messageId,
@@ -1413,12 +1603,17 @@ export class HiveDaemon {
       description:
         'Read and atomically acknowledge queued messages. Recipient "orchestrator" returns bounded envelopes.',
       inputSchema: InboxRequestSchema,
-    }, async ({ agent }) => toolResult(
-      agent === ORCHESTRATOR_NAME
-        ? await this.delivery.orchestratorInbox()
-        : this.delivery.inbox(agent),
-      "messages",
-    ));
+    }, async ({ agent }) => {
+      // The global orchestrator inbox is reachable only by naming the
+      // orchestrator, which only the orchestrator's own capability may do.
+      this.authorizeTool(capability, "hive_inbox", "inbox:read", agent, false);
+      return toolResult(
+        agent === ORCHESTRATOR_NAME
+          ? await this.delivery.orchestratorInbox()
+          : this.delivery.inbox(agent),
+        "messages",
+      );
+    });
 
     server.registerTool("hive_read_message", {
       title: "Read full orchestrator message",
@@ -1426,6 +1621,7 @@ export class HiveDaemon {
         "Read one full agent report by the id referenced in a bounded orchestrator envelope.",
       inputSchema: ReadMessageRequestSchema,
     }, async ({ id }) => {
+      this.authorizeTool(capability, "hive_read_message", "message:read", undefined, false);
       const message = this.delivery.readOrchestratorMessage(id);
       if (message === null) {
         throw new Error(`Orchestrator message not found: ${id}`);
@@ -1438,6 +1634,7 @@ export class HiveDaemon {
       description: "Start a new Hive agent for a delegated task.",
       inputSchema: SpawnRequestSchema,
     }, async (request: SpawnRequest) => {
+      this.authorizeTool(capability, "hive_spawn", "agent:spawn");
       if (this.memoryPressure) {
         throw new Error(
           "Hive is refusing to spawn new agents while the system is under " +
@@ -1465,14 +1662,25 @@ export class HiveDaemon {
       title: "List pending approvals",
       description: "List approval requests currently waiting for a decision.",
       inputSchema: z.object({}),
-    }, async () =>
-      toolResult(this.db.listApprovals("pending"), "approvals"));
+    }, async () => {
+      this.authorizeTool(capability, "hive_approvals", "approval:read", undefined, false);
+      return toolResult(this.db.listApprovals("pending"), "approvals");
+    });
 
     server.registerTool("hive_approve", {
       title: "Resolve agent approval",
       description: "Approve or deny a pending Hive agent approval request.",
       inputSchema: ApprovalDecisionSchema,
     }, async ({ id, decision }) => {
+      // The approval names an agent only indirectly, through its id, so the
+      // subject is resolved from the record before it is authorized against.
+      const pending = this.db.getApproval(id);
+      this.authorizeTool(
+        capability,
+        "hive_approve",
+        "approval:decide",
+        pending?.agentName,
+      );
       const approval = this.db.resolveApproval(
         id,
         decision === "approve" ? "approved" : "denied",
@@ -1514,10 +1722,32 @@ export class HiveDaemon {
         "Fast-forward land a writer branch only when its durable write capability epoch is current and not revoked.",
       inputSchema: LandRequestSchema,
     }, async ({ agent: name, capabilityEpoch }) => {
-      return toolResult(
-        await this.landAgent(name, capabilityEpoch),
-        "result",
-      );
+      this.authorizeTool(capability, "hive_land", "branch:land", name);
+      // Reserve the one-shot right before merging, so two concurrent lands
+      // cannot both reach git. A lost fast-forward race releases it again:
+      // main moved, the writer must rebase, and the retry has to be possible.
+      if (!this.capabilities.consumeOneShot(capability, "branch:land")) {
+        this.capabilities.audit({
+          route: "/mcp:hive_land",
+          action: "branch:land",
+          callerSubject: capability.subject,
+          callerRole: capability.role,
+          capabilityId: capability.id,
+          requestedSubject: name,
+          epoch: capability.epoch,
+          decision: "deny",
+          reason: "capability.replayed",
+        });
+        throw new Error(
+          `The one-shot branch:land grant for ${capability.subject} is already spent`,
+        );
+      }
+      try {
+        return toolResult(await this.landAgent(name, capabilityEpoch), "result");
+      } catch (error) {
+        this.capabilities.releaseOneShot(capability, "branch:land");
+        throw error;
+      }
     });
 
     server.registerTool("memory_search", {
@@ -1525,15 +1755,20 @@ export class HiveDaemon {
       description:
         'Full-text search durable memory facts across repo (".hive/memory/", committed) and global ("~/.hive/memory/") scope. Returns short snippets only; pull a full fact with memory_read before relying on it.',
       inputSchema: MemorySearchRequestSchema,
-    }, async ({ query, scope, limit }) =>
-      toolResult(this.memory.search(query, { scope, limit }), "results"));
+    }, async ({ query, scope, limit }) => {
+      this.authorizeTool(capability, "memory_search", "memory:read", undefined, false);
+      return toolResult(this.memory.search(query, { scope, limit }), "results");
+    });
 
     server.registerTool("memory_write", {
       title: "Write a Hive memory fact",
       description:
         "Create or update one durable Markdown memory fact. Omit id to create a new fact (a slug is derived from the title); pass an existing scope+id to overwrite that fact in place. Repo scope is committed and travels with the clone; global scope accumulates lessons across every project. Writes are serialized and immediately reflected in search.",
       inputSchema: MemoryWriteInputSchema,
-    }, async (input) => toolResult(await this.writeMemoryFact(input), "fact"));
+    }, async (input) => {
+      this.authorizeTool(capability, "memory_write", "memory:write");
+      return toolResult(await this.writeMemoryFact(input), "fact");
+    });
 
     server.registerTool("memory_read", {
       title: "Read a full Hive memory fact",
@@ -1541,6 +1776,7 @@ export class HiveDaemon {
         "Read one full memory fact by scope and id, as referenced by the injected index or a memory_search result.",
       inputSchema: MemoryFactRequestSchema,
     }, async ({ scope, id }) => {
+      this.authorizeTool(capability, "memory_read", "memory:read", undefined, false);
       const fact = await readMemoryFact(this.repoRoot, scope, id);
       if (fact === null) {
         throw new Error(`Memory fact not found: [${scope}] ${id}`);
@@ -1553,26 +1789,40 @@ export class HiveDaemon {
       description:
         "Delete one memory fact's Markdown file and remove it from the search index. Use for pruning stale facts.",
       inputSchema: MemoryFactRequestSchema,
-    }, async ({ scope, id }) =>
-      toolResult({ deleted: await this.deleteMemoryFact(scope, id) }, "result"));
+    }, async ({ scope, id }) => {
+      this.authorizeTool(capability, "memory_delete", "memory:write");
+      return toolResult({ deleted: await this.deleteMemoryFact(scope, id) }, "result");
+    });
 
     server.registerTool("memory_reindex", {
       title: "Rebuild the Hive memory search index",
       description:
         "Rebuild the SQLite FTS index for this repo's committed and global memory facts from the Markdown files on disk. The files are authoritative and the index is always disposable, so this is safe to call any time.",
       inputSchema: z.object({}),
-    }, async () =>
-      toolResult({ count: await this.rebuildMemoryIndex() }, "result"));
+    }, async () => {
+      this.authorizeTool(capability, "memory_reindex", "memory:write");
+      return toolResult({ count: await this.rebuildMemoryIndex() }, "result");
+    });
 
     return server;
   }
 
   private async handleMcp(request: Request): Promise<Response> {
+    // Authentication gates the whole transport, so an anonymous caller cannot
+    // even enumerate the tools it is not allowed to call.
+    const authenticated = this.authenticate(request, "/mcp");
+    if (!authenticated.ok) {
+      return json({
+        jsonrpc: "2.0",
+        error: { code: -32001, message: authenticated.message },
+        id: null,
+      }, { status: authenticated.status });
+    }
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
       enableJsonResponse: true,
     });
-    const server = this.createMcpServer();
+    const server = this.createMcpServer(authenticated.capability);
     try {
       await server.connect(transport);
       return await transport.handleRequest(request);

@@ -110,10 +110,20 @@ type Sleep = (milliseconds: number) => Promise<void>;
 type ModelResolver = typeof resolveConcreteModel;
 type ClaudeVersionDetector = () => Promise<string | null>;
 
+/** Mints one agent's capability, writes it to its 0600 credential file, and
+ * returns the token. Absent (tests, tooling) the agent is launched with no
+ * credential and its daemon calls fail closed rather than fail open. */
+export type CredentialIssuer = (
+  name: string,
+  role: "writer" | "reader",
+  epoch: number,
+) => string;
+
 export interface HiveSpawnerDependencies {
   db: AgentStore;
   repoRoot: string;
   port: number;
+  issueCredential?: CredentialIssuer;
   config: Pick<HiveConfig, "terminal" | "headless"> & {
     codex?: Pick<HiveConfig["codex"], "driver">;
     /** Writer autonomy. Absent (older callers, tests) fails safe to
@@ -353,6 +363,14 @@ export class HiveSpawner implements Spawner {
     // to a control-paused agent queues exactly as it did before.
     const channels = false;
     let argv: string[];
+    // The restarted process is read-only, so it re-mints as a reader at the
+    // freshly advanced epoch: the critical control that paused it has already
+    // revoked its write and landing rights, and its old token is now stale.
+    const capabilityToken = this.dependencies.issueCredential?.(
+      agent.name,
+      "reader",
+      prepared.record.capabilityEpoch,
+    );
     try {
       await provisionSkills(agent.worktreePath, identity.tool);
       if (identity.tool === "claude") {
@@ -376,6 +394,7 @@ export class HiveSpawner implements Spawner {
           daemonPort: this.dependencies.port,
           name: agent.name,
           readOnly,
+          ...(capabilityToken === undefined ? {} : { capabilityToken }),
         });
         const useAppServer =
           this.dependencies.config.codex?.driver === "app-server" &&
@@ -711,6 +730,13 @@ export class HiveSpawner implements Spawner {
 
     const dangerous = this.dependencies.config.autonomy === "dangerous";
     let argv: string[];
+    // A fresh writer is minted at epoch 0 with exactly one landing right, for
+    // its own branch. It cannot spawn, approve, kill, or name another agent.
+    const capabilityToken = this.dependencies.issueCredential?.(
+      name,
+      "writer",
+      record.capabilityEpoch,
+    );
     try {
       await provisionSkills(worktree.path, tool);
       if (tool === "claude") {
@@ -736,6 +762,7 @@ export class HiveSpawner implements Spawner {
           daemonPort: this.dependencies.port,
           name,
           readOnly: false,
+          ...(capabilityToken === undefined ? {} : { capabilityToken }),
         });
         const useAppServer =
           this.dependencies.config.codex?.driver === "app-server" &&

@@ -10,6 +10,7 @@ import {
   type TmuxSender,
 } from "./delivery";
 import { HiveDaemon } from "./server";
+import { actingAs } from "./testing";
 import type { Spawner } from "./spawner";
 
 const home = mkdtempSync(join(tmpdir(), "hive-delivery-test-"));
@@ -183,7 +184,7 @@ describe("MessageDelivery", () => {
       expect(queued.deliveredAt).toEqual(null);
       expect(tmux.calls).toEqual([]);
 
-      const response = await daemon.fetch(new Request("http://hive/event", {
+      const response = await actingAs(daemon, "operator")("http://hive/event", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -192,7 +193,7 @@ describe("MessageDelivery", () => {
           timestamp: "2026-07-09T12:01:00.000Z",
           contextPct: 31,
         }),
-      }));
+      });
       expect(response.status).toEqual(200);
       expect(tmux.calls).toEqual([
         ["hive-maya", "📨 message from sam: Queued work."],
@@ -270,7 +271,7 @@ describe("MessageDelivery", () => {
       db.insertAgent(agent("spawning"));
       db.releaseAgentName("maya");
 
-      const response = await daemon.fetch(new Request("http://hive/event", {
+      const response = await actingAs(daemon, "operator")("http://hive/event", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -278,7 +279,7 @@ describe("MessageDelivery", () => {
           agentName: "maya",
           timestamp: "2026-07-09T12:00:30.000Z",
         }),
-      }));
+      });
 
       expect(response.status).toEqual(200);
       expect(tmux.calls).toEqual([
@@ -382,7 +383,7 @@ describe("MessageDelivery", () => {
       expect(queued.deliveredAt).toEqual(null);
       expect(tmux.calls).toEqual([]);
 
-      const response = await daemon.fetch(new Request("http://hive/event", {
+      const response = await actingAs(daemon, "operator")("http://hive/event", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -390,7 +391,7 @@ describe("MessageDelivery", () => {
           agentName: "maya",
           timestamp: "2026-07-09T12:02:00.000Z",
         }),
-      }));
+      });
       expect(response.status).toEqual(200);
       expect(tmux.calls).toEqual([
         [
@@ -477,7 +478,7 @@ describe("MessageDelivery", () => {
         "maya",
         "Second message",
       );
-      const response = await daemon.fetch(new Request("http://hive/event", {
+      const response = await actingAs(daemon, "operator")("http://hive/event", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -485,7 +486,7 @@ describe("MessageDelivery", () => {
           agentName: "maya",
           timestamp: "2026-07-09T12:01:00.000Z",
         }),
-      }));
+      });
 
       expect(response.status).toEqual(200);
       expect(tmux.calls.toSorted((left, right) =>

@@ -15,6 +15,39 @@ import {
   type TerminalHandle,
 } from "../schemas";
 
+const StoredCapabilitySchema = z.object({
+  id: z.string().min(1),
+  subject: z.string().min(1),
+  role: z.enum(["operator", "orchestrator", "writer", "reader"]),
+  epoch: z.number().int().nonnegative(),
+  secretHash: z.string().min(1),
+  issuedAt: z.string().min(1),
+  expiresAt: z.string().min(1),
+  revokedAt: z.string().nullable(),
+});
+
+const CapabilityRowSchema = StoredCapabilitySchema;
+
+export type CapabilityRow = Omit<
+  z.infer<typeof StoredCapabilitySchema>,
+  "secretHash"
+>;
+
+const AuditRowSchema = z.object({
+  at: z.string().min(1),
+  route: z.string().min(1),
+  action: z.string().nullable(),
+  callerSubject: z.string().nullable(),
+  callerRole: z.string().nullable(),
+  capabilityId: z.string().nullable(),
+  requestedSubject: z.string().nullable(),
+  epoch: z.number().int().nullable(),
+  decision: z.enum(["allow", "deny"]),
+  reason: z.string().nullable(),
+});
+
+export type AuditRow = z.infer<typeof AuditRowSchema>;
+
 export const ApprovalSchema = z.object({
   id: z.string().min(1),
   agentName: z.string().min(1),
@@ -197,6 +230,41 @@ export class HiveDatabase {
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
       );
+      -- Only sha256(secret) is stored, so a database or WAL leak yields no
+      -- usable credential. The id is a lookup key, not a secret.
+      CREATE TABLE IF NOT EXISTS capabilities (
+        id TEXT PRIMARY KEY,
+        subject TEXT NOT NULL,
+        role TEXT NOT NULL,
+        epoch INTEGER NOT NULL,
+        secretHash TEXT NOT NULL,
+        issuedAt TEXT NOT NULL,
+        expiresAt TEXT NOT NULL,
+        revokedAt TEXT
+      );
+      CREATE INDEX IF NOT EXISTS capabilities_subject ON capabilities(subject);
+      -- A one-shot right is spent by inserting its row; the primary key makes
+      -- the spend atomic, so two concurrent lands cannot both succeed.
+      CREATE TABLE IF NOT EXISTS capability_consumptions (
+        capabilityId TEXT NOT NULL,
+        action TEXT NOT NULL,
+        consumedAt TEXT NOT NULL,
+        PRIMARY KEY (capabilityId, action)
+      );
+      CREATE TABLE IF NOT EXISTS audit_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        at TEXT NOT NULL,
+        route TEXT NOT NULL,
+        action TEXT,
+        callerSubject TEXT,
+        callerRole TEXT,
+        capabilityId TEXT,
+        requestedSubject TEXT,
+        epoch INTEGER,
+        decision TEXT NOT NULL,
+        reason TEXT
+      );
+      CREATE INDEX IF NOT EXISTS audit_log_at ON audit_log(at);
     `);
     const agentColumns = z.array(z.object({ name: z.string() })).parse(
       this.database.query("PRAGMA table_info(agents)").all(),
@@ -725,6 +793,99 @@ export class HiveDatabase {
     }
     return this.database.query("DELETE FROM events WHERE agentName = ?")
       .run(agentName).changes;
+  }
+
+  insertCapability(capability: CapabilityRow, secretHash: string): void {
+    this.database.query(`
+      INSERT INTO capabilities (
+        id, subject, role, epoch, secretHash, issuedAt, expiresAt, revokedAt
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      capability.id,
+      capability.subject,
+      capability.role,
+      capability.epoch,
+      secretHash,
+      capability.issuedAt,
+      capability.expiresAt,
+      capability.revokedAt,
+    );
+  }
+
+  getCapability(
+    id: string,
+  ): { capability: CapabilityRow; secretHash: string } | null {
+    const row = this.database.query("SELECT * FROM capabilities WHERE id = ?")
+      .get(id);
+    if (row === null) return null;
+    const parsed = CapabilityRowSchema.parse(row);
+    const { secretHash, ...capability } = parsed;
+    return { capability, secretHash };
+  }
+
+  /** Atomic: the primary key means the first inserter wins and every later
+   * spend of the same right is a replay. */
+  consumeOneShot(
+    capabilityId: string,
+    action: string,
+    consumedAt: string,
+  ): boolean {
+    const result = this.database.query(`
+      INSERT OR IGNORE INTO capability_consumptions (
+        capabilityId, action, consumedAt
+      ) VALUES (?, ?, ?)
+    `).run(capabilityId, action, consumedAt);
+    return result.changes === 1;
+  }
+
+  releaseOneShot(capabilityId: string, action: string): void {
+    this.database.query(`
+      DELETE FROM capability_consumptions
+      WHERE capabilityId = ? AND action = ?
+    `).run(capabilityId, action);
+  }
+
+  isOneShotConsumed(capabilityId: string, action: string): boolean {
+    const row = this.database.query(`
+      SELECT 1 AS present FROM capability_consumptions
+      WHERE capabilityId = ? AND action = ?
+    `).get(capabilityId, action);
+    return row !== null;
+  }
+
+  revokeCapabilitiesForSubject(subject: string, timestamp: string): number {
+    return this.database.query(`
+      UPDATE capabilities SET revokedAt = ?
+      WHERE subject = ? AND revokedAt IS NULL
+    `).run(timestamp, subject).changes;
+  }
+
+  insertAuditEntry(entry: AuditRow): void {
+    this.database.query(`
+      INSERT INTO audit_log (
+        at, route, action, callerSubject, callerRole, capabilityId,
+        requestedSubject, epoch, decision, reason
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      entry.at,
+      entry.route,
+      entry.action,
+      entry.callerSubject,
+      entry.callerRole,
+      entry.capabilityId,
+      entry.requestedSubject,
+      entry.epoch,
+      entry.decision,
+      entry.reason,
+    );
+  }
+
+  listAuditEntries(limit = 100): AuditRow[] {
+    return this.database.query(`
+      SELECT at, route, action, callerSubject, callerRole, capabilityId,
+             requestedSubject, epoch, decision, reason
+      FROM audit_log ORDER BY id DESC LIMIT ?
+    `).all(limit).map((row) => AuditRowSchema.parse(row));
   }
 
   insertApproval(approval: Approval): Approval {

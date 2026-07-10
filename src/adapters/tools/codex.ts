@@ -20,7 +20,13 @@ export interface CodexSpawnOptions {
 export type CodexAgentConfigOptions = Pick<
   CodexSpawnOptions,
   "name" | "daemonPort" | "readOnly"
->;
+> & {
+  /** The agent's capability token. Codex has no connect-time headers helper,
+   * so unlike Claude its token has to sit in a file. It goes in the 0600
+   * config.toml as a static header rather than in `bearer_token_env_var`,
+   * because an environment variable is inherited by every descendant. */
+  capabilityToken?: string;
+};
 
 export const CODEX_NOTIFY_SCRIPT = "hive-notify.sh";
 
@@ -221,12 +227,18 @@ export async function writeCodexAgentConfig(
   const config = [
     "[mcp_servers.hive]",
     `url = ${tomlString(`http://127.0.0.1:${options.daemonPort}/mcp`)}`,
+    ...(options.capabilityToken === undefined ? [] : [
+      "",
+      "[mcp_servers.hive.http_headers]",
+      `Authorization = ${tomlString(`Bearer ${options.capabilityToken}`)}`,
+    ]),
     "",
   ].join("\n");
 
+  const configPath = join(codexDirectory, "config.toml");
   await Promise.all([
-    writeFile(join(codexDirectory, "config.toml"), config),
+    writeFile(configPath, config, { mode: 0o600 }),
     writeFile(notifyPath, notifyScript, { mode: 0o755 }),
   ]);
-  await chmod(notifyPath, 0o755);
+  await Promise.all([chmod(configPath, 0o600), chmod(notifyPath, 0o755)]);
 }

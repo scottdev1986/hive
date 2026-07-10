@@ -9,6 +9,8 @@
 // durable message and the tmux fallback remains. Its only job is to move
 // already-persisted events onto a connection Claude is listening on.
 
+import { agentFetch } from "./credential";
+
 export interface BridgeTransport {
   send(message: unknown): void;
   onMessage(handler: (message: unknown) => void): void;
@@ -285,10 +287,16 @@ export class ChannelBridge {
   }
 }
 
-export function createHttpDaemonClient(port: number): DaemonClient {
+export function createHttpDaemonClient(
+  port: number,
+  agent?: string,
+): DaemonClient {
   const base = `http://127.0.0.1:${port}`;
+  // The bridge may only speak for the agent it was launched for, so it presents
+  // that agent's capability on every channel call.
+  const send = agent === undefined ? fetch : agentFetch(agent);
   const post = async (path: string, body: unknown): Promise<Response> =>
-    fetch(`${base}${path}`, {
+    send(`${base}${path}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
@@ -367,7 +375,7 @@ export async function runChannelBridge(
   const bridge = new ChannelBridge({
     agent,
     transport: createStdioTransport(),
-    daemon: createHttpDaemonClient(port),
+    daemon: createHttpDaemonClient(port, agent),
   });
   bridge.start();
   // Keep the process alive until stdin closes (handled by the transport).

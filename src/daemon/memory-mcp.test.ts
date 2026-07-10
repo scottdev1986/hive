@@ -8,6 +8,7 @@ import { join } from "node:path";
 import type { AgentRecord } from "../schemas";
 import { getDatabasePath, HiveDatabase } from "./db";
 import { HiveDaemon } from "./server";
+import { actingAs } from "./testing";
 import type { SpawnRequest, Spawner } from "./spawner";
 
 const tempRoots: string[] = [];
@@ -61,7 +62,7 @@ function textValue(result: Awaited<ReturnType<Client["callTool"]>>): unknown {
 async function connectedClient(daemon: HiveDaemon): Promise<Client> {
   const transport = new StreamableHTTPClientTransport(
     new URL("http://hive/mcp"),
-    { fetch: (input, init) => daemon.fetch(new Request(input, init)) },
+    { fetch: actingAs(daemon, "operator", "operator") },
   );
   const client = new Client({ name: "hive-memory-test", version: "1.0.0" });
   await client.connect(transport);

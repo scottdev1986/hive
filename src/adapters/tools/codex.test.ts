@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -261,5 +261,36 @@ describe("Codex adapter", () => {
         'exec hive event turn-end --agent agent-4 --port 4317 --payload "$1"',
       ),
     ).toEqual(true);
+  });
+  test("carries the agent capability as a static header in a 0600 config", async () => {
+    // Codex has no connect-time headers helper, so its token has to sit in a
+    // file. It must never land in `bearer_token_env_var`: an environment
+    // variable is inherited by every descendant of the agent's process.
+    await writeCodexAgentConfig(worktreePath, {
+      daemonPort: 4317,
+      name: "maya",
+      readOnly: false,
+      capabilityToken: "hv1.abc.secret-token",
+    });
+    const configPath = join(worktreePath, ".codex", "config.toml");
+    const config = await readFile(configPath, "utf8");
+    expect(config).toContain("[mcp_servers.hive.http_headers]");
+    expect(config).toContain('Authorization = "Bearer hv1.abc.secret-token"');
+    expect(config).not.toContain("bearer_token_env_var");
+    expect((await stat(configPath)).mode & 0o777).toEqual(0o600);
+  });
+
+  test("omits the header entirely when no capability was issued", async () => {
+    await writeCodexAgentConfig(worktreePath, {
+      daemonPort: 4317,
+      name: "maya",
+      readOnly: false,
+    });
+    const config = await readFile(
+      join(worktreePath, ".codex", "config.toml"),
+      "utf8",
+    );
+    expect(config).not.toContain("http_headers");
+    expect(config).not.toContain("Authorization");
   });
 });

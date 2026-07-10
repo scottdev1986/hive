@@ -2,6 +2,7 @@ import {
   HookEventSchema,
   type HookEvent,
 } from "../schemas";
+import { agentFetch } from "./credential";
 
 export interface HookEventOptions {
   agent?: string;
@@ -126,11 +127,14 @@ export async function runHiveEvent(
   kind: string,
   port: number,
   options: HookEventOptions,
-  fetcher: EventFetcher = fetch,
+  fetcher?: EventFetcher,
 ): Promise<0> {
   try {
     const event = buildHookEvent(kind, options);
-    await postHookEvent(event, port, fetcher);
+    // A hook speaks only for the agent it was installed for, and presents that
+    // agent's capability. The credential is read from its 0600 file, never
+    // from this process's environment.
+    await postHookEvent(event, port, fetcher ?? agentFetch(event.agentName));
   } catch {
     // Hooks run at every turn boundary and must never disrupt an agent CLI.
   }

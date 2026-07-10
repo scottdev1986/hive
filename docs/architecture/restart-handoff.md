@@ -4,7 +4,7 @@
 
 The accepted flagship is a signed Swift/AppKit workspace with native semantic agent transcripts, a limited SwiftTerm shell/legacy-TUI surface, immutable per-project `HiveUUID`s, one Supervisor, one Tenant Broker per Hive, reconnectable per-session AgentHosts, and authenticated connection-bound capabilities. The [Workspace blueprint](hive-workspace-blueprint.md) is canonical. The [cross-vendor review](../../research/cross-vendor-architecture-review.md) is the experimental record.
 
-No flagship implementation is authorized before restart. The first proposed implementation task afterward is **Phase 0: authenticate and authorize the current loopback control plane**. Do not start the Swift app, Supervisor migration, provider refactor, or AgentHost implementation before Phase 0 has its own scoped assignment and acceptance tests.
+**Phase 0 — authenticating and authorizing the loopback control plane — is landed**, behind the [capability rights matrix](capability-rights-matrix.md) and its adversarial tests. No further flagship implementation is authorized yet. Do not start the Swift app, Supervisor migration, provider refactor, or AgentHost implementation before each has its own scoped assignment and acceptance tests.
 
 ## What is settled
 
@@ -18,7 +18,7 @@ Claude Code 2.1.206 and Codex CLI 0.144.0 are ring-1 candidates only for binding
 
 ## Verified defects to preserve in every plan
 
-The current daemon exposes control and mutation endpoints on `127.0.0.1:4483` without authentication. This includes MCP tools capable of spawning, killing, approving, and landing. A worktree-confined local process can reach loopback, so the current capability-epoch story is bypassable. Phase 0 must authenticate every mutation and enforce least-privilege subject/action capabilities; a Unix socket alone does not stop a same-UID process.
+The daemon exposed control and mutation endpoints on `127.0.0.1:4483` without authentication, including MCP tools capable of spawning, killing, approving, and landing, which made the capability-epoch story bypassable by any worktree-confined local process. Phase 0 closed this: every mutation route authenticates a bearer capability and authorizes it against the least-privilege allowlist in the [capability rights matrix](capability-rights-matrix.md), credentials never travel in environment or argv, revocation advances the epoch, and decisions are audited. The residual same-UID filesystem read is accepted and documented; a Unix socket would not have stopped it either.
 
 The current launcher also treats any `/health` response with `ok === true` as the right daemon, ignores its version, and uses the first daemon's startup cwd as repository root. This permits cross-project and stale-build reuse. The destination handshake binds project identity, content-addressed build, protocol/schema ranges, capability set, and generation. Health is never authorization.
 
@@ -27,19 +27,19 @@ The current launcher also treats any `/health` response with `ok === true` as th
 1. Read this handoff, then the [canonical blueprint](hive-workspace-blueprint.md). Pull details only as needed from the [cross-vendor review](../../research/cross-vendor-architecture-review.md).
 2. Verify main contains this documentation landing and research commit `1859353`. Resolve the documentation landing with `git log -1 -- docs/architecture/hive-workspace-blueprint.md` and record it in the new work report.
 3. Read the landed [model-routing and token-efficiency policy](../research/model-routing-and-token-efficiency.md) only when work touches provider choice, escalation, budgets, or telemetry. Reconcile direct conflicts in the owning document rather than copying its policy into the blueprint.
-4. Open a narrowly scoped Phase 0 implementation task. Its scope is authentication and authorization for all current mutation routes, least-privilege per-caller capabilities, credential noninheritance, revocation/audit, and adversarial tests. Do not combine it with the Swift UI.
-5. Before coding Phase 0, write the capability rights matrix: caller, subject, action, epoch, expiry, delegation, and audit event. Include `/mcp`, `/event`, `/channel/*`, `/viewer`, `/recover`, and `/orchestrator-terminal`; keep `/health` non-authorizing.
-6. Reproduce the defect only with non-destructive calls or a test harness. Never invoke landing, kill, or approval against live work to prove exposure.
-7. Implement and land Phase 0 behind tests proving an unauthenticated process, foreign agent, revoked epoch, replayed one-shot grant, unsigned peer, and descendant process all fail. Preserve legitimate orchestrator and self-scoped writer workflows.
-8. Add build/project/protocol validation to daemon reuse as the next bounded reliability task, or include it in Phase 0 only if the assignment explicitly authorizes both concerns.
-9. Run the five de-risking prototypes in blueprint order: AgentHost crash matrix, native transcript, authenticated XPC, identity under motion, and provider conformance. Record evidence before promoting a hypothesis to a decision.
-10. Build the Supervisor/registry/brokers only after IPC and identity prototypes pass. Migrate CLI state transactionally before building the UI.
-11. Build one multiplexing AppKit Workspace with transcript panes. Add SwiftTerm only when implementing shell/legacy panes. Do not start a libghostty integration.
-12. Treat the twelve safety gates as release blockers and the performance/accessibility/soak numbers as product-quality targets. Update the blueprint in place when evidence changes a decision.
+4. Phase 0 is landed. The [capability rights matrix](capability-rights-matrix.md) is its binding contract: read it before touching any daemon route, and treat `/health` and `/handshake` as public and non-authorizing. Adding a mutation route means adding a matrix row and an adversarial test in the same change.
+5. The HTTP plane's residual risk is a same-UID process reading a `0600` credential file. Do not paper over it. Closing it requires a real privilege boundary and belongs with the Supervisor.
+6. Reproduce any future control-plane defect only with non-destructive calls or a test harness. Never invoke landing, kill, or approval against live work to prove exposure.
+7. Add build/project/protocol validation to daemon reuse as the next bounded reliability task.
+8. Run the five de-risking prototypes in blueprint order: AgentHost crash matrix, native transcript, authenticated XPC, identity under motion, and provider conformance. Record evidence before promoting a hypothesis to a decision.
+9. Build the Supervisor/registry/brokers only after IPC and identity prototypes pass. Migrate CLI state transactionally before building the UI.
+10. Build one multiplexing AppKit Workspace with transcript panes. Add SwiftTerm only when implementing shell/legacy panes. Do not start a libghostty integration.
+11. Treat the twelve safety gates as release blockers and the performance/accessibility/soak numbers as product-quality targets. Update the blueprint in place when evidence changes a decision.
 
 ## Artifacts and ownership
 
 - Canonical destination: [Hive Workspace blueprint](hive-workspace-blueprint.md)
+- Authorization contract for every daemon route: [capability rights matrix](capability-rights-matrix.md)
 - Operational entry point: this handoff
 - Experimental corrections and provider repro: [cross-vendor architecture review](../../research/cross-vendor-architecture-review.md), landed at `1859353`
 - Current shipping architecture and historical reasoning: [SPEC.md](../../SPEC.md)

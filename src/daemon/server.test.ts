@@ -10,6 +10,7 @@ import type { TmuxSender } from "./delivery";
 import { QuotaLedger } from "./quota-ledger";
 import { QuotaService } from "./quota";
 import { HIVE_VERSION, HiveDaemon, inferLegacyControl } from "./server";
+import { actingAs } from "./testing";
 import type { SpawnRequest, Spawner } from "./spawner";
 import { orchestratorTmuxSession } from "./tmux-sessions";
 
@@ -137,11 +138,11 @@ async function postEvent(
   daemon: HiveDaemon,
   event: Record<string, unknown>,
 ): Promise<Response> {
-  return daemon.fetch(new Request("http://hive/event", {
+  return actingAs(daemon, "operator")("http://hive/event", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(event),
-  }));
+  });
 }
 
 function textValue(result: Awaited<ReturnType<Client["callTool"]>>): unknown {
@@ -511,7 +512,7 @@ describe("HiveDaemon HTTP server", () => {
 
       const transport = new StreamableHTTPClientTransport(
         new URL("http://hive/mcp"),
-        { fetch: (input, init) => daemon.fetch(new Request(input, init)) },
+        { fetch: actingAs(daemon, "operator") },
       );
       const client = new Client({ name: "control-kill", version: "1.0.0" });
       await client.connect(transport);
@@ -808,7 +809,7 @@ describe("HiveDaemon HTTP server", () => {
     const transport = new StreamableHTTPClientTransport(
       new URL(`${baseUrl}/mcp`),
       {
-        fetch: (input, init) => daemon.fetch(new Request(input, init)),
+        fetch: actingAs(daemon, "operator"),
       },
     );
     const client = new Client({ name: "hive-test", version: "1.0.0" });
@@ -896,7 +897,9 @@ describe("HiveDaemon HTTP server", () => {
       expect(inbox.length).toEqual(1);
       expect(inbox[0]?.deliveredAt === null).toEqual(false);
 
-      const approvalRequest = new Request(`${baseUrl}/event`, {
+      const approvalResponse = await actingAs(daemon, "operator")(
+        `${baseUrl}/event`,
+        {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
@@ -905,8 +908,8 @@ describe("HiveDaemon HTTP server", () => {
             timestamp: "2026-07-09T12:05:00.000Z",
             description: "Push the branch",
           }),
-        });
-      const approvalResponse = await daemon.fetch(approvalRequest);
+        },
+      );
       expect(approvalResponse.status).toEqual(200);
 
       const approvals = textValue(await client.callTool({
@@ -1014,7 +1017,7 @@ describe("HiveDaemon HTTP server", () => {
     db.insertAgent(agent());
     const transport = new StreamableHTTPClientTransport(
       new URL("http://hive/mcp"),
-      { fetch: (input, init) => daemon.fetch(new Request(input, init)) },
+      { fetch: actingAs(daemon, "operator") },
     );
     const client = new Client({ name: "hive-test", version: "1.0.0" });
     try {
@@ -1081,7 +1084,7 @@ describe("HiveDaemon HTTP server", () => {
     db.insertAgent(agent());
     const transport = new StreamableHTTPClientTransport(
       new URL("http://hive/mcp"),
-      { fetch: (input, init) => daemon.fetch(new Request(input, init)) },
+      { fetch: actingAs(daemon, "operator") },
     );
     const client = new Client({ name: "hive-test", version: "1.0.0" });
     try {
@@ -1170,7 +1173,7 @@ describe("HiveDaemon HTTP server", () => {
     }));
     const transport = new StreamableHTTPClientTransport(
       new URL("http://hive/mcp"),
-      { fetch: (input, init) => daemon.fetch(new Request(input, init)) },
+      { fetch: actingAs(daemon, "operator") },
     );
     const client = new Client({ name: "hive-test", version: "1.0.0" });
     try {
@@ -1205,12 +1208,13 @@ describe("HiveDaemon HTTP server", () => {
     });
     db.insertAgent(agent({ status: "working" }));
     try {
-      const response = await daemon.fetch(
-        new Request("http://hive/recover", {
+      const response = await actingAs(daemon, "operator")(
+        "http://hive/recover",
+        {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: "{}",
-        }),
+        },
       );
       expect(response.status).toEqual(200);
       const body = await response.json() as { outcomes: { action: string }[] };
@@ -1476,7 +1480,7 @@ describe("HiveDaemon HTTP server", () => {
     }));
     const transport = new StreamableHTTPClientTransport(
       new URL("http://hive/mcp"),
-      { fetch: (input, init) => daemon.fetch(new Request(input, init)) },
+      { fetch: actingAs(daemon, "operator") },
     );
     const client = new Client({ name: "hive-test", version: "1.0.0" });
     try {
@@ -1515,12 +1519,13 @@ describe("HiveDaemon HTTP server", () => {
       windowId: 12,
       tty: "/dev/ttys004",
     } as const;
+    const operator = actingAs(daemon, "operator");
     const post = (body: unknown) =>
-      daemon.fetch(new Request("http://hive/orchestrator-terminal", {
+      operator("http://hive/orchestrator-terminal", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(body),
-      }));
+      });
     try {
       // With no agent viewers yet, registration must not move the user's
       // window.
@@ -1539,19 +1544,15 @@ describe("HiveDaemon HTTP server", () => {
       const invalid = await post({ handle: { app: "screen" } });
       expect(invalid.status).toEqual(400);
 
-      const notJson = await daemon.fetch(
-        new Request("http://hive/orchestrator-terminal", {
-          method: "POST",
-          body: "not json",
-        }),
-      );
+      const notJson = await operator("http://hive/orchestrator-terminal", {
+        method: "POST",
+        body: "not json",
+      });
       expect(notJson.status).toEqual(400);
 
-      const cleared = await daemon.fetch(
-        new Request("http://hive/orchestrator-terminal", {
-          method: "DELETE",
-        }),
-      );
+      const cleared = await operator("http://hive/orchestrator-terminal", {
+        method: "DELETE",
+      });
       expect(cleared.status).toEqual(200);
       expect(db.getOrchestratorTerminal()).toBeNull();
     } finally {
@@ -1575,11 +1576,11 @@ describe("HiveDaemon HTTP server", () => {
     });
     const handle = { app: "iterm2", sessionId: "watch-1" } as const;
     const post = (body: unknown) =>
-      daemon.fetch(new Request("http://hive/viewer", {
+      actingAs(daemon, "operator")("http://hive/viewer", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(body),
-      }));
+      });
     db.insertAgent(agent());
     db.insertAgent(agent({ id: "agent-dead", name: "dead-sam", status: "dead" }));
     try {
@@ -1613,7 +1614,7 @@ describe("HiveDaemon HTTP server", () => {
     const transport = new StreamableHTTPClientTransport(
       new URL("http://hive/mcp"),
       {
-        fetch: (input, init) => daemon.fetch(new Request(input, init)),
+        fetch: actingAs(daemon, "operator"),
       },
     );
     const client = new Client({ name: "hive-test", version: "1.0.0" });
@@ -1764,7 +1765,7 @@ describe("resource watchdog", () => {
 
       const transport = new StreamableHTTPClientTransport(
         new URL("http://hive/mcp"),
-        { fetch: (input, init) => daemon.fetch(new Request(input, init)) },
+        { fetch: actingAs(daemon, "operator") },
       );
       const client = new Client({ name: "watchdog-test", version: "1.0.0" });
       await client.connect(transport);

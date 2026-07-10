@@ -1,6 +1,7 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { z } from "zod";
+import { operatorFetch } from "./credential";
 import {
   AgentRecordSchema,
   MemoryFactSchema,
@@ -40,7 +41,7 @@ export async function fetchAgentStatus(
 ): Promise<AgentRecord[]> {
   const transport = new StreamableHTTPClientTransport(
     new URL(`http://127.0.0.1:${port}/mcp`),
-    fetcher === undefined ? undefined : { fetch: fetcher },
+    { fetch: fetcher ?? operatorFetch },
   );
   const client = new Client({ name: "hive-cli", version: "0.1.0" });
   try {
@@ -69,7 +70,7 @@ export async function markAgentDead(
 ): Promise<AgentRecord> {
   const transport = new StreamableHTTPClientTransport(
     new URL(`http://127.0.0.1:${port}/mcp`),
-    fetcher === undefined ? undefined : { fetch: fetcher },
+    { fetch: fetcher ?? operatorFetch },
   );
   const client = new Client({ name: "hive-cli", version: "0.1.0" });
   try {
@@ -100,7 +101,7 @@ async function callHiveTool(
 ): Promise<unknown> {
   const transport = new StreamableHTTPClientTransport(
     new URL(`http://127.0.0.1:${port}/mcp`),
-    fetcher === undefined ? undefined : { fetch: fetcher },
+    { fetch: fetcher ?? operatorFetch },
   );
   const client = new Client({ name: "hive-cli", version: "0.1.0" });
   try {

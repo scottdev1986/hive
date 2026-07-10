@@ -21,6 +21,7 @@ import {
   orchestratorTmuxSession,
 } from "./orchestrator-lifecycle";
 import { HiveDaemon } from "./server";
+import { actingAs } from "./testing";
 import type { Spawner } from "./spawner";
 
 const home = mkdtempSync(join(tmpdir(), "hive-orchestrator-lifecycle-"));
@@ -133,7 +134,8 @@ describe("event-driven orchestrator lifecycle", () => {
     });
     const transport = new StreamableHTTPClientTransport(
       new URL("http://hive/mcp"),
-      { fetch: (input, init) => daemon.fetch(new Request(input, init)) },
+      // hive_send is subject-bound to `from`, so the agent speaks, not the root.
+      { fetch: actingAs(daemon, "maya", "writer") },
     );
     const client = new Client({ name: "wake-test", version: "1.0.0" });
     try {
@@ -295,7 +297,7 @@ describe("event-driven orchestrator lifecycle", () => {
     const listSpy = spyOn(db, "listAgents");
     const transport = new StreamableHTTPClientTransport(
       new URL("http://hive/mcp"),
-      { fetch: (input, init) => daemon.fetch(new Request(input, init)) },
+      { fetch: actingAs(daemon, "orchestrator", "orchestrator") },
     );
     const client = new Client({ name: "status-test", version: "1.0.0" });
     try {

@@ -83,10 +83,17 @@ describe("CLI-to-daemon smoke", () => {
         tmuxSender: tmux,
       });
       const port = 4317;
+      // The `hive` CLI presents the operator credential on every call; here it
+      // is minted in process rather than read from its 0600 file.
+      const operatorToken = daemon.capabilities.mint("operator", "operator").token;
       const daemonFetch = (
         input: string | URL | Request,
         init?: RequestInit,
-      ): Promise<Response> => daemon!.fetch(new Request(input, init));
+      ): Promise<Response> => {
+        const headers = new Headers(init?.headers);
+        headers.set("Authorization", `Bearer ${operatorToken}`);
+        return daemon!.fetch(new Request(input, { ...init, headers }));
+      };
       const spawned = await spawner.spawn({
         task: "Smoke test event wiring",
         tier: "standard",

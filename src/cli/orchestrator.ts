@@ -10,6 +10,8 @@ import {
 import {
   writeCodexAgentConfig,
 } from "../adapters/tools/codex";
+import { readCredential } from "../daemon/credentials";
+import { operatorHeaders } from "./credential";
 import { orchestratorTmuxSession } from "../daemon/orchestrator-lifecycle";
 import type { TerminalHandle } from "../schemas";
 import { ORCHESTRATOR_BRIEF } from "./orchestrator-brief";
@@ -74,11 +76,15 @@ function claudeConfigPaths(cwd: string): string[] {
 async function prepareCodexConfig(cwd: string, port: number): Promise<void> {
   const configPath = join(cwd, ".codex", "config.toml");
   const existingConfig = await readExisting(configPath);
+  // Codex has no connect-time headers helper, so the orchestrator's token is
+  // read from its 0600 credential file and written into the 0600 config.
+  const capabilityToken = readCredential("orchestrator");
   try {
     await writeCodexAgentConfig(cwd, {
       daemonPort: port,
       name: "orchestrator",
       readOnly: true,
+      ...(capabilityToken === null ? {} : { capabilityToken }),
     });
   } finally {
     if (existingConfig !== null) {
@@ -169,7 +175,7 @@ export async function registerOrchestratorTerminal(
 ): Promise<void> {
   const response = await fetch(`http://127.0.0.1:${port}/orchestrator-terminal`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", ...operatorHeaders() },
     body: JSON.stringify({ handle }),
   });
   if (!response.ok) {

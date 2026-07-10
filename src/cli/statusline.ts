@@ -1,4 +1,5 @@
 import type { StatuslineReport } from "../schemas";
+import { agentFetch } from "./credential";
 
 // Claude Code invokes the configured statusLine command on every render and
 // pipes the session JSON to stdin. For Claude.ai subscribers, and only after
@@ -89,7 +90,7 @@ export async function runStatusline(
   agent: string,
   port: number,
   stdin: string,
-  fetcher: StatuslineFetcher = fetch,
+  fetcher: StatuslineFetcher = agentFetch(agent),
 ): Promise<string> {
   let report: StatuslineReport | null = null;
   try {

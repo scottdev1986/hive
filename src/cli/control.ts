@@ -33,6 +33,7 @@ import {
   type OrchestratorTerminalApp,
   registerRunningOrchestratorTerminal,
 } from "./orchestrator";
+import { operatorHeaders } from "./credential";
 import { formatQuotaStatus, formatStatusTable } from "./status";
 
 const isLive = (agent: AgentRecord): boolean =>
@@ -197,7 +198,7 @@ export async function recoverAgentsCli(name?: string): Promise<void> {
   const port = requireDaemonPort();
   const response = await fetch(`http://127.0.0.1:${port}/recover`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", ...operatorHeaders() },
     body: JSON.stringify(name === undefined ? {} : { agent: name }),
   });
   const body = await response.json() as {
@@ -250,7 +251,7 @@ export async function watchAgent(name: string): Promise<void> {
     // hive_kill can close it later.
     await fetch(`http://127.0.0.1:${port}/viewer`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", ...operatorHeaders() },
       body: JSON.stringify({ agent: name, handle }),
     });
   } catch {

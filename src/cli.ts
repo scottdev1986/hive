@@ -18,6 +18,7 @@ import {
   writeMemoryCli,
 } from "./cli/control";
 import { runChannelBridge } from "./cli/channel-bridge";
+import { runCredentialHelper } from "./cli/credential";
 import { runDaemon } from "./cli/daemon";
 import {
   readHookStdin,
@@ -366,6 +367,18 @@ export function createProgram(): Command {
       process.stdout.write(
         await runStatusline(options.agent, parsePort(options.port), stdin),
       );
+    });
+
+  program
+    .command("credential")
+    .description(
+      "Print the Authorization header for one Hive subject as JSON. Claude Code " +
+        "runs this as an MCP headersHelper at connect time, so no capability " +
+        "token is ever placed in an agent's environment.",
+    )
+    .requiredOption("--agent <name>", "subject name")
+    .action((options: { agent: string }) => {
+      process.exitCode = runCredentialHelper(options.agent);
     });
 
   program

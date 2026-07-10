@@ -304,6 +304,11 @@ export async function writeClaudeAgentConfig(
       hive: {
         type: "http",
         url: `http://127.0.0.1:${options.daemonPort}/mcp`,
+        // The capability travels through a helper Claude runs at connect time,
+        // not through `headers: {Authorization: "Bearer ${VAR}"}`. An env var
+        // would be inherited by every descendant of this agent's process; the
+        // helper reads a 0600 file with a close-on-exec descriptor instead.
+        headersHelper: `hive credential --agent ${shellToken(options.name)}`,
       },
       ...((options.channels ?? false)
         ? {
