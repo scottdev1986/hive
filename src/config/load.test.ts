@@ -55,10 +55,12 @@ describe("config loading", () => {
       [
         "[deep]",
         'tool = "codex"',
+        "",
+        "[deep.codex]",
         'model = "gpt-deep"',
         'effort = "xhigh"',
         "",
-        "[cheap]",
+        "[cheap.claude]",
         'model = "gpt-cheap-local"',
         "",
       ].join("\n"),
@@ -71,14 +73,35 @@ describe("config loading", () => {
     const routing = await loadRoutingTable();
     expect(routing.deep).toEqual({
       tool: "codex",
-      model: "gpt-deep",
-      effort: "xhigh",
+      claude: DEFAULT_ROUTING.deep.claude,
+      codex: {
+        model: "gpt-deep",
+        effort: "xhigh",
+      },
     });
     expect(routing.cheap).toEqual({
       ...DEFAULT_ROUTING.cheap,
-      model: "gpt-cheap-local",
+      claude: {
+        ...DEFAULT_ROUTING.cheap.claude,
+        model: "gpt-cheap-local",
+      },
     });
     expect(await resolveRoute("deep")).toEqual(routing.deep);
+  });
+
+  test("deep-merges one tool override without changing the other tool", async () => {
+    await resetHome();
+    await writeFile(
+      join(hiveHome, "routing.toml"),
+      '[cheap.claude]\nmodel = "haiku-local"\n',
+    );
+
+    const routing = await loadRoutingTable();
+    expect(routing.cheap.claude).toEqual({
+      ...DEFAULT_ROUTING.cheap.claude,
+      model: "haiku-local",
+    });
+    expect(routing.cheap.codex).toEqual(DEFAULT_ROUTING.cheap.codex);
   });
 
   test("reports invalid config with its path and schema details", async () => {
@@ -114,5 +137,30 @@ describe("config loading", () => {
     expect(message.includes(join(hiveHome, "routing.toml"))).toEqual(true);
     expect(message.includes("review")).toEqual(true);
     expect(message.includes("codex")).toEqual(true);
+  });
+
+  test("rejects a __proto__ route without polluting Object.prototype", async () => {
+    await resetHome();
+    const path = join(hiveHome, "routing.toml");
+    const pollutionKey = "hiveRoutingPrototypePolluted";
+    await writeFile(
+      path,
+      `["__proto__"]\n${pollutionKey} = true\n`,
+    );
+
+    expect(Object.hasOwn(Object.prototype, pollutionKey)).toEqual(false);
+
+    let message = "";
+    try {
+      await loadRoutingTable();
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+
+    expect(message.startsWith(`Invalid routing table at ${path}:`)).toEqual(
+      true,
+    );
+    expect(message.includes("__proto__")).toEqual(true);
+    expect(Object.hasOwn(Object.prototype, pollutionKey)).toEqual(false);
   });
 });

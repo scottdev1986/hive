@@ -3,6 +3,7 @@ import { mkdtemp, mkdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { TerminalAdapter } from "../adapters/terminal";
+import { DEFAULT_ROUTING } from "../schemas";
 import type { AgentRecord, Route, RoutingTier } from "../schemas";
 import {
   HiveSpawner,
@@ -146,7 +147,7 @@ describe("HiveSpawner name pool", () => {
       repoRoot: "/tmp/hive-exhausted",
       port: 4317,
       config: { terminal: "auto", headless: true },
-      routing: async () => ({ tool: "claude", model: "opus" }),
+      routing: async () => DEFAULT_ROUTING.deep,
       tmux: new FakeTmux(),
       terminal: new FakeTerminal(),
       createWorktree: async () => {
@@ -168,7 +169,7 @@ describe("HiveSpawner name pool", () => {
       repoRoot: "/tmp/hive-invalid-name",
       port: 4317,
       config: { terminal: "auto", headless: true },
-      routing: async () => ({ tool: "codex", model: "default" }),
+      routing: async () => DEFAULT_ROUTING.standard,
       tmux: new FakeTmux(),
       terminal: new FakeTerminal(),
       createWorktree: async () => {
@@ -192,7 +193,7 @@ describe("HiveSpawner name pool", () => {
       repoRoot: "/tmp/hive-collision",
       port: 4317,
       config: { terminal: "auto", headless: true },
-      routing: async () => ({ tool: "codex", model: "default" }),
+      routing: async () => DEFAULT_ROUTING.standard,
       tmux: new FakeTmux(),
       terminal: new FakeTerminal(),
       createWorktree: async () => {
@@ -217,8 +218,11 @@ describe("HiveSpawner wiring", () => {
     const tmux = new FakeTmux();
     const terminal = new FakeTerminal();
     const routes: Record<"deep" | "standard", Route> = {
-      deep: { tool: "claude", model: "opus", effort: "high" },
-      standard: { tool: "codex", model: "gpt-test", effort: "medium" },
+      deep: DEFAULT_ROUTING.deep,
+      standard: {
+        ...DEFAULT_ROUTING.standard,
+        codex: { model: "gpt-test", effort: "medium" },
+      },
     };
     const routing = async (tier: RoutingTier): Promise<Route> => {
       if (tier === "deep" || tier === "standard") {
@@ -262,7 +266,7 @@ describe("HiveSpawner wiring", () => {
       "hive-maya",
       "hive-david",
     ]);
-    expect(tmux.sessions[0]?.[2]).toContain("'claude' '--model' 'opus'");
+    expect(tmux.sessions[0]?.[2]).toContain("'claude' '--model' 'best'");
     expect(tmux.sessions[0]?.[2]).toContain("You are maya");
     expect(tmux.sessions[1]?.[2]).toContain("'codex'");
     expect(tmux.sessions[1]?.[2]).toContain("notify=");
@@ -298,11 +302,7 @@ describe("HiveSpawner wiring", () => {
       repoRoot: root,
       port: 4317,
       config: { terminal: "auto", headless: true },
-      routing: async () => ({
-        tool: "codex",
-        model: "default",
-        effort: "medium",
-      }),
+      routing: async () => DEFAULT_ROUTING.standard,
       tmux,
       terminal: new FakeTerminal(),
       createWorktree: async () => ({
@@ -349,9 +349,7 @@ describe("HiveSpawner wiring", () => {
       repoRoot: root,
       port: 4317,
       config: { terminal: "auto", headless: true },
-      routing: async (tier) => tier === "deep"
-        ? { tool: "claude", model: "opus", effort: "high" }
-        : { tool: "codex", model: "default", effort: "medium" },
+      routing: async (tier) => DEFAULT_ROUTING[tier],
       tmux,
       terminal: new FakeTerminal(),
       createWorktree,
@@ -373,9 +371,9 @@ describe("HiveSpawner wiring", () => {
 
     expect(claude.name).toEqual("quinn-2");
     expect(claude.tool).toEqual("claude");
-    expect(claude.model).toEqual("default");
+    expect(claude.model).toEqual("sonnet");
     expect(tmux.sessions[0]?.[2]).toContain("'claude'");
-    expect(tmux.sessions[0]?.[2]).not.toContain("'--model'");
+    expect(tmux.sessions[0]?.[2]).toContain("'--model' 'sonnet'");
     expect(codex.name).toEqual("riley");
     expect(codex.tool).toEqual("codex");
     expect(codex.model).toEqual("default");
@@ -383,6 +381,67 @@ describe("HiveSpawner wiring", () => {
       "'model_reasoning_effort=high'",
     );
     expect(tmux.sessions[1]?.[2]).not.toContain("'model=default'");
+  });
+
+  test("uses the cheap Claude model for an explicit Claude override", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-spawner-cheap-claude-"));
+    tempRoots.push(root);
+    const tmux = new FakeTmux();
+    const spawner = new HiveSpawner({
+      db: new FakeStore(),
+      repoRoot: root,
+      port: 4317,
+      config: { terminal: "auto", headless: true },
+      routing: async () => DEFAULT_ROUTING.cheap,
+      tmux,
+      terminal: new FakeTerminal(),
+      createWorktree: async (_repoRoot, name, slug) => {
+        const path = join(root, name);
+        await mkdir(path, { recursive: true });
+        return { path, branch: `hive/${name}-${slug}` };
+      },
+      sleep: async () => {},
+    });
+
+    const spawned = await spawner.spawn({
+      task: "Use cheap Claude",
+      tier: "cheap",
+      tool: "claude",
+    });
+
+    expect(spawned.tool).toEqual("claude");
+    expect(spawned.model).toEqual("haiku");
+    expect(tmux.sessions[0]?.[2]).toContain("'--model' 'haiku'");
+  });
+
+  test("uses the tier's configured tool and its model without an override", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-spawner-configured-route-"));
+    tempRoots.push(root);
+    const tmux = new FakeTmux();
+    const spawner = new HiveSpawner({
+      db: new FakeStore(),
+      repoRoot: root,
+      port: 4317,
+      config: { terminal: "auto", headless: true },
+      routing: async () => DEFAULT_ROUTING.review,
+      tmux,
+      terminal: new FakeTerminal(),
+      createWorktree: async (_repoRoot, name, slug) => {
+        const path = join(root, name);
+        await mkdir(path, { recursive: true });
+        return { path, branch: `hive/${name}-${slug}` };
+      },
+      sleep: async () => {},
+    });
+
+    const spawned = await spawner.spawn({
+      task: "Use configured review route",
+      tier: "review",
+    });
+
+    expect(spawned.tool).toEqual("claude");
+    expect(spawned.model).toEqual("sonnet");
+    expect(tmux.sessions[0]?.[2]).toContain("'--model' 'sonnet'");
   });
 
   test("marks pane errors failed, cleans up, and never opens a viewer", async () => {
@@ -403,11 +462,7 @@ describe("HiveSpawner wiring", () => {
       repoRoot: root,
       port: 4317,
       config: { terminal: "auto", headless: false },
-      routing: async () => ({
-        tool: "codex",
-        model: "default",
-        effort: "medium",
-      }),
+      routing: async () => DEFAULT_ROUTING.standard,
       tmux,
       terminal,
       createWorktree: async () => ({
@@ -450,11 +505,7 @@ describe("HiveSpawner wiring", () => {
       repoRoot: root,
       port: 4317,
       config: { terminal: "auto", headless: true },
-      routing: async () => ({
-        tool: "codex",
-        model: "default",
-        effort: "medium",
-      }),
+      routing: async () => DEFAULT_ROUTING.standard,
       tmux,
       terminal: new FakeTerminal(),
       createWorktree: async () => ({
@@ -485,11 +536,7 @@ describe("HiveSpawner wiring", () => {
       repoRoot: root,
       port: 4317,
       config: { terminal: "auto", headless: false },
-      routing: async () => ({
-        tool: "codex",
-        model: "default",
-        effort: "medium",
-      }),
+      routing: async () => DEFAULT_ROUTING.standard,
       tmux,
       terminal: new FailingTerminal(),
       createWorktree: async () => ({

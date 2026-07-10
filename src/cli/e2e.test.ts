@@ -56,8 +56,8 @@ describe("CLI-to-daemon smoke", () => {
       config: { terminal: "auto", headless: true },
       routing: async () => ({
         tool: "codex",
-        model: "gpt-test",
-        effort: "medium",
+        claude: { model: "sonnet" },
+        codex: { model: "gpt-test", effort: "medium" },
       }),
       tmux,
       terminal: new FakeTerminal(),

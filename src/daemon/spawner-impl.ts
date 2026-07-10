@@ -188,10 +188,8 @@ export class HiveSpawner implements Spawner {
     const name = resolveAgentName(request.name, existingAgents);
     const previousRecord = existingAgents.find((agent) => agent.name === name);
     const configuredRoute = await this.dependencies.routing(request.tier);
-    const route: Route = request.tool !== undefined &&
-        request.tool !== configuredRoute.tool
-      ? { ...configuredRoute, tool: request.tool, model: "default" }
-      : configuredRoute;
+    const tool = request.tool ?? configuredRoute.tool;
+    const model = configuredRoute[tool].model;
     const worktree = await this.makeWorktree(
       this.dependencies.repoRoot,
       name,
@@ -202,8 +200,8 @@ export class HiveSpawner implements Spawner {
     const record = this.dependencies.db.insertAgent({
       id: previousRecord?.id ?? crypto.randomUUID(),
       name,
-      tool: route.tool,
-      model: route.model,
+      tool,
+      model,
       tier: request.tier,
       status: "spawning",
       taskDescription: request.task,
@@ -217,7 +215,7 @@ export class HiveSpawner implements Spawner {
 
     let argv: string[];
     try {
-      if (route.tool === "claude") {
+      if (tool === "claude") {
         await writeClaudeAgentConfig(worktree.path, {
           daemonPort: this.dependencies.port,
           name,
@@ -225,7 +223,7 @@ export class HiveSpawner implements Spawner {
         });
         argv = buildClaudeSpawnCommand({
           daemonPort: this.dependencies.port,
-          model: route.model,
+          model: configuredRoute.claude.model,
           name,
           readOnly: false,
           worktreePath: worktree.path,
@@ -238,8 +236,8 @@ export class HiveSpawner implements Spawner {
         });
         argv = buildCodexSpawnCommand({
           daemonPort: this.dependencies.port,
-          effort: route.effort ?? "medium",
-          model: route.model,
+          effort: configuredRoute.codex.effort ?? "medium",
+          model: configuredRoute.codex.model,
           name,
           readOnly: false,
           worktreePath: worktree.path,

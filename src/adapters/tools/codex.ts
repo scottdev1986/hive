@@ -1,11 +1,11 @@
 import { chmod, mkdir, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import type { Route } from "../../schemas";
+import type { CodexRoute } from "../../schemas";
 
 export interface CodexSpawnOptions {
   name: string;
-  model: Route["model"];
-  effort: NonNullable<Route["effort"]>;
+  model: CodexRoute["model"];
+  effort: NonNullable<CodexRoute["effort"]>;
   worktreePath: string;
   daemonPort: number;
   readOnly: boolean;

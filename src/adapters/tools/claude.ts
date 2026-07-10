@@ -1,11 +1,11 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
-import type { Route } from "../../schemas";
+import type { ClaudeRoute } from "../../schemas";
 
 export interface ClaudeSpawnOptions {
   name: string;
-  model: Route["model"];
+  model: ClaudeRoute["model"];
   worktreePath: string;
   daemonPort: number;
   readOnly: boolean;

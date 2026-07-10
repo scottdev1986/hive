@@ -2,10 +2,12 @@ import { describe, expect, test } from "bun:test";
 import {
   AgentMessageSchema,
   AgentRecordSchema,
+  ClaudeRouteSchema,
   DEFAULT_ROUTING,
   HandoffSchema,
   HiveConfigSchema,
   HookEventSchema,
+  RouteSchema,
   RoutingTableSchema,
   type AgentRecord,
   type HookEvent,
@@ -37,24 +39,67 @@ describe("RoutingTableSchema", () => {
   });
 
   test("accepts the CLI account default while preserving pinned models", () => {
-    expect(RoutingTableSchema.parse(DEFAULT_ROUTING).standard.model).toEqual(
-      "default",
-    );
+    expect(
+      RoutingTableSchema.parse(DEFAULT_ROUTING).standard.codex.model,
+    ).toEqual("default");
     expect(RoutingTableSchema.parse({
       ...DEFAULT_ROUTING,
       standard: {
-        tool: "codex",
-        model: "gpt-pinned",
-        effort: "medium",
+        ...DEFAULT_ROUTING.standard,
+        codex: {
+          model: "gpt-pinned",
+          effort: "medium",
+        },
       },
-    }).standard.model).toEqual("gpt-pinned");
+    }).standard.codex.model).toEqual("gpt-pinned");
+  });
+
+  test("accepts minimal effort", () => {
+    expect(RouteSchema.parse({
+      ...DEFAULT_ROUTING.standard,
+      codex: {
+        ...DEFAULT_ROUTING.standard.codex,
+        effort: "minimal",
+      },
+    }).codex.effort).toEqual("minimal");
+  });
+
+  test("rejects a pre-migration flat route", () => {
+    expect(() =>
+      RoutingTableSchema.parse({
+        cheap: { tool: "codex", model: "x" },
+      })
+    ).toThrow(/unrecognized key.*model/i);
+  });
+
+  test("rejects a misspelled Claude route key", () => {
+    expect(() =>
+      RoutingTableSchema.parse({
+        ...DEFAULT_ROUTING,
+        cheap: {
+          ...DEFAULT_ROUTING.cheap,
+          claude: { model: "haiku", modle: "typo" },
+        },
+      })
+    ).toThrow(/unrecognized key.*modle/i);
+  });
+
+  test("rejects effort on a Claude route", () => {
+    expect(() =>
+      ClaudeRouteSchema.parse({ model: "sonnet", effort: "high" })
+    ).toThrow(/unrecognized key.*effort/i);
+  });
+
+  test("rejects a route missing the codex sub-table", () => {
+    const { codex: _codex, ...withoutCodex } = DEFAULT_ROUTING.standard;
+    expect(() => RouteSchema.parse(withoutCodex)).toThrow();
   });
 
   test("rejects an invalid routing table", () => {
     expect(() =>
       RoutingTableSchema.parse({
         ...DEFAULT_ROUTING,
-        deep: { tool: "gemini", model: "pro" },
+        deep: { ...DEFAULT_ROUTING.deep, tool: "gemini" },
       }),
     ).toThrow();
   });

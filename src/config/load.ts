@@ -13,6 +13,9 @@ import {
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
+const mergeOwn = (...sources: object[]): Record<string, unknown> =>
+  Object.assign(Object.create(null), ...sources);
+
 const errorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 
@@ -50,13 +53,30 @@ export async function loadRoutingTable(): Promise<RoutingTable> {
     throw new Error(`Invalid routing table at ${path}: expected a TOML table`);
   }
 
-  const merged: Record<string, unknown> = { ...DEFAULT_ROUTING };
+  const merged = mergeOwn();
+  for (const [tier, route] of Object.entries(DEFAULT_ROUTING)) {
+    const mergedRoute = mergeOwn(route);
+    mergedRoute.claude = mergeOwn(route.claude);
+    mergedRoute.codex = mergeOwn(route.codex);
+    merged[tier] = mergedRoute;
+  }
+
   for (const [tier, override] of Object.entries(raw ?? {})) {
     const fallback = merged[tier];
-    merged[tier] =
-      isRecord(fallback) && isRecord(override)
-        ? { ...fallback, ...override }
-        : override;
+    if (!isRecord(fallback) || !isRecord(override)) {
+      merged[tier] = isRecord(override) ? mergeOwn(override) : override;
+      continue;
+    }
+
+    const mergedRoute = mergeOwn(fallback, override);
+    for (const tool of ["claude", "codex"] as const) {
+      const fallbackTool = fallback[tool];
+      const overrideTool = override[tool];
+      if (isRecord(fallbackTool) && isRecord(overrideTool)) {
+        mergedRoute[tool] = mergeOwn(fallbackTool, overrideTool);
+      }
+    }
+    merged[tier] = mergedRoute;
   }
 
   try {
