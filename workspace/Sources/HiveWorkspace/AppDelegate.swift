@@ -32,7 +32,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 print("SMOKE FAIL:\n  --smoke requires --project, --port, and --hive")
                 exit(1)
             }
-            // Dock click / bare launch: explain, never show fixtures.
+            // Dock click / bare CLI launch: project-neutral home, never cwd data.
             showPlaceholderWindow()
             return
         }
@@ -136,12 +136,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.title = "Hive Workspace"
         window.center()
 
-        let title = NSTextField(labelWithString: "No project to show")
+        let title = NSTextField(labelWithString: "Hive Workspace")
         title.font = NSFont.systemFont(ofSize: 15, weight: .semibold)
         title.alignment = .center
 
         let body = NSTextField(wrappingLabelWithString:
-            "Hive Workspace is opened by the hive CLI.\n\nRun `hive` from a project directory and it will launch this window connected to that project's orchestrator and agents.")
+            "No project is open.\n\nRun `hive init` in a project directory to initialize it and start its Hive daemon.")
         body.font = Theme.bodyFont
         body.textColor = .secondaryLabelColor
         body.alignment = .center

@@ -9,8 +9,8 @@ import Foundation
 ///     --feed <binary>  overrides the feed process (defaults to `<hive> workspace-feed`);
 ///                      the process-boundary seam the smoke harness uses.
 ///
-/// Launched with no arguments (Dock click), the app shows a plain window
-/// explaining to run `hive` from a project directory — never fixtures.
+/// Launched with no arguments (Dock click or bare `hive`), the standalone app
+/// shows its project-neutral home window — never fixtures or cwd-derived data.
 struct LaunchConfig {
     var projectDirectory: String?
     var port: Int?

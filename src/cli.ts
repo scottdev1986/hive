@@ -208,9 +208,10 @@ export function createProgram(): Command {
   // what bug reports need. The richer facts belong to `hive update status`.
   program.version(versionLine(), "-v, --version", "Print the Hive version");
 
-  // Bare `hive` runs the shared session boundary (daemon up, profile
-  // announced), then opens the installed release Workspace against that
-  // daemon. Never a dev build.
+  // Bare `hive` is the standalone application launcher. Project discovery,
+  // profiling, and daemon startup belong to the explicit `hive init` path;
+  // launching the app must not inspect whichever repo the shell happens to be
+  // in. Never launch a development Workspace build.
   program.action(async () => {
     await runWorkspace();
   });

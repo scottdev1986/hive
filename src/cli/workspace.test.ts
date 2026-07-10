@@ -36,41 +36,19 @@ describe("hive opens the installed release Workspace", () => {
     const opened: string[] = [];
     await launchWorkspace({
       root,
-      port: 4483,
       open: async (app) => (opened.push(app), 0),
     });
     expect(opened).toEqual([join(root, "current", "HiveWorkspace.app")]);
   });
 
-  test("hands the app the project, the live port, and the launching CLI", async () => {
-    // The app must attach to the daemon this launch just brought up and spawn
-    // helpers from the same build — never guess a port or PATH-resolve `hive`.
+  test("passes no project or daemon data to the standalone app", async () => {
     install("0.0.7");
     const argLists: (readonly string[])[] = [];
     await launchWorkspace({
       root,
-      cwd: "/Users/scott/Projects/hive",
-      port: 4483,
-      hivePath: "/opt/hive/current/hive",
       open: async (_app, args) => (argLists.push(args), 0),
     });
-    expect(argLists).toEqual([[
-      "--project", "/Users/scott/Projects/hive",
-      "--port", "4483",
-      "--hive", "/opt/hive/current/hive",
-    ]]);
-  });
-
-  test("the forwarded CLI defaults to the running binary itself", async () => {
-    install("0.0.7");
-    let args: readonly string[] = [];
-    await launchWorkspace({
-      root,
-      port: 4483,
-      open: async (_app, forwarded) => ((args = forwarded), 0),
-    });
-    expect(args).toContain("--hive");
-    expect(args[args.indexOf("--hive") + 1]).toEqual(process.execPath);
+    expect(argLists).toEqual([[]]);
   });
 
   test("with no release installed it refuses rather than launching a dev build", async () => {
@@ -81,7 +59,6 @@ describe("hive opens the installed release Workspace", () => {
     let opened = false;
     const promise = launchWorkspace({
       root,
-      port: 4483,
       open: async () => (opened = true, 0),
     });
     await expect(promise).rejects.toThrow(WorkspaceNotInstalledError);
@@ -89,7 +66,7 @@ describe("hive opens the installed release Workspace", () => {
   });
 
   test("the refusal names the installer, not a build command", async () => {
-    const error = await launchWorkspace({ root, port: 4483 })
+    const error = await launchWorkspace({ root })
       .catch((cause: unknown) => cause);
     const message = (error as Error).message;
     expect(message).toContain("install.sh");
@@ -103,34 +80,33 @@ describe("hive opens the installed release Workspace", () => {
   });
 });
 
-describe("bare hive runs the session boundary before the app", () => {
-  test("launches against exactly the port the start boundary produced", async () => {
+describe("bare hive is a standalone app launcher", () => {
+  test("offers an available update, then launches without repo data", async () => {
     const launches: LaunchDeps[] = [];
-    let started = 0;
+    const lines: string[] = [];
     await runWorkspace({
-      start: async () => {
-        started += 1;
-        return { port: 45_017, cwd: "/Users/scott/Projects/hive" };
-      },
+      checkUpdate: async () => ({
+        state: "update-available", current: "0.0.3", latest: "0.0.4",
+        securityCritical: false, stale: false,
+      }),
+      write: (line) => lines.push(line),
       launch: async (deps) => (launches.push(deps), 0),
     });
-    expect(started).toEqual(1);
-    expect(launches).toEqual([
-      { cwd: "/Users/scott/Projects/hive", port: 45_017 },
-    ]);
+    expect(lines.join("\n")).toContain("hive 0.0.4 available");
+    expect(launches).toEqual([{}]);
   });
 
-  test("a start failure never launches the app", async () => {
-    // The failure mode from the field test, inverted: an app with no daemon
-    // behind it must be impossible to reach from bare `hive`.
+  test("a failed update check is silent and still launches the app", async () => {
     let launched = false;
-    const promise = runWorkspace({
-      start: async () => {
-        throw new Error("daemon failed to start");
+    const lines: string[] = [];
+    await runWorkspace({
+      checkUpdate: async () => {
+        throw new Error("offline");
       },
+      write: (line) => lines.push(line),
       launch: async () => ((launched = true), 0),
     });
-    await expect(promise).rejects.toThrow("daemon failed to start");
-    expect(launched).toEqual(false);
+    expect(lines).toEqual([]);
+    expect(launched).toEqual(true);
   });
 });

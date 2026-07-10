@@ -1,17 +1,9 @@
 /**
- * `hive` — bring the session up, then open the installed release Workspace.
+ * `hive` — check for a release, then open the standalone Workspace app.
  *
- * Bare `hive` is not a shortcut around `hive init`; it *is* `hive init`
- * followed by attaching the app. It runs the same session boundary (update
- * notice, stale-daemon restart, daemon bring-up, init-once profile line) and
- * only then launches the app, handing it everything it needs on argv:
- *
- *   --project <cwd>   the project directory this window serves
- *   --port <port>     the live daemon port the launcher just brought up
- *   --hive <path>     the exact CLI binary that did it (`process.execPath`),
- *                     so the app spawns `workspace-feed` and other helpers
- *                     from the same build as the daemon — never whatever
- *                     `hive` happens to be on the app's PATH.
+ * The current directory is deliberately irrelevant. A bare launch passes no
+ * project path or daemon port to the app; `hive init` is the explicit command
+ * that initializes a project and starts its daemon.
  *
  * There is deliberately no development fallback. Not a symlink into
  * `workspace/.build`, not a `swift run`, not an environment variable that
@@ -26,9 +18,21 @@
  */
 import { existsSync } from "node:fs";
 import { spawn } from "node:child_process";
-import { currentLink, installRoot, workspaceAppPath } from "../update/paths";
+import {
+  checkForUpdate,
+  fetchLatestFromGitHub,
+  isDismissed,
+  readUpdateCache,
+  type UpdateCheck,
+} from "../update/check";
+import {
+  currentLink,
+  detectInstallMethod,
+  installRoot,
+  workspaceAppPath,
+} from "../update/paths";
+import { renderStartNotice } from "../update/notice";
 import { IS_RELEASE_BUILD } from "../version";
-import { startSession, type StartedSession } from "./start";
 
 export class WorkspaceNotInstalledError extends Error {}
 
@@ -45,13 +49,8 @@ const INSTALL_HINT =
   "`hive` opens the installed release build, never a development build.";
 
 export interface LaunchDeps {
-  /** The daemon port the launcher already brought up; the app never guesses. */
-  readonly port: number;
   readonly root?: string;
   readonly open?: (app: string, args: readonly string[]) => Promise<number>;
-  readonly cwd?: string;
-  /** The CLI binary forwarded as `--hive`; defaults to this very process. */
-  readonly hivePath?: string;
 }
 
 const openApp = (app: string, args: readonly string[]): Promise<number> =>
@@ -76,28 +75,36 @@ export async function launchWorkspace(deps: LaunchDeps): Promise<number> {
         : INSTALL_HINT,
     );
   }
-  const cwd = deps.cwd ?? process.cwd();
-  return (deps.open ?? openApp)(app, [
-    "--project",
-    cwd,
-    "--port",
-    String(deps.port),
-    "--hive",
-    deps.hivePath ?? process.execPath,
-  ]);
+  return (deps.open ?? openApp)(app, []);
 }
 
 export interface RunWorkspaceDeps {
-  readonly start?: () => Promise<StartedSession>;
+  readonly checkUpdate?: () => Promise<UpdateCheck>;
+  readonly write?: (line: string) => void;
   readonly launch?: (deps: LaunchDeps) => Promise<number>;
 }
 
-/** Bare `hive`: the `hive init` session boundary, then the app attached to
- * exactly the port that boundary produced. */
+/** Bare `hive`: force a small release-metadata check, offer an update when one
+ * exists, then launch the app without consulting the current repo. A failed
+ * check is silent: app launch is useful offline and network trouble is not a
+ * project warning. */
 export async function runWorkspace(deps: RunWorkspaceDeps = {}): Promise<number> {
-  const session = await (deps.start ?? startSession)();
-  return (deps.launch ?? launchWorkspace)({
-    cwd: session.cwd,
-    port: session.port,
-  });
+  try {
+    const check = await (deps.checkUpdate ?? (() => checkForUpdate({
+      fetchLatest: () => fetchLatestFromGitHub(),
+      now: () => Date.now(),
+      force: true,
+    })))();
+    if (check.state === "update-available" &&
+      (check.securityCritical || !isDismissed(check.latest, readUpdateCache()))) {
+      const line = renderStartNotice({
+        check,
+        installMethod: detectInstallMethod(process.execPath),
+      });
+      (deps.write ?? ((text: string) => process.stderr.write(`${text}\n`)))(line);
+    }
+  } catch {
+    // Update discovery must never turn a standalone app launch into an error.
+  }
+  return (deps.launch ?? launchWorkspace)({});
 }
