@@ -50,3 +50,5 @@ yarn-error.log*
 #Coding Agents
 .claude/worktrees
 .codex/
+# hive writes per-worktree MCP wiring at spawn (see writeClaudeAgentConfig)
+.mcp.json

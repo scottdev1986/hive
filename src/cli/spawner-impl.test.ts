@@ -14,6 +14,20 @@ import {
 const timestamp = "2026-07-09T12:00:00.000Z";
 const tempRoots: string[] = [];
 
+const fakeResolveModel = async (
+  tool: Route["tool"],
+  route: Route,
+): Promise<string> => {
+  const configured = route[tool].model;
+  if (tool === "claude" && configured === "best") {
+    return "claude-fable-5";
+  }
+  if (configured === "default") {
+    return tool === "claude" ? "claude-fable-5[1m]" : "gpt-5.6-sol";
+  }
+  return configured;
+};
+
 function agent(
   name: string,
   status: AgentRecord["status"] = "working",
@@ -274,6 +288,7 @@ describe("HiveSpawner wiring", () => {
       terminal,
       createWorktree,
       sleep: async () => {},
+      resolveModel: fakeResolveModel,
     });
 
     const claude = await spawner.spawn({ task: "Build auth API", tier: "deep" });
@@ -296,11 +311,16 @@ describe("HiveSpawner wiring", () => {
     expect(tmux.sessions[1]?.[2]).toContain("'codex'");
     expect(tmux.sessions[1]?.[2]).toContain("notify=");
     expect(tmux.sessions[1]?.[2]).toContain("You are david");
+    expect(claude.model).toEqual("claude-fable-5");
     expect(terminal.windows).toEqual([
-      ["hive-maya", "maya — best"],
+      ["hive-maya", "maya — claude-fable-5"],
       ["hive-david", "david — gpt-test"],
     ]);
     for (const [, title] of terminal.windows) {
+      // Routing aliases must never surface: the title carries the concrete
+      // model the tool actually runs.
+      expect(title).not.toContain("best");
+      expect(title).not.toContain("default");
       expect(title).not.toContain("hive-");
       expect(title).not.toContain("Build auth API");
       expect(title).not.toContain("Add route tests");
@@ -343,6 +363,7 @@ describe("HiveSpawner wiring", () => {
         path: worktreePath,
         branch: "hive/maya-ready",
       }),
+      resolveModel: fakeResolveModel,
       sleep: async () => {
         polls += 1;
         const current = store.listAgents()[0];
@@ -388,6 +409,7 @@ describe("HiveSpawner wiring", () => {
       terminal: new FakeTerminal(),
       createWorktree,
       sleep: async () => {},
+      resolveModel: fakeResolveModel,
     });
 
     const claude = await spawner.spawn({
@@ -410,7 +432,7 @@ describe("HiveSpawner wiring", () => {
     expect(tmux.sessions[0]?.[2]).toContain("'--model' 'sonnet'");
     expect(codex.name).toEqual("riley");
     expect(codex.tool).toEqual("codex");
-    expect(codex.model).toEqual("default");
+    expect(codex.model).toEqual("gpt-5.6-sol");
     expect(tmux.sessions[1]?.[2]).toContain(
       "'model_reasoning_effort=high'",
     );
@@ -506,6 +528,7 @@ describe("HiveSpawner wiring", () => {
       removeWorktree: async (repoRoot, path) => {
         removals.push([repoRoot, path]);
       },
+      resolveModel: fakeResolveModel,
       sleep: async () => {},
     });
 
@@ -546,6 +569,7 @@ describe("HiveSpawner wiring", () => {
         path: worktreePath,
         branch: "hive/maya-error-handling",
       }),
+      resolveModel: fakeResolveModel,
       sleep: async () => {},
     });
 
@@ -577,6 +601,7 @@ describe("HiveSpawner wiring", () => {
         path: worktreePath,
         branch: "hive/maya-transient",
       }),
+      resolveModel: fakeResolveModel,
       sleep: async () => {},
     });
 

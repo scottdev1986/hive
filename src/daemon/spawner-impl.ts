@@ -12,6 +12,7 @@ import {
   buildCodexSpawnCommand,
   writeCodexAgentConfig,
 } from "../adapters/tools/codex";
+import { resolveConcreteModel } from "../adapters/tools/models";
 import {
   createWorktree,
   removeWorktree,
@@ -82,6 +83,7 @@ type TmuxSessionManager = Pick<
   "newSession" | "hasSession" | "capturePane" | "killSession"
 >;
 type Sleep = (milliseconds: number) => Promise<void>;
+type ModelResolver = typeof resolveConcreteModel;
 
 export interface HiveSpawnerDependencies {
   db: AgentStore;
@@ -95,6 +97,7 @@ export interface HiveSpawnerDependencies {
   removeWorktree?: WorktreeRemover;
   keepWorktreeOnFailure?: boolean;
   sleep?: Sleep;
+  resolveModel?: ModelResolver;
 }
 
 const isLive = (agent: AgentRecord): boolean =>
@@ -185,11 +188,13 @@ export class HiveSpawner implements Spawner {
   private readonly makeWorktree: WorktreeCreator;
   private readonly cleanupWorktree: WorktreeRemover;
   private readonly wait: Sleep;
+  private readonly modelResolver: ModelResolver;
 
   constructor(private readonly dependencies: HiveSpawnerDependencies) {
     this.makeWorktree = dependencies.createWorktree ?? createWorktree;
     this.cleanupWorktree = dependencies.removeWorktree ?? removeWorktree;
     this.wait = dependencies.sleep ?? sleep;
+    this.modelResolver = dependencies.resolveModel ?? resolveConcreteModel;
   }
 
   async spawn(request: SpawnRequest): Promise<AgentRecord> {
@@ -198,7 +203,10 @@ export class HiveSpawner implements Spawner {
     const previousRecord = existingAgents.find((agent) => agent.name === name);
     const configuredRoute = await this.dependencies.routing(request.tier);
     const tool = request.tool ?? configuredRoute.tool;
-    const model = configuredRoute[tool].model;
+    // The record (and thus the terminal title and hive_status) carries the
+    // concrete model; the spawn command below still receives the configured
+    // route value, so alias-driven CLI behavior is unchanged.
+    const model = await this.modelResolver(tool, configuredRoute);
     const worktree = await this.makeWorktree(
       this.dependencies.repoRoot,
       name,
