@@ -1,6 +1,12 @@
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { getHiveHome } from "./db";
+import {
+  expectedDaemonHandshake,
+  handshakeMismatch,
+  parseDaemonHandshake,
+  type DaemonHandshake,
+} from "./handshake";
 
 export function getPidFilePath(): string {
   return resolve(getHiveHome(), "daemon.pid");
@@ -52,6 +58,36 @@ export async function isRunning(): Promise<boolean> {
   }
 }
 
+export type DaemonReuseProbe =
+  | { state: "absent" }
+  | { state: "authorized"; port: number }
+  | { state: "rejected"; port: number; reason: string };
+
+/**
+ * Health is deliberately only a liveness probe. Reuse needs the complete
+ * project/build/protocol handshake from a separate endpoint.
+ */
+export async function probeDaemonReuse(
+  expected: DaemonHandshake,
+): Promise<DaemonReuseProbe> {
+  const port = readDaemonPort();
+  if (port === null || port <= 0 || port > 65_535 || !(await isRunning())) {
+    return { state: "absent" };
+  }
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/handshake`, {
+      signal: AbortSignal.timeout(250),
+    });
+    const actual = response.ok ? parseDaemonHandshake(await response.json()) : null;
+    const reason = actual === null ? "missing or malformed reuse handshake" :
+      handshakeMismatch(expected, actual);
+    return reason === null ? { state: "authorized", port } :
+      { state: "rejected", port, reason };
+  } catch {
+    return { state: "rejected", port, reason: "reuse handshake unavailable" };
+  }
+}
+
 export function writeLifecycleFiles(
   port: number,
   pid = process.pid,
@@ -71,8 +107,17 @@ export function cleanupLifecycleFiles(pid = process.pid): void {
 }
 
 export async function ensureStarted(): Promise<number> {
-  if (await isRunning()) {
-    return readDaemonPort() ?? readConfiguredPort();
+  const projectRoot = process.cwd();
+  const handshake = await expectedDaemonHandshake(projectRoot);
+  const existing = await probeDaemonReuse(handshake);
+  if (existing.state === "authorized") {
+    return existing.port;
+  }
+  if (existing.state === "rejected") {
+    throw new Error(
+      `Refusing to reuse live Hive daemon on port ${existing.port}: ${existing.reason} differs. ` +
+        "Stop the existing daemon before starting this project.",
+    );
   }
 
   cleanupLifecycleFiles();
@@ -85,6 +130,8 @@ export async function ensureStarted(): Promise<number> {
       ...process.env,
       HIVE_HOME: getHiveHome(),
       HIVE_PORT: String(port),
+      HIVE_PROJECT_ROOT: projectRoot,
+      HIVE_PROJECT_ID: handshake.hiveUuid,
     },
     stdin: "ignore",
     stdout: "ignore",
@@ -94,8 +141,14 @@ export async function ensureStarted(): Promise<number> {
 
   const deadline = Date.now() + 5_000;
   while (Date.now() < deadline) {
-    if (await isRunning()) {
-      return readDaemonPort() ?? port;
+    const started = await probeDaemonReuse(handshake);
+    if (started.state === "authorized") {
+      return started.port;
+    }
+    if (started.state === "rejected") {
+      throw new Error(
+        `Hive daemon started with an incompatible handshake: ${started.reason}.`,
+      );
     }
     if (await Promise.race([
       child.exited.then(() => true),

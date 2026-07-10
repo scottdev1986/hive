@@ -5,8 +5,20 @@ import { join } from "node:path";
 import {
   getPidFilePath,
   isRunning,
+  probeDaemonReuse,
   writeLifecycleFiles,
 } from "./lifecycle";
+import type { DaemonHandshake } from "./handshake";
+
+const handshake: DaemonHandshake = {
+  productVersion: "0.1.0",
+  buildHash: "current-build",
+  wireProtocol: { min: 1, max: 1 },
+  schemaEpoch: 1,
+  capabilities: ["daemon-handshake-v1"],
+  hiveUuid: "hive-project-a",
+  generation: 1,
+};
 
 describe("daemon lifecycle", () => {
   test("accepts a healthy daemon even when its pidfile is missing", async () => {
@@ -50,6 +62,79 @@ describe("daemon lifecycle", () => {
       } else {
         process.env.HIVE_HOME = previousHome;
       }
+    }
+  });
+
+  test("rejects cross-project adoption even when health is live", async () => {
+    const previousHome = process.env.HIVE_HOME;
+    const home = mkdtempSync(join(tmpdir(), "hive-lifecycle-project-"));
+    process.env.HIVE_HOME = home;
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(((input) => {
+      const url = String(input);
+      return Promise.resolve(Response.json(url.endsWith("/health")
+        ? { ok: true }
+        : { ...handshake, hiveUuid: "hive-project-b" }));
+    }) as typeof fetch);
+    try {
+      writeLifecycleFiles(4317);
+      expect(await probeDaemonReuse(handshake)).toEqual({
+        state: "rejected",
+        port: 4317,
+        reason: "project identity (HiveUUID)",
+      });
+    } finally {
+      fetchSpy.mockRestore();
+      rmSync(home, { recursive: true, force: true });
+      if (previousHome === undefined) delete process.env.HIVE_HOME;
+      else process.env.HIVE_HOME = previousHome;
+    }
+  });
+
+  test("rejects a stale build with the same marketing version", async () => {
+    const previousHome = process.env.HIVE_HOME;
+    const home = mkdtempSync(join(tmpdir(), "hive-lifecycle-build-"));
+    process.env.HIVE_HOME = home;
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(((input) =>
+      Promise.resolve(Response.json(String(input).endsWith("/health")
+        ? { ok: true }
+        : { ...handshake, buildHash: "stale-build" }))
+    ) as typeof fetch);
+    try {
+      writeLifecycleFiles(4317);
+      expect(await probeDaemonReuse(handshake)).toEqual({
+        state: "rejected",
+        port: 4317,
+        reason: "content-addressed build hash",
+      });
+    } finally {
+      fetchSpy.mockRestore();
+      rmSync(home, { recursive: true, force: true });
+      if (previousHome === undefined) delete process.env.HIVE_HOME;
+      else process.env.HIVE_HOME = previousHome;
+    }
+  });
+
+  test("authorizes legitimate same-project reuse only after handshake", async () => {
+    const previousHome = process.env.HIVE_HOME;
+    const home = mkdtempSync(join(tmpdir(), "hive-lifecycle-reuse-"));
+    process.env.HIVE_HOME = home;
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(((input) =>
+      Promise.resolve(Response.json(String(input).endsWith("/health")
+        ? { ok: true }
+        : handshake))
+    ) as typeof fetch);
+    try {
+      writeLifecycleFiles(4317);
+      expect(await probeDaemonReuse(handshake)).toEqual({
+        state: "authorized",
+        port: 4317,
+      });
+      expect(fetchSpy).toHaveBeenCalledTimes(2);
+    } finally {
+      fetchSpy.mockRestore();
+      rmSync(home, { recursive: true, force: true });
+      if (previousHome === undefined) delete process.env.HIVE_HOME;
+      else process.env.HIVE_HOME = previousHome;
     }
   });
 });

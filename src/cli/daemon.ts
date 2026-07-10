@@ -17,6 +17,7 @@ import { QuotaService } from "../daemon/quota";
 import { ORCHESTRATOR_NAME } from "../schemas";
 
 export async function runDaemon(): Promise<void> {
+  const repoRoot = process.env.HIVE_PROJECT_ROOT ?? process.cwd();
   const config = await loadHiveConfig();
   const quotaConfig = await loadQuotaConfig();
   const db = new HiveDatabase();
@@ -47,7 +48,7 @@ export async function runDaemon(): Promise<void> {
   });
   const spawner = new HiveSpawner({
     db,
-    repoRoot: process.cwd(),
+    repoRoot,
     port,
     // Only the daemon mints. The spawner asks for a credential, it never
     // creates one, and the token is written to a 0600 file rather than handed
@@ -76,7 +77,7 @@ export async function runDaemon(): Promise<void> {
     tmux,
     // Crash-recovered agents get their viewers reopened unless headless.
     ...(config.headless ? {} : { terminal }),
-    repoRoot: process.cwd(),
+    repoRoot,
     port,
     manageLifecycle: true,
     layout,

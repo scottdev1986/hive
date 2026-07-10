@@ -69,6 +69,7 @@ import {
   readConfiguredPort,
   writeLifecycleFiles,
 } from "./lifecycle";
+import { expectedDaemonHandshake } from "./handshake";
 import {
   compactActiveTeam,
   orchestratorTmuxSession,
@@ -365,6 +366,7 @@ export class HiveDaemon {
   >;
   private readonly recovery: CrashRecovery;
   private readonly repoRoot: string;
+  private readonly handshake: ReturnType<typeof expectedDaemonHandshake>;
   private readonly cleanupWorktree: typeof removeWorktree;
   private readonly assessStranded: NonNullable<
     HiveDaemonOptions["assessStrandedWork"]
@@ -465,6 +467,7 @@ export class HiveDaemon {
       ? defaultOrphanDependencies()
       : options.resourceRunners.orphans;
     this.repoRoot = options.repoRoot ?? process.cwd();
+    this.handshake = expectedDaemonHandshake(this.repoRoot);
     this.cleanupWorktree = options.removeWorktree ?? removeWorktree;
     this.assessStranded = options.assessStrandedWork ?? assessStrandedWork;
     this.recovery = new CrashRecovery({
@@ -931,6 +934,9 @@ export class HiveDaemon {
     // capability and no launcher has one before it decides to talk to us.
     if (url.pathname === "/health" && request.method === "GET") {
       return json({ ok: true, version: HIVE_VERSION });
+    }
+    if (url.pathname === "/handshake" && request.method === "GET") {
+      return json(await this.handshake);
     }
     // Everything below mutates state or reads another tenant's data, so every
     // one of them authenticates first. See the capability rights matrix.
