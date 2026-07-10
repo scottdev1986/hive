@@ -1,6 +1,9 @@
 import { readFileSync } from "node:fs";
 import { TmuxAdapter } from "../adapters/tmux";
-import { resolveTerminal } from "../adapters/terminal";
+import {
+  buildAgentTerminalTitle,
+  resolveTerminal,
+} from "../adapters/terminal";
 import { loadHiveConfig } from "../config/load";
 import {
   cleanupLifecycleFiles,
@@ -113,7 +116,10 @@ export async function watchAgent(name: string): Promise<void> {
     );
   }
   const config = await loadHiveConfig();
-  await resolveTerminal(config).openWindow(agent.tmuxSession, agent.tmuxSession);
+  await resolveTerminal(config).openWindow(
+    agent.tmuxSession,
+    buildAgentTerminalTitle(agent.name, agent.model),
+  );
 }
 
 export async function stopHive(): Promise<void> {

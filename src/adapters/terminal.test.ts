@@ -10,7 +10,7 @@ import {
   buildTerminalAppOsascript,
   TerminalAppAdapter,
 } from "./terminal-app";
-import { resolveTerminal } from "./terminal";
+import { buildAgentTerminalTitle, resolveTerminal } from "./terminal";
 
 const previousHiveHome = Bun.env.HIVE_HOME;
 Bun.env.HIVE_HOME = `/private/tmp/hive-terminal-${crypto.randomUUID()}`;
@@ -49,6 +49,19 @@ describe("terminal osascript builders", () => {
   test("shell-quotes tmux session names", () => {
     const script = buildITerm2Osascript("agent'five", "Agent Five");
     expect(script.includes("'=agent'\\\\''five'")).toEqual(true);
+  });
+});
+
+describe("agent terminal titles", () => {
+  test("contain only the human name and routed model", () => {
+    const title = buildAgentTerminalTitle("maya", "gpt-5-codex");
+
+    expect(title).toEqual("maya — gpt-5-codex");
+    expect(title).not.toContain("hive-");
+    expect(title).not.toContain("standard");
+    expect(title).not.toContain("Build auth API");
+    expect(title).not.toContain("/worktrees/");
+    expect(title).not.toContain("tmux");
   });
 });
 

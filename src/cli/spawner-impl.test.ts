@@ -297,9 +297,18 @@ describe("HiveSpawner wiring", () => {
     expect(tmux.sessions[1]?.[2]).toContain("notify=");
     expect(tmux.sessions[1]?.[2]).toContain("You are david");
     expect(terminal.windows).toEqual([
-      ["hive-maya", "hive-maya"],
-      ["hive-david", "hive-david"],
+      ["hive-maya", "maya — best"],
+      ["hive-david", "david — gpt-test"],
     ]);
+    for (const [, title] of terminal.windows) {
+      expect(title).not.toContain("hive-");
+      expect(title).not.toContain("Build auth API");
+      expect(title).not.toContain("Add route tests");
+      expect(title).not.toContain(root);
+      expect(title).not.toContain("deep");
+      expect(title).not.toContain("standard");
+      expect(title).not.toContain("tmux");
+    }
 
     const claudeSettings = await readFile(
       join(root, "maya", ".claude", "settings.local.json"),

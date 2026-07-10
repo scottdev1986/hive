@@ -9,6 +9,10 @@ export interface TerminalAdapter {
   openWindow(tmuxSession: string, title: string): Promise<void>;
 }
 
+export function buildAgentTerminalTitle(name: string, model: string): string {
+  return `${name} — ${model}`;
+}
+
 export function resolveTerminal(
   config: Pick<HiveConfig, "terminal">,
 ): TerminalAdapter {

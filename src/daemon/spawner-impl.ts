@@ -1,4 +1,7 @@
-import type { TerminalAdapter } from "../adapters/terminal";
+import {
+  buildAgentTerminalTitle,
+  type TerminalAdapter,
+} from "../adapters/terminal";
 import { shellJoin } from "../adapters/tmux";
 import type { TmuxAdapter } from "../adapters/tmux";
 import {
@@ -275,7 +278,7 @@ export class HiveSpawner implements Spawner {
       try {
         await this.dependencies.terminal.openWindow(
           record.tmuxSession,
-          record.tmuxSession,
+          buildAgentTerminalTitle(record.name, record.model),
         );
       } catch {
         // Opening a viewer is cosmetic and does not affect agent readiness.
