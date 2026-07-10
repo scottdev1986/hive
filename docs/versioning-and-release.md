@@ -33,12 +33,17 @@ Five constants ride along: the semver, the short commit, the build date, the con
 1. Typecheck and test. Nothing is released from a red tree.
 2. Plan: `plan-cli.ts` reads the tags and the tip's tags, and prints `{action, version, tag}`.
 3. Build, if the action is `release`: two Bun-compiled CLI slices (`darwin-arm64`, `darwin-x64`, cross-compiled from one macOS runner) and one universal Workspace application built with `swift build -c release --arch arm64 --arch x86_64`. The universal bundle is duplicated across both manifest entries rather than sliced, because a 3 MB duplicate is cheaper than a second bundle to sign and notarize.
-4. Prove the built binary reports its own version.
-5. Tag, then publish the GitHub Release with both binaries, the app tarball, and `hive-release.json`.
+4. Sign, if a Developer ID certificate is configured: a Developer ID Application signature with the hardened runtime and a secure timestamp on both CLI slices and the app, one `notarytool` submission for all three, and a stapled ticket on the app. With no certificate configured the artifacts stay unsigned and the release notes say so. The switch is the presence of the certificate secret, not a flag anyone flips.
+5. Prove the built binary reports its own version; sign `hive-release.json` with the offline key if one exists; and verify every signature with `codesign --verify --strict` and `spctl --assess`, failing the release on any defect. All of this is *before* the tag, so a signing failure never burns a version.
+6. Tag, then publish the GitHub Release with both binaries, the app tarball, `hive-release.json`, and — when a key is configured — `hive-release.json.sig`.
 
-Building *before* tagging is the interesting ordering. A failed build must not burn a version number, so the tag is minted only once there are artifacts to attach to it. The cost is that two racing runs may both build and only one may tag; a wasted build is cheaper than a gap in the series.
+Building *before* tagging is the interesting ordering. A failed build must not burn a version number, so the tag is minted only once there are artifacts to attach to it. The cost is that two racing runs may both build and only one may tag; a wasted build is cheaper than a gap in the series. Signing and its verification sit inside that same before-the-tag window for the same reason: a certificate problem or a notarization rejection must fail the release, not ship a broken signature under a fresh version number.
 
-`hive-release.json` is the manifest: version, commit, channel, `securityCritical`, wire-protocol and schema ranges, and for each artifact a name, size, SHA-256, and build hash. It is the one document the updater trusts. Apple's Developer ID signature would authenticate the executable to macOS; the manifest signature authenticates *update policy* to Hive — which version is current, which bytes are it, whether it is urgent. A notarized binary served from the wrong manifest is still the wrong update, so neither signature substitutes for the other.
+Two sharp edges of signing a Bun binary were found by testing, not by reading. First, `bun build --compile` writes its own ad-hoc signature, and on Bun ≥ 1.3.12 that signature reserves too little room in the Mach-O for a real one ([oven-sh/bun#29120](https://github.com/oven-sh/bun/issues/29120)); re-signing on top of it produces a truncated signature that fails `codesign --verify --strict` with "main executable failed strict validation". The build sets `BUN_NO_CODESIGN_MACHO_BINARY=1` whenever it is going to sign, which is the only way measured to yield a strict-valid Developer ID signature. Second, a compiled binary embeds JavaScriptCore — a JIT — and the hardened runtime kills a JIT that lacks `com.apple.security.cs.allow-jit` and `com.apple.security.cs.allow-unsigned-executable-memory`. Hive grants exactly those two, in `scripts/signing/entitlements.plist`. Bun's own guide prints three more — `disable-library-validation`, `disable-executable-page-protection`, `allow-dyld-environment-variables` — and Hive omits all three: a self-contained binary loads no foreign libraries, needs no `DYLD_*` overrides, and does not need executable-page-protection disabled once JIT is allowed. Each entitlement is attack surface, so the rejected alternative — sign with Bun's full set because it is what the guide shows — trades security for nothing. `scripts/signing/dry-run.sh` proves the choice against a real certificate before CI is trusted, and `sign.test.ts` pins the plist so the proof and the shipped file cannot drift.
+
+Stapling is where the CLI and the app diverge. A notarization ticket staples into a bundle but not into a bare Mach-O — `notarytool` and `stapler` accept only zips, packages, and bundles. So the app carries a stapled ticket and clears Gatekeeper offline, while the CLI slices are notarized inside a zip (which registers their code hash with Apple) and rely on Gatekeeper's online ticket lookup the first time they run. That is Apple's model for command-line tools, honestly documented rather than papered over: a machine that is offline the very first time it runs a freshly downloaded `hive` binary is the one case the ticket cannot cover, and the SHA-256 in the manifest plus the embedded signature are what stand behind it there.
+
+`hive-release.json` is the manifest: version, commit, channel, `securityCritical`, wire-protocol and schema ranges, and for each artifact a name, size, SHA-256, and build hash. It is the one document the updater trusts, and the SHA-256 it records is of the final signed, stapled bytes — the exact bytes `hive update` re-hashes on the way in — because signing is done before any digest is taken. Apple's Developer ID signature authenticates the executable to macOS; the manifest signature authenticates *update policy* to Hive — which version is current, which bytes are it, whether it is urgent. A notarized binary served from the wrong manifest is still the wrong update, so neither signature substitutes for the other.
 
 ## Install, update, launch
 
@@ -62,13 +67,58 @@ The daemon is the reason activation is not a file copy. A Unix process keeps exe
 
 ## What Scott still has to do
 
-The pipeline runs on `GITHUB_TOKEN` alone and needs no repository secret to publish its first release. Four things are not automatable, and three of them are gaps a user can feel.
+The pipeline is built and waits on credentials, not code. With no secrets set it publishes the unsigned release it always has; setting the secrets below turns Developer ID signing, notarization, and the manifest signature on with no other change and no flag to flip. Four things need a human, and each is a checklist you can follow top to bottom.
 
 **Verify workflow write permissions.** The repository default for `GITHUB_TOKEN` is read-only. The workflow raises itself to `contents: write`, which is permitted — a workflow may exceed the default, though not what the token can be granted. If the first run fails with a 403 on the tag push, flip Settings → Actions → General → Workflow permissions to "Read and write".
 
-**Apple Developer ID and notarization.** The artifacts are currently unsigned and un-notarized, so macOS quarantines them on first run and the user must clear Gatekeeper by hand. This is the largest gap. It needs a Developer ID Application certificate in CI, a hardened-runtime entitlement set *proved* to pass notarization on a real compiled Bun binary (Bun's JavaScriptCore may require JIT and library-validation entitlements, which is an unverified risk, not a formality), `notarytool` submission, and Gatekeeper verification on a clean account.
+**Set up Developer ID signing and notarization.** One-time setup on Apple's side, then a set of GitHub secrets the pipeline reads automatically. In order:
 
-**The offline Ed25519 release key.** Generate it off-CI, keep the private half offline, sign `hive-release.json` in the release job, publish `hive-release.json.sig`, and pass the public half to `build.ts --public-key`. Verification is already written and already fails closed; it is inert only because no key exists. Until then `hive update` prints an unsigned-release warning on every update, which is the honest thing to print and not a thing to leave printing for long.
+1. **Create a Developer ID Application certificate.** This requires the **Account Holder** role. In Xcode: Settings → Accounts → your team → Manage Certificates → **+** → Developer ID Application. (Or the developer portal: Certificates, Identifiers & Profiles → Certificates → **+** → Developer ID → Developer ID Application.) You may hold up to five.
+2. **Export it as a `.p12`.** In Keychain Access, find the `Developer ID Application: …` entry, expand it to confirm the private key hangs under it, select the certificate and its key, right-click → Export, choose Personal Information Exchange (`.p12`), and set a strong password. That password becomes `MACOS_CERT_PASSWORD`.
+3. **Create an App Store Connect API key for notarization.** App Store Connect → Users and Access → Integrations → App Store Connect API → Team Keys → **+**, and give it the **Developer** role — that is all notarization needs, not Admin and not Account Holder. Download `AuthKey_XXXXXXXXXX.p8` (Apple lets you download it exactly once) and note the **Key ID** (10 characters) and the **Issuer ID** (the UUID at the top of the Keys page).
+4. **Find your Team ID** — the 10-character code in parentheses in the certificate name, also shown under Membership at developer.apple.com/account.
+5. **Set the repository secrets** (Settings → Secrets and variables → Actions → New repository secret). Base64 values must carry no trailing newline; the macOS commands below are correct as written.
+
+   | secret | value |
+   |---|---|
+   | `MACOS_CERT_P12_BASE64` | `base64 -i DeveloperID.p12 \| pbcopy` |
+   | `MACOS_CERT_PASSWORD` | the `.p12` password from step 2 |
+   | `MACOS_SIGN_IDENTITY` | the identity string exactly as `security find-identity -v -p codesigning` prints it, e.g. `Developer ID Application: Your Name (TEAMID)` |
+   | `MACOS_TEAM_ID` | the 10-character Team ID |
+   | `MACOS_NOTARY_KEY_P8_BASE64` | `base64 -i AuthKey_XXXXXXXXXX.p8 \| pbcopy` |
+   | `MACOS_NOTARY_KEY_ID` | the 10-character Key ID |
+   | `MACOS_NOTARY_ISSUER_ID` | the Issuer UUID |
+
+6. **Prove your certificate works before trusting CI.** On your Mac, with the certificate in your login keychain, from a Hive checkout:
+
+   ```sh
+   scripts/signing/dry-run.sh
+   ```
+
+   It builds a real Hive CLI, signs it with your certificate and Hive's entitlements, *runs it*, and checks it with `codesign --verify --strict` — so a signing or entitlement mistake surfaces on your machine now, not on a user's after release. To prove the full Apple round trip including notarization and the app:
+
+   ```sh
+   export MACOS_NOTARY_KEY_PATH=~/AuthKey_XXXXXXXXXX.p8
+   export MACOS_NOTARY_KEY_ID=XXXXXXXXXX
+   export MACOS_NOTARY_ISSUER_ID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+   scripts/signing/dry-run.sh --full
+   ```
+
+**Generate the offline Ed25519 release key.** Set both halves or neither — the pipeline hard-errors on a half-configured key, because embedding the public half without signing with the private half flips `hive update` fail-closed and then refuses the very release it shipped in. On an offline machine:
+
+```sh
+openssl genpkey -algorithm ed25519 -out hive-release-private.pem
+openssl pkey -in hive-release-private.pem -pubout -outform DER | base64   # -> HIVE_RELEASE_PUBLIC_KEY
+openssl pkey -in hive-release-private.pem -outform DER | base64           # -> HIVE_RELEASE_PRIVATE_KEY
+```
+
+Set `HIVE_RELEASE_PUBLIC_KEY` and `HIVE_RELEASE_PRIVATE_KEY` as repository secrets and keep `hive-release-private.pem` offline — a hardware token or an air-gapped password manager, never the repo. The public half is embedded in every binary via `build.ts --public-key`; the private half signs `hive-release.json` in the release job through `scripts/signing/sign-manifest.ts` and touches nothing else. From the first release with both set, the binary embeds the key, the job publishes `hive-release.json.sig`, and `hive update` stops printing the unsigned-release warning: verification is mandatory and fail-closed from then on.
+
+**Confirm it end to end.** After the first signed release, on a clean Mac or a fresh user account that has never trusted your certificate:
+
+- Download `hive-darwin-arm64` from the release page and run `./hive-darwin-arm64 --version`. It must run with no "Apple could not verify … is free of malware" dialog, and `spctl --assess -t exec -vv ./hive-darwin-arm64` must report `source=Notarized Developer ID`.
+- Download and unpack `HiveWorkspace.tar.gz` and open `HiveWorkspace.app`. It must open with no Gatekeeper prompt, and `xcrun stapler validate HiveWorkspace.app` must confirm a stapled ticket.
+- Run `hive update`. It must no longer print the unsigned-release warning, which proves the embedded key verified the manifest signature.
 
 **A `hive` Homebrew tap**, if the secondary channel is wanted. Hive already detects a Homebrew-owned install and refuses to rewrite it; nothing else is built.
 

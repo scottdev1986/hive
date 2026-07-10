@@ -15,6 +15,14 @@
  * from rather than what it built. The property the daemon handshake needs holds
  * either way: two different releases always disagree, and a rebuild of one
  * release always agrees with itself.
+ *
+ * Signing, when the environment carries a Developer ID (see sign.ts), happens
+ * after every artifact is built and before any digest is taken: Apple's tools
+ * rewrite the signature into the Mach-O and stapling rewrites the app bundle, so
+ * the SHA-256 the manifest records must be of the final, signed, stapled bytes —
+ * the exact bytes `hive update` will re-hash on the way in. With no Developer ID
+ * in the environment this step is skipped entirely and the artifacts are the
+ * unsigned ones the pipeline publishes today.
  */
 import { createHash } from "node:crypto";
 import { mkdir, rm, writeFile } from "node:fs/promises";
@@ -27,6 +35,7 @@ import {
   type ReleaseArtifact,
   type ReleaseManifest,
 } from "./manifest";
+import { signRelease, signingConfigFromEnv, type SigningConfig } from "./sign";
 
 const TARGETS = [
   { arch: "arm64", bunTarget: "bun-darwin-arm64", asset: "hive-darwin-arm64" },
@@ -34,6 +43,8 @@ const TARGETS = [
 ] as const;
 
 const WORKSPACE_ASSET = "HiveWorkspace.tar.gz";
+const WORKSPACE_BUNDLE = "HiveWorkspace.app";
+const DEFAULT_ENTITLEMENTS = "scripts/signing/entitlements.plist";
 
 interface Options {
   version: string;
@@ -66,8 +77,17 @@ function parseArgs(argv: string[]): Options {
   };
 }
 
-async function sh(command: string[], cwd: string): Promise<void> {
-  const proc = Bun.spawn(command, { cwd, stdout: "inherit", stderr: "inherit" });
+async function sh(
+  command: string[],
+  cwd: string,
+  env?: Record<string, string>,
+): Promise<void> {
+  const proc = Bun.spawn(command, {
+    cwd,
+    stdout: "inherit",
+    stderr: "inherit",
+    ...(env === undefined ? {} : { env: { ...process.env, ...env } }),
+  });
   const code = await proc.exited;
   if (code !== 0) throw new Error(`${command.join(" ")} exited ${code}`);
 }
@@ -91,11 +111,26 @@ function buildHashFor(sourceHash: string, options: Options, target: string): str
     .digest("hex");
 }
 
-async function buildCli(
+interface CliBuild {
+  readonly target: (typeof TARGETS)[number];
+  readonly buildHash: string;
+  readonly outfile: string;
+}
+
+/**
+ * Compile one CLI slice. When the build will be signed, compile with
+ * `BUN_NO_CODESIGN_MACHO_BINARY=1`: Bun's own ad-hoc signature reserves too
+ * little space in __LINKEDIT (oven-sh/bun#29120), and codesign re-signing on top
+ * of it produces a truncated signature that fails `codesign --verify --strict`.
+ * The env var makes the compiled binary re-signable; sign.ts's header records
+ * the proof. Unsigned builds keep Bun's default so today's output is unchanged.
+ */
+async function compileCli(
   options: Options,
   target: (typeof TARGETS)[number],
   buildHash: string,
-): Promise<ReleaseArtifact> {
+  signed: boolean,
+): Promise<CliBuild> {
   const outfile = join(options.out, target.asset);
   const defines = [
     ["HIVE_BUILD_VERSION", options.version],
@@ -111,22 +146,19 @@ async function buildCli(
     `process.env.${name}=${JSON.stringify(value)}`,
   ]);
 
-  await sh([
-    "bun", "build", "--compile",
-    `--target=${target.bunTarget}`,
-    ...defines,
-    "src/cli.ts",
-    "--outfile", outfile,
-  ], options.repoRoot);
+  await sh(
+    [
+      "bun", "build", "--compile",
+      `--target=${target.bunTarget}`,
+      ...defines,
+      "src/cli.ts",
+      "--outfile", outfile,
+    ],
+    options.repoRoot,
+    signed ? { BUN_NO_CODESIGN_MACHO_BINARY: "1" } : undefined,
+  );
 
-  return {
-    name: target.asset,
-    kind: "cli",
-    platform: "darwin",
-    arch: target.arch,
-    buildHash,
-    ...(await digest(outfile)),
-  };
+  return { target, buildHash, outfile };
 }
 
 const INFO_PLIST = (version: string): string =>
@@ -149,7 +181,8 @@ const INFO_PLIST = (version: string): string =>
 </plist>
 `;
 
-async function buildWorkspace(options: Options): Promise<ReleaseArtifact[]> {
+/** Build the universal .app bundle and leave it on disk; return its path. */
+async function compileWorkspace(options: Options): Promise<string> {
   const workspace = join(options.repoRoot, "workspace");
   await sh(
     ["swift", "build", "-c", "release", "--arch", "arm64", "--arch", "x86_64"],
@@ -158,15 +191,19 @@ async function buildWorkspace(options: Options): Promise<ReleaseArtifact[]> {
   const binPath = (await Bun.$`swift build -c release --arch arm64 --arch x86_64 --show-bin-path`
     .cwd(workspace).text()).trim();
 
-  const bundle = join(options.out, "HiveWorkspace.app");
+  const bundle = join(options.out, WORKSPACE_BUNDLE);
   const macos = join(bundle, "Contents", "MacOS");
   await rm(bundle, { recursive: true, force: true });
   await mkdir(macos, { recursive: true });
   await writeFile(join(bundle, "Contents", "Info.plist"), INFO_PLIST(options.version));
   await sh(["cp", join(binPath, "HiveWorkspace"), join(macos, "HiveWorkspace")], options.repoRoot);
+  return bundle;
+}
 
+/** Tar the (now signed and stapled) bundle, digest it, and clean up. */
+async function finalizeWorkspace(options: Options, bundle: string): Promise<ReleaseArtifact[]> {
   const tarball = join(options.out, WORKSPACE_ASSET);
-  await sh(["tar", "-czf", tarball, "-C", options.out, "HiveWorkspace.app"], options.repoRoot);
+  await sh(["tar", "-czf", tarball, "-C", options.out, WORKSPACE_BUNDLE], options.repoRoot);
   await rm(bundle, { recursive: true, force: true });
 
   const stat = await digest(tarball);
@@ -185,15 +222,44 @@ async function buildWorkspace(options: Options): Promise<ReleaseArtifact[]> {
 export async function build(options: Options): Promise<ReleaseManifest> {
   await mkdir(options.out, { recursive: true });
   const sourceHash = await currentBuildHash();
+  const signing: SigningConfig | null = signingConfigFromEnv(
+    process.env,
+    join(options.repoRoot, DEFAULT_ENTITLEMENTS),
+  );
 
-  const artifacts: ReleaseArtifact[] = [];
+  // Build everything first, unsigned, so signing sees final on-disk artifacts.
+  const cliBuilds: CliBuild[] = [];
   for (const target of TARGETS) {
-    artifacts.push(
-      await buildCli(options, target, buildHashFor(sourceHash, options, target.bunTarget)),
+    cliBuilds.push(
+      await compileCli(
+        options,
+        target,
+        buildHashFor(sourceHash, options, target.bunTarget),
+        signing !== null,
+      ),
     );
   }
-  if (!options.skipWorkspace) {
-    artifacts.push(...(await buildWorkspace(options)));
+  const appBundle = options.skipWorkspace ? null : await compileWorkspace(options);
+
+  // Sign, notarize, and staple in place. A no-op when no Developer ID is set.
+  if (signing !== null) {
+    await signRelease({ cliSlices: cliBuilds.map((build) => build.outfile), appBundle }, signing);
+  }
+
+  // Digest last, so the manifest records the signed and stapled bytes.
+  const artifacts: ReleaseArtifact[] = [];
+  for (const build of cliBuilds) {
+    artifacts.push({
+      name: build.target.asset,
+      kind: "cli",
+      platform: "darwin",
+      arch: build.target.arch,
+      buildHash: build.buildHash,
+      ...(await digest(build.outfile)),
+    });
+  }
+  if (appBundle !== null) {
+    artifacts.push(...(await finalizeWorkspace(options, appBundle)));
   }
 
   const manifest: ReleaseManifest = {

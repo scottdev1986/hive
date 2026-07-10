@@ -27,7 +27,8 @@ concurrency:
 jobs:
   release:
     # macOS because the artifacts are Mach-O: `bun build --compile` cross-compiles
-    # both CLI slices from here, and `swift build` needs a real toolchain.
+    # both CLI slices from here, and `swift build` needs a real toolchain. Signing
+    # and notarization need the same real macOS tools (codesign, notarytool).
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
@@ -61,16 +62,106 @@ jobs:
         if: steps.plan.outputs.action != 'release'
         run: echo "::notice::${{ steps.plan.outputs.version }} — this commit is already released."
 
+      # Graceful degradation lives here, not in a flag. If the Apple certificate
+      # secret is absent the build stays unsigned and publishes exactly today's
+      # artifacts; if the offline release key is absent the manifest stays
+      # unsigned. Present secrets turn each on automatically, with no other edit.
+      - name: Detect signing configuration
+        id: cfg
+        if: steps.plan.outputs.action == 'release'
+        env:
+          APPLE_CERT: ${{ secrets.MACOS_CERT_P12_BASE64 }}
+          MANIFEST_PRIVATE: ${{ secrets.HIVE_RELEASE_PRIVATE_KEY }}
+          MANIFEST_PUBLIC: ${{ secrets.HIVE_RELEASE_PUBLIC_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -n "${APPLE_CERT:-}" ]; then
+            echo "apple=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "apple=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::No MACOS_CERT_P12_BASE64 secret; publishing UNSIGNED, un-notarized artifacts."
+          fi
+          # The manifest key is both-or-neither. Embedding the public half without
+          # signing with the private half would flip verification fail-closed and
+          # then refuse the very release it shipped in — so a half-configured key
+          # is a hard error, not a silent half-signed release.
+          if [ -n "${MANIFEST_PRIVATE:-}" ] && [ -z "${MANIFEST_PUBLIC:-}" ]; then
+            echo "::error::HIVE_RELEASE_PRIVATE_KEY is set but HIVE_RELEASE_PUBLIC_KEY is not; set both or neither."
+            exit 1
+          fi
+          if [ -z "${MANIFEST_PRIVATE:-}" ] && [ -n "${MANIFEST_PUBLIC:-}" ]; then
+            echo "::error::HIVE_RELEASE_PUBLIC_KEY is set but HIVE_RELEASE_PRIVATE_KEY is not; embedding the public key without signing would refuse every update."
+            exit 1
+          fi
+          if [ -n "${MANIFEST_PRIVATE:-}" ]; then
+            echo "manifest=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "manifest=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::No HIVE_RELEASE_PRIVATE_KEY secret; the manifest will be published unsigned."
+          fi
+
+      # Import the Developer ID certificate into a throwaway keychain and write
+      # the App Store Connect API key to disk, both under RUNNER_TEMP so they
+      # vanish with the runner. codesign finds the identity by name from the
+      # search list; sign.ts reads the key path from the build step's env.
+      - name: Set up signing keychain and notary key
+        if: steps.plan.outputs.action == 'release' && steps.cfg.outputs.apple == 'true'
+        env:
+          CERT_P12: ${{ secrets.MACOS_CERT_P12_BASE64 }}
+          CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+          NOTARY_P8: ${{ secrets.MACOS_NOTARY_KEY_P8_BASE64 }}
+          KEYCHAIN_PASSWORD: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          KEYCHAIN="$RUNNER_TEMP/hive-signing.keychain-db"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+
+          printf '%s' "$CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" -P "$CERT_PASSWORD" \
+            -T /usr/bin/codesign
+          # Let codesign use the imported key without an interactive prompt.
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
+          # Put our keychain first in the search list so codesign sees the cert.
+          security list-keychains -d user -s "$KEYCHAIN" \
+            $(security list-keychains -d user | sed 's/["]//g')
+          rm -f "$RUNNER_TEMP/cert.p12"
+
+          printf '%s' "$NOTARY_P8" | base64 --decode > "$RUNNER_TEMP/notary.p8"
+
       # Build before tagging. A build that fails must not burn a version number,
       # so the tag is minted only once there are artifacts to attach to it.
+      #
+      # BUN_NO_CODESIGN_MACHO_BINARY is set only when signing: it makes the
+      # compiled binary re-signable (oven-sh/bun#29120). The signing env is
+      # harmless when the secrets are empty — sign.ts takes the unsigned branch.
+      # --public-key is passed only when the offline key exists, which is what
+      # flips `hive update` verification to fail-closed.
       - name: Build release artifacts
         if: steps.plan.outputs.action == 'release'
+        env:
+          BUN_NO_CODESIGN_MACHO_BINARY: ${{ steps.cfg.outputs.apple == 'true' && '1' || '' }}
+          MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+          MACOS_TEAM_ID: ${{ secrets.MACOS_TEAM_ID }}
+          MACOS_NOTARY_KEY_PATH: ${{ steps.cfg.outputs.apple == 'true' && format('{0}/notary.p8', runner.temp) || '' }}
+          MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
+          MACOS_NOTARY_ISSUER_ID: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
+          HIVE_SIGN_ENTITLEMENTS: scripts/signing/entitlements.plist
+          HIVE_RELEASE_PUBLIC_KEY: ${{ secrets.HIVE_RELEASE_PUBLIC_KEY }}
         run: |
-          bun run src/release/build.ts \
-            --version "${{ steps.plan.outputs.version }}" \
-            --commit "$(git rev-parse --short HEAD)" \
-            --build-date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+          set -euo pipefail
+          args=(
+            --version "${{ steps.plan.outputs.version }}"
+            --commit "$(git rev-parse --short HEAD)"
+            --build-date "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
             --out dist
+          )
+          if [ -n "${HIVE_RELEASE_PUBLIC_KEY:-}" ]; then
+            args+=(--public-key "$HIVE_RELEASE_PUBLIC_KEY")
+          fi
+          bun run src/release/build.ts "${args[@]}"
 
       - name: Verify the built CLI reports its own version
         if: steps.plan.outputs.action == 'release'
@@ -83,6 +174,22 @@ jobs:
             *"${{ steps.plan.outputs.version }}"*) ;;
             *) echo "::error::built binary reported '$reported'"; exit 1 ;;
           esac
+
+      # Sign the manifest over its exact bytes with the offline private key. The
+      # public half was embedded above, so this is the moment update verification
+      # stops being inert. The key touches only this one small script.
+      - name: Sign the manifest with the offline release key
+        if: steps.plan.outputs.action == 'release' && steps.cfg.outputs.manifest == 'true'
+        env:
+          HIVE_RELEASE_PRIVATE_KEY: ${{ secrets.HIVE_RELEASE_PRIVATE_KEY }}
+        run: bun run scripts/signing/sign-manifest.ts dist/hive-release.json
+
+      # The Gatekeeper gate. codesign --verify --strict and spctl --assess on the
+      # exact bytes a user downloads; any signing defect exits non-zero here,
+      # before the tag exists, so a broken signature never burns a version.
+      - name: Verify signing and notarization
+        if: steps.plan.outputs.action == 'release' && steps.cfg.outputs.apple == 'true'
+        run: scripts/signing/verify.sh dist --require-notarization
 
       # The compare-and-swap. `git push` of a new tag ref fails if the ref
       # exists, so two concurrent runs can never both mint this version.
@@ -99,17 +206,39 @@ jobs:
         if: steps.plan.outputs.action == 'release'
         env:
           GH_TOKEN: ${{ github.token }}
+          SIGNED: ${{ steps.cfg.outputs.apple }}
+          MANIFEST_SIGNED: ${{ steps.cfg.outputs.manifest }}
         run: |
           set -euo pipefail
+          assets=(
+            dist/hive-darwin-arm64
+            dist/hive-darwin-x64
+            dist/HiveWorkspace.tar.gz
+            dist/hive-release.json
+          )
+          [ "$MANIFEST_SIGNED" = "true" ] && assets+=(dist/hive-release.json.sig)
+
+          if [ "$MANIFEST_SIGNED" = "true" ]; then
+            manifest_line="\`hive update\` verifies each artifact's SHA-256 and the Ed25519 manifest signature against the embedded release key."
+          else
+            manifest_line="\`hive update\` verifies each artifact's SHA-256 against \`hive-release.json\` and says out loud that the release carries no Hive release-key signature."
+          fi
+
+          if [ "$SIGNED" = "true" ]; then
+            notes="Automated release of ${{ github.sha }}.
+
+          These artifacts are signed with a Developer ID and notarized by Apple, so macOS
+          runs them without a Gatekeeper quarantine prompt. ${manifest_line}
+          See docs/versioning-and-release.md."
+          else
+            notes="Automated release of ${{ github.sha }}.
+
+          These artifacts are **not yet signed or notarized**, so macOS quarantines them on
+          first run. ${manifest_line} See docs/versioning-and-release.md."
+          fi
+
           gh release create "${{ steps.plan.outputs.tag }}" \
             --verify-tag \
             --title "hive ${{ steps.plan.outputs.version }}" \
-            --notes "Automated release of ${{ github.sha }}.
-
-          These artifacts are **not yet signed or notarized**. \`hive update\` verifies
-          each artifact's SHA-256 against \`hive-release.json\` and says out loud that the
-          release carries no Hive release-key signature. See docs/versioning-and-release.md." \
-            dist/hive-darwin-arm64 \
-            dist/hive-darwin-x64 \
-            dist/HiveWorkspace.tar.gz \
-            dist/hive-release.json
+            --notes "$notes" \
+            "${assets[@]}"

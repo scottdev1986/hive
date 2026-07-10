@@ -8,9 +8,9 @@
 # release manifest, proves the binary runs, and only then points ~/.local/bin/hive
 # at it. It never touches a Homebrew-owned install.
 #
-# The artifacts are not yet Developer ID signed or notarized, so macOS will
-# quarantine them on first run. That is a real gap, not a detail; see
-# docs/versioning-and-release.md.
+# A signed and notarized release runs without a Gatekeeper prompt. An unsigned
+# release (none of the signing secrets configured) is quarantined on first run;
+# see docs/versioning-and-release.md.
 set -eu
 
 REPO="${HIVE_REPO:-scottdev1986/hive}"
