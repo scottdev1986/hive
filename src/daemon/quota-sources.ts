@@ -1,5 +1,6 @@
 import { tmpdir } from "node:os";
 import type { CodexRateLimitsResponse, CodexRateLimitSnapshot } from "./quota";
+import { HIVE_VERSION } from "../version";
 
 /**
  * Live quota discovery.
@@ -229,7 +230,7 @@ export class CodexStdioProbeTransport implements CodexProbeTransport {
         id: 1,
         method: "initialize",
         params: {
-          clientInfo: { name: "hive", title: "Hive", version: "0.1.0" },
+          clientInfo: { name: "hive", title: "Hive", version: HIVE_VERSION },
           capabilities: { experimentalApi: false, requestAttestation: false },
         },
       });

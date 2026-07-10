@@ -133,7 +133,7 @@ export class CodexAppServerThreadConnection {
 
   async initialize(clientName = "hive-root"): Promise<void> {
     await this.client.request("initialize", {
-      clientInfo: { name: clientName, title: "Hive", version: "0.1.0" },
+      clientInfo: { name: clientName, title: "Hive", version: HIVE_VERSION },
       capabilities: { experimentalApi: true },
     });
     this.client.notify("initialized");

@@ -98,9 +98,13 @@ export async function inspectDaemonForUpdate(
   }
 
   // Identity before everything. A daemon serving another project is never ours
-  // to stop, whatever else differs.
+  // to stop, whatever else differs. Both keys are identity: `hiveUuid` names the
+  // project, `identityKey` names the directory that resolved to it.
   if (actual.hiveUuid !== deps.expected.hiveUuid) {
     return { state: "foreign", port, reason: "project identity (HiveUUID)" };
+  }
+  if (actual.identityKey !== deps.expected.identityKey) {
+    return { state: "foreign", port, reason: "project identity key" };
   }
 
   const reason = handshakeMismatch(deps.expected, actual);

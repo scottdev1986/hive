@@ -19,6 +19,8 @@ const expected: DaemonHandshake = {
   schemaEpoch: 1,
   capabilities: ["daemon-handshake-v1"],
   hiveUuid: "hive-project-a",
+  identityKey: "project-a",
+  repoFamilyKey: null,
   generation: 1,
 };
 
@@ -119,6 +121,19 @@ describe("the daemon left behind by an update", () => {
     expect(killed).toEqual(false);
     expect(outcome).toMatchObject({ stopped: false });
     expect(explainRefusal(state)).toContain("different project");
+  });
+
+  test("a daemon whose project identity key differs is foreign too", async () => {
+    // `hiveUuid` names the project; `identityKey` names the directory that
+    // resolved to it. Either differing means the daemon is not ours.
+    const port = serve({ ...stalePeer, identityKey: "project-b" });
+    writeLifecycleFiles(port, 4242);
+    const state = await inspectDaemonForUpdate({ expected, liveAgents: noAgents, port });
+    expect(state).toEqual({ state: "foreign", port, reason: "project identity key" });
+
+    let killed = false;
+    await restartStaleDaemon(state, { kill: () => (killed = true) });
+    expect(killed).toEqual(false);
   });
 
   test("a stale daemon with a live team is busy, and the team is left running", async () => {
