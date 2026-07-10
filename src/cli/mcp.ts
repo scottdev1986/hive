@@ -37,69 +37,13 @@ function textToolValue(content: unknown, toolName: string): unknown {
   return JSON.parse(item.text) as unknown;
 }
 
-export async function fetchAgentStatus(
-  port: number,
-  fetcher?: McpFetcher,
-): Promise<AgentRecord[]> {
-  const transport = new StreamableHTTPClientTransport(
-    new URL(`http://127.0.0.1:${port}/mcp`),
-    { fetch: fetcher ?? operatorFetch },
-  );
-  const client = new Client({ name: "hive-cli", version: HIVE_VERSION });
-  try {
-    await client.connect(transport);
-    const result = await client.callTool({
-      name: "hive_status",
-      arguments: {},
-    });
-    if (result.isError === true) {
-      throw new Error("hive_status failed");
-    }
-    const structuredContent = z.record(z.string(), z.unknown()).optional()
-      .parse(result.structuredContent);
-    const value = structuredContent?.agents ??
-      textToolValue(result.content, "hive_status");
-    return AgentRecordSchema.array().parse(value);
-  } finally {
-    await client.close().catch(() => undefined);
-  }
-}
-
-export async function markAgentDead(
-  port: number,
-  agentName: string,
-  fetcher?: McpFetcher,
-): Promise<AgentRecord> {
-  const transport = new StreamableHTTPClientTransport(
-    new URL(`http://127.0.0.1:${port}/mcp`),
-    { fetch: fetcher ?? operatorFetch },
-  );
-  const client = new Client({ name: "hive-cli", version: HIVE_VERSION });
-  try {
-    await client.connect(transport);
-    const result = await client.callTool({
-      name: "hive_mark_dead",
-      arguments: { agent: agentName },
-    });
-    if (result.isError === true) {
-      throw new Error(`hive_mark_dead failed for ${agentName}`);
-    }
-    const structuredContent = z.record(z.string(), z.unknown()).optional()
-      .parse(result.structuredContent);
-    const value = structuredContent?.agent ??
-      textToolValue(result.content, "hive_mark_dead");
-    return AgentRecordSchema.parse(value);
-  } finally {
-    await client.close().catch(() => undefined);
-  }
-}
-
 async function callHiveTool(
   port: number,
   name: string,
   args: Record<string, unknown>,
   key: string,
   fetcher?: McpFetcher,
+  errorLabel = name,
 ): Promise<unknown> {
   const transport = new StreamableHTTPClientTransport(
     new URL(`http://127.0.0.1:${port}/mcp`),
@@ -109,13 +53,37 @@ async function callHiveTool(
   try {
     await client.connect(transport);
     const result = await client.callTool({ name, arguments: args });
-    if (result.isError === true) throw new Error(`${name} failed`);
+    if (result.isError === true) throw new Error(`${errorLabel} failed`);
     const structured = z.record(z.string(), z.unknown()).optional()
       .parse(result.structuredContent);
     return structured?.[key] ?? textToolValue(result.content, name);
   } finally {
     await client.close().catch(() => undefined);
   }
+}
+
+export async function fetchAgentStatus(
+  port: number,
+  fetcher?: McpFetcher,
+): Promise<AgentRecord[]> {
+  return AgentRecordSchema.array().parse(
+    await callHiveTool(port, "hive_status", {}, "agents", fetcher),
+  );
+}
+
+export async function markAgentDead(
+  port: number,
+  agentName: string,
+  fetcher?: McpFetcher,
+): Promise<AgentRecord> {
+  return AgentRecordSchema.parse(await callHiveTool(
+    port,
+    "hive_mark_dead",
+    { agent: agentName },
+    "agent",
+    fetcher,
+    `hive_mark_dead for ${agentName}`,
+  ));
 }
 
 export async function fetchQuotaStatus(

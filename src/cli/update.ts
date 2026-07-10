@@ -60,10 +60,14 @@ function run(command: string, args: string[]): Promise<string> {
   return new Promise((resolvePromise, reject) => {
     const child = spawn(command, args, { stdio: ["ignore", "pipe", "pipe"] });
     let stdout = "";
+    let stderr = "";
     child.stdout.on("data", (chunk: Buffer) => (stdout += chunk.toString()));
+    child.stderr.on("data", (chunk: Buffer) => (stderr += chunk.toString()));
     child.on("error", reject);
     child.on("close", (code) =>
-      code === 0 ? resolvePromise(stdout) : reject(new Error(`${command} exited ${code}`)));
+      code === 0 ? resolvePromise(stdout) : reject(new Error(
+        `${command} exited ${code}${stderr.trim() === "" ? "" : `: ${stderr.trim().slice(0, 500)}`}`,
+      )));
   });
 }
 

@@ -175,7 +175,12 @@ export class ChannelBridge {
   private async onInitialized(): Promise<void> {
     if (this.closed || this.running) return;
     this.running = true;
-    void this.pumpLoop();
+    // A pump crash must not become an unhandled rejection: log it and stop
+    // cleanly — the daemon still holds the messages and tmux is the fallback.
+    void this.pumpLoop().catch((error) => {
+      this.log(`pump crashed: ${String(error)}`);
+      this.running = false;
+    });
   }
 
   private async onPermissionRequest(
@@ -280,11 +285,15 @@ export class ChannelBridge {
       return;
     }
     // permission-decision: relay the verdict to the CLI's open dialog.
-    this.transport.send({
-      jsonrpc: "2.0",
-      method: "notifications/claude/channel/permission",
-      params: { request_id: event.requestId, behavior: event.behavior },
-    });
+    try {
+      this.transport.send({
+        jsonrpc: "2.0",
+        method: "notifications/claude/channel/permission",
+        params: { request_id: event.requestId, behavior: event.behavior },
+      });
+    } catch (error) {
+      this.log(`permission push failed: ${String(error)}`);
+    }
   }
 }
 
@@ -321,7 +330,11 @@ export function createHttpDaemonClient(
     async poll(agent, waitMs) {
       const response = await post("/channel/poll", { agent, waitMs });
       if (!response.ok) return { ok: false };
-      const body = await response.json() as { events: ChannelEventWire[] };
+      const body = await response.json().catch(() => null) as
+        | { events?: ChannelEventWire[] }
+        | null;
+      // A body without an events array is a broken poll, not an empty one.
+      if (body === null || !Array.isArray(body.events)) return { ok: false };
       return { ok: true, events: body.events };
     },
     async ack(agent, deliveryId, ok) {

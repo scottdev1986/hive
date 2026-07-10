@@ -215,7 +215,9 @@ export async function recoverAgentsCli(name?: string): Promise<void> {
     headers: { "content-type": "application/json", ...operatorHeaders() },
     body: JSON.stringify(name === undefined ? {} : { agent: name }),
   });
-  const body = await response.json() as {
+  // A daemon that fails before its JSON handler (proxy page, empty body)
+  // must still surface as the HTTP failure it is, not as a parse error.
+  const body = await response.json().catch(() => ({})) as {
     outcomes?: RecoveryOutcomeView[];
     error?: string;
   };

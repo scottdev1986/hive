@@ -212,40 +212,7 @@ export function buildOrchestratorCommand(
   ];
 }
 
-export function readCurrentTty(): string | null {
-  const result = Bun.spawnSync(["/usr/bin/tty"], {
-    stdin: "inherit",
-    stdout: "pipe",
-    stderr: "ignore",
-  });
-  if (result.exitCode !== 0) {
-    return null;
-  }
-  const tty = result.stdout.toString().trim();
-  return tty.startsWith("/dev/") ? tty : null;
-}
-
 export type OrchestratorTerminalCapture = () => Promise<TerminalHandle | null>;
-
-// Legacy direct-terminal capture retained for explicit layout recovery. The
-// normal entry is Workspace-owned and deliberately does not call this.
-export const captureOrchestratorTerminal: OrchestratorTerminalCapture =
-  async () => {
-    if (Bun.env.TMUX !== undefined) {
-      return null;
-    }
-    const tty = readCurrentTty();
-    if (tty === null) {
-      return null;
-    }
-    if (Bun.env.TERM_PROGRAM === "Apple_Terminal") {
-      return await new TerminalAppAdapter().captureWindowByTty(tty);
-    }
-    if (Bun.env.TERM_PROGRAM === "iTerm.app") {
-      return await new ITerm2Adapter().captureWindowByTty(tty);
-    }
-    return null;
-  };
 
 export async function registerOrchestratorTerminal(
   port: number,
@@ -329,8 +296,11 @@ export async function registerRunningOrchestratorTerminal(
 }
 
 async function unregisterOrchestratorTerminal(port: number): Promise<void> {
+  // The daemon authenticates DELETE like POST; without the operator credential
+  // it answers 401 and the stale handle would sit in the layout forever.
   await fetch(`http://127.0.0.1:${port}/orchestrator-terminal`, {
     method: "DELETE",
+    headers: operatorHeaders(),
   });
 }
 

@@ -21,7 +21,7 @@
  * same seeding path, so the seam with the memory store (decision 5) is exercised
  * whether the facts came from a human, an agent, or a `--seed-facts` file.
  */
-import { readFile } from "node:fs/promises";
+import { access, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
   bootstrapProfile,
@@ -89,14 +89,13 @@ const defaultDeps: InitDeps = {
   listMemoryFacts,
   fileExists: async (path) => {
     try {
-      await readFile(path, "utf8");
+      await access(path);
       return true;
     } catch {
       return false;
     }
   },
   writeFile: async (path, contents) => {
-    const { writeFile } = await import("node:fs/promises");
     await writeFile(path, contents);
   },
   today: () => new Date().toISOString().slice(0, 10),
