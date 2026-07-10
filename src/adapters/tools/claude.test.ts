@@ -22,7 +22,8 @@ import {
   buildClaudeSpawnCommand,
   claudeProjectDirectory,
   detectClaudeCliVersion,
-  resolveClaudeExecutable,
+  resolveWorkingClaudeExecutable,
+  claudeExecutableCandidates,
   findLatestClaudeSessionId,
   writeClaudeAgentConfig,
   claudeConfigPath,
@@ -166,10 +167,35 @@ describe("Claude adapter", () => {
       "--model",
       "sonnet",
     ]);
-    expect(resolveClaudeExecutable(() => "/native/claude")).toBe(
-      "/native/claude",
+  });
+
+  test("resolves the first candidate that answers --version, skipping broken shims", () => {
+    const probes: string[] = [];
+    const resolved = resolveWorkingClaudeExecutable(
+      (executable) => {
+        probes.push(executable);
+        return executable === "/native/claude" ? "2.1.206" : null;
+      },
+      () => ["/homebrew/claude", "/native/claude", "/never/reached"],
     );
-    expect(resolveClaudeExecutable(() => null)).toBe("claude");
+    expect(resolved).toEqual({ path: "/native/claude", version: "2.1.206" });
+    expect(probes).toEqual(["/homebrew/claude", "/native/claude"]);
+  });
+
+  test("falls back to the bare command with a null version when nothing works", () => {
+    expect(resolveWorkingClaudeExecutable(() => null, () => ["/broken/claude"]))
+      .toEqual({ path: "claude", version: null });
+    expect(resolveWorkingClaudeExecutable(() => "2.1.206", () => []))
+      .toEqual({ path: "claude", version: null });
+  });
+
+  test("candidate order is PATH first, then the native-installer locations", () => {
+    const candidates = claudeExecutableCandidates({
+      PATH: "/definitely-missing-dir-a:/definitely-missing-dir-b",
+      HOME: "/definitely-missing-home",
+    });
+    // Every candidate must exist on disk; none of these do.
+    expect(candidates).toEqual([]);
   });
 
   test("omits the model flag for the account default", () => {

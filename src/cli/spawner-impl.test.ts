@@ -1785,6 +1785,103 @@ describe("HiveSpawner wiring", () => {
     expect(tmux.killed).toEqual([]);
   });
 
+  test("workspace presence suppresses spawn viewers until the lease lapses", async () => {
+    // While the Workspace app is the viewer, a spawn opens no external window
+    // — same effect as `headless`, but it reverts on its own when the lease
+    // does. The static config is untouched: this spawner is headless: false.
+    const root = await mkdtemp(join(tmpdir(), "hive-spawner-presence-"));
+    tempRoots.push(root);
+    const worktreePath = join(root, "worktree");
+    await mkdir(worktreePath, { recursive: true });
+    const store = new FakeStore();
+    const terminal = new FakeTerminal();
+    let present = true;
+    let layouts = 0;
+    const spawner = new HiveSpawner({
+      db: store,
+      repoRoot: root,
+      port: 4317,
+      config: { terminal: "auto", headless: false },
+      routing: async () => DEFAULT_ROUTING.standard,
+      tmux: new FakeTmux(),
+      terminal,
+      workspacePresent: () => present,
+      onTerminalsChanged: () => {
+        layouts += 1;
+      },
+      createWorktree: async () => ({
+        path: worktreePath,
+        branch: "hive/presence-test",
+      }),
+      resolveModel: fakeResolveModel,
+      sleep: async () => {},
+    });
+
+    const suppressed = await spawner.spawn({
+      task: "Spawn while the app watches",
+      tier: "standard",
+    });
+    expect(suppressed.status).toEqual("spawning");
+    expect(terminal.windows).toEqual([]);
+    expect(suppressed.terminalHandle).toBeUndefined();
+    expect(layouts).toEqual(0);
+
+    // The lease lapsed (app quit or crashed): external viewers come back.
+    present = false;
+    const visible = await spawner.spawn({
+      task: "Spawn after the app is gone",
+      tier: "standard",
+    });
+    expect(terminal.windows).toHaveLength(1);
+    expect(terminal.windows[0]?.[0]).toEqual(visible.tmuxSession);
+    expect(layouts).toEqual(1);
+  });
+
+  test("workspace presence suppresses the control-restart viewer too", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-control-presence-"));
+    tempRoots.push(root);
+    const staleHandle: TerminalHandle = {
+      app: "iterm2",
+      sessionId: "stale-viewer",
+    };
+    const controlled = {
+      ...agent("maya", "working"),
+      worktreePath: root,
+      terminalHandle: staleHandle,
+      executionIdentity: {
+        tool: "codex",
+        model: "gpt-test",
+        effort: "medium",
+      },
+    } satisfies AgentRecord;
+    const store = new FakeStore([controlled]);
+    const terminal = new FakeTerminal();
+    const controlQuota = makeControlQuota(root);
+    const spawner = new HiveSpawner({
+      db: store,
+      repoRoot: root,
+      port: 4317,
+      config: { terminal: "auto", headless: false },
+      routing: async () => DEFAULT_ROUTING.standard,
+      tmux: new FakeTmux(),
+      terminal,
+      workspacePresent: () => true,
+      sleep: async () => {},
+      resolveModel: fakeResolveModel,
+      quota: controlQuota.quota,
+    });
+    const restarted = await spawner.restartForControl(
+      controlled,
+      controlMessage("control-presence"),
+    );
+    // The stale lens still closes — it pointed at a killed session — but no
+    // replacement window opens while the app holds the lease.
+    expect(terminal.closed).toEqual([staleHandle]);
+    expect(terminal.windows).toEqual([]);
+    expect(restarted.terminalHandle).toBeUndefined();
+    controlQuota.db.close();
+  });
+
   test("closes a viewer that races with the agent being marked dead", async () => {
     const root = await mkdtemp(join(tmpdir(), "hive-spawner-viewer-race-"));
     tempRoots.push(root);

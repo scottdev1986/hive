@@ -1,59 +1,98 @@
 import AppKit
 import WorkspaceCore
 
-/// One AppKit process multiplexing every project as an in-process tenant:
-/// one window controller, layout tree, and reducer per project; one shared
-/// menu bar, attention center, and event pump.
+/// The workspace app for one project: a master terminal running the
+/// orchestrator (`hive claude`), satellite terminals attached to each agent's
+/// daemon-owned tmux session, and the feed subprocess that drives the pane
+/// set. Launched by the CLI as
+/// `open -a HiveWorkspace --args --project <dir> --port <n> --hive <bin>`.
 final class AppDelegate: NSObject, NSApplicationDelegate {
 
-    private let smokeMode: Bool
-    private(set) var controllers: [ProjectID: ProjectWindowController] = [:]
+    private let config: LaunchConfig
+    private(set) var controller: ProjectWindowController?
+    private var feedClient: FeedClient?
     private let attentionCenter = AttentionCenter()
     private let projectSwitcher = ProjectSwitcherController()
-    private var eventPump: EventPump?
+    private var placeholderWindow: NSWindow?
+    private var smokeRunner: SmokeRunner?
 
-    init(smokeMode: Bool) {
-        self.smokeMode = smokeMode
+    init(config: LaunchConfig) {
+        self.config = config
         super.init()
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.mainMenu = MainMenuBuilder.build()
 
-        let projects: [(ProjectID, String)] = [
-            (FixtureScript.hiveProject, "hive"),
-            (FixtureScript.docsProject, "docs-site"),
-        ]
-        for (offset, (projectID, name)) in projects.enumerated() {
-            let state = ProjectState(projectID: projectID, displayName: name)
-            let controller = ProjectWindowController(
-                state: state, attentionCenter: attentionCenter, cascadeIndex: offset)
-            controllers[projectID] = controller
-            projectSwitcher.register(state: state) { [weak controller] in
-                controller?.window?.makeKeyAndOrderFront(nil)
+        guard config.isComplete,
+              let projectDirectory = config.projectDirectory,
+              let hivePath = config.hivePath else {
+            if config.smoke {
+                // Smoke must never hang on a bad invocation.
+                print("SMOKE FAIL:\n  --smoke requires --project, --port, and --hive")
+                exit(1)
             }
-            if !smokeMode {
-                controller.showWindow(nil)
-            }
-        }
-        attentionCenter.activateHandler = { [weak self] projectID, paneID in
-            guard let controller = self?.controllers[projectID] else { return }
-            controller.window?.makeKeyAndOrderFront(nil)
-            controller.dispatch(.focusPane(paneID))
+            // Dock click / bare launch: explain, never show fixtures.
+            showPlaceholderWindow()
+            return
         }
 
-        let source = MockEventSource(script: FixtureScript.standard())
-        let pump = EventPump(source: source) { [weak self] envelope in
-            self?.controllers[envelope.projectID]?.ingest(envelope)
-        }
-        eventPump = pump
+        let displayName = (projectDirectory as NSString).lastPathComponent
+        let state = ProjectState(projectID: ProjectID(projectDirectory), displayName: displayName)
+        let controller = ProjectWindowController(
+            state: state, attentionCenter: attentionCenter,
+            projectDirectory: projectDirectory, hivePath: hivePath)
+        self.controller = controller
 
-        if smokeMode {
-            runSmokeChecksAndExit(pump: pump)
+        projectSwitcher.register(state: state) { [weak controller] in
+            controller?.window?.makeKeyAndOrderFront(nil)
+        }
+        attentionCenter.activateHandler = { [weak controller] _, paneID in
+            controller?.window?.makeKeyAndOrderFront(nil)
+            controller?.dispatch(.focusPane(paneID))
+        }
+
+        controller.onWindowWillClose = { [weak self] in
+            self?.feedClient?.stop()
+        }
+        controller.bootstrapOrchestrator()
+        startFeed()
+
+        if config.smoke {
+            let runner = SmokeRunner(controller: controller, config: config)
+            smokeRunner = runner
+            controller.window?.layoutIfNeeded()
+            runner.run() // exits the process 0/1
         } else {
+            controller.showWindow(nil)
+            controller.commitInitialGeometry()
             NSApp.activate(ignoringOtherApps: true)
-            controllers[FixtureScript.hiveProject]?.window?.makeKeyAndOrderFront(nil)
-            pump.startScheduled()
+            controller.window?.makeKeyAndOrderFront(nil)
+        }
+    }
+
+    /// The feed is a long-lived subprocess printing NDJSON snapshots; while it
+    /// runs, the daemon knows a workspace is attached and stops opening
+    /// external terminal windows. It dies with the app (`stop()` below).
+    private func startFeed() {
+        guard let invocation = config.feedInvocation else { return }
+        let feed = FeedClient(executable: invocation.executable, arguments: invocation.arguments)
+        feed.onSnapshot = { [weak self] agents in
+            self?.controller?.applyFeed(agents)
+        }
+        feed.onError = { message in
+            NSLog("workspace-feed error: %@", message)
+        }
+        feed.onExit = { [weak self] in
+            NSLog("workspace-feed exited; agent statuses are stale")
+            self?.controller?.feedLost()
+        }
+        feedClient = feed
+        do {
+            try feed.start()
+        } catch {
+            NSLog("failed to start workspace-feed: %@", error.localizedDescription)
+            controller?.feedLost()
         }
     }
 
@@ -66,95 +105,56 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        // Blueprint: closing UI never stops agents; in the real product the
-        // tenant keeps running headless. The prototype mirrors that by keeping
-        // the process alive until explicit quit.
-        false
+        // One launch invocation == one project window. Once it closes there is
+        // nothing left to show, and quitting tears down the feed (so the
+        // daemon resumes opening external terminals) and detaches the tmux
+        // clients. Agents keep running either way — they live in daemon-owned
+        // tmux sessions, never in this process.
+        true
     }
 
-    // MARK: Smoke mode
-
-    private func runSmokeChecksAndExit(pump: EventPump) {
-        var failures: [String] = []
-        func check(_ condition: Bool, _ label: String) {
-            if !condition { failures.append(label) }
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag {
+            controller?.window?.makeKeyAndOrderFront(nil)
+            placeholderWindow?.makeKeyAndOrderFront(nil)
         }
-
-        pump.fastForward()
-
-        guard let hive = controllers[FixtureScript.hiveProject],
-              let docs = controllers[FixtureScript.docsProject] else {
-            print("SMOKE FAIL: controllers missing")
-            exit(1)
-        }
-        hive.window?.layoutIfNeeded()
-        docs.window?.layoutIfNeeded()
-
-        check(hive.state.panes.count == 5, "hive has 5 panes")
-        check(docs.state.panes.count == 2, "docs has 2 panes")
-        check(hive.state.layout.master == PaneID("orchestrator"), "orchestrator is master")
-        check(hive.paneViewCount == 5, "hive renders 5 pane views")
-
-        // Frames are committed (no animation pending in smoke) and tile.
-        let frames = hive.currentPaneFrames()
-        check(frames.count == 5, "5 solved frames")
-        let masterFrame = frames[PaneID("orchestrator")]
-        check(masterFrame != nil && masterFrame!.width > 0, "master has geometry")
-
-        // Command model round trip: promote + return.
-        hive.dispatch(.promotePane("migrator"))
-        check(hive.state.layout.master == PaneID("migrator"), "promote via command model")
-        hive.dispatch(.returnOrchestratorToMaster)
-        check(hive.state.layout.master == PaneID("orchestrator"), "return orchestrator to master")
-
-        // Attention queue is populated and ordered by severity.
-        let attention = attentionCenter.orderedItems()
-        check(!attention.isEmpty, "attention queue populated")
-        check(attention.first?.severity == .failed, "failure ranks first")
-
-        // Transcript rendered real content, including the collapsed huge output.
-        check(hive.transcriptTextLength(pane: "indexer") > 0, "indexer transcript rendered")
-        check(hive.transcriptTextLength(pane: "styler") > 0, "styler transcript rendered")
-
-        // Explicit approval resolution through the shared command model.
-        hive.dispatch(.resolveApproval(approvalID: "appr-schema-migration", approved: true))
-        check(hive.state.panes[PaneID("migrator")]?.status == .running, "approval resolves to running")
-
-        if failures.isEmpty {
-            print("SMOKE OK — \(controllers.count) project windows, \(hive.state.panes.count + docs.state.panes.count) panes")
-            exit(0)
-        } else {
-            print("SMOKE FAIL:\n  " + failures.joined(separator: "\n  "))
-            exit(1)
-        }
-    }
-}
-
-/// Drives the mock event source either on the main run loop (scheduled, for
-/// interactive runs) or synchronously (fast-forward, for smoke/tests).
-final class EventPump {
-    private let source: MockEventSource
-    private let handler: (AgentEventEnvelope) -> Void
-
-    init(source: MockEventSource, handler: @escaping (AgentEventEnvelope) -> Void) {
-        self.source = source
-        self.handler = handler
+        return true
     }
 
-    func fastForward() {
-        source.fastForward(handler)
+    func applicationWillTerminate(_ notification: Notification) {
+        feedClient?.stop()
+        controller?.terminateAllTerminals()
     }
 
-    func startScheduled() {
-        scheduleNext()
-    }
+    // MARK: No-args launch
 
-    private func scheduleNext() {
-        guard let delay = source.nextDelay else { return }
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-            guard let self, let envelope = self.source.next() else { return }
-            self.handler(envelope)
-            self.scheduleNext()
-        }
+    private func showPlaceholderWindow() {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 480, height: 200),
+            styleMask: [.titled, .closable, .miniaturizable],
+            backing: .buffered, defer: false)
+        window.title = "Hive Workspace"
+        window.center()
+
+        let title = NSTextField(labelWithString: "No project to show")
+        title.font = NSFont.systemFont(ofSize: 15, weight: .semibold)
+        title.alignment = .center
+
+        let body = NSTextField(wrappingLabelWithString:
+            "Hive Workspace is opened by the hive CLI.\n\nRun `hive` from a project directory and it will launch this window connected to that project's orchestrator and agents.")
+        body.font = Theme.bodyFont
+        body.textColor = .secondaryLabelColor
+        body.alignment = .center
+
+        let stack = NSStackView(views: [title, body])
+        stack.orientation = .vertical
+        stack.alignment = .centerX
+        stack.spacing = 10
+        stack.edgeInsets = NSEdgeInsets(top: 30, left: 30, bottom: 30, right: 30)
+        window.contentView = stack
+
+        placeholderWindow = window
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
     }
 }

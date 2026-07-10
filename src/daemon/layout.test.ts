@@ -158,6 +158,29 @@ describe("TerminalLayoutManager", () => {
     empty.close();
   });
 
+  test("holds still while the Workspace lease suppresses it, and resumes after", async () => {
+    // Unlike `enabled` (static config), suppression is re-checked per request:
+    // the same manager tiles again the moment the lease lapses.
+    const db = new HiveDatabase(":memory:");
+    db.setOrchestratorTerminal(orchestratorHandle);
+    db.upsertAgent(agent("maya", { terminalHandle: viewer("maya") }));
+
+    let present = true;
+    const { layout, placements } = manager(db, {
+      suppressed: () => present,
+    });
+
+    layout.requestLayout();
+    await layout.settled();
+    expect(placements).toEqual([]);
+
+    present = false;
+    layout.requestLayout();
+    await layout.settled();
+    expect(placements.length).toEqual(2);
+    db.close();
+  });
+
   test("coalesces bursts of requests into at most one trailing pass", async () => {
     const db = new HiveDatabase(":memory:");
     db.setOrchestratorTerminal(orchestratorHandle);

@@ -36,7 +36,8 @@ import {
   runUpdateCheck,
   runUpdateSkip,
 } from "./cli/update";
-import { launchWorkspace } from "./cli/workspace";
+import { runWorkspace } from "./cli/workspace";
+import { runWorkspaceFeedCli } from "./cli/workspace-feed";
 import { versionLine } from "./version";
 import type { MemoryScope, MemorySource } from "./schemas";
 import { MemorySourceSchema } from "./schemas";
@@ -207,9 +208,11 @@ export function createProgram(): Command {
   // what bug reports need. The richer facts belong to `hive update status`.
   program.version(versionLine(), "-v, --version", "Print the Hive version");
 
-  // Bare `hive` opens the installed release Workspace. Never a dev build.
+  // Bare `hive` runs the `hive start` session boundary (daemon up, profile
+  // announced), then opens the installed release Workspace against that
+  // daemon. Never a dev build.
   program.action(async () => {
-    await launchWorkspace();
+    await runWorkspace();
   });
 
   program
@@ -509,6 +512,15 @@ export function createProgram(): Command {
     .command("daemon")
     .description("Run the Hive daemon in the foreground")
     .action(runDaemon);
+
+  // The Workspace app's status wire: NDJSON agent snapshots on stdout plus the
+  // daemon-side viewer lease. Hidden because only the app spawns it.
+  program
+    .command("workspace-feed", { hidden: true })
+    .requiredOption("--port <number>", "daemon port")
+    .action(async (options: { port: string }) => {
+      process.exitCode = await runWorkspaceFeedCli(parsePort(options.port));
+    });
 
   program
     .command("codex-app-server-host", { hidden: true })

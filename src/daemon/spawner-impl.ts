@@ -10,7 +10,7 @@ import { shellJoin } from "../adapters/tmux";
 import type { TmuxAdapter } from "../adapters/tmux";
 import {
   buildClaudeSpawnCommand,
-  resolveClaudeExecutable,
+  resolveWorkingClaudeExecutable,
   seedClaudeWorktreeTrust,
   writeClaudeAgentConfig,
 } from "../adapters/tools/claude";
@@ -224,6 +224,12 @@ export interface HiveSpawnerDependencies {
   /** Fires after a viewer window is attached so the daemon can re-tile the
    * window wall. */
   onTerminalsChanged?: () => void;
+  /** True while the Workspace app holds the viewer lease (`POST /workspace`).
+   * While it does, external viewer windows are skipped exactly as if
+   * `config.headless` were set — the app's panes are the viewers — but the
+   * static config keeps its meaning and behavior reverts when the lease
+   * lapses. Checked at open time, never cached. */
+  workspacePresent?: () => boolean;
   /** Reports viewer automation failures without treating the detached agent
    * process itself as failed. */
   onTerminalError?: (message: string) => void;
@@ -486,7 +492,7 @@ export class HiveSpawner implements Spawner {
     this.wait = dependencies.sleep ?? sleep;
     this.modelResolver = dependencies.resolveModel ?? resolveConcreteModel;
     this.claudeExecutable = dependencies.claudeExecutable ??
-      resolveClaudeExecutable();
+      resolveWorkingClaudeExecutable().path;
   }
 
   /** Servers a Codex spawn would inherit from the user's global config. Read
@@ -727,7 +733,7 @@ export class HiveSpawner implements Spawner {
 
     const record = prepared.record;
     let viewersChanged = prepared.viewersChanged;
-    if (!this.dependencies.config.headless) {
+    if (this.viewersEnabled()) {
       let handle: Awaited<ReturnType<TerminalAdapter["openWindow"]>> | null =
         null;
       try {
@@ -767,6 +773,13 @@ export class HiveSpawner implements Spawner {
       this.dependencies.onTerminalsChanged?.();
     }
     return this.dependencies.db.getAgentById(record.id) ?? record;
+  }
+
+  /** External viewer windows open only when the daemon is not headless *and*
+   * no Workspace app currently holds the viewer lease. */
+  private viewersEnabled(): boolean {
+    return !this.dependencies.config.headless &&
+      this.dependencies.workspacePresent?.() !== true;
   }
 
   private async prepareControlRestart(
@@ -1162,7 +1175,7 @@ export class HiveSpawner implements Spawner {
       return await this.failSpawnIfStillSpawning(record, worktree, reason);
     }
 
-    if (!this.dependencies.config.headless) {
+    if (this.viewersEnabled()) {
       let handle: Awaited<ReturnType<TerminalAdapter["openWindow"]>> | null =
         null;
       try {

@@ -13,6 +13,7 @@ import { readConfiguredPort } from "../daemon/lifecycle";
 import { HiveDaemon } from "../daemon/server";
 import { HiveSpawner } from "../daemon/spawner-impl";
 import { QuotaLedger } from "../daemon/quota-ledger";
+import { WorkspacePresence } from "../daemon/workspace-presence";
 import { QuotaService } from "../daemon/quota";
 import {
   ClaudeQuotaProbe,
@@ -50,9 +51,14 @@ export async function runDaemon(): Promise<void> {
       idempotencyKey: `terminal-error:${Bun.hash(message)}`,
     }).catch(() => undefined);
   };
+  // While the Workspace app holds the viewer lease its panes are the viewers:
+  // no external windows are opened and the window wall stays still. The lease
+  // is TTL-based, so a crashed app reverts the daemon to external viewers.
+  const workspacePresence = new WorkspacePresence();
   const layout = new TerminalLayoutManager({
     db,
     enabled: config.layout === "auto" && !config.headless,
+    suppressed: () => workspacePresence.isPresent(),
     logError: reportTerminalError,
   });
   const codexAppServer = new CodexAppServerManager({
@@ -75,6 +81,7 @@ export async function runDaemon(): Promise<void> {
     routing: resolveRoute,
     tmux,
     terminal,
+    workspacePresent: () => workspacePresence.isPresent(),
     onTerminalsChanged: () => layout.requestLayout(),
     onTerminalError: reportTerminalError,
     channelsEnabled: config.channels === "auto",
@@ -97,6 +104,7 @@ export async function runDaemon(): Promise<void> {
     port,
     manageLifecycle: true,
     layout,
+    workspacePresence,
     quota,
     codexControl: codexAppServer,
     resources: config.resources,

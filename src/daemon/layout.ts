@@ -26,6 +26,11 @@ const LIVE_STATUSES: ReadonlySet<AgentRecord["status"]> = new Set([
 export interface TerminalLayoutManagerOptions {
   db: Pick<HiveDatabase, "listAgents" | "getOrchestratorTerminal">;
   enabled: boolean;
+  /** Dynamic pause, checked per pass: while the Workspace app holds the viewer
+   * lease there are no external windows worth tiling, and moving the user's
+   * remaining windows under the app would be pure noise. Unlike `enabled`
+   * (static config), this reverts on its own when the lease lapses. */
+  suppressed?: () => boolean;
   setBounds?: TerminalBoundsSetter;
   readScreen?: ScreenFrameReader;
   layoutOptions?: Partial<LayoutOptions>;
@@ -44,6 +49,7 @@ export interface TerminalLayoutManagerOptions {
 export class TerminalLayoutManager implements LayoutCoordinator {
   private readonly db: TerminalLayoutManagerOptions["db"];
   private readonly enabled: boolean;
+  private readonly suppressed: () => boolean;
   private readonly setBounds: TerminalBoundsSetter;
   private readonly readScreen: ScreenFrameReader;
   private readonly layoutOptions: Partial<LayoutOptions>;
@@ -54,6 +60,7 @@ export class TerminalLayoutManager implements LayoutCoordinator {
   constructor(options: TerminalLayoutManagerOptions) {
     this.db = options.db;
     this.enabled = options.enabled;
+    this.suppressed = options.suppressed ?? (() => false);
     this.setBounds = options.setBounds ?? setTerminalBounds;
     this.readScreen = options.readScreen ?? readScreenFrame;
     this.layoutOptions = options.layoutOptions ?? {};
@@ -62,7 +69,7 @@ export class TerminalLayoutManager implements LayoutCoordinator {
   }
 
   requestLayout(): void {
-    if (!this.enabled) {
+    if (!this.enabled || this.suppressed()) {
       return;
     }
     this.pending = true;

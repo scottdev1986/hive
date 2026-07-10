@@ -2,13 +2,13 @@
 
 ## The one-minute restart brief
 
-The accepted flagship is a signed Swift/AppKit workspace with native semantic agent transcripts, a limited SwiftTerm shell/legacy-TUI surface, immutable per-project `HiveUUID`s, one Supervisor, one Tenant Broker per Hive, reconnectable per-session AgentHosts, and authenticated connection-bound capabilities. The [Workspace blueprint](hive-workspace-blueprint.md) is canonical. The [cross-vendor review](../../research/cross-vendor-architecture-review.md) is the experimental record.
+The accepted flagship is a signed Swift/AppKit workspace whose agent panes are SwiftTerm terminals attached to daemon-owned tmux sessions running the vendors' native TUIs, with immutable per-project `HiveUUID`s, one Supervisor, one Tenant Broker per Hive, reconnectable AgentHosts for driven headless sessions only, and authenticated connection-bound capabilities. The [Workspace blueprint](hive-workspace-blueprint.md) is canonical. The [cross-vendor review](../../research/cross-vendor-architecture-review.md) is the experimental record.
 
-**Phase 0 — authenticating and authorizing the loopback control plane — is landed**, behind the [capability rights matrix](capability-rights-matrix.md) and its adversarial tests. No further flagship implementation is authorized yet. Do not start the Swift app, Supervisor migration, provider refactor, or AgentHost implementation before each has its own scoped assignment and acceptance tests.
+**Phase 0 — authenticating and authorizing the loopback control plane — is landed**, behind the [capability rights matrix](capability-rights-matrix.md) and its adversarial tests. Flagship Workspace work on the current daemon/tmux substrate is authorized and underway; Supervisor migration, provider refactor, and AgentHost implementation still each need their own scoped assignment and acceptance tests.
 
 ## What is settled
 
-Agent panes are AppKit transcripts, not terminal grids. SwiftTerm exists only for a user shell and legacy provider TUI. `libghostty` is deferred until its embedding API is tagged and stable. One AppKit process multiplexes project windows; tenant isolation is logical unless a VM or remote runner is selected.
+Agent panes are terminals showing the vendors' own TUIs; Hive renders no agent conversation itself (the semantic-transcript direction is superseded in the blueprint, with its evidence preserved). SwiftTerm is the embedding surface. `libghostty` is deferred until its embedding API is tagged and stable. One AppKit process multiplexes project windows; tenant isolation is logical unless a VM or remote runner is selected.
 
 `hive start` resolves a canonical Git worktree or exact plain directory to an immutable `HiveUUID`. User linked worktrees are separate projects; Hive-managed agent worktrees attach to their authenticated owner. Nested repositories win. Plain bookmarks follow moves, so path disagreement requires rebind; recreated paths never inherit automatically. Concurrent starts coalesce under a registry uniqueness lease.
 
@@ -31,9 +31,9 @@ The current launcher also treats any `/health` response with `ok === true` as th
 5. The HTTP plane's residual risk is a same-UID process reading a `0600` credential file. Do not paper over it. Closing it requires a real privilege boundary and belongs with the Supervisor.
 6. Reproduce any future control-plane defect only with non-destructive calls or a test harness. Never invoke landing, kill, or approval against live work to prove exposure.
 7. Add build/project/protocol validation to daemon reuse as the next bounded reliability task.
-8. Run the five de-risking prototypes in blueprint order: AgentHost crash matrix, native transcript, authenticated XPC, identity under motion, and provider conformance. Record evidence before promoting a hypothesis to a decision.
-9. Build the Supervisor/registry/brokers only after IPC and identity prototypes pass. Migrate CLI state transactionally before building the UI.
-10. Build one multiplexing AppKit Workspace with transcript panes. Add SwiftTerm only when implementing shell/legacy panes. Do not start a libghostty integration.
+8. The five de-risking prototypes (AgentHost crash matrix, UI foundation, authenticated XPC, identity under motion, provider conformance) have run; their evidence is linked from the blueprint. Record new evidence before promoting any further hypothesis to a decision.
+9. Build the Supervisor/registry/brokers only after IPC and identity prototypes pass review against the shipped substrate. Migrate CLI state transactionally before moving the UI off the current daemon.
+10. The multiplexing AppKit Workspace uses SwiftTerm terminal panes attached to the daemon's tmux sessions. Do not start a libghostty integration.
 11. Treat the twelve safety gates as release blockers and the performance/accessibility/soak numbers as product-quality targets. Update the blueprint in place when evidence changes a decision.
 
 ## Artifacts and ownership

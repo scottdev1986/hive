@@ -9,7 +9,7 @@ import type { TmuxAdapter } from "../adapters/tmux";
 import {
   buildClaudeResumeCommand,
   findLatestClaudeSessionId,
-  resolveClaudeExecutable,
+  resolveWorkingClaudeExecutable,
   seedClaudeWorktreeTrust,
   writeClaudeAgentConfig,
 } from "../adapters/tools/claude";
@@ -129,7 +129,7 @@ export class CrashRecovery {
       ((worktreePath) => findLatestCodexSessionId(worktreePath));
     this.worktreeExists = deps.worktreeExists ?? existsSync;
     this.wait = deps.sleep ?? defaultSleep;
-    this.claudeExecutable = deps.claudeExecutable ?? resolveClaudeExecutable();
+    this.claudeExecutable = deps.claudeExecutable ?? resolveWorkingClaudeExecutable().path;
   }
 
   // The maintenance sweep: classify every agent whose tmux session is gone

@@ -6,7 +6,8 @@ import { TerminalAppAdapter } from "../adapters/terminal-app";
 import { TmuxAdapter } from "../adapters/tmux";
 import {
   buildClaudeSpawnCommand,
-  detectClaudeCliVersion,
+  resolveWorkingClaudeExecutable,
+  type ResolvedClaudeExecutable,
   writeClaudeAgentConfig,
 } from "../adapters/tools/claude";
 import { CHANNELS_MIN_VERSION, versionAtLeast } from "../daemon/channels";
@@ -152,6 +153,7 @@ export function buildOrchestratorCommand(
   port: number,
   memoryIndex = "",
   docGuidance = "",
+  executable = "claude",
 ): string[] {
   const brief = [ORCHESTRATOR_BRIEF, docGuidance, memoryIndex]
     .filter((part) => part !== "")
@@ -165,6 +167,7 @@ export function buildOrchestratorCommand(
         daemonPort: port,
         readOnly: true,
         channels: true,
+        executable,
       }),
       "--append-system-prompt",
       brief,
@@ -312,6 +315,7 @@ export function buildOrchestratorLaunchCommand(
   cwd: string,
   memoryIndex = "",
   docGuidance = "",
+  executable = "claude",
 ): string[] {
   if (tool === "codex") {
     return ["tmux", "new-session", "-A", "-s", orchestratorTmuxSession(), "-c", cwd,
@@ -325,7 +329,7 @@ export function buildOrchestratorLaunchCommand(
     orchestratorTmuxSession(),
     "-c",
     cwd,
-    ...buildOrchestratorCommand(tool, port, memoryIndex, docGuidance),
+    ...buildOrchestratorCommand(tool, port, memoryIndex, docGuidance, executable),
   ];
 }
 
@@ -335,14 +339,20 @@ export async function launchOrchestrator(
   cwd = process.cwd(),
   spawn: OrchestratorSpawn = spawnOrchestrator,
   captureTerminal: OrchestratorTerminalCapture = captureOrchestratorTerminal,
-  detectVersion: () => Promise<string | null> = detectClaudeCliVersion,
+  detectVersion?: () => Promise<string | null>,
+  resolveExecutable: () => ResolvedClaudeExecutable = resolveWorkingClaudeExecutable,
 ): Promise<number> {
   if (tool !== "claude") {
     // The authority command performs the handshake gate before attaching the
     // interactive remote TUI; delivery wiring is enabled by the daemon when
     // a root driver is registered for this socket/thread.
   }
-  const version = await detectVersion();
+  // Resolve a provably working CLI, not the first PATH hit: a broken
+  // package-manager shim ahead of the real installation must neither fail the
+  // version gate nor be the executable the pane runs. The gate and the spawn
+  // use the same binary, so what was version-checked is what launches.
+  const claude = resolveExecutable();
+  const version = await (detectVersion ?? (async () => claude.version))();
   if (version === null || !versionAtLeast(version, CHANNELS_MIN_VERSION)) {
     throw new Error(
       `The Hive orchestrator requires Claude Channels (Claude >= ${CHANNELS_MIN_VERSION}).`,
@@ -376,7 +386,14 @@ export async function launchOrchestrator(
       buildOrchestratorDocGuidance(cwd).catch(() => ""),
     ]);
     const child = spawn(
-      buildOrchestratorLaunchCommand(tool, port, cwd, memoryIndex, docGuidance),
+      buildOrchestratorLaunchCommand(
+        tool,
+        port,
+        cwd,
+        memoryIndex,
+        docGuidance,
+        claude.path,
+      ),
       {
         cwd,
         stdin: "inherit",

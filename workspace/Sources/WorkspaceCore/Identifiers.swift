@@ -20,7 +20,8 @@ public struct ProjectID: Hashable, Comparable, Codable, CustomStringConvertible,
 }
 
 public enum PaneKind: String, Codable {
+    /// The master terminal running `hive claude` (the orchestrator TUI).
     case orchestrator
-    case worker
-    case shell // placeholder until the SwiftTerm phase; participates in layout only
+    /// A worker agent terminal attached to its daemon-owned tmux session.
+    case agent
 }

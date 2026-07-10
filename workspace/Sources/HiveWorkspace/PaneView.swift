@@ -15,7 +15,7 @@ final class PaneView: NSView {
     private let titleLabel = NSTextField(labelWithString: "")
     private let detailLabel = NSTextField(labelWithString: "")
     private let failureBadge = NSImageView()
-    let contentView: TranscriptPaneView
+    let contentView: TerminalPaneView
 
     private let statusBorderLayer = CAShapeLayer()
     private let focusRingLayer = CAShapeLayer()
@@ -25,7 +25,7 @@ final class PaneView: NSView {
     init(paneID: PaneID, title: String, dispatch: @escaping (WorkspaceCommand) -> Void) {
         self.paneID = paneID
         self.dispatch = dispatch
-        self.contentView = TranscriptPaneView(paneID: paneID, dispatch: dispatch)
+        self.contentView = TerminalPaneView()
         super.init(frame: .zero)
         wantsLayer = true
         setup(title: title)
@@ -247,8 +247,8 @@ final class PaneView: NSView {
     }
 
     /// Called exactly once per settled layout change (end of the ~180 ms
-    /// transition, or immediately under Reduce Motion). The future terminal
-    /// pane converts this into its single PTY resize.
+    /// transition, or immediately under Reduce Motion). The terminal pane
+    /// uses it to spawn its child with settled pty geometry.
     func commitCellGeometry() {
         contentView.commitCellGeometry()
     }

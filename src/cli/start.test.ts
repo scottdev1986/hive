@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { announceProfile } from "./start";
+import { announceProfile, startSession } from "./start";
 import { loadProfile } from "../adapters/profile";
 
 // `hive start`'s single profile line (SPEC §14). Exercised directly rather than
@@ -31,6 +31,86 @@ async function repoWithSpec(): Promise<string> {
   git(root, ["commit", "-m", "init", "--no-gpg-sign"]);
   return root;
 }
+
+// The session boundary shared by `hive start` and bare `hive`. The daemon
+// bring-up itself is a subprocess concern (covered end-to-end in
+// e2e-real.test.ts); here the seams prove the boundary's shape: order, the
+// returned port, and the best-effort steps staying best-effort.
+describe("startSession", () => {
+  test("checks, announces the profile, then brings the daemon up — and returns the port", async () => {
+    const root = await repoWithSpec();
+    const steps: string[] = [];
+    try {
+      const session = await startSession({
+        cwd: root,
+        checkUpdate: async () => {
+          steps.push("check");
+          throw new Error("offline");
+        },
+        ensureDaemon: async (cwd) => {
+          steps.push(`ensure:${cwd}`);
+        },
+        ensurePort: async () => {
+          steps.push("port");
+          return 45_017;
+        },
+        write: (line) => steps.push(`write:${line.slice(0, 5)}`),
+      });
+      expect(session).toEqual({ port: 45_017, cwd: root });
+      // The update check ran first and its failure stopped nothing. The
+      // profile line (a fresh repo writes one) came BEFORE the daemon: the
+      // daemon bootstraps the profile too, and announcing afterwards loses
+      // the first-start line to that race (the e2e suite pins this).
+      expect(steps).toEqual(["check", "write:Wrote", `ensure:${root}`, "port"]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("a profile that cannot be evaluated still starts the session", async () => {
+    // Not a git repo and no manifest: evaluateProfile has nothing to read.
+    const root = await mkdtemp(join(tmpdir(), "hive-start-bare-"));
+    try {
+      const session = await startSession({
+        cwd: root,
+        checkUpdate: async () => {
+          throw new Error("offline");
+        },
+        ensureDaemon: async () => {},
+        ensurePort: async () => 45_018,
+        write: () => {},
+      });
+      expect(session.port).toEqual(45_018);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("a stale-daemon refusal stops the session before any daemon starts", async () => {
+    const root = await repoWithSpec();
+    let started = false;
+    try {
+      const promise = startSession({
+        cwd: root,
+        checkUpdate: async () => {
+          throw new Error("offline");
+        },
+        ensureDaemon: async () => {
+          throw new Error("live agents still running");
+        },
+        ensurePort: async () => {
+          started = true;
+          return 45_019;
+        },
+        write: () => {},
+      });
+      await expect(promise).rejects.toThrow("live agents still running");
+      expect(started).toEqual(false);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
 
 describe("announceProfile", () => {
   test("on an uninitialized repo, writes the profile and prints one line", async () => {

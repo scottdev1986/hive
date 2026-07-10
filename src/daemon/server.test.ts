@@ -10,6 +10,7 @@ import type { TmuxSender } from "./delivery";
 import { QuotaLedger } from "./quota-ledger";
 import { QuotaService } from "./quota";
 import { HIVE_VERSION, HiveDaemon, inferLegacyControl } from "./server";
+import { WorkspacePresence } from "./workspace-presence";
 import { actingAs } from "./testing";
 import type { SpawnRequest, Spawner } from "./spawner";
 import { orchestratorTmuxSession } from "./tmux-sessions";
@@ -1609,6 +1610,86 @@ describe("HiveDaemon HTTP server", () => {
       const invalid = await post({ agent: "maya" });
       expect(invalid.status).toEqual(400);
       expect(layoutRequests).toEqual(1);
+    } finally {
+      await daemon.stop();
+      db.close();
+    }
+  });
+
+  test("workspace presence is a TTL lease that pauses and releases the window wall", async () => {
+    const db = new HiveDatabase(join(home, "workspace-presence.db"));
+    let nowMs = 0;
+    const presence = new WorkspacePresence(() => nowMs);
+    let layoutRequests = 0;
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new StubSpawner(),
+      tmux: new FakeDaemonTmux(),
+      workspacePresence: presence,
+      layout: {
+        requestLayout: () => {
+          layoutRequests += 1;
+        },
+      },
+    });
+    const operator = actingAs(daemon, "operator");
+    const post = (body: unknown) =>
+      operator("http://hive/workspace", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    const read = async (): Promise<unknown> => (await operator("http://hive/workspace")).json();
+    try {
+      // No lease until the app registers.
+      expect(await read()).toEqual({ present: false });
+
+      const granted = await post({ present: true });
+      expect(granted.status).toEqual(200);
+      expect(await granted.json()).toEqual({
+        ok: true,
+        present: true,
+        ttlMs: presence.ttlMs,
+      });
+      expect(await read()).toEqual({ present: true });
+
+      // A crashed app stops renewing; the TTL reverts the daemon by itself.
+      nowMs = presence.ttlMs + 1;
+      expect(await read()).toEqual({ present: false });
+
+      // A clean shutdown surrenders explicitly and puts the wall back.
+      await post({ present: true });
+      expect(layoutRequests).toEqual(0);
+      const cleared = await post({ present: false });
+      expect(await cleared.json()).toMatchObject({ ok: true, present: false });
+      expect(layoutRequests).toEqual(1);
+
+      const malformed = await post({ present: "yes" });
+      expect(malformed.status).toEqual(400);
+      const notJson = await operator("http://hive/workspace", {
+        method: "POST",
+        body: "not json",
+      });
+      expect(notJson.status).toEqual(400);
+
+      // No credential, no lease; an agent credential may not claim it either.
+      const anonymous = await daemon.fetch(
+        new Request("http://hive/workspace", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ present: true }),
+        }),
+      );
+      expect(anonymous.status).toEqual(401);
+      const agentPost = await actingAs(daemon, "maya", "writer")(
+        "http://hive/workspace",
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ present: true }),
+        },
+      );
+      expect(agentPost.status).toEqual(403);
     } finally {
       await daemon.stop();
       db.close();

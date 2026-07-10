@@ -1,6 +1,6 @@
 # hive
 
-> **Architecture scope.** This document records the current Bun/tmux/Terminal.app system and the control-plane decisions learned from dogfooding it. The accepted destination is the native [Hive Workspace blueprint](docs/architecture/hive-workspace-blueprint.md), with restart order in the [handoff](docs/architecture/restart-handoff.md). Where the documents differ on windows, provider TUIs, tmux, process ownership, project identity, or IPC, the Workspace blueprint is authoritative for future work. No flagship implementation is authorized before the documented restart; Phase 0 control-plane authentication is the first proposed task afterward.
+> **Architecture scope.** This document records the current Bun/tmux/Terminal.app system and the control-plane decisions learned from dogfooding it. The accepted destination is the native [Hive Workspace blueprint](docs/architecture/hive-workspace-blueprint.md). The two documents agree on the substrate: agents are the vendors' native TUIs living in daemon-owned tmux sessions, and every window — terminal or Workspace pane — is a disposable viewer over them. Where they still differ (process ownership, project identity, IPC), the blueprint is authoritative for future work; Phase 0 control-plane authentication is landed, and the flagship Workspace attaches to this system's daemon and tmux substrate rather than waiting on a restart (order preserved in the [handoff](docs/architecture/restart-handoff.md)).
 
 ## What this is
 

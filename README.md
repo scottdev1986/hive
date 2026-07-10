@@ -76,16 +76,19 @@ To update later, run `hive update`. Hive also checks for new versions on `hive s
 ## Quick start
 
 1. `cd` into any project folder (a git repository).
-2. Run `hive start` to bring up the project's daemon.
-3. Run `hive` to open the Workspace app, or `hive claude` / `hive codex` for a terminal orchestrator.
-4. Tell the orchestrator what you want done, in plain English.
-5. Watch the agent windows, and answer the occasional approval prompt in the orchestrator window.
+2. Run `hive`. It brings up the project's daemon and opens the Workspace: one window, the orchestrator front and center, and every agent as a live terminal pane running the real Claude Code or Codex interface.
+3. Tell the orchestrator what you want done, in plain English.
+4. Watch the agent panes, and answer the occasional approval prompt in the orchestrator pane. Typing into any pane talks directly to that agent's own interface.
+
+Prefer plain terminals? `hive claude` / `hive codex` run the same orchestrator in the terminal you're in, with agents in their own windows.
 
 ## Commands
 
 | Command | What it does |
 |---|---|
-| `hive claude` / `hive codex` | Start an orchestrator in the current folder |
+| `hive` | Open the project's Workspace — daemon, orchestrator, and agent panes in one window |
+| `hive start` | Bring up the project's daemon without opening a window |
+| `hive claude` / `hive codex` | Start a terminal orchestrator in the current folder |
 | `hive status` | Show all running agents and what they're doing |
 | `hive quota` | Show remaining capacity per provider, with reset times |
 | `hive watch <name>` | Reopen a closed agent window |

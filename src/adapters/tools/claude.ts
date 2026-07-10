@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import {
   mkdir,
   readdir,
@@ -86,15 +87,69 @@ export async function detectClaudeCliVersion(
   }
 }
 
-export type ExecutableFinder = (command: string) => string | null;
+/** Synchronous `--version` probe. Non-billable by construction: `--version`
+ * never opens a session (a guessed subcommand, by contrast, becomes a billable
+ * prompt). Null means this executable cannot launch anything. */
+export function probeClaudeVersion(executable: string): string | null {
+  try {
+    const result = Bun.spawnSync([executable, "--version"], {
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "ignore",
+    });
+    if (result.exitCode !== 0) return null;
+    return /(\d+\.\d+\.\d+)/.exec(result.stdout.toString())?.[1] ?? null;
+  } catch {
+    return null;
+  }
+}
 
-/** Bind launches to the executable visible to the daemon. A long-lived tmux
- * server has its own environment and may otherwise resolve the same bare
- * command to a stale or broken installation. */
-export function resolveClaudeExecutable(
-  find: ExecutableFinder = Bun.which,
-): string {
-  return find("claude") ?? "claude";
+/** Candidate installations in preference order: every PATH entry, then the
+ * native-installer locations a broken package-manager shim commonly shadows
+ * (a homebrew `claude` that prints "native binary not installed" sits ahead
+ * of a working ~/.local/bin/claude on a typical login PATH). */
+export function claudeExecutableCandidates(
+  env: Record<string, string | undefined> = process.env,
+): string[] {
+  const home = env.HOME ?? homedir();
+  const fromPath = (env.PATH ?? "")
+    .split(":")
+    .filter((dir) => dir.length > 0)
+    .map((dir) => join(dir, "claude"));
+  const known = [
+    join(home, ".local", "bin", "claude"),
+    join(home, ".claude", "local", "claude"),
+  ];
+  const candidates: string[] = [];
+  for (const candidate of [...fromPath, ...known]) {
+    if (!candidates.includes(candidate) && existsSync(candidate)) {
+      candidates.push(candidate);
+    }
+  }
+  return candidates;
+}
+
+export interface ResolvedClaudeExecutable {
+  path: string;
+  version: string | null;
+}
+
+/** Bind launches to an executable that provably works. A long-lived tmux
+ * server has its own environment, and PATH order happily serves a stale or
+ * broken installation first — so a candidate must answer `--version` before
+ * it may launch anything. No candidate answering resolves to the bare command
+ * with a null version, which downstream version gates fail closed on. */
+export function resolveWorkingClaudeExecutable(
+  probe: (executable: string) => string | null = probeClaudeVersion,
+  candidates: () => string[] = claudeExecutableCandidates,
+): ResolvedClaudeExecutable {
+  for (const candidate of candidates()) {
+    const version = probe(candidate);
+    if (version !== null) {
+      return { path: candidate, version };
+    }
+  }
+  return { path: "claude", version: null };
 }
 
 const shellToken = (value: string): string => {

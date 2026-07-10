@@ -36,6 +36,10 @@ export interface StartDeps {
   readonly checkUpdate?: () => Promise<UpdateCheck>;
   readonly write?: (line: string) => void;
   readonly cwd?: string;
+  /** Test seams for the daemon bring-up; production always uses the real
+   * `ensureDaemonForBuild` and `ensureStarted`. */
+  readonly ensureDaemon?: (cwd: string) => Promise<void>;
+  readonly ensurePort?: () => Promise<number>;
 }
 
 /** Resolve the staged-but-not-active version, so the notice can say so. */
@@ -106,6 +110,14 @@ export async function ensureDaemonForBuild(cwd = process.cwd()): Promise<void> {
  *     The durable orchestrator note is enqueued by the daemon on the same start.
  *   - Fresh: proceed in silence.
  * Any failure here is swallowed by the caller: profiling must never stop a start.
+ *
+ * This runs *before* the daemon comes up. The daemon bootstraps the profile
+ * too (server.ts `checkRepoProfile`, for repos entered through `hive claude`),
+ * and by the time `ensureStarted` has seen /health that bootstrap has usually
+ * already won — evaluated afterwards, a first start reads as "fresh" and the
+ * one line that says the profile was written is silently lost. Both writers
+ * are deterministic and idempotent, so ordering the terminal-owning one first
+ * costs nothing and makes the announcement reliable.
  */
 export async function announceProfile(
   cwd: string,
@@ -125,19 +137,38 @@ export async function announceProfile(
   }
 }
 
-export async function runStart(deps: StartDeps = {}): Promise<void> {
+export interface StartedSession {
+  readonly port: number;
+  readonly cwd: string;
+}
+
+/**
+ * The session boundary itself, shared by `hive start` and bare `hive`: update
+ * notice (best-effort), stale-daemon restart, daemon bring-up, and the
+ * init-once profile line (best-effort). Everything a session needs before
+ * anything attaches to it — and nothing about *what* attaches, which is why
+ * bare `hive` can run this and then hand the port to the Workspace app while
+ * `hive start` just prints where the daemon is.
+ */
+export async function startSession(deps: StartDeps = {}): Promise<StartedSession> {
   await printStartNotice(deps).catch(() => {
     // A broken update check must never stop a project from starting.
   });
   const cwd = deps.cwd ?? process.cwd();
-  await ensureDaemonForBuild(cwd);
-  const port = await ensureStarted();
   const write = deps.write ??
     ((line: string) => process.stderr.write(`${line}\n`));
+  // Before the daemon: see announceProfile on why the order is load-bearing.
   await announceProfile(cwd, write).catch(() => {
     // Profiling is best-effort: a repo starts even if its profile cannot be
     // written or read.
   });
+  await (deps.ensureDaemon ?? ensureDaemonForBuild)(cwd);
+  const port = await (deps.ensurePort ?? ensureStarted)();
+  return { port, cwd };
+}
+
+export async function runStart(deps: StartDeps = {}): Promise<void> {
+  const { port, cwd } = await startSession(deps);
   console.log(`Hive is running for ${cwd} (daemon port ${port}).`);
   console.log("Run `hive` to open the Workspace, or `hive claude` for an orchestrator.");
 }

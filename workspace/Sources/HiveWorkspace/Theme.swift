@@ -59,48 +59,6 @@ enum Theme {
     static let headerFont = NSFont.systemFont(ofSize: 13, weight: .semibold)
     static let captionFont = NSFont.systemFont(ofSize: 11)
 
-    // MARK: ANSI → system colors
-
-    /// Standard 8/16 ANSI slots mapped to semantic system colors so logs adapt
-    /// to appearance changes like native text.
-    static func ansiColor(_ color: StyledSpan.Color) -> NSColor {
-        switch color {
-        case .standard(let index), .bright(let index):
-            switch index {
-            case 0: return .labelColor          // "black" reads as primary text
-            case 1: return .systemRed
-            case 2: return .systemGreen
-            case 3: return .systemYellow
-            case 4: return .systemBlue
-            case 5: return .systemPurple
-            case 6: return .systemTeal
-            default: return .secondaryLabelColor // "white" against system background
-            }
-        case .palette256(let value):
-            return palette256Color(value)
-        case .rgb(let red, let green, let blue):
-            return NSColor(srgbRed: CGFloat(red) / 255, green: CGFloat(green) / 255,
-                           blue: CGFloat(blue) / 255, alpha: 1)
-        }
-    }
-
-    private static func palette256Color(_ value: Int) -> NSColor {
-        switch value {
-        case 0...15:
-            return ansiColor(.standard(value % 8))
-        case 16...231:
-            let index = value - 16
-            let levels: [CGFloat] = [0, 95, 135, 175, 215, 255].map { $0 / 255 }
-            let r = levels[index / 36]
-            let g = levels[(index / 6) % 6]
-            let b = levels[index % 6]
-            return NSColor(srgbRed: r, green: g, blue: b, alpha: 1)
-        default:
-            let gray = CGFloat(8 + (value - 232) * 10) / 255
-            return NSColor(srgbRed: gray, green: gray, blue: gray, alpha: 1)
-        }
-    }
-
     static var reduceMotion: Bool {
         NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
     }

@@ -1,0 +1,207 @@
+import { describe, expect, test } from "bun:test";
+import type { AgentRecord } from "../schemas";
+import {
+  FEED_GIVE_UP_MS,
+  FEED_HEARTBEAT_MS,
+  FEED_POLL_MS,
+  FEED_RETRY_MAX_MS,
+  runWorkspaceFeed,
+} from "./workspace-feed";
+
+const timestamp = "2026-07-10T12:00:00.000Z";
+
+function agent(name: string, overrides: Partial<AgentRecord> = {}): AgentRecord {
+  return {
+    id: `agent-${name}`,
+    name,
+    tool: "claude",
+    model: "claude-test",
+    tier: "standard",
+    status: "working",
+    taskDescription: "Feed test",
+    worktreePath: `/tmp/${name}`,
+    branch: `hive/${name}-test`,
+    tmuxSession: `hive-${name}`,
+    contextPct: 10,
+    createdAt: timestamp,
+    lastEventAt: timestamp,
+    recoveryAttempts: 0,
+    capabilityEpoch: 0,
+    writeRevoked: false,
+    channelsEnabled: false,
+    ...overrides,
+  };
+}
+
+/** One scripted poll: returns a snapshot or throws. `abort` ends the loop
+ * after the step is processed, exactly like SIGTERM between polls. */
+type Step = (abort: () => void) => AgentRecord[];
+
+interface FeedRun {
+  exitCode: number;
+  lines: Array<Record<string, unknown>>;
+  presence: boolean[];
+  sleeps: number[];
+}
+
+/** Drives the real loop on a fake clock: sleeping advances time instantly, so
+ * heartbeat and give-up behavior are exact, not wall-clock flaky. */
+async function runScript(steps: Step[]): Promise<FeedRun> {
+  const controller = new AbortController();
+  const lines: Array<Record<string, unknown>> = [];
+  const presence: boolean[] = [];
+  const sleeps: number[] = [];
+  let time = 0;
+  let index = 0;
+  const exitCode = await runWorkspaceFeed(4483, {
+    signal: controller.signal,
+    now: () => time,
+    sleep: async (milliseconds) => {
+      sleeps.push(milliseconds);
+      time += milliseconds;
+    },
+    write: (line) => {
+      lines.push(JSON.parse(line) as Record<string, unknown>);
+    },
+    setPresence: async (_port, present) => {
+      presence.push(present);
+    },
+    fetchStatus: async () => {
+      const step = steps[index];
+      if (step === undefined) {
+        throw new Error("feed polled past the end of the script");
+      }
+      index += 1;
+      return step(() => controller.abort());
+    },
+  });
+  return { exitCode, lines, presence, sleeps };
+}
+
+const snapshot = (...agents: AgentRecord[]): Step => () => agents;
+const failure = (message: string): Step => () => {
+  throw new Error(message);
+};
+const last = (step: Step): Step => (abort) => {
+  const result = step(abort);
+  abort();
+  return result;
+};
+const lastFailure = (message: string): Step => (abort) => {
+  abort();
+  throw new Error(message);
+};
+
+describe("runWorkspaceFeed", () => {
+  test("emits the first snapshot, stays silent while unchanged, heartbeats at 5s", async () => {
+    const maya = agent("maya");
+    const run = await runScript([
+      snapshot(maya), // t=0: first snapshot
+      snapshot(maya), // t=1s..4s: unchanged, silent
+      snapshot(maya),
+      snapshot(maya),
+      snapshot(maya),
+      last(snapshot(maya)), // t=5s: unchanged, but the heartbeat is due
+    ]);
+    expect(run.exitCode).toEqual(0);
+    expect(run.lines).toHaveLength(2);
+    expect(run.lines[0]).toEqual({
+      v: 1,
+      agents: [JSON.parse(JSON.stringify(maya)) as unknown],
+    });
+    expect(run.lines[1]?.agents).toBeDefined();
+    expect(run.sleeps.every((ms) => ms === FEED_POLL_MS)).toEqual(true);
+  });
+
+  test("any change emits immediately, without waiting for the heartbeat", async () => {
+    const maya = agent("maya");
+    const run = await runScript([
+      snapshot(maya),
+      last(snapshot({ ...maya, status: "idle", contextPct: 42 })),
+    ]);
+    expect(run.lines).toHaveLength(2);
+    const [, changed] = run.lines;
+    expect((changed?.agents as Array<{ status: string }>)[0]?.status)
+      .toEqual("idle");
+  });
+
+  test("shutdown surrenders the lease it took on start and renewed per emit", async () => {
+    const run = await runScript([last(snapshot(agent("maya")))]);
+    // true on start, true on the emit's renewal, false on the way out.
+    expect(run.presence).toEqual([true, true, false]);
+  });
+
+  test("a failure is emitted once, retried with backoff, and recovery re-emits", async () => {
+    const maya = agent("maya");
+    const run = await runScript([
+      failure("connect ECONNREFUSED"),
+      failure("connect ECONNREFUSED"), // same failure: no second line
+      failure("handshake mismatch"), // distinct failure: one new line
+      last(snapshot(maya)), // recovery re-emits even a first-ever snapshot
+    ]);
+    expect(run.exitCode).toEqual(0);
+    expect(run.lines).toEqual([
+      { v: 1, error: "connect ECONNREFUSED" },
+      { v: 1, error: "handshake mismatch" },
+      { v: 1, agents: [JSON.parse(JSON.stringify(maya)) as unknown] },
+    ]);
+    // Backoff doubles from the poll interval and caps.
+    expect(run.sleeps.slice(0, 3)).toEqual([
+      Math.min(FEED_POLL_MS * 2, FEED_RETRY_MAX_MS),
+      Math.min(FEED_POLL_MS * 4, FEED_RETRY_MAX_MS),
+      FEED_RETRY_MAX_MS,
+    ]);
+  });
+
+  test("an error after healthy polls resets nothing until 30s of silence", async () => {
+    const maya = agent("maya");
+    const run = await runScript([
+      snapshot(maya),
+      failure("daemon stopped"),
+      last(snapshot(maya)), // back before the deadline: keep going
+    ]);
+    expect(run.exitCode).toEqual(0);
+    // error line, then the recovery snapshot.
+    expect(run.lines.map((line) => "error" in line)).toEqual([
+      false,
+      true,
+      false,
+    ]);
+  });
+
+  test("exits non-zero once the daemon is gone for 30s, still surrendering the lease", async () => {
+    // Backoff caps at 4s, so ~9 consecutive failures cross the 30s deadline.
+    const steps: Step[] = Array.from(
+      { length: 30 },
+      () => failure("connect ECONNREFUSED"),
+    );
+    const run = await runScript(steps);
+    expect(run.exitCode).toEqual(1);
+    expect(run.lines).toEqual([{ v: 1, error: "connect ECONNREFUSED" }]);
+    const failedFor = run.sleeps.reduce((total, ms) => total + ms, 0);
+    expect(failedFor).toBeGreaterThanOrEqual(FEED_GIVE_UP_MS - FEED_RETRY_MAX_MS);
+    expect(run.presence).toEqual([true, false]);
+  });
+
+  test("an abort mid-outage exits zero: a closing app is not a dead daemon", async () => {
+    const run = await runScript([
+      failure("connect ECONNREFUSED"),
+      lastFailure("connect ECONNREFUSED"),
+    ]);
+    expect(run.exitCode).toEqual(0);
+    expect(run.presence.at(-1)).toEqual(false);
+  });
+
+  test("heartbeats renew the lease inside the daemon's TTL", async () => {
+    const maya = agent("maya");
+    // 11 unchanged polls: emits at t=0, 5s, 10s.
+    const steps: Step[] = Array.from({ length: 11 }, () => snapshot(maya));
+    steps.push(last(snapshot(maya)));
+    const run = await runScript(steps);
+    const renewals = run.presence.filter((present) => present).length;
+    expect(renewals).toBeGreaterThanOrEqual(4); // start + one per heartbeat
+    expect(run.lines.length).toEqual(3);
+    expect(run.sleeps.filter((ms) => ms === FEED_POLL_MS).length)
+      .toEqual(run.sleeps.length);
+  });
+});

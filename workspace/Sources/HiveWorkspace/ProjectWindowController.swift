@@ -1,27 +1,38 @@
 import AppKit
 import WorkspaceCore
 
-/// One project's workspace window: owns the pane views, applies reducer
-/// changes, and is the single dispatch point for the shared command model.
-/// Menu items and shortcuts reach it through the responder chain, so the key
-/// window owns routing exactly as the blueprint requires.
+/// One project's workspace window: owns the pane views (real terminals),
+/// applies reducer changes, and is the single dispatch point for the shared
+/// command model. Menu items and shortcuts reach it through the responder
+/// chain, so the key window owns routing exactly as the blueprint requires.
 final class ProjectWindowController: NSWindowController, NSWindowDelegate {
 
     let state: ProjectState
     private let attentionCenter: AttentionCenter
+    private let projectDirectory: String
+    private let hivePath: String
     private let container = LayoutContainerView()
     private let animator = LayoutAnimator()
     private var paneViews: [PaneID: PaneView] = [:]
+    private var pendingCloses: Set<PaneID> = []
+
+    /// Set by the app delegate to tear the feed down with the window (the
+    /// app usually quits on last-window-close, but a floating panel can keep
+    /// it alive — the feed must die with the window regardless, so the daemon
+    /// gets its external viewers back).
+    var onWindowWillClose: (() -> Void)?
 
     var paneViewCount: Int { paneViews.count }
 
-    init(state: ProjectState, attentionCenter: AttentionCenter, cascadeIndex: Int) {
+    init(state: ProjectState, attentionCenter: AttentionCenter,
+         projectDirectory: String, hivePath: String) {
         self.state = state
         self.attentionCenter = attentionCenter
+        self.projectDirectory = projectDirectory
+        self.hivePath = hivePath
 
         let window = NSWindow(
-            contentRect: NSRect(x: 120 + cascadeIndex * 60, y: 80 + cascadeIndex * 40,
-                                width: 1280, height: 800),
+            contentRect: NSRect(x: 120, y: 80, width: 1280, height: 800),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered, defer: false)
         window.title = state.displayName
@@ -58,14 +69,36 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
 
     required init?(coder: NSCoder) { fatalError("not used") }
 
-    // MARK: Event and command entry points
+    // MARK: Entry points
 
-    func ingest(_ envelope: AgentEventEnvelope) {
-        react(to: state.apply(envelope))
+    /// Creates the master pane and starts the orchestrator terminal.
+    func bootstrapOrchestrator() {
+        react(to: state.addOrchestrator(title: state.displayName))
+    }
+
+    /// Commits the first real window geometry after presentation. Bootstrap
+    /// happens before `showWindow`, when the container may still be 0×0; do
+    /// not rely on AppKit subsequently reporting a bounds change to launch the
+    /// deferred terminal child. A snapped layout here gives SwiftTerm the
+    /// visible pane's settled dimensions and deterministically starts it.
+    func commitInitialGeometry() {
+        window?.layoutIfNeeded()
+        state.layoutBounds = container.bounds
+        applyLayout(animated: false)
+    }
+
+    /// One feed snapshot in, pane set reconciled.
+    func applyFeed(_ agents: [AgentSnapshot]) {
+        react(to: state.apply(feed: agents))
+    }
+
+    /// The feed process exited: agent statuses can no longer be trusted.
+    func feedLost() {
+        react(to: state.markFeedLost())
     }
 
     /// The one shared command entry: menu items, keyboard shortcuts, clicks,
-    /// double-clicks, links, and accessibility actions all end here.
+    /// double-clicks, and accessibility actions all end here.
     func dispatch(_ command: WorkspaceCommand) {
         react(to: state.apply(command))
     }
@@ -76,7 +109,13 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
             case .paneAdded(let paneID):
                 addPaneView(for: paneID)
             case .paneRemoved(let paneID):
-                paneViews.removeValue(forKey: paneID)?.removeFromSuperview()
+                pendingCloses.remove(paneID)
+                if let view = paneViews.removeValue(forKey: paneID) {
+                    view.contentView.terminateChild() // detaches the tmux client, never the session
+                    view.removeFromSuperview()
+                }
+            case .paneClosePending(let paneID):
+                scheduleGracefulClose(paneID)
             case .layoutChanged:
                 applyLayout(animated: true)
             case .focusChanged(let paneID):
@@ -85,14 +124,8 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
                 if let pane = state.panes[paneID] {
                     paneViews[paneID]?.update(state: pane)
                 }
-            case .transcriptChanged(let paneID, let transcriptChange):
-                if let pane = state.panes[paneID] {
-                    paneViews[paneID]?.contentView.apply(transcriptChange, items: pane.transcript.items)
-                }
             case .attentionChanged:
                 attentionCenter.refresh()
-            case .composerSubmitted:
-                break // the mock source has no live agent to deliver to
             }
         }
     }
@@ -105,13 +138,44 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
             self?.dispatch(command)
         }
         view.update(state: pane)
-        view.contentView.rebuild(items: pane.transcript.items)
+        view.contentView.schedule(
+            command: terminalCommand(for: pane),
+            workingDirectory: projectDirectory)
         paneViews[paneID] = view
         container.addSubview(view)
         // New panes appear at their final slot's center and grow into place;
         // creation must be visible but never steal focus.
         if let target = state.frames(in: container.bounds)[paneID] {
             view.frame = CGRect(x: target.midX, y: target.midY, width: 0, height: 0)
+        }
+    }
+
+    /// What runs inside a pane's pty:
+    /// - master: `hive claude` attaches to the orchestrator's tmux session
+    ///   with `-A`, so relaunching the app reattaches instead of duplicating.
+    /// - agent: a plain tmux attach client for the daemon-owned session;
+    ///   killing it later merely detaches.
+    private func terminalCommand(for pane: PaneState) -> String {
+        switch pane.kind {
+        case .orchestrator:
+            return "exec \(shellQuoted(hivePath)) claude"
+        case .agent:
+            let session = pane.tmuxSession ?? pane.title
+            return "exec tmux attach-session -t \(shellQuoted(session))"
+        }
+    }
+
+    /// A closed agent keeps its pane (final status border) for the grace
+    /// window, then the close flows through the same command model as ⇧⌘W.
+    private func scheduleGracefulClose(_ paneID: PaneID) {
+        guard !pendingCloses.contains(paneID) else { return }
+        pendingCloses.insert(paneID)
+        DispatchQueue.main.asyncAfter(deadline: .now() + PaneCloseGrace.seconds) { [weak self] in
+            guard let self, self.pendingCloses.contains(paneID) else { return }
+            self.pendingCloses.remove(paneID)
+            // A live snapshot may have revived the agent during the grace.
+            guard self.state.panes[paneID]?.closePending == true else { return }
+            self.dispatch(.closePane(paneID))
         }
     }
 
@@ -131,8 +195,24 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
             view.setFocused(id == paneID)
         }
         if let paneID, let view = paneViews[paneID] {
-            view.contentView.focusComposer()
+            // Keystrokes go to the pane's pty — that is the product's
+            // message-sending path (typing into the native TUIs).
+            view.contentView.focusTerminal()
         }
+    }
+
+    /// Detaches every terminal (SIGTERM to attach clients / the orchestrator
+    /// CLI). Agents keep running: their processes live in daemon-owned tmux
+    /// sessions, and a viewer must never kill them.
+    func terminateAllTerminals() {
+        for view in paneViews.values {
+            view.contentView.terminateChild()
+        }
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        terminateAllTerminals()
+        onWindowWillClose?()
     }
 
     // MARK: Smoke-test introspection
@@ -141,8 +221,16 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
         state.frames(in: container.bounds)
     }
 
-    func transcriptTextLength(pane: PaneID) -> Int {
-        paneViews[pane]?.contentView.transcriptTextLength ?? 0
+    func terminalText(pane: PaneID) -> String {
+        paneViews[pane]?.contentView.visibleText ?? ""
+    }
+
+    func sendText(_ text: String, pane: PaneID) {
+        paneViews[pane]?.contentView.send(text: text)
+    }
+
+    func terminalChildRunning(pane: PaneID) -> Bool {
+        paneViews[pane]?.contentView.childRunning ?? false
     }
 
     // MARK: Menu actions (responder chain; same command model)
@@ -174,24 +262,6 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
     @objc func moveFocusRight(_ sender: Any?) { dispatch(.moveFocus(.right)) }
     @objc func moveFocusUp(_ sender: Any?) { dispatch(.moveFocus(.up)) }
     @objc func moveFocusDown(_ sender: Any?) { dispatch(.moveFocus(.down)) }
-
-    @objc func approvePendingRequest(_ sender: Any?) {
-        resolvePendingApproval(approved: true)
-    }
-
-    @objc func denyPendingRequest(_ sender: Any?) {
-        resolvePendingApproval(approved: false)
-    }
-
-    private func resolvePendingApproval(approved: Bool) {
-        guard let focused = state.focusedPane,
-              let pane = state.panes[focused],
-              let pending = pane.transcript.items.lazy.compactMap({ item -> String? in
-                  if case .approval(let approval) = item, approval.state == .pending { return approval.id }
-                  return nil
-              }).first else { return }
-        dispatch(.resolveApproval(approvalID: pending, approved: approved))
-    }
 }
 
 extension ProjectWindowController: NSMenuItemValidation {
@@ -205,12 +275,6 @@ extension ProjectWindowController: NSMenuItemValidation {
             return state.focusedPane != nil
         case #selector(focusOrchestrator(_:)):
             return state.orchestratorPane != nil
-        case #selector(approvePendingRequest(_:)), #selector(denyPendingRequest(_:)):
-            guard let focused = state.focusedPane, let pane = state.panes[focused] else { return false }
-            return pane.transcript.items.contains { item in
-                if case .approval(let approval) = item { return approval.state == .pending }
-                return false
-            }
         default:
             return true
         }

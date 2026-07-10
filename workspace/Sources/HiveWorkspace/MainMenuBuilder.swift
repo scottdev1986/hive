@@ -31,13 +31,6 @@ enum MainMenuBuilder {
         editMenu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
         editMenu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
         editMenu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
-        editMenu.addItem(.separator())
-        let find = NSMenuItem(title: "Find…", action: #selector(NSTextView.performFindPanelAction(_:)), keyEquivalent: "f")
-        find.tag = NSTextFinder.Action.showFindInterface.rawValue
-        editMenu.addItem(find)
-        let findNext = NSMenuItem(title: "Find Next", action: #selector(NSTextView.performFindPanelAction(_:)), keyEquivalent: "g")
-        findNext.tag = NSTextFinder.Action.nextMatch.rawValue
-        editMenu.addItem(findNext)
 
         // Pane (the shared command model, keyboard-first)
         let paneItem = NSMenuItem()
@@ -74,16 +67,9 @@ enum MainMenuBuilder {
                                      keyEquivalent: "k")
         acknowledge.keyEquivalentModifierMask = [.command, .shift]
         paneMenu.addItem(acknowledge)
-        let approve = NSMenuItem(title: "Approve Pending Request",
-                                 action: #selector(ProjectWindowController.approvePendingRequest(_:)),
-                                 keyEquivalent: "y")
-        approve.keyEquivalentModifierMask = [.command, .shift]
-        paneMenu.addItem(approve)
-        let deny = NSMenuItem(title: "Deny Pending Request",
-                              action: #selector(ProjectWindowController.denyPendingRequest(_:)),
-                              keyEquivalent: "n")
-        deny.keyEquivalentModifierMask = [.command, .shift]
-        paneMenu.addItem(deny)
+        // Approvals and message sending happen inside the native TUIs by
+        // typing — the pane is a real terminal, so there is no app-level
+        // approve/deny surface anymore.
         paneMenu.addItem(.separator())
         let close = NSMenuItem(title: "Close Pane",
                                action: #selector(ProjectWindowController.closeFocusedPane(_:)), keyEquivalent: "w")

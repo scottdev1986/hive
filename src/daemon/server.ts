@@ -59,6 +59,7 @@ import {
 import { OPERATOR_SUBJECT, writeCredential } from "./credentials";
 import { HiveDatabase, type Approval } from "./db";
 import type { LayoutCoordinator } from "./layout";
+import { WorkspacePresence } from "./workspace-presence";
 import { MemoryIndex } from "./memory-index";
 import {
   BunTmuxSender,
@@ -201,6 +202,10 @@ const OrchestratorTerminalRequestSchema = z.object({
   handle: TerminalHandleSchema,
 });
 
+const WorkspacePresenceRequestSchema = z.object({
+  present: z.boolean(),
+});
+
 const ViewerRequestSchema = z.object({
   agent: z.string().min(1),
   handle: TerminalHandleSchema,
@@ -314,6 +319,10 @@ export interface HiveDaemonOptions {
   hostname?: string;
   manageLifecycle?: boolean;
   layout?: LayoutCoordinator;
+  /** The Workspace-app viewer lease (`POST /workspace`). Shared with the
+   * spawner and layout so external viewer windows pause while the app is
+   * attached; an embedded daemon gets its own inert instance. */
+  workspacePresence?: WorkspacePresence;
   quota?: QuotaService;
   codexControl?: Pick<
     CodexAppServerManager,
@@ -357,6 +366,7 @@ export class HiveDaemon {
   readonly spawner: Spawner;
   readonly memory: MemoryIndex;
   readonly capabilities: CapabilityStore;
+  readonly workspacePresence: WorkspacePresence;
   private memoryLock: Promise<unknown> = Promise.resolve();
   private readonly ownsDatabase: boolean;
   private readonly port: number;
@@ -457,6 +467,7 @@ export class HiveDaemon {
     });
     this.closeTerminal = options.closeTerminal ?? closeTerminal;
     this.layout = options.layout ?? null;
+    this.workspacePresence = options.workspacePresence ?? new WorkspacePresence();
     this.land = options.landBranch ?? landBranch;
     this.resources = options.resources ?? null;
     this.psSample = options.resourceRunners?.ps ?? runPs;
@@ -1030,6 +1041,14 @@ export class HiveDaemon {
     if (url.pathname === "/viewer" && request.method === "POST") {
       return this.attachViewer(request);
     }
+    if (url.pathname === "/workspace") {
+      if (request.method === "POST") {
+        return this.setWorkspacePresenceEndpoint(request);
+      }
+      if (request.method === "GET") {
+        return this.readWorkspacePresenceEndpoint(request);
+      }
+    }
     if (url.pathname === "/statusline" && request.method === "POST") {
       return this.receiveStatusline(request);
     }
@@ -1251,6 +1270,75 @@ export class HiveDaemon {
       this.layout?.requestLayout();
     }
     return json({ ok: true });
+  }
+
+  /**
+   * `POST /workspace` — the Workspace app's viewer lease.
+   *
+   * `{present: true}` grants (or renews) the lease for one TTL; the feed's
+   * heartbeat renews well inside it, and `{present: false}` surrenders it on
+   * clean shutdown. Operator-level, like `/orchestrator-terminal`: only the
+   * human's own tooling may decide who the viewer is. Allows are audited only
+   * when the lease state actually flips — the renewals are a heartbeat and,
+   * like channel polls, would bury every other audit row.
+   */
+  private async setWorkspacePresenceEndpoint(
+    request: Request,
+  ): Promise<Response> {
+    const authenticated = this.authenticate(request, "/workspace");
+    if (!authenticated.ok) return this.denied(authenticated);
+    let body: unknown;
+    try {
+      body = await request.json();
+    } catch {
+      return json({ error: "Invalid workspace presence" }, { status: 400 });
+    }
+    const parsed = WorkspacePresenceRequestSchema.safeParse(body);
+    if (!parsed.success) {
+      return json(
+        { error: "Invalid workspace presence", issues: parsed.error.issues },
+        { status: 400 },
+      );
+    }
+    const flips = parsed.data.present !== this.workspacePresence.isPresent();
+    const decision = this.authorize(
+      authenticated.capability,
+      "/workspace",
+      "terminal:register",
+      undefined,
+      flips,
+    );
+    if (!decision.ok) return this.denied(decision);
+    if (parsed.data.present) {
+      this.workspacePresence.markPresent();
+    } else {
+      this.workspacePresence.clear();
+      // The app stopped being the viewer; put the window wall back.
+      this.layout?.requestLayout();
+    }
+    return json({
+      ok: true,
+      present: this.workspacePresence.isPresent(),
+      ttlMs: this.workspacePresence.ttlMs,
+    });
+  }
+
+  /** `GET /workspace` — read the live lease state. A poll, so allows are not
+   * audited. */
+  private async readWorkspacePresenceEndpoint(
+    request: Request,
+  ): Promise<Response> {
+    const authenticated = this.authenticate(request, "/workspace");
+    if (!authenticated.ok) return this.denied(authenticated);
+    const decision = this.authorize(
+      authenticated.capability,
+      "/workspace",
+      "status:read",
+      undefined,
+      false,
+    );
+    if (!decision.ok) return this.denied(decision);
+    return json({ present: this.workspacePresence.isPresent() });
   }
 
   private async recoverEndpoint(request: Request): Promise<Response> {
