@@ -57,3 +57,10 @@ yarn-error.log*
 # file is evaluated from each worktree's own root, where that path never
 # matches.
 .agents/
+# The Claude-native equivalents of the two rules above: hive writes
+# .claude/settings.local.json (writeClaudeAgentConfig) and symlinks skills
+# into .claude/skills/ at spawn, so an unignored entry makes every Claude
+# worktree look dirty and blocks hive_kill cleanup. Committed skill symlinks
+# stay tracked; add new intentional ones with `git add -f`.
+.claude/settings.local.json
+.claude/skills/
