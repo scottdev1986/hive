@@ -39,8 +39,11 @@ public struct PaneState: Equatable {
         self.closePending = closePending
     }
 
-    /// Human status line for headers and accessibility values.
-    public var statusDescription: String {
+    /// Live header detail. The title label renders the agent name separately,
+    /// so this contains each remaining field exactly once. `feedStatus` is the
+    /// current activity from hook events; `taskDescription` is the immutable
+    /// assignment and deliberately does not masquerade as live activity.
+    public var headerDescription: String {
         var parts: [String] = []
         if let tool { parts.append(tool) }
         if let model { parts.append(model) }
@@ -50,6 +53,9 @@ public struct PaneState: Equatable {
         }
         return parts.joined(separator: " · ")
     }
+
+    /// Human status line for accessibility values and fallback attention text.
+    public var statusDescription: String { headerDescription }
 }
 
 /// State changes the UI layer reacts to. One reducer emits these for every

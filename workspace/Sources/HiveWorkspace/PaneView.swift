@@ -185,11 +185,7 @@ final class PaneView: NSView {
 
     func update(state: PaneState) {
         titleLabel.stringValue = state.title
-        var detail = state.statusDescription
-        if let model = state.model {
-            detail = "\(model) · \(detail)"
-        }
-        detailLabel.stringValue = detail
+        detailLabel.stringValue = state.headerDescription
 
         let color = Theme.statusColor(for: state.status)
         statusIcon.image = NSImage(systemSymbolName: Theme.statusSymbol(for: state.status),

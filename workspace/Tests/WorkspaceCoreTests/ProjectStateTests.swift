@@ -55,6 +55,40 @@ final class ProjectStateTests: XCTestCase {
         XCTAssertEqual(state.panes[ProjectState.paneID(forAgent: "indexer")]?.tmuxSession, "hive-indexer")
     }
 
+    func testAgentHeaderHasEachFieldOnceAndUsesLiveActivity() throws {
+        let state = ProjectState(projectID: "proj", displayName: "hive")
+        let paneID = ProjectState.paneID(forAgent: "reviewer")
+        state.apply(feed: [
+            agent("reviewer", status: "working", tool: "codex", model: "gpt-5.4",
+                  task: "spawn-time assignment", contextPct: 12),
+        ], now: 1)
+
+        XCTAssertEqual(
+            try XCTUnwrap(state.panes[paneID]).headerDescription,
+            "codex · gpt-5.4 · working · ctx 12%")
+
+        let changes = state.apply(feed: [
+            agent("reviewer", status: "idle", tool: "codex", model: "gpt-5.4",
+                  task: "spawn-time assignment", contextPct: 47.6),
+        ], now: 2)
+        XCTAssertTrue(changes.contains(.statusChanged(paneID)))
+        XCTAssertEqual(
+            try XCTUnwrap(state.panes[paneID]).headerDescription,
+            "codex · gpt-5.4 · idle · ctx 48%")
+    }
+
+    func testContextOnlyFeedChangeRerendersHeader() throws {
+        let state = ProjectState(projectID: "proj", displayName: "hive")
+        let paneID = ProjectState.paneID(forAgent: "reviewer")
+        state.apply(feed: [agent("reviewer", contextPct: 12)], now: 1)
+
+        let changes = state.apply(feed: [agent("reviewer", contextPct: 63)], now: 2)
+
+        XCTAssertTrue(changes.contains(.statusChanged(paneID)))
+        XCTAssertEqual(try XCTUnwrap(state.panes[paneID]).contextPct, 63)
+        XCTAssertTrue(try XCTUnwrap(state.panes[paneID]).headerDescription.hasSuffix("ctx 63%"))
+    }
+
     func testStatusWordsMapToSemanticStatus() {
         let state = ProjectState(projectID: "proj", displayName: "hive")
         state.addOrchestrator()
