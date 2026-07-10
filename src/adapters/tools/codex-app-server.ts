@@ -6,7 +6,6 @@ import type {
   CodexQuotaReading,
   CodexRateLimitsResponse,
 } from "../../daemon/quota";
-import { HIVE_VERSION } from "../../daemon/version";
 
 type JsonObject = Record<string, unknown>;
 type RpcId = string | number;

@@ -1903,6 +1903,17 @@ describe("agent landing protocol", () => {
     expect(protocol).toContain("Red tests never merge");
   });
 
+  // `bun test` does not typecheck. A branch whose suite is green can still
+  // carry a type error onto main — which is how two agents who each added a
+  // version module landed a duplicate `HIVE_VERSION` import that no test could
+  // see. The landing gate verifies both, or it verifies nothing.
+  test("requires a typecheck, not just green tests, before the merge gate", () => {
+    const protocol = buildLandingProtocol(worktree.branch, "/repo");
+    expect(protocol).toContain("bunx tsc --noEmit");
+    expect(protocol).toContain("`bun test` does not typecheck");
+    expect(protocol).toContain("neither do type errors");
+  });
+
   test("tells the agent to scope its reading and escalate instead of grinding", () => {
     const prompt = buildAgentPrompt("maya", "Build auth API", worktree, "/repo");
     expect(prompt).toContain("Read only what the task needs");
@@ -1958,6 +1969,8 @@ describe("spawn prompt diet", () => {
     expect(concise).toContain("git rebase main");
     expect(concise).toContain("git rebase --abort");
     expect(concise).toContain("Red tests never merge");
+    expect(concise).toContain("bunx tsc --noEmit");
+    expect(concise).toContain("neither do type errors");
     expect(concise).toContain("git diff --name-only ORIG_HEAD..HEAD");
     expect(concise).toContain(
       "`hive_land` with agent `maya`, capabilityEpoch `0`",
