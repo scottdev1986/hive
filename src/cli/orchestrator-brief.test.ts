@@ -1,17 +1,19 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { ORCHESTRATOR_BRIEF, orchestratorDocGuidance } from "./orchestrator-brief";
 import { orchestratorTmuxSession } from "../daemon/tmux-sessions";
 import {
   buildOrchestratorCommand,
   buildOrchestratorLaunchCommand,
   buildCodexRootAuthorityCommand,
+  CODEX_ROOT_TOKEN_SUBJECT,
   launchOrchestrator,
   prepareFreshOrchestratorSession,
   prepareOrchestratorConfig,
+  provisionCodexRootToken,
   registerRunningOrchestratorTerminal,
 } from "./orchestrator";
 
@@ -249,6 +251,92 @@ describe("orchestrator brief", () => {
     } finally {
       await rm(root, { recursive: true, force: true });
     }
+  });
+
+  describe("codex root capability token", () => {
+    test("provisions a 0600 token file in a 0700 dir and returns only the path", async () => {
+      const home = await mkdtemp(join(tmpdir(), "hive-root-token-home-"));
+      const previousHome = process.env.HIVE_HOME;
+      process.env.HIVE_HOME = home;
+      try {
+        const path = await provisionCodexRootToken(4317, async () => "tok-first");
+        expect(path).not.toBeNull();
+        expect(path).toContain(CODEX_ROOT_TOKEN_SUBJECT);
+        expect(await readFile(path!, "utf8")).toEqual("tok-first\n");
+        expect((await stat(path!)).mode & 0o777).toEqual(0o600);
+        expect((await stat(dirname(path!))).mode & 0o777).toEqual(0o700);
+
+        // A relaunch mints fresh and overwrites: one current token on disk.
+        const second = await provisionCodexRootToken(4317, async () => "tok-second");
+        expect(second).toEqual(path);
+        expect(await readFile(path!, "utf8")).toEqual("tok-second\n");
+      } finally {
+        if (previousHome === undefined) {
+          delete process.env.HIVE_HOME;
+        } else {
+          process.env.HIVE_HOME = previousHome;
+        }
+        await rm(home, { recursive: true, force: true });
+      }
+    });
+
+    test("degrades to no token when the daemon cannot mint one", async () => {
+      expect(
+        await provisionCodexRootToken(4317, async () => null, () => {
+          throw new Error("must not write a file without a token");
+        }),
+      ).toBeNull();
+    });
+
+    test("the launch command carries the token file PATH, never the token", () => {
+      const tokenFile = "/home/x/.hive/credentials/codex-root.cap";
+      const command = buildOrchestratorCommand(
+        "codex",
+        4317,
+        "",
+        "",
+        "claude",
+        tokenFile,
+      );
+      expect(command).toContain(
+        `mcp_servers.hive.capability_token_file="${tokenFile}"`,
+      );
+      expect(command.join(" ")).not.toContain("Bearer");
+      // Without a provisioned token the flag is absent entirely.
+      expect(buildOrchestratorCommand("codex", 4317).join(" "))
+        .not.toContain("capability_token_file");
+    });
+
+    test("a freshly written .codex/config.toml carries no secret", async () => {
+      const root = await mkdtemp(join(tmpdir(), "hive-orchestrator-codex-"));
+      try {
+        await prepareOrchestratorConfig("codex", 4317, root);
+        const written = await readFile(
+          join(root, ".codex", "config.toml"),
+          "utf8",
+        );
+        expect(written).toContain("mcp_servers.hive");
+        expect(written).not.toContain("Authorization");
+        expect(written).not.toContain("Bearer");
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    });
+
+    test("the root launch command threads the token file through to codex", () => {
+      const command = buildOrchestratorLaunchCommand(
+        "codex",
+        4317,
+        "/repo",
+        "",
+        "",
+        "claude",
+        "/home/x/.hive/credentials/codex-root.cap",
+      );
+      const shellCommand = command.at(-1)!;
+      expect(shellCommand).toContain("capability_token_file");
+      expect(shellCommand).toContain("codex-root.cap");
+    });
   });
 
   test("restores existing Claude project config after the process exits", async () => {

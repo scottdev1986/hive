@@ -15,7 +15,7 @@ import { CHANNELS_MIN_VERSION, versionAtLeast } from "../daemon/channels";
 import {
   writeCodexAgentConfig,
 } from "../adapters/tools/codex";
-import { readCredential } from "../daemon/credentials";
+import { writeCredential } from "../daemon/credentials";
 import { operatorHeaders } from "./credential";
 import { orchestratorTmuxSession } from "../daemon/orchestrator-lifecycle";
 import { hiveInstanceSuffix } from "../daemon/tmux-sessions";
@@ -150,21 +150,59 @@ function claudeConfigPaths(cwd: string): string[] {
 async function prepareCodexConfig(cwd: string, port: number): Promise<void> {
   const configPath = join(cwd, ".codex", "config.toml");
   const existingConfig = await readExisting(configPath);
-  // Codex has no connect-time headers helper, so the orchestrator's token is
-  // read from its 0600 credential file and written into the 0600 config.
-  const capabilityToken = readCredential("orchestrator");
+  // No secret ever enters .codex/config.toml: the root's capability travels as
+  // a single-use token FILE whose path rides the -c flag (see
+  // provisionCodexRootToken). A pre-existing config is therefore safe to
+  // restore immediately — the write only exists for the notify script.
   try {
     await writeCodexAgentConfig(cwd, {
       daemonPort: port,
       name: "orchestrator",
       readOnly: true,
-      ...(capabilityToken === null ? {} : { capabilityToken }),
     });
   } finally {
     if (existingConfig !== null) {
       await writeFile(configPath, existingConfig);
     }
   }
+}
+
+/** The credential-store subject holding the single-use Codex root token. */
+export const CODEX_ROOT_TOKEN_SUBJECT = "codex-root";
+
+/** Ask the daemon to mint a single-use, short-lived root token. Returns null
+ * when the daemon does not offer the endpoint yet or refuses — the launch
+ * proceeds without a token rather than failing, matching the pre-token
+ * behavior until the daemon side lands. */
+export async function requestCodexRootToken(
+  port: number,
+): Promise<string | null> {
+  const response = await fetch(`http://127.0.0.1:${port}/codex-root-token`, {
+    method: "POST",
+    headers: operatorHeaders(),
+  }).catch(() => null);
+  if (response === null || !response.ok) return null;
+  const body = await response.json().catch(() => null) as
+    | { token?: string }
+    | null;
+  return typeof body?.token === "string" && body.token.length > 0
+    ? body.token
+    : null;
+}
+
+/** Provision the Codex root capability: mint a single-use token and write it
+ * to a 0600 file inside the 0700 credentials directory under the resolved
+ * Hive home. Only the PATH is returned — the token itself never reaches argv,
+ * env, or .codex/config.toml; the daemon exchanges it once over the root
+ * socket for a connection-bound session and invalidates it on first use. */
+export async function provisionCodexRootToken(
+  port: number,
+  request: (port: number) => Promise<string | null> = requestCodexRootToken,
+  write: (subject: string, token: string) => string = writeCredential,
+): Promise<string | null> {
+  const token = await request(port);
+  if (token === null) return null;
+  return write(CODEX_ROOT_TOKEN_SUBJECT, token);
 }
 
 export async function prepareOrchestratorConfig(
@@ -202,6 +240,7 @@ export function buildOrchestratorCommand(
   memoryIndex = "",
   docGuidance = "",
   executable = "claude",
+  codexTokenFile = "",
 ): string[] {
   const brief = [ORCHESTRATOR_BRIEF, docGuidance, memoryIndex]
     .filter((part) => part !== "")
@@ -224,6 +263,13 @@ export function buildOrchestratorCommand(
     "codex",
     "-c",
     `mcp_servers.hive.url="http://127.0.0.1:${port}/mcp"`,
+    // The token FILE PATH, never the token: paths are not secrets, so argv and
+    // ps can see this. Codex ignores the unknown key (verified against
+    // codex-cli 0.144.1); the daemon reads it during the root-socket exchange.
+    ...(codexTokenFile === "" ? [] : [
+      "-c",
+      `mcp_servers.hive.capability_token_file=${JSON.stringify(codexTokenFile)}`,
+    ]),
     "--sandbox",
     "read-only",
     brief,
@@ -329,6 +375,7 @@ export function buildOrchestratorLaunchCommand(
   memoryIndex = "",
   docGuidance = "",
   executable = "claude",
+  codexTokenFile = "",
 ): string[] {
   if (tool === "codex") {
     // `codex --help` defines the initial brief as positional [PROMPT]. The
@@ -339,6 +386,8 @@ export function buildOrchestratorLaunchCommand(
       port,
       memoryIndex,
       docGuidance,
+      "claude",
+      codexTokenFile,
     );
     return ["tmux", "new-session", "-s", orchestratorTmuxSession(), "-c", cwd,
       ...buildCodexRootAuthorityCommand(undefined, codexCommand.slice(1))];
@@ -403,6 +452,20 @@ export async function launchOrchestrator(
   try {
     await prepareFreshOrchestratorSession(tmux);
     await prepareOrchestratorConfig(tool, port, cwd);
+    let codexTokenFile = "";
+    if (tool === "codex") {
+      const provisioned = await provisionCodexRootToken(port).catch(() => null);
+      if (provisioned === null) {
+        // Pre-token daemons have no mint endpoint; degrade to the old
+        // unauthenticated root instead of refusing to launch, but say so.
+        console.warn(
+          "hive: no single-use Codex root token available from the daemon; " +
+            "launching the Codex orchestrator without one.",
+        );
+      } else {
+        codexTokenFile = provisioned;
+      }
+    }
     const [memoryIndex, docGuidance] = await Promise.all([
       buildMemoryIndex(cwd).catch(() => ""),
       buildOrchestratorDocGuidance(cwd).catch(() => ""),
@@ -415,6 +478,7 @@ export async function launchOrchestrator(
         memoryIndex,
         docGuidance,
         claudePath,
+        codexTokenFile,
       ),
       {
         cwd,
