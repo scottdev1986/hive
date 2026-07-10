@@ -297,6 +297,10 @@ export async function seedClaudeWorktreeTrust(
     const config = await readJsonObject(configPath);
     const projects = isRecord(config.projects) ? config.projects : {};
     const existing = isRecord(projects[key]) ? projects[key] : {};
+    // hasTrustDialogAccepted is the load-bearing key: on 2.1.206 it alone both
+    // clears the dialog and restores project-scoped settings. The onboarding
+    // pair is cheap insurance against a version that gates an interactive
+    // project-onboarding step on it, and stays inside this worktree's entry.
     const seeded = {
       ...existing,
       hasTrustDialogAccepted: true,
