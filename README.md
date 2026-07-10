@@ -6,6 +6,15 @@ Type `hive claude` in any project folder. A terminal opens with an AI orchestrat
 
 > **Status: in active development — not yet released.** Star or watch the repo to be notified when the first version ships. The full design is public in [SPEC.md](SPEC.md).
 
+The repository also contains a runnable foundation for Hive Workspace, the native macOS surface described by the design. It is a Swift 6.3/AppKit SwiftPM package in [`workspace/`](workspace/): it multiplexes project windows, tiles master and satellite panes deterministically with promotion and spatial focus, follows macOS-native HIG styling, models status and attention, and includes a native transcript prototype driven by a mock event source. It has no daemon integration yet. Smoke-run it with:
+
+```sh
+cd workspace
+swift run HiveWorkspace --smoke
+```
+
+The authenticated-XPC prototype lives in [`prototypes/authenticated-xpc/`](prototypes/authenticated-xpc/). The daemon also preserves failed-command panes for inspection and delivers orchestrator envelopes without clobbering an in-progress composer. These are implementation foundations; the design and architecture remain documented in [SPEC.md](SPEC.md) and the [Hive Workspace blueprint](docs/architecture/hive-workspace-blueprint.md).
+
 ## What it looks like
 
 ```
@@ -59,7 +68,7 @@ hive uses your existing Claude / OpenAI subscriptions or API keys. It adds no fe
 brew install hive
 ```
 
-Until then, this repository contains the project's design and documentation.
+Until then, this repository contains the project's design, documentation, daemon, and runnable prototypes.
 
 ## Quick start (once installed)
 
@@ -172,6 +181,8 @@ The first version targets the terminals we can integrate with best (iTerm2, Term
 
 - [SPEC.md](SPEC.md) — the full design: what hive is, every architecture decision and why, the roadmap, and the open questions.
 - [Hive Workspace blueprint](docs/architecture/hive-workspace-blueprint.md) — the canonical Swift/AppKit destination architecture, safety gates, and open prototypes.
+- [Hive Workspace foundation](workspace/README.md) — how to build and smoke-run the landed native UI prototype.
+- [Authenticated-XPC prototype](prototypes/authenticated-xpc/README.md) — the runnable capability and peer-authentication prototype.
 - [Restart handoff](docs/architecture/restart-handoff.md) — the ordered, restart-safe continuation checklist and Phase 0 boundary.
 - [Model routing and token efficiency](docs/research/model-routing-and-token-efficiency.md) — the companion provider-choice, escalation, and cost policy.
 - [Cross-vendor architecture review](research/cross-vendor-architecture-review.md) — driven Claude/Codex and macOS evidence behind the flagship corrections.
