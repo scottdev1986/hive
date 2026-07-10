@@ -26,7 +26,7 @@ The current launcher also treats any `/health` response with `ok === true` as th
 
 1. Read this handoff, then the [canonical blueprint](hive-workspace-blueprint.md). Pull details only as needed from the [cross-vendor review](../../research/cross-vendor-architecture-review.md).
 2. Verify main contains this documentation landing and research commit `1859353`. Resolve the documentation landing with `git log -1 -- docs/architecture/hive-workspace-blueprint.md` and record it in the new work report.
-3. Check whether `docs/research/model-routing-and-token-efficiency.md` has landed. If present, link it as the companion routing/cost policy and reconcile only direct conflicts. If absent, leave it independently pending; do not wait or poll.
+3. Read the landed [model-routing and token-efficiency policy](../research/model-routing-and-token-efficiency.md) only when work touches provider choice, escalation, budgets, or telemetry. Reconcile direct conflicts in the owning document rather than copying its policy into the blueprint.
 4. Open a narrowly scoped Phase 0 implementation task. Its scope is authentication and authorization for all current mutation routes, least-privilege per-caller capabilities, credential noninheritance, revocation/audit, and adversarial tests. Do not combine it with the Swift UI.
 5. Before coding Phase 0, write the capability rights matrix: caller, subject, action, epoch, expiry, delegation, and audit event. Include `/mcp`, `/event`, `/channel/*`, `/viewer`, `/recover`, and `/orchestrator-terminal`; keep `/health` non-authorizing.
 6. Reproduce the defect only with non-destructive calls or a test harness. Never invoke landing, kill, or approval against live work to prove exposure.
@@ -44,10 +44,9 @@ The current launcher also treats any `/health` response with `ok === true` as th
 - Experimental corrections and provider repro: [cross-vendor architecture review](../../research/cross-vendor-architecture-review.md), landed at `1859353`
 - Current shipping architecture and historical reasoning: [SPEC.md](../../SPEC.md)
 - Packaging and activation: [distribution research](../../research/distribution-auto-update.md) and [update experience](../../research/update-experience.md)
-- Routing/cost companion: independently pending unless `docs/research/model-routing-and-token-efficiency.md` exists after restart
+- Routing/cost companion: [model routing and token efficiency](../research/model-routing-and-token-efficiency.md), landed at `ad21bae`
 - Durable summary: repo memory fact `hive-workspace-restart-handoff`
 
 ## Open work, not authorization
 
 The blueprint names genuine questions around transcript usability, WAL retention and encryption, AgentHost process count, remote viewing, overview privacy, network-volume identity, the undocumented Claude flag, and routing policy. They are prototype or policy work. Their presence does not authorize product code during this documentation handoff.
-

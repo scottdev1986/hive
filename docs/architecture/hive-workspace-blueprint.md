@@ -143,7 +143,7 @@ A ring-1 orchestrator must prove structured lifecycle; prompt, steer, and cancel
 
 Model state is `catalogued`, `providerReportedSelectable`, then `launchValidated`. Claude can report the middle state without a model call, but the undocumented surface is reported evidence, not authoritative entitlement. An invalid Claude pin is accepted at initialize and fails on its first turn at zero observed cost. Therefore a new provider session enters `VALIDATING` and accepts no real task until its adapter's validation outcome. Zero-cost validation is asserted only for adapters that prove it. Hive never passes Claude's `--fallback-model`, and no adapter silently substitutes another model.
 
-The exact Claude procedures and wider provider matrix live in the [cross-vendor review](../../research/cross-vendor-architecture-review.md). The independently assigned routing and token-efficiency policy document has not landed in this branch; when it lands, it should be linked here as the companion policy rather than duplicated.
+The exact Claude procedures and wider provider matrix live in the [cross-vendor review](../../research/cross-vendor-architecture-review.md). Model choice, escalation, token budgets, and routing telemetry belong to the companion [model-routing and token-efficiency policy](../research/model-routing-and-token-efficiency.md); this blueprint owns provider identity and conformance and does not duplicate that policy.
 
 ## Settings and onboarding
 
@@ -224,4 +224,5 @@ Security-scoped bookmarks in a nonsandboxed Supervisor lost to plain bookmarks. 
 - [Claude Code model configuration](https://code.claude.com/docs/en/model-config), [Claude hooks](https://code.claude.com/docs/en/hooks)
 - [SwiftTerm](https://github.com/migueldeicaza/SwiftTerm), [Ghostty embedding status](https://github.com/ghostty-org/ghostty)
 - [Agent Client Protocol](https://agentclientprotocol.com/protocol/overview)
+- [Model routing and token efficiency](../research/model-routing-and-token-efficiency.md)
 - [Hive distribution and update research](../../research/distribution-auto-update.md), [update UX research](../../research/update-experience.md)

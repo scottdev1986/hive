@@ -173,6 +173,7 @@ The first version targets the terminals we can integrate with best (iTerm2, Term
 - [SPEC.md](SPEC.md) — the full design: what hive is, every architecture decision and why, the roadmap, and the open questions.
 - [Hive Workspace blueprint](docs/architecture/hive-workspace-blueprint.md) — the canonical Swift/AppKit destination architecture, safety gates, and open prototypes.
 - [Restart handoff](docs/architecture/restart-handoff.md) — the ordered, restart-safe continuation checklist and Phase 0 boundary.
+- [Model routing and token efficiency](docs/research/model-routing-and-token-efficiency.md) — the companion provider-choice, escalation, and cost policy.
 - [Cross-vendor architecture review](research/cross-vendor-architecture-review.md) — driven Claude/Codex and macOS evidence behind the flagship corrections.
 
 ## License
