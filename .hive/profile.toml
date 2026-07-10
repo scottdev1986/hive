@@ -1,0 +1,35 @@
+# .hive/profile.toml — Hive repo profile (SPEC.md decision 14).
+# Committed structured truth: doc names, commands, and shape, so Hive's
+# token economics hold on this repo without re-profiling. Written by Hive's
+# bootstrap and enriched by `hive init`; do not hand-edit the fingerprint.
+
+schema_version = 1
+
+[docs]
+briefable = ["CLAUDE.md", "README.md", "SPEC.md", "docs/architecture/capability-rights-matrix.md", "docs/architecture/hive-workspace-blueprint.md", "docs/architecture/restart-handoff.md", "docs/model-selection.md", "docs/research/agent-memory-best-practices.md", "docs/research/model-routing-and-token-efficiency.md", "docs/research/provider-quota-surfaces.md", "docs/research/repo-startup-and-init.md", "docs/versioning-and-release.md", "research/cross-vendor-architecture-review.md", "research/distribution-auto-update.md", "research/update-experience.md"]
+briefable_directories = ["docs/", "research/"]
+primary = "SPEC.md"
+
+[commands]
+test = "bun test"
+typecheck = "bun run typecheck"
+run = "bun run dev"
+
+[conventions]
+agents_file = "CLAUDE.md"
+language = "typescript"
+package_manager = "bun"
+monorepo = false
+
+[entry_points]
+ranked = ["src/cli.ts"]
+
+[index_budget]
+file_count = 248
+map_tokens = 1000
+
+[fingerprint]
+generated = "2026-07-10"
+hive_version = "0.0.0-dev"
+commit = "e5b4f658b5e4acb4aabadfb2ab5ad1fb979ca3f2"
+inputs_hash = "4ba3ae8d30dc6a78081863d436e5de62950f3d2f4a9322ab6d307c3561cee03f"

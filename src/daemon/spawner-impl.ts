@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import { buildScopedBrief } from "../adapters/brief";
 import { buildMemoryIndex } from "../adapters/memory";
+import { loadProfile } from "../adapters/profile";
 import {
   buildAgentTerminalTitle,
   type TerminalAdapter,
@@ -354,6 +355,36 @@ const CONCISE_TIERS: readonly RoutingTier[] = ["cheap"];
 const CONTINUOUS_EXECUTION =
   `After reporting a landing or milestone, immediately continue with the next authorized piece of your assignment in this same session. Stop only for a genuine blocker, an escalation, or an explicit hold from "${ORCHESTRATOR_NAME}".`;
 
+/** The concrete verify commands the landing gate names, from the repo profile
+ * (SPEC §14: "the landing gate's 're-run the tests' resolves to the profile's
+ * concrete command"). Null means the profile could not discover it; the gate
+ * then falls back to generic wording rather than inventing a command. */
+export interface LandingCommands {
+  test: string | null;
+  typecheck: string | null;
+}
+
+/** Render "re-run the tests"/"typecheck it" against the profile's commands so an
+ * agent in an arbitrary repo is told the exact command, not hive's own. */
+function verifyPhrases(commands: LandingCommands | undefined): {
+  test: string;
+  typecheck: string;
+  typecheckBackstop: string;
+} {
+  const test = commands?.test != null
+    ? `Re-run the tests (\`${commands.test}\`)`
+    : "Re-run the tests";
+  const typecheck = commands?.typecheck != null
+    ? `\`${commands.typecheck}\``
+    : "your typechecker";
+  // The "a green suite does not typecheck" backstop names the test command when
+  // the profile knows it, so the agent sees exactly which run is insufficient.
+  const typecheckBackstop = commands?.typecheck != null && commands.test != null
+    ? `\`${commands.test}\` does not typecheck`
+    : "a passing test run does not typecheck";
+  return { test, typecheck, typecheckBackstop };
+}
+
 export function buildLandingProtocol(
   branch: string,
   repoRoot: string,
@@ -361,13 +392,15 @@ export function buildLandingProtocol(
   agentName = branch.split("/")[1]?.split("-")[0] ?? "agent",
   capabilityEpoch = 0,
   concise = false,
+  commands?: LandingCommands,
 ): string {
+  const verify = verifyPhrases(commands);
   if (concise) {
     return [
       `When your task is done and tests are green, land it on ${mainBranch} — unlanded work is lost work:`,
       `1. Commit everything on \`${branch}\`.`,
       `2. \`git rebase ${mainBranch}\` in your worktree. On conflict: \`git rebase --abort\`, message "${ORCHESTRATOR_NAME}" with the conflicting file names, stop. Never force, never resolve another agent's code.`,
-      `3. Re-run the tests and \`bunx tsc --noEmit\`; \`bun test\` does not typecheck, so a green suite alone can carry a type error onto ${mainBranch}. Skip both only if \`git diff --name-only ORIG_HEAD..HEAD\` lists \`.md\` files alone. Red tests never merge, and neither do type errors: fix them, or commit and report the failure.`,
+      `3. ${verify.test} and typecheck with ${verify.typecheck}; ${verify.typecheckBackstop}, so a green suite alone can carry a type error onto ${mainBranch}. Skip both only if \`git diff --name-only ORIG_HEAD..HEAD\` lists \`.md\` files alone. Red tests never merge, and neither do type errors: fix them, or commit and report the failure.`,
       `4. Call \`hive_land\` with agent \`${agentName}\`, capabilityEpoch \`${capabilityEpoch}\`. Never merge into the primary checkout yourself.`,
       `5. Rejected because ${mainBranch} moved? Back to step 2, at most ${LANDING_MAX_ATTEMPTS} attempts, then message "${ORCHESTRATOR_NAME}".`,
       `6. Report the merge commit hash. Leave your branch and worktree in place.`,
@@ -377,7 +410,7 @@ export function buildLandingProtocol(
     `When your task is complete and the tests are green, land your work on ${mainBranch} immediately — finished work left on your branch is lost work:`,
     `1. Commit everything on your branch (${branch}); never leave work uncommitted.`,
     `2. Rebase onto the latest ${mainBranch}: run \`git rebase ${mainBranch}\` in your worktree. If the rebase hits conflicts, run \`git rebase --abort\` and message "${ORCHESTRATOR_NAME}" naming the conflicting files — never force anything and never resolve another agent's code alone.`,
-    `3. Re-run the tests on the rebased branch, and typecheck it with \`bunx tsc --noEmit\`. Both must pass. \`bun test\` does not typecheck, so a green suite alone will carry a type error onto ${mainBranch}: two agents whose work was separately green merge into a duplicate symbol that no test can see. You may skip both checks only when \`git diff --name-only ORIG_HEAD..HEAD\` — what the rebase pulled in — lists nothing but \`.md\` files that no test reads: your pre-rebase green run still holds, so go straight to step 4. Red tests never merge, and neither do type errors: fix them on your branch, or commit what you have and report the failure instead.`,
+    `3. ${verify.test} on the rebased branch, and typecheck it with ${verify.typecheck}. Both must pass. ${verify.typecheckBackstop}, so a green suite alone will carry a type error onto ${mainBranch}: two agents whose work was separately green merge into a duplicate symbol that no test can see. You may skip both checks only when \`git diff --name-only ORIG_HEAD..HEAD\` — what the rebase pulled in — lists nothing but \`.md\` files that no test reads: your pre-rebase green run still holds, so go straight to step 4. Red tests never merge, and neither do type errors: fix them on your branch, or commit what you have and report the failure instead.`,
     `4. Land through Hive's capability gate: call \`hive_land\` with agent \`${agentName}\` and capabilityEpoch \`${capabilityEpoch}\`. The daemon performs the fast-forward-only merge of \`${branch}\` into \`${mainBranch}\`; never merge into the primary checkout directly.`,
     `5. If that merge is rejected because ${mainBranch} moved, return to step 2. After ${LANDING_MAX_ATTEMPTS} failed attempts, stop and message "${ORCHESTRATOR_NAME}".`,
     `6. Include the merge commit hash in your completion report. Do not delete your branch or worktree; hive cleans up landed branches.`,
@@ -389,6 +422,9 @@ export interface AgentPromptOptions {
   tier?: RoutingTier;
   /** Doc sections the task named, extracted at spawn. See adapters/brief.ts. */
   brief?: string;
+  /** The repo profile's verify commands, so the landing gate names this repo's
+   * concrete test/typecheck commands instead of a hardcoded guess (SPEC §14). */
+  landingCommands?: LandingCommands;
 }
 
 export function buildAgentPrompt(
@@ -421,7 +457,9 @@ export function buildAgentPrompt(
       ];
   return [
     ...preamble,
-    buildLandingProtocol(worktree.branch, repoRoot, "main", name, 0, concise),
+    buildLandingProtocol(
+      worktree.branch, repoRoot, "main", name, 0, concise, options.landingCommands,
+    ),
     ...(options.brief === undefined || options.brief === ""
       ? []
       : [options.brief]),
@@ -930,11 +968,23 @@ export class HiveSpawner implements Spawner {
       }
       throw error;
     }
+    // The profile is read once from the worktree — an agent's excerpt and its
+    // verify commands must match the tree it is about to edit (SPEC §14). A
+    // worktree with no profile yet degrades to no brief and generic landing
+    // wording rather than assuming hive's own doc names or commands.
+    const profile = await loadProfile(worktree.path).catch(() => null);
+    const briefConfig = profile === null ? undefined : {
+      briefableDocs: profile.docs.briefable,
+      briefableDirectories: profile.docs.briefableDirectories,
+      primaryDoc: profile.docs.primary,
+    };
     const [memoryIndex, brief] = await Promise.all([
       buildMemoryIndex(worktree.path),
-      // The brief reads the repo's own docs, so it is built from the worktree:
-      // an agent's excerpt must match the tree it is about to edit.
-      buildScopedBrief(worktree.path, request.task).catch(() => ""),
+      buildScopedBrief(
+        worktree.path,
+        request.task,
+        briefConfig === undefined ? {} : { config: briefConfig },
+      ).catch(() => ""),
     ]);
     const prompt = buildAgentPrompt(
       name,
@@ -942,7 +992,16 @@ export class HiveSpawner implements Spawner {
       worktree,
       this.dependencies.repoRoot,
       memoryIndex,
-      { tier: request.tier, brief },
+      {
+        tier: request.tier,
+        brief,
+        ...(profile === null ? {} : {
+          landingCommands: {
+            test: profile.commands.test,
+            typecheck: profile.commands.typecheck,
+          },
+        }),
+      },
     );
     const channels = await this.useChannels(tool);
     const timestamp = new Date().toISOString();

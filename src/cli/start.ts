@@ -25,6 +25,11 @@ import { isStaged, readInstallState } from "../update/install";
 import { renderStartNotice } from "../update/notice";
 import { isRunning } from "../daemon/lifecycle";
 import { liveAgentNames } from "./update";
+import {
+  bootstrapIfUninitialized,
+  evaluateProfile,
+  PROFILE_RELATIVE_PATH,
+} from "../adapters/profile";
 import type { UpdateCheck } from "../update/check";
 
 export interface StartDeps {
@@ -91,6 +96,35 @@ export async function ensureDaemonForBuild(cwd = process.cwd()): Promise<void> {
   );
 }
 
+/**
+ * Meet the repo (SPEC §14). `hive start` never profiles on the hot path; it does
+ * one cheap thing every start — recompute the fingerprint and compare:
+ *   - Uninitialized: run the deterministic, zero-quota bootstrap, write the
+ *     profile, and print the single line that says it was written.
+ *   - Stale (inputs drifted): proceed on the existing profile — a slightly stale
+ *     allowlist beats none — and print the one-line `hive init --refresh` note.
+ *     The durable orchestrator note is enqueued by the daemon on the same start.
+ *   - Fresh: proceed in silence.
+ * Any failure here is swallowed by the caller: profiling must never stop a start.
+ */
+export async function announceProfile(
+  cwd: string,
+  write: (line: string) => void,
+): Promise<void> {
+  const status = await evaluateProfile(cwd);
+  if (status.state === "uninitialized") {
+    const { profile } = await bootstrapIfUninitialized(cwd);
+    write(
+      `Wrote ${PROFILE_RELATIVE_PATH} (${profile.docs.briefable.length} briefable ` +
+        "docs, discovered with zero model tokens). Run `hive init` to enrich it.",
+    );
+    return;
+  }
+  if (status.state === "stale") {
+    write(status.note);
+  }
+}
+
 export async function runStart(deps: StartDeps = {}): Promise<void> {
   await printStartNotice(deps).catch(() => {
     // A broken update check must never stop a project from starting.
@@ -98,6 +132,12 @@ export async function runStart(deps: StartDeps = {}): Promise<void> {
   const cwd = deps.cwd ?? process.cwd();
   await ensureDaemonForBuild(cwd);
   const port = await ensureStarted();
+  const write = deps.write ??
+    ((line: string) => process.stderr.write(`${line}\n`));
+  await announceProfile(cwd, write).catch(() => {
+    // Profiling is best-effort: a repo starts even if its profile cannot be
+    // written or read.
+  });
   console.log(`Hive is running for ${cwd} (daemon port ${port}).`);
   console.log("Run `hive` to open the Workspace, or `hive claude` for an orchestrator.");
 }

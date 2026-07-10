@@ -1,24 +1,53 @@
 import { readFile } from "node:fs/promises";
-import { isAbsolute, relative, resolve } from "node:path";
+import { basename, isAbsolute, relative, resolve } from "node:path";
+import { loadProfile } from "./profile";
 
-// A spawned agent that is told "read SPEC.md" reads all ~20K tokens of it to
+// A spawned agent that is told "read the spec" reads all ~20K tokens of it to
 // find the two sections its task actually names. The brief inverts that: the
 // daemon does the extraction once, at spawn, and hands the agent the sections
 // plus a `file:line` outline of everything it did not embed. Reading deeper is
 // then an opt-in the agent makes with a specific destination, not a reflex.
+//
+// *What* is briefable is not compiled in — it would tie the brief mechanism to
+// hive's own doc names and break on any other repo (SPEC.md decision 14). The
+// allowlist, the briefable directories, and which doc earns the bare-name
+// `§`-selector rule all come from the repo profile, read per-repo.
 
-/** Docs an agent may be pointed at. A task naming any other path is ignored:
- * the brief must never become a way to paste arbitrary repo files into a
- * prompt, and every entry here is a document written to be excerpted. */
-export const BRIEFABLE_DOCS = [
-  "SPEC.md",
-  "README.md",
-  "CLAUDE.md",
-] as const;
+/** The repo-specific inputs the brief mechanism needs, sourced from the profile
+ * (`.hive/profile.toml`) rather than hardcoded. `primaryDoc` is the design doc
+ * that earns the bare-name selector rule (a task citing "DESIGN §3" in a repo
+ * whose profile names `DESIGN.md` primary), and is null when the repo has none
+ * — dropping a special case it never needed. */
+export interface BriefConfig {
+  /** Docs an agent may be pointed at. A task naming any other path is ignored:
+   * the brief must never become a way to paste arbitrary repo files into a
+   * prompt, and every entry is a document written to be excerpted. */
+  briefableDocs: readonly string[];
+  /** Directories whose `.md` files are briefable — the artifacts agents hand
+   * each other; source and config are not. */
+  briefableDirectories: readonly string[];
+  /** The primary design doc (basename addressable by bare name), or null. */
+  primaryDoc: string | null;
+}
 
-/** Directories whose `.md` files are briefable. Research and architecture docs
- * are the artifacts agents hand each other; source and config are not. */
-export const BRIEFABLE_DIRECTORIES = ["docs/", "research/"] as const;
+const EMPTY_BRIEF_CONFIG: BriefConfig = {
+  briefableDocs: [],
+  briefableDirectories: [],
+  primaryDoc: null,
+};
+
+/** Derive the brief inputs from the repo profile. A repo with no profile yet
+ * (bootstrap has not run) briefs nothing rather than assuming hive's own doc
+ * names — the safe, portable default. */
+export async function loadBriefConfig(root: string): Promise<BriefConfig> {
+  const profile = await loadProfile(root);
+  if (profile === null) return EMPTY_BRIEF_CONFIG;
+  return {
+    briefableDocs: profile.docs.briefable,
+    briefableDirectories: profile.docs.briefableDirectories,
+    primaryDoc: profile.docs.primary,
+  };
+}
 
 /** A whole doc under this size is cheaper to embed than to make the agent open
  * a file, burn a tool call, and read it anyway. */
@@ -85,17 +114,18 @@ export function parseDocOutline(source: string): DocSection[] {
   });
 }
 
-const isBriefable = (path: string): boolean =>
-  (BRIEFABLE_DOCS as readonly string[]).includes(path) ||
-  BRIEFABLE_DIRECTORIES.some((directory) => path.startsWith(directory));
+const isBriefable = (path: string, config: BriefConfig): boolean =>
+  config.briefableDocs.includes(path) ||
+  config.briefableDirectories.some((directory) => path.startsWith(directory));
 
 /** Resolve a task-named path to an absolute path inside `root`, or null when it
  * escapes the repo or is not a briefable doc. */
 export function resolveBriefablePath(
   root: string,
   path: string,
+  config: BriefConfig,
 ): string | null {
-  if (isAbsolute(path) || !isBriefable(path)) {
+  if (isAbsolute(path) || !isBriefable(path, config)) {
     return null;
   }
   const absolute = resolve(root, path);
@@ -118,13 +148,19 @@ const QUOTED_HEADING = /["“]([^"”]{3,80})["”]/g;
 /** How far after a doc mention a section selector still binds to that doc. */
 const SELECTOR_WINDOW = 80;
 
+const escapeRegExp = (value: string): string =>
+  value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
 /** Read the doc references out of a task description. A doc named with no
  * section still counts: the agent gets its outline, never its full text. */
-export function findTaskDocReferences(task: string): DocReference[] {
+export function findTaskDocReferences(
+  task: string,
+  config: BriefConfig,
+): DocReference[] {
   const references = new Map<string, (number | string)[]>();
   for (const match of task.matchAll(DOC_PATH)) {
     const path = match[1]!;
-    if (!isBriefable(path)) {
+    if (!isBriefable(path, config)) {
       continue;
     }
     // Selectors may precede ("§6 of SPEC.md") or follow ("SPEC.md §6") the
@@ -145,17 +181,23 @@ export function findTaskDocReferences(task: string): DocReference[] {
     }
     references.set(path, sections);
   }
-  // `SPEC §6` with no `.md`: the spec is the one doc referred to by bare name.
-  if (!references.has("SPEC.md") && /\bSPEC\s*(?:§|section)/i.test(task)) {
-    const sections: (number | string)[] = [];
-    for (const selector of task.matchAll(SECTION_SELECTOR)) {
-      for (const group of [selector[1], selector[2], selector[3]]) {
-        if (group !== undefined) {
-          sections.push(Number(group));
+  // The primary doc referred to by bare name and section: `SPEC §6`, `DESIGN §3`
+  // — whatever the profile names primary — with no `.md`. A repo with no primary
+  // doc simply has no such special case.
+  if (config.primaryDoc !== null) {
+    const bareName = basename(config.primaryDoc).replace(/\.md$/i, "");
+    const bareRule = new RegExp(`\\b${escapeRegExp(bareName)}\\s*(?:§|section)`, "i");
+    if (!references.has(config.primaryDoc) && bareRule.test(task)) {
+      const sections: (number | string)[] = [];
+      for (const selector of task.matchAll(SECTION_SELECTOR)) {
+        for (const group of [selector[1], selector[2], selector[3]]) {
+          if (group !== undefined) {
+            sections.push(Number(group));
+          }
         }
       }
+      references.set(config.primaryDoc, sections);
     }
-    references.set("SPEC.md", sections);
   }
   return [...references].map(([path, sections]) => ({
     path,
@@ -217,6 +259,9 @@ function renderOutline(path: string, outline: DocSection[]): string {
 export interface BriefOptions {
   readDoc?: (absolutePath: string) => Promise<string>;
   maxChars?: number;
+  /** The profile-derived brief inputs. Omitted in production, where it is read
+   * from the repo profile at `root`; passed explicitly in tests. */
+  config?: BriefConfig;
 }
 
 const readDocDefault = (path: string): Promise<string> => readFile(path, "utf8");
@@ -230,13 +275,14 @@ export async function buildScopedBrief(
   task: string,
   options: BriefOptions = {},
 ): Promise<string> {
+  const config = options.config ?? await loadBriefConfig(root);
   const readDoc = options.readDoc ?? readDocDefault;
   const budget = options.maxChars ?? BRIEF_MAX_CHARS;
   const blocks: string[] = [];
   let used = 0;
 
-  for (const reference of findTaskDocReferences(task)) {
-    const absolute = resolveBriefablePath(root, reference.path);
+  for (const reference of findTaskDocReferences(task, config)) {
+    const absolute = resolveBriefablePath(root, reference.path, config);
     if (absolute === null) {
       continue;
     }

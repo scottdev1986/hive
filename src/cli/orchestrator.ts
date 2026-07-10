@@ -17,7 +17,8 @@ import { readCredential } from "../daemon/credentials";
 import { operatorHeaders } from "./credential";
 import { orchestratorTmuxSession } from "../daemon/orchestrator-lifecycle";
 import type { TerminalHandle } from "../schemas";
-import { ORCHESTRATOR_BRIEF } from "./orchestrator-brief";
+import { ORCHESTRATOR_BRIEF, orchestratorDocGuidance } from "./orchestrator-brief";
+import { loadProfile } from "../adapters/profile";
 
 export type OrchestratorTool = "claude" | "codex";
 export type OrchestratorTerminalApp = "auto" | "terminal" | "iterm2";
@@ -134,14 +135,27 @@ export async function prepareOrchestratorConfig(
   await prepareCodexConfig(cwd, port);
 }
 
+/** Load the repo profile and format the orchestrator's repo-specific doc
+ * guidance. A repo with no profile yet contributes "", leaving the generic
+ * brief untouched rather than teaching hive's own doc names. */
+export async function buildOrchestratorDocGuidance(cwd: string): Promise<string> {
+  const profile = await loadProfile(cwd).catch(() => null);
+  if (profile === null) return "";
+  return orchestratorDocGuidance({
+    primary: profile.docs.primary,
+    loadBearing: profile.docs.briefable,
+  });
+}
+
 export function buildOrchestratorCommand(
   tool: OrchestratorTool,
   port: number,
   memoryIndex = "",
+  docGuidance = "",
 ): string[] {
-  const brief = memoryIndex === ""
-    ? ORCHESTRATOR_BRIEF
-    : `${ORCHESTRATOR_BRIEF}\n\n${memoryIndex}`;
+  const brief = [ORCHESTRATOR_BRIEF, docGuidance, memoryIndex]
+    .filter((part) => part !== "")
+    .join("\n\n");
   if (tool === "claude") {
     return [
       ...buildClaudeSpawnCommand({
@@ -297,6 +311,7 @@ export function buildOrchestratorLaunchCommand(
   port: number,
   cwd: string,
   memoryIndex = "",
+  docGuidance = "",
 ): string[] {
   if (tool === "codex") {
     return ["tmux", "new-session", "-A", "-s", orchestratorTmuxSession(), "-c", cwd,
@@ -310,7 +325,7 @@ export function buildOrchestratorLaunchCommand(
     orchestratorTmuxSession(),
     "-c",
     cwd,
-    ...buildOrchestratorCommand(tool, port, memoryIndex),
+    ...buildOrchestratorCommand(tool, port, memoryIndex, docGuidance),
   ];
 }
 
@@ -355,9 +370,12 @@ export async function launchOrchestrator(
 
   try {
     await prepareOrchestratorConfig(tool, port, cwd);
-    const memoryIndex = await buildMemoryIndex(cwd).catch(() => "");
+    const [memoryIndex, docGuidance] = await Promise.all([
+      buildMemoryIndex(cwd).catch(() => ""),
+      buildOrchestratorDocGuidance(cwd).catch(() => ""),
+    ]);
     const child = spawn(
-      buildOrchestratorLaunchCommand(tool, port, cwd, memoryIndex),
+      buildOrchestratorLaunchCommand(tool, port, cwd, memoryIndex, docGuidance),
       {
         cwd,
         stdin: "inherit",

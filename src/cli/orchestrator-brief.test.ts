@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ORCHESTRATOR_BRIEF } from "./orchestrator-brief";
+import { ORCHESTRATOR_BRIEF, orchestratorDocGuidance } from "./orchestrator-brief";
 import { orchestratorTmuxSession } from "../daemon/tmux-sessions";
 import {
   buildOrchestratorCommand,
@@ -117,11 +117,45 @@ describe("orchestrator brief", () => {
   });
 
   test("tells the orchestrator to cite doc sections rather than whole docs", () => {
-    expect(ORCHESTRATOR_BRIEF).toContain("SPEC §6");
     expect(ORCHESTRATOR_BRIEF).toContain("file:line pointers");
     expect(ORCHESTRATOR_BRIEF).toContain(
       "never tell an agent to read a document whole",
     );
+    // The rule is generic: no hive-repo-specific doc name is compiled into the
+    // brief. The actual doc names are fed from the profile at launch.
+    expect(ORCHESTRATOR_BRIEF).not.toContain("SPEC");
+    expect(ORCHESTRATOR_BRIEF).not.toContain("docs/research");
+    expect(ORCHESTRATOR_BRIEF).toContain("Cite this repo's own documents by the names listed below");
+  });
+
+  describe("orchestratorDocGuidance (profile-fed at launch)", () => {
+    test("names this repo's primary and load-bearing docs, whatever they are", () => {
+      const guidance = orchestratorDocGuidance({
+        primary: "DESIGN.md",
+        loadBearing: ["DESIGN.md", "README.md", "docs/api.md"],
+      });
+      expect(guidance).toContain("DESIGN.md is the primary design doc");
+      expect(guidance).toContain('a bare "DESIGN §6" resolves to it');
+      expect(guidance).toContain("- README.md");
+      expect(guidance).toContain("- docs/api.md");
+      // The primary is listed once (as primary), not repeated in the plain list.
+      expect(guidance.match(/DESIGN\.md/g)!.length).toBe(1);
+    });
+
+    test("a repo with no profiled docs contributes nothing", () => {
+      expect(orchestratorDocGuidance({ primary: null, loadBearing: [] })).toBe("");
+    });
+
+    test("is appended to the brief in the launched command", () => {
+      const command = buildOrchestratorCommand(
+        "claude",
+        4317,
+        "",
+        orchestratorDocGuidance({ primary: "SPEC.md", loadBearing: ["SPEC.md"] }),
+      );
+      expect(command.at(-1)).toContain(ORCHESTRATOR_BRIEF);
+      expect(command.at(-1)).toContain("SPEC.md is the primary design doc");
+    });
   });
 
   test("preserves an existing Codex project config while preparing MCP overrides", async () => {

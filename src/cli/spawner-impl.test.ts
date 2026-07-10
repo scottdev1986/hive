@@ -1937,11 +1937,27 @@ describe("agent landing protocol", () => {
   // `bun test` does not typecheck. A branch whose suite is green can still
   // carry a type error onto main — which is how two agents who each added a
   // version module landed a duplicate `HIVE_VERSION` import that no test could
-  // see. The landing gate verifies both, or it verifies nothing.
-  test("requires a typecheck, not just green tests, before the merge gate", () => {
-    const protocol = buildLandingProtocol(worktree.branch, "/repo");
-    expect(protocol).toContain("bunx tsc --noEmit");
+  // see. The landing gate verifies both, or it verifies nothing — and names the
+  // repo's concrete commands (SPEC §14), not a hardcoded guess.
+  test("requires a typecheck, not just green tests, and names the profile's commands", () => {
+    const protocol = buildLandingProtocol(
+      worktree.branch, "/repo", "main", "maya", 0, false,
+      { test: "bun test", typecheck: "bun run typecheck" },
+    );
+    expect(protocol).toContain("bun run typecheck");
+    expect(protocol).toContain("Re-run the tests (`bun test`)");
     expect(protocol).toContain("`bun test` does not typecheck");
+    expect(protocol).toContain("neither do type errors");
+  });
+
+  // In a repo whose profile discovered no commands, the gate keeps the rule but
+  // invents no command — it must never tell an agent to run a command that does
+  // not exist in this repo.
+  test("falls back to generic wording when the profile knows no commands", () => {
+    const protocol = buildLandingProtocol(worktree.branch, "/repo");
+    expect(protocol).toContain("Re-run the tests on the rebased branch");
+    expect(protocol).toContain("your typechecker");
+    expect(protocol).not.toContain("bunx tsc --noEmit");
     expect(protocol).toContain("neither do type errors");
   });
 
@@ -1996,11 +2012,12 @@ describe("spawn prompt diet", () => {
       "maya",
       0,
       true,
+      { test: "bun test", typecheck: "bun run typecheck" },
     );
     expect(concise).toContain("git rebase main");
     expect(concise).toContain("git rebase --abort");
     expect(concise).toContain("Red tests never merge");
-    expect(concise).toContain("bunx tsc --noEmit");
+    expect(concise).toContain("bun run typecheck");
     expect(concise).toContain("neither do type errors");
     expect(concise).toContain("git diff --name-only ORIG_HEAD..HEAD");
     expect(concise).toContain(

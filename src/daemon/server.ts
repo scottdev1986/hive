@@ -22,6 +22,7 @@ import {
   readMemoryFact,
   writeMemoryFact as writeMemoryFactFile,
 } from "../adapters/memory";
+import { bootstrapIfUninitialized, evaluateProfile } from "../adapters/profile";
 import {
   assessStrandedWork,
   removeWorktree,
@@ -643,6 +644,16 @@ export class HiveDaemon {
         }`,
       );
     });
+    // The repo profile (SPEC §14): bootstrap it if this repo has never been met,
+    // and — when it exists but the tree has drifted — emit the one durable
+    // orchestrator note. Never blocks startup; a repo runs without a profile.
+    void this.checkRepoProfile().catch((error) => {
+      console.error(
+        `Hive repo profile check failed: ${
+          error instanceof Error ? error.message : "unknown error"
+        }`,
+      );
+    });
     return this.bunServer;
   }
 
@@ -676,6 +687,30 @@ export class HiveDaemon {
 
   async rebuildMemoryIndex(): Promise<number> {
     return this.serializeMemory(() => this.memory.rebuild(this.repoRoot));
+  }
+
+  /**
+   * The repo profile's start-time duties the daemon owns (SPEC §14). It has the
+   * repo root, the message bus, and no terminal — the complement of `hive start`,
+   * which has a terminal but wants the durable note to survive it:
+   *   - Uninitialized: write the deterministic profile, so a repo entered through
+   *     `hive claude` (never `hive start`) still gets un-hardcoded briefs. The
+   *     idempotent, atomic write converges with any concurrent `hive start`.
+   *   - Stale: enqueue exactly one durable orchestrator note. The idempotency key
+   *     is the profile's own fingerprint, so re-boots at the same staleness never
+   *     spam, and a `hive init --refresh` (new fingerprint) re-arms the note.
+   */
+  private async checkRepoProfile(): Promise<void> {
+    const status = await evaluateProfile(this.repoRoot);
+    if (status.state === "uninitialized") {
+      await bootstrapIfUninitialized(this.repoRoot);
+      return;
+    }
+    if (status.state === "stale") {
+      await this.delivery.send("hive-profile", ORCHESTRATOR_NAME, status.note, {
+        idempotencyKey: `profile-stale:${status.profile.fingerprint.inputsHash}`,
+      });
+    }
   }
 
   /**

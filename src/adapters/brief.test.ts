@@ -1,13 +1,25 @@
 import { describe, expect, test } from "bun:test";
 import {
   BRIEF_MAX_CHARS,
+  type BriefConfig,
   buildScopedBrief,
   findTaskDocReferences,
+  loadBriefConfig,
   parseDocOutline,
   resolveBriefablePath,
   SECTION_MAX_CHARS,
   selectSections,
 } from "./brief";
+
+// The brief inputs this repo's generated `.hive/profile.toml` produces. Passing
+// them explicitly keeps the unit tests independent of the on-disk profile while
+// exercising exactly the config product code derives from it. A dedicated test
+// below asserts `loadBriefConfig` recovers these from the committed profile.
+const CONFIG: BriefConfig = {
+  briefableDocs: ["SPEC.md", "README.md", "CLAUDE.md"],
+  briefableDirectories: ["docs/", "research/"],
+  primaryDoc: "SPEC.md",
+};
 
 const SPEC = [
   "# hive",
@@ -69,45 +81,62 @@ describe("parseDocOutline", () => {
 
 describe("findTaskDocReferences", () => {
   test("binds a trailing section selector to the doc", () => {
-    expect(findTaskDocReferences("Rework SPEC.md §6 to add a tier")).toEqual([
-      { path: "SPEC.md", sections: [6] },
-    ]);
+    expect(findTaskDocReferences("Rework SPEC.md §6 to add a tier", CONFIG))
+      .toEqual([{ path: "SPEC.md", sections: [6] }]);
   });
 
   test("binds a leading section selector to the doc", () => {
-    expect(findTaskDocReferences("Read section 7 of SPEC.md first")).toEqual([
-      { path: "SPEC.md", sections: [7] },
+    expect(findTaskDocReferences("Read section 7 of SPEC.md first", CONFIG))
+      .toEqual([{ path: "SPEC.md", sections: [7] }]);
+  });
+
+  test("reads a bare primary-doc § reference with no .md", () => {
+    expect(findTaskDocReferences("Follow SPEC §6 exactly", CONFIG)).toEqual([
+      { path: "SPEC.md", sections: [6] },
     ]);
   });
 
-  test("reads a bare SPEC § reference with no .md", () => {
-    expect(findTaskDocReferences("Follow SPEC §6 exactly")).toEqual([
-      { path: "SPEC.md", sections: [6] },
+  test("the bare-name rule follows whatever doc the profile names primary", () => {
+    const design: BriefConfig = {
+      briefableDocs: ["DESIGN.md"],
+      briefableDirectories: [],
+      primaryDoc: "DESIGN.md",
+    };
+    expect(findTaskDocReferences("Follow DESIGN §3 exactly", design)).toEqual([
+      { path: "DESIGN.md", sections: [3] },
     ]);
+    // And a repo whose profile names no primary doc simply loses the special
+    // case: a bare "SPEC §6" resolves to nothing.
+    const none: BriefConfig = {
+      briefableDocs: ["notes.md"],
+      briefableDirectories: [],
+      primaryDoc: null,
+    };
+    expect(findTaskDocReferences("Follow SPEC §6 exactly", none)).toEqual([]);
   });
 
   test("collects several sections and de-duplicates", () => {
     expect(
-      findTaskDocReferences("Update SPEC.md sections 6 and 7, then §6 again"),
+      findTaskDocReferences("Update SPEC.md sections 6 and 7, then §6 again", CONFIG),
     ).toEqual([{ path: "SPEC.md", sections: [6, 7] }]);
   });
 
   test("reads a quoted heading selector", () => {
     expect(
-      findTaskDocReferences('Revise SPEC.md "Who picks the model" today'),
+      findTaskDocReferences('Revise SPEC.md "Who picks the model" today', CONFIG),
     ).toEqual([{ path: "SPEC.md", sections: ["Who picks the model"] }]);
   });
 
   test("a doc named with no section still resolves, so it gets an outline", () => {
-    expect(findTaskDocReferences("Read SPEC.md before designing")).toEqual([
-      { path: "SPEC.md", sections: [] },
-    ]);
+    expect(findTaskDocReferences("Read SPEC.md before designing", CONFIG))
+      .toEqual([{ path: "SPEC.md", sections: [] }]);
   });
 
   test("finds docs in briefable directories", () => {
     expect(
       findTaskDocReferences(
         "See docs/research/model-routing-and-token-efficiency.md",
+        CONFIG,
       ),
     ).toEqual([
       { path: "docs/research/model-routing-and-token-efficiency.md", sections: [] },
@@ -115,31 +144,34 @@ describe("findTaskDocReferences", () => {
   });
 
   test("strips trailing punctuation from a path", () => {
-    expect(findTaskDocReferences("Read SPEC.md, then stop.")[0]!.path).toBe(
-      "SPEC.md",
-    );
+    expect(findTaskDocReferences("Read SPEC.md, then stop.", CONFIG)[0]!.path)
+      .toBe("SPEC.md");
   });
 
   test("ignores non-briefable paths", () => {
-    expect(findTaskDocReferences("Fix src/daemon/spawner-impl.ts")).toEqual([]);
-    expect(findTaskDocReferences("Read node_modules/pkg/readme.md")).toEqual([]);
+    expect(findTaskDocReferences("Fix src/daemon/spawner-impl.ts", CONFIG))
+      .toEqual([]);
+    expect(findTaskDocReferences("Read node_modules/pkg/readme.md", CONFIG))
+      .toEqual([]);
   });
 
   test("a task naming no doc gets no references", () => {
-    expect(findTaskDocReferences("Add a retry to the poller")).toEqual([]);
+    expect(findTaskDocReferences("Add a retry to the poller", CONFIG)).toEqual([]);
   });
 });
 
 describe("resolveBriefablePath", () => {
   test("resolves an allowed doc inside the root", () => {
-    expect(resolveBriefablePath("/repo", "SPEC.md")).toBe("/repo/SPEC.md");
-    expect(resolveBriefablePath("/repo", "docs/x.md")).toBe("/repo/docs/x.md");
+    expect(resolveBriefablePath("/repo", "SPEC.md", CONFIG))
+      .toBe("/repo/SPEC.md");
+    expect(resolveBriefablePath("/repo", "docs/x.md", CONFIG))
+      .toBe("/repo/docs/x.md");
   });
 
   test("refuses traversal, absolute paths, and non-briefable files", () => {
-    expect(resolveBriefablePath("/repo", "../../etc/passwd.md")).toBeNull();
-    expect(resolveBriefablePath("/repo", "/etc/passwd.md")).toBeNull();
-    expect(resolveBriefablePath("/repo", "src/secret.md")).toBeNull();
+    expect(resolveBriefablePath("/repo", "../../etc/passwd.md", CONFIG)).toBeNull();
+    expect(resolveBriefablePath("/repo", "/etc/passwd.md", CONFIG)).toBeNull();
+    expect(resolveBriefablePath("/repo", "src/secret.md", CONFIG)).toBeNull();
   });
 });
 
@@ -161,15 +193,38 @@ describe("selectSections", () => {
   });
 });
 
+describe("loadBriefConfig", () => {
+  test("recovers this repo's briefable docs and primary from the profile", async () => {
+    // The committed `.hive/profile.toml` two directories up from this worktree
+    // file (src/adapters/ → repo root). Product code reads exactly this.
+    const root = new URL("../..", import.meta.url).pathname;
+    const config = await loadBriefConfig(root);
+    expect(config.briefableDocs).toContain("SPEC.md");
+    expect(config.primaryDoc).toBe("SPEC.md");
+    expect(config.briefableDirectories).toContain("docs/");
+  });
+
+  test("a repo with no profile briefs nothing rather than assuming doc names", async () => {
+    const config = await loadBriefConfig("/no/such/repo");
+    expect(config).toEqual({
+      briefableDocs: [],
+      briefableDirectories: [],
+      primaryDoc: null,
+    });
+  });
+});
+
 describe("buildScopedBrief", () => {
   test("a task naming no doc gets no brief at all", async () => {
-    expect(await buildScopedBrief("/repo", "Add a retry", { readDoc: readSpec }))
-      .toBe("");
+    expect(
+      await buildScopedBrief("/repo", "Add a retry", { readDoc: readSpec, config: CONFIG }),
+    ).toBe("");
   });
 
   test("embeds only the named section, verbatim, with a file:line pointer", async () => {
     const brief = await buildScopedBrief("/repo", "Rework SPEC.md §6", {
       readDoc: readSpec,
+      config: CONFIG,
     });
     expect(brief).toContain("--- SPEC.md:11-14 ---");
     expect(brief).toContain("The orchestrator classifies; the table resolves.");
@@ -181,6 +236,7 @@ describe("buildScopedBrief", () => {
   test("lists the unembedded sections as an outline with pointers", async () => {
     const brief = await buildScopedBrief("/repo", "Rework SPEC.md §6", {
       readDoc: readSpec,
+      config: CONFIG,
     });
     expect(brief).toContain("Outline of SPEC.md");
     // Depth is rendered as indentation under the `path:line` pointer.
@@ -192,6 +248,7 @@ describe("buildScopedBrief", () => {
     const big = `${SPEC}\n\n${"filler prose. ".repeat(500)}`;
     const brief = await buildScopedBrief("/repo", "Read SPEC.md first", {
       readDoc: async () => big,
+      config: CONFIG,
     });
     expect(brief).toContain("Outline of SPEC.md");
     expect(brief).toContain("SPEC.md:11    6. Who picks the model");
@@ -203,6 +260,7 @@ describe("buildScopedBrief", () => {
   test("a small doc named without a section is embedded whole", async () => {
     const brief = await buildScopedBrief("/repo", "Read SPEC.md first", {
       readDoc: readSpec,
+      config: CONFIG,
     });
     expect(brief).toContain("whole document");
     expect(brief).toContain("The orchestrator classifies");
@@ -211,6 +269,7 @@ describe("buildScopedBrief", () => {
   test("tells the agent not to read the files whole", async () => {
     const brief = await buildScopedBrief("/repo", "Rework SPEC.md §6", {
       readDoc: readSpec,
+      config: CONFIG,
     });
     expect(brief).toContain("Do not read these files whole");
   });
@@ -222,6 +281,7 @@ describe("buildScopedBrief", () => {
     ].join("\n");
     const brief = await buildScopedBrief("/repo", "SPEC.md §6", {
       readDoc: async () => long,
+      config: CONFIG,
     });
     expect(brief).toContain("…truncated");
     expect(brief).toMatch(/The rest of this section is SPEC\.md:\d+-\d+\./);
@@ -236,7 +296,7 @@ describe("buildScopedBrief", () => {
     const brief = await buildScopedBrief(
       "/repo",
       "SPEC.md sections 1 and 2, §3, §4, §5, §6, §7, §8",
-      { readDoc: async () => headings },
+      { readDoc: async () => headings, config: CONFIG },
     );
     expect(brief.length).toBeLessThanOrEqual(BRIEF_MAX_CHARS + 1_000);
     expect(brief).toContain("Brief budget exhausted");
@@ -246,6 +306,7 @@ describe("buildScopedBrief", () => {
     expect(
       await buildScopedBrief("/repo", "Read README.md", {
         readDoc: readSpec,
+        config: CONFIG,
       }),
     ).toBe("");
   });
@@ -257,7 +318,17 @@ describe("buildScopedBrief", () => {
         attempted = true;
         return "secret";
       },
+      config: CONFIG,
     });
     expect(attempted).toBe(false);
+  });
+
+  test("with no config and no profile at root, produces no brief", async () => {
+    // Product path when a repo has not been bootstrapped: no doc is briefable,
+    // so the mechanism is a safe no-op rather than assuming hive's doc names.
+    const brief = await buildScopedBrief("/no/such/repo", "Rework SPEC.md §6", {
+      readDoc: readSpec,
+    });
+    expect(brief).toBe("");
   });
 });
