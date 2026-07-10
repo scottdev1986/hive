@@ -1,5 +1,13 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, readlinkSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readlinkSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { sha256, type ReleaseManifest } from "../release/manifest";
@@ -13,7 +21,7 @@ import {
   stageRelease,
   writeInstallState,
 } from "./install";
-import { cliPath, currentLink, versionDir, versionsDir } from "./paths";
+import { cliPath, currentLink, stagingDir, versionDir, versionsDir } from "./paths";
 
 let root: string;
 beforeEach(() => {
@@ -95,13 +103,15 @@ describe("staging a release", () => {
     expect(isStaged("0.0.7", root)).toEqual(false);
   });
 
-  test("refuses a binary that will not run at all", async () => {
+  test("refuses a binary that will not run at all, and cleans up its staging dir", async () => {
     const promise = stageRelease(stageDeps("0.0.7", {
       probeVersion: async () => {
         throw new Error("Bad CPU type in executable");
       },
     }));
     await expect(promise).rejects.toThrow(/did not run/);
+    expect(isStaged("0.0.7", root)).toEqual(false);
+    expect(existsSync(join(stagingDir(root), "0.0.7"))).toEqual(false);
   });
 
   test("fails closed when a release key is embedded but the manifest is unsigned", async () => {
@@ -212,5 +222,28 @@ describe("rollback", () => {
     rmSync(versionsDir(root), { recursive: true, force: true });
     await expect(rollback({ root, healthCheck: async () => true }))
       .rejects.toThrow(/missing from/);
+  });
+
+  test("a rollback target that fails its health check is reverted, not left active", async () => {
+    fakeVersion("0.0.6");
+    fakeVersion("0.0.7");
+    await activate("0.0.7", root);
+    writeInstallState({ active: "0.0.7", previous: "0.0.6" }, root);
+
+    const outcome = await rollback({ root, healthCheck: async () => false });
+    expect(outcome).toMatchObject({ activated: false, revertedTo: "0.0.7" });
+    // `current` is back on the version that was running before the rollback
+    // attempt, not stranded on the one that just failed its health check.
+    expect(readlinkSync(currentLink(root))).toEqual(join("versions", "0.0.7"));
+    expect(readInstallState(root)).toEqual({ active: "0.0.7", previous: "0.0.6" });
+  });
+
+  test("a rollback with nothing healthy to fall back to says so rather than stranding current", async () => {
+    fakeVersion("0.0.6");
+    writeInstallState({ active: null, previous: "0.0.6" }, root);
+
+    const outcome = await rollback({ root, healthCheck: async () => false });
+    expect(outcome).toMatchObject({ activated: false, revertedTo: null });
+    expect(readlinkSync(currentLink(root))).toEqual(join("versions", "0.0.6"));
   });
 });

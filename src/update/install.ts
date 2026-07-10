@@ -129,7 +129,8 @@ export async function stageRelease(deps: StageDeps): Promise<StageResult> {
 
   // Execute the candidate before it can ever be `current`. A binary that will
   // not say its own name is not a binary we activate.
-  const reported = await deps.probeVersion(stagedCli).catch((error: unknown) => {
+  const reported = await deps.probeVersion(stagedCli).catch(async (error: unknown) => {
+    await rm(staging, { recursive: true, force: true });
     throw new UpdateError(
       `Refusing update: staged hive ${version} did not run (${
         error instanceof Error ? error.message : String(error)
@@ -267,10 +268,18 @@ export async function rollback(deps: ActivationDeps): Promise<ActivationOutcome>
   await activate(target, root);
   const healthy = await deps.healthCheck(cliPath(currentLink(root))).catch(() => false);
   if (!healthy) {
+    // Symmetric with activateWithHealthCheck: never leave `current` pointing at
+    // a binary that just failed its own health check, rollback included. The
+    // version we came from got here by having already passed a health check
+    // (its own activation or an earlier rollback), so it is the thing to trust.
+    const canRevert = state.active !== null && isStaged(state.active, root);
+    if (canRevert) {
+      await activate(state.active as string, root);
+    }
     return {
       activated: false,
       version: target,
-      revertedTo: null,
+      revertedTo: canRevert ? state.active : null,
       reason: `hive ${target} failed its health check`,
     };
   }
