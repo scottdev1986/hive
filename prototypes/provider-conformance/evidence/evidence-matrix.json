@@ -1,0 +1,507 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-07-10T14:02:46.690Z",
+  "runId": "2026-07-10T14-00-28-311Z",
+  "facts": [
+    {
+      "provider": "claude",
+      "scenario": "lifecycle",
+      "documented": {
+        "status": "yes",
+        "provenance": [
+          "https://code.claude.com/docs/en/agent-sdk/streaming-vs-single-mode",
+          "https://code.claude.com/docs/en/cli-usage"
+        ]
+      },
+      "observed": {
+        "status": "pass",
+        "provenance": [
+          "evidence/driven-run-summary.json#claude/lifecycle",
+          "binding sha256:3197aba4442dbd5b3df42b6f35e6d7bd03b5e48ce18b7a3c5c6f5f8c28e03b7f"
+        ]
+      },
+      "billable": {
+        "status": "billable",
+        "provenance": [
+          "Claude stream-json result.total_cost_usd and result.usage fields from this run.",
+          "https://code.claude.com/docs/en/agent-sdk/streaming-vs-single-mode"
+        ],
+        "note": "Provider-reported total_cost_usd: 0.004426."
+      }
+    },
+    {
+      "provider": "claude",
+      "scenario": "approve",
+      "documented": {
+        "status": "yes",
+        "provenance": [
+          "https://code.claude.com/docs/en/cli-usage",
+          "https://code.claude.com/docs/en/agent-sdk/user-input"
+        ]
+      },
+      "observed": {
+        "status": "pass",
+        "provenance": [
+          "evidence/driven-run-summary.json#claude/approve",
+          "binding sha256:3197aba4442dbd5b3df42b6f35e6d7bd03b5e48ce18b7a3c5c6f5f8c28e03b7f"
+        ]
+      },
+      "billable": {
+        "status": "billable",
+        "provenance": [
+          "Claude stream-json result.total_cost_usd and result.usage fields from this run.",
+          "https://code.claude.com/docs/en/agent-sdk/streaming-vs-single-mode"
+        ],
+        "note": "Provider-reported total_cost_usd: 0.012570."
+      }
+    },
+    {
+      "provider": "claude",
+      "scenario": "deny",
+      "documented": {
+        "status": "yes",
+        "provenance": [
+          "https://code.claude.com/docs/en/cli-usage",
+          "https://code.claude.com/docs/en/agent-sdk/user-input"
+        ]
+      },
+      "observed": {
+        "status": "pass",
+        "provenance": [
+          "evidence/driven-run-summary.json#claude/deny",
+          "binding sha256:3197aba4442dbd5b3df42b6f35e6d7bd03b5e48ce18b7a3c5c6f5f8c28e03b7f"
+        ]
+      },
+      "billable": {
+        "status": "billable",
+        "provenance": [
+          "Claude stream-json result.total_cost_usd and result.usage fields from this run.",
+          "https://code.claude.com/docs/en/agent-sdk/streaming-vs-single-mode"
+        ],
+        "note": "Provider-reported total_cost_usd: 0.013149."
+      }
+    },
+    {
+      "provider": "claude",
+      "scenario": "needs-user",
+      "documented": {
+        "status": "yes",
+        "provenance": [
+          "https://code.claude.com/docs/en/agent-sdk/user-input"
+        ]
+      },
+      "observed": {
+        "status": "pass",
+        "provenance": [
+          "evidence/driven-run-summary.json#claude/needs-user",
+          "binding sha256:3197aba4442dbd5b3df42b6f35e6d7bd03b5e48ce18b7a3c5c6f5f8c28e03b7f"
+        ]
+      },
+      "billable": {
+        "status": "billable",
+        "provenance": [
+          "Claude stream-json result.total_cost_usd and result.usage fields from this run.",
+          "https://code.claude.com/docs/en/agent-sdk/streaming-vs-single-mode"
+        ],
+        "note": "Provider-reported total_cost_usd: 0.013283."
+      }
+    },
+    {
+      "provider": "claude",
+      "scenario": "steer",
+      "documented": {
+        "status": "yes",
+        "provenance": [
+          "https://code.claude.com/docs/en/agent-sdk/streaming-vs-single-mode",
+          "https://code.claude.com/docs/en/agent-sdk/user-input"
+        ]
+      },
+      "observed": {
+        "status": "pass",
+        "provenance": [
+          "evidence/driven-run-summary.json#claude/steer",
+          "binding sha256:3197aba4442dbd5b3df42b6f35e6d7bd03b5e48ce18b7a3c5c6f5f8c28e03b7f"
+        ]
+      },
+      "billable": {
+        "status": "billable",
+        "provenance": [
+          "Claude stream-json result.total_cost_usd and result.usage fields from this run.",
+          "https://code.claude.com/docs/en/agent-sdk/streaming-vs-single-mode"
+        ],
+        "note": "Provider-reported total_cost_usd: 0.007502."
+      }
+    },
+    {
+      "provider": "claude",
+      "scenario": "cancel",
+      "documented": {
+        "status": "partial",
+        "provenance": [
+          "https://code.claude.com/docs/en/agent-sdk/streaming-vs-single-mode",
+          "research/cross-vendor-architecture-review.md"
+        ],
+        "note": "Interrupt is documented through the Agent SDK; the CLI control-frame receipt token is binding-observed rather than specified on the CLI page."
+      },
+      "observed": {
+        "status": "pass",
+        "provenance": [
+          "evidence/driven-run-summary.json#claude/cancel",
+          "binding sha256:3197aba4442dbd5b3df42b6f35e6d7bd03b5e48ce18b7a3c5c6f5f8c28e03b7f"
+        ]
+      },
+      "billable": {
+        "status": "billable",
+        "provenance": [
+          "Claude stream-json result.total_cost_usd and result.usage fields from this run.",
+          "https://code.claude.com/docs/en/agent-sdk/streaming-vs-single-mode"
+        ],
+        "note": "Provider-reported total_cost_usd: 0.005448."
+      }
+    },
+    {
+      "provider": "claude",
+      "scenario": "resume",
+      "documented": {
+        "status": "yes",
+        "provenance": [
+          "https://code.claude.com/docs/en/cli-usage"
+        ]
+      },
+      "observed": {
+        "status": "pass",
+        "provenance": [
+          "evidence/driven-run-summary.json#claude/resume",
+          "binding sha256:3197aba4442dbd5b3df42b6f35e6d7bd03b5e48ce18b7a3c5c6f5f8c28e03b7f"
+        ]
+      },
+      "billable": {
+        "status": "billable",
+        "provenance": [
+          "Claude stream-json result.total_cost_usd and result.usage fields from this run.",
+          "https://code.claude.com/docs/en/agent-sdk/streaming-vs-single-mode"
+        ],
+        "note": "Provider-reported total_cost_usd: 0.010968."
+      }
+    },
+    {
+      "provider": "claude",
+      "scenario": "invalid-model",
+      "documented": {
+        "status": "partial",
+        "provenance": [
+          "https://code.claude.com/docs/en/cli-usage",
+          "research/cross-vendor-architecture-review.md"
+        ],
+        "note": "Concrete pins and fallback configuration are documented; rejection timing and zero observed cost come from the driven binding repro."
+      },
+      "observed": {
+        "status": "pass",
+        "provenance": [
+          "evidence/driven-run-summary.json#claude/invalid-model",
+          "binding sha256:3197aba4442dbd5b3df42b6f35e6d7bd03b5e48ce18b7a3c5c6f5f8c28e03b7f"
+        ]
+      },
+      "billable": {
+        "status": "non-billable",
+        "provenance": [
+          "Claude stream-json result.total_cost_usd and result.usage fields from this run.",
+          "research/cross-vendor-architecture-review.md#appendix-reproducing-the-claude-code-observations"
+        ],
+        "note": "Provider-reported total_cost_usd: 0.000000."
+      }
+    },
+    {
+      "provider": "claude",
+      "scenario": "read-only",
+      "documented": {
+        "status": "yes",
+        "provenance": [
+          "https://code.claude.com/docs/en/agent-sdk/permissions"
+        ]
+      },
+      "observed": {
+        "status": "pass",
+        "provenance": [
+          "evidence/driven-run-summary.json#claude/read-only",
+          "binding sha256:3197aba4442dbd5b3df42b6f35e6d7bd03b5e48ce18b7a3c5c6f5f8c28e03b7f"
+        ]
+      },
+      "billable": {
+        "status": "billable",
+        "provenance": [
+          "Claude stream-json result.total_cost_usd and result.usage fields from this run.",
+          "https://code.claude.com/docs/en/agent-sdk/streaming-vs-single-mode"
+        ],
+        "note": "Provider-reported total_cost_usd: 0.014379."
+      }
+    },
+    {
+      "provider": "codex",
+      "scenario": "lifecycle",
+      "documented": {
+        "status": "yes",
+        "provenance": [
+          "https://learn.chatgpt.com/docs/app-server",
+          "binding-generated JSON Schema"
+        ]
+      },
+      "observed": {
+        "status": "pass",
+        "provenance": [
+          "evidence/driven-run-summary.json#codex/lifecycle",
+          "binding sha256:978740e6bcbd9af2f850823b723fb74f16d8d1e44de05f7dd6737ae631f72017"
+        ]
+      },
+      "billable": {
+        "status": "billable",
+        "provenance": [
+          "A real Codex turn was started; treat it as billable subscription/API usage.",
+          "https://learn.chatgpt.com/docs/app-server"
+        ],
+        "note": "No provider currency amount was available."
+      }
+    },
+    {
+      "provider": "codex",
+      "scenario": "approve",
+      "documented": {
+        "status": "yes",
+        "provenance": [
+          "https://learn.chatgpt.com/docs/app-server",
+          "binding-generated JSON Schema"
+        ]
+      },
+      "observed": {
+        "status": "pass",
+        "provenance": [
+          "evidence/driven-run-summary.json#codex/approve",
+          "binding sha256:978740e6bcbd9af2f850823b723fb74f16d8d1e44de05f7dd6737ae631f72017"
+        ]
+      },
+      "billable": {
+        "status": "billable",
+        "provenance": [
+          "A real Codex turn was started; treat it as billable subscription/API usage.",
+          "https://learn.chatgpt.com/docs/app-server"
+        ],
+        "note": "No provider currency amount was available."
+      }
+    },
+    {
+      "provider": "codex",
+      "scenario": "deny",
+      "documented": {
+        "status": "yes",
+        "provenance": [
+          "https://learn.chatgpt.com/docs/app-server",
+          "binding-generated JSON Schema"
+        ]
+      },
+      "observed": {
+        "status": "pass",
+        "provenance": [
+          "evidence/driven-run-summary.json#codex/deny",
+          "binding sha256:978740e6bcbd9af2f850823b723fb74f16d8d1e44de05f7dd6737ae631f72017"
+        ]
+      },
+      "billable": {
+        "status": "billable",
+        "provenance": [
+          "A real Codex turn was started; treat it as billable subscription/API usage.",
+          "https://learn.chatgpt.com/docs/app-server"
+        ],
+        "note": "No provider currency amount was available."
+      }
+    },
+    {
+      "provider": "codex",
+      "scenario": "needs-user",
+      "documented": {
+        "status": "yes",
+        "provenance": [
+          "https://learn.chatgpt.com/docs/app-server",
+          "binding-generated JSON Schema"
+        ],
+        "note": "item/tool/requestUserInput is explicitly experimental and requires initialize.capabilities.experimentalApi."
+      },
+      "observed": {
+        "status": "pass",
+        "provenance": [
+          "evidence/driven-run-summary.json#codex/needs-user",
+          "binding sha256:978740e6bcbd9af2f850823b723fb74f16d8d1e44de05f7dd6737ae631f72017"
+        ]
+      },
+      "billable": {
+        "status": "billable",
+        "provenance": [
+          "A real Codex turn was started; treat it as billable subscription/API usage.",
+          "https://learn.chatgpt.com/docs/app-server"
+        ],
+        "note": "No provider currency amount was available."
+      }
+    },
+    {
+      "provider": "codex",
+      "scenario": "steer",
+      "documented": {
+        "status": "yes",
+        "provenance": [
+          "https://learn.chatgpt.com/docs/app-server",
+          "binding-generated JSON Schema"
+        ]
+      },
+      "observed": {
+        "status": "pass",
+        "provenance": [
+          "evidence/driven-run-summary.json#codex/steer",
+          "binding sha256:978740e6bcbd9af2f850823b723fb74f16d8d1e44de05f7dd6737ae631f72017"
+        ]
+      },
+      "billable": {
+        "status": "billable",
+        "provenance": [
+          "A real Codex turn was started; treat it as billable subscription/API usage.",
+          "https://learn.chatgpt.com/docs/app-server"
+        ],
+        "note": "No provider currency amount was available."
+      }
+    },
+    {
+      "provider": "codex",
+      "scenario": "cancel",
+      "documented": {
+        "status": "yes",
+        "provenance": [
+          "https://learn.chatgpt.com/docs/app-server",
+          "binding-generated JSON Schema"
+        ]
+      },
+      "observed": {
+        "status": "pass",
+        "provenance": [
+          "evidence/driven-run-summary.json#codex/cancel",
+          "binding sha256:978740e6bcbd9af2f850823b723fb74f16d8d1e44de05f7dd6737ae631f72017"
+        ]
+      },
+      "billable": {
+        "status": "billable",
+        "provenance": [
+          "A real Codex turn was started; treat it as billable subscription/API usage.",
+          "https://learn.chatgpt.com/docs/app-server"
+        ],
+        "note": "No provider currency amount was available."
+      }
+    },
+    {
+      "provider": "codex",
+      "scenario": "resume",
+      "documented": {
+        "status": "yes",
+        "provenance": [
+          "https://learn.chatgpt.com/docs/app-server",
+          "binding-generated JSON Schema"
+        ]
+      },
+      "observed": {
+        "status": "pass",
+        "provenance": [
+          "evidence/driven-run-summary.json#codex/resume",
+          "binding sha256:978740e6bcbd9af2f850823b723fb74f16d8d1e44de05f7dd6737ae631f72017"
+        ]
+      },
+      "billable": {
+        "status": "billable",
+        "provenance": [
+          "A real Codex turn was started; treat it as billable subscription/API usage.",
+          "https://learn.chatgpt.com/docs/app-server"
+        ],
+        "note": "No provider currency amount was available."
+      }
+    },
+    {
+      "provider": "codex",
+      "scenario": "invalid-model",
+      "documented": {
+        "status": "partial",
+        "provenance": [
+          "https://learn.chatgpt.com/docs/app-server",
+          "binding-generated JSON Schema"
+        ],
+        "note": "Model pinning and effective-model reporting are documented; fail-before-turn and validation cost are binding observations, not a general promise."
+      },
+      "observed": {
+        "status": "pass",
+        "provenance": [
+          "evidence/driven-run-summary.json#codex/invalid-model",
+          "binding sha256:978740e6bcbd9af2f850823b723fb74f16d8d1e44de05f7dd6737ae631f72017"
+        ]
+      },
+      "billable": {
+        "status": "unknown",
+        "provenance": [
+          "Codex exposes token usage but no adapter-level promise that a rejected invalid pin costs zero.",
+          "https://learn.chatgpt.com/docs/app-server"
+        ],
+        "note": "No provider currency amount was available."
+      }
+    },
+    {
+      "provider": "codex",
+      "scenario": "read-only",
+      "documented": {
+        "status": "yes",
+        "provenance": [
+          "https://learn.chatgpt.com/docs/app-server",
+          "binding-generated JSON Schema"
+        ]
+      },
+      "observed": {
+        "status": "pass",
+        "provenance": [
+          "evidence/driven-run-summary.json#codex/read-only",
+          "binding sha256:978740e6bcbd9af2f850823b723fb74f16d8d1e44de05f7dd6737ae631f72017"
+        ]
+      },
+      "billable": {
+        "status": "billable",
+        "provenance": [
+          "A real Codex turn was started; treat it as billable subscription/API usage.",
+          "https://learn.chatgpt.com/docs/app-server"
+        ],
+        "note": "No provider currency amount was available."
+      }
+    },
+    {
+      "provider": "codex",
+      "scenario": "dual-client",
+      "documented": {
+        "status": "yes",
+        "provenance": [
+          "https://learn.chatgpt.com/docs/app-server#connect-the-cli-terminal-ui",
+          "binding-generated JSON Schema",
+          "binding --help output"
+        ],
+        "note": "The public guide documents WebSocket TUI attachment; the pinned schema and help expose thread/resume, turn/steer, thread/inject_items, --listen, and --remote."
+      },
+      "observed": {
+        "status": "pass",
+        "provenance": [
+          "evidence/dual-client-driven-proof.json",
+          "binding sha256:978740e6bcbd9af2f850823b723fb74f16d8d1e44de05f7dd6737ae631f72017",
+          "Hive message c1f45c0c-a4b8-4e27-852f-137167841bdf",
+          "Hive message 4b225b25-ddb3-41f4-9a77-fe8545055c4d"
+        ],
+        "note": "Steer transport acceptance was observed; injected model-visible history plus its TUI-rendered verification response proves cross-client semantic delivery on the shared thread."
+      },
+      "billable": {
+        "status": "billable",
+        "provenance": [
+          "Three real no-tool Codex turns were reported by the driven proof.",
+          "https://learn.chatgpt.com/docs/app-server"
+        ],
+        "note": "No provider currency amount was available."
+      }
+    }
+  ]
+}
