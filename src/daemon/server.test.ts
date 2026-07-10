@@ -42,6 +42,15 @@ class SilentTmuxSender implements TmuxSender {
   }
 }
 
+class RootUnavailableTmuxSender extends SilentTmuxSender {
+  override async sendMessage(session: string, text: string): Promise<void> {
+    if (session === "hive-orchestrator") {
+      throw new Error("root session unavailable");
+    }
+    await super.sendMessage(session, text);
+  }
+}
+
 class FakeDaemonTmux {
   readonly sessions = new Set<string>();
   readonly killed: string[] = [];
@@ -191,7 +200,7 @@ describe("HiveDaemon HTTP server", () => {
   test("all MCP tools work through StreamableHTTPClientTransport", async () => {
     const db = new HiveDatabase(join(home, "mcp.db"));
     const spawner = new StubSpawner();
-    const tmux = new SilentTmuxSender();
+    const tmux = new RootUnavailableTmuxSender();
     const daemonTmux = new FakeDaemonTmux();
     const removedWorktrees: Array<[string, string]> = [];
     const daemon = new HiveDaemon({

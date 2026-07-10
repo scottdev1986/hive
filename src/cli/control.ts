@@ -8,6 +8,7 @@ import {
   readDaemonPort,
 } from "../daemon/lifecycle";
 import type { AgentRecord } from "../schemas";
+import { ORCHESTRATOR_TMUX_SESSION } from "../daemon/orchestrator-lifecycle";
 import { fetchAgentStatus, markAgentDead } from "./mcp";
 import { formatStatusTable } from "./status";
 
@@ -120,6 +121,7 @@ export async function stopHive(): Promise<void> {
   const port = readDaemonPort();
   const tmux = new TmuxAdapter();
   const stoppedAgentCount = await stopAgentSessions(port, { tmux });
+  await tmux.killSession(ORCHESTRATOR_TMUX_SESSION, { ignoreMissing: true });
 
   const pid = readDaemonPid();
   if (pid !== null) {

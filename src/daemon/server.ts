@@ -11,6 +11,7 @@ import {
 } from "../adapters/worktrees";
 import {
   HookEventSchema,
+  ORCHESTRATOR_NAME,
   type AgentRecord,
   type HookEvent,
 } from "../schemas";
@@ -25,6 +26,7 @@ import {
   readConfiguredPort,
   writeLifecycleFiles,
 } from "./lifecycle";
+import { compactActiveTeam } from "./orchestrator-lifecycle";
 import {
   SpawnRequestSchema,
   type SpawnRequest,
@@ -41,6 +43,14 @@ const SendRequestSchema = z.object({
 
 const InboxRequestSchema = z.object({
   agent: z.string().min(1),
+});
+
+const ReadMessageRequestSchema = z.object({
+  id: z.string().min(1),
+});
+
+const StatusRequestSchema = z.object({
+  detail: z.enum(["full", "active"]).optional(),
 });
 
 const MarkDeadRequestSchema = z.object({
@@ -292,9 +302,16 @@ export class HiveDaemon {
 
     server.registerTool("hive_status", {
       title: "Hive agent status",
-      description: "List all Hive agents and their current execution status.",
-      inputSchema: z.object({}),
-    }, async () => toolResult(this.db.listAgents(), "agents"));
+      description:
+        'Fetch agent status on demand. Use detail "active" for a compact active-team summary; omitted detail preserves the full legacy response.',
+      inputSchema: StatusRequestSchema,
+    }, async ({ detail }) => {
+      const agents = this.db.listAgents();
+      return toolResult(
+        detail === "active" ? compactActiveTeam(agents) : agents,
+        "agents",
+      );
+    });
 
     server.registerTool("hive_mark_dead", {
       title: "Mark Hive agent dead",
@@ -360,7 +377,7 @@ export class HiveDaemon {
     server.registerTool("hive_send", {
       title: "Send agent message",
       description:
-        'Send or queue a message for a named Hive agent, or to "orchestrator" to reach the root orchestrator inbox.',
+        'Send or queue a message for a named Hive agent, or wake the root with recipient "orchestrator".',
       inputSchema: SendRequestSchema,
     }, async ({ from, to, body }) =>
       toolResult(await this.delivery.send(from, to, body), "message"));
@@ -368,10 +385,27 @@ export class HiveDaemon {
     server.registerTool("hive_inbox", {
       title: "Read agent inbox",
       description:
-        'Read and acknowledge queued messages for a Hive agent (the orchestrator reads its own with agent "orchestrator").',
+        'Read and atomically acknowledge queued messages. Recipient "orchestrator" returns bounded envelopes.',
       inputSchema: InboxRequestSchema,
-    }, async ({ agent }) =>
-      toolResult(this.delivery.inbox(agent), "messages"));
+    }, async ({ agent }) => toolResult(
+      agent === ORCHESTRATOR_NAME
+        ? await this.delivery.orchestratorInbox()
+        : this.delivery.inbox(agent),
+      "messages",
+    ));
+
+    server.registerTool("hive_read_message", {
+      title: "Read full orchestrator message",
+      description:
+        "Read one full agent report by the id referenced in a bounded orchestrator envelope.",
+      inputSchema: ReadMessageRequestSchema,
+    }, async ({ id }) => {
+      const message = this.delivery.readOrchestratorMessage(id);
+      if (message === null) {
+        throw new Error(`Orchestrator message not found: ${id}`);
+      }
+      return toolResult(message, "message");
+    });
 
     server.registerTool("hive_spawn", {
       title: "Spawn Hive agent",

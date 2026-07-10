@@ -70,6 +70,15 @@ class FailingTmuxSender implements TmuxSender {
   }
 }
 
+class UnavailableTmuxSender implements TmuxSender {
+  readonly calls: Array<[string, string]> = [];
+
+  async sendMessage(session: string, text: string): Promise<void> {
+    this.calls.push([session, text]);
+    throw new Error("tmux session unavailable");
+  }
+}
+
 const unusedSpawner: Spawner = {
   async spawn() {
     throw new Error("not used");
@@ -165,27 +174,22 @@ describe("MessageDelivery", () => {
     }
   });
 
-  test("queues agent reports for the unregistered orchestrator and drains them exactly once", async () => {
+  test("keeps reports unread when root is unavailable and drains them exactly once", async () => {
     const db = new HiveDatabase(join(home, "orchestrator-inbox.db"));
-    const tmux = new RecordingTmuxSender();
+    const tmux = new UnavailableTmuxSender();
     const delivery = new MessageDelivery(db, tmux);
     try {
       const report = "Task complete.\nRoot cause: enter race.\nBranch: hive/maya-delivery";
       const queued = await delivery.send("maya", "orchestrator", report);
       expect(queued.deliveredAt).toEqual(null);
-      expect(tmux.calls).toEqual([]);
+      expect(tmux.calls).toHaveLength(1);
 
-      // A turn-end style flush must never try to inject into a
-      // nonexistent orchestrator tmux session.
-      expect(await delivery.flushQueued("orchestrator")).toEqual([]);
-      expect(tmux.calls).toEqual([]);
-
-      const inbox = delivery.inbox("orchestrator");
+      const inbox = await delivery.orchestratorInbox();
       expect(inbox.length).toEqual(1);
       expect(inbox[0]?.id).toEqual(queued.id);
       expect(inbox[0]?.body).toEqual(report);
-      expect(inbox[0]?.deliveredAt === null).toEqual(false);
-      expect(delivery.inbox("orchestrator")).toEqual([]);
+      expect(await delivery.orchestratorInbox()).toEqual([]);
+      expect(db.getMessage(queued.id)?.deliveredAt).not.toEqual(null);
     } finally {
       db.close();
     }
@@ -201,7 +205,7 @@ describe("MessageDelivery", () => {
         "orchestrator",
         "Still reachable.",
       );
-      expect(db.getMessage(queued.id)?.deliveredAt).toEqual(null);
+      expect(db.getMessage(queued.id)?.deliveredAt).not.toEqual(null);
     } finally {
       db.close();
     }

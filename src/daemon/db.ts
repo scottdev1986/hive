@@ -247,7 +247,7 @@ export class HiveDatabase {
   }
 
   listMessages(): AgentMessage[] {
-    return this.database.query("SELECT * FROM messages ORDER BY createdAt, id")
+    return this.database.query("SELECT * FROM messages ORDER BY rowid")
       .all()
       .map((row) => AgentMessageSchema.parse(row));
   }
@@ -256,8 +256,35 @@ export class HiveDatabase {
     return this.database.query(`
       SELECT * FROM messages
       WHERE "to" = ? AND deliveredAt IS NULL
-      ORDER BY createdAt, id
+      ORDER BY rowid
     `).all(agentName).map((row) => AgentMessageSchema.parse(row));
+  }
+
+  claimUndeliveredMessages(
+    agentName: string,
+    deliveredAt: string,
+  ): AgentMessage[] {
+    return this.transaction(() => {
+      const claimed: AgentMessage[] = [];
+      for (const message of this.getUndeliveredMessages(agentName)) {
+        const result = this.database.query(`
+          UPDATE messages SET deliveredAt = ?
+          WHERE id = ? AND deliveredAt IS NULL
+        `).run(deliveredAt, message.id);
+        if (result.changes === 1) {
+          claimed.push(AgentMessageSchema.parse({ ...message, deliveredAt }));
+        }
+      }
+      return claimed;
+    });
+  }
+
+  acknowledgeMessage(id: string, deliveredAt: string): AgentMessage | null {
+    const result = this.database.query(`
+      UPDATE messages SET deliveredAt = ?
+      WHERE id = ? AND deliveredAt IS NULL
+    `).run(deliveredAt, id);
+    return result.changes === 1 ? this.getMessage(id) : null;
   }
 
   markMessageDelivered(id: string, deliveredAt: string): AgentMessage | null {

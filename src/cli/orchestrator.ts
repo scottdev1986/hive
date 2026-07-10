@@ -6,6 +6,7 @@ import {
 import {
   writeCodexAgentConfig,
 } from "../adapters/tools/codex";
+import { ORCHESTRATOR_TMUX_SESSION } from "../daemon/orchestrator-lifecycle";
 import { ORCHESTRATOR_BRIEF } from "./orchestrator-brief";
 
 export type OrchestratorTool = "claude" | "codex";
@@ -113,6 +114,23 @@ export function buildOrchestratorCommand(
   ];
 }
 
+export function buildOrchestratorLaunchCommand(
+  tool: OrchestratorTool,
+  port: number,
+  cwd: string,
+): string[] {
+  return [
+    "tmux",
+    "new-session",
+    "-A",
+    "-s",
+    ORCHESTRATOR_TMUX_SESSION,
+    "-c",
+    cwd,
+    ...buildOrchestratorCommand(tool, port),
+  ];
+}
+
 export async function launchOrchestrator(
   tool: OrchestratorTool,
   port: number,
@@ -125,7 +143,7 @@ export async function launchOrchestrator(
 
   try {
     await prepareOrchestratorConfig(tool, port, cwd);
-    const child = spawn(buildOrchestratorCommand(tool, port), {
+    const child = spawn(buildOrchestratorLaunchCommand(tool, port, cwd), {
       cwd,
       stdin: "inherit",
       stdout: "inherit",
