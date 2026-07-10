@@ -96,6 +96,9 @@ describe("terminal osascript builders", () => {
         "return terminalProcessId & (ASCII character 9) & agentWindowId & (ASCII character 9) & agentTty",
       ),
     ).toEqual(true);
+    expect(script).toContain("/bin/launchctl print gui/$(/usr/bin/id -u)");
+    expect(script).toContain("application\\\\.com\\\\.apple\\\\.Terminal\\\\.");
+    expect(script).not.toContain("pgrep");
   });
 
   test("uses the bundled profile's exact settings-set name", () => {
@@ -159,6 +162,8 @@ describe("terminal osascript builders", () => {
     );
 
     expect(script).toContain('if terminalProcessId is not "4242" then return');
+    expect(script).toContain("/bin/launchctl print gui/$(/usr/bin/id -u)");
+    expect(script).not.toContain("pgrep");
     expect(script).toContain("first window whose id is 731");
     expect(script).toContain("if (count of tabs of agentWindow) is not 1 then return");
     expect(script).toContain(
@@ -180,6 +185,8 @@ describe("terminal layout osascript builders", () => {
     );
 
     expect(script).toContain('if terminalProcessId is not "4242" then return');
+    expect(script).toContain("/bin/launchctl print gui/$(/usr/bin/id -u)");
+    expect(script).not.toContain("pgrep");
     expect(script).toContain("first window whose id is 731");
     expect(script).toContain(
       'if (count of (tabs of agentWindow whose tty is "/dev/ttys009")) is 0 then return',
@@ -211,7 +218,8 @@ describe("terminal layout osascript builders", () => {
     const script = buildTerminalAppFindWindowByTtyOsascript("/dev/ttys003");
 
     expect(script).toContain('if application "Terminal" is not running then return ""');
-    expect(script).toContain("if [ $status -eq 1 ]; then exit 0");
+    expect(script).toContain("/bin/launchctl print gui/$(/usr/bin/id -u)");
+    expect(script).not.toContain("pgrep");
     expect(script).toContain('if terminalProcessId is "" then return ""');
     expect(script).toContain('if (tty of candidateTab as text) is "/dev/ttys003" then');
     expect(script).toContain(

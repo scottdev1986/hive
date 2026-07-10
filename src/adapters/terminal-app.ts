@@ -7,6 +7,20 @@ export const TERMINAL_APP_PROFILE_PATH =
   `${import.meta.dir}/hive-agent-v2.terminal`;
 export const TERMINAL_APP_PROFILE_NAME = "hive-agent-v2";
 
+// Codex's macOS sandbox denies process-table enumeration, so `pgrep` can
+// report no Terminal process after AppleScript has successfully created the
+// window. launchd's per-user application record exposes the same PID without
+// requiring process-list access.
+const TERMINAL_APP_PROCESS_ID_COMMAND =
+  "/bin/launchctl print gui/$(/usr/bin/id -u) | " +
+  "/usr/bin/awk '$3 ~ /^application\\.com\\.apple\\.Terminal\\./ && " +
+  "$1 ~ /^[0-9]+$/ { print $1; exit }'";
+
+const terminalAppProcessIdOsascript =
+  `set terminalProcessId to do shell script "${
+    appleScriptString(TERMINAL_APP_PROCESS_ID_COMMAND)
+  }"`;
+
 export function buildTerminalAppOsascript(
   tmuxSession: string,
   title: string,
@@ -67,7 +81,8 @@ export function buildTerminalAppOsascript(
     "  set agentWindowId to id of agentWindow as text",
     "  set agentTty to tty of agentTab",
     "end tell",
-    'set terminalProcessId to do shell script "/usr/bin/pgrep -x Terminal"',
+    terminalAppProcessIdOsascript,
+    'if terminalProcessId is "" then error "could not identify Terminal process"',
     "return terminalProcessId & (ASCII character 9) & agentWindowId & (ASCII character 9) & agentTty",
   ].join("\n");
 }
@@ -81,7 +96,8 @@ export function buildTerminalAppCloseOsascript(
 ): string {
   return [
     'if application "Terminal" is not running then return',
-    'set terminalProcessId to do shell script "/usr/bin/pgrep -x Terminal"',
+    terminalAppProcessIdOsascript,
+    'if terminalProcessId is "" then return',
     `if terminalProcessId is not "${processId}" then return`,
     'tell application "Terminal"',
     "  try",
@@ -111,7 +127,8 @@ export function buildTerminalAppSetBoundsOsascript(
   }}`;
   return [
     'if application "Terminal" is not running then return',
-    'set terminalProcessId to do shell script "/usr/bin/pgrep -x Terminal"',
+    terminalAppProcessIdOsascript,
+    'if terminalProcessId is "" then return',
     `if terminalProcessId is not "${processId}" then return`,
     'tell application "Terminal"',
     "  try",
@@ -130,10 +147,7 @@ export function buildTerminalAppSetBoundsOsascript(
 export function buildTerminalAppFindWindowByTtyOsascript(tty: string): string {
   return [
     'if application "Terminal" is not running then return ""',
-    // pgrep uses exit 1 for an ordinary no-match result. `do shell script`
-    // turns every non-zero exit into an AppleScript error, so normalize only
-    // that result while preserving genuine pgrep failures.
-    'set terminalProcessId to do shell script "/usr/bin/pgrep -x Terminal; status=$?; if [ $status -eq 1 ]; then exit 0; fi; exit $status"',
+    terminalAppProcessIdOsascript,
     'if terminalProcessId is "" then return ""',
     'tell application "Terminal"',
     "  repeat with candidateWindow in windows",
