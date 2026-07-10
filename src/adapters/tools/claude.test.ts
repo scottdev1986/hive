@@ -138,6 +138,21 @@ describe("Claude adapter", () => {
       );
     });
 
+    test("places an appended system prompt before the channels terminator", () => {
+      const command = buildClaudeSpawnCommand({
+        ...base,
+        channels: true,
+        appendSystemPrompt: "root instructions",
+      });
+      expect(command.indexOf("--append-system-prompt")).toBeLessThan(
+        command.indexOf("--"),
+      );
+      expect(command[command.indexOf("--append-system-prompt") + 1]).toBe(
+        "root instructions",
+      );
+      expect(command.at(-1)).toBe("--");
+    });
+
     test("omits the flags entirely when no scoped config is given", () => {
       const command = buildClaudeSpawnCommand(base);
       expect(command).not.toContain("--strict-mcp-config");
@@ -222,6 +237,22 @@ describe("Claude adapter", () => {
       "--model",
       "sonnet",
     ]);
+  });
+
+  test("keeps resumed session flags before the channels terminator", () => {
+    const command = buildClaudeResumeCommand({
+      name: "agent-3",
+      model: "sonnet",
+      worktreePath: "/tmp/worktree",
+      daemonPort: 4317,
+      readOnly: false,
+      channels: true,
+      appendSystemPrompt: "root instructions",
+    }, "0189-session");
+    expect(command.slice(0, 3)).toEqual(["claude", "--resume", "0189-session"]);
+    expect(command.indexOf("--append-system-prompt")).toBeLessThan(
+      command.indexOf("--"),
+    );
   });
 
   test("derives the transcript project directory from the munged worktree path", () => {

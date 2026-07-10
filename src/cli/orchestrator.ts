@@ -189,9 +189,8 @@ export function buildOrchestratorCommand(
         readOnly: true,
         channels: true,
         executable,
+        appendSystemPrompt: brief,
       }),
-      "--append-system-prompt",
-      brief,
     ];
   }
   return [

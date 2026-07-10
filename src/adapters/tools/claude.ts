@@ -42,6 +42,9 @@ export interface ClaudeSpawnOptions {
    * configured for the human's interactive sessions. Absent means today's
    * inherit-everything behavior. */
   scopedMcpConfigPath?: string;
+  /** Additional system instructions for this session. Emitted before the
+   * Channels `--` terminator, which makes every following argument positional. */
+  appendSystemPrompt?: string;
 }
 
 export type ClaudeAgentConfigOptions = Pick<
@@ -238,6 +241,9 @@ export function buildClaudeSpawnCommand(
       options.scopedMcpConfigPath,
       "--strict-mcp-config",
     );
+  }
+  if (options.appendSystemPrompt !== undefined) {
+    command.push("--append-system-prompt", options.appendSystemPrompt);
   }
   if (options.channels ?? false) {
     command.push(

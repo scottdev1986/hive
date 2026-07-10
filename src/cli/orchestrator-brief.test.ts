@@ -60,7 +60,13 @@ describe("orchestrator brief", () => {
     const claude = buildOrchestratorCommand("claude", 4317);
     expect(claude).toContain("--dangerously-load-development-channels");
     expect(claude).toContain("server:hive-channel");
-    expect(claude.at(-1)).toEqual(ORCHESTRATOR_BRIEF);
+    expect(claude.at(-1)).toEqual("--");
+    expect(claude.indexOf("--append-system-prompt")).toBeLessThan(
+      claude.indexOf("--"),
+    );
+    expect(claude[claude.indexOf("--append-system-prompt") + 1]).toEqual(
+      ORCHESTRATOR_BRIEF,
+    );
     expect(buildOrchestratorCommand("codex", 4317)).toEqual([
       "codex",
       "-c",
@@ -73,12 +79,16 @@ describe("orchestrator brief", () => {
 
   test("appends a supplied memory index to the root prompt", () => {
     const index = "Hive memory index — durable facts.\n- [repo] x (2026-06-01): note";
-    expect(buildOrchestratorCommand("claude", 4317, index).at(-1)).toEqual(
+    const claudeCommand = buildOrchestratorCommand("claude", 4317, index);
+    expect(claudeCommand[claudeCommand.indexOf("--append-system-prompt") + 1]).toEqual(
       `${ORCHESTRATOR_BRIEF}\n\n${index}`,
     );
     const codexCommand = buildOrchestratorCommand("codex", 4317, index);
     expect(codexCommand.at(-1)).toEqual(`${ORCHESTRATOR_BRIEF}\n\n${index}`);
-    expect(buildOrchestratorCommand("claude", 4317).at(-1)).toEqual(ORCHESTRATOR_BRIEF);
+    const plainClaudeCommand = buildOrchestratorCommand("claude", 4317);
+    expect(
+      plainClaudeCommand[plainClaudeCommand.indexOf("--append-system-prompt") + 1],
+    ).toEqual(ORCHESTRATOR_BRIEF);
   });
 
   test("starts a fresh root in the fixed instance-scoped tmux session", () => {
@@ -180,8 +190,9 @@ describe("orchestrator brief", () => {
         "",
         orchestratorDocGuidance({ primary: "SPEC.md", loadBearing: ["SPEC.md"] }),
       );
-      expect(command.at(-1)).toContain(ORCHESTRATOR_BRIEF);
-      expect(command.at(-1)).toContain("SPEC.md is the primary design doc");
+      const prompt = command[command.indexOf("--append-system-prompt") + 1];
+      expect(prompt).toContain(ORCHESTRATOR_BRIEF);
+      expect(prompt).toContain("SPEC.md is the primary design doc");
     });
   });
 
@@ -365,11 +376,14 @@ describe("orchestrator brief", () => {
         noExistingRoot,
       );
 
-      expect(capturedCommand.at(-1)).toContain("Hive memory index");
-      expect(capturedCommand.at(-1)).toContain(
+      const prompt = capturedCommand[
+        capturedCommand.indexOf("--append-system-prompt") + 1
+      ];
+      expect(prompt).toContain("Hive memory index");
+      expect(prompt).toContain(
         "[repo] flaky-login-test (2026-06-01): The login test is flaky",
       );
-      expect(capturedCommand.at(-1)).toContain(ORCHESTRATOR_BRIEF);
+      expect(prompt).toContain(ORCHESTRATOR_BRIEF);
     } finally {
       if (previousHome === undefined) {
         delete process.env.HIVE_HOME;
