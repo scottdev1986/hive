@@ -134,7 +134,8 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
 
     private func addPaneView(for paneID: PaneID) {
         guard let pane = state.panes[paneID] else { return }
-        let view = PaneView(paneID: paneID, title: pane.title) { [weak self] command in
+        let scrollSession = pane.kind == .agent ? pane.tmuxSession : nil
+        let view = PaneView(paneID: paneID, title: pane.title, tmuxSession: scrollSession) { [weak self] command in
             self?.dispatch(command)
         }
         view.update(state: pane)

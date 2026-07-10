@@ -2,6 +2,79 @@ import AppKit
 import SwiftTerm
 import WorkspaceCore
 
+/// Serializes and coalesces tmux copy-mode commands. Trackpads can emit many
+/// events while one tmux process is running; adjacent events in the same
+/// direction become one command instead of an unbounded subprocess queue.
+private final class TmuxScrollController: @unchecked Sendable {
+    private let session: String
+    private let queue = DispatchQueue(label: "dev.hive.workspace.tmux-scroll", qos: .userInteractive)
+    private let lock = NSLock()
+    private var pending: [TerminalScrollRequest] = []
+    private var workerScheduled = false
+
+    init(session: String) {
+        self.session = session
+    }
+
+    func submit(_ request: TerminalScrollRequest) {
+        lock.lock()
+        if let last = pending.last, last.direction == request.direction {
+            pending[pending.count - 1] = TerminalScrollRequest(
+                direction: request.direction,
+                lineCount: last.lineCount + request.lineCount)
+        } else {
+            pending.append(request)
+        }
+        let shouldSchedule = !workerScheduled
+        workerScheduled = true
+        lock.unlock()
+
+        if shouldSchedule {
+            queue.async { [weak self] in self?.drain() }
+        }
+    }
+
+    private func drain() {
+        while let request = nextRequest() {
+            let target = "=\(session):"
+            if request.direction == .up {
+                runTmux(["copy-mode", "-e", "-t", target])
+            }
+            runTmux([
+                "send-keys", "-X", "-N", String(request.lineCount),
+                "-t", target,
+                request.direction == .up ? "scroll-up" : "scroll-down",
+            ])
+        }
+    }
+
+    private func nextRequest() -> TerminalScrollRequest? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !pending.isEmpty else {
+            workerScheduled = false
+            return nil
+        }
+        return pending.removeFirst()
+    }
+
+    private func runTmux(_ arguments: [String]) {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+        let command = (["exec", "tmux"] + arguments.map(shellQuoted)).joined(separator: " ")
+        process.arguments = ["-lc", command]
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        do {
+            try process.run()
+            process.waitUntilExit()
+        } catch {
+            // A vanished session or unavailable tmux only makes this gesture
+            // a no-op; the feed owns honest disconnected-state reporting.
+        }
+    }
+}
+
 /// A pane's content: a real terminal (SwiftTerm's `LocalProcessTerminalView`)
 /// running either the orchestrator TUI (`hive claude`) or a `tmux
 /// attach-session` client for one agent. Hive never rolls its own renderer —
@@ -14,12 +87,15 @@ import WorkspaceCore
 final class TerminalPaneView: NSView, LocalProcessTerminalViewDelegate {
 
     let terminal = LocalProcessTerminalView(frame: .zero)
+    private let tmuxScroller: TmuxScrollController?
+    private var scrollMonitor: Any?
 
     private var pendingLaunch: (command: String, workingDirectory: String)?
     private(set) var childRunning = false
     var onChildExit: ((Int32?) -> Void)?
 
-    init() {
+    init(tmuxSession: String? = nil) {
+        tmuxScroller = tmuxSession.map(TmuxScrollController.init)
         super.init(frame: .zero)
         terminal.processDelegate = self
         terminal.translatesAutoresizingMaskIntoConstraints = false
@@ -33,6 +109,30 @@ final class TerminalPaneView: NSView, LocalProcessTerminalViewDelegate {
     }
 
     required init?(coder: NSCoder) { fatalError("not used") }
+
+    deinit {
+        if let scrollMonitor { NSEvent.removeMonitor(scrollMonitor) }
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if let scrollMonitor {
+            NSEvent.removeMonitor(scrollMonitor)
+            self.scrollMonitor = nil
+        }
+        guard window != nil, tmuxScroller != nil else { return }
+        scrollMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
+            guard let self, event.window === self.window,
+                  self.bounds.contains(self.convert(event.locationInWindow, from: nil)),
+                  let tmuxScroller = self.tmuxScroller,
+                  let request = TerminalScrollRequest(
+                    deltaY: event.scrollingDeltaY,
+                    visibleRows: self.terminal.getTerminal().rows)
+            else { return event }
+            tmuxScroller.submit(request)
+            return nil
+        }
+    }
 
     // MARK: Child process lifecycle
 

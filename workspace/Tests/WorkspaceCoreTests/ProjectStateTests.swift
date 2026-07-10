@@ -4,6 +4,22 @@ import CoreGraphics
 
 final class ProjectStateTests: XCTestCase {
 
+    func testTerminalScrollRequestMapsWheelDirectionAndVelocity() {
+        XCTAssertNil(TerminalScrollRequest(deltaY: 0, visibleRows: 40))
+        XCTAssertEqual(
+            TerminalScrollRequest(deltaY: 0.5, visibleRows: 40),
+            TerminalScrollRequest(direction: .up, lineCount: 1))
+        XCTAssertEqual(
+            TerminalScrollRequest(deltaY: -2, visibleRows: 40),
+            TerminalScrollRequest(direction: .down, lineCount: 3))
+        XCTAssertEqual(
+            TerminalScrollRequest(deltaY: 6, visibleRows: 40),
+            TerminalScrollRequest(direction: .up, lineCount: 10))
+        XCTAssertEqual(
+            TerminalScrollRequest(deltaY: -10, visibleRows: 40),
+            TerminalScrollRequest(direction: .down, lineCount: 40))
+    }
+
     private func agent(_ name: String, status: String = "working",
                        tool: String = "claude", model: String = "opus",
                        task: String = "do things", session: String? = nil,
