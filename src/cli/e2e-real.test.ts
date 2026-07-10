@@ -264,12 +264,12 @@ e2e("real hive CLI against a real daemon and real tmux", () => {
     expect(await health()).toEqual(true);
   }, MINUTE);
 
-  test("hive start remains a deprecated alias for hive init", async () => {
+  test("the removed start subcommand is rejected", async () => {
     const run = await runCli(["start"]);
     const output = run.stdout + run.stderr;
-    expect(run.exitCode).toEqual(0);
-    expect(output).toContain("`hive start` is deprecated; use `hive init`.");
-    expect(output).toContain(`daemon port ${port}`);
+    expect(run.exitCode).not.toEqual(0);
+    expect(output).toContain("too many arguments");
+    expect(output).not.toContain(`daemon port ${port}`);
   }, MINUTE);
 
   test("workspace-feed streams NDJSON snapshots and holds the presence lease", async () => {

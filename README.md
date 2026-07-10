@@ -88,7 +88,6 @@ Prefer plain terminals? `hive claude` / `hive codex` run the same orchestrator i
 |---|---|
 | `hive` | Open the project's Workspace — daemon, orchestrator, and agent panes in one window |
 | `hive init` | Initialize or refresh the repo profile, then bring up its daemon without opening a window (`--refresh` updates the profile only) |
-| `hive start` | Deprecated alias for `hive init` |
 | `hive claude` / `hive codex` | Start a terminal orchestrator in the current folder |
 | `hive status` | Show all running agents and what they're doing |
 | `hive quota` | Show remaining capacity per provider, with reset times |

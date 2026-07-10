@@ -216,15 +216,6 @@ export function createProgram(): Command {
   });
 
   program
-    .command("start")
-    .description("Deprecated alias for `hive init`")
-    .action(async () => {
-      console.error("`hive start` is deprecated; use `hive init`.");
-      await runInitCli({});
-      await runStart();
-    });
-
-  program
     .command("init")
     .description(
       "Initialize or refresh this repo profile, then bring its Hive daemon up",
