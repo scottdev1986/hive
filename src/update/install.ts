@@ -17,7 +17,7 @@
  * useful while staging and exactly why the daemon must be restarted explicitly.
  */
 import { chmod, mkdir, rename, rm, symlink, writeFile } from "node:fs/promises";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { z } from "zod";
 import {
@@ -195,10 +195,92 @@ export async function ensureBinLink(root = installRoot()): Promise<void> {
   await rename(temporary, link);
 }
 
+/** Patch number of a `versions/` directory name, or -1 for anything malformed. */
+function patchNumber(version: string): number {
+  const match = /^\d+\.\d+\.(\d+)$/.exec(version);
+  return match?.[1] === undefined ? -1 : Number.parseInt(match[1], 10);
+}
+
+/** Every staged version directory, most recent first. Empty if none exist yet. */
+function installedVersions(root: string): string[] {
+  try {
+    return readdirSync(versionsDir(root), { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() && /^\d+\.\d+\.\d+$/.test(entry.name))
+      .map((entry) => entry.name)
+      .sort((a, b) => patchNumber(b) - patchNumber(a));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Staged versions outside the retention budget: the active version, the
+ * rollback target, and the next most recent — three by default, fewer only
+ * when fewer than three are staged. `active` and `previous` are never in the
+ * result, whether or not they are actually present on disk.
+ */
+export function versionsToPrune(
+  root: string,
+  active: string | null,
+  previous: string | null,
+): string[] {
+  const installed = installedVersions(root);
+  const keep = new Set<string>();
+  if (active !== null) keep.add(active);
+  if (previous !== null) keep.add(previous);
+  for (const version of installed) {
+    if (keep.size >= 3) break;
+    keep.add(version);
+  }
+  return installed.filter((version) => !keep.has(version));
+}
+
+export interface PruneDeps {
+  readonly root?: string;
+  /** Where the prune report goes; defaults to `console.log`. */
+  readonly log?: (message: string) => void;
+  /** Injectable for tests; defaults to removing the version directory. */
+  readonly remove?: (dir: string) => Promise<void>;
+}
+
+/**
+ * Remove staged versions past the retention budget so `versions/` does not
+ * grow forever. Never throws: pruning is disk hygiene, not part of the
+ * update's success, so a removal error is logged and swallowed rather than
+ * surfaced as a failed update.
+ */
+export async function pruneOldVersions(
+  active: string | null,
+  previous: string | null,
+  deps: PruneDeps = {},
+): Promise<readonly string[]> {
+  const root = deps.root ?? installRoot();
+  const log = deps.log ?? ((message: string) => console.log(message));
+  const remove = deps.remove ?? ((dir: string) => rm(dir, { recursive: true, force: true }));
+
+  const pruned: string[] = [];
+  for (const version of versionsToPrune(root, active, previous)) {
+    try {
+      await remove(versionDir(version, root));
+      pruned.push(version);
+      log(`hive update: pruned hive ${version} (retaining the active version, the rollback target, and the next most recent)`);
+    } catch (error) {
+      log(
+        `hive update: could not prune hive ${version}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }
+  return pruned;
+}
+
 export interface ActivationDeps {
   readonly root?: string;
   /** Bounded proof that the activated binary works. */
   readonly healthCheck: (binaryPath: string) => Promise<boolean>;
+  /** Where prune reports go; forwarded to `pruneOldVersions`. */
+  readonly log?: (message: string) => void;
 }
 
 export type ActivationOutcome =
@@ -229,6 +311,7 @@ export async function activateWithHealthCheck(
 
   if (healthy) {
     writeInstallState({ active: version, previous }, root);
+    await pruneOldVersions(version, previous, { root, log: deps.log });
     return { activated: true, version, previous };
   }
 
@@ -286,6 +369,7 @@ export async function rollback(deps: ActivationDeps): Promise<ActivationOutcome>
   // The version we just left becomes the rollback target, so a bad rollback is
   // itself reversible.
   writeInstallState({ active: target, previous: state.active }, root);
+  await pruneOldVersions(target, state.active, { root, log: deps.log });
   return { activated: true, version: target, previous: state.active };
 }
 

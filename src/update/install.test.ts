@@ -16,9 +16,11 @@ import {
   activate,
   activateWithHealthCheck,
   isStaged,
+  pruneOldVersions,
   readInstallState,
   rollback,
   stageRelease,
+  versionsToPrune,
   writeInstallState,
 } from "./install";
 import { cliPath, currentLink, stagingDir, versionDir, versionsDir } from "./paths";
@@ -245,5 +247,115 @@ describe("rollback", () => {
     const outcome = await rollback({ root, healthCheck: async () => false });
     expect(outcome).toMatchObject({ activated: false, revertedTo: null });
     expect(readlinkSync(currentLink(root))).toEqual(join("versions", "0.0.6"));
+  });
+});
+
+describe("retention set for pruning old versions", () => {
+  test("keeps the active version, the rollback target, and the next most recent", () => {
+    ["0.0.4", "0.0.5", "0.0.6", "0.0.7", "0.0.8"].forEach((v) => fakeVersion(v));
+    // active/previous are the two newest; the next most recent is 0.0.6.
+    expect(versionsToPrune(root, "0.0.8", "0.0.7").sort()).toEqual(["0.0.4", "0.0.5"]);
+  });
+
+  test("never counts active or the rollback target against the budget, wherever they sort", () => {
+    ["0.0.4", "0.0.5", "0.0.6", "0.0.7"].forEach((v) => fakeVersion(v));
+    // active/previous are the two oldest; pruning must still spare both of them.
+    expect(versionsToPrune(root, "0.0.4", "0.0.5")).toEqual(["0.0.6"]);
+  });
+
+  test("prunes nothing when three or fewer versions are staged", () => {
+    fakeVersion("0.0.6");
+    fakeVersion("0.0.7");
+    expect(versionsToPrune(root, "0.0.7", "0.0.6")).toEqual([]);
+  });
+
+  test("is not confused by a directory that is not a version", () => {
+    fakeVersion("0.0.6");
+    fakeVersion("0.0.7");
+    mkdirSync(join(versionsDir(root), "staging-leftover"), { recursive: true });
+    expect(versionsToPrune(root, "0.0.7", "0.0.6")).toEqual([]);
+  });
+});
+
+describe("pruneOldVersions", () => {
+  test("removes exactly the versions outside the retention budget, and logs each one", async () => {
+    ["0.0.4", "0.0.5", "0.0.6", "0.0.7"].forEach((v) => fakeVersion(v));
+    const logs: string[] = [];
+
+    const pruned = await pruneOldVersions("0.0.7", "0.0.6", { root, log: (m) => logs.push(m) });
+
+    expect(pruned).toEqual(["0.0.4"]);
+    expect(isStaged("0.0.4", root)).toEqual(false);
+    expect(isStaged("0.0.5", root)).toEqual(true);
+    expect(isStaged("0.0.6", root)).toEqual(true);
+    expect(isStaged("0.0.7", root)).toEqual(true);
+    expect(logs).toHaveLength(1);
+    expect(logs[0]).toContain("0.0.4");
+  });
+
+  test("never removes the active version or the rollback target", async () => {
+    ["0.0.4", "0.0.5", "0.0.6", "0.0.7", "0.0.8"].forEach((v) => fakeVersion(v));
+    await pruneOldVersions("0.0.8", "0.0.4", { root, log: () => {} });
+    expect(isStaged("0.0.8", root)).toEqual(true);
+    expect(isStaged("0.0.4", root)).toEqual(true);
+  });
+
+  test("a removal failure is logged and swallowed, never thrown", async () => {
+    ["0.0.4", "0.0.5", "0.0.6", "0.0.7"].forEach((v) => fakeVersion(v));
+    const logs: string[] = [];
+    const failing = versionDir("0.0.4", root);
+
+    const pruned = await pruneOldVersions("0.0.7", "0.0.6", {
+      root,
+      log: (m) => logs.push(m),
+      remove: async (dir) => {
+        if (dir === failing) throw new Error("permission denied");
+      },
+    });
+
+    expect(pruned).toEqual([]);
+    expect(isStaged("0.0.4", root)).toEqual(true);
+    expect(logs.some((m) => m.includes("0.0.4") && m.includes("permission denied"))).toEqual(true);
+  });
+
+  test("activating a new version prunes old ones, keeping active/previous/next", async () => {
+    ["0.0.4", "0.0.5", "0.0.6", "0.0.7"].forEach((v) => fakeVersion(v));
+    writeInstallState({ active: "0.0.6", previous: "0.0.5" }, root);
+
+    const outcome = await activateWithHealthCheck("0.0.7", {
+      root,
+      healthCheck: async () => true,
+      log: () => {},
+    });
+
+    expect(outcome).toMatchObject({ activated: true, version: "0.0.7", previous: "0.0.6" });
+    expect(isStaged("0.0.7", root)).toEqual(true);
+    expect(isStaged("0.0.6", root)).toEqual(true);
+    expect(isStaged("0.0.5", root)).toEqual(true);
+    expect(isStaged("0.0.4", root)).toEqual(false);
+  });
+
+  test("a successful rollback prunes old versions too", async () => {
+    ["0.0.4", "0.0.5", "0.0.6", "0.0.7"].forEach((v) => fakeVersion(v));
+    await activate("0.0.7", root);
+    writeInstallState({ active: "0.0.7", previous: "0.0.6" }, root);
+
+    const outcome = await rollback({ root, healthCheck: async () => true, log: () => {} });
+
+    expect(outcome).toMatchObject({ activated: true, version: "0.0.6", previous: "0.0.7" });
+    expect(isStaged("0.0.6", root)).toEqual(true);
+    expect(isStaged("0.0.7", root)).toEqual(true);
+    expect(isStaged("0.0.5", root)).toEqual(true);
+    expect(isStaged("0.0.4", root)).toEqual(false);
+  });
+
+  test("a failed activation that reverts does not prune anything", async () => {
+    ["0.0.4", "0.0.5", "0.0.6", "0.0.7"].forEach((v) => fakeVersion(v));
+    writeInstallState({ active: "0.0.6", previous: "0.0.5" }, root);
+
+    await activateWithHealthCheck("0.0.7", { root, healthCheck: async () => false, log: () => {} });
+
+    // A failed activation never reaches the prune step at all.
+    expect(isStaged("0.0.4", root)).toEqual(true);
   });
 });
