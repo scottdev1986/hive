@@ -69,12 +69,12 @@ final class ProjectStateTests: XCTestCase {
 
         let changes = state.apply(feed: [
             agent("reviewer", status: "idle", tool: "codex", model: "gpt-5.4",
-                  task: "spawn-time assignment", contextPct: 47.6),
+                  task: "spawn-time assignment", contextPct: 12),
         ], now: 2)
         XCTAssertTrue(changes.contains(.statusChanged(paneID)))
         XCTAssertEqual(
             try XCTUnwrap(state.panes[paneID]).headerDescription,
-            "codex · gpt-5.4 · idle · ctx 48%")
+            "codex · gpt-5.4 · idle · ctx 12%")
     }
 
     func testContextOnlyFeedChangeRerendersHeader() throws {
