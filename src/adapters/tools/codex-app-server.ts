@@ -123,6 +123,13 @@ export class CodexAppServerClient {
   }
 }
 
+// A JSON-RPC frame is at most a few hundred KB; megabytes of buffered bytes
+// without a newline means the peer is streaming garbage. Dropping the buffer
+// forfeits one unparseable frame instead of letting a broken peer grow the
+// process without bound (the 2026-07-10 OOM incident is why every unbounded
+// accumulation point in this file now has a ceiling).
+export const MAX_FRAME_BUFFER_BYTES = 4 * 1024 * 1024;
+
 class SocketTransport implements CodexAppServerTransport {
   private buffer = "";
   private messageHandler: (message: RpcMessage) => void = () => undefined;
@@ -167,7 +174,15 @@ class SocketTransport implements CodexAppServerTransport {
     this.buffer += chunk;
     while (true) {
       const newline = this.buffer.indexOf("\n");
-      if (newline < 0) return;
+      if (newline < 0) {
+        if (this.buffer.length > MAX_FRAME_BUFFER_BYTES) {
+          console.error(
+            `Hive Codex transport dropped ${this.buffer.length} unterminated bytes`,
+          );
+          this.buffer = "";
+        }
+        return;
+      }
       const line = this.buffer.slice(0, newline).trim();
       this.buffer = this.buffer.slice(newline + 1);
       if (line.length === 0) continue;
@@ -647,6 +662,7 @@ export async function runCodexAppServerHost(
   options: CodexAppServerHostOptions,
 ): Promise<number> {
   await unlink(options.socket).catch(() => undefined);
+  await unlink(`${options.socket}.pid`).catch(() => undefined);
   const child = Bun.spawn([
     "codex",
     "app-server",
@@ -661,6 +677,10 @@ export async function runCodexAppServerHost(
     stdout: "pipe",
     stderr: "pipe",
   });
+  // The child's pid is recorded beside the socket so the daemon can reap a
+  // codex app-server whose host died without cleanup (SIGKILL, OOM, crash) —
+  // orphans from exactly that path were found still running days later.
+  await Bun.write(`${options.socket}.pid`, `${child.pid}\n`);
   const stopChild = (): void => {
     try {
       child.kill();
@@ -671,6 +691,7 @@ export async function runCodexAppServerHost(
   process.once("SIGINT", stopChild);
   process.once("SIGTERM", stopChild);
   process.once("SIGHUP", stopChild);
+  process.once("exit", stopChild);
   let client: Socket | null = null;
   let childBuffer = "";
   const server = createServer((socket) => {
@@ -703,8 +724,21 @@ export async function runCodexAppServerHost(
       const { done, value } = await stdout.read();
       if (done) break;
       const text = decode.decode(value, { stream: true });
+      if (
+        client !== null && client.writableLength > MAX_FRAME_BUFFER_BYTES
+      ) {
+        // The daemon stopped draining its socket. Dropping the connection
+        // (it re-establishes on the next agent start) beats buffering the
+        // codex stream in this process until the machine runs out of memory.
+        client.destroy();
+        client = null;
+      }
       client?.write(text);
       childBuffer += text;
+      if (childBuffer.indexOf("\n") < 0) {
+        if (childBuffer.length > MAX_FRAME_BUFFER_BYTES) childBuffer = "";
+        continue;
+      }
       while (true) {
         const newline = childBuffer.indexOf("\n");
         if (newline < 0) break;
@@ -736,8 +770,65 @@ export async function runCodexAppServerHost(
   process.off("SIGINT", stopChild);
   process.off("SIGTERM", stopChild);
   process.off("SIGHUP", stopChild);
+  process.off("exit", stopChild);
   server.close();
   (client as Socket | null)?.destroy();
   await unlink(options.socket).catch(() => undefined);
+  await unlink(`${options.socket}.pid`).catch(() => undefined);
   return exitCode;
+}
+
+const HOST_PIDFILE_PATTERN = /^hive-codex-(.+)\.sock\.pid$/;
+
+export interface ReapOrphanDependencies {
+  listSocketDir: () => Promise<string[]>;
+  readPidFile: (name: string) => Promise<string>;
+  removeFile: (name: string) => Promise<void>;
+  processCommand: (pid: number) => Promise<string | null>;
+  kill: (pid: number) => void;
+}
+
+/**
+ * Kill codex app-server children whose host process died without cleanup.
+ *
+ * Only pidfiles whose agent id belongs to a KNOWN dead agent are acted on:
+ * a live agent's host still owns its child, and an id this daemon has never
+ * seen may belong to another hive instance sharing /tmp. The pid is verified
+ * to still be a codex app-server before the kill so a recycled pid is never
+ * shot. Returns the pids that were reaped.
+ */
+export async function reapOrphanCodexHosts(
+  agentIdStatus: (id: string) => "live" | "dead" | "unknown",
+  dependencies: ReapOrphanDependencies,
+): Promise<number[]> {
+  const reaped: number[] = [];
+  for (const name of await dependencies.listSocketDir()) {
+    const match = HOST_PIDFILE_PATTERN.exec(name);
+    if (match === null) continue;
+    // Socket paths flatten the agent id with the same substitution as
+    // defaultSocketPath, and uuids survive it unchanged.
+    const status = agentIdStatus(match[1]!);
+    if (status !== "dead") continue;
+    let pid: number | null = null;
+    try {
+      pid = Number.parseInt((await dependencies.readPidFile(name)).trim(), 10);
+    } catch {
+      continue;
+    }
+    if (Number.isSafeInteger(pid) && pid > 0) {
+      const command = await dependencies.processCommand(pid);
+      if (command !== null && command.includes("codex app-server")) {
+        try {
+          dependencies.kill(pid);
+          reaped.push(pid);
+        } catch {
+          // The process exited between the check and the kill.
+        }
+      }
+    }
+    await dependencies.removeFile(name).catch(() => undefined);
+    await dependencies.removeFile(name.slice(0, -".pid".length))
+      .catch(() => undefined);
+  }
+  return reaped;
 }

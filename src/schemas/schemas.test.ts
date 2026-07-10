@@ -28,6 +28,11 @@ describe("HiveConfigSchema", () => {
       layout: "auto",
       codex: { driver: "tui" },
       channels: "auto",
+      resources: {
+        enabled: true,
+        perProcessMemoryMb: 12_288,
+        minSystemAvailableMb: 4_096,
+      },
     });
   });
 

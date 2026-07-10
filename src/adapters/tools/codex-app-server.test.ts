@@ -3,6 +3,7 @@ import type { AgentRecord, HookEvent } from "../../schemas";
 import {
   CodexAppServerManager,
   type CodexAppServerTransport,
+  reapOrphanCodexHosts,
   renderCodexViewerMessage,
 } from "./codex-app-server";
 
@@ -224,5 +225,70 @@ describe("Codex app-server adapter", () => {
       method: "account/rateLimits/updated",
       params: {},
     })).toEqual(null);
+  });
+});
+
+describe("reapOrphanCodexHosts", () => {
+  interface FakeWorld {
+    files: Map<string, string>;
+    commands: Map<number, string>;
+    killed: number[];
+  }
+
+  const dependencies = (world: FakeWorld) => ({
+    listSocketDir: async () => [...world.files.keys()],
+    readPidFile: async (name: string) => {
+      const contents = world.files.get(name);
+      if (contents === undefined) throw new Error("missing");
+      return contents;
+    },
+    removeFile: async (name: string) => {
+      world.files.delete(name);
+    },
+    processCommand: async (pid: number) => world.commands.get(pid) ?? null,
+    kill: (pid: number) => {
+      world.killed.push(pid);
+    },
+  });
+
+  const status = (map: Record<string, "live" | "dead" | "unknown">) =>
+  (id: string) => map[id] ?? "unknown";
+
+  test("kills only verified codex children of known-dead agents", async () => {
+    const world: FakeWorld = {
+      files: new Map([
+        ["hive-codex-dead-agent.sock.pid", "4242\n"],
+        ["hive-codex-dead-agent.sock", ""],
+        ["hive-codex-live-agent.sock.pid", "5151\n"],
+        ["hive-codex-foreign-agent.sock.pid", "6161\n"],
+        ["hive-codex-recycled.sock.pid", "7171\n"],
+        ["unrelated.txt", "ignore me"],
+      ]),
+      commands: new Map([
+        [4242, "codex app-server --stdio"],
+        [5151, "codex app-server --stdio"],
+        [6161, "codex app-server --stdio"],
+        [7171, "vim notes.txt"],
+      ]),
+      killed: [],
+    };
+    const reaped = await reapOrphanCodexHosts(
+      status({
+        "dead-agent": "dead",
+        "live-agent": "live",
+        recycled: "dead",
+      }),
+      dependencies(world),
+    );
+
+    expect(reaped).toEqual([4242]);
+    expect(world.killed).toEqual([4242]);
+    // Dead agents' pidfiles and sockets are cleared even when the pid was
+    // recycled by another program; live and unknown agents keep theirs.
+    expect([...world.files.keys()].sort()).toEqual([
+      "hive-codex-foreign-agent.sock.pid",
+      "hive-codex-live-agent.sock.pid",
+      "unrelated.txt",
+    ]);
   });
 });

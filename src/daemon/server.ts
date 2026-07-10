@@ -1,3 +1,5 @@
+import { readdir, readFile, rm } from "node:fs/promises";
+import { join } from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import {
   WebStandardStreamableHTTPServerTransport as StreamableHTTPServerTransport,
@@ -50,16 +52,59 @@ import {
   readConfiguredPort,
   writeLifecycleFiles,
 } from "./lifecycle";
-import { compactActiveTeam } from "./orchestrator-lifecycle";
+import {
+  compactActiveTeam,
+  orchestratorTmuxSession,
+} from "./orchestrator-lifecycle";
 import {
   SpawnRequestSchema,
   type SpawnRequest,
   type Spawner,
 } from "./spawner";
 import type { QuotaService } from "./quota";
-import type { CodexAppServerManager } from "../adapters/tools/codex-app-server";
+import {
+  reapOrphanCodexHosts,
+  type CodexAppServerManager,
+  type ReapOrphanDependencies,
+} from "../adapters/tools/codex-app-server";
+import {
+  assessResources,
+  parseAvailableMemoryMb,
+  parseProcessTable,
+  runPs,
+  runVmStat,
+  type CommandOutput,
+  type SessionProcessRoots,
+} from "./resources";
+import type { ResourceLimits } from "../schemas";
 
 export const HIVE_VERSION = "0.1.0";
+
+// Codex app-server hosts drop their pidfiles beside their sockets in /tmp
+// (see defaultSocketPath); the daemon reaps children whose host died without
+// running its own cleanup.
+const CODEX_SOCKET_DIR = "/tmp";
+
+function defaultOrphanDependencies(): ReapOrphanDependencies {
+  return {
+    listSocketDir: () => readdir(CODEX_SOCKET_DIR),
+    readPidFile: (name) =>
+      readFile(join(CODEX_SOCKET_DIR, name), "utf8"),
+    removeFile: (name) => rm(join(CODEX_SOCKET_DIR, name), { force: true }),
+    processCommand: async (pid) => {
+      const child = Bun.spawn(["ps", "-o", "command=", "-p", String(pid)], {
+        stdout: "pipe",
+        stderr: "ignore",
+      });
+      const [output, exitCode] = await Promise.all([
+        new Response(child.stdout).text(),
+        child.exited,
+      ]);
+      return exitCode === 0 ? output.trim() : null;
+    },
+    kill: (pid) => process.kill(pid, "SIGKILL"),
+  };
+}
 
 const SendRequestSchema = z.object({
   from: z.string().min(1),
@@ -244,6 +289,17 @@ export interface HiveDaemonOptions {
     | "resolveApproval"
     | "close"
   >;
+  /** Memory watchdog limits; the sweep stays off when omitted so embedded
+   * daemons (tests, tooling) never sample or kill real processes. */
+  resources?: ResourceLimits;
+  /** Test seams for the resource sweep's process interrogation. */
+  resourceRunners?: {
+    ps?: CommandOutput;
+    vmStat?: CommandOutput;
+    panePids?: (session: string) => Promise<number[]>;
+    kill?: (pid: number) => void;
+    orphans?: ReapOrphanDependencies | null;
+  };
 }
 
 function json(value: unknown, init?: ResponseInit): Response {
@@ -285,6 +341,13 @@ export class HiveDaemon {
   private bunServer: Server<undefined> | null = null;
   private reconciliationTimer: ReturnType<typeof setInterval> | null = null;
   private maintenanceRunning = false;
+  private readonly resources: ResourceLimits | null;
+  private readonly psSample: CommandOutput;
+  private readonly vmStatSample: CommandOutput;
+  private readonly panePids: (session: string) => Promise<number[]>;
+  private readonly killProcess: (pid: number) => void;
+  private readonly orphanDependencies: ReapOrphanDependencies | null;
+  private memoryPressure = false;
 
   constructor(options: HiveDaemonOptions) {
     this.ownsDatabase = options.db === undefined;
@@ -348,6 +411,16 @@ export class HiveDaemon {
     this.closeTerminal = options.closeTerminal ?? closeTerminal;
     this.layout = options.layout ?? null;
     this.land = options.landBranch ?? landBranch;
+    this.resources = options.resources ?? null;
+    this.psSample = options.resourceRunners?.ps ?? runPs;
+    this.vmStatSample = options.resourceRunners?.vmStat ?? runVmStat;
+    this.panePids = options.resourceRunners?.panePids ??
+      ((session) => new TmuxAdapter().listPanePids(session));
+    this.killProcess = options.resourceRunners?.kill ??
+      ((pid) => process.kill(pid, "SIGKILL"));
+    this.orphanDependencies = options.resourceRunners?.orphans === undefined
+      ? defaultOrphanDependencies()
+      : options.resourceRunners.orphans;
     this.repoRoot = options.repoRoot ?? process.cwd();
     this.cleanupWorktree = options.removeWorktree ?? removeWorktree;
     this.assessStranded = options.assessStrandedWork ?? assessStrandedWork;
@@ -453,8 +526,110 @@ export class HiveDaemon {
       await this.recoverQuotaReservations();
       await this.delivery.recoverCriticalControls();
       await this.reconcileAgents();
+      await this.sweepResources();
+      this.db.pruneHistory(new Date().toISOString());
     } finally {
       this.maintenanceRunning = false;
+    }
+  }
+
+  /**
+   * The memory watchdog (SPEC.md "Resource safety"): hard-kill any process
+   * under a hive-owned tmux session that exceeds the per-process ceiling,
+   * pause spawning while the system is low on reclaimable memory, and reap
+   * codex app-server children orphaned by a dead host. Every action lands as
+   * a durable orchestrator message, so degradation is visible, not silent.
+   */
+  async sweepResources(): Promise<void> {
+    const limits = this.resources;
+    if (limits === null || !limits.enabled) return;
+    try {
+      const [psRaw, vmRaw] = await Promise.all([
+        this.psSample(),
+        this.vmStatSample(),
+      ]);
+      const sessions: SessionProcessRoots[] = [];
+      const watched = [
+        { owner: ORCHESTRATOR_NAME, session: orchestratorTmuxSession() },
+        ...this.db.listAgents()
+          .filter((agent) =>
+            agent.status !== "dead" && agent.status !== "done" &&
+            agent.status !== "failed"
+          )
+          .map((agent) => ({ owner: agent.name, session: agent.tmuxSession })),
+      ];
+      for (const target of watched) {
+        try {
+          sessions.push({
+            owner: target.owner,
+            rootPids: await this.panePids(target.session),
+          });
+        } catch {
+          // A vanished session has no processes left to watch.
+        }
+      }
+      const assessment = assessResources({
+        samples: parseProcessTable(psRaw),
+        sessions,
+        daemonPid: process.pid,
+        availableMb: parseAvailableMemoryMb(vmRaw),
+        limits,
+      });
+      this.memoryPressure = assessment.memoryPressure;
+      for (const kill of assessment.kills) {
+        try {
+          this.killProcess(kill.process.pid);
+        } catch {
+          continue;
+        }
+        await this.delivery.send(
+          "hive-resources",
+          ORCHESTRATOR_NAME,
+          `Hive memory watchdog killed pid ${kill.process.pid} under ${kill.owner} ` +
+            `(${Math.round(kill.process.rssMb)} MB resident, limit ${limits.perProcessMemoryMb} MB): ` +
+            `${kill.process.command.slice(0, 160)}. The ${kill.owner} session itself is still running; ` +
+            `check whether its work needs to be retried.`,
+          { idempotencyKey: `resource-kill:${kill.process.pid}` },
+        ).catch(() => undefined);
+      }
+      if (assessment.memoryPressure && assessment.availableMb !== null) {
+        await this.delivery.send(
+          "hive-resources",
+          ORCHESTRATOR_NAME,
+          `Hive paused agent spawning: ${Math.round(assessment.availableMb)} MB of ` +
+            `reclaimable system memory is below the ${limits.minSystemAvailableMb} MB floor. ` +
+            "Spawns resume automatically once memory pressure clears.",
+          // One alert per hour of sustained pressure, not one per sweep.
+          { idempotencyKey: `resource-pressure:${new Date().toISOString().slice(0, 13)}` },
+        ).catch(() => undefined);
+      }
+      await this.reapCodexOrphans();
+    } catch (error) {
+      console.error(
+        `Hive resource sweep failed: ${
+          error instanceof Error ? error.message : "unknown error"
+        }`,
+      );
+    }
+  }
+
+  private async reapCodexOrphans(): Promise<void> {
+    if (this.orphanDependencies === null) return;
+    const reaped = await reapOrphanCodexHosts((id) => {
+      const agent = this.db.getAgentById(id);
+      if (agent === null) return "unknown";
+      return agent.status === "dead" || agent.status === "done" ||
+          agent.status === "failed"
+        ? "dead"
+        : "live";
+    }, this.orphanDependencies);
+    for (const pid of reaped) {
+      await this.delivery.send(
+        "hive-resources",
+        ORCHESTRATOR_NAME,
+        `Hive reaped an orphaned codex app-server (pid ${pid}) left behind by a dead agent's host process.`,
+        { idempotencyKey: `resource-reap:${pid}` },
+      ).catch(() => undefined);
     }
   }
 
@@ -1194,6 +1369,13 @@ export class HiveDaemon {
       description: "Start a new Hive agent for a delegated task.",
       inputSchema: SpawnRequestSchema,
     }, async (request: SpawnRequest) => {
+      if (this.memoryPressure) {
+        throw new Error(
+          "Hive is refusing to spawn new agents while the system is under " +
+            "memory pressure; retry once the resource watchdog reports the " +
+            "pressure has cleared.",
+        );
+      }
       const agent = await this.spawner.spawn(request);
       const current = this.db.getAgentById(agent.id);
       const persisted = current !== null &&

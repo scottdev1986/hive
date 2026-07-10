@@ -161,6 +161,22 @@ export class TmuxAdapter {
       .filter((tty) => tty.startsWith("/dev/")))];
   }
 
+  /** PIDs of the root process in every pane of the session. These anchor the
+   * resource watchdog's process-tree walk, so a runaway grandchild (e.g. a
+   * hung test run inside an agent's shell) is still attributable. */
+  async listPanePids(session: string): Promise<number[]> {
+    validateSessionName(session);
+    const result = await this.run(
+      ["list-panes", "-s", "-t", `=${session}`, "-F", "#{pane_pid}"],
+      this.socketName,
+    );
+    assertSuccess(result, "list-panes");
+    return result.stdout
+      .split("\n")
+      .map((pid) => Number.parseInt(pid.trim(), 10))
+      .filter((pid) => Number.isSafeInteger(pid) && pid > 0);
+  }
+
   async killSession(
     session: string,
     options: KillSessionOptions = {},

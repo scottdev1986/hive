@@ -1516,3 +1516,108 @@ describe("HiveDaemon HTTP server", () => {
     }
   });
 });
+
+describe("resource watchdog", () => {
+  const psOutput = [
+    "  10     1   102400 claude --model sonnet", // maya pane root, 100 MB
+    "  11    10 94371840 bun test",              // runaway grandchild, 90 GB
+    "  20     1   102400 codex",                 // sam pane root, healthy
+  ].join("\n");
+  const vmStatOutput = [
+    "Mach Virtual Memory Statistics: (page size of 16384 bytes)",
+    "Pages free:                              262144.",
+    "Pages inactive:                          262144.",
+  ].join("\n");
+
+  function watchdogDaemon(overrides: {
+    vmStat?: string;
+    availableFloorMb?: number;
+  } = {}) {
+    const db = new HiveDatabase(":memory:");
+    const sender = new SilentTmuxSender();
+    const killed: number[] = [];
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new StubSpawner(),
+      tmuxSender: sender,
+      resources: {
+        enabled: true,
+        perProcessMemoryMb: 12_288,
+        minSystemAvailableMb: overrides.availableFloorMb ?? 4_096,
+      },
+      resourceRunners: {
+        ps: async () => psOutput,
+        vmStat: async () => overrides.vmStat ?? vmStatOutput,
+        panePids: async (session) =>
+          session === "hive-maya" ? [10] : session === "hive-sam" ? [20] : [],
+        kill: (pid) => {
+          killed.push(pid);
+        },
+        orphans: null,
+      },
+    });
+    return { db, daemon, killed };
+  }
+
+  test("kills a runaway process under an agent session and reports it", async () => {
+    const { db, daemon, killed } = watchdogDaemon();
+    db.insertAgent(agent({ tmuxSession: "hive-maya" }));
+    db.insertAgent(agent({
+      id: "agent-sam",
+      name: "sam",
+      tmuxSession: "hive-sam",
+    }));
+    try {
+      await daemon.sweepResources();
+
+      expect(killed).toEqual([11]);
+      const reports = db.listMessages()
+        .filter((message) => message.from === "hive-resources");
+      expect(reports).toHaveLength(1);
+      expect(reports[0]?.body).toContain("killed pid 11 under maya");
+      expect(reports[0]?.body).toContain("bun test");
+
+      // The same runaway is never re-reported on the next sweep.
+      await daemon.sweepResources();
+      expect(killed).toEqual([11, 11]);
+      expect(db.listMessages()
+        .filter((message) => message.from === "hive-resources"))
+        .toHaveLength(1);
+    } finally {
+      await daemon.stop();
+      db.close();
+    }
+  });
+
+  test("memory pressure pauses hive_spawn until it clears", async () => {
+    const lowMemory = [
+      "Mach Virtual Memory Statistics: (page size of 16384 bytes)",
+      "Pages free:                              1024.",
+      "Pages inactive:                          1024.",
+    ].join("\n");
+    const { db, daemon } = watchdogDaemon({ vmStat: lowMemory });
+    try {
+      await daemon.sweepResources();
+
+      const transport = new StreamableHTTPClientTransport(
+        new URL("http://hive/mcp"),
+        { fetch: (input, init) => daemon.fetch(new Request(input, init)) },
+      );
+      const client = new Client({ name: "watchdog-test", version: "1.0.0" });
+      await client.connect(transport);
+      const refused = await client.callTool({
+        name: "hive_spawn",
+        arguments: { task: "More work", tier: "standard" },
+      });
+      expect(refused.isError).toBe(true);
+      expect(JSON.stringify(refused.content)).toContain("memory pressure");
+      expect(db.listMessages()
+        .some((m) => m.body.includes("paused agent spawning")))
+        .toBe(true);
+      await client.close();
+    } finally {
+      await daemon.stop();
+      db.close();
+    }
+  });
+});

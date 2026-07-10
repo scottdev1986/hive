@@ -75,6 +75,7 @@ export async function runDaemon(): Promise<void> {
     layout,
     quota,
     codexControl: codexAppServer,
+    resources: config.resources,
   });
   daemon.start();
 

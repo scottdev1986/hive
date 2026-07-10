@@ -746,4 +746,31 @@ export class HiveDatabase {
   deleteApproval(id: string): boolean {
     return this.database.query("DELETE FROM approvals WHERE id = ?").run(id).changes > 0;
   }
+
+  /**
+   * Drop settled history older than the retention window. Events, applied
+   * messages, and resolved approvals are audit trail, not operating state, so
+   * the daemon prunes them on its maintenance tick rather than letting the
+   * tables (and every full-table scan over them) grow for the life of the
+   * install. Pending approvals and undelivered/unacknowledged messages are
+   * never touched.
+   */
+  pruneHistory(
+    now: string,
+    keepDays = 14,
+  ): { events: number; messages: number; approvals: number } {
+    const cutoff = new Date(Date.parse(now) - keepDays * 86_400_000)
+      .toISOString();
+    return this.transaction(() => ({
+      events: this.database
+        .query("DELETE FROM events WHERE timestamp < ?")
+        .run(cutoff).changes,
+      messages: this.database
+        .query("DELETE FROM messages WHERE state = 'applied' AND createdAt < ?")
+        .run(cutoff).changes,
+      approvals: this.database
+        .query("DELETE FROM approvals WHERE status != 'pending' AND createdAt < ?")
+        .run(cutoff).changes,
+    }));
+  }
 }

@@ -274,6 +274,67 @@ describe("HiveDatabase", () => {
     }
   });
 
+  test("prunes settled history but never operating state", () => {
+    const db = new HiveDatabase(join(home, "prune.db"));
+    const old = "2026-06-01T00:00:00.000Z";
+    const now = "2026-07-09T12:00:00.000Z";
+    const message = (overrides: Partial<AgentMessage>): AgentMessage => ({
+      id: "message-old",
+      from: "sam",
+      to: "maya",
+      body: "history",
+      createdAt: old,
+      deliveredAt: null,
+      priority: "normal",
+      intent: "instruction",
+      state: "queued",
+      injectedAt: null,
+      acknowledgedAt: null,
+      appliedAt: null,
+      deadlineAt: null,
+      alertAt: null,
+      sequence: 1,
+      idempotencyKey: null,
+      capabilityEpoch: null,
+      ...overrides,
+    });
+    try {
+      db.insertEvent({ kind: "turn-start", agentName: "maya", timestamp: old });
+      db.insertEvent({ kind: "turn-start", agentName: "maya", timestamp: now });
+      db.insertMessage(message({ id: "old-applied", state: "applied" }));
+      db.insertMessage(message({ id: "old-queued", sequence: 2 }));
+      db.insertApproval({
+        id: "old-approved",
+        agentName: "maya",
+        description: "done",
+        status: "approved",
+        createdAt: old,
+        resolvedAt: old,
+      });
+      db.insertApproval({
+        id: "old-pending",
+        agentName: "maya",
+        description: "still waiting",
+        status: "pending",
+        createdAt: old,
+        resolvedAt: null,
+      });
+
+      expect(db.pruneHistory(now)).toEqual({
+        events: 1,
+        messages: 1,
+        approvals: 1,
+      });
+      expect(db.listEvents("maya")).toHaveLength(1);
+      expect(db.getMessage("old-queued")).not.toBeNull();
+      expect(db.getMessage("old-applied")).toBeNull();
+      expect(db.getApproval("old-pending")).not.toBeNull();
+      expect(db.getApproval("old-approved")).toBeNull();
+    } finally {
+      db.close();
+    }
+  });
+
   test("durably reserves agent names during spawn", () => {
     const path = join(home, "agent-name-reservations.db");
     let db = new HiveDatabase(path);

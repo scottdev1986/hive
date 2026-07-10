@@ -48,6 +48,11 @@ describe("config loading", () => {
       layout: "auto",
       codex: { driver: "tui" },
       channels: "auto",
+      resources: {
+        enabled: true,
+        perProcessMemoryMb: 12_288,
+        minSystemAvailableMb: 4_096,
+      },
     });
     expect(await loadRoutingTable()).toEqual(DEFAULT_ROUTING);
     expect(await loadQuotaConfig()).toMatchObject({
@@ -138,6 +143,11 @@ describe("config loading", () => {
       layout: "auto",
       codex: { driver: "app-server" },
       channels: "auto",
+      resources: {
+        enabled: true,
+        perProcessMemoryMb: 12_288,
+        minSystemAvailableMb: 4_096,
+      },
     });
     const routing = await loadRoutingTable();
     expect(routing.deep).toEqual({
