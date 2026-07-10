@@ -1,10 +1,12 @@
 import { describe, expect, test } from "bun:test";
+import { tmpdir } from "node:os";
 import type { AgentRecord, HookEvent } from "../../schemas";
 import {
   CodexAppServerManager,
   CodexAppServerClient,
   CodexAppServerThreadConnection,
   type CodexAppServerTransport,
+  codexAgentSocketPath,
   reapOrphanCodexHosts,
   renderCodexViewerMessage,
 } from "./codex-app-server";
@@ -257,6 +259,114 @@ describe("Codex app-server adapter", () => {
       method: "account/rateLimits/updated",
       params: {},
     })).toEqual(null);
+  });
+});
+
+describe("codexAgentSocketPath", () => {
+  test("derives socket path in tmpdir with agent ID and hive instance hash", () => {
+    const agent: AgentRecord = {
+      id: "agent-test",
+      name: "test",
+      tool: "codex",
+      model: "gpt-5-codex",
+      tier: "standard",
+      status: "spawning",
+      taskDescription: "test",
+      worktreePath: "/tmp/test",
+      branch: "main",
+      tmuxSession: "hive-test",
+      contextPct: 0,
+      createdAt: "2026-07-10T12:00:00.000Z",
+      lastEventAt: "2026-07-10T12:00:00.000Z",
+      recoveryAttempts: 0,
+      capabilityEpoch: 0,
+      writeRevoked: false,
+      channelsEnabled: false,
+    };
+    const path = codexAgentSocketPath(agent);
+    expect(path).toContain("hive-codex-");
+    expect(path).toContain("agent-test");
+    expect(path).toContain(".sock");
+    expect(path).toMatch(new RegExp(`^${tmpdir().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+  });
+
+  test("replaces non-alphanumeric characters in agent ID", () => {
+    const agent: AgentRecord = {
+      id: "agent@with:special#chars",
+      name: "test",
+      tool: "codex",
+      model: "gpt-5-codex",
+      tier: "standard",
+      status: "spawning",
+      taskDescription: "test",
+      worktreePath: "/tmp/test",
+      branch: "main",
+      tmuxSession: "hive-test",
+      contextPct: 0,
+      createdAt: "2026-07-10T12:00:00.000Z",
+      lastEventAt: "2026-07-10T12:00:00.000Z",
+      recoveryAttempts: 0,
+      capabilityEpoch: 0,
+      writeRevoked: false,
+      channelsEnabled: false,
+    };
+    const path = codexAgentSocketPath(agent);
+    const filename = path.split("/").pop()!;
+    expect(filename).toContain("agent-with-special-chars");
+    expect(filename).not.toContain("@");
+    expect(filename).not.toContain(":");
+    expect(filename).not.toContain("#");
+  });
+
+  test("throws when socket path would exceed AF_UNIX length limit", () => {
+    const agent: AgentRecord = {
+      id: "x".repeat(200),
+      name: "test",
+      tool: "codex",
+      model: "gpt-5-codex",
+      tier: "standard",
+      status: "spawning",
+      taskDescription: "test",
+      worktreePath: "/tmp/test",
+      branch: "main",
+      tmuxSession: "hive-test",
+      contextPct: 0,
+      createdAt: "2026-07-10T12:00:00.000Z",
+      lastEventAt: "2026-07-10T12:00:00.000Z",
+      recoveryAttempts: 0,
+      capabilityEpoch: 0,
+      writeRevoked: false,
+      channelsEnabled: false,
+    };
+    expect(() => codexAgentSocketPath(agent)).toThrow(
+      /exceeds the AF_UNIX length limit/,
+    );
+  });
+
+  test("deduplicates sockets for the same hive instance", () => {
+    const agent: AgentRecord = {
+      id: "agent-maya",
+      name: "maya",
+      tool: "codex",
+      model: "gpt-5-codex",
+      tier: "standard",
+      status: "spawning",
+      taskDescription: "test",
+      worktreePath: "/tmp/maya",
+      branch: "main",
+      tmuxSession: "hive-maya",
+      contextPct: 0,
+      createdAt: "2026-07-10T12:00:00.000Z",
+      lastEventAt: "2026-07-10T12:00:00.000Z",
+      recoveryAttempts: 0,
+      capabilityEpoch: 0,
+      writeRevoked: false,
+      channelsEnabled: false,
+    };
+    const path1 = codexAgentSocketPath(agent);
+    const path2 = codexAgentSocketPath(agent, "/some/hive/home");
+    const path3 = codexAgentSocketPath(agent, "/some/hive/home");
+    expect(path2).toEqual(path3);
   });
 });
 

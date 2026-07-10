@@ -1,7 +1,10 @@
 import { createServer, connect, type Socket } from "node:net";
 import { chmod, unlink } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { AgentRecord, HookEvent } from "../../schemas";
 import { HIVE_VERSION } from "../../version";
+import { hiveInstanceSuffix } from "../../daemon/tmux-sessions";
 import type {
   CodexQuotaReading,
   CodexRateLimitsResponse,
@@ -323,8 +326,31 @@ interface PendingApproval {
   resolve: (approved: boolean) => void;
 }
 
+/** The per-agent Codex app-server socket. It lives in the per-user temp dir
+ * (0700 on macOS), never world-writable /tmp where any local user could
+ * pre-bind the name, and is keyed by the resolved-home hash to deduplicate
+ * when multiple HIVE_HOME spellings name the same place. */
+export function codexAgentSocketPath(
+  agent: AgentRecord,
+  hiveHome?: string,
+): string {
+  const socket = join(
+    tmpdir(),
+    `hive-codex-${hiveInstanceSuffix(hiveHome)}-${agent.id.replaceAll(/[^A-Za-z0-9_-]/g, "-")}.sock`,
+  );
+  // macOS caps sun_path at 104 bytes; an over-long TMPDIR must fail here with
+  // its cause, not as an inscrutable bind error inside a subprocess.
+  if (Buffer.byteLength(socket) > 103) {
+    throw new Error(
+      `Codex agent socket path exceeds the AF_UNIX length limit: ${socket}. ` +
+        "Point TMPDIR at a shorter directory.",
+    );
+  }
+  return socket;
+}
+
 const defaultSocketPath = (agent: AgentRecord): string =>
-  `/tmp/hive-codex-${agent.id.replaceAll(/[^A-Za-z0-9_-]/g, "-")}.sock`;
+  codexAgentSocketPath(agent);
 
 const asObject = (value: unknown, label: string): JsonObject => {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
