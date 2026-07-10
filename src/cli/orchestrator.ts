@@ -1,5 +1,7 @@
 import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { ITerm2Adapter } from "../adapters/iterm2";
+import { TerminalAppAdapter } from "../adapters/terminal-app";
 import {
   writeClaudeAgentConfig,
 } from "../adapters/tools/claude";
@@ -7,6 +9,7 @@ import {
   writeCodexAgentConfig,
 } from "../adapters/tools/codex";
 import { ORCHESTRATOR_TMUX_SESSION } from "../daemon/orchestrator-lifecycle";
+import type { TerminalHandle } from "../schemas";
 import { ORCHESTRATOR_BRIEF } from "./orchestrator-brief";
 
 export type OrchestratorTool = "claude" | "codex";
@@ -114,6 +117,62 @@ export function buildOrchestratorCommand(
   ];
 }
 
+export function readCurrentTty(): string | null {
+  const result = Bun.spawnSync(["/usr/bin/tty"], {
+    stdin: "inherit",
+    stdout: "pipe",
+    stderr: "ignore",
+  });
+  if (result.exitCode !== 0) {
+    return null;
+  }
+  const tty = result.stdout.toString().trim();
+  return tty.startsWith("/dev/") ? tty : null;
+}
+
+export type OrchestratorTerminalCapture = () => Promise<TerminalHandle | null>;
+
+// The orchestrator runs in whatever terminal the user typed `hive claude`
+// into, so unlike agent viewers there is no window-creation step that yields
+// a handle. Identify the window by the TTY hive is attached to, but only in
+// emulators whose windows hive knows how to drive; anywhere else (VS Code,
+// Alacritty, an existing tmux) the orchestrator simply doesn't participate
+// in the layout.
+export const captureOrchestratorTerminal: OrchestratorTerminalCapture =
+  async () => {
+    if (Bun.env.TMUX !== undefined) {
+      return null;
+    }
+    const tty = readCurrentTty();
+    if (tty === null) {
+      return null;
+    }
+    if (Bun.env.TERM_PROGRAM === "Apple_Terminal") {
+      return await new TerminalAppAdapter().captureWindowByTty(tty);
+    }
+    if (Bun.env.TERM_PROGRAM === "iTerm.app") {
+      return await new ITerm2Adapter().captureWindowByTty(tty);
+    }
+    return null;
+  };
+
+async function registerOrchestratorTerminal(
+  port: number,
+  handle: TerminalHandle,
+): Promise<void> {
+  await fetch(`http://127.0.0.1:${port}/orchestrator-terminal`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ handle }),
+  });
+}
+
+async function unregisterOrchestratorTerminal(port: number): Promise<void> {
+  await fetch(`http://127.0.0.1:${port}/orchestrator-terminal`, {
+    method: "DELETE",
+  });
+}
+
 export function buildOrchestratorLaunchCommand(
   tool: OrchestratorTool,
   port: number,
@@ -136,10 +195,22 @@ export async function launchOrchestrator(
   port: number,
   cwd = process.cwd(),
   spawn: OrchestratorSpawn = spawnOrchestrator,
+  captureTerminal: OrchestratorTerminalCapture = captureOrchestratorTerminal,
 ): Promise<number> {
   const snapshots = tool === "claude"
     ? await Promise.all(claudeConfigPaths(cwd).map(snapshotFile))
     : [];
+
+  let registeredTerminal = false;
+  try {
+    const handle = await captureTerminal();
+    if (handle !== null) {
+      await registerOrchestratorTerminal(port, handle);
+      registeredTerminal = true;
+    }
+  } catch {
+    // Layout participation is cosmetic; the orchestrator launches regardless.
+  }
 
   try {
     await prepareOrchestratorConfig(tool, port, cwd);
@@ -152,5 +223,8 @@ export async function launchOrchestrator(
     return await child.exited;
   } finally {
     await Promise.all(snapshots.map(restoreFile));
+    if (registeredTerminal) {
+      await unregisterOrchestratorTerminal(port).catch(() => undefined);
+    }
   }
 }

@@ -24,11 +24,13 @@ describe("HiveConfigSchema", () => {
     expect(HiveConfigSchema.parse(roundTrip(parsed))).toEqual({
       terminal: "auto",
       headless: false,
+      layout: "auto",
     });
   });
 
   test("rejects an invalid config", () => {
     expect(() => HiveConfigSchema.parse({ terminal: "xterm" })).toThrow();
+    expect(() => HiveConfigSchema.parse({ layout: "stack" })).toThrow();
   });
 });
 

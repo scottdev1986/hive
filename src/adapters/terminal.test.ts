@@ -4,12 +4,16 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import {
   buildITerm2CloseOsascript,
+  buildITerm2FindSessionByTtyOsascript,
   buildITerm2Osascript,
+  buildITerm2SetBoundsOsascript,
   ITerm2Adapter,
 } from "./iterm2";
 import {
   buildTerminalAppCloseOsascript,
+  buildTerminalAppFindWindowByTtyOsascript,
   buildTerminalAppOsascript,
+  buildTerminalAppSetBoundsOsascript,
   TerminalAppAdapter,
 } from "./terminal-app";
 import { buildAgentTerminalTitle, resolveTerminal } from "./terminal";
@@ -139,6 +143,77 @@ describe("terminal osascript builders", () => {
     expect(script).toContain("close agentWindow");
     expect(script).not.toContain("custom title");
     expect(script).not.toContain("tmux");
+  });
+});
+
+describe("terminal layout osascript builders", () => {
+  test("positions only an identity-verified Terminal.app window", () => {
+    const script = buildTerminalAppSetBoundsOsascript(
+      4242,
+      731,
+      "/dev/ttys009",
+      { x: 100, y: 25, width: 800, height: 600 },
+    );
+
+    expect(script).toContain('if terminalProcessId is not "4242" then return');
+    expect(script).toContain("first window whose id is 731");
+    expect(script).toContain(
+      'if (count of (tabs of agentWindow whose tty is "/dev/ttys009")) is 0 then return',
+    );
+    expect(script).toContain(
+      "set bounds of agentWindow to {100, 25, 900, 625}",
+    );
+    expect(script).not.toContain("close");
+    expect(script).not.toContain("activate");
+  });
+
+  test("positions only the exact iTerm2 session's window", () => {
+    const script = buildITerm2SetBoundsOsascript('session-1"\\', {
+      x: 0,
+      y: 33,
+      width: 640,
+      height: 480,
+    });
+
+    expect(script).toContain(
+      'if (unique id of agentSession as text) is "session-1\\"\\\\" then',
+    );
+    expect(script).toContain("set bounds of agentWindow to {0, 33, 640, 513}");
+    expect(script).not.toContain("close");
+    expect(script).not.toContain("activate");
+  });
+
+  test("finds a Terminal.app window by TTY and returns its identity", () => {
+    const script = buildTerminalAppFindWindowByTtyOsascript("/dev/ttys003");
+
+    expect(script).toContain('if application "Terminal" is not running then return ""');
+    expect(script).toContain('if (tty of candidateTab as text) is "/dev/ttys003" then');
+    expect(script).toContain(
+      "return terminalProcessId & (ASCII character 9) & (id of candidateWindow as text)",
+    );
+    expect(script).not.toContain("close");
+  });
+
+  test("finds an iTerm2 session by TTY and returns its unique id", () => {
+    const script = buildITerm2FindSessionByTtyOsascript("/dev/ttys003");
+
+    expect(script).toContain('if (tty of candidateSession as text) is "/dev/ttys003" then');
+    expect(script).toContain("return unique id of candidateSession as text");
+    expect(script).not.toContain("close");
+  });
+
+  test("bounds setters ignore handles from the other emulator", async () => {
+    const frame = { x: 0, y: 0, width: 100, height: 100 };
+    // Wrong-app handles return without running osascript, so these resolve
+    // instantly even with no emulator installed.
+    await new TerminalAppAdapter().setWindowBounds(
+      { app: "iterm2", sessionId: "session-1" },
+      frame,
+    );
+    await new ITerm2Adapter().setWindowBounds(
+      { app: "terminal", processId: 1, windowId: 2, tty: "/dev/ttys000" },
+      frame,
+    );
   });
 });
 

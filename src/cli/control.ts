@@ -101,7 +101,8 @@ export async function printStatus(): Promise<void> {
 }
 
 export async function watchAgent(name: string): Promise<void> {
-  const agents = await fetchAgentStatus(requireDaemonPort());
+  const port = requireDaemonPort();
+  const agents = await fetchAgentStatus(port);
   const agent = agents.find((candidate) => candidate.name === name);
   if (agent === undefined) {
     const known = agents.length === 0
@@ -117,10 +118,21 @@ export async function watchAgent(name: string): Promise<void> {
     );
   }
   const config = await loadHiveConfig();
-  await resolveTerminal(config).openWindow(
+  const handle = await resolveTerminal(config).openWindow(
     agent.tmuxSession,
     buildAgentTerminalTitle(agent.name, agent.model),
   );
+  try {
+    // Hand the handle to the daemon so the new viewer joins the layout and
+    // hive_kill can close it later.
+    await fetch(`http://127.0.0.1:${port}/viewer`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ agent: name, handle }),
+    });
+  } catch {
+    // Viewer tracking is best-effort; the window is already open.
+  }
 }
 
 export async function stopHive(): Promise<void> {

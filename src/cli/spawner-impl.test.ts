@@ -781,6 +781,58 @@ describe("HiveSpawner wiring", () => {
     expect(terminal.closed).toEqual([handle]);
     expect(store.getAgentById(spawned.id)?.terminalHandle).toBeUndefined();
   });
+
+  test("announces terminal changes only after a viewer is attached", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-spawner-layout-"));
+    tempRoots.push(root);
+    const worktreePath = join(root, "maya");
+    await mkdir(worktreePath, { recursive: true });
+    let terminalsChanged = 0;
+    const makeSpawner = (
+      terminal: TerminalAdapter,
+      store: FakeStore,
+    ): HiveSpawner =>
+      new HiveSpawner({
+        db: store,
+        repoRoot: root,
+        port: 4317,
+        config: { terminal: "auto", headless: false },
+        routing: async () => DEFAULT_ROUTING.standard,
+        tmux: new FakeTmux(),
+        terminal,
+        createWorktree: async () => ({
+          path: worktreePath,
+          branch: "hive/maya-layout",
+        }),
+        resolveModel: fakeResolveModel,
+        sleep: async () => {},
+        onTerminalsChanged: () => {
+          terminalsChanged += 1;
+        },
+      });
+
+    const spawned = await makeSpawner(new FakeTerminal(), new FakeStore())
+      .spawn({ task: "Announce the new viewer", tier: "standard" });
+    expect(spawned.terminalHandle).toBeDefined();
+    expect(terminalsChanged).toEqual(1);
+
+    // A viewer that never opened leaves the wall untouched.
+    await makeSpawner(new FailingTerminal(), new FakeStore())
+      .spawn({ task: "Fail to open a viewer", tier: "standard" });
+    expect(terminalsChanged).toEqual(1);
+
+    // A viewer that lost the attach race was closed, not added.
+    const racingStore = new FakeStore();
+    const racingTerminal = new FakeTerminal(() => {
+      const current = racingStore.listAgents()[0];
+      if (current !== undefined) {
+        racingStore.insertAgent({ ...current, status: "dead" });
+      }
+    });
+    await makeSpawner(racingTerminal, racingStore)
+      .spawn({ task: "Lose the attach race", tier: "standard" });
+    expect(terminalsChanged).toEqual(1);
+  });
 });
 
 describe("agent landing protocol", () => {

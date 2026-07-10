@@ -1,4 +1,5 @@
 import type { TerminalHandle } from "../schemas";
+import type { Frame } from "./layout";
 import { appleScriptString, runOsascript, shellQuote } from "./osascript";
 import type { TerminalAdapter } from "./terminal";
 
@@ -78,6 +79,56 @@ export function buildTerminalAppCloseOsascript(
   ].join("\n");
 }
 
+// Positioning uses the same identity triple as closing (app PID, window id,
+// TTY) so a recycled window id can never move an unrelated window. Unlike
+// closing it accepts extra tabs: any tab on the recorded TTY proves identity,
+// and moving a window the user added tabs to is harmless.
+export function buildTerminalAppSetBoundsOsascript(
+  processId: number,
+  windowId: number,
+  tty: string,
+  frame: Frame,
+): string {
+  const bounds = `{${frame.x}, ${frame.y}, ${frame.x + frame.width}, ${
+    frame.y + frame.height
+  }}`;
+  return [
+    'if application "Terminal" is not running then return',
+    'set terminalProcessId to do shell script "/usr/bin/pgrep -x Terminal"',
+    `if terminalProcessId is not "${processId}" then return`,
+    'tell application "Terminal"',
+    "  try",
+    `    set agentWindow to first window whose id is ${windowId}`,
+    "  on error",
+    "    return",
+    "  end try",
+    `  if (count of (tabs of agentWindow whose tty is "${
+      appleScriptString(tty)
+    }")) is 0 then return`,
+    `  set bounds of agentWindow to ${bounds}`,
+    "end tell",
+  ].join("\n");
+}
+
+export function buildTerminalAppFindWindowByTtyOsascript(tty: string): string {
+  return [
+    'if application "Terminal" is not running then return ""',
+    'set terminalProcessId to do shell script "/usr/bin/pgrep -x Terminal"',
+    'tell application "Terminal"',
+    "  repeat with candidateWindow in windows",
+    "    repeat with candidateTab in tabs of candidateWindow",
+    `      if (tty of candidateTab as text) is "${
+      appleScriptString(tty)
+    }" then`,
+    "        return terminalProcessId & (ASCII character 9) & (id of candidateWindow as text)",
+    "      end if",
+    "    end repeat",
+    "  end repeat",
+    "end tell",
+    'return ""',
+  ].join("\n");
+}
+
 export class TerminalAppAdapter implements TerminalAdapter {
   async openWindow(
     tmuxSession: string,
@@ -114,5 +165,40 @@ export class TerminalAppAdapter implements TerminalAdapter {
       ),
       "close Terminal.app window",
     );
+  }
+
+  async setWindowBounds(handle: TerminalHandle, frame: Frame): Promise<void> {
+    if (handle.app !== "terminal") {
+      return;
+    }
+    await runOsascript(
+      buildTerminalAppSetBoundsOsascript(
+        handle.processId,
+        handle.windowId,
+        handle.tty,
+        frame,
+      ),
+      "position Terminal.app window",
+    );
+  }
+
+  async captureWindowByTty(tty: string): Promise<TerminalHandle | null> {
+    const output = await runOsascript(
+      buildTerminalAppFindWindowByTtyOsascript(tty),
+      "find Terminal.app window",
+    );
+    if (output.length === 0) {
+      return null;
+    }
+    const [processIdText, windowIdText, ...extra] = output.split("\t");
+    const processId = Number(processIdText);
+    const windowId = Number(windowIdText);
+    if (
+      !Number.isSafeInteger(processId) || processId <= 0 ||
+      !Number.isSafeInteger(windowId) || windowId <= 0 || extra.length > 0
+    ) {
+      return null;
+    }
+    return { app: "terminal", processId, windowId, tty };
   }
 }

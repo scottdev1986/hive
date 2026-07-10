@@ -588,6 +588,208 @@ describe("HiveDaemon HTTP server", () => {
     }
   });
 
+  test("reconciliation closes a dead agent's viewer and re-tiles the wall", async () => {
+    const db = new HiveDatabase(join(home, "reconcile-viewer.db"));
+    const tmux = new FakeDaemonTmux();
+    const closedTerminals: AgentRecord["terminalHandle"][] = [];
+    let layoutRequests = 0;
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new StubSpawner(),
+      tmux,
+      closeTerminal: async (handle) => {
+        closedTerminals.push(handle);
+      },
+      layout: {
+        requestLayout: () => {
+          layoutRequests += 1;
+        },
+      },
+    });
+    const terminalHandle = { app: "iterm2", sessionId: "viewer-1" } as const;
+    db.insertAgent(agent({ status: "idle", terminalHandle }));
+    db.insertAgent(agent({
+      id: "agent-david",
+      name: "david",
+      status: "idle",
+      tmuxSession: "hive-david",
+    }));
+    tmux.sessions.add("hive-david");
+    try {
+      await daemon.reconcileAgents();
+
+      expect(db.getAgentByName("maya")).toMatchObject({
+        status: "dead",
+        failureReason: "tmux session missing (reconciled)",
+      });
+      expect(db.getAgentByName("maya")?.terminalHandle).toBeUndefined();
+      expect(closedTerminals).toEqual([terminalHandle]);
+      expect(db.getAgentByName("david")?.status).toEqual("idle");
+      expect(layoutRequests).toEqual(1);
+
+      // A second sweep with nothing to do stays quiet.
+      await daemon.reconcileAgents();
+      expect(layoutRequests).toEqual(1);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("hive_kill re-tiles the wall only when a viewer was tracked", async () => {
+    const db = new HiveDatabase(join(home, "kill-layout.db"));
+    let layoutRequests = 0;
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new StubSpawner(),
+      tmux: new FakeDaemonTmux(),
+      closeTerminal: async () => {},
+      assessStrandedWork: async () => ({
+        dirtyFiles: [],
+        unmergedCommits: 0,
+      }),
+      layout: {
+        requestLayout: () => {
+          layoutRequests += 1;
+        },
+      },
+    });
+    db.insertAgent(agent({
+      terminalHandle: { app: "iterm2", sessionId: "viewer-1" },
+    }));
+    db.insertAgent(agent({
+      id: "agent-david",
+      name: "david",
+      tmuxSession: "hive-david",
+    }));
+    const transport = new StreamableHTTPClientTransport(
+      new URL("http://hive/mcp"),
+      { fetch: (input, init) => daemon.fetch(new Request(input, init)) },
+    );
+    const client = new Client({ name: "hive-test", version: "1.0.0" });
+    try {
+      await client.connect(transport);
+      await client.callTool({ name: "hive_kill", arguments: { name: "maya" } });
+      expect(layoutRequests).toEqual(1);
+
+      await client.callTool({
+        name: "hive_kill",
+        arguments: { name: "david" },
+      });
+      expect(layoutRequests).toEqual(1);
+    } finally {
+      await client.close();
+      await daemon.stop();
+      db.close();
+    }
+  });
+
+  test("registers, replaces, and clears the orchestrator terminal", async () => {
+    const db = new HiveDatabase(join(home, "orchestrator-terminal.db"));
+    let layoutRequests = 0;
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new StubSpawner(),
+      tmux: new FakeDaemonTmux(),
+      layout: {
+        requestLayout: () => {
+          layoutRequests += 1;
+        },
+      },
+    });
+    const handle = {
+      app: "terminal",
+      processId: 4242,
+      windowId: 12,
+      tty: "/dev/ttys004",
+    } as const;
+    const post = (body: unknown) =>
+      daemon.fetch(new Request("http://hive/orchestrator-terminal", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      }));
+    try {
+      // With no agent viewers yet, registration must not move the user's
+      // window.
+      const registered = await post({ handle });
+      expect(registered.status).toEqual(200);
+      expect(db.getOrchestratorTerminal()).toEqual(handle);
+      expect(layoutRequests).toEqual(0);
+
+      // Once a live viewer exists, re-registration re-tiles.
+      db.insertAgent(agent({
+        terminalHandle: { app: "iterm2", sessionId: "viewer-1" },
+      }));
+      await post({ handle });
+      expect(layoutRequests).toEqual(1);
+
+      const invalid = await post({ handle: { app: "screen" } });
+      expect(invalid.status).toEqual(400);
+
+      const notJson = await daemon.fetch(
+        new Request("http://hive/orchestrator-terminal", {
+          method: "POST",
+          body: "not json",
+        }),
+      );
+      expect(notJson.status).toEqual(400);
+
+      const cleared = await daemon.fetch(
+        new Request("http://hive/orchestrator-terminal", {
+          method: "DELETE",
+        }),
+      );
+      expect(cleared.status).toEqual(200);
+      expect(db.getOrchestratorTerminal()).toBeNull();
+    } finally {
+      await daemon.stop();
+      db.close();
+    }
+  });
+
+  test("viewer registration attaches the handle and re-tiles", async () => {
+    const db = new HiveDatabase(join(home, "viewer-endpoint.db"));
+    let layoutRequests = 0;
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new StubSpawner(),
+      tmux: new FakeDaemonTmux(),
+      layout: {
+        requestLayout: () => {
+          layoutRequests += 1;
+        },
+      },
+    });
+    const handle = { app: "iterm2", sessionId: "watch-1" } as const;
+    const post = (body: unknown) =>
+      daemon.fetch(new Request("http://hive/viewer", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      }));
+    db.insertAgent(agent());
+    db.insertAgent(agent({ id: "agent-dead", name: "dead-sam", status: "dead" }));
+    try {
+      const attached = await post({ agent: "maya", handle });
+      expect(attached.status).toEqual(200);
+      expect(db.getAgentByName("maya")?.terminalHandle).toEqual(handle);
+      expect(layoutRequests).toEqual(1);
+
+      const unknown = await post({ agent: "nobody", handle });
+      expect(unknown.status).toEqual(404);
+
+      const terminal = await post({ agent: "dead-sam", handle });
+      expect(terminal.status).toEqual(409);
+
+      const invalid = await post({ agent: "maya" });
+      expect(invalid.status).toEqual(400);
+      expect(layoutRequests).toEqual(1);
+    } finally {
+      await daemon.stop();
+      db.close();
+    }
+  });
+
   test("hive_spawn returns a tool error for a failed verdict", async () => {
     const db = new HiveDatabase(join(home, "failed-spawn.db"));
     const daemon = new HiveDaemon({

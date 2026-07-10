@@ -82,6 +82,78 @@ describe("HiveDatabase", () => {
     }
   });
 
+  test("marking dead records a failure reason and preserves an existing one", () => {
+    const db = new HiveDatabase(join(home, "dead-reasons.db"));
+    try {
+      db.upsertAgent(agent({
+        terminalHandle: { app: "iterm2", sessionId: "session-maya" },
+      }));
+      const reconciled = db.markAgentDeadAndDetachTerminal(
+        "agent-maya",
+        "2026-07-09T13:00:00.000Z",
+        "tmux session missing (reconciled)",
+      );
+      expect(reconciled?.terminalHandle).toEqual({
+        app: "iterm2",
+        sessionId: "session-maya",
+      });
+      expect(reconciled?.agent.failureReason).toEqual(
+        "tmux session missing (reconciled)",
+      );
+
+      db.upsertAgent(agent({
+        id: "agent-david",
+        name: "david",
+        status: "stuck",
+        failureReason: "earlier reason",
+      }));
+      const preserved = db.markAgentDeadAndDetachTerminal(
+        "agent-david",
+        "2026-07-09T13:00:00.000Z",
+      );
+      expect(preserved?.agent.failureReason).toEqual("earlier reason");
+    } finally {
+      db.close();
+    }
+  });
+
+  test("round-trips the orchestrator terminal handle", () => {
+    const db = new HiveDatabase(join(home, "orchestrator-terminal.db"));
+    try {
+      expect(db.getOrchestratorTerminal()).toBeNull();
+
+      const first = {
+        app: "terminal",
+        processId: 88,
+        windowId: 12,
+        tty: "/dev/ttys002",
+      } as const;
+      db.setOrchestratorTerminal(first);
+      expect(db.getOrchestratorTerminal()).toEqual(first);
+
+      const replacement = { app: "iterm2", sessionId: "root-1" } as const;
+      db.setOrchestratorTerminal(replacement);
+      expect(db.getOrchestratorTerminal()).toEqual(replacement);
+
+      db.clearOrchestratorTerminal();
+      expect(db.getOrchestratorTerminal()).toBeNull();
+    } finally {
+      db.close();
+    }
+  });
+
+  test("treats a corrupted orchestrator terminal record as absent", () => {
+    const db = new HiveDatabase(join(home, "orchestrator-corrupt.db"));
+    try {
+      db.database.query(
+        "INSERT INTO meta (key, value) VALUES ('orchestratorTerminal', 'not json')",
+      ).run();
+      expect(db.getOrchestratorTerminal()).toBeNull();
+    } finally {
+      db.close();
+    }
+  });
+
   test("migrates legacy agent rows with no terminal handle", () => {
     const path = join(home, "legacy-agents.db");
     const legacy = new Database(path, { create: true });

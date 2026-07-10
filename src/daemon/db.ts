@@ -148,6 +148,10 @@ export class HiveDatabase {
       );
       CREATE INDEX IF NOT EXISTS approvals_status_created
         ON approvals(status, createdAt);
+      CREATE TABLE IF NOT EXISTS meta (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      );
     `);
     const agentColumns = z.array(z.object({ name: z.string() })).parse(
       this.database.query("PRAGMA table_info(agents)").all(),
@@ -239,6 +243,7 @@ export class HiveDatabase {
   markAgentDeadAndDetachTerminal(
     agentId: string,
     timestamp: string,
+    failureReason?: string,
   ): { agent: AgentRecord; terminalHandle: TerminalHandle | undefined } | null {
     return this.transaction(() => {
       const current = this.getAgentById(agentId);
@@ -250,10 +255,43 @@ export class HiveDatabase {
         ...current,
         status: "dead",
         terminalHandle: undefined,
+        failureReason: failureReason ?? current.failureReason,
         lastEventAt: timestamp,
       });
       return { agent, terminalHandle };
     });
+  }
+
+  // The orchestrator is not a spawned agent and has no agents-table row; its
+  // viewer window handle lives in the meta table so the layout engine can
+  // keep the root window central across daemon restarts.
+  setOrchestratorTerminal(handle: TerminalHandle): void {
+    const value = TerminalHandleSchema.parse(handle);
+    this.database.query(`
+      INSERT INTO meta (key, value) VALUES ('orchestratorTerminal', ?)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value
+    `).run(JSON.stringify(value));
+  }
+
+  getOrchestratorTerminal(): TerminalHandle | null {
+    const row = this.database.query(
+      "SELECT value FROM meta WHERE key = 'orchestratorTerminal'",
+    ).get();
+    if (row === null) {
+      return null;
+    }
+    try {
+      const { value } = z.object({ value: z.string() }).parse(row);
+      return TerminalHandleSchema.parse(JSON.parse(value));
+    } catch {
+      return null;
+    }
+  }
+
+  clearOrchestratorTerminal(): void {
+    this.database.query(
+      "DELETE FROM meta WHERE key = 'orchestratorTerminal'",
+    ).run();
   }
 
   getAgentById(id: string): AgentRecord | null {

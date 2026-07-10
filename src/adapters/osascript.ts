@@ -10,12 +10,17 @@ export const appleScriptString = (value: string): string =>
     .replaceAll("\r", "\\r")
     .replaceAll("\n", "\\n");
 
+export type OsascriptLanguage = "AppleScript" | "JavaScript";
+
 export async function runOsascript(
   script: string,
   operation: string,
+  language: OsascriptLanguage = "AppleScript",
 ): Promise<string> {
   const process = Bun.spawn(
-    ["osascript", "-e", script],
+    language === "JavaScript"
+      ? ["osascript", "-l", "JavaScript", "-e", script]
+      : ["osascript", "-e", script],
     { stdout: "pipe", stderr: "pipe" },
   );
   const stdout = new Response(process.stdout).text();

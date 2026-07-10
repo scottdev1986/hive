@@ -40,6 +40,7 @@ describe("config loading", () => {
     expect(await loadHiveConfig()).toEqual({
       terminal: "auto",
       headless: false,
+      layout: "auto",
     });
     expect(await loadRoutingTable()).toEqual(DEFAULT_ROUTING);
   });
@@ -69,6 +70,7 @@ describe("config loading", () => {
     expect(await loadHiveConfig()).toEqual({
       terminal: "iterm2",
       headless: true,
+      layout: "auto",
     });
     const routing = await loadRoutingTable();
     expect(routing.deep).toEqual({

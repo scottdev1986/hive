@@ -18,10 +18,12 @@ import {
 import {
   HookEventSchema,
   ORCHESTRATOR_NAME,
+  TerminalHandleSchema,
   type AgentRecord,
   type HookEvent,
 } from "../schemas";
 import { HiveDatabase, type Approval } from "./db";
+import type { LayoutCoordinator } from "./layout";
 import {
   BunTmuxSender,
   MessageDelivery,
@@ -74,6 +76,15 @@ const ApprovalDecisionSchema = z.object({
   decision: z.enum(["approve", "deny"]),
 });
 
+const OrchestratorTerminalRequestSchema = z.object({
+  handle: TerminalHandleSchema,
+});
+
+const ViewerRequestSchema = z.object({
+  agent: z.string().min(1),
+  handle: TerminalHandleSchema,
+});
+
 export interface HiveDaemonOptions {
   spawner: Spawner;
   db?: HiveDatabase;
@@ -94,6 +105,7 @@ export interface HiveDaemonOptions {
   port?: number;
   hostname?: string;
   manageLifecycle?: boolean;
+  layout?: LayoutCoordinator;
 }
 
 function json(value: unknown, init?: ResponseInit): Response {
@@ -125,6 +137,7 @@ export class HiveDaemon {
     HiveDaemonOptions["assessStrandedWork"]
   >;
   private readonly closeTerminal: TerminalCloser;
+  private readonly layout: LayoutCoordinator | null;
   private bunServer: Server<undefined> | null = null;
   private reconciliationTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -141,6 +154,7 @@ export class HiveDaemon {
     this.manageLifecycle = options.manageLifecycle ?? false;
     this.tmux = options.tmux ?? new TmuxAdapter();
     this.closeTerminal = options.closeTerminal ?? closeTerminal;
+    this.layout = options.layout ?? null;
     this.repoRoot = options.repoRoot ?? process.cwd();
     this.cleanupWorktree = options.removeWorktree ?? removeWorktree;
     this.assessStranded = options.assessStrandedWork ?? assessStrandedWork;
@@ -205,6 +219,7 @@ export class HiveDaemon {
       "awaiting-approval",
       "stuck",
     ];
+    let viewersChanged = false;
     for (const agent of this.db.listAgents()) {
       if (agent.status === "spawning") {
         continue;
@@ -215,12 +230,24 @@ export class HiveDaemon {
       if (await this.tmux.hasSession(agent.tmuxSession)) {
         continue;
       }
-      this.db.upsertAgent({
-        ...agent,
-        status: "dead",
-        failureReason: "tmux session missing (reconciled)",
-        lastEventAt: new Date().toISOString(),
-      });
+      const reconciled = this.db.markAgentDeadAndDetachTerminal(
+        agent.id,
+        new Date().toISOString(),
+        "tmux session missing (reconciled)",
+      );
+      // The tmux session is already gone, so the viewer shows nothing but a
+      // dead shell; close it instead of leaving a stale window on the wall.
+      if (reconciled?.terminalHandle !== undefined) {
+        viewersChanged = true;
+        try {
+          await this.closeTerminal(reconciled.terminalHandle);
+        } catch {
+          // Viewer cleanup is best-effort; reconciliation must not stall.
+        }
+      }
+    }
+    if (viewersChanged) {
+      this.layout?.requestLayout();
     }
   }
 
@@ -232,10 +259,84 @@ export class HiveDaemon {
     if (url.pathname === "/event" && request.method === "POST") {
       return this.receiveEvent(request);
     }
+    if (url.pathname === "/orchestrator-terminal") {
+      if (request.method === "POST") {
+        return this.registerOrchestratorTerminal(request);
+      }
+      if (request.method === "DELETE") {
+        this.db.clearOrchestratorTerminal();
+        return json({ ok: true });
+      }
+    }
+    if (url.pathname === "/viewer" && request.method === "POST") {
+      return this.attachViewer(request);
+    }
     if (url.pathname === "/mcp") {
       return this.handleMcp(request);
     }
     return json({ error: "Not found" }, { status: 404 });
+  }
+
+  private async registerOrchestratorTerminal(
+    request: Request,
+  ): Promise<Response> {
+    let body: unknown;
+    try {
+      body = await request.json();
+    } catch {
+      return json({ error: "Invalid terminal handle" }, { status: 400 });
+    }
+    const parsed = OrchestratorTerminalRequestSchema.safeParse(body);
+    if (!parsed.success) {
+      return json(
+        { error: "Invalid terminal handle", issues: parsed.error.issues },
+        { status: 400 },
+      );
+    }
+    this.db.setOrchestratorTerminal(parsed.data.handle);
+    // Registration alone leaves a lone orchestrator window untouched; the
+    // wall only starts moving once agent viewers exist.
+    const hasViewers = this.db.listAgents().some((agent) =>
+      agent.terminalHandle !== undefined &&
+      agent.status !== "dead" && agent.status !== "done" &&
+      agent.status !== "failed"
+    );
+    if (hasViewers) {
+      this.layout?.requestLayout();
+    }
+    return json({ ok: true });
+  }
+
+  private async attachViewer(request: Request): Promise<Response> {
+    let body: unknown;
+    try {
+      body = await request.json();
+    } catch {
+      return json({ error: "Invalid viewer request" }, { status: 400 });
+    }
+    const parsed = ViewerRequestSchema.safeParse(body);
+    if (!parsed.success) {
+      return json(
+        { error: "Invalid viewer request", issues: parsed.error.issues },
+        { status: 400 },
+      );
+    }
+    const agent = this.db.getAgentByName(parsed.data.agent);
+    if (agent === null) {
+      return json(
+        { error: `Hive agent not found: ${parsed.data.agent}` },
+        { status: 404 },
+      );
+    }
+    const attached = this.db.attachTerminalHandle(agent.id, parsed.data.handle);
+    if (attached === null) {
+      return json(
+        { error: `Hive agent is no longer live: ${parsed.data.agent}` },
+        { status: 409 },
+      );
+    }
+    this.layout?.requestLayout();
+    return json({ agent: attached });
   }
 
   async processEvent(event: HookEvent): Promise<void> {
@@ -375,6 +476,7 @@ export class HiveDaemon {
         } catch {
           // Terminal cleanup is best-effort; killing and marking dead must win.
         }
+        this.layout?.requestLayout();
       }
       let updated = killed.agent;
       const cleaned: {

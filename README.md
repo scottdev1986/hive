@@ -29,7 +29,7 @@ hive > david finished the routes and is waiting; maya is mid-way
 hive > ⚠️  sam wants to run `npm install express-rate-limit` — allow? (y/n)
 ```
 
-Each agent works in its own window. Close a window any time — the agent keeps working in the background, and you can reopen its view whenever you like.
+Each agent works in its own window, and hive keeps the window wall tidy for you: the orchestrator sits front and center as the largest window, agent windows tile around it in even columns, and everything reflows automatically as agents join and finish. Close a window any time — the agent keeps working in the background, and you can reopen its view whenever you like.
 
 ## Why people use it
 
@@ -90,6 +90,9 @@ No — one is enough. With both installed, hive can mix them on one team and rou
 
 **Can I close agent windows?**
 Yes. Windows are just live views — closing one never stops the agent. `hive watch <name>` brings the view back.
+
+**Can I stop hive from moving my windows?**
+Yes. hive only ever arranges its own windows — the orchestrator and agent viewers — and never touches anything else you have open. To keep hive's windows where you put them, set `layout = "off"` in `~/.hive/config.toml`.
 
 **What happens to my code?**
 Agents work on isolated branches and the work is merged step by step, so your main branch is never edited by multiple agents at once. Everything stays local to your machine except the AI API calls your CLIs already make.

@@ -100,7 +100,7 @@ export interface HiveSpawnerDependencies {
   db: AgentStore;
   repoRoot: string;
   port: number;
-  config: HiveConfig;
+  config: Pick<HiveConfig, "terminal" | "headless">;
   routing: RouteResolver;
   tmux: TmuxSessionManager;
   terminal: TerminalAdapter;
@@ -109,6 +109,9 @@ export interface HiveSpawnerDependencies {
   keepWorktreeOnFailure?: boolean;
   sleep?: Sleep;
   resolveModel?: ModelResolver;
+  /** Fires after a viewer window is attached so the daemon can re-tile the
+   * window wall. */
+  onTerminalsChanged?: () => void;
 }
 
 const isLive = (agent: AgentRecord): boolean =>
@@ -354,6 +357,7 @@ export class HiveSpawner implements Spawner {
           await this.dependencies.terminal.closeWindow(orphanedHandle);
         } else {
           handle = null;
+          this.dependencies.onTerminalsChanged?.();
         }
       } catch {
         // Opening a viewer is cosmetic and does not affect agent readiness.

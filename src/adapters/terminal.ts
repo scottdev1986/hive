@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { HiveConfig, TerminalHandle } from "../schemas";
 import { ITerm2Adapter } from "./iterm2";
+import type { Frame } from "./layout";
 import { TerminalAppAdapter } from "./terminal-app";
 
 export interface TerminalAdapter {
@@ -21,6 +22,24 @@ export const closeTerminal: TerminalCloser = async (handle) => {
     ? new ITerm2Adapter()
     : new TerminalAppAdapter();
   await adapter.closeWindow(handle);
+};
+
+export type TerminalBoundsSetter = (
+  handle: TerminalHandle,
+  frame: Frame,
+) => Promise<void>;
+
+// Dispatches on the handle rather than the configured adapter: the
+// orchestrator's window can live in a different emulator than the agent
+// viewers hive itself opened.
+export const setTerminalBounds: TerminalBoundsSetter = async (
+  handle,
+  frame,
+) => {
+  const adapter = handle.app === "iterm2"
+    ? new ITerm2Adapter()
+    : new TerminalAppAdapter();
+  await adapter.setWindowBounds(handle, frame);
 };
 
 export function resolveTerminal(
