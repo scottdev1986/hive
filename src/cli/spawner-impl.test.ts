@@ -23,6 +23,7 @@ import {
 import { HiveDatabase } from "../daemon/db";
 import { QuotaLedger } from "../daemon/quota-ledger";
 import { QuotaService } from "../daemon/quota";
+import { agentTmuxSession } from "../daemon/tmux-sessions";
 
 const timestamp = "2026-07-09T12:00:00.000Z";
 const tempRoots: string[] = [];
@@ -798,7 +799,7 @@ describe("HiveSpawner wiring", () => {
 
     await spawner.spawn({ task: "Fallback task", tier: "standard" });
     expect(disconnected).toEqual(["maya"]);
-    expect(tmux.killed).toEqual(["hive-maya"]);
+    expect(tmux.killed).toEqual([agentTmuxSession("maya")]);
     expect(tmux.sessions).toHaveLength(2);
     expect(tmux.sessions[1]?.[2]).toContain("'codex'");
     expect(tmux.sessions[1]?.[2]).toContain("notify=");
@@ -922,16 +923,16 @@ describe("HiveSpawner wiring", () => {
     expect(codex.name).toEqual("david");
     expect(claude.terminalHandle).toEqual({
       app: "iterm2",
-      sessionId: "session-hive-maya",
+      sessionId: `session-${agentTmuxSession("maya")}`,
     });
     expect(codex.terminalHandle).toEqual({
       app: "iterm2",
-      sessionId: "session-hive-david",
+      sessionId: `session-${agentTmuxSession("david")}`,
     });
     expect(store.agents).toEqual([claude, codex]);
     expect(tmux.sessions.map(([name]) => name)).toEqual([
-      "hive-maya",
-      "hive-david",
+      agentTmuxSession("maya"),
+      agentTmuxSession("david"),
     ]);
     expect(tmux.sessions[0]?.[2]).toContain(
       "'claude' '--model' 'claude-fable-5'",
@@ -955,8 +956,8 @@ describe("HiveSpawner wiring", () => {
       effort: "medium",
     });
     expect(terminal.windows).toEqual([
-      ["hive-maya", "maya — claude-fable-5"],
-      ["hive-david", "david — gpt-test"],
+      [agentTmuxSession("maya"), "maya — claude-fable-5"],
+      [agentTmuxSession("david"), "david — gpt-test"],
     ]);
     for (const [, title] of terminal.windows) {
       // Routing aliases must never surface: the title carries the concrete
@@ -1253,7 +1254,7 @@ describe("HiveSpawner wiring", () => {
     expect(failed.failureReason).not.toContain("startup line 1\n");
     expect(failed.failedAt).toBeDefined();
     expect(store.agents).toEqual([failed]);
-    expect(tmux.killed).toEqual(["hive-maya"]);
+    expect(tmux.killed).toEqual([agentTmuxSession("maya")]);
     expect(removals).toEqual([[root, worktreePath]]);
     expect(terminal.windows).toEqual([]);
   });
@@ -1360,7 +1361,7 @@ describe("HiveSpawner wiring", () => {
 
     const handle = {
       app: "iterm2",
-      sessionId: "session-hive-maya",
+      sessionId: `session-${agentTmuxSession("maya")}`,
     } as const;
     expect(spawned.status).toEqual("dead");
     expect(spawned.terminalHandle).toBeUndefined();

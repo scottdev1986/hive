@@ -4,6 +4,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentMessage, AgentRecord } from "../schemas";
+import { orchestratorTmuxSession } from "./tmux-sessions";
 import { HiveDatabase } from "./db";
 import {
   type CriticalControlRuntime,
@@ -222,7 +223,7 @@ describe("priority control messages", () => {
       expect(await recoveredDelivery.alertExpiredControls(future)).toEqual(0);
       expect(db.getMessage(urgent.id)?.alertAt).not.toEqual(null);
       expect(sender.calls.some(([session, text]) =>
-        session === "hive-orchestrator" && text.includes("missed its acknowledgement deadline")
+        session === orchestratorTmuxSession() && text.includes("missed its acknowledgement deadline")
       )).toEqual(true);
     } finally {
       db.close();

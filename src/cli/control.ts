@@ -16,7 +16,8 @@ import type {
   MemoryWriteInput,
   QuotaObservation,
 } from "../schemas";
-import { ORCHESTRATOR_TMUX_SESSION } from "../daemon/orchestrator-lifecycle";
+import { orchestratorTmuxSession } from "../daemon/orchestrator-lifecycle";
+import { isTmuxSessionForInstance } from "../daemon/tmux-sessions";
 import {
   deleteMemory,
   fetchAgentStatus,
@@ -50,6 +51,7 @@ export interface StopAgentSessionDependencies {
   tmux: StopTmux;
   fetchAgents?: AgentStatusFetcher;
   markDead?: DeadAgentMarker;
+  hiveHome?: string;
 }
 
 const markAgentDeadViaMcp: DeadAgentMarker = async (port, agentName) => {
@@ -71,7 +73,10 @@ export async function stopAgentSessions(
       agents = null;
     }
     if (agents !== null) {
-      const liveAgents = agents.filter(isLive);
+      const liveAgents = agents.filter((agent) =>
+        isLive(agent) &&
+        isTmuxSessionForInstance(agent.tmuxSession, dependencies.hiveHome)
+      );
       await Promise.all(liveAgents.map(async (agent) => {
         await dependencies.tmux.killSession(agent.tmuxSession, {
           ignoreMissing: true,
@@ -83,7 +88,7 @@ export async function stopAgentSessions(
   }
 
   const hiveSessions = (await dependencies.tmux.listSessions()).filter(
-    (session) => /^hive-/.test(session),
+    (session) => isTmuxSessionForInstance(session, dependencies.hiveHome),
   );
   await Promise.all(hiveSessions.map((session) =>
     dependencies.tmux.killSession(session, { ignoreMissing: true })
@@ -216,7 +221,10 @@ export async function stopHive(): Promise<void> {
   const port = readDaemonPort();
   const tmux = new TmuxAdapter();
   const stoppedAgentCount = await stopAgentSessions(port, { tmux });
-  await tmux.killSession(ORCHESTRATOR_TMUX_SESSION, { ignoreMissing: true });
+  await tmux.killSession(orchestratorTmuxSession(), { ignoreMissing: true });
+  if (isTmuxSessionForInstance("hive-orchestrator")) {
+    await tmux.killSession("hive-orchestrator", { ignoreMissing: true });
+  }
 
   const pid = readDaemonPid();
   if (pid !== null) {

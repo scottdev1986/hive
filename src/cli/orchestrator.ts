@@ -9,7 +9,7 @@ import {
 import {
   writeCodexAgentConfig,
 } from "../adapters/tools/codex";
-import { ORCHESTRATOR_TMUX_SESSION } from "../daemon/orchestrator-lifecycle";
+import { orchestratorTmuxSession } from "../daemon/orchestrator-lifecycle";
 import type { TerminalHandle } from "../schemas";
 import { ORCHESTRATOR_BRIEF } from "./orchestrator-brief";
 
@@ -194,7 +194,7 @@ export function buildOrchestratorLaunchCommand(
     "new-session",
     "-A",
     "-s",
-    ORCHESTRATOR_TMUX_SESSION,
+    orchestratorTmuxSession(),
     "-c",
     cwd,
     ...buildOrchestratorCommand(tool, port, memoryIndex),

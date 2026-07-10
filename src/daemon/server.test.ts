@@ -11,6 +11,7 @@ import { QuotaLedger } from "./quota-ledger";
 import { QuotaService } from "./quota";
 import { HIVE_VERSION, HiveDaemon, inferLegacyControl } from "./server";
 import type { SpawnRequest, Spawner } from "./spawner";
+import { orchestratorTmuxSession } from "./tmux-sessions";
 
 const home = mkdtempSync(join(tmpdir(), "hive-server-test-"));
 process.env.HIVE_HOME = home;
@@ -48,7 +49,7 @@ class SilentTmuxSender implements TmuxSender {
 
 class RootUnavailableTmuxSender extends SilentTmuxSender {
   override async sendMessage(session: string, text: string): Promise<void> {
-    if (session === "hive-orchestrator") {
+    if (session === orchestratorTmuxSession()) {
       throw new Error("root session unavailable");
     }
     await super.sendMessage(session, text);

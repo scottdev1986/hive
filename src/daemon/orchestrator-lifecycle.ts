@@ -3,8 +3,8 @@ import {
   OrchestratorMessageEnvelopeSchema,
   type OrchestratorMessageEnvelope,
 } from "../schemas";
+export { orchestratorTmuxSession } from "./tmux-sessions";
 
-export const ORCHESTRATOR_TMUX_SESSION = "hive-orchestrator";
 export const ORCHESTRATOR_ENVELOPE_MAX_BYTES = 2_048;
 const MAX_METADATA_CODE_POINTS = 128;
 const MAX_TASK_CODE_POINTS = 160;

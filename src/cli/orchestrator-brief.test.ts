@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ORCHESTRATOR_BRIEF } from "./orchestrator-brief";
+import { orchestratorTmuxSession } from "../daemon/tmux-sessions";
 import {
   buildOrchestratorCommand,
   buildOrchestratorLaunchCommand,
@@ -79,7 +80,7 @@ describe("orchestrator brief", () => {
       "new-session",
       "-A",
       "-s",
-      "hive-orchestrator",
+      orchestratorTmuxSession(),
       "-c",
       "/repo",
       "claude",

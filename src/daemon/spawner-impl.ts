@@ -34,6 +34,7 @@ import {
 import type { HiveDatabase } from "./db";
 import type { SpawnRequest, Spawner } from "./spawner";
 import type { QuotaService } from "./quota";
+import { agentTmuxSession } from "./tmux-sessions";
 
 export const NAME_POOL = [
   "maya",
@@ -619,7 +620,7 @@ export class HiveSpawner implements Spawner {
       taskDescription: request.task,
       worktreePath: worktree.path,
       branch: worktree.branch,
-      tmuxSession: `hive-${name}`,
+      tmuxSession: agentTmuxSession(name),
       contextPct: 0,
       createdAt: timestamp,
       lastEventAt: timestamp,

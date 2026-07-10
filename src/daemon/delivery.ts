@@ -12,7 +12,7 @@ import { HiveDatabase } from "./db";
 import {
   createOrchestratorEnvelope,
   formatOrchestratorWake,
-  ORCHESTRATOR_TMUX_SESSION,
+  orchestratorTmuxSession,
 } from "./orchestrator-lifecycle";
 
 export interface TmuxSender {
@@ -258,7 +258,7 @@ export class MessageDelivery {
   }
 
   async orchestratorInbox(): Promise<OrchestratorMessageEnvelope[]> {
-    return this.withSessionLock(ORCHESTRATOR_TMUX_SESSION, async () =>
+    return this.withSessionLock(orchestratorTmuxSession(), async () =>
       this.db.claimUndeliveredMessages(
         ORCHESTRATOR_NAME,
         new Date().toISOString(),
@@ -279,11 +279,12 @@ export class MessageDelivery {
   }
 
   async wakeOrchestrator(): Promise<AgentMessage[]> {
-    return this.withSessionLock(ORCHESTRATOR_TMUX_SESSION, async () => {
+    const session = orchestratorTmuxSession();
+    return this.withSessionLock(session, async () => {
       const delivered: AgentMessage[] = [];
       for (const message of this.db.getUndeliveredMessages(ORCHESTRATOR_NAME)) {
         await this.tmux.sendMessage(
-          ORCHESTRATOR_TMUX_SESSION,
+          session,
           formatOrchestratorWake(createOrchestratorEnvelope(message)),
         );
         const acknowledged = this.db.acknowledgeMessage(

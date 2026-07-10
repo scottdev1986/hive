@@ -14,7 +14,7 @@ import {
   createOrchestratorEnvelope,
   formatOrchestratorWake,
   ORCHESTRATOR_ENVELOPE_MAX_BYTES,
-  ORCHESTRATOR_TMUX_SESSION,
+  orchestratorTmuxSession,
 } from "./orchestrator-lifecycle";
 import { HiveDaemon } from "./server";
 import type { Spawner } from "./spawner";
@@ -132,7 +132,7 @@ describe("event-driven orchestrator lifecycle", () => {
 
       expect(message.deliveredAt).not.toEqual(null);
       expect(sender.calls).toHaveLength(1);
-      expect(sender.calls[0]?.[0]).toEqual(ORCHESTRATOR_TMUX_SESSION);
+      expect(sender.calls[0]?.[0]).toEqual(orchestratorTmuxSession());
       expect(sender.calls[0]?.[1]).toContain('"kind":"hive.message"');
       expect(sender.calls[0]?.[1]).toContain('"from":"maya"');
       expect(sender.calls[0]?.[1]).not.toContain("Build the event bridge");
