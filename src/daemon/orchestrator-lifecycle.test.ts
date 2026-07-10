@@ -37,6 +37,8 @@ function agent(overrides: Partial<AgentRecord> = {}): AgentRecord {
     contextPct: 12,
     createdAt: timestamp,
     lastEventAt: timestamp,
+    capabilityEpoch: 0,
+    writeRevoked: false,
     ...overrides,
   };
 }

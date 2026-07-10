@@ -23,6 +23,8 @@ function agent(
     contextPct: 0,
     createdAt: timestamp,
     lastEventAt: timestamp,
+    capabilityEpoch: 0,
+    writeRevoked: false,
   };
 }
 

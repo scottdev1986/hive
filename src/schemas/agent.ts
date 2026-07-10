@@ -32,6 +32,7 @@ export const AgentRecordSchema = z.object({
     "working",
     "idle",
     "awaiting-approval",
+    "control-paused",
     "stuck",
     "done",
     "dead",
@@ -48,6 +49,8 @@ export const AgentRecordSchema = z.object({
   contextPct: z.number().min(0).max(100),
   createdAt: z.iso.datetime(),
   lastEventAt: z.iso.datetime(),
+  capabilityEpoch: z.number().int().nonnegative().default(0),
+  writeRevoked: z.boolean().default(false),
 });
 
 export type AgentRecord = z.infer<typeof AgentRecordSchema>;

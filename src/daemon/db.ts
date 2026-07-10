@@ -30,6 +30,8 @@ const AgentDatabaseRowSchema = AgentRecordSchema.extend({
   failedAt: z.string().nullable(),
   quotaReservationId: z.string().nullable(),
   terminalHandle: z.string().nullable(),
+  capabilityEpoch: z.number().int().nonnegative().default(0),
+  writeRevoked: z.union([z.boolean(), z.number().int()]).default(0),
 });
 
 function parseAgentRow(row: unknown): AgentRecord {
@@ -42,6 +44,7 @@ function parseAgentRow(row: unknown): AgentRecord {
     terminalHandle: value.terminalHandle === null
       ? undefined
       : TerminalHandleSchema.parse(JSON.parse(value.terminalHandle)),
+    writeRevoked: value.writeRevoked === true || value.writeRevoked === 1,
   });
 }
 
@@ -119,7 +122,9 @@ export class HiveDatabase {
         lastEventAt TEXT NOT NULL,
         failureReason TEXT,
         failedAt TEXT,
-        quotaReservationId TEXT
+        quotaReservationId TEXT,
+        capabilityEpoch INTEGER NOT NULL DEFAULT 0,
+        writeRevoked INTEGER NOT NULL DEFAULT 0
       );
       CREATE TABLE IF NOT EXISTS messages (
         id TEXT PRIMARY KEY,
@@ -127,7 +132,18 @@ export class HiveDatabase {
         "to" TEXT NOT NULL,
         body TEXT NOT NULL,
         createdAt TEXT NOT NULL,
-        deliveredAt TEXT
+        deliveredAt TEXT,
+        priority TEXT NOT NULL DEFAULT 'normal',
+        intent TEXT NOT NULL DEFAULT 'instruction',
+        state TEXT NOT NULL DEFAULT 'queued',
+        injectedAt TEXT,
+        acknowledgedAt TEXT,
+        appliedAt TEXT,
+        deadlineAt TEXT,
+        alertAt TEXT,
+        sequence INTEGER NOT NULL DEFAULT 0,
+        idempotencyKey TEXT,
+        capabilityEpoch INTEGER
       );
       CREATE INDEX IF NOT EXISTS messages_recipient_delivery
         ON messages("to", deliveredAt, createdAt);
@@ -188,6 +204,52 @@ export class HiveDatabase {
     if (!eventColumnNames.has("usageSource")) {
       this.database.exec("ALTER TABLE events ADD COLUMN usageSource TEXT");
     }
+    if (!agentColumnNames.has("capabilityEpoch")) {
+      this.database.exec(
+        "ALTER TABLE agents ADD COLUMN capabilityEpoch INTEGER NOT NULL DEFAULT 0",
+      );
+    }
+    if (!agentColumnNames.has("writeRevoked")) {
+      this.database.exec(
+        "ALTER TABLE agents ADD COLUMN writeRevoked INTEGER NOT NULL DEFAULT 0",
+      );
+    }
+    const messageColumns = z.array(z.object({ name: z.string() })).parse(
+      this.database.query("PRAGMA table_info(messages)").all(),
+    );
+    const messageColumnNames = new Set(
+      messageColumns.map((column) => column.name),
+    );
+    const messageMigrations = [
+      ["priority", "TEXT NOT NULL DEFAULT 'normal'"],
+      ["intent", "TEXT NOT NULL DEFAULT 'instruction'"],
+      ["state", "TEXT NOT NULL DEFAULT 'queued'"],
+      ["injectedAt", "TEXT"],
+      ["acknowledgedAt", "TEXT"],
+      ["appliedAt", "TEXT"],
+      ["deadlineAt", "TEXT"],
+      ["alertAt", "TEXT"],
+      ["sequence", "INTEGER NOT NULL DEFAULT 0"],
+      ["idempotencyKey", "TEXT"],
+      ["capabilityEpoch", "INTEGER"],
+    ] as const;
+    for (const [name, definition] of messageMigrations) {
+      if (!messageColumnNames.has(name)) {
+        this.database.exec(
+          `ALTER TABLE messages ADD COLUMN ${name} ${definition}`,
+        );
+      }
+    }
+    this.database.exec(`
+      CREATE UNIQUE INDEX IF NOT EXISTS messages_sender_idempotency
+      ON messages("from", idempotencyKey)
+      WHERE idempotencyKey IS NOT NULL
+    `);
+    this.database.exec(`
+      UPDATE messages
+      SET state = 'applied', injectedAt = COALESCE(injectedAt, deliveredAt)
+      WHERE deliveredAt IS NOT NULL AND state = 'queued'
+    `);
   }
 
   close(): void {
@@ -205,8 +267,8 @@ export class HiveDatabase {
         id, name, tool, model, tier, status, taskDescription,
         worktreePath, branch, tmuxSession, terminalHandle, contextPct,
         createdAt, lastEventAt, failureReason, failedAt,
-        quotaReservationId
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        quotaReservationId, capabilityEpoch, writeRevoked
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         name = excluded.name,
         tool = excluded.tool,
@@ -223,7 +285,9 @@ export class HiveDatabase {
         lastEventAt = excluded.lastEventAt,
         failureReason = excluded.failureReason,
         failedAt = excluded.failedAt,
-        quotaReservationId = excluded.quotaReservationId
+        quotaReservationId = excluded.quotaReservationId,
+        capabilityEpoch = excluded.capabilityEpoch,
+        writeRevoked = excluded.writeRevoked
     `).run(
       value.id,
       value.name,
@@ -244,6 +308,8 @@ export class HiveDatabase {
       value.failureReason ?? null,
       value.failedAt ?? null,
       value.quotaReservationId ?? null,
+      value.capabilityEpoch,
+      value.writeRevoked ? 1 : 0,
     );
     return this.getAgentById(value.id)!;
   }
@@ -361,8 +427,11 @@ export class HiveDatabase {
   insertMessage(message: AgentMessage): AgentMessage {
     const value = AgentMessageSchema.parse(message);
     this.database.query(`
-      INSERT INTO messages (id, "from", "to", body, createdAt, deliveredAt)
-      VALUES (?, ?, ?, ?, ?, ?)
+      INSERT INTO messages (
+        id, "from", "to", body, createdAt, deliveredAt, priority, intent,
+        state, injectedAt, acknowledgedAt, appliedAt, deadlineAt, alertAt,
+        sequence, idempotencyKey, capabilityEpoch
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       value.id,
       value.from,
@@ -370,6 +439,17 @@ export class HiveDatabase {
       value.body,
       value.createdAt,
       value.deliveredAt,
+      value.priority,
+      value.intent,
+      value.state,
+      value.injectedAt,
+      value.acknowledgedAt,
+      value.appliedAt,
+      value.deadlineAt,
+      value.alertAt,
+      value.sequence,
+      value.idempotencyKey,
+      value.capabilityEpoch,
     );
     return this.getMessage(value.id)!;
   }
@@ -385,11 +465,95 @@ export class HiveDatabase {
       .map((row) => AgentMessageSchema.parse(row));
   }
 
+  findMessageByIdempotency(
+    from: string,
+    idempotencyKey: string,
+  ): AgentMessage | null {
+    const row = this.database.query(`
+      SELECT * FROM messages WHERE "from" = ? AND idempotencyKey = ?
+    `).get(from, idempotencyKey);
+    return row === null ? null : AgentMessageSchema.parse(row);
+  }
+
+  nextMessageSequence(agentName: string): number {
+    const row = this.database.query(`
+      SELECT COALESCE(MAX(sequence), 0) AS value FROM messages WHERE "to" = ?
+    `).get(agentName) as { value: number };
+    return row.value + 1;
+  }
+
+  transitionMessage(
+    id: string,
+    state: AgentMessage["state"],
+    timestamp: string,
+  ): AgentMessage | null {
+    const current = this.getMessage(id);
+    if (current === null) return null;
+    const rank = ["queued", "injected", "agent-acknowledged", "applied"];
+    if (rank.indexOf(state) <= rank.indexOf(current.state)) return current;
+    const field = state === "injected"
+      ? "injectedAt"
+      : state === "agent-acknowledged"
+        ? "acknowledgedAt"
+        : "appliedAt";
+    this.database.query(`
+      UPDATE messages SET state = ?, ${field} = ?,
+        deliveredAt = CASE WHEN ? = 'injected' THEN ? ELSE deliveredAt END
+      WHERE id = ?
+    `).run(state, timestamp, state, timestamp, id);
+    return this.getMessage(id);
+  }
+
+  markMessageAlerted(id: string, timestamp: string): AgentMessage | null {
+    this.database.query(`
+      UPDATE messages SET alertAt = COALESCE(alertAt, ?) WHERE id = ?
+    `).run(timestamp, id);
+    return this.getMessage(id);
+  }
+
+  assignMessageCapabilityEpoch(
+    id: string,
+    capabilityEpoch: number,
+  ): AgentMessage | null {
+    this.database.query(`
+      UPDATE messages SET capabilityEpoch = COALESCE(capabilityEpoch, ?)
+      WHERE id = ?
+    `).run(capabilityEpoch, id);
+    return this.getMessage(id);
+  }
+
+  listExpiredUnacknowledged(now: string): AgentMessage[] {
+    return this.database.query(`
+      SELECT * FROM messages
+      WHERE priority IN ('urgent', 'critical')
+        AND deadlineAt IS NOT NULL AND deadlineAt <= ?
+        AND state IN ('queued', 'injected') AND alertAt IS NULL
+      ORDER BY deadlineAt, sequence, rowid
+    `).all(now).map((row) => AgentMessageSchema.parse(row));
+  }
+
+  revokeAgentCapabilities(name: string, timestamp: string): AgentRecord | null {
+    return this.transaction(() => {
+      this.database.query(`
+        UPDATE agents SET capabilityEpoch = capabilityEpoch + 1,
+          writeRevoked = 1, status = 'control-paused', lastEventAt = ?
+        WHERE name = ? AND status NOT IN ('dead', 'done', 'failed')
+      `).run(timestamp, name);
+      this.database.query(`
+        UPDATE approvals SET status = 'denied', resolvedAt = ?
+        WHERE agentName = ? AND status = 'pending'
+      `).run(timestamp, name);
+      return this.getAgentByName(name);
+    });
+  }
+
   getUndeliveredMessages(agentName: string): AgentMessage[] {
     return this.database.query(`
       SELECT * FROM messages
       WHERE "to" = ? AND deliveredAt IS NULL
-      ORDER BY rowid
+      ORDER BY CASE priority
+        WHEN 'critical' THEN 0 WHEN 'urgent' THEN 1 ELSE 2 END,
+        sequence, rowid
     `).all(agentName).map((row) => AgentMessageSchema.parse(row));
   }
 

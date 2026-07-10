@@ -17,6 +17,8 @@ import {
 } from "../adapters/worktrees";
 import {
   HookEventSchema,
+  ControlIntentSchema,
+  MessagePrioritySchema,
   ORCHESTRATOR_NAME,
   QuotaObservationSchema,
   TerminalHandleSchema,
@@ -49,7 +51,37 @@ const SendRequestSchema = z.object({
   from: z.string().min(1),
   to: z.string().min(1),
   body: z.string(),
+  priority: MessagePrioritySchema.optional(),
+  intent: ControlIntentSchema.optional(),
+  idempotencyKey: z.string().min(1).optional(),
+  deadlineMs: z.number().int().positive().optional(),
 });
+
+const MessageAcknowledgementSchema = z.object({
+  agent: z.string().min(1),
+  messageId: z.string().min(1),
+  capabilityEpoch: z.number().int().nonnegative().optional(),
+  applied: z.boolean().optional().default(false),
+});
+
+export function inferLegacyControl(body: string):
+  { priority: "critical"; intent: "pause" | "stop" | "cancel" | "restrict-writes" } |
+  null {
+  const value = body.trim().toLowerCase();
+  if (/^cancel(?:\s+(?:this task|work|now))?[.!]?$/.test(value)) {
+    return { priority: "critical", intent: "cancel" };
+  }
+  if (/^stop(?:\s+(?:this task|work|now|working))?[.!]?$/.test(value)) {
+    return { priority: "critical", intent: "stop" };
+  }
+  if (/^(?:pause before (?:coding|writing|modifying)|pause work)\b/.test(value)) {
+    return { priority: "critical", intent: "pause" };
+  }
+  if (/^(?:do not|don't) (?:modify|write|edit)\b/.test(value)) {
+    return { priority: "critical", intent: "restrict-writes" };
+  }
+  return null;
+}
 
 const InboxRequestSchema = z.object({
   agent: z.string().min(1),
@@ -93,6 +125,41 @@ const ViewerRequestSchema = z.object({
   handle: TerminalHandleSchema,
 });
 
+const LandRequestSchema = z.object({
+  agent: z.string().min(1),
+  capabilityEpoch: z.number().int().nonnegative(),
+});
+
+export type LandBranch = (
+  repoRoot: string,
+  branch: string,
+) => Promise<{ commit: string }>;
+
+const landBranch: LandBranch = async (repoRoot, branch) => {
+  const merge = Bun.spawn(
+    ["git", "-C", repoRoot, "merge", "--ff-only", branch],
+    { stdout: "pipe", stderr: "pipe" },
+  );
+  const [exitCode, stderr] = await Promise.all([
+    merge.exited,
+    new Response(merge.stderr).text(),
+  ]);
+  if (exitCode !== 0) {
+    throw new Error(stderr.trim() || `git merge exited ${exitCode}`);
+  }
+  const revision = Bun.spawn(
+    ["git", "-C", repoRoot, "rev-parse", "HEAD"],
+    { stdout: "pipe", stderr: "pipe" },
+  );
+  const [revisionExit, stdout, revisionError] = await Promise.all([
+    revision.exited,
+    new Response(revision.stdout).text(),
+    new Response(revision.stderr).text(),
+  ]);
+  if (revisionExit !== 0) throw new Error(revisionError.trim());
+  return { commit: stdout.trim() };
+};
+
 export interface HiveDaemonOptions {
   spawner: Spawner;
   db?: HiveDatabase;
@@ -110,6 +177,7 @@ export interface HiveDaemonOptions {
     worktreePath: string | null,
     branch: string | null,
   ) => Promise<StrandedWork>;
+  landBranch?: LandBranch;
   port?: number;
   hostname?: string;
   manageLifecycle?: boolean;
@@ -148,6 +216,7 @@ export class HiveDaemon {
   private readonly closeTerminal: TerminalCloser;
   private readonly layout: LayoutCoordinator | null;
   private readonly quota: QuotaService | undefined;
+  private readonly land: LandBranch;
   private bunServer: Server<undefined> | null = null;
   private reconciliationTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -155,20 +224,40 @@ export class HiveDaemon {
     this.ownsDatabase = options.db === undefined;
     this.db = options.db ?? new HiveDatabase();
     this.spawner = options.spawner;
+    this.port = options.port ?? readConfiguredPort();
+    this.hostname = options.hostname ?? "127.0.0.1";
+    this.manageLifecycle = options.manageLifecycle ?? false;
+    this.tmux = options.tmux ?? new TmuxAdapter();
     this.delivery = new MessageDelivery(
       this.db,
       options.tmuxSender ?? new BunTmuxSender(),
+      {
+        interruptAndRestart: async (agent, message) => {
+          await this.tmux.killSession(agent.tmuxSession, {
+            ignoreMissing: true,
+          });
+          // The interrupted run is over and its replacement is read-only, so
+          // settle the quota reservation the way any other stopped run does:
+          // started runs keep their conservative estimate, unstarted release.
+          if (agent.quotaReservationId !== undefined) {
+            await this.quota?.cancel(agent.quotaReservationId);
+          }
+          if (this.spawner.restartForControl === undefined) {
+            throw new Error(
+              `Spawner cannot restart ${agent.name} for critical control`,
+            );
+          }
+          await this.spawner.restartForControl(agent, message);
+        },
+      },
     );
     this.quota = options.quota;
     this.quota?.setAlertSink(async (body) => {
       await this.delivery.send("hive-quota", ORCHESTRATOR_NAME, body);
     });
-    this.port = options.port ?? readConfiguredPort();
-    this.hostname = options.hostname ?? "127.0.0.1";
-    this.manageLifecycle = options.manageLifecycle ?? false;
-    this.tmux = options.tmux ?? new TmuxAdapter();
     this.closeTerminal = options.closeTerminal ?? closeTerminal;
     this.layout = options.layout ?? null;
+    this.land = options.landBranch ?? landBranch;
     this.repoRoot = options.repoRoot ?? process.cwd();
     this.cleanupWorktree = options.removeWorktree ?? removeWorktree;
     this.assessStranded = options.assessStrandedWork ?? assessStrandedWork;
@@ -209,7 +298,21 @@ export class HiveDaemon {
           }`,
         );
       });
+      void this.delivery.alertExpiredControls().catch((error) => {
+        console.error(
+          `Hive control deadline check failed: ${
+            error instanceof Error ? error.message : "unknown error"
+          }`,
+        );
+      });
     }, 30_000);
+    void this.delivery.recoverCriticalControls().catch((error) => {
+      console.error(
+        `Hive critical-control recovery failed: ${
+          error instanceof Error ? error.message : "unknown error"
+        }`,
+      );
+    });
     this.reconciliationTimer.unref?.();
     void this.quota?.recoverExpired().catch((error) => {
       console.error(
@@ -241,6 +344,7 @@ export class HiveDaemon {
       "working",
       "idle",
       "awaiting-approval",
+      "control-paused",
       "stuck",
     ];
     let viewersChanged = false;
@@ -276,6 +380,22 @@ export class HiveDaemon {
     if (viewersChanged) {
       this.layout?.requestLayout();
     }
+  }
+
+  async landAgent(
+    name: string,
+    capabilityEpoch: number,
+  ): Promise<{ commit: string }> {
+    const agent = this.db.getAgentByName(name);
+    if (agent === null || agent.branch === null) {
+      throw new Error(`Agent branch not found: ${name}`);
+    }
+    if (agent.writeRevoked || agent.capabilityEpoch !== capabilityEpoch) {
+      throw new Error(
+        `Landing capability revoked or stale for ${name}: current epoch ${agent.capabilityEpoch}`,
+      );
+    }
+    return this.land(this.repoRoot, agent.branch);
   }
 
   async fetch(request: Request): Promise<Response> {
@@ -380,7 +500,9 @@ export class HiveDaemon {
       ) {
         const updated: AgentRecord = {
           ...agent,
-          status: value.kind === "dead"
+          status: agent.writeRevoked && value.kind !== "dead"
+            ? "control-paused"
+            : value.kind === "dead"
             ? "dead"
             : value.kind === "turn-start"
               ? "working"
@@ -427,6 +549,9 @@ export class HiveDaemon {
       }
     }
 
+    if (value.kind === "session-start") {
+      await this.delivery.recoverCriticalControls();
+    }
     if (value.kind === "session-start" || value.kind === "turn-end") {
       await this.delivery.flushQueued(value.agentName);
     }
@@ -627,10 +752,34 @@ export class HiveDaemon {
     server.registerTool("hive_send", {
       title: "Send agent message",
       description:
-        'Send or queue a message for a named Hive agent, or wake the root with recipient "orchestrator".',
+        'Send a durable message and return its real lifecycle state. normal waits for an ordinary boundary; urgent interrupts at the next safe boundary and requires acknowledgement; critical revokes write/landing authority and restarts the target read-only. Prefer structured priority and intent. Recipient "orchestrator" wakes the root.',
       inputSchema: SendRequestSchema,
-    }, async ({ from, to, body }) =>
-      toolResult(await this.delivery.send(from, to, body), "message"));
+    }, async ({ from, to, body, ...requested }) => {
+      const inferred = requested.priority === undefined &&
+          requested.intent === undefined
+        ? inferLegacyControl(body)
+        : null;
+      return toolResult(await this.delivery.send(from, to, body, {
+        ...requested,
+        ...(inferred ?? {}),
+      }), "message");
+    });
+
+    server.registerTool("hive_ack_message", {
+      title: "Acknowledge a control message",
+      description:
+        "Acknowledge an injected urgent or critical control using its capability epoch; optionally confirm it has been applied.",
+      inputSchema: MessageAcknowledgementSchema,
+    }, async ({ agent, messageId, capabilityEpoch, applied }) =>
+      toolResult(
+        this.delivery.acknowledge(
+          agent,
+          messageId,
+          capabilityEpoch,
+          applied,
+        ),
+        "message",
+      ));
 
     server.registerTool("hive_inbox", {
       title: "Read agent inbox",
@@ -704,6 +853,18 @@ export class HiveDaemon {
         await this.delivery.flushQueued(approval.agentName);
       }
       return toolResult(approval, "approval");
+    });
+
+    server.registerTool("hive_land", {
+      title: "Land an agent branch",
+      description:
+        "Fast-forward land a writer branch only when its durable write capability epoch is current and not revoked.",
+      inputSchema: LandRequestSchema,
+    }, async ({ agent: name, capabilityEpoch }) => {
+      return toolResult(
+        await this.landAgent(name, capabilityEpoch),
+        "result",
+      );
     });
 
     return server;

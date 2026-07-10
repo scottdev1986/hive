@@ -30,6 +30,8 @@ function agent(overrides: Partial<AgentRecord> = {}): AgentRecord {
     contextPct: 12,
     createdAt: timestamp,
     lastEventAt: timestamp,
+    capabilityEpoch: 0,
+    writeRevoked: false,
     ...overrides,
   };
 }
@@ -226,6 +228,17 @@ describe("HiveDatabase", () => {
       body: "The interface is ready.",
       createdAt: timestamp,
       deliveredAt: null,
+      priority: "normal",
+      intent: "instruction",
+      state: "queued",
+      injectedAt: null,
+      acknowledgedAt: null,
+      appliedAt: null,
+      deadlineAt: null,
+      alertAt: null,
+      sequence: 1,
+      idempotencyKey: null,
+      capabilityEpoch: null,
     };
     try {
       expect(db.insertMessage(message)).toEqual(message);

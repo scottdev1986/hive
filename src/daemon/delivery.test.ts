@@ -28,6 +28,8 @@ function agent(status: AgentRecord["status"]): AgentRecord {
     contextPct: 10,
     createdAt: timestamp,
     lastEventAt: timestamp,
+    capabilityEpoch: 0,
+    writeRevoked: false,
   };
 }
 

@@ -2,6 +2,7 @@ import { z } from "zod";
 import {
   RoutingTierSchema,
   type AgentRecord,
+  type AgentMessage,
 } from "../schemas";
 
 export const SpawnRequestSchema = z.object({
@@ -16,4 +17,8 @@ export type SpawnRequest = z.infer<typeof SpawnRequestSchema>;
 
 export interface Spawner {
   spawn(req: SpawnRequest): Promise<AgentRecord>;
+  restartForControl?(
+    agent: AgentRecord,
+    message: AgentMessage,
+  ): Promise<AgentRecord>;
 }

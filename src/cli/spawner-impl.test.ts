@@ -6,6 +6,7 @@ import type { TerminalAdapter } from "../adapters/terminal";
 import { DEFAULT_ROUTING, QuotaConfigSchema } from "../schemas";
 import type {
   AgentRecord,
+  AgentMessage,
   Route,
   RoutingTier,
   TerminalHandle,
@@ -58,6 +59,8 @@ function agent(
     contextPct: 0,
     createdAt: timestamp,
     lastEventAt: timestamp,
+    capabilityEpoch: 0,
+    writeRevoked: false,
   };
 }
 
@@ -196,6 +199,60 @@ afterEach(async () => {
 });
 
 describe("HiveSpawner name pool", () => {
+  test("restarts both providers in a fresh read-only control process", async () => {
+    for (const tool of ["claude", "codex"] as const) {
+      const root = await mkdtemp(join(tmpdir(), `hive-control-${tool}-`));
+      tempRoots.push(root);
+      const controlled = {
+        ...agent("maya", "control-paused"),
+        tool,
+        worktreePath: root,
+        capabilityEpoch: 1,
+        writeRevoked: true,
+      } satisfies AgentRecord;
+      const store = new FakeStore([controlled]);
+      const tmux = new FakeTmux();
+      const spawner = new HiveSpawner({
+        db: store,
+        repoRoot: root,
+        port: 4317,
+        config: { terminal: "auto", headless: true },
+        routing: async () => DEFAULT_ROUTING.standard,
+        tmux,
+        terminal: new FakeTerminal(),
+        sleep: async () => {},
+        resolveModel: fakeResolveModel,
+      });
+      const message = {
+        id: `control-${tool}`,
+        from: "orchestrator",
+        to: "maya",
+        body: "Pause before coding.",
+        createdAt: timestamp,
+        deliveredAt: null,
+        priority: "critical",
+        intent: "pause",
+        state: "queued",
+        injectedAt: null,
+        acknowledgedAt: null,
+        appliedAt: null,
+        deadlineAt: timestamp,
+        alertAt: null,
+        sequence: 1,
+        idempotencyKey: null,
+        capabilityEpoch: 1,
+      } satisfies AgentMessage;
+      await spawner.restartForControl(controlled, message);
+      const command = tmux.sessions[0]?.[2] ?? "";
+      expect(command).toContain("CRITICAL HIVE CONTROL");
+      expect(command).toContain("This process is read-only");
+      expect(command).toContain(tool === "claude"
+        ? "--permission-mode"
+        : "--sandbox");
+      expect(command).toContain(tool === "claude" ? "default" : "read-only");
+    }
+  });
+
   test("reserves the orchestrator destination from agent assignment", () => {
     expect(() => resolveAgentName("orchestrator", [])).toThrow(
       'Agent name "orchestrator" is reserved',
@@ -485,7 +542,7 @@ describe("HiveSpawner wiring", () => {
     expect(tmux.sessions[0]?.[2]).toContain("You are maya");
     // Every writer agent carries the landing protocol for its own branch.
     expect(tmux.sessions[0]?.[2]).toContain(
-      `merge --ff-only hive/maya-build-auth-api`,
+      `hive_land`,
     );
     expect(tmux.sessions[1]?.[2]).toContain("'codex'");
     expect(tmux.sessions[1]?.[2]).toContain("notify=");
@@ -917,8 +974,9 @@ describe("agent landing protocol", () => {
     expect(protocol).toContain("Re-run the tests on the rebased branch");
     expect(protocol).toContain("Red tests never merge");
     expect(protocol).toContain(
-      "git -C /repo merge --ff-only hive/maya-auth-api",
+      "call `hive_land` with agent `maya` and capabilityEpoch `0`",
     );
+    expect(protocol).not.toContain("git -C /repo merge");
     expect(protocol).toContain("Do not delete your branch or worktree");
   });
 
