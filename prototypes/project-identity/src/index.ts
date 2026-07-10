@@ -10,7 +10,7 @@ export {
 } from "./ledger";
 export type { ManagedWorktree, ManagedWorktreeLedger } from "./ledger";
 export { IdentityKeyOccupied, ProjectRegistry } from "./registry";
-export type { ProjectRecord, ProjectState, Tombstone, TombstoneReason } from "./registry";
+export type { ProjectRecord, ProjectRegistrySnapshot, ProjectState, Tombstone, TombstoneReason } from "./registry";
 export { clearCreationLeases, resolveOrCreate, resolveProject } from "./resolver";
 export type { ResolveOptions } from "./resolver";
 export type {

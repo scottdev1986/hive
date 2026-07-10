@@ -17,6 +17,8 @@ const handshake: DaemonHandshake = {
   schemaEpoch: 1,
   capabilities: ["daemon-handshake-v1"],
   hiveUuid: "hive-project-a",
+  identityKey: "project-a",
+  repoFamilyKey: null,
   generation: 1,
 };
 

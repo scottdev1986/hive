@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { resolveHandshakeProject } from "./project-identity";
 import { readdir, readFile, realpath } from "node:fs/promises";
 import { join, relative, resolve } from "node:path";
 import { HIVE_VERSION } from "./version";
@@ -20,6 +21,8 @@ export interface DaemonHandshake {
   schemaEpoch: number;
   capabilities: readonly string[];
   hiveUuid: string;
+  identityKey: string;
+  repoFamilyKey: string | null;
   generation: number;
 }
 
@@ -77,7 +80,7 @@ export async function expectedDaemonHandshake(
     wireProtocol: DAEMON_WIRE_PROTOCOL,
     schemaEpoch: DAEMON_SCHEMA_EPOCH,
     capabilities: DAEMON_CAPABILITIES,
-    hiveUuid: await hiveUuidForProject(projectRoot),
+    ...resolveHandshakeProject(projectRoot),
     generation: DAEMON_GENERATION,
   };
 }
@@ -92,7 +95,8 @@ export function parseDaemonHandshake(value: unknown): DaemonHandshake | null {
   const wire = body.wireProtocol;
   if (
     typeof body.productVersion !== "string" || typeof body.buildHash !== "string" ||
-    typeof body.schemaEpoch !== "number" || typeof body.hiveUuid !== "string" ||
+    typeof body.schemaEpoch !== "number" || typeof body.hiveUuid !== "string" || typeof body.identityKey !== "string" ||
+    !(typeof body.repoFamilyKey === "string" || body.repoFamilyKey === null) ||
     typeof body.generation !== "number" || !Array.isArray(body.capabilities) ||
     !body.capabilities.every((capability) => typeof capability === "string") ||
     typeof wire !== "object" || wire === null || Array.isArray(wire)
@@ -106,6 +110,8 @@ export function parseDaemonHandshake(value: unknown): DaemonHandshake | null {
     schemaEpoch: body.schemaEpoch,
     capabilities: body.capabilities as string[],
     hiveUuid: body.hiveUuid,
+    identityKey: body.identityKey,
+    repoFamilyKey: body.repoFamilyKey as string | null,
     generation: body.generation,
   };
 }
@@ -117,6 +123,8 @@ export function handshakeMismatch(
   if (actual.productVersion !== expected.productVersion) return "product version";
   if (actual.buildHash !== expected.buildHash) return "content-addressed build hash";
   if (actual.hiveUuid !== expected.hiveUuid) return "project identity (HiveUUID)";
+  if (actual.identityKey !== expected.identityKey) return "project identity key";
+  if (actual.repoFamilyKey !== expected.repoFamilyKey) return "repository family identity";
   if (actual.generation !== expected.generation) return "daemon generation";
   if (actual.schemaEpoch !== expected.schemaEpoch) return "schema/migration epoch";
   if (

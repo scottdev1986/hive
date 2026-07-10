@@ -35,6 +35,7 @@ export interface Tombstone {
   /** The evidence that used to be at this path. Kept so an audit can explain the refusal. */
   formerEvidence: FsEvidence;
 }
+export interface ProjectRegistrySnapshot { records: ProjectRecord[]; tombstones: Tombstone[]; }
 
 export class IdentityKeyOccupied extends Error {
   constructor(identityKey: string) {
@@ -65,6 +66,16 @@ export class ProjectRegistry {
 
   records(): ProjectRecord[] {
     return [...this.byUuid.values()];
+  }
+  snapshot(): ProjectRegistrySnapshot { return { records: structuredClone(this.records()), tombstones: structuredClone([...this.tombstones.values()]) }; }
+  static hydrate(snapshot: ProjectRegistrySnapshot): ProjectRegistry {
+    const registry = new ProjectRegistry();
+    for (const record of snapshot.records) {
+      if (registry.byUuid.has(record.hiveUuid) || registry.byIdentityKey.has(record.identityKey)) throw new Error("duplicate registry identity");
+      registry.byUuid.set(record.hiveUuid, structuredClone(record)); registry.byIdentityKey.set(record.identityKey, record.hiveUuid);
+    }
+    for (const tombstone of snapshot.tombstones) registry.tombstones.set(tombstone.identityKey, structuredClone(tombstone));
+    return registry;
   }
 
   findByIdentityKey(identityKey: string): ProjectRecord | null {
