@@ -9,6 +9,7 @@ import {
   runWorkspace,
   type LaunchDeps,
 } from "./workspace";
+import { orchestratorTmuxSession } from "../daemon/tmux-sessions";
 
 let root: string;
 beforeEach(() => {
@@ -63,6 +64,29 @@ describe("hive opens the installed release Workspace", () => {
       "--project", "/tmp/proj",
       "--port", "4567",
       "--hive", "/opt/hive/bin/hive",
+      "--orchestrator-session", orchestratorTmuxSession(),
+    ]]);
+  });
+
+  test("hands an explicit orchestrator selection to the app", async () => {
+    install("0.0.7");
+    const argLists: (readonly string[])[] = [];
+    await launchWorkspace({
+      root,
+      open: async (_app, args) => (argLists.push(args), 0),
+      session: {
+        cwd: "/tmp/proj",
+        port: 4567,
+        hivePath: "/opt/hive/bin/hive",
+        orchestrator: "codex",
+      },
+    });
+    expect(argLists).toEqual([[
+      "--project", "/tmp/proj",
+      "--port", "4567",
+      "--hive", "/opt/hive/bin/hive",
+      "--orchestrator-session", orchestratorTmuxSession(),
+      "--orchestrator", "codex",
     ]]);
   });
 
@@ -78,6 +102,7 @@ describe("hive opens the installed release Workspace", () => {
       "--project", "/tmp/proj",
       "--port", "4567",
       "--hive", process.execPath,
+      "--orchestrator-session", orchestratorTmuxSession(),
     ]]);
   });
 
@@ -132,6 +157,20 @@ describe("bare hive opens the project you're in", () => {
     expect(resolved).toEqual(["/repo/root/some/subdir"]);
     expect(started).toEqual(["/repo/root"]);
     expect(launches).toEqual([{ session: { cwd: "/repo/root", port: 4483 } }]);
+  });
+
+  test("an orchestrator entry uses the same session boundary and selects its tool", async () => {
+    const launches: LaunchDeps[] = [];
+    await runWorkspace({
+      orchestrator: "claude",
+      cwd: "/repo/root/subdir",
+      resolveRoot: () => "/repo/root",
+      start: async () => ({ port: 4483, cwd: "/repo/root" }),
+      launch: async (deps) => (launches.push(deps), 0),
+    });
+    expect(launches).toEqual([{
+      session: { cwd: "/repo/root", port: 4483, orchestrator: "claude" },
+    }]);
   });
 
   test("outside a repo it offers an available update, then launches standalone", async () => {

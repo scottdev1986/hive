@@ -5,7 +5,9 @@
  * the shared `hive init` session boundary (update notice, stale-daemon
  * restart, daemon bring-up, init-once profile line), and launches the
  * installed release app with everything it needs on argv: `--project <root>`,
- * `--port <port>`, and `--hive <this binary>` — so the app spawns
+ * `--port <port>`, `--hive <this binary>`, the instance-scoped
+ * `--orchestrator-session`, and, for an explicit orchestrator entry,
+ * `--orchestrator <claude|codex>` — so the app spawns
  * `workspace-feed` from the same build as the daemon, never whatever `hive`
  * happens to be on the app's PATH. Run outside a git repo, it stays a
  * project-neutral launcher: a forced release-metadata check, then an argless
@@ -40,8 +42,10 @@ import {
 } from "../update/paths";
 import { renderStartNotice } from "../update/notice";
 import { IS_RELEASE_BUILD } from "../version";
+import { orchestratorTmuxSession } from "../daemon/tmux-sessions";
 import { startSession, type StartDeps, type StartedSession } from "./start";
 import { resolveProjectRoot } from "./project-root";
+import type { OrchestratorTool } from "./orchestrator";
 
 export class WorkspaceNotInstalledError extends Error {}
 
@@ -67,6 +71,8 @@ export interface LaunchDeps {
     readonly port: number;
     /** The CLI binary forwarded as `--hive`; defaults to this very process. */
     readonly hivePath?: string;
+    /** The orchestrator hosted in the Workspace master pane. */
+    readonly orchestrator?: OrchestratorTool;
   };
 }
 
@@ -101,11 +107,17 @@ export async function launchWorkspace(deps: LaunchDeps): Promise<number> {
         String(deps.session.port),
         "--hive",
         deps.session.hivePath ?? process.execPath,
+        "--orchestrator-session",
+        orchestratorTmuxSession(),
+        ...(deps.session.orchestrator === undefined
+          ? []
+          : ["--orchestrator", deps.session.orchestrator]),
       ];
   return (deps.open ?? openApp)(app, args);
 }
 
 export interface RunWorkspaceDeps {
+  readonly orchestrator?: OrchestratorTool;
   readonly cwd?: string;
   readonly resolveRoot?: (cwd: string) => string | null;
   readonly start?: (deps: StartDeps) => Promise<StartedSession>;
@@ -127,7 +139,13 @@ export async function runWorkspace(deps: RunWorkspaceDeps = {}): Promise<number>
   if (root !== null) {
     const session = await (deps.start ?? startSession)({ cwd: root });
     return (deps.launch ?? launchWorkspace)({
-      session: { cwd: session.cwd, port: session.port },
+      session: {
+        cwd: session.cwd,
+        port: session.port,
+        ...(deps.orchestrator === undefined
+          ? {}
+          : { orchestrator: deps.orchestrator }),
+      },
     });
   }
   try {

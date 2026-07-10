@@ -32,7 +32,16 @@ export function codexRootSocketPath(home = Bun.env.HIVE_HOME ?? "~/.hive"): stri
 /** Authority-first command for the Codex root driver. */
 export function buildCodexRootAuthorityCommand(
   socketPath = codexRootSocketPath(),
+  codexArguments: readonly string[] = [],
 ): string[] {
+  const shellQuote = (value: string): string =>
+    `'${value.replaceAll("'", `'"'"'`)}'`;
+  const remoteCommand = [
+    "codex",
+    "--remote",
+    `unix://${socketPath}`,
+    ...codexArguments,
+  ].map(shellQuote).join(" ");
   return [
     "sh",
     "-lc",
@@ -41,7 +50,7 @@ export function buildCodexRootAuthorityCommand(
       `for attempt in $(seq 1 50); do ` +
       `test -S '${socketPath}' && break; sleep 0.1; done; ` +
       `test -S '${socketPath}' || { echo 'Codex app-server failed to become ready' >&2; exit 1; }; ` +
-      `exec codex --remote unix://${socketPath}`,
+      `exec ${remoteCommand}`,
   ];
 }
 
@@ -218,12 +227,8 @@ export function readCurrentTty(): string | null {
 
 export type OrchestratorTerminalCapture = () => Promise<TerminalHandle | null>;
 
-// The orchestrator runs in whatever terminal the user typed `hive claude`
-// into, so unlike agent viewers there is no window-creation step that yields
-// a handle. Identify the window by the TTY hive is attached to, but only in
-// emulators whose windows hive knows how to drive; anywhere else (VS Code,
-// Alacritty, an existing tmux) the orchestrator simply doesn't participate
-// in the layout.
+// Legacy direct-terminal capture retained for explicit layout recovery. The
+// normal entry is Workspace-owned and deliberately does not call this.
 export const captureOrchestratorTerminal: OrchestratorTerminalCapture =
   async () => {
     if (Bun.env.TMUX !== undefined) {
@@ -338,8 +343,17 @@ export function buildOrchestratorLaunchCommand(
   executable = "claude",
 ): string[] {
   if (tool === "codex") {
+    // `codex --help` defines the initial brief as positional [PROMPT]. The
+    // app-server has no prompt option, so it belongs on the remote TUI command
+    // that creates the thread, after the ordinary config/sandbox flags.
+    const codexCommand = buildOrchestratorCommand(
+      tool,
+      port,
+      memoryIndex,
+      docGuidance,
+    );
     return ["tmux", "new-session", "-s", orchestratorTmuxSession(), "-c", cwd,
-      ...buildCodexRootAuthorityCommand()];
+      ...buildCodexRootAuthorityCommand(undefined, codexCommand.slice(1))];
   }
   return [
     "tmux",
@@ -357,26 +371,25 @@ export async function launchOrchestrator(
   port: number,
   cwd = process.cwd(),
   spawn: OrchestratorSpawn = spawnOrchestrator,
-  captureTerminal: OrchestratorTerminalCapture = captureOrchestratorTerminal,
+  // Workspace owns the viewer, so normal launches have no external terminal
+  // handle to register with the daemon's legacy window wall.
+  captureTerminal: OrchestratorTerminalCapture = async () => null,
   detectVersion?: () => Promise<string | null>,
   resolveExecutable: () => ResolvedClaudeExecutable = resolveWorkingClaudeExecutable,
   tmux: OrchestratorTmux = new TmuxAdapter(),
 ): Promise<number> {
-  if (tool !== "claude") {
-    // The authority command performs the handshake gate before attaching the
-    // interactive remote TUI; delivery wiring is enabled by the daemon when
-    // a root driver is registered for this socket/thread.
-  }
-  // Resolve a provably working CLI, not the first PATH hit: a broken
-  // package-manager shim ahead of the real installation must neither fail the
-  // version gate nor be the executable the pane runs. The gate and the spawn
-  // use the same binary, so what was version-checked is what launches.
-  const claude = resolveExecutable();
-  const version = await (detectVersion ?? (async () => claude.version))();
-  if (version === null || !versionAtLeast(version, CHANNELS_MIN_VERSION)) {
-    throw new Error(
-      `The Hive orchestrator requires Claude Channels (Claude >= ${CHANNELS_MIN_VERSION}).`,
-    );
+  // Resolve and gate Claude only for the Claude path. A Codex orchestrator
+  // must not require an unrelated Claude installation.
+  let claudePath = "claude";
+  if (tool === "claude") {
+    const claude = resolveExecutable();
+    claudePath = claude.path;
+    const version = await (detectVersion ?? (async () => claude.version))();
+    if (version === null || !versionAtLeast(version, CHANNELS_MIN_VERSION)) {
+      throw new Error(
+        `The Hive orchestrator requires Claude Channels (Claude >= ${CHANNELS_MIN_VERSION}).`,
+      );
+    }
   }
   const snapshots = tool === "claude"
     ? await Promise.all(claudeConfigPaths(cwd).map(snapshotFile))
@@ -413,7 +426,7 @@ export async function launchOrchestrator(
         cwd,
         memoryIndex,
         docGuidance,
-        claude.path,
+        claudePath,
       ),
       {
         cwd,

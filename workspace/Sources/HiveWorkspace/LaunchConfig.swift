@@ -2,7 +2,9 @@ import Foundation
 
 /// Arguments the CLI passes at launch:
 ///
-///     open -a HiveWorkspace --args --project <abs dir> --port <daemon port> --hive <abs hive binary>
+///     open -a HiveWorkspace --args --project <abs dir> --port <daemon port>
+///       --hive <abs hive binary> --orchestrator-session <tmux session>
+///       [--orchestrator claude|codex]
 ///
 /// Plus two development/CI flags:
 ///     --smoke          headless end-to-end checks (offscreen windows, exits 0/1)
@@ -15,6 +17,8 @@ struct LaunchConfig {
     var projectDirectory: String?
     var port: Int?
     var hivePath: String?
+    var orchestrator = "claude"
+    var orchestratorSession: String?
     var feedOverride: String?
     var smoke = false
 
@@ -48,6 +52,12 @@ struct LaunchConfig {
                 config.port = iterator.next().flatMap(Int.init)
             case "--hive":
                 config.hivePath = iterator.next()
+            case "--orchestrator":
+                if let tool = iterator.next(), tool == "claude" || tool == "codex" {
+                    config.orchestrator = tool
+                }
+            case "--orchestrator-session":
+                config.orchestratorSession = iterator.next()
             case "--feed":
                 config.feedOverride = iterator.next()
             default:

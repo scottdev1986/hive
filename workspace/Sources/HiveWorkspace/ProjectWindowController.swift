@@ -11,6 +11,8 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
     private let attentionCenter: AttentionCenter
     private let projectDirectory: String
     private let hivePath: String
+    private let daemonPort: Int
+    private let orchestrator: String
     private let container = LayoutContainerView()
     private let animator = LayoutAnimator()
     private var paneViews: [PaneID: PaneView] = [:]
@@ -25,11 +27,14 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
     var paneViewCount: Int { paneViews.count }
 
     init(state: ProjectState, attentionCenter: AttentionCenter,
-         projectDirectory: String, hivePath: String) {
+         projectDirectory: String, hivePath: String, daemonPort: Int,
+         orchestrator: String) {
         self.state = state
         self.attentionCenter = attentionCenter
         self.projectDirectory = projectDirectory
         self.hivePath = hivePath
+        self.daemonPort = daemonPort
+        self.orchestrator = orchestrator
 
         let window = NSWindow(
             contentRect: NSRect(x: 120, y: 80, width: 1280, height: 800),
@@ -157,14 +162,14 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
     }
 
     /// What runs inside a pane's pty:
-    /// - master: `hive claude` attaches to the orchestrator's tmux session
-    ///   with `-A`, so relaunching the app reattaches instead of duplicating.
+    /// - master: the private Workspace boundary starts the selected
+    ///   orchestrator and attaches its tmux session.
     /// - agent: a plain tmux attach client for the daemon-owned session;
     ///   killing it later merely detaches.
     private func terminalCommand(for pane: PaneState) -> String {
         switch pane.kind {
         case .orchestrator:
-            return "exec \(shellQuoted(hivePath)) claude"
+            return "exec \(shellQuoted(hivePath)) workspace-orchestrator --tool \(shellQuoted(orchestrator)) --port \(daemonPort)"
         case .agent:
             let session = pane.tmuxSession ?? pane.title
             return "exec tmux attach-session -t \(shellQuoted(session))"

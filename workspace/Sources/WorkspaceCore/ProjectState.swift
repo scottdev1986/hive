@@ -120,7 +120,7 @@ public final class ProjectState {
 
     // MARK: Orchestrator pane (local, not feed-driven)
 
-    /// The master pane is the orchestrator terminal (`hive claude`), created
+    /// The master pane is the selected orchestrator terminal, created
     /// by the window at open — the feed only describes worker agents.
     @discardableResult
     public func addOrchestrator(title: String = "Orchestrator") -> [StateChange] {

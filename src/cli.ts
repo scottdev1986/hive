@@ -2,7 +2,6 @@
 
 import { Command, CommanderError } from "commander";
 import { runCodexAppServerHost } from "./adapters/tools/codex-app-server";
-import { ensureStarted } from "./daemon/lifecycle";
 import {
   deleteMemoryCli,
   printQuotaStatus,
@@ -271,18 +270,16 @@ export function createProgram(): Command {
 
   program
     .command("claude")
-    .description("Start a read-only Claude orchestrator")
+    .description("Open Workspace with a read-only Claude orchestrator")
     .action(async () => {
-      const port = await ensureStarted();
-      process.exitCode = await launchOrchestrator("claude", port);
+      process.exitCode = await runWorkspace({ orchestrator: "claude" });
     });
 
   program
     .command("codex")
-    .description("Start a read-only Codex orchestrator")
+    .description("Open Workspace with a read-only Codex orchestrator")
     .action(async () => {
-      const port = await ensureStarted();
-      process.exitCode = await launchOrchestrator("codex", port);
+      process.exitCode = await runWorkspace({ orchestrator: "codex" });
     });
 
   program
@@ -515,6 +512,23 @@ export function createProgram(): Command {
     .requiredOption("--port <number>", "daemon port")
     .action(async (options: { port: string }) => {
       process.exitCode = await runWorkspaceFeedCli(parsePort(options.port));
+    });
+
+  // The Workspace master pane calls this private process boundary. Public
+  // `hive claude|codex` launch the app; they must never be invoked from the
+  // pane itself or the app would recursively open another Workspace.
+  program
+    .command("workspace-orchestrator", { hidden: true })
+    .requiredOption("--tool <tool>", "claude or codex")
+    .requiredOption("--port <number>", "daemon port")
+    .action(async (options: { tool: string; port: string }) => {
+      if (options.tool !== "claude" && options.tool !== "codex") {
+        throw new Error(`unsupported orchestrator tool: ${options.tool}`);
+      }
+      process.exitCode = await launchOrchestrator(
+        options.tool,
+        parsePort(options.port),
+      );
     });
 
   program

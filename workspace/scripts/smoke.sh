@@ -35,8 +35,8 @@ trap cleanup EXIT
 
 # --- (a) Real detached tmux sessions with recognizable output ---------------
 # agent-one ends in an interactive shell so the keystroke round trip has a
-# prompt to type at; agent-two chatters forever; orch is what `hive claude`
-# reattaches to via new-session -A.
+# prompt to type at; agent-two chatters forever; orch stands in for the
+# selected Workspace orchestrator session.
 tmux new-session -d -x 100 -y 30 -s "$SESS_ONE" 'echo AGENT-ONE-ALIVE; exec sh -i' || { echo "SMOKE FAIL: cannot start tmux"; exit 1; }
 tmux new-session -d -x 100 -y 30 -s "$SESS_TWO" 'while :; do echo AGENT-TWO-ALIVE; sleep 1; done'
 tmux new-session -d -x 100 -y 30 -s "$SESS_ORCH" 'echo ORCH-ALIVE; exec sh -i'

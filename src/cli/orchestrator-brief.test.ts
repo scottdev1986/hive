@@ -26,7 +26,9 @@ describe("orchestrator brief", () => {
     const command = buildCodexRootAuthorityCommand("/tmp/hive-root.sock");
     expect(command.slice(0, 2)).toEqual(["sh", "-lc"]);
     expect(command[2]).toContain("codex app-server --listen unix:///tmp/hive-root.sock");
-    expect(command[2]).toContain("exec codex --remote unix:///tmp/hive-root.sock");
+    expect(command[2]).toContain(
+      "exec 'codex' '--remote' 'unix:///tmp/hive-root.sock'",
+    );
   });
   test("is non-empty and names every orchestration MCP tool", () => {
     expect(ORCHESTRATOR_BRIEF.trim().length).toBeGreaterThan(100);
@@ -107,12 +109,45 @@ describe("orchestrator brief", () => {
   });
 
   test("runs Codex root through an app-server authority and remote TUI", () => {
-    const command = buildOrchestratorLaunchCommand("codex", 4317, "/repo");
+    const memory = "Hive memory index — durable facts.\n- [repo] launch fact";
+    const guidance = "DESIGN.md is the primary design doc.";
+    const command = buildOrchestratorLaunchCommand(
+      "codex",
+      4317,
+      "/repo",
+      memory,
+      guidance,
+    );
     expect(command.slice(0, 7)).toEqual([
       "tmux", "new-session", "-s", orchestratorTmuxSession(), "-c", "/repo", "sh",
     ]);
-    expect(command.at(-1)).toContain("codex app-server --listen unix://");
-    expect(command.at(-1)).toContain("exec codex --remote unix://");
+    const shellCommand = command.at(-1)!;
+    expect(shellCommand).toContain("codex app-server --listen unix://");
+    expect(shellCommand).toContain("'codex' '--remote' 'unix://");
+    expect(shellCommand).toContain("mcp_servers.hive.url=");
+    expect(shellCommand).toContain("'--sandbox' 'read-only'");
+    expect(shellCommand).toContain(ORCHESTRATOR_BRIEF.slice(0, 80));
+    expect(shellCommand).toContain(guidance);
+    expect(shellCommand).toContain(memory);
+  });
+
+  test("Codex launch does not resolve or version-gate Claude", async () => {
+    let command: string[] = [];
+    const exitCode = await launchOrchestrator(
+      "codex",
+      4317,
+      process.cwd(),
+      (spawned) => {
+        command = spawned;
+        return { exited: Promise.resolve(0) };
+      },
+      async () => null,
+      async () => { throw new Error("must not inspect Claude"); },
+      () => { throw new Error("must not resolve Claude"); },
+      noExistingRoot,
+    );
+    expect(exitCode).toEqual(0);
+    expect(command.at(-1)).toContain(ORCHESTRATOR_BRIEF.slice(0, 80));
   });
 
   test("kills an unattached stale root before launch", async () => {

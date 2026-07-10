@@ -1,7 +1,7 @@
 # Hive Workspace
 
 The Swift/AppKit workspace window for one Hive project: the master pane is a
-real terminal running the orchestrator (`hive claude`), every satellite pane
+real terminal running the selected Claude or Codex orchestrator, every satellite pane
 is a real terminal attached to one agent's daemon-owned tmux session, and the
 pane set is driven by the `hive workspace-feed` NDJSON stream. Hive does not
 roll its own renderer — SwiftTerm hosts the native claude/codex TUIs on real
@@ -18,14 +18,19 @@ headless onboarding command (profile, then daemon), while bare `hive` opens
 this Workspace after the same session boundary:
 
 ```sh
-open -a HiveWorkspace --args --project <abs project dir> --port <daemon port> --hive <abs hive binary>
+open -a HiveWorkspace --args --project <abs project dir> --port <daemon port> --hive <abs hive binary> --orchestrator-session <tmux session> [--orchestrator claude|codex]
 ```
 
 - `--project` one window per launch invocation, titled after the directory;
   it is also the cwd of every pane's shell.
 - `--port` the local daemon's HTTP port, handed to the feed subprocess.
-- `--hive` the hive binary; the master pane runs `<hive> claude`, the feed
+- `--hive` the hive binary; the master pane runs the private
+  `<hive> workspace-orchestrator` boundary, while the feed
   runs `<hive> workspace-feed --port <port>`.
+- `--orchestrator` selects Claude or Codex for the master pane; absent means
+  Claude, preserving bare `hive` as the default Workspace entry.
+- `--orchestrator-session` carries Hive's instance-scoped tmux identity into
+  the app, so terminal features never have to duplicate its naming algorithm.
 - `--feed <binary>` (hidden) overrides the feed executable — the
   process-boundary seam the smoke harness uses.
 - `--smoke` headless end-to-end checks (see below).
@@ -35,9 +40,11 @@ explaining to run `hive` from a project directory. No fixtures, ever.
 
 ## How panes work
 
-- **Master** — `/bin/zsh -lc "exec '<hive>' claude"`. `hive claude` attaches
-  to the orchestrator's tmux session with `-A`, so relaunching the app
-  reattaches to a live orchestrator; closing the window merely detaches.
+- **Master** — `/bin/zsh -lc "exec '<hive>' workspace-orchestrator --tool
+  <claude|codex> --port <n>"`. The private boundary starts the selected
+  read-only orchestrator in its fixed tmux session. Public `hive claude` and
+  `hive codex` first open Workspace through the shared session boundary;
+  keeping those public commands out of the pane prevents recursive launches.
 - **Satellites** — `/bin/zsh -lc "exec tmux attach-session -t '<session>'"`,
   one per live agent in the feed. Closing a pane SIGTERMs only the attach
   client; the agent and its session are never touched (`tmux kill-session`

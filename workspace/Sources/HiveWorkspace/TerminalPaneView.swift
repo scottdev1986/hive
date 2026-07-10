@@ -76,7 +76,7 @@ private final class TmuxScrollController: @unchecked Sendable {
 }
 
 /// A pane's content: a real terminal (SwiftTerm's `LocalProcessTerminalView`)
-/// running either the orchestrator TUI (`hive claude`) or a `tmux
+/// running either the selected orchestrator TUI or a `tmux
 /// attach-session` client for one agent. Hive never rolls its own renderer —
 /// the native claude/codex TUIs draw themselves here, and typing goes straight
 /// to the pty.

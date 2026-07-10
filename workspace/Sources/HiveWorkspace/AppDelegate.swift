@@ -2,10 +2,11 @@ import AppKit
 import WorkspaceCore
 
 /// The workspace app for one project: a master terminal running the
-/// orchestrator (`hive claude`), satellite terminals attached to each agent's
+/// selected Claude or Codex orchestrator, satellite terminals attached to each agent's
 /// daemon-owned tmux session, and the feed subprocess that drives the pane
 /// set. Launched by the CLI as
-/// `open -a HiveWorkspace --args --project <dir> --port <n> --hive <bin>`.
+/// `open -a HiveWorkspace --args --project <dir> --port <n> --hive <bin>
+/// --orchestrator-session <tmux session> --orchestrator <claude|codex>`.
 final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private let config: LaunchConfig
@@ -26,7 +27,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         guard config.isComplete,
               let projectDirectory = config.projectDirectory,
-              let hivePath = config.hivePath else {
+              let hivePath = config.hivePath,
+              let daemonPort = config.port else {
             if config.smoke {
                 // Smoke must never hang on a bad invocation.
                 print("SMOKE FAIL:\n  --smoke requires --project, --port, and --hive")
@@ -41,7 +43,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let state = ProjectState(projectID: ProjectID(projectDirectory), displayName: displayName)
         let controller = ProjectWindowController(
             state: state, attentionCenter: attentionCenter,
-            projectDirectory: projectDirectory, hivePath: hivePath)
+            projectDirectory: projectDirectory, hivePath: hivePath,
+            daemonPort: daemonPort, orchestrator: config.orchestrator)
         self.controller = controller
 
         projectSwitcher.register(state: state) { [weak controller] in
