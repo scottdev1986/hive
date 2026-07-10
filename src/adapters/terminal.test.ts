@@ -50,6 +50,12 @@ describe("terminal osascript builders", () => {
     ).toEqual(true);
     expect(
       script.includes(
+        "set agentWindow to first window whose selected tab is agentTab",
+      ),
+    ).toEqual(true);
+    expect(script).not.toContain("set agentWindow to front window");
+    expect(
+      script.includes(
         "return terminalProcessId & (ASCII character 9) & agentWindowId & (ASCII character 9) & agentTty",
       ),
     ).toEqual(true);

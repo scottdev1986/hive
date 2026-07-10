@@ -13,8 +13,11 @@ export function buildTerminalAppOsascript(
     "  activate",
     `  set agentTab to do script "${appleScriptString(command)}"`,
     `  set custom title of agentTab to "${appleScriptString(title)}"`,
-    "  set agentWindow to front window",
-    "  if (tty of selected tab of agentWindow) is not (tty of agentTab) then error \"could not identify created Terminal window\"",
+    // Terminal activates windows asynchronously. The newly created tab is not
+    // guaranteed to belong to `front window` yet, particularly when several
+    // agents launch close together or the user changes focus during launch.
+    // Associate the window through the exact tab object returned by `do script`.
+    "  set agentWindow to first window whose selected tab is agentTab",
     "  set agentWindowId to id of agentWindow as text",
     "  set agentTty to tty of agentTab",
     "end tell",
