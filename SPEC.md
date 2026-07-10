@@ -1,5 +1,7 @@
 # hive
 
+> **Architecture scope.** This document records the current Bun/tmux/Terminal.app system and the control-plane decisions learned from dogfooding it. The accepted destination is the native [Hive Workspace blueprint](docs/architecture/hive-workspace-blueprint.md), with restart order in the [handoff](docs/architecture/restart-handoff.md). Where the documents differ on windows, provider TUIs, tmux, process ownership, project identity, or IPC, the Workspace blueprint is authoritative for future work. No flagship implementation is authorized before the documented restart; Phase 0 control-plane authentication is the first proposed task afterward.
+
 ## What this is
 
 You `cd` into a project and type `hive claude`. A terminal opens with an AI orchestrator in it, scoped to that folder. You talk to it like a tech lead: "build this feature," "figure out why the tests are flaky," "have Codex take a second look at the auth code." It doesn't write the code itself. It decomposes the work, spawns agents — Claude Code here, Codex there, big model for the hard part, cheap model for the changelog — and each agent appears in its own terminal window where you can watch it work. Agents talk to each other when they need to, regardless of vendor. When the work is done, it gets merged, and the windows go away.
