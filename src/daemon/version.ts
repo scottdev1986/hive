@@ -1,1 +1,2 @@
-export const HIVE_VERSION = "0.1.0";
+/** Kept as the daemon's import site; the value lives in one place. */
+export { HIVE_VERSION } from "../version";

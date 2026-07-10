@@ -2,6 +2,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { z } from "zod";
 import { operatorFetch } from "./credential";
+import { HIVE_VERSION } from "../version";
 import {
   AgentRecordSchema,
   MemoryFactSchema,
@@ -44,7 +45,7 @@ export async function fetchAgentStatus(
     new URL(`http://127.0.0.1:${port}/mcp`),
     { fetch: fetcher ?? operatorFetch },
   );
-  const client = new Client({ name: "hive-cli", version: "0.1.0" });
+  const client = new Client({ name: "hive-cli", version: HIVE_VERSION });
   try {
     await client.connect(transport);
     const result = await client.callTool({
@@ -73,7 +74,7 @@ export async function markAgentDead(
     new URL(`http://127.0.0.1:${port}/mcp`),
     { fetch: fetcher ?? operatorFetch },
   );
-  const client = new Client({ name: "hive-cli", version: "0.1.0" });
+  const client = new Client({ name: "hive-cli", version: HIVE_VERSION });
   try {
     await client.connect(transport);
     const result = await client.callTool({
@@ -104,7 +105,7 @@ async function callHiveTool(
     new URL(`http://127.0.0.1:${port}/mcp`),
     { fetch: fetcher ?? operatorFetch },
   );
-  const client = new Client({ name: "hive-cli", version: "0.1.0" });
+  const client = new Client({ name: "hive-cli", version: HIVE_VERSION });
   try {
     await client.connect(transport);
     const result = await client.callTool({ name, arguments: args });

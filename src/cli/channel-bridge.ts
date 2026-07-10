@@ -10,6 +10,7 @@
 // already-persisted events onto a connection Claude is listening on.
 
 import { agentFetch } from "./credential";
+import { HIVE_VERSION } from "../version";
 
 export interface BridgeTransport {
   send(message: unknown): void;
@@ -144,7 +145,7 @@ export class ChannelBridge {
           protocolVersion: typeof params.protocolVersion === "string"
             ? params.protocolVersion
             : "2025-06-18",
-          serverInfo: { name: "hive-channel", version: "0.1.0" },
+          serverInfo: { name: "hive-channel", version: HIVE_VERSION },
           capabilities: {
             experimental: {
               // Presence of this key registers the channel listener; the

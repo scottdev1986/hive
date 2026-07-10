@@ -28,6 +28,8 @@ dist/
 build/
 out/
 *.tsbuildinfo
+# `bun build --compile` scratch files, written beside the project root
+.*.bun-build
 coverage/
 .cache/
 npm-debug.log*

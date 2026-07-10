@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { resolveHandshakeProject } from "./project-identity";
 import { readdir, readFile, realpath } from "node:fs/promises";
 import { join, relative, resolve } from "node:path";
-import { HIVE_VERSION } from "./version";
+import { HIVE_BUILD_HASH, HIVE_VERSION } from "../version";
 
 /**
  * This is intentionally separate from product version. A wire change must not
@@ -36,8 +36,17 @@ async function sourceFiles(directory: string): Promise<string[]> {
   return files.flat();
 }
 
-/** Content address the executable source tree, rather than its marketing version. */
+/**
+ * Content address the executable, rather than its marketing version.
+ *
+ * A release binary carries its hash inlined at compile time: there is no source
+ * tree inside the compiled artifact to walk, and a build-time constant is the
+ * only value a peer cannot influence. A source checkout hashes the tree it is
+ * actually executing, which is what makes an edit-and-rerun cycle reject the
+ * daemon still running the pre-edit code.
+ */
 export async function currentBuildHash(): Promise<string> {
+  if (HIVE_BUILD_HASH !== null) return HIVE_BUILD_HASH;
   const sourceRoot = resolveSourceRoot();
   const files = (await sourceFiles(sourceRoot)).sort();
   const hash = createHash("sha256");

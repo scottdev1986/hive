@@ -62,20 +62,23 @@ hive uses your existing Claude / OpenAI subscriptions or API keys. It adds no fe
 
 ## Installation
 
-*Coming with the first release:*
-
 ```
-brew install hive
+curl -fsSL https://raw.githubusercontent.com/scottdev1986/hive/main/install.sh | sh
 ```
 
-Until then, this repository contains the project's design, documentation, daemon, and runnable prototypes.
+This installs the compiled `hive` binary and the Hive Workspace application into `~/.local/share/hive`, and links `~/.local/bin/hive`. Read [install.sh](install.sh) before you run it; it is short on purpose.
+
+`hive start` checks for a newer release and prints one line if there is one. `hive update` installs it — staging and verifying immediately, activating only when no agents are live. `HIVE_NO_UPDATE_CHECK=1` silences the check; `HIVE_DISABLE_UPDATES=1` disables self-update entirely. Homebrew will be a secondary channel, and Hive will tell you to run `brew upgrade hive` rather than rewrite an install Homebrew owns.
+
+Releases are **not yet signed or notarized**, so macOS will quarantine the binary on first run. `hive update` verifies every artifact's SHA-256 against the release manifest and tells you plainly that the release carries no Hive signature. See [docs/versioning-and-release.md](docs/versioning-and-release.md).
 
 ## Quick start (once installed)
 
 1. `cd` into any project folder (a git repository).
-2. Run `hive claude` (or `hive codex` to use a Codex orchestrator).
-3. Tell the orchestrator what you want done, in plain English.
-4. Watch the agent windows, and answer the occasional approval prompt in the orchestrator window.
+2. Run `hive start`. It brings up this project's daemon and tells you if a newer Hive exists.
+3. Run `hive` to open the Workspace, or `hive claude` (or `hive codex`) for a terminal orchestrator.
+4. Tell the orchestrator what you want done, in plain English.
+5. Watch the agent windows, and answer the occasional approval prompt in the orchestrator window.
 
 ### Quota-aware routing
 

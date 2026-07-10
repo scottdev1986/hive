@@ -1,0 +1,225 @@
+#!/usr/bin/env bun
+/**
+ * Build the release artifacts and the manifest that describes them.
+ *
+ * `bun run src/release/build.ts --version 0.0.7 --commit abc1234 --out dist`
+ *
+ * Two CLI binaries (`darwin-arm64`, `darwin-x64`) and one universal Workspace
+ * application. The app is universal rather than sliced because `swift build
+ * --arch arm64 --arch x86_64` produces one bundle that runs everywhere, and a
+ * 3 MB duplicate is cheaper than a second bundle to sign and notarize.
+ *
+ * The build hash is a content address of the *inputs*: source tree, version,
+ * commit, and target triple. It cannot be a hash of the output, because the
+ * output embeds the hash — that circularity is why Hive addresses what it built
+ * from rather than what it built. The property the daemon handshake needs holds
+ * either way: two different releases always disagree, and a rebuild of one
+ * release always agrees with itself.
+ */
+import { createHash } from "node:crypto";
+import { mkdir, rm, writeFile } from "node:fs/promises";
+import { join, resolve } from "node:path";
+import { currentBuildHash } from "../daemon/handshake";
+import { DAEMON_SCHEMA_EPOCH, DAEMON_WIRE_PROTOCOL } from "../daemon/handshake";
+import {
+  MANIFEST_ASSET,
+  RELEASE_MANIFEST_SCHEMA,
+  type ReleaseArtifact,
+  type ReleaseManifest,
+} from "./manifest";
+
+const TARGETS = [
+  { arch: "arm64", bunTarget: "bun-darwin-arm64", asset: "hive-darwin-arm64" },
+  { arch: "x64", bunTarget: "bun-darwin-x64", asset: "hive-darwin-x64" },
+] as const;
+
+const WORKSPACE_ASSET = "HiveWorkspace.tar.gz";
+
+interface Options {
+  version: string;
+  commit: string;
+  buildDate: string;
+  out: string;
+  repoRoot: string;
+  publicKey: string | null;
+  securityCritical: boolean;
+  skipWorkspace: boolean;
+}
+
+function parseArgs(argv: string[]): Options {
+  const get = (flag: string): string | null => {
+    const index = argv.indexOf(flag);
+    return index >= 0 ? argv[index + 1] ?? null : null;
+  };
+  const version = get("--version");
+  if (version === null) throw new Error("--version is required");
+  const repoRoot = resolve(get("--repo-root") ?? process.cwd());
+  return {
+    version,
+    commit: get("--commit") ?? "unknown",
+    buildDate: get("--build-date") ?? new Date().toISOString(),
+    out: resolve(get("--out") ?? join(repoRoot, "dist")),
+    repoRoot,
+    publicKey: get("--public-key"),
+    securityCritical: argv.includes("--security-critical"),
+    skipWorkspace: argv.includes("--skip-workspace"),
+  };
+}
+
+async function sh(command: string[], cwd: string): Promise<void> {
+  const proc = Bun.spawn(command, { cwd, stdout: "inherit", stderr: "inherit" });
+  const code = await proc.exited;
+  if (code !== 0) throw new Error(`${command.join(" ")} exited ${code}`);
+}
+
+async function digest(path: string): Promise<{ sha256: string; size: number }> {
+  const bytes = new Uint8Array(await Bun.file(path).arrayBuffer());
+  return {
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+    size: bytes.byteLength,
+  };
+}
+
+/** Content address of the inputs; see the header. */
+function buildHashFor(sourceHash: string, options: Options, target: string): string {
+  return createHash("sha256")
+    .update("hive-build-v1\0")
+    .update(sourceHash).update("\0")
+    .update(options.version).update("\0")
+    .update(options.commit).update("\0")
+    .update(target)
+    .digest("hex");
+}
+
+async function buildCli(
+  options: Options,
+  target: (typeof TARGETS)[number],
+  buildHash: string,
+): Promise<ReleaseArtifact> {
+  const outfile = join(options.out, target.asset);
+  const defines = [
+    ["HIVE_BUILD_VERSION", options.version],
+    ["HIVE_BUILD_COMMIT", options.commit],
+    ["HIVE_BUILD_DATE", options.buildDate],
+    ["HIVE_BUILD_HASH", buildHash],
+    ...(options.publicKey === null
+      ? []
+      : [["HIVE_RELEASE_PUBLIC_KEY", options.publicKey]]),
+  ].flatMap(([name, value]) => [
+    "--define",
+    // JSON-encode so the value lands as a string literal in the bundle.
+    `process.env.${name}=${JSON.stringify(value)}`,
+  ]);
+
+  await sh([
+    "bun", "build", "--compile",
+    `--target=${target.bunTarget}`,
+    ...defines,
+    "src/cli.ts",
+    "--outfile", outfile,
+  ], options.repoRoot);
+
+  return {
+    name: target.asset,
+    kind: "cli",
+    platform: "darwin",
+    arch: target.arch,
+    buildHash,
+    ...(await digest(outfile)),
+  };
+}
+
+const INFO_PLIST = (version: string): string =>
+  `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleDevelopmentRegion</key><string>en</string>
+  <key>CFBundleExecutable</key><string>HiveWorkspace</string>
+  <key>CFBundleIdentifier</key><string>dev.hive.workspace</string>
+  <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+  <key>CFBundleName</key><string>Hive Workspace</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleShortVersionString</key><string>${version}</string>
+  <key>CFBundleVersion</key><string>${version}</string>
+  <key>LSMinimumSystemVersion</key><string>14.0</string>
+  <key>NSHighResolutionCapable</key><true/>
+  <key>NSPrincipalClass</key><string>NSApplication</string>
+</dict>
+</plist>
+`;
+
+async function buildWorkspace(options: Options): Promise<ReleaseArtifact[]> {
+  const workspace = join(options.repoRoot, "workspace");
+  await sh(
+    ["swift", "build", "-c", "release", "--arch", "arm64", "--arch", "x86_64"],
+    workspace,
+  );
+  const binPath = (await Bun.$`swift build -c release --arch arm64 --arch x86_64 --show-bin-path`
+    .cwd(workspace).text()).trim();
+
+  const bundle = join(options.out, "HiveWorkspace.app");
+  const macos = join(bundle, "Contents", "MacOS");
+  await rm(bundle, { recursive: true, force: true });
+  await mkdir(macos, { recursive: true });
+  await writeFile(join(bundle, "Contents", "Info.plist"), INFO_PLIST(options.version));
+  await sh(["cp", join(binPath, "HiveWorkspace"), join(macos, "HiveWorkspace")], options.repoRoot);
+
+  const tarball = join(options.out, WORKSPACE_ASSET);
+  await sh(["tar", "-czf", tarball, "-C", options.out, "HiveWorkspace.app"], options.repoRoot);
+  await rm(bundle, { recursive: true, force: true });
+
+  const stat = await digest(tarball);
+  // One universal bundle, listed for both architectures so `selectArtifact`
+  // resolves on either machine.
+  return TARGETS.map((target) => ({
+    name: WORKSPACE_ASSET,
+    kind: "workspace" as const,
+    platform: "darwin" as const,
+    arch: target.arch,
+    buildHash: stat.sha256,
+    ...stat,
+  }));
+}
+
+export async function build(options: Options): Promise<ReleaseManifest> {
+  await mkdir(options.out, { recursive: true });
+  const sourceHash = await currentBuildHash();
+
+  const artifacts: ReleaseArtifact[] = [];
+  for (const target of TARGETS) {
+    artifacts.push(
+      await buildCli(options, target, buildHashFor(sourceHash, options, target.bunTarget)),
+    );
+  }
+  if (!options.skipWorkspace) {
+    artifacts.push(...(await buildWorkspace(options)));
+  }
+
+  const manifest: ReleaseManifest = {
+    schema: RELEASE_MANIFEST_SCHEMA,
+    version: options.version,
+    tag: `v${options.version}`,
+    channel: "stable",
+    commit: options.commit,
+    publishedAt: options.buildDate,
+    securityCritical: options.securityCritical,
+    wireProtocol: { ...DAEMON_WIRE_PROTOCOL },
+    schemaEpoch: DAEMON_SCHEMA_EPOCH,
+    artifacts,
+  };
+  await writeFile(
+    join(options.out, MANIFEST_ASSET),
+    `${JSON.stringify(manifest, null, 2)}\n`,
+  );
+  return manifest;
+}
+
+if (import.meta.main) {
+  const options = parseArgs(process.argv.slice(2));
+  const manifest = await build(options);
+  console.log(`built hive ${manifest.version} -> ${options.out}`);
+  for (const artifact of manifest.artifacts) {
+    console.log(`  ${artifact.name} ${artifact.arch} ${artifact.sha256.slice(0, 12)}`);
+  }
+}

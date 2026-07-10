@@ -95,8 +95,9 @@ import {
   type SessionProcessRoots,
 } from "./resources";
 import type { ResourceLimits } from "../schemas";
+import { HIVE_VERSION } from "../version";
 
-export const HIVE_VERSION = "0.1.0";
+export { HIVE_VERSION };
 
 const OPERATOR_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 

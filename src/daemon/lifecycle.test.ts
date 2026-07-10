@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  daemonSpawnArgv,
   getPidFilePath,
   isRunning,
   probeDaemonReuse,
@@ -22,6 +23,21 @@ const handshake: DaemonHandshake = {
   repoFamilyKey: null,
   generation: 1,
 };
+
+describe("respawning as the daemon", () => {
+  test("a source checkout names the entry script, because bun is the executable", () => {
+    expect(daemonSpawnArgv(false, "/opt/homebrew/bin/bun", "/repo/src/cli.ts"))
+      .toEqual(["/opt/homebrew/bin/bun", "/repo/src/cli.ts", "daemon"]);
+  });
+
+  test("a release build spawns itself, never a path inside its own bundle", () => {
+    // `import.meta.dir` in a compiled binary is Bun's virtual filesystem. Passing
+    // it as argv makes the child try to run `/$bunfs/root/cli.ts` as a command.
+    const argv = daemonSpawnArgv(true, "/Users/s/.local/share/hive/current/hive", "/$bunfs/root/cli.ts");
+    expect(argv).toEqual(["/Users/s/.local/share/hive/current/hive", "daemon"]);
+    expect(argv.join(" ")).not.toContain("bunfs");
+  });
+});
 
 describe("daemon lifecycle", () => {
   test("a confirmed move retains its opaque handshake identity", () => {

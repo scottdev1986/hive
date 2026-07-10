@@ -26,7 +26,17 @@ import {
   type HookEventOptions,
 } from "./cli/event";
 import { launchOrchestrator } from "./cli/orchestrator";
+import { runStart } from "./cli/start";
 import { runStatusline } from "./cli/statusline";
+import {
+  printUpdateStatus,
+  runRollback,
+  runUpdate,
+  runUpdateCheck,
+  runUpdateSkip,
+} from "./cli/update";
+import { launchWorkspace } from "./cli/workspace";
+import { versionLine } from "./version";
 import type { MemoryScope } from "./schemas";
 
 export interface EventCliOptions {
@@ -180,6 +190,49 @@ export function createProgram(): Command {
     .description("Coordinate named Claude and Codex agents")
     .showHelpAfterError()
     .exitOverride();
+
+  // `hive --version` prints one line because that is what every peer does and
+  // what bug reports need. The richer facts belong to `hive update status`.
+  program.version(versionLine(), "-v, --version", "Print the Hive version");
+
+  // Bare `hive` opens the installed release Workspace. Never a dev build.
+  program.action(async () => {
+    await launchWorkspace();
+  });
+
+  program
+    .command("start")
+    .description(
+      "Check for updates and bring this project's Hive daemon up",
+    )
+    .action(async () => {
+      await runStart();
+    });
+
+  const update = program
+    .command("update [version]")
+    .description("Update the installed Hive to the latest (or an exact) release")
+    .action(async (version?: string) => {
+      await runUpdate(version);
+    });
+
+  update.command("check")
+    .description("Check for a newer release; exit 10 when one is available")
+    .action(async () => {
+      process.exitCode = await runUpdateCheck();
+    });
+
+  update.command("status")
+    .description("Show version, install method, retained versions, and last check")
+    .action(printUpdateStatus);
+
+  update.command("rollback")
+    .description("Reactivate the retained previous version")
+    .action(runRollback);
+
+  update.command("skip")
+    .description("Silence update notices for the currently offered version")
+    .action(runUpdateSkip);
 
   program
     .command("claude")

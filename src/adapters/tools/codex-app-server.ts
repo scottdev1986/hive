@@ -1,6 +1,7 @@
 import { createServer, connect, type Socket } from "node:net";
 import { chmod, unlink } from "node:fs/promises";
 import type { AgentRecord, HookEvent } from "../../schemas";
+import { HIVE_VERSION } from "../../version";
 import type {
   CodexQuotaReading,
   CodexRateLimitsResponse,
@@ -364,7 +365,7 @@ export class CodexAppServerManager {
     });
     try {
       await client.request("initialize", {
-        clientInfo: { name: "hive", title: "Hive", version: "0.1.0" },
+        clientInfo: { name: "hive", title: "Hive", version: HIVE_VERSION },
         capabilities: {
           experimentalApi: false,
           requestAttestation: false,

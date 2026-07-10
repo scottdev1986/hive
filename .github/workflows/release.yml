@@ -1,0 +1,115 @@
+name: release
+
+# One push to main is one patch bump. The push event fires once per push
+# regardless of how many commits it carries, so a hundred local commits landing
+# together produce exactly one release. Everything else here exists to make that
+# sentence survive re-runs, races, and failures.
+on:
+  push:
+    branches: [main]
+  # Re-runnable by hand. `planRelease` skips a commit that is already tagged, so
+  # a manual run against a released commit publishes nothing.
+  workflow_dispatch:
+
+# The repository default for GITHUB_TOKEN is read-only. A workflow may raise its
+# own permissions above that default; it may not exceed what the token can be
+# granted. Tag pushes and release creation both need `contents: write`.
+permissions:
+  contents: write
+
+# Serialize. Two pushes in quick succession must not race for the same version;
+# the tag push is the compare-and-swap that would reject the loser, and waiting
+# is cheaper than a burned build.
+concurrency:
+  group: hive-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    # macOS because the artifacts are Mach-O: `bun build --compile` cross-compiles
+    # both CLI slices from here, and `swift build` needs a real toolchain.
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # planRelease needs every tag to find the highest patch, and the tags
+          # are what make the bump idempotent.
+          fetch-depth: 0
+          fetch-tags: true
+
+      # Pinned, not floating: the release binary embeds this Bun's runtime.
+      # `src/release/toolchain.test.ts` fails if this drifts from package.json's
+      # `packageManager` field.
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.14"
+
+      - run: bun install --frozen-lockfile
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Test
+        run: bun test
+
+      # The bump rule is a tested pure function; this step is its adapter.
+      - name: Plan the release
+        id: plan
+        run: bun run src/release/plan-cli.ts "$GITHUB_SHA"
+
+      - name: Nothing to release
+        if: steps.plan.outputs.action != 'release'
+        run: echo "::notice::${{ steps.plan.outputs.version }} — this commit is already released."
+
+      # Build before tagging. A build that fails must not burn a version number,
+      # so the tag is minted only once there are artifacts to attach to it.
+      - name: Build release artifacts
+        if: steps.plan.outputs.action == 'release'
+        run: |
+          bun run src/release/build.ts \
+            --version "${{ steps.plan.outputs.version }}" \
+            --commit "$(git rev-parse --short HEAD)" \
+            --build-date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --out dist
+
+      - name: Verify the built CLI reports its own version
+        if: steps.plan.outputs.action == 'release'
+        run: |
+          set -euo pipefail
+          chmod +x dist/hive-darwin-arm64
+          reported="$(dist/hive-darwin-arm64 --version)"
+          echo "$reported"
+          case "$reported" in
+            *"${{ steps.plan.outputs.version }}"*) ;;
+            *) echo "::error::built binary reported '$reported'"; exit 1 ;;
+          esac
+
+      # The compare-and-swap. `git push` of a new tag ref fails if the ref
+      # exists, so two concurrent runs can never both mint this version.
+      - name: Publish the tag
+        if: steps.plan.outputs.action == 'release'
+        run: |
+          set -euo pipefail
+          git config user.name "hive-release[bot]"
+          git config user.email "hive-release[bot]@users.noreply.github.com"
+          git tag -a "${{ steps.plan.outputs.tag }}" -m "hive ${{ steps.plan.outputs.version }}"
+          git push origin "refs/tags/${{ steps.plan.outputs.tag }}"
+
+      - name: Publish the release
+        if: steps.plan.outputs.action == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release create "${{ steps.plan.outputs.tag }}" \
+            --verify-tag \
+            --title "hive ${{ steps.plan.outputs.version }}" \
+            --notes "Automated release of ${{ github.sha }}.
+
+          These artifacts are **not yet signed or notarized**. \`hive update\` verifies
+          each artifact's SHA-256 against \`hive-release.json\` and says out loud that the
+          release carries no Hive release-key signature. See docs/versioning-and-release.md." \
+            dist/hive-darwin-arm64 \
+            dist/hive-darwin-x64 \
+            dist/HiveWorkspace.tar.gz \
+            dist/hive-release.json

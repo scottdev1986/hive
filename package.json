@@ -1,6 +1,6 @@
 {
   "name": "hive",
-  "version": "0.1.0",
+  "version": "0.0.0",
   "type": "module",
   "bin": {
     "hive": "src/cli.ts"
@@ -12,7 +12,9 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "bun test",
-    "dev": "bun run src/cli.ts"
+    "dev": "bun run src/cli.ts",
+    "build:release": "bun run src/release/build.ts",
+    "release:plan": "bun run src/release/plan-cli.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",

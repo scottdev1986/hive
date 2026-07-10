@@ -1,5 +1,6 @@
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { IS_RELEASE_BUILD } from "../version";
 import { getHiveHome } from "./db";
 import {
   expectedDaemonHandshake,
@@ -106,6 +107,23 @@ export function cleanupLifecycleFiles(pid = process.pid): void {
   rmSync(getPortFilePath(), { force: true });
 }
 
+/**
+ * How to re-invoke ourselves as the daemon.
+ *
+ * A source checkout runs under `bun`, so `process.execPath` is the Bun binary
+ * and the entry script must be named explicitly. A compiled release *is* the
+ * entry: its sources live in Bun's virtual filesystem, and passing that path as
+ * argv would make the new process try to run `/$bunfs/root/cli.ts` as a
+ * subcommand. Release builds therefore spawn themselves with `daemon` alone.
+ */
+export function daemonSpawnArgv(
+  isReleaseBuild: boolean,
+  execPath: string,
+  entry = resolve(import.meta.dir, "../cli.ts"),
+): string[] {
+  return isReleaseBuild ? [execPath, "daemon"] : [execPath, entry, "daemon"];
+}
+
 export async function ensureStarted(): Promise<number> {
   const projectRoot = process.cwd();
   const handshake = await expectedDaemonHandshake(projectRoot);
@@ -122,8 +140,7 @@ export async function ensureStarted(): Promise<number> {
 
   cleanupLifecycleFiles();
   const port = readConfiguredPort();
-  const cliEntry = resolve(import.meta.dir, "../cli.ts");
-  const child = Bun.spawn([process.execPath, cliEntry, "daemon"], {
+  const child = Bun.spawn(daemonSpawnArgv(IS_RELEASE_BUILD, process.execPath), {
     cwd: process.cwd(),
     detached: true,
     env: {
