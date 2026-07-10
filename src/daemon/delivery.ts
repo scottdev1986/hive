@@ -35,6 +35,11 @@ export interface ChannelDeliverer {
   ): Promise<boolean>;
 }
 
+export interface RootProtocolDeliverer {
+  isLive(): boolean;
+  deliverMessage(content: string, meta: Record<string, string>): Promise<boolean>;
+}
+
 export function formatChannelMessage(message: AgentMessage): {
   content: string;
   meta: Record<string, string>;
@@ -107,6 +112,7 @@ export class MessageDelivery {
     private readonly controls?: CriticalControlRuntime,
     private readonly nativeControl?: NativeAgentControl,
     private readonly channels?: ChannelDeliverer,
+    private readonly rootProtocol?: RootProtocolDeliverer,
   ) {}
 
   async send(
@@ -375,6 +381,16 @@ export class MessageDelivery {
   private async deliverRootViaChannel(
     message: AgentMessage,
   ): Promise<AgentMessage | null> {
+    if (this.rootProtocol?.isLive()) {
+      const confirmed = await this.rootProtocol.deliverMessage(
+        formatOrchestratorWake(createOrchestratorEnvelope(message)),
+        { sender: message.from, message_id: message.id, sequence: String(message.sequence) },
+      ).catch(() => false);
+      if (!confirmed) return null;
+      const now = new Date().toISOString();
+      this.db.markMessageDelivered(message.id, now);
+      return this.db.transitionMessage(message.id, "injected", now)!;
+    }
     if (this.channels === undefined || !this.channels.isLive(ORCHESTRATOR_NAME)) {
       return null;
     }
