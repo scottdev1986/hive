@@ -61,10 +61,162 @@ describe("HiveDatabase", () => {
         toolSessionId: "0189-session",
         recoveryAttempts: 2,
       });
-      expect(db.upsertAgent(updated)).toEqual(updated);
-      expect(db.listAgents()).toEqual([updated]);
+      // Reaching a terminal status stamps closure durably, from failedAt.
+      const closed = { ...updated, closedAt: "2026-07-09T12:01:00.000Z" };
+      expect(db.upsertAgent(updated)).toEqual(closed);
+      expect(db.listAgents()).toEqual([closed]);
       expect(db.deleteAgent(updated.id)).toEqual(true);
       expect(db.getAgentById(updated.id)).toEqual(null);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("stamps closure once and clears it when recovery revives the agent", () => {
+    const db = new HiveDatabase(join(home, "closure.db"));
+    try {
+      db.insertAgent(agent());
+      expect(db.getAgentByName("maya")?.closedAt).toBeUndefined();
+
+      const dead = db.markAgentDeadAndDetachTerminal(
+        "agent-maya",
+        "2026-07-09T12:02:00.000Z",
+      );
+      expect(dead?.agent.closedAt).toEqual("2026-07-09T12:02:00.000Z");
+
+      // A later write that keeps the agent closed must not slide the instant.
+      const rewritten = db.upsertAgent({
+        ...dead!.agent,
+        failureReason: "killed by orchestrator",
+        lastEventAt: "2026-07-09T12:30:00.000Z",
+      });
+      expect(rewritten.closedAt).toEqual("2026-07-09T12:02:00.000Z");
+
+      // Crash recovery brings this same agent back: it is live, not closed.
+      const revived = db.upsertAgent({ ...rewritten, status: "working" });
+      expect(revived.closedAt).toBeUndefined();
+      expect(db.getLiveAgentByName("maya")?.id).toEqual("agent-maya");
+    } finally {
+      db.close();
+    }
+  });
+
+  test("keeps every past holder of a name as its own row", () => {
+    const db = new HiveDatabase(join(home, "holders.db"));
+    try {
+      db.insertAgent(agent({ taskDescription: "crash matrix" }));
+      db.markAgentDeadAndDetachTerminal("agent-maya", "2026-07-09T12:02:00.000Z");
+      // The name comes back on a brand-new AgentUUID.
+      db.insertAgent(agent({
+        id: "agent-maya-2",
+        taskDescription: "quota ledger",
+        createdAt: "2026-07-09T13:00:00.000Z",
+      }));
+
+      const holders = db.listAgentsNamed("maya");
+      expect(holders.map((holder) => holder.id))
+        .toEqual(["agent-maya", "agent-maya-2"]);
+      // The closed holder keeps its own task and closure instant: history can
+      // still say which maya did what.
+      expect(holders[0]).toMatchObject({
+        status: "dead",
+        taskDescription: "crash matrix",
+        closedAt: "2026-07-09T12:02:00.000Z",
+      });
+      expect(holders[1]).toMatchObject({
+        status: "working",
+        taskDescription: "quota ledger",
+      });
+
+      // A bare name means the live holder, never the ghost.
+      expect(db.getAgentByName("maya")?.id).toEqual("agent-maya-2");
+      expect(db.getLiveAgentByName("maya")?.id).toEqual("agent-maya-2");
+    } finally {
+      db.close();
+    }
+  });
+
+  test("refuses a second live holder of one name", () => {
+    const db = new HiveDatabase(join(home, "one-live-holder.db"));
+    try {
+      db.insertAgent(agent());
+      expect(() => db.insertAgent(agent({ id: "agent-maya-2" })))
+        .toThrow(/UNIQUE constraint failed/);
+
+      // Once the first holder closes, the name is free again.
+      db.markAgentDeadAndDetachTerminal("agent-maya", "2026-07-09T12:02:00.000Z");
+      expect(db.insertAgent(agent({ id: "agent-maya-2" })).name).toEqual("maya");
+    } finally {
+      db.close();
+    }
+  });
+
+  test("resolves a name with no live holder to its most recent closed one", () => {
+    const db = new HiveDatabase(join(home, "closed-lookup.db"));
+    try {
+      db.insertAgent(agent({ status: "dead", closedAt: timestamp }));
+      db.insertAgent(agent({
+        id: "agent-maya-2",
+        status: "failed",
+        createdAt: "2026-07-09T13:00:00.000Z",
+        closedAt: "2026-07-09T13:05:00.000Z",
+      }));
+
+      expect(db.getLiveAgentByName("maya")).toEqual(null);
+      // Delivery looks a recipient up by name and rejects terminal agents; it
+      // must see the newest ghost, not an arbitrary one.
+      expect(db.getAgentByName("maya")?.id).toEqual("agent-maya-2");
+    } finally {
+      db.close();
+    }
+  });
+
+  test("rebuilds a legacy agents table that made names globally unique", () => {
+    const path = join(home, "legacy-unique-name.db");
+    const legacy = new Database(path, { create: true });
+    legacy.exec(`
+      CREATE TABLE agents (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL UNIQUE,
+        tool TEXT NOT NULL,
+        model TEXT NOT NULL,
+        tier TEXT NOT NULL,
+        status TEXT NOT NULL,
+        taskDescription TEXT NOT NULL,
+        worktreePath TEXT,
+        branch TEXT,
+        tmuxSession TEXT NOT NULL,
+        contextPct REAL NOT NULL,
+        createdAt TEXT NOT NULL,
+        lastEventAt TEXT NOT NULL
+      );
+      INSERT INTO agents (
+        id, name, tool, model, tier, status, taskDescription,
+        worktreePath, branch, tmuxSession, contextPct, createdAt, lastEventAt
+      ) VALUES (
+        'agent-maya', 'maya', 'codex', 'gpt-5-codex', 'standard', 'dead',
+        'crash matrix', '/tmp/hive-maya', 'hive/maya-daemon', 'hive-maya',
+        12, '${timestamp}', '${timestamp}'
+      );
+    `);
+    legacy.close();
+
+    const db = new HiveDatabase(path);
+    try {
+      // The dead holder survives the rebuild, with closure backfilled from the
+      // only terminal instant a legacy row records.
+      expect(db.getAgentByName("maya")).toMatchObject({
+        id: "agent-maya",
+        status: "dead",
+        closedAt: timestamp,
+      });
+      // And the name is now reusable without overwriting that history.
+      db.insertAgent(agent({ id: "agent-maya-2" }));
+      expect(db.listAgentsNamed("maya").map((holder) => holder.id))
+        .toEqual(["agent-maya", "agent-maya-2"]);
+      // The rebuilt table still admits only one live holder.
+      expect(() => db.insertAgent(agent({ id: "agent-maya-3" })))
+        .toThrow(/UNIQUE constraint failed/);
     } finally {
       db.close();
     }

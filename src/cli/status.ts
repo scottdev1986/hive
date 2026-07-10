@@ -1,3 +1,4 @@
+import { describeAgentName } from "../schemas";
 import type { AgentRecord, QuotaStatus, QuotaWindowStatus } from "../schemas";
 
 const TASK_WIDTH = 48;
@@ -12,7 +13,7 @@ function truncate(value: string, width: number): string {
 
 export function formatStatusTable(agents: AgentRecord[]): string {
   const rows = agents.map((agent) => [
-    agent.name,
+    describeAgentName(agent),
     agent.tool,
     agent.model,
     agent.status,

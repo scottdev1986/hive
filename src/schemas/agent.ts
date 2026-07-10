@@ -39,7 +39,24 @@ export const ExecutionIdentitySchema = z.discriminatedUnion("tool", [
 
 export type ExecutionIdentity = z.infer<typeof ExecutionIdentitySchema>;
 
+// A closed agent is done with the world: it holds no tmux session, accepts no
+// messages, and its name is free to be issued again. Every other status —
+// including `spawning`, `control-paused`, and `stuck` — is a live holder that
+// still owns its name.
+export const TERMINAL_AGENT_STATUSES = ["done", "dead", "failed"] as const;
+
+export type TerminalAgentStatus = (typeof TERMINAL_AGENT_STATUSES)[number];
+
+export function isTerminalAgentStatus(
+  status: string,
+): status is TerminalAgentStatus {
+  return (TERMINAL_AGENT_STATUSES as readonly string[]).includes(status);
+}
+
 export const AgentRecordSchema = z.object({
+  // The AgentUUID: distinct per holder of a name, for the lifetime of the Hive.
+  // Two agents that share a name across time never share an id, so history can
+  // always tell them apart.
   id: z.string().min(1),
   name: z.string().min(1),
   tool: z.enum(["claude", "codex"]),
@@ -58,6 +75,11 @@ export const AgentRecordSchema = z.object({
   ]),
   failureReason: z.string().optional(),
   failedAt: z.iso.datetime().optional(),
+  // When this holder closed. Stamped once, the first time the agent reaches a
+  // terminal status, and cleared if crash recovery brings the same agent back.
+  // Absent means the holder is live. This is what makes a name safe to reissue:
+  // the daemon can always say which agent closed and when.
+  closedAt: z.iso.datetime().optional(),
   quotaReservationId: z.string().min(1).optional(),
   controlQuotaReservationId: z.string().min(1).optional(),
   controlMessageId: z.string().min(1).optional(),
@@ -83,3 +105,34 @@ export const AgentRecordSchema = z.object({
 });
 
 export type AgentRecord = z.infer<typeof AgentRecordSchema>;
+
+/** A closed holder: keeps its row and its history, owns nothing. */
+export function isClosedAgent(agent: Pick<AgentRecord, "status">): boolean {
+  return isTerminalAgentStatus(agent.status);
+}
+
+/** The live holder of a name. Exactly one may exist at a time. */
+export function isLiveAgent(agent: Pick<AgentRecord, "status">): boolean {
+  return !isTerminalAgentStatus(agent.status);
+}
+
+/**
+ * How an agent is named wherever history and live agents are shown together.
+ * A bare `sarah` always means the agent answering to that name right now; a
+ * past holder is always marked, `sarah (closed 14:11)`. Without this, a reused
+ * name puts two indistinguishable `sarah` rows in front of the user — the
+ * ambiguity the naming rules exist to prevent.
+ *
+ * Falls back to the record's own clock for rows written before Hive tracked
+ * closure durably.
+ */
+export function describeAgentName(
+  agent: Pick<
+    AgentRecord,
+    "name" | "status" | "closedAt" | "failedAt" | "lastEventAt"
+  >,
+): string {
+  if (isLiveAgent(agent)) return agent.name;
+  const closedAt = agent.closedAt ?? agent.failedAt ?? agent.lastEventAt;
+  return `${agent.name} (closed ${closedAt.slice(11, 16)})`;
+}

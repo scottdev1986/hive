@@ -9,6 +9,7 @@ import {
   HookEventSchema,
   ExecutionIdentitySchema,
   TerminalHandleSchema,
+  isTerminalAgentStatus,
   type AgentMessage,
   type AgentRecord,
   type HookEvent,
@@ -62,6 +63,7 @@ export type Approval = z.infer<typeof ApprovalSchema>;
 const AgentDatabaseRowSchema = AgentRecordSchema.extend({
   failureReason: z.string().nullable(),
   failedAt: z.string().nullable(),
+  closedAt: z.string().nullable(),
   quotaReservationId: z.string().nullable(),
   controlQuotaReservationId: z.string().nullable(),
   controlMessageId: z.string().nullable(),
@@ -80,6 +82,7 @@ function parseAgentRow(row: unknown): AgentRecord {
     ...value,
     failureReason: value.failureReason ?? undefined,
     failedAt: value.failedAt ?? undefined,
+    closedAt: value.closedAt ?? undefined,
     quotaReservationId: value.quotaReservationId ?? undefined,
     controlQuotaReservationId: value.controlQuotaReservationId ?? undefined,
     controlMessageId: value.controlMessageId ?? undefined,
@@ -155,7 +158,11 @@ export class HiveDatabase {
     this.database.exec(`
       CREATE TABLE IF NOT EXISTS agents (
         id TEXT PRIMARY KEY,
-        name TEXT NOT NULL UNIQUE,
+        -- Deliberately not UNIQUE: a name may be held by many agents across
+        -- time, one at a time. agents_one_live_holder enforces the "one at a
+        -- time" half; the row per holder preserves the closure history that a
+        -- UNIQUE name would overwrite.
+        name TEXT NOT NULL,
         tool TEXT NOT NULL,
         model TEXT NOT NULL,
         tier TEXT NOT NULL,
@@ -177,7 +184,8 @@ export class HiveDatabase {
         toolSessionId TEXT,
         recoveryAttempts INTEGER NOT NULL DEFAULT 0,
         capabilityEpoch INTEGER NOT NULL DEFAULT 0,
-        writeRevoked INTEGER NOT NULL DEFAULT 0
+        writeRevoked INTEGER NOT NULL DEFAULT 0,
+        closedAt TEXT
       );
       CREATE TABLE IF NOT EXISTS messages (
         id TEXT PRIMARY KEY,
@@ -326,6 +334,26 @@ export class HiveDatabase {
         "ALTER TABLE agents ADD COLUMN channelsEnabled INTEGER NOT NULL DEFAULT 0",
       );
     }
+    if (!agentColumnNames.has("closedAt")) {
+      this.database.exec("ALTER TABLE agents ADD COLUMN closedAt TEXT");
+      // Backfill closure for holders that terminated before Hive tracked it.
+      // failedAt is the only recorded terminal instant; lastEventAt is the
+      // honest approximation for agents that died or finished.
+      this.database.exec(`
+        UPDATE agents SET closedAt = COALESCE(failedAt, lastEventAt)
+        WHERE closedAt IS NULL AND status IN ('done', 'dead', 'failed')
+      `);
+    }
+    this.dropLegacyUniqueAgentName();
+    this.database.exec(`
+      -- The mechanical guarantee behind "a name means exactly one agent": at
+      -- most one non-terminal row per name. A second spawn onto a live name
+      -- fails on this index rather than on a check that raced.
+      CREATE UNIQUE INDEX IF NOT EXISTS agents_one_live_holder
+        ON agents(name) WHERE status NOT IN ('done', 'dead', 'failed');
+      CREATE INDEX IF NOT EXISTS agents_name_history
+        ON agents(name, createdAt);
+    `);
     const messageColumns = z.array(z.object({ name: z.string() })).parse(
       this.database.query("PRAGMA table_info(messages)").all(),
     );
@@ -384,6 +412,76 @@ export class HiveDatabase {
     })();
   }
 
+  /**
+   * Hive originally declared `name TEXT NOT NULL UNIQUE`, which forced a
+   * respawn onto a recycled name to overwrite the dead holder's row — the very
+   * closure history the daemon now has to show. SQLite cannot drop a table
+   * constraint in place, so the table is rebuilt once, without it. Existing
+   * rows are safe to copy: a UNIQUE name means there was never more than one
+   * holder to collide.
+   */
+  private dropLegacyUniqueAgentName(): void {
+    const indexes = z.array(
+      z.object({ name: z.string(), unique: z.number(), origin: z.string() }),
+    ).parse(this.database.query("PRAGMA index_list(agents)").all());
+    const legacy = indexes.find((index) => {
+      if (index.unique !== 1 || index.origin !== "u") return false;
+      const columns = z.array(z.object({ name: z.string() })).parse(
+        this.database.query(`PRAGMA index_info(${index.name})`).all(),
+      );
+      return columns.length === 1 && columns[0]!.name === "name";
+    });
+    if (legacy === undefined) return;
+
+    const columns = [
+      "id", "name", "tool", "model", "tier", "status", "taskDescription",
+      "worktreePath", "branch", "tmuxSession", "terminalHandle", "contextPct",
+      "createdAt", "lastEventAt", "failureReason", "failedAt",
+      "quotaReservationId", "controlQuotaReservationId", "controlMessageId",
+      "executionIdentity", "toolSessionId", "recoveryAttempts",
+      "capabilityEpoch", "writeRevoked", "channelsEnabled", "closedAt",
+    ].join(", ");
+    this.database.exec("PRAGMA foreign_keys = OFF");
+    this.database.transaction(() => {
+      this.database.exec(`
+        CREATE TABLE agents_rebuilt (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          tool TEXT NOT NULL,
+          model TEXT NOT NULL,
+          tier TEXT NOT NULL,
+          status TEXT NOT NULL,
+          taskDescription TEXT NOT NULL,
+          worktreePath TEXT,
+          branch TEXT,
+          tmuxSession TEXT NOT NULL,
+          terminalHandle TEXT,
+          contextPct REAL NOT NULL,
+          createdAt TEXT NOT NULL,
+          lastEventAt TEXT NOT NULL,
+          failureReason TEXT,
+          failedAt TEXT,
+          quotaReservationId TEXT,
+          controlQuotaReservationId TEXT,
+          controlMessageId TEXT,
+          executionIdentity TEXT,
+          toolSessionId TEXT,
+          recoveryAttempts INTEGER NOT NULL DEFAULT 0,
+          capabilityEpoch INTEGER NOT NULL DEFAULT 0,
+          writeRevoked INTEGER NOT NULL DEFAULT 0,
+          channelsEnabled INTEGER NOT NULL DEFAULT 0,
+          closedAt TEXT
+        )
+      `);
+      this.database.exec(
+        `INSERT INTO agents_rebuilt (${columns}) SELECT ${columns} FROM agents`,
+      );
+      this.database.exec("DROP TABLE agents");
+      this.database.exec("ALTER TABLE agents_rebuilt RENAME TO agents");
+    })();
+    this.database.exec("PRAGMA foreign_keys = ON");
+  }
+
   close(): void {
     this.database.close();
   }
@@ -394,6 +492,7 @@ export class HiveDatabase {
 
   upsertAgent(agent: AgentRecord): AgentRecord {
     const value = AgentRecordSchema.parse(agent);
+    const closedAt = this.resolveClosedAt(value);
     this.database.query(`
       INSERT INTO agents (
         id, name, tool, model, tier, status, taskDescription,
@@ -401,8 +500,8 @@ export class HiveDatabase {
         createdAt, lastEventAt, failureReason, failedAt,
         quotaReservationId, controlQuotaReservationId, controlMessageId,
         executionIdentity, toolSessionId, recoveryAttempts,
-        capabilityEpoch, writeRevoked, channelsEnabled
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        capabilityEpoch, writeRevoked, channelsEnabled, closedAt
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         name = excluded.name,
         tool = excluded.tool,
@@ -427,7 +526,8 @@ export class HiveDatabase {
         recoveryAttempts = excluded.recoveryAttempts,
         capabilityEpoch = excluded.capabilityEpoch,
         writeRevoked = excluded.writeRevoked,
-        channelsEnabled = excluded.channelsEnabled
+        channelsEnabled = excluded.channelsEnabled,
+        closedAt = excluded.closedAt
     `).run(
       value.id,
       value.name,
@@ -458,8 +558,25 @@ export class HiveDatabase {
       value.capabilityEpoch,
       value.writeRevoked ? 1 : 0,
       value.channelsEnabled ? 1 : 0,
+      closedAt,
     );
     return this.getAgentById(value.id)!;
+  }
+
+  /**
+   * Closure is stamped by the database, not by callers, because every path
+   * that can close an agent (kill, crash sweep, done event, failed spawn)
+   * would otherwise have to remember. It is written once — a later write that
+   * keeps the agent terminal must not slide the timestamp forward — and
+   * cleared when crash recovery returns this same id to a live status.
+   */
+  private resolveClosedAt(value: AgentRecord): string | null {
+    if (!isTerminalAgentStatus(value.status)) return null;
+    if (value.closedAt !== undefined) return value.closedAt;
+    const existing = this.database.query(
+      "SELECT closedAt FROM agents WHERE id = ?",
+    ).get(value.id) as { closedAt: string | null } | null;
+    return existing?.closedAt ?? value.failedAt ?? value.lastEventAt;
   }
 
   insertAgent(agent: AgentRecord): AgentRecord {
@@ -538,9 +655,36 @@ export class HiveDatabase {
     return row === null ? null : parseAgentRow(row);
   }
 
+  /**
+   * The agent a bare name refers to: the live holder if there is one, else the
+   * most recent closed holder. Callers that reject terminal agents (message
+   * delivery, control) therefore keep rejecting exactly as before, and a name
+   * whose holder is closed never resolves to an older ghost of itself.
+   */
   getAgentByName(name: string): AgentRecord | null {
-    const row = this.database.query("SELECT * FROM agents WHERE name = ?").get(name);
+    const row = this.database.query(`
+      SELECT * FROM agents WHERE name = ?
+      ORDER BY (status IN ('done', 'dead', 'failed')) ASC, createdAt DESC
+      LIMIT 1
+    `).get(name);
     return row === null ? null : parseAgentRow(row);
+  }
+
+  /** The one live holder of a name, or null when the name is free. */
+  getLiveAgentByName(name: string): AgentRecord | null {
+    const row = this.database.query(`
+      SELECT * FROM agents
+      WHERE name = ? AND status NOT IN ('done', 'dead', 'failed')
+      LIMIT 1
+    `).get(name);
+    return row === null ? null : parseAgentRow(row);
+  }
+
+  /** Every holder a name has ever had, oldest first. */
+  listAgentsNamed(name: string): AgentRecord[] {
+    return this.database.query(
+      "SELECT * FROM agents WHERE name = ? ORDER BY createdAt",
+    ).all(name).map(parseAgentRow);
   }
 
   listAgents(): AgentRecord[] {

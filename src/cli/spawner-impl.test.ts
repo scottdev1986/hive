@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, readFile, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { TerminalAdapter } from "../adapters/terminal";
-import { DEFAULT_ROUTING, QuotaConfigSchema } from "../schemas";
+import { DEFAULT_ROUTING, QuotaConfigSchema, isLiveAgent } from "../schemas";
 import type {
   AgentRecord,
   AgentMessage,
@@ -41,6 +41,32 @@ const fakeResolveModel = async (
   }
   return configured;
 };
+
+/** A holder that has closed, and whose name is therefore legal to reissue. */
+function closedAgent(name: string, closedAt: string): AgentRecord {
+  return { ...agent(name, "done"), closedAt, lastEventAt: closedAt };
+}
+
+/** True when one insertion, deletion, or substitution turns `a` into `b`. */
+function editDistanceWithin1(a: string, b: string): boolean {
+  if (Math.abs(a.length - b.length) > 1) return false;
+  if (a === b) return true;
+  const [short, long] = a.length <= b.length ? [a, b] : [b, a];
+  let i = 0;
+  let j = 0;
+  let edits = 0;
+  while (i < short.length && j < long.length) {
+    if (short[i] === long[j]) {
+      i += 1;
+      j += 1;
+      continue;
+    }
+    if (++edits > 1) return false;
+    if (short.length === long.length) i += 1;
+    j += 1;
+  }
+  return edits + (long.length - j) + (short.length - i) <= 1;
+}
 
 function agent(
   name: string,
@@ -118,6 +144,12 @@ class FakeStore {
 
   getAgentById(id: string): AgentRecord | null {
     return this.agents.find((candidate) => candidate.id === id) ?? null;
+  }
+
+  getLiveAgentByName(name: string): AgentRecord | null {
+    return this.agents.find(
+      (candidate) => candidate.name === name && isLiveAgent(candidate),
+    ) ?? null;
   }
 
   reserveAgentName(name: string): boolean {
@@ -558,12 +590,136 @@ describe("HiveSpawner name pool", () => {
     );
   });
 
-  test("selects the first name not held by a live agent", () => {
+  test("prefers a never-used name over a closed one", () => {
+    // david and sam are closed and their names are legal to reuse, but a name
+    // this Hive has never issued is always the better answer.
     expect(selectAgentName([
       agent("maya"),
       agent("david", "dead"),
       agent("sam", "done"),
-    ])).toEqual("david");
+    ])).toEqual("john");
+  });
+
+  test("the pool is large, typeable, and mutually unconfusable", () => {
+    expect(NAME_POOL.length).toBeGreaterThanOrEqual(300);
+    expect(new Set(NAME_POOL).size).toEqual(NAME_POOL.length);
+    // Names that would be ambiguous when spoken to the orchestrator: the
+    // reserved destination, the tools, and the human running the Hive.
+    for (const reserved of ["orchestrator", "claude", "codex", "hive", "scott"]) {
+      expect(NAME_POOL).not.toContain(reserved);
+    }
+    for (const name of NAME_POOL) {
+      // Short, lowercase letters only: no digits anywhere, so no name in the
+      // pool can be mistaken for a maya-2 style suffix.
+      expect(name).toMatch(/^[a-z]{3,10}$/);
+    }
+
+    const offenders: string[] = [];
+    for (let i = 0; i < NAME_POOL.length; i += 1) {
+      for (let j = i + 1; j < NAME_POOL.length; j += 1) {
+        const a = NAME_POOL[i]!;
+        const b = NAME_POOL[j]!;
+        if (a.startsWith(b) || b.startsWith(a)) offenders.push(`prefix ${a}/${b}`);
+        else if (editDistanceWithin1(a, b)) offenders.push(`one edit ${a}/${b}`);
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  test("reuses the least-recently-closed name once no fresh name is left", () => {
+    // Every pool name has been used. maya closed first, so maya comes back —
+    // and only maya; reuse is by closure order, never by pool order.
+    const agents = NAME_POOL.map((name, index) =>
+      closedAgent(name, `2026-07-09T12:${String(index % 60).padStart(2, "0")}:00.000Z`)
+    );
+    agents[0] = closedAgent("maya", "2026-07-01T00:00:00.000Z");
+    expect(selectAgentName(agents)).toEqual("maya");
+  });
+
+  test("never reuses a name whose holder is still spawning or recovering", () => {
+    // maya is the oldest holder by clock, but she is spawning, not closed.
+    // A spawning agent owns its name exactly as a working one does.
+    const agents = NAME_POOL.map((name, index) =>
+      closedAgent(name, `2026-07-09T12:${String(index % 60).padStart(2, "0")}:00.000Z`)
+    );
+    agents[0] = { ...agent("maya", "spawning"), lastEventAt: "2026-07-01T00:00:00.000Z" };
+    agents[1] = closedAgent("david", "2026-07-02T00:00:00.000Z");
+
+    expect(selectAgentName(agents)).toEqual("david");
+  });
+
+  test("a closed name is never reissued while a live holder already has it", () => {
+    // maya was reused: an old closed holder and the current live one coexist.
+    // The name is taken, so the next spawn must look elsewhere.
+    const agents = NAME_POOL.map((name, index) =>
+      closedAgent(name, `2026-07-09T12:${String(index % 60).padStart(2, "0")}:00.000Z`)
+    );
+    agents[0] = closedAgent("maya", "2026-07-01T00:00:00.000Z");
+    agents.push({ ...agent("maya", "working"), id: "maya-second-holder" });
+    agents[1] = closedAgent("david", "2026-07-02T00:00:00.000Z");
+
+    expect(selectAgentName(agents)).toEqual("david");
+  });
+
+  test("refuses the spawn when every name has a live holder", () => {
+    // No suffixing, no stealing a live name: an honest refusal naming the fix.
+    expect(() => selectAgentName(NAME_POOL.map((name) => agent(name))))
+      .toThrow("name pool exhausted");
+    expect(() => selectAgentName(NAME_POOL.map((name) => agent(name))))
+      .toThrow("never appends a numeric suffix");
+    expect(() => selectAgentName(NAME_POOL.map((name) => agent(name))))
+      .toThrow("expand NAME_POOL");
+  });
+
+  test("an explicitly requested name is refused while its holder is live", () => {
+    expect(() => resolveAgentName("maya", [agent("maya", "working")]))
+      .toThrow('"maya" is already assigned to a live agent');
+    expect(() => resolveAgentName("maya", [agent("maya", "spawning")]))
+      .toThrow('"maya" is already assigned to a live agent');
+  });
+
+  test("an explicitly requested name is allowed once its holder has closed", () => {
+    expect(resolveAgentName("maya", [agent("maya", "dead")])).toEqual("maya");
+  });
+
+  test("concurrent spawns never receive the same name", async () => {
+    const store = new FakeStore();
+    let releaseRouting!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releaseRouting = resolve;
+    });
+    const spawner = new HiveSpawner({
+      db: store,
+      repoRoot: "/tmp/hive-concurrent-names",
+      port: 4317,
+      config: { terminal: "auto", headless: true },
+      routing: async () => {
+        await gate;
+        return DEFAULT_ROUTING.standard;
+      },
+      tmux: new FakeTmux(),
+      terminal: new FakeTerminal(),
+      // Fail after the name is claimed: the claim is what this test is about.
+      createWorktree: async () => {
+        throw new Error("stop after routing");
+      },
+      sleep: async () => {},
+      resolveModel: fakeResolveModel,
+    });
+
+    // Every spawn is in flight at once, before any of them writes an agent row,
+    // so only the reservation table can keep their names apart.
+    const spawns = Array.from({ length: 8 }, (_, index) =>
+      spawner.spawn({ task: `Task ${index}`, tier: "standard" })
+    );
+    const claimed = [...store.reservations];
+    expect(claimed.length).toEqual(8);
+    expect(new Set(claimed).size).toEqual(8);
+    expect(claimed).toEqual(NAME_POOL.slice(0, 8) as unknown as string[]);
+
+    releaseRouting();
+    await Promise.allSettled(spawns);
+    expect(store.reservations.size).toEqual(0);
   });
 
   test("reserves a requested name before asynchronous spawn setup", async () => {

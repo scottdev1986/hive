@@ -45,6 +45,47 @@ describe("status table", () => {
     expect(row).toEndWith("…");
     expect(row).not.toContain("selected model is not supported");
   });
+
+  test("marks a closed holder so a reused name is never ambiguous", () => {
+    const base = {
+      tool: "codex",
+      model: "gpt-test",
+      tier: "standard",
+      taskDescription: "crash matrix",
+      worktreePath: "/tmp/maya",
+      branch: "hive/maya-task",
+      tmuxSession: "hive-maya",
+      contextPct: 0,
+      createdAt: timestamp,
+      recoveryAttempts: 0,
+      capabilityEpoch: 0,
+      writeRevoked: false,
+      channelsEnabled: false,
+    } as const;
+    const agents: AgentRecord[] = [
+      {
+        ...base,
+        id: "agent-maya",
+        name: "maya",
+        status: "dead",
+        lastEventAt: "2026-07-09T14:11:00.000Z",
+        closedAt: "2026-07-09T14:11:00.000Z",
+      },
+      {
+        ...base,
+        id: "agent-maya-2",
+        name: "maya",
+        status: "working",
+        lastEventAt: timestamp,
+      },
+    ];
+
+    const [, closed, live] = formatStatusTable(agents).split("\n");
+    expect(closed).toContain("maya (closed 14:11)");
+    // The live holder wears the bare name, and only the live holder.
+    expect(live).toMatch(/^maya\s/);
+    expect(live).not.toContain("closed");
+  });
 });
 
 describe("quota status", () => {

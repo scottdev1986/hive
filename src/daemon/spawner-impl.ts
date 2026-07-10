@@ -34,6 +34,7 @@ import {
 } from "../adapters/worktrees";
 import {
   ORCHESTRATOR_NAME,
+  isLiveAgent,
   type AgentMessage,
   type AgentRecord,
   type ExecutionIdentity,
@@ -46,53 +47,125 @@ import type { SpawnRequest, Spawner } from "./spawner";
 import type { QuotaRouteCandidate, QuotaService } from "./quota";
 import { agentTmuxSession } from "./tmux-sessions";
 
+/**
+ * Names an agent can be given. Human first names, because the user's interface
+ * is conversation: "tell maya to reuse the middleware" works, "message agent-3"
+ * makes the user keep a numbering table the tool should keep for them.
+ *
+ * Curated so that names are easy to type and hard to confuse: no name is a
+ * prefix of another, and no two names are within one edit of each other (no
+ * mark/marc, no ana/anna). A test enforces both invariants — add names only if
+ * they still hold. Numeric suffixes are never appended to make a name unique;
+ * see selectAgentName.
+ */
 export const NAME_POOL = [
-  "maya",
-  "david",
-  "sam",
-  "john",
-  "sarah",
-  "alex",
-  "nina",
-  "leo",
-  "anna",
-  "james",
-  "zoe",
-  "omar",
-  "lena",
-  "noah",
-  "priya",
-  "liam",
-  "emma",
-  "lucas",
-  "ava",
-  "ethan",
-  "mia",
-  "henry",
-  "isla",
-  "jack",
-  "chloe",
-  "ryan",
-  "sofia",
-  "adam",
-  "grace",
-  "owen",
-  "layla",
-  "theo",
-  "ruby",
-  "caleb",
-  "alice",
-  "felix",
-  "clara",
-  "marco",
-  "julia",
-  "ben",
+  "maya", "david", "sam", "john", "sarah", "alex",
+  "nina", "leo", "anna", "james", "zoe", "omar",
+  "lena", "noah", "priya", "liam", "emma", "lucas",
+  "ava", "ethan", "mia", "henry", "isla", "jack",
+  "chloe", "ryan", "sofia", "adam", "grace", "owen",
+  "layla", "theo", "ruby", "caleb", "alice", "felix",
+  "clara", "marco", "julia", "ben", "aaron", "abel",
+  "abby", "adele", "adrian", "agnes", "ahmed", "aisha",
+  "albert", "alma", "amara", "amber", "amos", "amy",
+  "andre", "angela", "anton", "april", "arash", "archie",
+  "arjun", "arlo", "armand", "arnold", "arthur", "ashley",
+  "astrid", "atlas", "aubrey", "august", "aurora", "austin",
+  "autumn", "azra", "bailey", "barbara", "basil", "beatrix",
+  "becca", "bella", "bernard", "bertha", "bianca", "bilal",
+  "birgit", "blake", "bobby", "bonnie", "boris", "bram",
+  "brandon", "brenda", "brian", "bridget", "brock", "bruno",
+  "burt", "byron", "callum", "calvin", "camila", "candace",
+  "carl", "carmen", "casey", "cassie", "cecil", "cedric",
+  "celia", "cesar", "chad", "chandra", "charles", "chase",
+  "chester", "chiara", "chris", "cindy", "clay", "clifford",
+  "clinton", "clyde", "cole", "colin", "conrad", "cooper",
+  "cora", "cormac", "cosmo", "craig", "crystal", "curtis",
+  "cyrus", "dahlia", "daisy", "dakota", "damian", "dana",
+  "daniel", "danny", "daphne", "darius", "darren", "dawn",
+  "dean", "deborah", "declan", "denise", "dennis", "derek",
+  "desmond", "devon", "dexter", "diego", "dimitri", "dominic",
+  "donna", "dorothy", "douglas", "duncan", "dylan", "eamon",
+  "edgar", "edith", "edmund", "eduardo", "edwin", "eileen",
+  "elaine", "eleanor", "eli", "ellen", "elliot", "elmer",
+  "eloise", "elsa", "elton", "elvis", "emil", "emmett",
+  "enzo", "erica", "ernest", "esme", "esther", "eugene",
+  "evan", "evelyn", "everett", "fabian", "faith", "farid",
+  "fatima", "faye", "fenton", "fergus", "fernanda", "fiona",
+  "flora", "florence", "floyd", "forrest", "frances", "frank",
+  "fraser", "freda", "gabriel", "gail", "gareth", "gavin",
+  "gene", "geoff", "george", "gerald", "gilbert", "gloria",
+  "gordon", "graham", "greta", "gunnar", "gus", "hadley",
+  "hakim", "hannah", "harold", "harper", "harriet", "harvey",
+  "hassan", "hattie", "hazel", "heather", "hector", "heidi",
+  "helen", "herman", "hilda", "hiro", "holly", "homer",
+  "hope", "horace", "howard", "hugo", "hunter", "ian",
+  "ibrahim", "ida", "ignacio", "imani", "imogen", "ines",
+  "ingrid", "irene", "iris", "irving", "isaac", "isabel",
+  "ismael", "ivy", "jacob", "jade", "jamal", "janet",
+  "jared", "jasmine", "jasper", "javier", "jeanne", "jeffrey",
+  "jenna", "jeremy", "jerome", "jesse", "jewel", "jillian",
+  "jimmy", "joel", "jonah", "jordan", "jorge", "josef",
+  "joshua", "joyce", "juan", "judith", "juliet", "june",
+  "junior", "kalum", "kara", "karim", "kate", "katrina",
+  "keith", "kelly", "kelvin", "kendra", "kenneth", "khalid",
+  "kieran", "kim", "kirby", "kirsten", "klaus", "kyle",
+  "lachlan", "lamar", "lance", "larry", "laura", "laurel",
+  "lawrence", "lazlo", "leah", "leandro", "leigh", "leland",
+  "leroy", "leslie", "lester", "lewis", "lidia", "lila",
+  "lincoln", "lindsay", "linus", "lionel", "logan", "lorenzo",
+  "loretta", "lorna", "louis", "lowell", "lucia", "ludwig",
+  "luke", "madeline", "magnus", "maisie", "malcolm", "mallory",
+  "mandy", "manuel", "marcus", "margaret", "maria", "marilyn",
+  "marion", "marnie", "marshall", "martha", "martin", "mason",
+  "mateo", "matilda", "matthew", "maude", "maurice", "maxwell",
+  "megan", "melissa", "mercy", "meredith", "mervyn", "micah",
+  "michelle", "miguel", "mikhail", "mildred", "miles", "millie",
+  "milo", "miranda", "miriam", "mitchell", "moira", "monica",
+  "morgan", "morris", "moses", "murray", "myra", "nadia",
+  "nancy", "naomi", "natalie", "nathan", "neil", "nelson",
+  "nestor", "nicholas", "nigel", "nikolai", "nolan", "norman",
+  "nova", "octavia", "odette", "olga", "oliver", "olivia",
+  "ollie", "opal", "ophelia", "orion", "orlando", "oscar",
+  "osman", "oswald", "otis", "otto", "ozzie", "pablo",
+  "paloma", "pamela", "pascal", "patrick", "patsy", "paula",
+  "pearl", "pedro", "peggy", "penelope", "perry", "peter",
+  "petra", "phoebe", "pierce", "piper", "porter", "preston",
+  "primo", "prudence", "quentin", "quinn", "rachel", "rafael",
+  "raheem", "ralph", "ramona", "randall", "raoul", "raphael",
+  "raquel", "rashid", "raymond", "rebecca", "reginald", "reid",
+  "remy", "renee", "reuben", "rex", "rhoda", "rhys",
+  "ricardo", "richard", "rita", "robert", "robin", "rochelle",
+  "roderick", "rodney", "roger", "roland", "rolf", "roman",
+  "romeo", "ronald", "rory", "rosalind", "roscoe", "rosemary",
+  "roxana", "rudolf", "rufus", "rupert", "russell", "rusty",
+  "ruth", "ryder", "sabine", "sadie", "saeed", "salvador",
+  "sandra", "sanjay", "santiago", "sasha", "saul", "scarlett",
+  "sebastian", "selena", "selma", "sergio", "seth",
+  "shane", "shannon", "sharon", "shaun", "sheila", "shelby",
+  "sheldon", "shirley", "sidney", "siegfried", "sienna", "sigrid",
+  "silas", "simon", "sinclair", "solomon", "sonya", "spencer",
+  "stanley", "stella", "stephen", "sterling", "stuart", "sullivan",
+  "summer", "susan", "sven", "sybil", "sylvia", "tabitha",
+  "tanya", "tariq", "tatiana", "taylor", "teresa", "terrence",
+  "tessa", "thaddeus", "thelma", "thomas", "thora", "tiffany",
+  "timothy", "tobias", "toby", "todd", "tommy", "tracy",
+  "travis", "trent", "trevor", "tristan", "troy", "tucker",
+  "tyler", "tyrone", "ulrich", "ulysses", "uma", "umberto",
+  "ursula", "valentina", "valerie", "vanessa", "vaughn", "vera",
+  "vernon", "veronica", "victor", "vidal", "vijay", "vincent",
+  "viola", "virgil", "vivian", "vladimir", "walter", "wanda",
+  "wayne", "wendell", "wendy", "wesley", "wilbur", "wilfred",
+  "willa", "willow", "winston", "wyatt", "ximena", "yasmin",
+  "yolanda", "york", "yusuf", "yvette", "yvonne", "zachary",
+  "zaid", "zeke", "zelda", "zenobia",
 ] as const;
 
 type AgentStore = Pick<
   HiveDatabase,
   | "attachTerminalHandle"
   | "getAgentById"
+  | "getLiveAgentByName"
   | "insertAgent"
   | "listAgents"
   | "releaseAgentName"
@@ -163,11 +236,6 @@ export interface HiveSpawnerDependencies {
   >;
 }
 
-const isLive = (agent: AgentRecord): boolean =>
-  agent.status !== "dead" &&
-  agent.status !== "done" &&
-  agent.status !== "failed";
-
 const AGENT_NAME_PATTERN = /^[a-z][a-z0-9-]{1,20}$/;
 const READINESS_POLL_MS = 1_000;
 const READINESS_ATTEMPTS = 15;
@@ -190,17 +258,54 @@ function tailLines(value: string, count: number): string {
   return trimmed.split(/\r?\n/).slice(-count).join("\n").trim();
 }
 
-export function selectAgentName(agents: AgentRecord[]): string {
-  const liveNames = new Set(
-    agents.filter(isLive).map((agent) => agent.name),
+/** When this holder closed, for ordering reuse. Old rows predate closedAt. */
+const closureInstant = (agent: AgentRecord): string =>
+  agent.closedAt ?? agent.failedAt ?? agent.lastEventAt;
+
+/**
+ * Pick the next agent name.
+ *
+ * A name means exactly one agent at a time, so a name with a live holder is
+ * never issued. Beyond that: always prefer a name this Hive has never used, and
+ * fall back to the least-recently-closed name only once no fresh name is left.
+ * Across a few hundred names reuse is therefore legal but vanishingly rare —
+ * which is the point. The user's scrollback still says "maya reported X", and
+ * the odds that a *new* maya exists to misreceive "maya, follow up on X" stay
+ * near zero, while closure is durably recorded so history can always name the
+ * agent that closed.
+ *
+ * When every pool name has a live holder there is nothing honest to return.
+ * Numeric suffixes (maya-2) are never minted, and taking a live agent's name
+ * would create exactly the ambiguity this design exists to prevent. Refuse, and
+ * say the pool needs expanding.
+ */
+export function selectAgentName(
+  agents: AgentRecord[],
+  /** Names already claimed by a spawn in flight; as unavailable as a live one. */
+  unavailable: ReadonlySet<string> = new Set(),
+): string {
+  const live = new Set(agents.filter(isLiveAgent).map((agent) => agent.name));
+  const everUsed = new Set(agents.map((agent) => agent.name));
+  const taken = (name: string): boolean =>
+    live.has(name) || unavailable.has(name);
+
+  const fresh = NAME_POOL.find(
+    (candidate) => !everUsed.has(candidate) && !taken(candidate),
   );
-  const name = NAME_POOL.find((candidate) => !liveNames.has(candidate));
-  if (name === undefined) {
-    throw new Error(
-      `Hive agent name pool exhausted (${NAME_POOL.length} live agents)`,
-    );
-  }
-  return name;
+  if (fresh !== undefined) return fresh;
+
+  const inPool = new Set<string>(NAME_POOL);
+  const closed = agents
+    .filter((agent) => inPool.has(agent.name) && !taken(agent.name))
+    .sort((a, b) => closureInstant(a).localeCompare(closureInstant(b)));
+  if (closed.length > 0) return closed[0]!.name;
+
+  throw new Error(
+    `Hive agent name pool exhausted: all ${NAME_POOL.length} names are held by ` +
+      "a live or spawning agent. Hive never reuses a live name and never " +
+      "appends a numeric suffix, so this spawn is refused. Close an agent, or " +
+      "expand NAME_POOL in src/daemon/spawner-impl.ts.",
+  );
 }
 
 export function resolveAgentName(
@@ -224,7 +329,7 @@ export function resolveAgentName(
   }
   if (
     agents.some((agent) =>
-      isLive(agent) && agent.name === normalizedName
+      isLiveAgent(agent) && agent.name === normalizedName
     )
   ) {
     throw new Error(
@@ -688,25 +793,57 @@ export class HiveSpawner implements Spawner {
   }
 
   async spawn(request: SpawnRequest): Promise<AgentRecord> {
-    const existingAgents = this.dependencies.db.listAgents();
-    const name = resolveAgentName(request.name, existingAgents);
-    const previousRecord = existingAgents.find((agent) => agent.name === name);
-    if (!this.dependencies.db.reserveAgentName(name)) {
-      throw new Error(
-        `Agent name collision: "${name}" is already being assigned to a spawning agent`,
-      );
-    }
+    const name = this.claimAgentName(request.name);
     try {
-      return await this.spawnReserved(request, name, previousRecord);
+      return await this.spawnReserved(request, name);
     } finally {
       this.dependencies.db.releaseAgentName(name);
+    }
+  }
+
+  /**
+   * Take exclusive hold of a name for the duration of this spawn.
+   *
+   * The reservation row is the arbiter, not the liveness scan: two spawns that
+   * both read an empty agents table still cannot both claim `maya`, because
+   * only one `INSERT OR IGNORE` reports a change. Concurrent spawns therefore
+   * walk on to different names instead of colliding. A reservation is held for
+   * exactly as long as a spawn is in flight, so an in-flight name is as
+   * unavailable as a live one — reuse can never race a spawning or recovering
+   * agent.
+   */
+  private claimAgentName(requestedName: string | undefined): string {
+    const db = this.dependencies.db;
+    if (requestedName !== undefined) {
+      const name = resolveAgentName(requestedName, db.listAgents());
+      if (!db.reserveAgentName(name)) {
+        throw new Error(
+          `Agent name collision: "${name}" is already being assigned to a spawning agent`,
+        );
+      }
+      return name;
+    }
+
+    // Each pass either claims a name or rules one out, so this terminates:
+    // `blocked` only grows, and selectAgentName throws once the pool is spent.
+    const blocked = new Set<string>();
+    for (;;) {
+      const candidate = selectAgentName(db.listAgents(), blocked);
+      if (!db.reserveAgentName(candidate)) {
+        blocked.add(candidate);
+        continue;
+      }
+      // Holding the reservation, no concurrent spawn can create a live holder
+      // for this name, so this check is authoritative rather than racy.
+      if (db.getLiveAgentByName(candidate) === null) return candidate;
+      db.releaseAgentName(candidate);
+      blocked.add(candidate);
     }
   }
 
   private async spawnReserved(
     request: SpawnRequest,
     name: string,
-    previousRecord: AgentRecord | undefined,
   ): Promise<AgentRecord> {
     const configuredRoute = await this.dependencies.routing(request.tier);
     let tool = request.tool ?? configuredRoute.tool;
@@ -801,7 +938,10 @@ export class HiveSpawner implements Spawner {
     const channels = await this.useChannels(tool);
     const timestamp = new Date().toISOString();
     const record = this.dependencies.db.insertAgent({
-      id: previousRecord?.id ?? crypto.randomUUID(),
+      // A fresh AgentUUID, always. Reusing a closed holder's id would overwrite
+      // its row — erasing the very closure record that lets history tell the
+      // two agents apart.
+      id: crypto.randomUUID(),
       name,
       tool,
       model,

@@ -308,6 +308,30 @@ describe("MessageDelivery", () => {
     }
   });
 
+  test("routes a reused name to its live holder, never the closed one", async () => {
+    const db = new HiveDatabase(join(home, "reused-recipient.db"));
+    const delivery = new MessageDelivery(db, new RecordingTmuxSender());
+    try {
+      db.insertAgent({ ...agent("dead"), closedAt: timestamp });
+      // maya's name was reissued to a new agent with its own session.
+      db.insertAgent({
+        ...agent("idle"),
+        id: "agent-maya-2",
+        tmuxSession: "hive-maya-2",
+        createdAt: "2026-07-09T13:00:00.000Z",
+      });
+
+      const message = await delivery.send("sam", "maya", "Are you there?");
+      expect(message.to).toEqual("maya");
+      // The closed holder is not a recipient: it never sees the message, and
+      // the send is not rejected on its behalf either.
+      expect(db.getAgentByName("maya")?.id).toEqual("agent-maya-2");
+      expect(db.listMessages()).toHaveLength(1);
+    } finally {
+      db.close();
+    }
+  });
+
   test("keeps reports unread when root is unavailable and drains them exactly once", async () => {
     const db = new HiveDatabase(join(home, "orchestrator-inbox.db"));
     const tmux = new UnavailableTmuxSender();
