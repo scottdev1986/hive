@@ -66,3 +66,5 @@ yarn-error.log*
 # stay tracked; add new intentional ones with `git add -f`.
 .claude/settings.local.json
 .claude/skills/
+
+apple
