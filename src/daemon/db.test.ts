@@ -49,6 +49,13 @@ describe("HiveDatabase", () => {
         contextPct: 28,
         failureReason: "Error: model not supported",
         failedAt: "2026-07-09T12:01:00.000Z",
+        executionIdentity: {
+          tool: "codex",
+          model: "gpt-5-codex",
+          effort: "high",
+        },
+        controlMessageId: "control-1",
+        controlQuotaReservationId: "quota-control-1",
       });
       expect(db.upsertAgent(updated)).toEqual(updated);
       expect(db.listAgents()).toEqual([updated]);
@@ -208,6 +215,17 @@ describe("HiveDatabase", () => {
           (column) => (column as { name: string }).name === "terminalHandle",
         ),
       ).toEqual(true);
+      for (const name of [
+        "executionIdentity",
+        "controlMessageId",
+        "controlQuotaReservationId",
+      ]) {
+        expect(
+          db.database.query("PRAGMA table_info(agents)").all().some(
+            (column) => (column as { name: string }).name === name,
+          ),
+        ).toEqual(true);
+      }
       expect(
         db.database.query("PRAGMA table_info(agents)").all().some(
           (column) =>

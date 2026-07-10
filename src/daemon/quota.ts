@@ -36,6 +36,12 @@ export interface QuotaRouteDecision extends QuotaRouteCandidate {
   reason: string;
 }
 
+export interface ControlQuotaRequest extends QuotaRouteCandidate {
+  agentName: string;
+  tier: RoutingTier;
+  controlMessageId: string;
+}
+
 export type QuotaAlertSink = (body: string) => Promise<void>;
 export type QuotaClock = () => Date;
 
@@ -227,6 +233,23 @@ export class QuotaService {
     ) ?? this.config.limits.find((limit) =>
       limit.provider === candidate.tool && limit.models.includes("*")
     ) ?? null;
+  }
+
+  private requireMatchingControlReservation(
+    reservation: QuotaReservation,
+    request: ControlQuotaRequest,
+  ): QuotaReservation {
+    if (
+      reservation.agentName !== request.agentName ||
+      reservation.provider !== request.tool ||
+      reservation.model !== request.model ||
+      reservation.tier !== request.tier || reservation.purpose !== "control"
+    ) {
+      throw new Error(
+        `Control reservation ${reservation.id} does not match the recorded execution identity for ${request.agentName}`,
+      );
+    }
+    return reservation;
   }
 
   private windowBounds(limit: QuotaLimit, now: Date): {
@@ -575,6 +598,82 @@ export class QuotaService {
     );
   }
 
+  async reserveControlRun(
+    request: ControlQuotaRequest,
+  ): Promise<QuotaReservation> {
+    const existing = this.ledger.getActiveControlReservation(
+      request.controlMessageId,
+    );
+    if (existing !== null) {
+      return this.requireMatchingControlReservation(existing, request);
+    }
+
+    const now = this.clock();
+    const estimate = this.config.estimates[request.tier];
+    const limit = this.limitFor(request);
+    if (limit === null) {
+      const reservation = this.ledger.insertUnboundedReservation({
+        id: crypto.randomUUID(),
+        agentName: request.agentName,
+        provider: request.tool,
+        account: "default",
+        pool: `unconfigured:${request.model}`,
+        model: request.model,
+        tier: request.tier,
+        estimatedUnits: estimate,
+        now: iso(now),
+        expiresAt: add(now, this.config.reservationTtlMinutes * 60_000),
+        purpose: "control",
+        controlMessageId: request.controlMessageId,
+      });
+      await this.alertUnknown(request, now);
+      return this.requireMatchingControlReservation(reservation, request);
+    }
+
+    const status = this.statusForLimit(limit, now);
+    const bounds = this.windowBounds(limit, now);
+    const supplemental = this.supplemental(limit, status, now);
+    const reservation = this.ledger.tryReserve({
+      id: crypto.randomUUID(),
+      agentName: request.agentName,
+      provider: limit.provider,
+      account: limit.account,
+      pool: limit.pool,
+      model: request.model,
+      tier: request.tier,
+      estimatedUnits: estimate,
+      now: iso(now),
+      expiresAt: add(now, this.config.reservationTtlMinutes * 60_000),
+      fiveHourStart: bounds.fiveHourStart,
+      weeklyStart: bounds.weeklyStart,
+      observationAt: supplemental.observationAt,
+      supplementalFiveHourUsed: supplemental.five,
+      supplementalWeeklyUsed: supplemental.week,
+      fiveHourAllowance: limit.fiveHourAllowance,
+      weeklyAllowance: limit.weeklyAllowance,
+      // A critical acknowledgement may use the last safe capacity. It never
+      // falls back to another provider or model, but it also must not preserve
+      // a deep-work reserve at the expense of delivering the control.
+      fiveHourFloor: 0,
+      weeklyFloor: 0,
+      purpose: "control",
+      controlMessageId: request.controlMessageId,
+    });
+    if (reservation === null) {
+      throw new QuotaExhaustedError(
+        `Insufficient quota for critical control ${request.controlMessageId}: ` +
+          `${request.tool}/${request.model} has ` +
+          `${status.fiveHour.remaining.toFixed(1)} five-hour and ` +
+          `${status.weekly.remaining.toFixed(1)} weekly units remaining; ` +
+          `${estimate.toFixed(1)} are required. The agent remains write-revoked, ` +
+          "the worktree is preserved, and Hive will not switch models.",
+      );
+    }
+    const matched = this.requireMatchingControlReservation(reservation, request);
+    await this.alertPool(limit, now);
+    return matched;
+  }
+
   markStarted(reservationId: string, at = iso(this.clock())): void {
     this.ledger.markStarted(reservationId, at);
   }
@@ -614,11 +713,17 @@ export class QuotaService {
   }
 
   async recoverExpired(now = this.clock()): Promise<number> {
+    return (await this.recoverExpiredReservations(now)).length;
+  }
+
+  async recoverExpiredReservations(
+    now = this.clock(),
+  ): Promise<QuotaReservation[]> {
     const expired = this.ledger.expired(iso(now));
     for (const reservation of expired) {
       await this.cancel(reservation.id, iso(now));
     }
-    return expired.length;
+    return expired;
   }
 
   async observe(observation: QuotaObservation): Promise<QuotaObservation> {

@@ -21,6 +21,24 @@ export const TerminalHandleSchema = z.discriminatedUnion("app", [
 
 export type TerminalHandle = z.infer<typeof TerminalHandleSchema>;
 
+// A control restart must be able to reproduce the process that was actually
+// launched without reading a routing table or a mutable tool default. Keep
+// only immutable launch choices here; daemon ports, paths, permissions, and
+// hook configuration remain dynamic and are rebuilt for the read-only run.
+export const ExecutionIdentitySchema = z.discriminatedUnion("tool", [
+  z.strictObject({
+    tool: z.literal("claude"),
+    model: z.string().min(1),
+  }),
+  z.strictObject({
+    tool: z.literal("codex"),
+    model: z.string().min(1),
+    effort: z.enum(["minimal", "low", "medium", "high", "xhigh"]),
+  }),
+]);
+
+export type ExecutionIdentity = z.infer<typeof ExecutionIdentitySchema>;
+
 export const AgentRecordSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
@@ -41,6 +59,9 @@ export const AgentRecordSchema = z.object({
   failureReason: z.string().optional(),
   failedAt: z.iso.datetime().optional(),
   quotaReservationId: z.string().min(1).optional(),
+  controlQuotaReservationId: z.string().min(1).optional(),
+  controlMessageId: z.string().min(1).optional(),
+  executionIdentity: ExecutionIdentitySchema.optional(),
   taskDescription: z.string(),
   worktreePath: z.string().nullable(),
   branch: z.string().nullable(),

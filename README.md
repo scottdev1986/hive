@@ -124,6 +124,8 @@ hive quota reconcile --provider codex --account personal \
 
 Warning and critical alerts travel through the same durable orchestrator inbox as agent reports. Each pool/window alert fires on a threshold crossing, escalates once from warning to critical, and rearms only after the reset changes or capacity recovers past the threshold plus hysteresis. `hive quota` shows confidence, freshness, reservations, and known reset times without exposing raw SQLite state. See [SPEC.md](SPEC.md#6-who-picks-the-model) for the policy and limitations.
 
+Read-only processes started to acknowledge critical controls are accounted for too. Hive settles the interrupted run, then creates a separate reservation for the acknowledgement process on the agent's recorded provider and concrete model. It never re-resolves `routing.toml` or substitutes another model. The control reservation settles on acknowledgement, completion, death, kill, reconciliation, launch failure, daemon recovery, or timeout; a timed-out process is stopped so it cannot continue outside a reservation.
+
 Useful commands:
 
 | Command | What it does |
@@ -137,9 +139,11 @@ Useful commands:
 
 ### Changing direction while an agent works
 
-Hive distinguishes ordinary coordination from controls that reduce an agent's authority. Normal messages wait for the next turn boundary. Urgent directions interrupt at the next safe boundary and require acknowledgement. Critical controls—pause, stop, cancel, or do-not-modify—revoke the agent's write and landing capability first, preserve its worktree, stop only its process, and restart it read-only with the instruction already in context.
+Hive distinguishes ordinary coordination from controls that reduce an agent's authority. Normal messages wait for the next turn boundary. Urgent directions interrupt at the next safe boundary and require acknowledgement. Critical controls—pause, stop, cancel, or do-not-modify—revoke the agent's write and landing capability first, preserve its worktree, stop only its process, and restart it read-only with the instruction already in context. The restart is pinned to the exact provider, model, and immutable launch settings recorded at the original spawn; editing the route table while an agent runs cannot change it.
 
 The orchestrator sends these as structured `hive_send` requests with `priority` and `intent`; those fields are preferred over prose. Send results report `queued`, `injected`, `agent-acknowledged`, or `applied`. A queued result means exactly that: the agent has not seen it yet. Missed urgent or critical acknowledgement deadlines wake the orchestrator once without polling. For compatibility, a small set of unambiguous commands such as “stop now” and “pause before coding” are promoted to critical, but operators should rely on structured intent.
+
+If the recorded model is no longer available, the row predates recorded execution identities, or there is not enough quota to reserve the acknowledgement process, Hive fails closed. It never re-enables writes and never switches models: the process remains stopped, landing stays revoked, the worktree and queued control remain durable, and the orchestrator receives an actionable alert. The stale viewer closes and the remaining Hive windows re-layout; a successful retry opens a fresh viewer on the same tmux identity. Legacy rows may therefore require the operator to finish the paused work from a newly spawned agent after reviewing the alert.
 
 ## FAQ
 

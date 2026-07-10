@@ -146,6 +146,38 @@ describe("quota windows", () => {
 });
 
 describe("quota persistence and reservations", () => {
+  test("migrates legacy reservation ledgers without control-run columns", async () => {
+    const { db } = await fileDatabase("legacy-control-columns");
+    db.database.exec(`
+      CREATE TABLE quota_reservations (
+        id TEXT PRIMARY KEY,
+        agentName TEXT NOT NULL,
+        provider TEXT NOT NULL,
+        account TEXT NOT NULL,
+        pool TEXT NOT NULL,
+        model TEXT NOT NULL,
+        tier TEXT NOT NULL,
+        estimatedUnits REAL NOT NULL,
+        status TEXT NOT NULL,
+        createdAt TEXT NOT NULL,
+        expiresAt TEXT NOT NULL,
+        startedAt TEXT,
+        reconciledAt TEXT,
+        actualUnits REAL,
+        source TEXT
+      )
+    `);
+    new QuotaLedger(db);
+    const columns = new Set(
+      (db.database.query("PRAGMA table_info(quota_reservations)").all() as Array<{
+        name: string;
+      }>).map((column) => column.name),
+    );
+    expect(columns.has("purpose")).toEqual(true);
+    expect(columns.has("controlMessageId")).toEqual(true);
+    db.close();
+  });
+
   test("atomically prevents two database connections from reserving the same headroom", async () => {
     const { path, db } = await fileDatabase("concurrency");
     const secondDb = new HiveDatabase(path);
@@ -168,6 +200,94 @@ describe("quota persistence and reservations", () => {
     ));
     expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
     expect(results.filter((result) => result.status === "rejected")).toHaveLength(1);
+    secondDb.close();
+    db.close();
+  });
+
+  test("gives a control restart its own idempotent reservation without double-counting the interrupted run", async () => {
+    const { path, db } = await fileDatabase("control-reservation");
+    const quotaConfig = config([
+      limit("codex", 30, { weeklyAllowance: 300 }),
+    ]);
+    const now = () => new Date("2026-07-09T12:00:00.000Z");
+    const ledger = new QuotaLedger(db);
+    const service = new QuotaService(ledger, quotaConfig, now);
+    const original = await service.routeAndReserve({
+      agentName: "maya",
+      tier: "standard",
+      preferredTool: "codex",
+      explicitTool: "codex",
+      candidates: candidates(),
+    });
+    service.markStarted(original.reservation.id);
+    await service.cancel(original.reservation.id);
+
+    const control = await service.reserveControlRun({
+      agentName: "maya",
+      tier: "standard",
+      tool: "codex",
+      model: "codex-model",
+      controlMessageId: "control-1",
+    });
+    expect(control).toMatchObject({
+      purpose: "control",
+      controlMessageId: "control-1",
+      status: "active",
+    });
+    expect(ledger.getReservation(original.reservation.id)).toMatchObject({
+      status: "reconciled",
+      actualUnits: 10,
+    });
+    const status = service.statuses()[0];
+    expect(status).toMatchObject({
+      fiveHour: { used: 10, reserved: 10, remaining: 10 },
+      weekly: { used: 10, reserved: 10, remaining: 280 },
+    });
+
+    db.close();
+    const restartedDb = new HiveDatabase(path);
+    const restarted = new QuotaService(
+      new QuotaLedger(restartedDb),
+      quotaConfig,
+      now,
+    );
+    const recovered = await restarted.reserveControlRun({
+      agentName: "maya",
+      tier: "standard",
+      tool: "codex",
+      model: "codex-model",
+      controlMessageId: "control-1",
+    });
+    expect(recovered.id).toEqual(control.id);
+    restartedDb.close();
+  });
+
+  test("atomically prevents concurrent control restarts from overcommitting headroom", async () => {
+    const { path, db } = await fileDatabase("control-concurrency");
+    const secondDb = new HiveDatabase(path);
+    const quotaConfig = config([
+      limit("claude", 15, { weeklyAllowance: 100 }),
+    ]);
+    const now = () => new Date("2026-07-09T12:00:00.000Z");
+    const services = [
+      new QuotaService(new QuotaLedger(db), quotaConfig, now),
+      new QuotaService(new QuotaLedger(secondDb), quotaConfig, now),
+    ];
+    const results = await Promise.allSettled(services.map((service, index) =>
+      service.reserveControlRun({
+        agentName: index === 0 ? "maya" : "sam",
+        tier: "standard",
+        tool: "claude",
+        model: "claude-model",
+        controlMessageId: `control-${index}`,
+      })
+    ));
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(results.filter((result) => result.status === "rejected")).toHaveLength(1);
+    const rejected = results.find((result) => result.status === "rejected");
+    expect(rejected?.status === "rejected" && rejected.reason).toBeInstanceOf(
+      QuotaExhaustedError,
+    );
     secondDb.close();
     db.close();
   });

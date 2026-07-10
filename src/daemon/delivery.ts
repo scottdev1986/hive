@@ -82,7 +82,7 @@ export class MessageDelivery {
       priority = "critical";
     }
     const now = new Date();
-    const capabilityEpoch = priority === "critical" && recipient !== null
+    let capabilityEpoch = priority === "critical" && recipient !== null
       ? recipient.capabilityEpoch + 1
       : null;
     const deadlineMs = options.deadlineMs ??
@@ -100,6 +100,7 @@ export class MessageDelivery {
             to,
             now.toISOString(),
           );
+          capabilityEpoch = currentRecipient?.capabilityEpoch ?? capabilityEpoch;
         }
         const value = AgentMessageSchema.parse({
           id: crypto.randomUUID(),
@@ -137,22 +138,25 @@ export class MessageDelivery {
       if (currentRecipient === null || this.controls === undefined) {
         return this.getStoredMessage(message.id);
       }
-      try {
-        await this.controls.interruptAndRestart(currentRecipient, message);
-      } catch (error) {
-        const alertedAt = new Date().toISOString();
-        this.db.markMessageAlerted(message.id, alertedAt);
-        await this.send(
-          "hive-control",
-          ORCHESTRATOR_NAME,
-          `Critical control ${message.id} revoked ${to}'s capability epoch but process restart failed: ${
-            error instanceof Error ? error.message : "unknown error"
-          }. Worktree was preserved; operator attention is required.`,
-          { idempotencyKey: `control-restart-failed:${message.id}` },
-        ).catch(() => undefined);
-        return this.getStoredMessage(message.id);
-      }
-      return this.markInjected(message);
+      return this.withSessionLock(currentRecipient.tmuxSession, async () => {
+        try {
+          const latestRecipient = this.requireLiveRecipient(to);
+          await this.controls!.interruptAndRestart(latestRecipient, message);
+        } catch (error) {
+          const alertedAt = new Date().toISOString();
+          this.db.markMessageAlerted(message.id, alertedAt);
+          await this.send(
+            "hive-control",
+            ORCHESTRATOR_NAME,
+            `Critical control ${message.id} revoked ${to}'s capability epoch but process restart failed: ${
+              error instanceof Error ? error.message : "unknown error"
+            }. Worktree was preserved; operator attention is required.`,
+            { idempotencyKey: `control-restart-failed:${message.id}` },
+          ).catch(() => undefined);
+          return this.getStoredMessage(message.id);
+        }
+        return this.markInjected(message);
+      });
     }
 
     if (recipient === null) {
@@ -361,8 +365,12 @@ export class MessageDelivery {
         )!;
       }
       try {
-        await this.controls.interruptAndRestart(recipient, message);
-        this.markInjected(message);
+        await this.withSessionLock(recipient.tmuxSession, async () => {
+          const latest = this.db.getAgentByName(message.to);
+          if (latest === null) return;
+          await this.controls!.interruptAndRestart(latest, message);
+          this.markInjected(message);
+        });
         recovered += 1;
       } catch (error) {
         const alertedAt = new Date().toISOString();

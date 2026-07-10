@@ -35,7 +35,9 @@ export async function runDaemon(): Promise<void> {
     tmux,
     terminal,
     onTerminalsChanged: () => layout.requestLayout(),
-    ...(quotaConfig.enabled ? { quota } : {}),
+    // Even when quota-aware routing is disabled, critical read-only restarts
+    // require a durable accounting lifecycle.
+    quota,
   });
   const tmuxSender: TmuxSender = {
     sendMessage: (session, text) => tmux.sendKeys(session, text),
@@ -49,7 +51,7 @@ export async function runDaemon(): Promise<void> {
     port,
     manageLifecycle: true,
     layout,
-    ...(quotaConfig.enabled ? { quota } : {}),
+    quota,
   });
 
   let stopping = false;

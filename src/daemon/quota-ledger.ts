@@ -24,6 +24,8 @@ const ReservationSchema = z.object({
   reconciledAt: z.string().nullable(),
   actualUnits: z.number().nullable(),
   source: z.string().nullable(),
+  purpose: z.enum(["agent", "control"]),
+  controlMessageId: z.string().nullable(),
 });
 
 export type QuotaReservation = z.infer<typeof ReservationSchema>;
@@ -67,6 +69,8 @@ export interface ReserveQuotaInput extends QuotaScope {
   weeklyAllowance: number;
   fiveHourFloor: number;
   weeklyFloor: number;
+  purpose?: "agent" | "control";
+  controlMessageId?: string;
 }
 
 export class QuotaLedger {
@@ -101,7 +105,9 @@ export class QuotaLedger {
         startedAt TEXT,
         reconciledAt TEXT,
         actualUnits REAL,
-        source TEXT
+        source TEXT,
+        purpose TEXT NOT NULL DEFAULT 'agent',
+        controlMessageId TEXT
       );
       CREATE INDEX IF NOT EXISTS quota_reservations_scope_status
         ON quota_reservations(provider, account, pool, status);
@@ -130,6 +136,27 @@ export class QuotaLedger {
         boundaryAt TEXT,
         PRIMARY KEY(provider, account, pool, window)
       );
+    `);
+    const reservationColumns = z.array(z.object({ name: z.string() })).parse(
+      this.db.database.query("PRAGMA table_info(quota_reservations)").all(),
+    );
+    const reservationColumnNames = new Set(
+      reservationColumns.map((column) => column.name),
+    );
+    if (!reservationColumnNames.has("purpose")) {
+      this.db.database.exec(
+        "ALTER TABLE quota_reservations ADD COLUMN purpose TEXT NOT NULL DEFAULT 'agent'",
+      );
+    }
+    if (!reservationColumnNames.has("controlMessageId")) {
+      this.db.database.exec(
+        "ALTER TABLE quota_reservations ADD COLUMN controlMessageId TEXT",
+      );
+    }
+    this.db.database.exec(`
+      CREATE UNIQUE INDEX IF NOT EXISTS quota_reservations_active_control
+      ON quota_reservations(controlMessageId)
+      WHERE controlMessageId IS NOT NULL AND status = 'active'
     `);
   }
 
@@ -201,6 +228,10 @@ export class QuotaLedger {
 
   tryReserve(input: ReserveQuotaInput): QuotaReservation | null {
     return this.immediate(() => {
+      if (input.controlMessageId !== undefined) {
+        const existing = this.getActiveControlReservation(input.controlMessageId);
+        if (existing !== null) return existing;
+      }
       const totals = this.usageTotals(
         input,
         input.fiveHourStart,
@@ -221,8 +252,9 @@ export class QuotaLedger {
         INSERT INTO quota_reservations (
           id, agentName, provider, account, pool, model, tier,
           estimatedUnits, status, createdAt, expiresAt,
-          startedAt, reconciledAt, actualUnits, source
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, NULL, NULL, NULL, NULL)
+          startedAt, reconciledAt, actualUnits, source, purpose,
+          controlMessageId
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, NULL, NULL, NULL, NULL, ?, ?)
       `).run(
         input.id,
         input.agentName,
@@ -234,6 +266,8 @@ export class QuotaLedger {
         input.estimatedUnits,
         input.now,
         input.expiresAt,
+        input.purpose ?? "agent",
+        input.controlMessageId ?? null,
       );
       return this.getReservation(input.id);
     });
@@ -245,25 +279,34 @@ export class QuotaLedger {
     | "fiveHourAllowance" | "weeklyAllowance"
     | "fiveHourFloor" | "weeklyFloor"
   >): QuotaReservation {
-    this.db.database.query(`
-      INSERT INTO quota_reservations (
-        id, agentName, provider, account, pool, model, tier,
-        estimatedUnits, status, createdAt, expiresAt,
-        startedAt, reconciledAt, actualUnits, source
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, NULL, NULL, NULL, NULL)
-    `).run(
-      input.id,
-      input.agentName,
-      input.provider,
-      input.account,
-      input.pool,
-      input.model,
-      input.tier,
-      input.estimatedUnits,
-      input.now,
-      input.expiresAt,
-    );
-    return this.getReservation(input.id)!;
+    return this.immediate(() => {
+      if (input.controlMessageId !== undefined) {
+        const existing = this.getActiveControlReservation(input.controlMessageId);
+        if (existing !== null) return existing;
+      }
+      this.db.database.query(`
+        INSERT INTO quota_reservations (
+          id, agentName, provider, account, pool, model, tier,
+          estimatedUnits, status, createdAt, expiresAt,
+          startedAt, reconciledAt, actualUnits, source, purpose,
+          controlMessageId
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, NULL, NULL, NULL, NULL, ?, ?)
+      `).run(
+        input.id,
+        input.agentName,
+        input.provider,
+        input.account,
+        input.pool,
+        input.model,
+        input.tier,
+        input.estimatedUnits,
+        input.now,
+        input.expiresAt,
+        input.purpose ?? "agent",
+        input.controlMessageId ?? null,
+      );
+      return this.getReservation(input.id)!;
+    });
   }
 
   getReservation(id: string): QuotaReservation | null {
@@ -279,6 +322,15 @@ export class QuotaLedger {
       WHERE agentName = ? AND status = 'active'
       ORDER BY createdAt DESC LIMIT 1
     `).get(agentName);
+    return row === null ? null : ReservationSchema.parse(row);
+  }
+
+  getActiveControlReservation(controlMessageId: string): QuotaReservation | null {
+    const row = this.db.database.query(`
+      SELECT * FROM quota_reservations
+      WHERE controlMessageId = ? AND status = 'active'
+      ORDER BY createdAt DESC LIMIT 1
+    `).get(controlMessageId);
     return row === null ? null : ReservationSchema.parse(row);
   }
 

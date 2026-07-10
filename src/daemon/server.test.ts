@@ -115,6 +115,15 @@ class RestartingSpawner extends StubSpawner {
   }
 }
 
+class FailingRestartSpawner extends StubSpawner {
+  constructor(private readonly reason: string) {
+    super();
+  }
+  async restartForControl(): Promise<AgentRecord> {
+    throw new Error(this.reason);
+  }
+}
+
 async function postEvent(
   daemon: HiveDaemon,
   event: Record<string, unknown>,
@@ -155,11 +164,17 @@ describe("HiveDaemon HTTP server", () => {
     tmux.sessions.add("hive-maya");
     tmux.sessions.add("hive-unrelated");
     const spawner = new RestartingSpawner();
+    const quota = new QuotaService(
+      new QuotaLedger(db),
+      QuotaConfigSchema.parse({ enabled: false }),
+      () => new Date(timestamp),
+    );
     const daemon = new HiveDaemon({
       db,
       spawner,
       tmux,
       tmuxSender: new SilentTmuxSender(),
+      quota,
     });
     try {
       db.insertAgent(agent());
@@ -243,6 +258,376 @@ describe("HiveDaemon HTTP server", () => {
         status: "reconciled",
         source: "estimated",
       });
+    } finally {
+      db.close();
+    }
+  });
+
+  test("repeated critical interruption settles the prior control run before starting the next", async () => {
+    const db = new HiveDatabase(join(home, "repeated-critical.db"));
+    const ledger = new QuotaLedger(db);
+    const quota = new QuotaService(
+      ledger,
+      QuotaConfigSchema.parse({ enabled: false }),
+      () => new Date(timestamp),
+    );
+    const prior = await quota.reserveControlRun({
+      agentName: "maya",
+      tier: "standard",
+      tool: "codex",
+      model: "gpt-5-codex",
+      controlMessageId: "prior-control",
+    });
+    quota.markStarted(prior.id);
+    const tmux = new FakeDaemonTmux();
+    tmux.sessions.add("hive-maya");
+    const spawner = new RestartingSpawner();
+    const daemon = new HiveDaemon({
+      db,
+      spawner,
+      tmux,
+      tmuxSender: new SilentTmuxSender(),
+      quota,
+    });
+    try {
+      db.insertAgent(agent({
+        status: "control-paused",
+        writeRevoked: true,
+        capabilityEpoch: 1,
+        controlMessageId: "prior-control",
+        controlQuotaReservationId: prior.id,
+      }));
+      await daemon.delivery.send("orchestrator", "maya", "Stop now.", {
+        priority: "critical",
+        intent: "stop",
+      });
+      expect(ledger.getReservation(prior.id)).toMatchObject({
+        status: "reconciled",
+        source: "estimated",
+      });
+      expect(spawner.restarts).toHaveLength(1);
+      expect(tmux.killed).toEqual(["hive-maya"]);
+      expect(db.getAgentByName("maya")).toMatchObject({
+        writeRevoked: true,
+        capabilityEpoch: 2,
+      });
+    } finally {
+      db.close();
+    }
+  });
+
+  test("daemon crash recovery reuses a surviving control process and reservation", async () => {
+    const db = new HiveDatabase(join(home, "control-crash-recovery.db"));
+    const ledger = new QuotaLedger(db);
+    const quota = new QuotaService(
+      ledger,
+      QuotaConfigSchema.parse({ enabled: false }),
+      () => new Date(timestamp),
+    );
+    const reservation = await quota.reserveControlRun({
+      agentName: "maya",
+      tier: "standard",
+      tool: "codex",
+      model: "gpt-5-codex",
+      controlMessageId: "recover-control",
+    });
+    quota.markStarted(reservation.id);
+    const tmux = new FakeDaemonTmux();
+    tmux.sessions.add("hive-maya");
+    const spawner = new RestartingSpawner();
+    const daemon = new HiveDaemon({
+      db,
+      spawner,
+      tmux,
+      tmuxSender: new SilentTmuxSender(),
+      quota,
+    });
+    try {
+      db.insertAgent(agent({
+        status: "control-paused",
+        writeRevoked: true,
+        capabilityEpoch: 1,
+        controlMessageId: "recover-control",
+        controlQuotaReservationId: reservation.id,
+      }));
+      db.insertMessage({
+        id: "recover-control",
+        from: "orchestrator",
+        to: "maya",
+        body: "Pause.",
+        createdAt: timestamp,
+        deliveredAt: null,
+        priority: "critical",
+        intent: "pause",
+        state: "queued",
+        injectedAt: null,
+        acknowledgedAt: null,
+        appliedAt: null,
+        deadlineAt: "2026-07-09T12:01:00.000Z",
+        alertAt: null,
+        sequence: 1,
+        idempotencyKey: null,
+        capabilityEpoch: 1,
+      });
+      expect(await daemon.delivery.recoverCriticalControls()).toEqual(1);
+      expect(spawner.restarts).toHaveLength(0);
+      expect(tmux.killed).toHaveLength(0);
+      expect(db.getMessage("recover-control")?.state).toEqual("injected");
+      expect(ledger.getReservation(reservation.id)?.status).toEqual("active");
+    } finally {
+      db.close();
+    }
+  });
+
+  test("acknowledgement settles the dedicated control reservation", async () => {
+    const db = new HiveDatabase(join(home, "control-ack.db"));
+    const ledger = new QuotaLedger(db);
+    const quota = new QuotaService(
+      ledger,
+      QuotaConfigSchema.parse({ enabled: false }),
+      () => new Date(timestamp),
+    );
+    const reservation = await quota.reserveControlRun({
+      agentName: "maya",
+      tier: "standard",
+      tool: "codex",
+      model: "gpt-5-codex",
+      controlMessageId: "ack-control",
+    });
+    quota.markStarted(reservation.id);
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new StubSpawner(),
+      tmuxSender: new SilentTmuxSender(),
+      quota,
+    });
+    try {
+      db.insertAgent(agent({
+        status: "control-paused",
+        writeRevoked: true,
+        capabilityEpoch: 1,
+        controlMessageId: "ack-control",
+        controlQuotaReservationId: reservation.id,
+      }));
+      db.insertMessage({
+        id: "ack-control",
+        from: "orchestrator",
+        to: "maya",
+        body: "Pause.",
+        createdAt: timestamp,
+        deliveredAt: timestamp,
+        priority: "critical",
+        intent: "pause",
+        state: "injected",
+        injectedAt: timestamp,
+        acknowledgedAt: null,
+        appliedAt: null,
+        deadlineAt: "2026-07-09T12:01:00.000Z",
+        alertAt: null,
+        sequence: 1,
+        idempotencyKey: null,
+        capabilityEpoch: 1,
+      });
+      const acknowledged = await daemon.acknowledgeControlMessage(
+        "maya",
+        "ack-control",
+        1,
+        true,
+      );
+      expect(acknowledged.state).toEqual("applied");
+      expect(ledger.getReservation(reservation.id)).toMatchObject({
+        status: "reconciled",
+        source: "estimated",
+      });
+    } finally {
+      db.close();
+    }
+  });
+
+  test("completion, death, reconciliation, and hive_kill settle the current control reservation", async () => {
+    const db = new HiveDatabase(join(home, "control-terminal-paths.db"));
+    const ledger = new QuotaLedger(db);
+    const quota = new QuotaService(
+      ledger,
+      QuotaConfigSchema.parse({ enabled: false }),
+      () => new Date(timestamp),
+    );
+    const tmux = new FakeDaemonTmux();
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new StubSpawner(),
+      tmux,
+      tmuxSender: new SilentTmuxSender(),
+      quota,
+      assessStrandedWork: async () => ({ dirtyFiles: [], unmergedCommits: 0 }),
+    });
+    const cases = ["complete", "dead", "reconcile", "kill"] as const;
+    const reservations = new Map<string, string>();
+    for (const [index, name] of cases.entries()) {
+      const reservation = await quota.reserveControlRun({
+        agentName: name,
+        tier: "standard",
+        tool: "codex",
+        model: "gpt-5-codex",
+        controlMessageId: `${name}-control`,
+      });
+      quota.markStarted(reservation.id);
+      reservations.set(name, reservation.id);
+      db.insertAgent(agent({
+        id: `agent-${name}`,
+        name,
+        tmuxSession: `hive-${name}`,
+        status: "control-paused",
+        writeRevoked: true,
+        capabilityEpoch: 1,
+        controlMessageId: `${name}-control`,
+        controlQuotaReservationId: reservation.id,
+      }));
+      if (name !== "reconcile") tmux.sessions.add(`hive-${name}`);
+    }
+    try {
+      await daemon.processEvent({
+        kind: "turn-end",
+        agentName: "complete",
+        timestamp: "2026-07-09T12:01:00.000Z",
+        usageUnits: 3,
+        usageSource: "gateway",
+      });
+      await daemon.processEvent({
+        kind: "dead",
+        agentName: "dead",
+        timestamp: "2026-07-09T12:01:01.000Z",
+      });
+      await daemon.reconcileAgents();
+
+      const transport = new StreamableHTTPClientTransport(
+        new URL("http://hive/mcp"),
+        { fetch: (input, init) => daemon.fetch(new Request(input, init)) },
+      );
+      const client = new Client({ name: "control-kill", version: "1.0.0" });
+      await client.connect(transport);
+      await client.callTool({ name: "hive_kill", arguments: { name: "kill" } });
+      await client.close();
+
+      expect(ledger.getReservation(reservations.get("complete")!)).toMatchObject({
+        status: "reconciled",
+        actualUnits: 3,
+        source: "gateway",
+      });
+      for (const name of ["dead", "reconcile", "kill"]) {
+        expect(ledger.getReservation(reservations.get(name)!)).toMatchObject({
+          status: "reconciled",
+          source: "estimated",
+        });
+      }
+    } finally {
+      db.close();
+    }
+  });
+
+  test("an expired control reservation settles, stops its process, preserves work, and re-tiles", async () => {
+    const db = new HiveDatabase(join(home, "control-timeout.db"));
+    const ledger = new QuotaLedger(db);
+    let now = new Date(timestamp);
+    const quota = new QuotaService(
+      ledger,
+      QuotaConfigSchema.parse({
+        enabled: false,
+        reservationTtlMinutes: 1,
+      }),
+      () => now,
+    );
+    const reservation = await quota.reserveControlRun({
+      agentName: "maya",
+      tier: "standard",
+      tool: "codex",
+      model: "gpt-5-codex",
+      controlMessageId: "timeout-control",
+    });
+    quota.markStarted(reservation.id);
+    const tmux = new FakeDaemonTmux();
+    tmux.sessions.add("hive-maya");
+    const closed: AgentRecord["terminalHandle"][] = [];
+    let layouts = 0;
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new StubSpawner(),
+      tmux,
+      tmuxSender: new RootUnavailableTmuxSender(),
+      quota,
+      closeTerminal: async (handle) => { closed.push(handle); },
+      layout: { requestLayout: () => layouts += 1 },
+    });
+    const handle = { app: "iterm2", sessionId: "timeout-viewer" } as const;
+    try {
+      db.insertAgent(agent({
+        status: "control-paused",
+        writeRevoked: true,
+        capabilityEpoch: 1,
+        controlMessageId: "timeout-control",
+        controlQuotaReservationId: reservation.id,
+        terminalHandle: handle,
+      }));
+      now = new Date("2026-07-09T12:02:00.000Z");
+      expect(await daemon.recoverQuotaReservations()).toEqual(1);
+      expect(ledger.getReservation(reservation.id)).toMatchObject({
+        status: "reconciled",
+        source: "estimated",
+      });
+      expect(tmux.killed).toEqual(["hive-maya"]);
+      expect(db.getAgentByName("maya")).toMatchObject({
+        status: "dead",
+        writeRevoked: true,
+        worktreePath: "/tmp/hive-maya",
+      });
+      expect(closed).toEqual([handle]);
+      expect(layouts).toEqual(1);
+      expect(db.listMessages().some((message) =>
+        message.to === "orchestrator" && message.body.includes("timed out")
+      )).toEqual(true);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("quota-blocked control remains revoked and emits a durable actionable alert", async () => {
+    const db = new HiveDatabase(join(home, "control-quota-blocked.db"));
+    const quota = new QuotaService(
+      new QuotaLedger(db),
+      QuotaConfigSchema.parse({ enabled: false }),
+      () => new Date(timestamp),
+    );
+    const tmux = new FakeDaemonTmux();
+    tmux.sessions.add("hive-maya");
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new FailingRestartSpawner(
+        "Insufficient quota for recorded codex/gpt-5-codex; no model fallback",
+      ),
+      tmux,
+      tmuxSender: new RootUnavailableTmuxSender(),
+      quota,
+    });
+    try {
+      db.insertAgent(agent());
+      const control = await daemon.delivery.send(
+        "orchestrator",
+        "maya",
+        "Pause before coding.",
+        { priority: "critical", intent: "pause" },
+      );
+      expect(control.state).toEqual("queued");
+      expect(db.getAgentByName("maya")).toMatchObject({
+        status: "control-paused",
+        writeRevoked: true,
+        worktreePath: "/tmp/hive-maya",
+      });
+      const alert = db.listMessages().find((message) =>
+        message.to === "orchestrator" && message.from === "hive-control"
+      );
+      expect(alert?.body).toContain("Insufficient quota");
+      expect(alert?.body).toContain("Worktree was preserved");
+      expect(alert?.idempotencyKey).toContain("control-restart-failed:");
     } finally {
       db.close();
     }

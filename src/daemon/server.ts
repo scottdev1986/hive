@@ -219,6 +219,7 @@ export class HiveDaemon {
   private readonly land: LandBranch;
   private bunServer: Server<undefined> | null = null;
   private reconciliationTimer: ReturnType<typeof setInterval> | null = null;
+  private maintenanceRunning = false;
 
   constructor(options: HiveDaemonOptions) {
     this.ownsDatabase = options.db === undefined;
@@ -228,19 +229,34 @@ export class HiveDaemon {
     this.hostname = options.hostname ?? "127.0.0.1";
     this.manageLifecycle = options.manageLifecycle ?? false;
     this.tmux = options.tmux ?? new TmuxAdapter();
+    this.quota = options.quota;
     this.delivery = new MessageDelivery(
       this.db,
       options.tmuxSender ?? new BunTmuxSender(),
       {
         interruptAndRestart: async (agent, message) => {
-          await this.tmux.killSession(agent.tmuxSession, {
-            ignoreMissing: true,
-          });
-          // The interrupted run is over and its replacement is read-only, so
-          // settle the quota reservation the way any other stopped run does:
-          // started runs keep their conservative estimate, unstarted release.
-          if (agent.quotaReservationId !== undefined) {
-            await this.quota?.cancel(agent.quotaReservationId);
+          const sameControlAttempt = agent.controlMessageId === message.id &&
+            agent.controlQuotaReservationId !== undefined &&
+            this.quota?.ledger.getReservation(agent.controlQuotaReservationId)
+                ?.status === "active";
+          if (
+            sameControlAttempt &&
+            await this.tmux.hasSession(agent.tmuxSession)
+          ) {
+            // The daemon may have crashed after launch but before advancing the
+            // message. Reuse the surviving process and reservation exactly.
+            return;
+          }
+          if (!sameControlAttempt) {
+            await this.tmux.killSession(agent.tmuxSession, {
+              ignoreMissing: true,
+            });
+            await this.settleAgentQuota(agent);
+          }
+          if (this.quota === undefined) {
+            throw new Error(
+              "quota accounting is unavailable; read-only control restart was not launched",
+            );
           }
           if (this.spawner.restartForControl === undefined) {
             throw new Error(
@@ -251,7 +267,6 @@ export class HiveDaemon {
         },
       },
     );
-    this.quota = options.quota;
     this.quota?.setAlertSink(async (body) => {
       await this.delivery.send("hive-quota", ORCHESTRATOR_NAME, body);
     });
@@ -288,10 +303,7 @@ export class HiveDaemon {
       writeLifecycleFiles(listeningPort);
     }
     this.reconciliationTimer = setInterval(() => {
-      void Promise.all([
-        this.reconcileAgents(),
-        this.quota?.recoverExpired() ?? Promise.resolve(0),
-      ]).catch((error) => {
+      void this.runMaintenance().catch((error) => {
         console.error(
           `Hive reconciliation failed: ${
             error instanceof Error ? error.message : "unknown error"
@@ -306,22 +318,69 @@ export class HiveDaemon {
         );
       });
     }, 30_000);
-    void this.delivery.recoverCriticalControls().catch((error) => {
-      console.error(
-        `Hive critical-control recovery failed: ${
-          error instanceof Error ? error.message : "unknown error"
-        }`,
-      );
-    });
     this.reconciliationTimer.unref?.();
-    void this.quota?.recoverExpired().catch((error) => {
+    void this.runMaintenance().catch((error) => {
       console.error(
-        `Hive quota recovery failed: ${
+        `Hive startup recovery failed: ${
           error instanceof Error ? error.message : "unknown error"
         }`,
       );
     });
     return this.bunServer;
+  }
+
+  private async runMaintenance(): Promise<void> {
+    if (this.maintenanceRunning) return;
+    this.maintenanceRunning = true;
+    try {
+      await this.recoverQuotaReservations();
+      await this.delivery.recoverCriticalControls();
+      await this.reconcileAgents();
+    } finally {
+      this.maintenanceRunning = false;
+    }
+  }
+
+  async recoverQuotaReservations(): Promise<number> {
+    if (this.quota === undefined) return 0;
+    const expired = await this.quota.recoverExpiredReservations();
+    let viewersChanged = false;
+    for (const reservation of expired) {
+      if (reservation.purpose !== "control") continue;
+      const agent = this.db.getAgentByName(reservation.agentName);
+      if (agent?.controlQuotaReservationId !== reservation.id) continue;
+      await this.tmux.killSession(agent.tmuxSession, { ignoreMissing: true });
+      const detached = this.db.markAgentDeadAndDetachTerminal(
+        agent.id,
+        new Date().toISOString(),
+        `Critical control acknowledgement process timed out (reservation ${reservation.id})`,
+      );
+      if (detached?.terminalHandle !== undefined) {
+        viewersChanged = true;
+        await this.closeTerminal(detached.terminalHandle).catch(() => undefined);
+      }
+      await this.delivery.send(
+        "hive-control",
+        ORCHESTRATOR_NAME,
+        `Critical control acknowledgement process for ${agent.name} timed out. ` +
+          `Reservation ${reservation.id} settled conservatively; the process was stopped, ` +
+          "write and landing capability remain revoked, and the worktree is preserved.",
+        { idempotencyKey: `control-quota-timeout:${reservation.id}` },
+      ).catch(() => undefined);
+    }
+    if (viewersChanged) this.layout?.requestLayout();
+    return expired.length;
+  }
+
+  private async settleAgentQuota(
+    agent: AgentRecord,
+    at?: string,
+  ): Promise<void> {
+    const reservationId = agent.controlQuotaReservationId ??
+      agent.quotaReservationId;
+    if (reservationId !== undefined) {
+      await this.quota?.cancel(reservationId, at);
+    }
   }
 
   async stop(): Promise<void> {
@@ -358,14 +417,20 @@ export class HiveDaemon {
       if (await this.tmux.hasSession(agent.tmuxSession)) {
         continue;
       }
+      if (
+        agent.writeRevoked && agent.controlMessageId !== undefined &&
+        this.db.getMessage(agent.controlMessageId)?.state === "queued"
+      ) {
+        // A quota- or identity-blocked critical control remains durable and
+        // retryable. Never convert that fail-closed state into ordinary death.
+        continue;
+      }
       const reconciled = this.db.markAgentDeadAndDetachTerminal(
         agent.id,
         new Date().toISOString(),
         "tmux session missing (reconciled)",
       );
-      if (agent.quotaReservationId !== undefined) {
-        await this.quota?.cancel(agent.quotaReservationId);
-      }
+      await this.settleAgentQuota(agent);
       // The tmux session is already gone, so the viewer shows nothing but a
       // dead shell; close it instead of leaving a stale window on the wall.
       if (reconciled?.terminalHandle !== undefined) {
@@ -396,6 +461,29 @@ export class HiveDaemon {
       );
     }
     return this.land(this.repoRoot, agent.branch);
+  }
+
+  async acknowledgeControlMessage(
+    agentName: string,
+    messageId: string,
+    capabilityEpoch: number | undefined,
+    applied: boolean,
+  ) {
+    const message = this.delivery.acknowledge(
+      agentName,
+      messageId,
+      capabilityEpoch,
+      applied,
+    );
+    const record = this.db.getAgentByName(agentName);
+    if (
+      message.priority === "critical" &&
+      record?.controlMessageId === messageId &&
+      record.controlQuotaReservationId !== undefined
+    ) {
+      await this.quota?.cancel(record.controlQuotaReservationId);
+    }
+    return message;
   }
 
   async fetch(request: Request): Promise<Response> {
@@ -534,18 +622,20 @@ export class HiveDaemon {
     });
 
     const agent = this.db.getAgentByName(value.agentName);
-    if (agent?.quotaReservationId !== undefined) {
+    const eventReservationId = agent?.controlQuotaReservationId ??
+      agent?.quotaReservationId;
+    if (eventReservationId !== undefined) {
       if (value.kind === "session-start" || value.kind === "turn-start") {
-        this.quota?.markStarted(agent.quotaReservationId, value.timestamp);
+        this.quota?.markStarted(eventReservationId, value.timestamp);
       } else if (value.kind === "turn-end") {
         await this.quota?.reconcile(
-          agent.quotaReservationId,
+          eventReservationId,
           value.usageUnits,
           value.usageSource ?? "estimated",
           value.timestamp,
         );
       } else if (value.kind === "dead") {
-        await this.quota?.cancel(agent.quotaReservationId, value.timestamp);
+        await this.quota?.cancel(eventReservationId, value.timestamp);
       }
     }
 
@@ -638,9 +728,7 @@ export class HiveDaemon {
         status: "dead",
         lastEventAt: new Date().toISOString(),
       });
-      if (updated.quotaReservationId !== undefined) {
-        await this.quota?.cancel(updated.quotaReservationId);
-      }
+      await this.settleAgentQuota(updated);
       return toolResult(updated, "agent");
     });
 
@@ -664,9 +752,7 @@ export class HiveDaemon {
       if (killed === null) {
         throw new Error(`Hive agent not found: ${name}`);
       }
-      if (killed.agent.quotaReservationId !== undefined) {
-        await this.quota?.cancel(killed.agent.quotaReservationId, timestamp);
-      }
+      await this.settleAgentQuota(killed.agent, timestamp);
       if (killed.terminalHandle !== undefined) {
         try {
           await this.closeTerminal(killed.terminalHandle);
@@ -770,16 +856,15 @@ export class HiveDaemon {
       description:
         "Acknowledge an injected urgent or critical control using its capability epoch; optionally confirm it has been applied.",
       inputSchema: MessageAcknowledgementSchema,
-    }, async ({ agent, messageId, capabilityEpoch, applied }) =>
-      toolResult(
-        this.delivery.acknowledge(
-          agent,
-          messageId,
-          capabilityEpoch,
-          applied,
-        ),
-        "message",
-      ));
+    }, async ({ agent, messageId, capabilityEpoch, applied }) => {
+      const message = await this.acknowledgeControlMessage(
+        agent,
+        messageId,
+        capabilityEpoch,
+        applied,
+      );
+      return toolResult(message, "message");
+    });
 
     server.registerTool("hive_inbox", {
       title: "Read agent inbox",

@@ -24,6 +24,7 @@ import {
   ORCHESTRATOR_NAME,
   type AgentMessage,
   type AgentRecord,
+  type ExecutionIdentity,
   type HiveConfig,
   type Route,
   type RoutingTier,
@@ -243,70 +244,127 @@ export class HiveSpawner implements Spawner {
     if (agent.worktreePath === null) {
       throw new Error(`Cannot restart ${agent.name}: worktree is unavailable`);
     }
-    const configuredRoute = await this.dependencies.routing(agent.tier);
-    const readOnly = true;
-    await provisionSkills(agent.worktreePath, agent.tool);
-    let argv: string[];
-    if (agent.tool === "claude") {
-      await writeClaudeAgentConfig(agent.worktreePath, {
-        daemonPort: this.dependencies.port,
-        name: agent.name,
-        readOnly,
-      });
-      argv = buildClaudeSpawnCommand({
-        daemonPort: this.dependencies.port,
-        model: configuredRoute.claude.model,
-        name: agent.name,
-        readOnly,
-        worktreePath: agent.worktreePath,
-      });
-    } else {
-      await writeCodexAgentConfig(agent.worktreePath, {
-        daemonPort: this.dependencies.port,
-        name: agent.name,
-        readOnly,
-      });
-      argv = buildCodexSpawnCommand({
-        daemonPort: this.dependencies.port,
-        effort: configuredRoute.codex.effort ?? "medium",
-        model: configuredRoute.codex.model,
-        name: agent.name,
-        readOnly,
-        worktreePath: agent.worktreePath,
-      });
+    const identity = agent.executionIdentity;
+    if (
+      identity === undefined || identity.model === "default" ||
+      identity.tool !== agent.tool || identity.model !== agent.model
+    ) {
+      await this.failClosedControlRestart(
+        agent,
+        message,
+        "no complete immutable execution identity is recorded (legacy or unresolved-default agent row)",
+      );
+      throw new Error(
+        `Cannot restart ${agent.name} for critical control: no complete immutable execution identity is recorded. ` +
+          "This legacy/unresolved row cannot be restarted safely without risking a model switch; capability remains revoked.",
+      );
     }
-    argv.push([
-      `CRITICAL HIVE CONTROL ${message.id} (capability epoch ${message.capabilityEpoch}).`,
-      message.body,
-      "Your prior process was stopped and its worktree was preserved.",
-      "This process is read-only. Do not resume implementation or landing.",
-      `Acknowledge with hive_ack_message using agent=${JSON.stringify(agent.name)}, messageId=${JSON.stringify(message.id)}, capabilityEpoch=${message.capabilityEpoch}.`,
-      `Previous assignment for context only: ${agent.taskDescription}`,
-    ].join("\n\n"));
-    await this.dependencies.tmux.newSession(
-      agent.tmuxSession,
-      agent.worktreePath,
-      shellJoin(argv),
+    if (this.dependencies.quota === undefined) {
+      await this.failClosedControlRestart(
+        agent,
+        message,
+        "quota accounting is unavailable for the acknowledgement process",
+      );
+      throw new Error(
+        `Cannot restart ${agent.name} for critical control: quota accounting is unavailable; capability remains revoked`,
+      );
+    }
+
+    let reservationId: string;
+    try {
+      const reservation = await this.dependencies.quota.reserveControlRun({
+        agentName: agent.name,
+        tier: agent.tier,
+        tool: identity.tool,
+        model: identity.model,
+        controlMessageId: message.id,
+      });
+      reservationId = reservation.id;
+    } catch (error) {
+      await this.failClosedControlRestart(
+        agent,
+        message,
+        error instanceof Error ? error.message : "control quota reservation failed",
+      );
+      throw error;
+    }
+
+    const prepared = await this.prepareControlRestart(
+      agent,
+      message,
+      reservationId,
     );
-    const now = new Date().toISOString();
-    // The old viewer is attached to the killed session, so drop the recorded
-    // handle before closing it and open a fresh lens on the restarted one.
-    const previousHandle = agent.terminalHandle;
-    const record = this.dependencies.db.insertAgent({
-      ...agent,
-      status: "control-paused",
-      writeRevoked: true,
-      terminalHandle: undefined,
-      lastEventAt: now,
-    });
-    let viewersChanged = previousHandle !== undefined;
-    if (previousHandle !== undefined) {
-      try {
-        await this.dependencies.terminal.closeWindow(previousHandle);
-      } catch {
-        // Closing the stale lens is cosmetic; the control must still win.
+    const readOnly = true;
+    let argv: string[];
+    try {
+      await provisionSkills(agent.worktreePath, identity.tool);
+      if (identity.tool === "claude") {
+        await writeClaudeAgentConfig(agent.worktreePath, {
+          daemonPort: this.dependencies.port,
+          name: agent.name,
+          readOnly,
+        });
+        argv = buildClaudeSpawnCommand({
+          daemonPort: this.dependencies.port,
+          model: identity.model,
+          name: agent.name,
+          readOnly,
+          worktreePath: agent.worktreePath,
+        });
+      } else {
+        await writeCodexAgentConfig(agent.worktreePath, {
+          daemonPort: this.dependencies.port,
+          name: agent.name,
+          readOnly,
+        });
+        argv = buildCodexSpawnCommand({
+          daemonPort: this.dependencies.port,
+          effort: identity.effort,
+          model: identity.model,
+          name: agent.name,
+          readOnly,
+          worktreePath: agent.worktreePath,
+        });
       }
+      argv.push([
+        `CRITICAL HIVE CONTROL ${message.id} (capability epoch ${message.capabilityEpoch}).`,
+        message.body,
+        "Your prior process was stopped and its worktree was preserved.",
+        "This process is read-only. Do not resume implementation or landing.",
+        `Acknowledge with hive_ack_message using agent=${JSON.stringify(agent.name)}, messageId=${JSON.stringify(message.id)}, capabilityEpoch=${message.capabilityEpoch}.`,
+        `Previous assignment for context only: ${agent.taskDescription}`,
+      ].join("\n\n"));
+      await this.dependencies.tmux.newSession(
+        agent.tmuxSession,
+        agent.worktreePath,
+        shellJoin(argv),
+      );
+      const failureReason = await this.monitorControlReadiness(prepared.record);
+      if (failureReason !== null) throw new Error(failureReason);
+      this.dependencies.quota.markStarted(reservationId);
+    } catch (error) {
+      await this.dependencies.quota.cancel(reservationId);
+      await this.dependencies.tmux.killSession(agent.tmuxSession, {
+        ignoreMissing: true,
+      }).catch(() => undefined);
+      const reason = error instanceof Error
+        ? error.message
+        : "control acknowledgement process failed to launch";
+      this.dependencies.db.insertAgent({
+        ...prepared.record,
+        status: "control-paused",
+        writeRevoked: true,
+        failureReason: `Critical control ${message.id} restart failed: ${reason}`,
+        lastEventAt: new Date().toISOString(),
+      });
+      if (prepared.viewersChanged) this.dependencies.onTerminalsChanged?.();
+      throw new Error(
+        `Recorded ${identity.tool}/${identity.model} could not be launched for ${agent.name}: ${reason}`,
+      );
     }
+
+    const record = prepared.record;
+    let viewersChanged = prepared.viewersChanged;
     if (!this.dependencies.config.headless) {
       let handle: Awaited<ReturnType<TerminalAdapter["openWindow"]>> | null =
         null;
@@ -344,6 +402,73 @@ export class HiveSpawner implements Spawner {
     return this.dependencies.db.getAgentById(record.id) ?? record;
   }
 
+  private async prepareControlRestart(
+    agent: AgentRecord,
+    message: AgentMessage,
+    reservationId?: string,
+    failureReason?: string,
+  ): Promise<{ record: AgentRecord; viewersChanged: boolean }> {
+    const current = this.dependencies.db.getAgentById(agent.id) ?? agent;
+    const previousHandle = current.terminalHandle;
+    const record = this.dependencies.db.insertAgent({
+      ...current,
+      status: "control-paused",
+      writeRevoked: true,
+      terminalHandle: undefined,
+      controlMessageId: message.id,
+      controlQuotaReservationId: reservationId,
+      failureReason,
+      lastEventAt: new Date().toISOString(),
+    });
+    if (previousHandle !== undefined) {
+      try {
+        await this.dependencies.terminal.closeWindow(previousHandle);
+      } catch {
+        // Closing a killed session's viewer is cosmetic; revocation persists.
+      }
+    }
+    return { record, viewersChanged: previousHandle !== undefined };
+  }
+
+  private async failClosedControlRestart(
+    agent: AgentRecord,
+    message: AgentMessage,
+    reason: string,
+  ): Promise<void> {
+    const prepared = await this.prepareControlRestart(
+      agent,
+      message,
+      undefined,
+      `Critical control ${message.id} is pending: ${reason}`,
+    );
+    if (prepared.viewersChanged) this.dependencies.onTerminalsChanged?.();
+  }
+
+  private async monitorControlReadiness(
+    record: AgentRecord,
+  ): Promise<string | null> {
+    for (let attempt = 0; attempt < READINESS_ATTEMPTS; attempt += 1) {
+      await this.wait(READINESS_POLL_MS);
+      const current = this.dependencies.db.getAgentById(record.id);
+      if (current !== null && current.lastEventAt > record.lastEventAt) return null;
+      if (!(await this.dependencies.tmux.hasSession(record.tmuxSession))) {
+        return "tmux session exited";
+      }
+      try {
+        const pane = await this.dependencies.tmux.capturePane(record.tmuxSession);
+        const paneTail = tailLines(pane, 5);
+        if (LAUNCH_FAILURE_PATTERNS.some((pattern) => pattern.test(paneTail))) {
+          return tailLines(pane, 15) || "Control process launch error";
+        }
+      } catch {
+        if (!(await this.dependencies.tmux.hasSession(record.tmuxSession))) {
+          return "tmux session exited";
+        }
+      }
+    }
+    return null;
+  }
+
   async spawn(request: SpawnRequest): Promise<AgentRecord> {
     const existingAgents = this.dependencies.db.listAgents();
     const name = resolveAgentName(request.name, existingAgents);
@@ -367,12 +492,13 @@ export class HiveSpawner implements Spawner {
   ): Promise<AgentRecord> {
     const configuredRoute = await this.dependencies.routing(request.tier);
     let tool = request.tool ?? configuredRoute.tool;
-    // The record (and thus the terminal title and hive_status) carries the
-    // concrete model; the spawn command below still receives the configured
-    // route value, so alias-driven CLI behavior is unchanged.
+    // The process, durable identity, terminal title, and hive_status all use
+    // the same concrete model. A later control restart can therefore replay
+    // the launch without consulting aliases or mutable tool defaults.
     let model = await this.modelResolver(tool, configuredRoute);
+    let executionIdentity: ExecutionIdentity | undefined;
     let quotaReservationId: string | undefined;
-    if (this.dependencies.quota !== undefined) {
+    if (this.dependencies.quota?.config.enabled === true) {
       const [claudeModel, codexModel] = await Promise.all([
         this.modelResolver("claude", configuredRoute),
         this.modelResolver("codex", configuredRoute),
@@ -393,6 +519,15 @@ export class HiveSpawner implements Spawner {
       tool = decision.tool;
       model = decision.model;
       quotaReservationId = decision.reservation.id;
+    }
+    if (model !== "default") {
+      executionIdentity = tool === "claude"
+        ? { tool, model }
+        : {
+            tool,
+            model,
+            effort: configuredRoute.codex.effort ?? "medium",
+          };
     }
     let worktree: CreatedWorktree;
     try {
@@ -429,6 +564,7 @@ export class HiveSpawner implements Spawner {
       createdAt: timestamp,
       lastEventAt: timestamp,
       ...(quotaReservationId === undefined ? {} : { quotaReservationId }),
+      ...(executionIdentity === undefined ? {} : { executionIdentity }),
       capabilityEpoch: 0,
       writeRevoked: false,
     });
@@ -444,7 +580,7 @@ export class HiveSpawner implements Spawner {
         });
         argv = buildClaudeSpawnCommand({
           daemonPort: this.dependencies.port,
-          model: configuredRoute.claude.model,
+          model,
           name,
           readOnly: false,
           worktreePath: worktree.path,
@@ -458,7 +594,7 @@ export class HiveSpawner implements Spawner {
         argv = buildCodexSpawnCommand({
           daemonPort: this.dependencies.port,
           effort: configuredRoute.codex.effort ?? "medium",
-          model: configuredRoute.codex.model,
+          model,
           name,
           readOnly: false,
           worktreePath: worktree.path,

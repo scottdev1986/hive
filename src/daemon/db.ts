@@ -7,6 +7,7 @@ import {
   AgentMessageSchema,
   AgentRecordSchema,
   HookEventSchema,
+  ExecutionIdentitySchema,
   TerminalHandleSchema,
   type AgentMessage,
   type AgentRecord,
@@ -29,6 +30,9 @@ const AgentDatabaseRowSchema = AgentRecordSchema.extend({
   failureReason: z.string().nullable(),
   failedAt: z.string().nullable(),
   quotaReservationId: z.string().nullable(),
+  controlQuotaReservationId: z.string().nullable(),
+  controlMessageId: z.string().nullable(),
+  executionIdentity: z.string().nullable(),
   terminalHandle: z.string().nullable(),
   capabilityEpoch: z.number().int().nonnegative().default(0),
   writeRevoked: z.union([z.boolean(), z.number().int()]).default(0),
@@ -41,6 +45,11 @@ function parseAgentRow(row: unknown): AgentRecord {
     failureReason: value.failureReason ?? undefined,
     failedAt: value.failedAt ?? undefined,
     quotaReservationId: value.quotaReservationId ?? undefined,
+    controlQuotaReservationId: value.controlQuotaReservationId ?? undefined,
+    controlMessageId: value.controlMessageId ?? undefined,
+    executionIdentity: value.executionIdentity === null
+      ? undefined
+      : ExecutionIdentitySchema.parse(JSON.parse(value.executionIdentity)),
     terminalHandle: value.terminalHandle === null
       ? undefined
       : TerminalHandleSchema.parse(JSON.parse(value.terminalHandle)),
@@ -123,6 +132,9 @@ export class HiveDatabase {
         failureReason TEXT,
         failedAt TEXT,
         quotaReservationId TEXT,
+        controlQuotaReservationId TEXT,
+        controlMessageId TEXT,
+        executionIdentity TEXT,
         capabilityEpoch INTEGER NOT NULL DEFAULT 0,
         writeRevoked INTEGER NOT NULL DEFAULT 0
       );
@@ -193,6 +205,17 @@ export class HiveDatabase {
     }
     if (!agentColumnNames.has("quotaReservationId")) {
       this.database.exec("ALTER TABLE agents ADD COLUMN quotaReservationId TEXT");
+    }
+    if (!agentColumnNames.has("controlQuotaReservationId")) {
+      this.database.exec(
+        "ALTER TABLE agents ADD COLUMN controlQuotaReservationId TEXT",
+      );
+    }
+    if (!agentColumnNames.has("controlMessageId")) {
+      this.database.exec("ALTER TABLE agents ADD COLUMN controlMessageId TEXT");
+    }
+    if (!agentColumnNames.has("executionIdentity")) {
+      this.database.exec("ALTER TABLE agents ADD COLUMN executionIdentity TEXT");
     }
     const eventColumns = z.array(z.object({ name: z.string() })).parse(
       this.database.query("PRAGMA table_info(events)").all(),
@@ -267,8 +290,9 @@ export class HiveDatabase {
         id, name, tool, model, tier, status, taskDescription,
         worktreePath, branch, tmuxSession, terminalHandle, contextPct,
         createdAt, lastEventAt, failureReason, failedAt,
-        quotaReservationId, capabilityEpoch, writeRevoked
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        quotaReservationId, controlQuotaReservationId, controlMessageId,
+        executionIdentity, capabilityEpoch, writeRevoked
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         name = excluded.name,
         tool = excluded.tool,
@@ -286,6 +310,9 @@ export class HiveDatabase {
         failureReason = excluded.failureReason,
         failedAt = excluded.failedAt,
         quotaReservationId = excluded.quotaReservationId,
+        controlQuotaReservationId = excluded.controlQuotaReservationId,
+        controlMessageId = excluded.controlMessageId,
+        executionIdentity = excluded.executionIdentity,
         capabilityEpoch = excluded.capabilityEpoch,
         writeRevoked = excluded.writeRevoked
     `).run(
@@ -308,6 +335,11 @@ export class HiveDatabase {
       value.failureReason ?? null,
       value.failedAt ?? null,
       value.quotaReservationId ?? null,
+      value.controlQuotaReservationId ?? null,
+      value.controlMessageId ?? null,
+      value.executionIdentity === undefined
+        ? null
+        : JSON.stringify(value.executionIdentity),
       value.capabilityEpoch,
       value.writeRevoked ? 1 : 0,
     );

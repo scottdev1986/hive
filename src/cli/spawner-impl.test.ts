@@ -64,6 +64,43 @@ function agent(
   };
 }
 
+function makeControlQuota(root: string): {
+  db: HiveDatabase;
+  quota: QuotaService;
+} {
+  const db = new HiveDatabase(join(root, "control-quota.db"));
+  return {
+    db,
+    quota: new QuotaService(
+      new QuotaLedger(db),
+      QuotaConfigSchema.parse({ enabled: false }),
+      () => new Date(timestamp),
+    ),
+  };
+}
+
+function controlMessage(id: string, epoch = 1): AgentMessage {
+  return {
+    id,
+    from: "orchestrator",
+    to: "maya",
+    body: "Pause before coding.",
+    createdAt: timestamp,
+    deliveredAt: null,
+    priority: "critical",
+    intent: "pause",
+    state: "queued",
+    injectedAt: null,
+    acknowledgedAt: null,
+    appliedAt: null,
+    deadlineAt: timestamp,
+    alertAt: null,
+    sequence: 1,
+    idempotencyKey: null,
+    capabilityEpoch: epoch,
+  };
+}
+
 class FakeStore {
   readonly agents: AgentRecord[];
   readonly reservations = new Set<string>();
@@ -209,7 +246,11 @@ describe("HiveSpawner name pool", () => {
         worktreePath: root,
         capabilityEpoch: 1,
         writeRevoked: true,
+        executionIdentity: tool === "claude"
+          ? { tool, model: "gpt-test" }
+          : { tool, model: "gpt-test", effort: "high" },
       } satisfies AgentRecord;
+      const controlQuota = makeControlQuota(root);
       const store = new FakeStore([controlled]);
       const tmux = new FakeTmux();
       const spawner = new HiveSpawner({
@@ -217,11 +258,14 @@ describe("HiveSpawner name pool", () => {
         repoRoot: root,
         port: 4317,
         config: { terminal: "auto", headless: true },
-        routing: async () => DEFAULT_ROUTING.standard,
+        routing: async () => {
+          throw new Error("changed routing table must not be consulted");
+        },
         tmux,
         terminal: new FakeTerminal(),
         sleep: async () => {},
         resolveModel: fakeResolveModel,
+        quota: controlQuota.quota,
       });
       const message = {
         id: `control-${tool}`,
@@ -250,6 +294,20 @@ describe("HiveSpawner name pool", () => {
         ? "--permission-mode"
         : "--sandbox");
       expect(command).toContain(tool === "claude" ? "default" : "read-only");
+      expect(command).toContain("gpt-test");
+      if (tool === "codex") expect(command).toContain("high");
+      const restarted = store.getAgentById(controlled.id)!;
+      expect(restarted.controlQuotaReservationId).toBeString();
+      expect(
+        controlQuota.quota.ledger.getReservation(
+          restarted.controlQuotaReservationId!,
+        ),
+      ).toMatchObject({
+        purpose: "control",
+        controlMessageId: message.id,
+        status: "active",
+      });
+      controlQuota.db.close();
     }
   });
 
@@ -264,10 +322,16 @@ describe("HiveSpawner name pool", () => {
       ...agent("maya", "working"),
       worktreePath: root,
       terminalHandle: staleHandle,
+      executionIdentity: {
+        tool: "codex",
+        model: "gpt-test",
+        effort: "medium",
+      },
     } satisfies AgentRecord;
     const store = new FakeStore([controlled]);
     const terminal = new FakeTerminal();
     let layoutRequests = 0;
+    const controlQuota = makeControlQuota(root);
     const spawner = new HiveSpawner({
       db: store,
       repoRoot: root,
@@ -281,6 +345,7 @@ describe("HiveSpawner name pool", () => {
       onTerminalsChanged: () => {
         layoutRequests += 1;
       },
+      quota: controlQuota.quota,
     });
     const restarted = await spawner.restartForControl(controlled, {
       id: "control-viewer",
@@ -311,6 +376,177 @@ describe("HiveSpawner name pool", () => {
       sessionId: "session-hive-maya",
     });
     expect(layoutRequests).toEqual(1);
+    controlQuota.db.close();
+  });
+
+  test("fails closed when the recorded model cannot launch and removes only its stale viewer", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-control-unavailable-"));
+    tempRoots.push(root);
+    const staleHandle = { app: "iterm2", sessionId: "stale" } as const;
+    const controlled = {
+      ...agent("maya", "control-paused"),
+      worktreePath: root,
+      capabilityEpoch: 1,
+      writeRevoked: true,
+      terminalHandle: staleHandle,
+      executionIdentity: {
+        tool: "codex",
+        model: "removed-model",
+        effort: "high",
+      },
+      model: "removed-model",
+    } satisfies AgentRecord;
+    const store = new FakeStore([controlled]);
+    const tmux = new FakeTmux("Error: model not supported");
+    const terminal = new FakeTerminal();
+    const controlQuota = makeControlQuota(root);
+    let layouts = 0;
+    const spawner = new HiveSpawner({
+      db: store,
+      repoRoot: root,
+      port: 4317,
+      config: { terminal: "auto", headless: false },
+      routing: async () => DEFAULT_ROUTING.cheap,
+      tmux,
+      terminal,
+      sleep: async () => {},
+      quota: controlQuota.quota,
+      onTerminalsChanged: () => layouts += 1,
+    });
+
+    await expect(spawner.restartForControl(
+      controlled,
+      controlMessage("unavailable"),
+    )).rejects.toThrow("removed-model could not be launched");
+    const failed = store.getAgentById(controlled.id)!;
+    expect(failed).toMatchObject({
+      status: "control-paused",
+      writeRevoked: true,
+      controlMessageId: "unavailable",
+    });
+    expect(failed.failureReason).toContain("model not supported");
+    expect(failed.terminalHandle).toBeUndefined();
+    expect(terminal.closed).toEqual([staleHandle]);
+    expect(terminal.windows).toEqual([]);
+    expect(layouts).toEqual(1);
+    expect(
+      controlQuota.quota.ledger.getReservation(
+        failed.controlQuotaReservationId!,
+      )?.status,
+    ).toEqual("released");
+    controlQuota.db.close();
+  });
+
+  test("legacy rows without immutable launch fields remain revoked and visibly pending", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-control-legacy-"));
+    tempRoots.push(root);
+    const staleHandle = { app: "iterm2", sessionId: "legacy-viewer" } as const;
+    const controlled = {
+      ...agent("maya", "control-paused"),
+      worktreePath: root,
+      writeRevoked: true,
+      capabilityEpoch: 1,
+      terminalHandle: staleHandle,
+    } satisfies AgentRecord;
+    const store = new FakeStore([controlled]);
+    const terminal = new FakeTerminal();
+    let routeReads = 0;
+    const spawner = new HiveSpawner({
+      db: store,
+      repoRoot: root,
+      port: 4317,
+      config: { terminal: "auto", headless: false },
+      routing: async () => {
+        routeReads += 1;
+        return DEFAULT_ROUTING.standard;
+      },
+      tmux: new FakeTmux(),
+      terminal,
+    });
+
+    await expect(spawner.restartForControl(
+      controlled,
+      controlMessage("legacy"),
+    )).rejects.toThrow("legacy/unresolved row");
+    expect(routeReads).toEqual(0);
+    expect(store.getAgentById(controlled.id)).toMatchObject({
+      status: "control-paused",
+      writeRevoked: true,
+      controlMessageId: "legacy",
+    });
+    expect(store.getAgentById(controlled.id)?.failureReason).toContain(
+      "legacy or unresolved-default",
+    );
+    expect(terminal.closed).toEqual([staleHandle]);
+  });
+
+  test("insufficient control quota never launches or changes the recorded model", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-control-exhausted-"));
+    tempRoots.push(root);
+    const quotaDb = new HiveDatabase(join(root, "quota.db"));
+    const quota = new QuotaService(
+      new QuotaLedger(quotaDb),
+      QuotaConfigSchema.parse({
+        estimates: { deep: 20, standard: 10, cheap: 4, review: 8 },
+        limits: [{
+          provider: "codex",
+          pool: "codex",
+          models: ["gpt-test"],
+          fiveHourAllowance: 5,
+          weeklyAllowance: 5,
+        }],
+      }),
+      () => new Date(timestamp),
+    );
+    const staleHandle = { app: "iterm2", sessionId: "exhausted" } as const;
+    const controlled = {
+      ...agent("maya", "control-paused"),
+      worktreePath: root,
+      writeRevoked: true,
+      capabilityEpoch: 1,
+      terminalHandle: staleHandle,
+      executionIdentity: {
+        tool: "codex",
+        model: "gpt-test",
+        effort: "xhigh",
+      },
+    } satisfies AgentRecord;
+    const store = new FakeStore([controlled]);
+    const tmux = new FakeTmux();
+    const terminal = new FakeTerminal();
+    const spawner = new HiveSpawner({
+      db: store,
+      repoRoot: root,
+      port: 4317,
+      config: { terminal: "auto", headless: false },
+      routing: async () => ({
+        ...DEFAULT_ROUTING.standard,
+        tool: "claude",
+        codex: { model: "different-model", effort: "minimal" },
+      }),
+      tmux,
+      terminal,
+      quota,
+    });
+
+    await expect(spawner.restartForControl(
+      controlled,
+      controlMessage("exhausted"),
+    )).rejects.toThrow("Insufficient quota");
+    expect(tmux.sessions).toHaveLength(0);
+    expect(terminal.windows).toHaveLength(0);
+    expect(terminal.closed).toEqual([staleHandle]);
+    expect(store.getAgentById(controlled.id)).toMatchObject({
+      model: "gpt-test",
+      executionIdentity: controlled.executionIdentity,
+      status: "control-paused",
+      writeRevoked: true,
+      controlMessageId: "exhausted",
+    });
+    expect(store.getAgentById(controlled.id)?.failureReason).toContain(
+      "will not switch models",
+    );
+    quotaDb.close();
   });
 
   test("reserves the orchestrator destination from agent assignment", () => {
@@ -598,7 +834,9 @@ describe("HiveSpawner wiring", () => {
       "hive-maya",
       "hive-david",
     ]);
-    expect(tmux.sessions[0]?.[2]).toContain("'claude' '--model' 'best'");
+    expect(tmux.sessions[0]?.[2]).toContain(
+      "'claude' '--model' 'claude-fable-5'",
+    );
     expect(tmux.sessions[0]?.[2]).toContain("You are maya");
     // Every writer agent carries the landing protocol for its own branch.
     expect(tmux.sessions[0]?.[2]).toContain(
@@ -608,6 +846,15 @@ describe("HiveSpawner wiring", () => {
     expect(tmux.sessions[1]?.[2]).toContain("notify=");
     expect(tmux.sessions[1]?.[2]).toContain("You are david");
     expect(claude.model).toEqual("claude-fable-5");
+    expect(claude.executionIdentity).toEqual({
+      tool: "claude",
+      model: "claude-fable-5",
+    });
+    expect(codex.executionIdentity).toEqual({
+      tool: "codex",
+      model: "gpt-test",
+      effort: "medium",
+    });
     expect(terminal.windows).toEqual([
       ["hive-maya", "maya — claude-fable-5"],
       ["hive-david", "david — gpt-test"],
