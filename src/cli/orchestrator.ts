@@ -160,11 +160,16 @@ async function registerOrchestratorTerminal(
   port: number,
   handle: TerminalHandle,
 ): Promise<void> {
-  await fetch(`http://127.0.0.1:${port}/orchestrator-terminal`, {
+  const response = await fetch(`http://127.0.0.1:${port}/orchestrator-terminal`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ handle }),
   });
+  if (!response.ok) {
+    throw new Error(
+      `could not register the orchestrator terminal with Hive: HTTP ${response.status}`,
+    );
+  }
 }
 
 async function unregisterOrchestratorTerminal(port: number): Promise<void> {
@@ -202,14 +207,13 @@ export async function launchOrchestrator(
     : [];
 
   let registeredTerminal = false;
-  try {
-    const handle = await captureTerminal();
-    if (handle !== null) {
-      await registerOrchestratorTerminal(port, handle);
-      registeredTerminal = true;
-    }
-  } catch {
-    // Layout participation is cosmetic; the orchestrator launches regardless.
+  const handle = await captureTerminal();
+  if (handle !== null) {
+    // A supported terminal that cannot be scripted is configuration failure,
+    // not an unsupported-terminal opt-out. Surface the adapter's actionable
+    // macOS permission error in the foreground.
+    await registerOrchestratorTerminal(port, handle);
+    registeredTerminal = true;
   }
 
   try {

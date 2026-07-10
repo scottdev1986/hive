@@ -17,6 +17,7 @@ import {
   TerminalAppAdapter,
 } from "./terminal-app";
 import { buildAgentTerminalTitle, resolveTerminal } from "./terminal";
+import { osascriptFailure } from "./osascript";
 
 const previousHiveHome = Bun.env.HIVE_HOME;
 Bun.env.HIVE_HOME = `/private/tmp/hive-terminal-${crypto.randomUUID()}`;
@@ -30,6 +31,18 @@ afterAll(() => {
 });
 
 describe("terminal osascript builders", () => {
+  test("turns macOS automation denials into actionable errors", () => {
+    const error = osascriptFailure(
+      "position Terminal.app window",
+      "Not authorized to send Apple events. (-1743)",
+    );
+
+    expect(error.message).toContain(
+      "System Settings > Privacy & Security > Automation",
+    );
+    expect(error.message).toContain("hive stop");
+  });
+
   test("builds an iTerm2 window command without executing it", () => {
     const script = buildITerm2Osascript("hive-agent-3", 'Agent "Three"');
 
@@ -70,6 +83,8 @@ describe("terminal osascript builders", () => {
       script.includes('set custom title of agentTab to "Agent Four"'),
     ).toEqual(true);
     expect(script).toContain("set title displays custom title of agentTab to true");
+    expect(script).toContain("set previousBounds to bounds of agentWindow");
+    expect(script).toContain("if stableSamples is 2 then exit repeat");
     expect(
       script.includes(
         "set agentWindow to first window whose selected tab is agentTab",
@@ -83,9 +98,16 @@ describe("terminal osascript builders", () => {
     ).toEqual(true);
   });
 
+  test("uses the bundled profile's exact settings-set name", () => {
+    const script = buildTerminalAppOsascript("hive-maya", "maya — stub");
+
+    expect(script).toContain('if exists settings set "hive-agent-v2" then');
+    expect(script).toContain("/hive-agent-v2.terminal");
+  });
+
   test("ships a Terminal.app profile that suppresses generated title components", async () => {
     const profile = await Bun.file(
-      join(import.meta.dir, "hive-agent-v1.terminal"),
+      join(import.meta.dir, "hive-agent-v2.terminal"),
     ).text();
     const generatedTitleKeys = [
       "ShowComponentsWhenTabHasCustomTitle",
@@ -108,6 +130,8 @@ describe("terminal osascript builders", () => {
     for (const key of generatedTitleKeys) {
       expect(profile).toContain(`<key>${key}</key>\n  <false/>`);
     }
+    expect(profile).toContain("<string>hive-agent-v2</string>");
+    expect(profile).toContain("<key>BackgroundColor</key>");
   });
 
   test("shell-quotes tmux session names", () => {

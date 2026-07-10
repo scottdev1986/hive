@@ -115,6 +115,9 @@ export interface HiveSpawnerDependencies {
   /** Fires after a viewer window is attached so the daemon can re-tile the
    * window wall. */
   onTerminalsChanged?: () => void;
+  /** Reports viewer automation failures without treating the detached agent
+   * process itself as failed. */
+  onTerminalError?: (message: string) => void;
   quota?: QuotaService;
 }
 
@@ -385,8 +388,13 @@ export class HiveSpawner implements Spawner {
           handle = null;
           viewersChanged = true;
         }
-      } catch {
+      } catch (error) {
         // Opening a viewer is cosmetic and does not affect the restart.
+        this.dependencies.onTerminalError?.(
+          `hive terminal: could not open viewer for ${record.name}: ${
+            error instanceof Error ? error.message : "unknown error"
+          }`,
+        );
         if (handle !== null) {
           try {
             await this.dependencies.terminal.closeWindow(handle);
@@ -645,8 +653,13 @@ export class HiveSpawner implements Spawner {
           handle = null;
           this.dependencies.onTerminalsChanged?.();
         }
-      } catch {
+      } catch (error) {
         // Opening a viewer is cosmetic and does not affect agent readiness.
+        this.dependencies.onTerminalError?.(
+          `hive terminal: could not open viewer for ${record.name}: ${
+            error instanceof Error ? error.message : "unknown error"
+          }`,
+        );
         if (handle !== null) {
           try {
             await this.dependencies.terminal.closeWindow(handle);

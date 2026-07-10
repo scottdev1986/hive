@@ -4,8 +4,8 @@ import { appleScriptString, runOsascript, shellQuote } from "./osascript";
 import type { TerminalAdapter } from "./terminal";
 
 export const TERMINAL_APP_PROFILE_PATH =
-  `${import.meta.dir}/hive-agent-v1.terminal`;
-export const TERMINAL_APP_PROFILE_NAME = "hive-agent-v1";
+  `${import.meta.dir}/hive-agent-v2.terminal`;
+export const TERMINAL_APP_PROFILE_NAME = "hive-agent-v2";
 
 export function buildTerminalAppOsascript(
   tmuxSession: string,
@@ -47,6 +47,23 @@ export function buildTerminalAppOsascript(
     // agents launch close together or the user changes focus during launch.
     // Associate the window through the exact tab object returned by `do script`.
     "  set agentWindow to first window whose selected tab is agentTab",
+    // `do script` returns before Terminal has necessarily finished applying
+    // its profile and default cascade geometry. An immediate layout pass can
+    // therefore succeed and then be overwritten by Terminal a moment later.
+    // Wait for stable bounds before exposing the handle to the daemon.
+    "  set previousBounds to bounds of agentWindow",
+    "  set stableSamples to 0",
+    "  repeat 20 times",
+    "    delay 0.05",
+    "    set currentBounds to bounds of agentWindow",
+    "    if currentBounds is previousBounds then",
+    "      set stableSamples to stableSamples + 1",
+    "    else",
+    "      set stableSamples to 0",
+    "      set previousBounds to currentBounds",
+    "    end if",
+    "    if stableSamples is 2 then exit repeat",
+    "  end repeat",
     "  set agentWindowId to id of agentWindow as text",
     "  set agentTty to tty of agentTab",
     "end tell",

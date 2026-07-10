@@ -27,6 +27,13 @@ export interface LayoutOptions {
   soloHeightFraction: number;
   /** Target cell width:height ratio for the uniform grid fallback. */
   gridCellAspect: number;
+  /** The wall is inset from the display so managed windows remain ordinary
+   * floating windows rather than macOS full/half-screen lookalikes. */
+  wallWidthFraction: number;
+  wallHeightFraction: number;
+  maxWindowWidthFraction: number;
+  maxWindowHeightFraction: number;
+  gap: number;
 }
 
 export const DEFAULT_LAYOUT_OPTIONS: LayoutOptions = {
@@ -35,9 +42,14 @@ export const DEFAULT_LAYOUT_OPTIONS: LayoutOptions = {
   centerFraction: 0.42,
   minCenterFraction: 0.36,
   minCenterWidth: 600,
-  soloWidthFraction: 0.7,
-  soloHeightFraction: 0.85,
+  soloWidthFraction: 0.68,
+  soloHeightFraction: 0.74,
   gridCellAspect: 1.5,
+  wallWidthFraction: 0.92,
+  wallHeightFraction: 0.82,
+  maxWindowWidthFraction: 0.82,
+  maxWindowHeightFraction: 0.82,
+  gap: 12,
 };
 
 export type LayoutMode = "centered" | "grid";
@@ -57,6 +69,45 @@ const boundary = (
   start: number,
   extent: number,
 ): number => start + Math.round((index * extent) / count);
+
+function centeredRegion(
+  screen: Frame,
+  widthFraction: number,
+  heightFraction: number,
+): Frame {
+  const width = Math.max(1, Math.round(screen.width * widthFraction));
+  const height = Math.max(1, Math.round(screen.height * heightFraction));
+  return {
+    x: screen.x + Math.round((screen.width - width) / 2),
+    y: screen.y + Math.round((screen.height - height) / 2),
+    width,
+    height,
+  };
+}
+
+/** Inset a computed cell and cap it relative to the display. This is the
+ * mechanical guard against accidentally recreating native full-screen or
+ * half-screen geometry when a layout shape changes. */
+function regularWindow(
+  cell: Frame,
+  screen: Frame,
+  options: LayoutOptions,
+): Frame {
+  const width = Math.max(1, Math.min(
+    cell.width - Math.min(options.gap, Math.max(0, cell.width - 1)),
+    Math.floor(screen.width * options.maxWindowWidthFraction),
+  ));
+  const height = Math.max(1, Math.min(
+    cell.height - Math.min(options.gap, Math.max(0, cell.height - 1)),
+    Math.floor(screen.height * options.maxWindowHeightFraction),
+  ));
+  return {
+    x: cell.x + Math.round((cell.width - width) / 2),
+    y: cell.y + Math.round((cell.height - height) / 2),
+    width,
+    height,
+  };
+}
 
 /** Tile `count` frames into a region as `cols` columns of stacked rows,
  * column-major, extra rows going to the earlier columns. */
@@ -82,7 +133,7 @@ function tileColumns(region: Frame, count: number, cols: number): Frame[] {
   return frames;
 }
 
-/** Uniform grid over the whole screen, row-major. Rows split the width
+/** Uniform grid over the supplied wall region, row-major. Rows split the width
  * among only the cells they actually hold, so a partial last row stretches
  * instead of leaving a hole. Never fails: cells just get small. */
 function tileGrid(screen: Frame, total: number, options: LayoutOptions): Frame[] {
@@ -139,8 +190,9 @@ export function centermostFrameIndex(frames: Frame[], screen: Frame): number {
   return bestIndex;
 }
 
-/** Centered mode: the orchestrator is a full-height center column, workers
- * stack in symmetric side columns (right side takes the odd worker). Returns
+/** Centered mode: the orchestrator owns the center column of the inset wall
+ * and workers stack in symmetric side columns (right side takes the odd
+ * worker). The caller adds the final gaps and size caps. Returns
  * null when the screen cannot hold every worker at the configured minimum
  * cell size while keeping the center column dominant. */
 function computeCentered(
@@ -148,7 +200,9 @@ function computeCentered(
   workerCount: number,
   options: LayoutOptions,
 ): ComputedLayout | null {
-  const maxRows = Math.floor(screen.height / options.minWorkerHeight);
+  const workerCellHeight = options.minWorkerHeight + options.gap;
+  const workerCellWidth = options.minWorkerWidth + options.gap;
+  const maxRows = Math.floor(screen.height / workerCellHeight);
   if (maxRows < 1) {
     return null;
   }
@@ -162,7 +216,7 @@ function computeCentered(
     options.minCenterWidth,
     Math.round(screen.width * options.minCenterFraction),
   );
-  const maxCenter = screen.width - 2 * sideCols * options.minWorkerWidth;
+  const maxCenter = screen.width - 2 * sideCols * workerCellWidth;
   if (maxCenter < minCenter) {
     return null;
   }
@@ -219,14 +273,44 @@ export function computeLayout(
   hasOrchestrator: boolean,
   overrides: Partial<LayoutOptions> = {},
 ): ComputedLayout {
-  const options = { ...DEFAULT_LAYOUT_OPTIONS, ...overrides };
+  const configured = { ...DEFAULT_LAYOUT_OPTIONS, ...overrides };
+  // These are safety bounds, not layout preferences. Callers may make the
+  // wall smaller, but cannot turn managed terminals into full/half-screen
+  // windows by overriding the pure-function tuning knobs.
+  const options: LayoutOptions = {
+    ...configured,
+    wallWidthFraction: Math.min(
+      configured.wallWidthFraction,
+      DEFAULT_LAYOUT_OPTIONS.wallWidthFraction,
+    ),
+    wallHeightFraction: Math.min(
+      configured.wallHeightFraction,
+      DEFAULT_LAYOUT_OPTIONS.wallHeightFraction,
+    ),
+    maxWindowWidthFraction: Math.min(
+      configured.maxWindowWidthFraction,
+      DEFAULT_LAYOUT_OPTIONS.maxWindowWidthFraction,
+    ),
+    maxWindowHeightFraction: Math.min(
+      configured.maxWindowHeightFraction,
+      DEFAULT_LAYOUT_OPTIONS.maxWindowHeightFraction,
+    ),
+    gap: Math.max(configured.gap, DEFAULT_LAYOUT_OPTIONS.gap),
+  };
   const count = Math.max(0, Math.floor(workerCount));
+  const wall = centeredRegion(
+    screen,
+    options.wallWidthFraction,
+    options.wallHeightFraction,
+  );
 
   if (!hasOrchestrator) {
     return {
       mode: "grid",
       orchestrator: null,
-      workers: tileGrid(screen, count, options),
+      workers: tileGrid(wall, count, options).map((frame) =>
+        regularWindow(frame, screen, options)
+      ),
     };
   }
 
@@ -239,24 +323,33 @@ export function computeLayout(
       ),
     );
     const height = Math.round(screen.height * options.soloHeightFraction);
+    const orchestrator = regularWindow({
+      x: screen.x + Math.round((screen.width - width) / 2),
+      y: screen.y + Math.round((screen.height - height) / 2),
+      width,
+      height,
+    }, screen, options);
     return {
       mode: "centered",
-      orchestrator: {
-        x: screen.x + Math.round((screen.width - width) / 2),
-        y: screen.y + Math.round((screen.height - height) / 2),
-        width,
-        height,
-      },
+      orchestrator,
       workers: [],
     };
   }
 
-  const centered = computeCentered(screen, count, options);
+  const centered = computeCentered(wall, count, options);
   if (centered !== null) {
-    return centered;
+    return {
+      ...centered,
+      orchestrator: regularWindow(centered.orchestrator!, screen, options),
+      workers: centered.workers.map((frame) =>
+        regularWindow(frame, screen, options)
+      ),
+    };
   }
 
-  const cells = tileGrid(screen, count + 1, options);
+  const cells = tileGrid(wall, count + 1, options).map((frame) =>
+    regularWindow(frame, screen, options)
+  );
   const orchestratorIndex = centermostFrameIndex(cells, screen);
   return {
     mode: "grid",

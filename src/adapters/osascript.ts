@@ -12,6 +12,22 @@ export const appleScriptString = (value: string): string =>
 
 export type OsascriptLanguage = "AppleScript" | "JavaScript";
 
+const MACOS_PERMISSION_DENIED =
+  /(?:-1743|-25211|not authorized to send apple events|not allowed assistive access|accessibility access)/i;
+
+export function osascriptFailure(operation: string, detail: string): Error {
+  const message = `could not ${operation}: ${detail}`;
+  if (!MACOS_PERMISSION_DENIED.test(detail)) {
+    return new Error(message);
+  }
+  return new Error(
+    `${message}. macOS denied terminal automation. Open System Settings > ` +
+      "Privacy & Security > Automation and allow the app that launched Hive " +
+      "(Terminal or your terminal emulator) to control the selected terminal " +
+      "application, then run `hive stop` and retry",
+  );
+}
+
 export async function runOsascript(
   script: string,
   operation: string,
@@ -50,10 +66,9 @@ export async function runOsascript(
 
   const [stdoutText, stderrText] = await Promise.all([stdout, stderr]);
   if (exitCode !== 0) {
-    throw new Error(
-      `could not ${operation}: ${
-        stderrText.trim() || `exit code ${exitCode}`
-      }`,
+    throw osascriptFailure(
+      operation,
+      stderrText.trim() || `exit code ${exitCode}`,
     );
   }
   return stdoutText.trim();

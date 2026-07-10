@@ -5,9 +5,11 @@
   <key>ProfileCurrentVersion</key>
   <real>2.09</real>
   <key>name</key>
-  <string>Hive Agent</string>
+  <string>hive-agent-v2</string>
   <key>type</key>
   <string>Window Settings</string>
+  <key>BackgroundColor</key>
+  <data>YnBsaXN0MDDUAQIDBAUGBwpYJHZlcnNpb25ZJGFyY2hpdmVyVCR0b3BYJG9iamVjdHMSAAGGoF8QD05TS2V5ZWRBcmNoaXZlctEICVRyb290gAGjCwwTVSRudWxs0w0ODxARElVOU1JHQlxOU0NvbG9yU3BhY2VWJGNsYXNzTxASMC4wNTUgMC4wNzUgMC4wOTUAEAGAAtIUFRYXWiRjbGFzc25hbWVYJGNsYXNzZXNXTlNDb2xvcqIWGFhOU09iamVjdAgRGiQpMjdJTFFTV11kand+k5WXnKewuLsAAAAAAAABAQAAAAAAAAAZAAAAAAAAAAAAAAAAAAAAxA==</data>
   <key>ShowComponentsWhenTabHasCustomTitle</key>
   <false/>
   <key>ShowActiveProcessArgumentsInTabTitle</key>

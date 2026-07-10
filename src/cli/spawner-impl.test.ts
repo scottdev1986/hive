@@ -1216,6 +1216,7 @@ describe("HiveSpawner wiring", () => {
     const worktreePath = join(root, "maya");
     await mkdir(worktreePath, { recursive: true });
     let terminalsChanged = 0;
+    const terminalErrors: string[] = [];
     const makeSpawner = (
       terminal: TerminalAdapter,
       store: FakeStore,
@@ -1237,6 +1238,7 @@ describe("HiveSpawner wiring", () => {
         onTerminalsChanged: () => {
           terminalsChanged += 1;
         },
+        onTerminalError: (message) => terminalErrors.push(message),
       });
 
     const spawned = await makeSpawner(new FakeTerminal(), new FakeStore())
@@ -1248,6 +1250,8 @@ describe("HiveSpawner wiring", () => {
     await makeSpawner(new FailingTerminal(), new FakeStore())
       .spawn({ task: "Fail to open a viewer", tier: "standard" });
     expect(terminalsChanged).toEqual(1);
+    expect(terminalErrors).toHaveLength(1);
+    expect(terminalErrors[0]).toContain("could not open viewer for maya");
 
     // A viewer that lost the attach race was closed, not added.
     const racingStore = new FakeStore();

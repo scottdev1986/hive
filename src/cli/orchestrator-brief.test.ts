@@ -150,4 +150,23 @@ describe("orchestrator brief", () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+
+  test("fails loudly when a supported terminal cannot be captured", async () => {
+    let spawned = false;
+    await expect(launchOrchestrator(
+      "claude",
+      4317,
+      process.cwd(),
+      () => {
+        spawned = true;
+        return { exited: Promise.resolve(0) };
+      },
+      async () => {
+        throw new Error(
+          "macOS denied terminal automation; enable it in System Settings",
+        );
+      },
+    )).rejects.toThrow("System Settings");
+    expect(spawned).toEqual(false);
+  });
 });

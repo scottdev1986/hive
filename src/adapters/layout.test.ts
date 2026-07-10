@@ -61,9 +61,17 @@ function expectValid(layout: ComputedLayout, screen: Frame): void {
   expectNoOverlap(frames);
 }
 
-function expectFullCoverage(layout: ComputedLayout, screen: Frame): void {
-  const total = allFrames(layout).reduce((sum, frame) => sum + area(frame), 0);
-  expect(total).toEqual(area(screen));
+function expectRegularWindows(layout: ComputedLayout, screen: Frame): void {
+  for (const frame of allFrames(layout)) {
+    expect(frame.width).toBeLessThanOrEqual(
+      Math.floor(screen.width * DEFAULT_LAYOUT_OPTIONS.maxWindowWidthFraction),
+    );
+    expect(frame.height).toBeLessThanOrEqual(
+      Math.floor(screen.height * DEFAULT_LAYOUT_OPTIONS.maxWindowHeightFraction),
+    );
+    expect(frame.width).toBeLessThan(screen.width);
+    expect(frame.height).toBeLessThan(screen.height);
+  }
 }
 
 describe("computeLayout with an orchestrator", () => {
@@ -75,7 +83,7 @@ describe("computeLayout with an orchestrator", () => {
     const orchestrator = layout.orchestrator!;
     expectValid(layout, laptop);
     expect(orchestrator.width).toBeGreaterThanOrEqual(
-      Math.round(laptop.width * 0.7),
+      Math.round(laptop.width * 0.65),
     );
     const centerX = orchestrator.x + orchestrator.width / 2;
     const centerY = orchestrator.y + orchestrator.height / 2;
@@ -89,14 +97,14 @@ describe("computeLayout with an orchestrator", () => {
     expect(layout.mode).toEqual("centered");
     expect(layout.workers.length).toEqual(1);
     expectValid(layout, laptop);
-    expectFullCoverage(layout, laptop);
+    expectRegularWindows(layout, laptop);
     const worker = layout.workers[0]!;
     const orchestrator = layout.orchestrator!;
     expect(worker.width).toBeGreaterThanOrEqual(
       DEFAULT_LAYOUT_OPTIONS.minWorkerWidth,
     );
-    expect(orchestrator.x).toEqual(laptop.x);
-    expect(worker.x).toEqual(orchestrator.x + orchestrator.width);
+    expect(orchestrator.x).toBeGreaterThan(laptop.x);
+    expect(worker.x).toBeGreaterThan(orchestrator.x + orchestrator.width);
     expect(area(orchestrator)).toBeGreaterThan(area(worker) * 1.3);
   });
 
@@ -108,10 +116,10 @@ describe("computeLayout with an orchestrator", () => {
       expect(layout.mode).toEqual("centered");
       expect(layout.workers.length).toEqual(workerCount);
       expectValid(layout, desktop);
-      expectFullCoverage(layout, desktop);
+      expectRegularWindows(layout, desktop);
 
       const orchestrator = layout.orchestrator!;
-      expect(orchestrator.height).toEqual(desktop.height);
+      expect(orchestrator.height).toBeLessThan(desktop.height);
       for (const worker of layout.workers) {
         expect(worker.width).toBeGreaterThanOrEqual(
           DEFAULT_LAYOUT_OPTIONS.minWorkerWidth,
@@ -157,7 +165,7 @@ describe("computeLayout with an orchestrator", () => {
     expect(layout.mode).toEqual("grid");
     expect(layout.workers.length).toEqual(6);
     expectValid(layout, cramped);
-    expectFullCoverage(layout, cramped);
+    expectRegularWindows(layout, cramped);
 
     // The orchestrator holds the most central cell.
     const frames = allFrames(layout);
@@ -171,7 +179,7 @@ describe("computeLayout with an orchestrator", () => {
     expect(layout.mode).toEqual("grid");
     expect(layout.workers.length).toEqual(15);
     expectValid(layout, laptop);
-    expectFullCoverage(layout, laptop);
+    expectRegularWindows(layout, laptop);
   });
 
   test("absurd counts on tiny screens still produce sane frames", () => {
@@ -180,7 +188,7 @@ describe("computeLayout with an orchestrator", () => {
 
     expect(layout.workers.length).toEqual(40);
     expectValid(layout, tiny);
-    expectFullCoverage(layout, tiny);
+    expectRegularWindows(layout, tiny);
   });
 
   test("negative and fractional worker counts are clamped", () => {
@@ -196,17 +204,41 @@ describe("computeLayout without an orchestrator", () => {
     expect(layout.workers).toEqual([]);
   });
 
-  test("workers alone tile the whole screen", () => {
+  test("workers alone tile an inset regular-window wall", () => {
     const layout = computeLayout(laptop, 5, false);
 
     expect(layout.orchestrator).toBeNull();
     expect(layout.workers.length).toEqual(5);
     expectValid(layout, laptop);
-    expectFullCoverage(layout, laptop);
+    expectRegularWindows(layout, laptop);
   });
 });
 
 describe("layout options", () => {
+  test("unsafe overrides cannot produce full-screen or half-screen frames", () => {
+    for (const screen of [laptop, desktop, cramped]) {
+      for (const hasOrchestrator of [true, false]) {
+        for (let workers = 1; workers <= 20; workers += 1) {
+          const layout = computeLayout(screen, workers, hasOrchestrator, {
+            wallWidthFraction: 1,
+            wallHeightFraction: 1,
+            maxWindowWidthFraction: 1,
+            maxWindowHeightFraction: 1,
+            soloWidthFraction: 1,
+            soloHeightFraction: 1,
+            gap: 0,
+          });
+          for (const frame of allFrames(layout)) {
+            expect(frame.width).toBeLessThan(screen.width);
+            expect(frame.height).toBeLessThan(screen.height);
+            expect(frame.width).not.toEqual(screen.width / 2);
+            expect(frame.height).not.toEqual(screen.height / 2);
+          }
+        }
+      }
+    }
+  });
+
   test("stricter worker minimums force the grid fallback sooner", () => {
     const centered = computeLayout(desktop, 4, true);
     expect(centered.mode).toEqual("centered");
@@ -219,7 +251,7 @@ describe("layout options", () => {
 
   test("centered mode splits a side into multiple columns when rows run out", () => {
     // 10 workers, 5 per side; at most 3 rows fit, so each side needs 2 columns.
-    const wide: Frame = { x: 0, y: 25, width: 3800, height: 1000 };
+    const wide: Frame = { x: 0, y: 25, width: 3800, height: 1300 };
     const layout = computeLayout(wide, 10, true, {
       minWorkerHeight: 320,
       minWorkerWidth: 420,
@@ -227,7 +259,7 @@ describe("layout options", () => {
 
     expect(layout.mode).toEqual("centered");
     expectValid(layout, wide);
-    expectFullCoverage(layout, wide);
+    expectRegularWindows(layout, wide);
     const orchestrator = layout.orchestrator!;
     const rightXs = new Set(
       layout.workers.filter((worker) => worker.x > orchestrator.x)

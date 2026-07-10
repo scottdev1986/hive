@@ -13,6 +13,7 @@ import { startDaemon } from "../daemon/server";
 import { HiveSpawner } from "../daemon/spawner-impl";
 import { QuotaLedger } from "../daemon/quota-ledger";
 import { QuotaService } from "../daemon/quota";
+import { ORCHESTRATOR_NAME } from "../schemas";
 
 export async function runDaemon(): Promise<void> {
   const config = await loadHiveConfig();
@@ -22,9 +23,19 @@ export async function runDaemon(): Promise<void> {
   const tmux = new TmuxAdapter();
   const terminal = resolveTerminal(config);
   const port = readConfiguredPort();
+  let daemon: ReturnType<typeof startDaemon> | undefined;
+  const reportTerminalError = (message: string): void => {
+    console.error(message);
+    // The detached daemon has no visible stderr. Put terminal failures on the
+    // durable orchestrator path so geometry cannot fail silently.
+    void daemon?.delivery.send("hive-terminal", ORCHESTRATOR_NAME, message, {
+      idempotencyKey: `terminal-error:${Bun.hash(message)}`,
+    }).catch(() => undefined);
+  };
   const layout = new TerminalLayoutManager({
     db,
     enabled: config.layout === "auto" && !config.headless,
+    logError: reportTerminalError,
   });
   const spawner = new HiveSpawner({
     db,
@@ -35,6 +46,7 @@ export async function runDaemon(): Promise<void> {
     tmux,
     terminal,
     onTerminalsChanged: () => layout.requestLayout(),
+    onTerminalError: reportTerminalError,
     // Even when quota-aware routing is disabled, critical read-only restarts
     // require a durable accounting lifecycle.
     quota,
@@ -42,7 +54,7 @@ export async function runDaemon(): Promise<void> {
   const tmuxSender: TmuxSender = {
     sendMessage: (session, text) => tmux.sendKeys(session, text),
   };
-  const daemon = startDaemon({
+  daemon = startDaemon({
     db,
     spawner,
     tmuxSender,
@@ -60,7 +72,7 @@ export async function runDaemon(): Promise<void> {
       return;
     }
     stopping = true;
-    await daemon.stop();
+    await daemon!.stop();
     db.close();
     process.exit(0);
   };
