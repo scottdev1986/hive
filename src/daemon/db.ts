@@ -34,6 +34,8 @@ const AgentDatabaseRowSchema = AgentRecordSchema.extend({
   controlMessageId: z.string().nullable(),
   executionIdentity: z.string().nullable(),
   terminalHandle: z.string().nullable(),
+  toolSessionId: z.string().nullable(),
+  recoveryAttempts: z.number().int().nonnegative().default(0),
   capabilityEpoch: z.number().int().nonnegative().default(0),
   writeRevoked: z.union([z.boolean(), z.number().int()]).default(0),
   channelsEnabled: z.union([z.boolean(), z.number().int()]).default(0),
@@ -48,6 +50,7 @@ function parseAgentRow(row: unknown): AgentRecord {
     quotaReservationId: value.quotaReservationId ?? undefined,
     controlQuotaReservationId: value.controlQuotaReservationId ?? undefined,
     controlMessageId: value.controlMessageId ?? undefined,
+    toolSessionId: value.toolSessionId ?? undefined,
     executionIdentity: value.executionIdentity === null
       ? undefined
       : ExecutionIdentitySchema.parse(JSON.parse(value.executionIdentity)),
@@ -138,6 +141,8 @@ export class HiveDatabase {
         controlQuotaReservationId TEXT,
         controlMessageId TEXT,
         executionIdentity TEXT,
+        toolSessionId TEXT,
+        recoveryAttempts INTEGER NOT NULL DEFAULT 0,
         capabilityEpoch INTEGER NOT NULL DEFAULT 0,
         writeRevoked INTEGER NOT NULL DEFAULT 0
       );
@@ -219,6 +224,14 @@ export class HiveDatabase {
     }
     if (!agentColumnNames.has("executionIdentity")) {
       this.database.exec("ALTER TABLE agents ADD COLUMN executionIdentity TEXT");
+    }
+    if (!agentColumnNames.has("toolSessionId")) {
+      this.database.exec("ALTER TABLE agents ADD COLUMN toolSessionId TEXT");
+    }
+    if (!agentColumnNames.has("recoveryAttempts")) {
+      this.database.exec(
+        "ALTER TABLE agents ADD COLUMN recoveryAttempts INTEGER NOT NULL DEFAULT 0",
+      );
     }
     const eventColumns = z.array(z.object({ name: z.string() })).parse(
       this.database.query("PRAGMA table_info(events)").all(),
@@ -319,8 +332,9 @@ export class HiveDatabase {
         worktreePath, branch, tmuxSession, terminalHandle, contextPct,
         createdAt, lastEventAt, failureReason, failedAt,
         quotaReservationId, controlQuotaReservationId, controlMessageId,
-        executionIdentity, capabilityEpoch, writeRevoked, channelsEnabled
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        executionIdentity, toolSessionId, recoveryAttempts,
+        capabilityEpoch, writeRevoked, channelsEnabled
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         name = excluded.name,
         tool = excluded.tool,
@@ -341,6 +355,8 @@ export class HiveDatabase {
         controlQuotaReservationId = excluded.controlQuotaReservationId,
         controlMessageId = excluded.controlMessageId,
         executionIdentity = excluded.executionIdentity,
+        toolSessionId = excluded.toolSessionId,
+        recoveryAttempts = excluded.recoveryAttempts,
         capabilityEpoch = excluded.capabilityEpoch,
         writeRevoked = excluded.writeRevoked,
         channelsEnabled = excluded.channelsEnabled
@@ -369,6 +385,8 @@ export class HiveDatabase {
       value.executionIdentity === undefined
         ? null
         : JSON.stringify(value.executionIdentity),
+      value.toolSessionId ?? null,
+      value.recoveryAttempts,
       value.capabilityEpoch,
       value.writeRevoked ? 1 : 0,
       value.channelsEnabled ? 1 : 0,
@@ -484,6 +502,15 @@ export class HiveDatabase {
     return this.database.query(`
       DELETE FROM agent_name_reservations WHERE name = ?
     `).run(name).changes === 1;
+  }
+
+  // Name reservations are transient bookkeeping for spawns in flight inside
+  // one daemon process. A daemon crash strands them, and a stranded
+  // reservation makes its spawning agent look forever in-flight to crash
+  // recovery, so daemon startup clears the table wholesale.
+  clearAgentNameReservations(): number {
+    return this.database.query("DELETE FROM agent_name_reservations")
+      .run().changes;
   }
 
   insertMessage(message: AgentMessage): AgentMessage {

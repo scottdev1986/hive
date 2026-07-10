@@ -4,6 +4,8 @@ import { HookEventSchema } from "../schemas";
 import { buildEventOptions } from "../cli";
 import {
   buildHookEvent,
+  parseHookStdin,
+  readHookStdin,
   runHiveEvent,
   type EventFetcher,
 } from "./event";
@@ -90,6 +92,73 @@ describe("hive event", () => {
       kind: "approval-request",
       description: "Publish package",
     });
+  });
+
+  test("captures the tool session id and rides it on every event kind", () => {
+    const event = buildHookEvent(
+      "session-start",
+      { agent: "maya", toolSessionId: "0189-session" },
+      timestamp,
+    );
+    expect(HookEventSchema.parse(event)).toMatchObject({
+      kind: "session-start",
+      toolSessionId: "0189-session",
+    });
+    expect(buildHookEvent(
+      "turn-end",
+      { agent: "maya", contextPct: 10, toolSessionId: "0189-session" },
+      timestamp,
+    )).toMatchObject({ toolSessionId: "0189-session" });
+  });
+
+  test("extracts the Codex notify thread-id from the payload as the session id", () => {
+    expect(buildEventOptions({
+      agent: "maya",
+      payload: JSON.stringify({
+        "type": "agent-turn-complete",
+        "thread-id": "019f-thread",
+        "turn-id": "42",
+        "cwd": "/repo/.hive/worktrees/maya",
+        "last-assistant-message": "done",
+      }),
+    })).toEqual({ agent: "maya", toolSessionId: "019f-thread" });
+    expect(() => buildEventOptions({
+      payload: JSON.stringify({ "thread-id": 42 }),
+    })).toThrow("Event payload session id must be a non-empty string");
+  });
+
+  test("parses the Claude hook stdin payload for session_id", () => {
+    expect(parseHookStdin(JSON.stringify({
+      session_id: "abc123",
+      transcript_path: "/tmp/t.jsonl",
+      cwd: "/repo",
+      hook_event_name: "SessionStart",
+      source: "resume",
+    }))).toEqual({ toolSessionId: "abc123" });
+    expect(parseHookStdin("not json")).toEqual({});
+    expect(parseHookStdin(JSON.stringify({ session_id: "" }))).toEqual({});
+    expect(parseHookStdin(JSON.stringify(null))).toEqual({});
+  });
+
+  test("reads hook stdin without ever stalling the agent turn", async () => {
+    expect(await readHookStdin({
+      isTTY: false,
+      text: async () => JSON.stringify({ session_id: "abc" }),
+    })).toEqual({ toolSessionId: "abc" });
+    // A TTY is a human, not a hook runner.
+    expect(await readHookStdin({
+      isTTY: true,
+      text: async () => JSON.stringify({ session_id: "abc" }),
+    })).toEqual({});
+    // A stream that never closes hits the timeout and yields nothing.
+    expect(await readHookStdin({
+      isTTY: false,
+      text: () => new Promise<string>(() => {}),
+    }, 20)).toEqual({});
+    expect(await readHookStdin({
+      isTTY: false,
+      text: () => Promise.reject(new Error("closed")),
+    })).toEqual({});
   });
 
   test("returns success when the daemon is down", async () => {

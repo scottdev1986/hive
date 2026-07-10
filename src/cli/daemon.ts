@@ -69,6 +69,8 @@ export async function runDaemon(): Promise<void> {
     spawner,
     tmuxSender,
     tmux,
+    // Crash-recovered agents get their viewers reopened unless headless.
+    ...(config.headless ? {} : { terminal }),
     repoRoot: process.cwd(),
     port,
     manageLifecycle: true,

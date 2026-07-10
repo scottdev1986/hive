@@ -21,6 +21,7 @@ describe("status table", () => {
       contextPct: 37.6,
       createdAt: timestamp,
       lastEventAt: timestamp,
+      recoveryAttempts: 0,
       capabilityEpoch: 0,
       writeRevoked: false,
       channelsEnabled: false,

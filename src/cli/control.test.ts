@@ -24,6 +24,7 @@ function agent(
     contextPct: 0,
     createdAt: timestamp,
     lastEventAt: timestamp,
+    recoveryAttempts: 0,
     capabilityEpoch: 0,
     writeRevoked: false,
     channelsEnabled: false,

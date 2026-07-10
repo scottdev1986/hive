@@ -1,5 +1,6 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { join, resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import type { ClaudeRoute } from "../../schemas";
 
@@ -133,6 +134,62 @@ export function buildClaudeSpawnCommand(
     );
   }
   return command;
+}
+
+// Relaunches a crashed agent's actual conversation (`claude --resume
+// <session-id>`, verified against claude CLI help) with the same launch
+// flags the original spawn used; hooks and permissions come from the
+// worktree config exactly as at spawn.
+export function buildClaudeResumeCommand(
+  options: ClaudeSpawnOptions,
+  sessionId: string,
+): string[] {
+  const command = buildClaudeSpawnCommand(options);
+  command.splice(1, 0, "--resume", sessionId);
+  return command;
+}
+
+// Claude Code stores transcripts under ~/.claude/projects/<munged-cwd>/,
+// where the munge replaces every non-alphanumeric path character with "-".
+export function claudeProjectDirectory(
+  worktreePath: string,
+  home = homedir(),
+): string {
+  return join(
+    home,
+    ".claude",
+    "projects",
+    resolve(worktreePath).replace(/[^A-Za-z0-9]/g, "-"),
+  );
+}
+
+// Disk-discovery fallback for a crashed agent whose session id was never
+// captured from hook traffic: the newest transcript in the worktree's
+// project directory is the session to resume.
+export async function findLatestClaudeSessionId(
+  worktreePath: string,
+  home = homedir(),
+): Promise<string | null> {
+  const directory = claudeProjectDirectory(worktreePath, home);
+  let entries: string[];
+  try {
+    entries = await readdir(directory);
+  } catch {
+    return null;
+  }
+  let newest: { sessionId: string; mtimeMs: number } | null = null;
+  for (const entry of entries) {
+    if (!entry.endsWith(".jsonl")) continue;
+    try {
+      const info = await stat(join(directory, entry));
+      if (newest === null || info.mtimeMs > newest.mtimeMs) {
+        newest = { sessionId: entry.slice(0, -".jsonl".length), mtimeMs: info.mtimeMs };
+      }
+    } catch {
+      // A transcript deleted mid-scan is simply not a candidate.
+    }
+  }
+  return newest?.sessionId ?? null;
 }
 
 export async function writeClaudeAgentConfig(

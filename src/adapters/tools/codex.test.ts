@@ -1,8 +1,11 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  findLatestCodexSessionId,
+  codexSessionsDirectory,
+  buildCodexResumeCommand,
   buildCodexSpawnCommand,
   buildCodexTrustArgs,
   CODEX_NOTIFY_SCRIPT,
@@ -104,6 +107,81 @@ describe("Codex adapter", () => {
         hive: { url: "http://127.0.0.1:4317/mcp" },
       },
     });
+  });
+
+  test("builds a resume argv that replays the spawn overrides as `codex resume`", () => {
+    expect(buildCodexResumeCommand({
+      name: "agent-4",
+      model: "gpt-5-codex",
+      effort: "high" as const,
+      worktreePath: "/tmp/worktree",
+      daemonPort: 4317,
+      readOnly: false,
+    }, "019f-thread")).toEqual([
+      "codex",
+      "resume",
+      "-c",
+      "model=gpt-5-codex",
+      "-c",
+      "model_reasoning_effort=high",
+      "-c",
+      'sandbox_mode="workspace-write"',
+      "-c",
+      'approval_policy="on-request"',
+      "-c",
+      'projects."/tmp/worktree".trust_level="trusted"',
+      "-c",
+      'mcp_servers.hive.url="http://127.0.0.1:4317/mcp"',
+      "-c",
+      'notify=["/tmp/worktree/.codex/hive-notify.sh"]',
+      "019f-thread",
+    ]);
+  });
+
+  test("a read-only resume expresses the sandbox as a config override, not --sandbox", () => {
+    const command = buildCodexResumeCommand({
+      name: "agent-4",
+      model: "default",
+      effort: "medium" as const,
+      worktreePath: "/tmp/worktree",
+      daemonPort: 4317,
+      readOnly: true,
+    }, "019f-thread");
+    expect(command).not.toContain("--sandbox");
+    expect(command).toContain('sandbox_mode="read-only"');
+  });
+
+  test("rollout disk discovery matches session_meta cwd and prefers the newest file", async () => {
+    const fakeHome = join(tempRoot, "codex-home");
+    const dayDir = join(codexSessionsDirectory(fakeHome), "2026", "07", "10");
+    await mkdir(dayDir, { recursive: true });
+    const meta = (sessionId: string, cwd: string): string =>
+      `${JSON.stringify({
+        timestamp: "2026-07-10T09:00:00.000Z",
+        type: "session_meta",
+        payload: { session_id: sessionId, id: sessionId, cwd },
+      })}\n`;
+    await writeFile(
+      join(dayDir, "rollout-2026-07-10T08-00-00-other.jsonl"),
+      meta("other-session", "/somewhere/else"),
+    );
+    await writeFile(
+      join(dayDir, "rollout-2026-07-10T08-30-00-older.jsonl"),
+      meta("older-match", worktreePath),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    await writeFile(
+      join(dayDir, "rollout-2026-07-10T09-00-00-newer.jsonl"),
+      meta("newer-match", worktreePath),
+    );
+
+    expect(await findLatestCodexSessionId(worktreePath, fakeHome))
+      .toEqual("newer-match");
+    expect(await findLatestCodexSessionId("/no/such/worktree", fakeHome))
+      .toBeNull();
+    expect(
+      await findLatestCodexSessionId(worktreePath, join(tempRoot, "missing")),
+    ).toBeNull();
   });
 
   test("omits the model override for the account default", () => {

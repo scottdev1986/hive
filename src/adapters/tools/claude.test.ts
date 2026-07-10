@@ -10,8 +10,11 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  buildClaudeResumeCommand,
   buildClaudeSpawnCommand,
+  claudeProjectDirectory,
   detectClaudeCliVersion,
+  findLatestClaudeSessionId,
   writeClaudeAgentConfig,
   CLAUDE_CHANNELS_FLAG,
   HIVE_CHANNEL_SERVER_NAME,
@@ -75,6 +78,48 @@ describe("Claude adapter", () => {
       daemonPort: 4317,
       readOnly: false,
     })).toEqual(["claude"]);
+  });
+
+  test("builds a resume argv that replays the spawn flags with --resume", () => {
+    expect(buildClaudeResumeCommand({
+      name: "agent-3",
+      model: "sonnet",
+      worktreePath: "/tmp/worktree",
+      daemonPort: 4317,
+      readOnly: false,
+    }, "0189-session")).toEqual([
+      "claude",
+      "--resume",
+      "0189-session",
+      "--model",
+      "sonnet",
+    ]);
+  });
+
+  test("derives the transcript project directory from the munged worktree path", () => {
+    expect(claudeProjectDirectory("/repo/.hive/worktrees/maya", "/home/u"))
+      .toEqual("/home/u/.claude/projects/-repo--hive-worktrees-maya");
+  });
+
+  test("disk discovery returns the newest transcript's session id, or null", async () => {
+    const fakeHome = join(tempRoot, "claude-home");
+    const projectDir = join(
+      fakeHome,
+      ".claude",
+      "projects",
+      worktreePath.replace(/[^A-Za-z0-9]/g, "-"),
+    );
+    expect(await findLatestClaudeSessionId(worktreePath, fakeHome)).toBeNull();
+
+    await mkdir(projectDir, { recursive: true });
+    await writeFile(join(projectDir, "older-session.jsonl"), "{}\n");
+    // Ensure a strictly newer mtime for the second transcript.
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    await writeFile(join(projectDir, "newer-session.jsonl"), "{}\n");
+    await writeFile(join(projectDir, "not-a-transcript.txt"), "ignored");
+
+    expect(await findLatestClaudeSessionId(worktreePath, fakeHome))
+      .toEqual("newer-session");
   });
 
   test("writes read-only hooks, Bash rules, and HTTP MCP registration", async () => {

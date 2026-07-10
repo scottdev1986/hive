@@ -9,8 +9,14 @@ import { z } from "zod";
 import { TmuxAdapter } from "../adapters/tmux";
 import {
   closeTerminal,
+  type TerminalAdapter,
   type TerminalCloser,
 } from "../adapters/terminal";
+import {
+  CrashRecovery,
+  type RecoveryOutcome,
+  type SessionResolver,
+} from "./recovery";
 import {
   deleteMemoryFact as deleteMemoryFactFile,
   readMemoryFact,
@@ -259,8 +265,20 @@ export interface HiveDaemonOptions {
   spawner: Spawner;
   db?: HiveDatabase;
   tmuxSender?: TmuxSender;
-  tmux?: Pick<TmuxAdapter, "hasSession" | "killSession" | "capturePane">;
+  tmux?: Pick<
+    TmuxAdapter,
+    "hasSession" | "killSession" | "capturePane" | "newSession"
+  >;
   closeTerminal?: TerminalCloser;
+  /** Viewer adapter for reopening windows on crash-recovered agents; omit in
+   * headless setups. */
+  terminal?: TerminalAdapter;
+  recovery?: {
+    resolveClaudeSessionId?: SessionResolver;
+    resolveCodexSessionId?: SessionResolver;
+    worktreeExists?: (path: string) => boolean;
+    sleep?: (milliseconds: number) => Promise<void>;
+  };
   repoRoot?: string;
   removeWorktree?: (
     repoRoot: string,
@@ -326,8 +344,9 @@ export class HiveDaemon {
   private readonly manageLifecycle: boolean;
   private readonly tmux: Pick<
     TmuxAdapter,
-    "hasSession" | "killSession" | "capturePane"
+    "hasSession" | "killSession" | "capturePane" | "newSession"
   >;
+  private readonly recovery: CrashRecovery;
   private readonly repoRoot: string;
   private readonly cleanupWorktree: typeof removeWorktree;
   private readonly assessStranded: NonNullable<
@@ -424,6 +443,31 @@ export class HiveDaemon {
     this.repoRoot = options.repoRoot ?? process.cwd();
     this.cleanupWorktree = options.removeWorktree ?? removeWorktree;
     this.assessStranded = options.assessStrandedWork ?? assessStrandedWork;
+    this.recovery = new CrashRecovery({
+      db: this.db,
+      tmux: this.tmux,
+      port: this.port,
+      dropChannel: (agentName) => this.channels.drop(agentName),
+      closeTerminal: (handle) => this.closeTerminal(handle),
+      send: (from, to, body, sendOptions) =>
+        this.delivery.send(from, to, body, sendOptions),
+      settleQuota: (agent) => this.settleAgentQuota(agent),
+      flushQueued: (agentName) => this.delivery.flushQueued(agentName),
+      terminal: options.terminal,
+      onTerminalsChanged: () => this.layout?.requestLayout(),
+      ...(options.recovery?.resolveClaudeSessionId === undefined
+        ? {}
+        : { resolveClaudeSessionId: options.recovery.resolveClaudeSessionId }),
+      ...(options.recovery?.resolveCodexSessionId === undefined
+        ? {}
+        : { resolveCodexSessionId: options.recovery.resolveCodexSessionId }),
+      ...(options.recovery?.worktreeExists === undefined
+        ? {}
+        : { worktreeExists: options.recovery.worktreeExists }),
+      ...(options.recovery?.sleep === undefined
+        ? {}
+        : { sleep: options.recovery.sleep }),
+    });
   }
 
   get server(): Server<undefined> | null {
@@ -450,6 +494,10 @@ export class HiveDaemon {
     if (this.manageLifecycle) {
       writeLifecycleFiles(listeningPort);
     }
+    // Spawn-name reservations belong to spawns in flight inside one daemon
+    // process; any row present at startup was stranded by a crash and would
+    // make its agent look forever in-flight to crash recovery.
+    this.db.clearAgentNameReservations();
     this.reconciliationTimer = setInterval(() => {
       void this.runMaintenance().catch((error) => {
         console.error(
@@ -691,54 +739,19 @@ export class HiveDaemon {
     }
   }
 
-  async reconcileAgents(): Promise<void> {
-    const liveStatuses: AgentRecord["status"][] = [
-      "working",
-      "idle",
-      "awaiting-approval",
-      "control-paused",
-      "stuck",
-    ];
-    let viewersChanged = false;
-    for (const agent of this.db.listAgents()) {
-      if (agent.status === "spawning") {
-        continue;
-      }
-      if (!liveStatuses.includes(agent.status)) {
-        continue;
-      }
-      if (await this.tmux.hasSession(agent.tmuxSession)) {
-        continue;
-      }
-      if (
-        agent.writeRevoked && agent.controlMessageId !== undefined &&
-        this.db.getMessage(agent.controlMessageId)?.state === "queued"
-      ) {
-        // A quota- or identity-blocked critical control remains durable and
-        // retryable. Never convert that fail-closed state into ordinary death.
-        continue;
-      }
-      const reconciled = this.db.markAgentDeadAndDetachTerminal(
-        agent.id,
-        new Date().toISOString(),
-        "tmux session missing (reconciled)",
-      );
-      this.channels.drop(agent.name);
-      await this.settleAgentQuota(agent);
-      // The tmux session is already gone, so the viewer shows nothing but a
-      // dead shell; close it instead of leaving a stale window on the wall.
-      if (reconciled?.terminalHandle !== undefined) {
-        viewersChanged = true;
-        try {
-          await this.closeTerminal(reconciled.terminalHandle);
-        } catch {
-          // Viewer cleanup is best-effort; reconciliation must not stall.
-        }
-      }
+  // Crash detection and recovery: any agent whose status claims a process
+  // but whose tmux session is gone gets classified — resumable active work
+  // is relaunched with the tool's native resume; everything else is marked
+  // dead with its worktree preserved and the stranded state surfaced.
+  async reconcileAgents(): Promise<RecoveryOutcome[]> {
+    return this.recovery.sweep();
+  }
+
+  async recoverCrashedAgents(name?: string): Promise<RecoveryOutcome[]> {
+    if (name !== undefined) {
+      return [await this.recovery.recoverAgent(name)];
     }
-    if (viewersChanged) {
-      this.layout?.requestLayout();
-    }
+    return this.recovery.sweep();
   }
 
   async landAgent(
@@ -835,6 +848,9 @@ export class HiveDaemon {
     }
     if (request.method === "POST" && url.pathname.startsWith("/channel/")) {
       return this.handleChannel(url.pathname, request);
+    }
+    if (url.pathname === "/recover" && request.method === "POST") {
+      return this.recoverEndpoint(request);
     }
     if (url.pathname === "/mcp") {
       return this.handleMcp(request);
@@ -1014,6 +1030,32 @@ export class HiveDaemon {
     return json({ ok: true });
   }
 
+  private async recoverEndpoint(request: Request): Promise<Response> {
+    let body: unknown;
+    try {
+      body = await request.json();
+    } catch {
+      body = {};
+    }
+    const parsed = z.object({ agent: z.string().min(1).optional() })
+      .safeParse(body ?? {});
+    if (!parsed.success) {
+      return json(
+        { error: "Invalid recover request", issues: parsed.error.issues },
+        { status: 400 },
+      );
+    }
+    try {
+      const outcomes = await this.recoverCrashedAgents(parsed.data.agent);
+      return json({ outcomes });
+    } catch (error) {
+      return json(
+        { error: error instanceof Error ? error.message : "Recovery failed" },
+        { status: 500 },
+      );
+    }
+  }
+
   private async attachViewer(request: Request): Promise<Response> {
     let body: unknown;
     try {
@@ -1076,6 +1118,17 @@ export class HiveDaemon {
             ? value.contextPct
             : agent.contextPct,
           lastEventAt: new Date(value.timestamp).toISOString(),
+          // The tool-level session identity rides on hook traffic (Claude's
+          // stdin payload, Codex's notify thread-id); a resume forks Claude
+          // to a fresh id, so the newest observation always wins.
+          ...(value.toolSessionId === undefined
+            ? {}
+            : { toolSessionId: value.toolSessionId }),
+          // A completed turn proves the process is genuinely healthy, so the
+          // crash-resume budget rearms.
+          ...(value.kind === "turn-end" && agent.recoveryAttempts > 0
+            ? { recoveryAttempts: 0 }
+            : {}),
         };
         this.db.upsertAgent(updated);
       }
@@ -1184,6 +1237,14 @@ export class HiveDaemon {
       });
       return toolResult(value, "observation");
     });
+
+    server.registerTool("hive_recover", {
+      title: "Recover crashed Hive agents",
+      description:
+        "Resume crashed agent sessions with their conversation context restored (native tool resume in the same worktree). Omit agent to sweep all recoverable agents; name one — including an agent already marked dead — for a manual retry.",
+      inputSchema: z.object({ agent: z.string().min(1).optional() }),
+    }, async ({ agent }) =>
+      toolResult(await this.recoverCrashedAgents(agent), "outcomes"));
 
     server.registerTool("hive_mark_dead", {
       title: "Mark Hive agent dead",

@@ -32,6 +32,7 @@ function agent(status: AgentRecord["status"]): AgentRecord {
     contextPct: 10,
     createdAt: timestamp,
     lastEventAt: timestamp,
+    recoveryAttempts: 0,
     capabilityEpoch: 0,
     writeRevoked: false,
     channelsEnabled: false,

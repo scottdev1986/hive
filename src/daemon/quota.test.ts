@@ -368,6 +368,7 @@ describe("quota persistence and reservations", () => {
       quotaReservationId: decision.reservation.id,
       createdAt: "2026-07-09T12:00:00.000Z",
       lastEventAt: "2026-07-09T12:00:00.000Z",
+      recoveryAttempts: 0,
       capabilityEpoch: 0,
       writeRevoked: false,
       channelsEnabled: false,

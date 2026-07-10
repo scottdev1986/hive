@@ -33,6 +33,7 @@ function agent(overrides: Partial<AgentRecord> = {}): AgentRecord {
     contextPct: 14,
     createdAt: timestamp,
     lastEventAt: timestamp,
+    recoveryAttempts: 0,
     capabilityEpoch: 0,
     writeRevoked: false,
     channelsEnabled: false,
@@ -61,6 +62,7 @@ class FakeDaemonTmux {
   readonly sessions = new Set<string>();
   readonly killed: string[] = [];
   readonly checked: string[] = [];
+  readonly created: { name: string; cwd: string; command: string }[] = [];
 
   async hasSession(session: string): Promise<boolean> {
     this.checked.push(session);
@@ -74,6 +76,11 @@ class FakeDaemonTmux {
   async killSession(session: string): Promise<void> {
     this.killed.push(session);
     this.sessions.delete(session);
+  }
+
+  async newSession(name: string, cwd: string, command: string): Promise<void> {
+    this.created.push({ name, cwd, command });
+    this.sessions.add(name);
   }
 }
 
@@ -1097,13 +1104,131 @@ describe("HiveDaemon HTTP server", () => {
     }
   });
 
-  test("reconciliation marks a vanished live session dead", async () => {
+  test("hook events capture the tool session id and a completed turn rearms the resume budget", async () => {
+    const db = new HiveDatabase(join(home, "session-capture.db"));
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new StubSpawner(),
+      tmuxSender: new SilentTmuxSender(),
+      tmux: new FakeDaemonTmux(),
+    });
+    db.insertAgent(agent({ status: "working", recoveryAttempts: 2 }));
+    try {
+      await daemon.processEvent({
+        kind: "session-start",
+        agentName: "maya",
+        timestamp: "2026-07-10T10:00:00.000Z",
+        toolSessionId: "0189-first",
+      });
+      expect(db.getAgentByName("maya")).toMatchObject({
+        toolSessionId: "0189-first",
+        recoveryAttempts: 2,
+      });
+
+      // A resume forks Claude to a fresh session id; the newest wins.
+      await daemon.processEvent({
+        kind: "turn-end",
+        agentName: "maya",
+        timestamp: "2026-07-10T10:05:00.000Z",
+        toolSessionId: "0189-forked",
+      });
+      expect(db.getAgentByName("maya")).toMatchObject({
+        toolSessionId: "0189-forked",
+        recoveryAttempts: 0,
+      });
+
+      // An event without identity leaves the recorded session untouched.
+      await daemon.processEvent({
+        kind: "turn-start",
+        agentName: "maya",
+        timestamp: "2026-07-10T10:06:00.000Z",
+      });
+      expect(db.getAgentByName("maya")?.toolSessionId).toEqual("0189-forked");
+    } finally {
+      await daemon.stop();
+      db.close();
+    }
+  });
+
+  test("hive_recover resumes a crashed agent over MCP and reports the outcome", async () => {
+    const db = new HiveDatabase(join(home, "recover-mcp.db"));
+    const tmux = new FakeDaemonTmux();
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new StubSpawner(),
+      tmuxSender: new SilentTmuxSender(),
+      tmux,
+      recovery: {
+        worktreeExists: () => true,
+        sleep: async () => {},
+      },
+    });
+    db.insertAgent(agent({
+      status: "dead",
+      toolSessionId: "0189-session",
+      failureReason: "tmux session missing (reconciled)",
+    }));
+    const transport = new StreamableHTTPClientTransport(
+      new URL("http://hive/mcp"),
+      { fetch: (input, init) => daemon.fetch(new Request(input, init)) },
+    );
+    const client = new Client({ name: "hive-test", version: "1.0.0" });
+    try {
+      await client.connect(transport);
+      const outcomes = textValue(await client.callTool({
+        name: "hive_recover",
+        arguments: { agent: "maya" },
+      })) as { agent: string; action: string; sessionId?: string }[];
+      expect(outcomes).toEqual([{
+        agent: "maya",
+        action: "resumed",
+        sessionId: "0189-session",
+      }]);
+      expect(db.getAgentByName("maya")?.status).toEqual("idle");
+      expect(tmux.created[0]?.command).toContain("'codex' 'resume'");
+      expect(tmux.created[0]?.command).toContain("0189-session");
+    } finally {
+      await client.close();
+      await daemon.stop();
+      db.close();
+    }
+  });
+
+  test("the /recover endpoint sweeps and reports over HTTP for the CLI", async () => {
+    const db = new HiveDatabase(join(home, "recover-http.db"));
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new StubSpawner(),
+      tmuxSender: new SilentTmuxSender(),
+      tmux: new FakeDaemonTmux(),
+      recovery: { worktreeExists: () => false },
+    });
+    db.insertAgent(agent({ status: "working" }));
+    try {
+      const response = await daemon.fetch(
+        new Request("http://hive/recover", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: "{}",
+        }),
+      );
+      expect(response.status).toEqual(200);
+      const body = await response.json() as { outcomes: { action: string }[] };
+      expect(body.outcomes).toMatchObject([{ action: "marked-dead" }]);
+    } finally {
+      await daemon.stop();
+      db.close();
+    }
+  });
+
+  test("reconciliation marks a vanished live session dead when nothing is resumable", async () => {
     const db = new HiveDatabase(join(home, "reconcile.db"));
     const tmux = new FakeDaemonTmux();
     const daemon = new HiveDaemon({
       db,
       spawner: new StubSpawner(),
       tmux,
+      recovery: { worktreeExists: () => false },
     });
     db.insertAgent(agent({ status: "idle" }));
     try {
@@ -1111,22 +1236,57 @@ describe("HiveDaemon HTTP server", () => {
 
       expect(db.getAgentByName("maya")).toMatchObject({
         status: "dead",
-        failureReason: "tmux session missing (reconciled)",
+        failureReason: "worktree is missing; session not resumable",
       });
+      // Death surfaces durably: the orchestrator gets the stored task text
+      // for a respawn instead of a silent status flip.
+      const alert = db.listMessages().find((message) =>
+        message.to === "orchestrator" && message.from === "hive-recovery"
+      );
+      expect(alert?.body).toContain("maya died in a crash");
+      expect(alert?.body).toContain("Build server");
     } finally {
       db.close();
     }
   });
 
-  test("reconciliation ignores spawning agents", async () => {
+  test("reconciliation classifies a spawning agent with a vanished session as died-during-spawn", async () => {
     const db = new HiveDatabase(join(home, "reconcile-spawning.db"));
     const tmux = new FakeDaemonTmux();
     const daemon = new HiveDaemon({
       db,
       spawner: new StubSpawner(),
       tmux,
+      recovery: { worktreeExists: () => true },
     });
     db.insertAgent(agent({ status: "spawning" }));
+    try {
+      await daemon.reconcileAgents();
+
+      // The anna failure mode: a status table saying "spawning" forever
+      // while urgent messages rot in the queue. Death is now explicit and
+      // the worktree survives for a respawn.
+      expect(db.getAgentByName("maya")).toMatchObject({
+        status: "dead",
+        failureReason: "process died during spawn (crash recovery)",
+        worktreePath: "/tmp/hive-maya",
+      });
+    } finally {
+      db.close();
+    }
+  });
+
+  test("reconciliation leaves an in-flight spawn alone while its name is reserved", async () => {
+    const db = new HiveDatabase(join(home, "reconcile-inflight.db"));
+    const tmux = new FakeDaemonTmux();
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new StubSpawner(),
+      tmux,
+      recovery: { worktreeExists: () => true },
+    });
+    db.insertAgent(agent({ status: "spawning" }));
+    db.reserveAgentName("maya");
     try {
       await daemon.reconcileAgents();
 
@@ -1144,6 +1304,7 @@ describe("HiveDaemon HTTP server", () => {
       db,
       spawner: new StubSpawner(),
       tmux,
+      recovery: { worktreeExists: () => false },
     });
     db.insertAgent(agent({ status: "stuck" }));
     try {
@@ -1152,7 +1313,7 @@ describe("HiveDaemon HTTP server", () => {
       expect(tmux.checked).toEqual(["hive-maya"]);
       expect(db.getAgentByName("maya")).toMatchObject({
         status: "dead",
-        failureReason: "tmux session missing (reconciled)",
+        failureReason: "worktree is missing; session not resumable",
       });
     } finally {
       db.close();
@@ -1176,6 +1337,7 @@ describe("HiveDaemon HTTP server", () => {
           layoutRequests += 1;
         },
       },
+      recovery: { worktreeExists: () => false },
     });
     const terminalHandle = { app: "iterm2", sessionId: "viewer-1" } as const;
     db.insertAgent(agent({ status: "idle", terminalHandle }));
@@ -1191,7 +1353,7 @@ describe("HiveDaemon HTTP server", () => {
 
       expect(db.getAgentByName("maya")).toMatchObject({
         status: "dead",
-        failureReason: "tmux session missing (reconciled)",
+        failureReason: "worktree is missing; session not resumable",
       });
       expect(db.getAgentByName("maya")?.terminalHandle).toBeUndefined();
       expect(closedTerminals).toEqual([terminalHandle]);
@@ -1258,6 +1420,7 @@ describe("HiveDaemon HTTP server", () => {
         },
       },
       quota,
+      recovery: { worktreeExists: () => false },
     });
     const terminalHandle = { app: "iterm2", sessionId: "viewer-1" } as const;
     db.insertAgent(agent({
@@ -1270,7 +1433,7 @@ describe("HiveDaemon HTTP server", () => {
 
       expect(db.getAgentByName("maya")).toMatchObject({
         status: "dead",
-        failureReason: "tmux session missing (reconciled)",
+        failureReason: "worktree is missing; session not resumable",
       });
       expect(db.getAgentByName("maya")?.terminalHandle).toBeUndefined();
       // A started agent that dies keeps its conservative estimate.

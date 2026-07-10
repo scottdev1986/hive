@@ -664,6 +664,7 @@ export class HiveSpawner implements Spawner {
       lastEventAt: timestamp,
       ...(quotaReservationId === undefined ? {} : { quotaReservationId }),
       ...(executionIdentity === undefined ? {} : { executionIdentity }),
+      recoveryAttempts: 0,
       capabilityEpoch: 0,
       writeRevoked: false,
       channelsEnabled: channels,

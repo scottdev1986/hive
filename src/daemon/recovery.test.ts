@@ -1,0 +1,626 @@
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { AgentRecord, TerminalHandle } from "../schemas";
+import { HiveDatabase } from "./db";
+import { MessageDelivery, type TmuxSender } from "./delivery";
+import {
+  CrashRecovery,
+  MAX_AUTO_RESUME_ATTEMPTS,
+  type CrashRecoveryDependencies,
+} from "./recovery";
+
+const timestamp = "2026-07-10T09:00:00.000Z";
+
+function agent(overrides: Partial<AgentRecord> = {}): AgentRecord {
+  return {
+    id: "agent-maya",
+    name: "maya",
+    tool: "claude",
+    model: "claude-fable-5",
+    tier: "standard",
+    status: "working",
+    taskDescription: "Build the server",
+    worktreePath: "/repo/.hive/worktrees/maya",
+    branch: "hive/maya-server",
+    tmuxSession: "hive-maya",
+    contextPct: 40,
+    createdAt: timestamp,
+    lastEventAt: timestamp,
+    recoveryAttempts: 0,
+    capabilityEpoch: 0,
+    writeRevoked: false,
+    channelsEnabled: false,
+    ...overrides,
+  };
+}
+
+class FakeTmux {
+  readonly sessions = new Set<string>();
+  readonly created: { name: string; cwd: string; command: string }[] = [];
+  readonly killed: string[] = [];
+  panes = new Map<string, string>();
+  failNewSession = false;
+
+  async hasSession(session: string): Promise<boolean> {
+    return this.sessions.has(session);
+  }
+
+  async newSession(name: string, cwd: string, command: string): Promise<void> {
+    if (this.failNewSession) {
+      throw new Error("tmux new-session failed: boom");
+    }
+    this.created.push({ name, cwd, command });
+    this.sessions.add(name);
+  }
+
+  async killSession(session: string): Promise<void> {
+    this.killed.push(session);
+    this.sessions.delete(session);
+  }
+
+  async capturePane(session: string): Promise<string> {
+    return this.panes.get(session) ?? "";
+  }
+}
+
+class SilentSender implements TmuxSender {
+  readonly sent: { session: string; text: string }[] = [];
+  async sendMessage(session: string, text: string): Promise<void> {
+    this.sent.push({ session, text });
+  }
+}
+
+class FakeTerminal {
+  readonly opened: { session: string; title: string }[] = [];
+  readonly closed: TerminalHandle[] = [];
+
+  async openWindow(session: string, title: string): Promise<TerminalHandle> {
+    this.opened.push({ session, title });
+    return { app: "iterm2", sessionId: `viewer-${this.opened.length}` };
+  }
+
+  async closeWindow(handle: TerminalHandle): Promise<void> {
+    this.closed.push(handle);
+  }
+}
+
+interface Harness {
+  db: HiveDatabase;
+  tmux: FakeTmux;
+  terminal: FakeTerminal;
+  sender: SilentSender;
+  recovery: CrashRecovery;
+  settled: string[];
+  closedViewers: TerminalHandle[];
+  layoutRequests: () => number;
+}
+
+let home = "";
+
+beforeEach(() => {
+  home = mkdtempSync(join(tmpdir(), "hive-recovery-"));
+});
+
+afterEach(() => {
+  rmSync(home, { recursive: true, force: true });
+});
+
+function harness(
+  overrides: Partial<CrashRecoveryDependencies> = {},
+): Harness {
+  const db = new HiveDatabase(join(home, `${crypto.randomUUID()}.db`));
+  const tmux = new FakeTmux();
+  const terminal = new FakeTerminal();
+  const sender = new SilentSender();
+  const delivery = new MessageDelivery(db, sender);
+  const settled: string[] = [];
+  const closedViewers: TerminalHandle[] = [];
+  let layoutRequests = 0;
+  const recovery = new CrashRecovery({
+    db,
+    tmux,
+    port: 4483,
+    closeTerminal: async (handle) => {
+      closedViewers.push(handle);
+    },
+    send: (from, to, body, options) => delivery.send(from, to, body, options),
+    settleQuota: async (record) => {
+      settled.push(record.name);
+    },
+    flushQueued: (name) => delivery.flushQueued(name),
+    terminal,
+    onTerminalsChanged: () => {
+      layoutRequests += 1;
+    },
+    resolveClaudeSessionId: async () => null,
+    resolveCodexSessionId: async () => null,
+    worktreeExists: () => true,
+    sleep: async () => {},
+    ...overrides,
+  });
+  return {
+    db,
+    tmux,
+    terminal,
+    sender,
+    recovery,
+    settled,
+    closedViewers,
+    layoutRequests: () => layoutRequests,
+  };
+}
+
+function orchestratorAlerts(db: HiveDatabase): string[] {
+  return db.listMessages()
+    .filter((message) =>
+      message.to === "orchestrator" && message.from === "hive-recovery"
+    )
+    .map((message) => message.body);
+}
+
+describe("crash classification", () => {
+  test("a spawning agent with a vanished session is died-during-spawn: dead, worktree kept, task surfaced", async () => {
+    const h = harness();
+    h.db.insertAgent(agent({ status: "spawning" }));
+
+    const outcomes = await h.recovery.sweep();
+
+    expect(outcomes).toEqual([{
+      agent: "maya",
+      action: "marked-dead",
+      reason: "process died during spawn (crash recovery)",
+    }]);
+    expect(h.db.getAgentByName("maya")).toMatchObject({
+      status: "dead",
+      worktreePath: "/repo/.hive/worktrees/maya",
+    });
+    // No resume was ever attempted for a session that never produced work.
+    expect(h.tmux.created).toEqual([]);
+    const alerts = orchestratorAlerts(h.db);
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]).toContain("Build the server");
+    expect(alerts[0]).toContain("Worktree preserved");
+    expect(h.settled).toEqual(["maya"]);
+  });
+
+  test("a spawning agent whose name is still reserved is an in-flight spawn and is left alone", async () => {
+    const h = harness();
+    h.db.insertAgent(agent({ status: "spawning" }));
+    h.db.reserveAgentName("maya");
+
+    const outcomes = await h.recovery.sweep();
+
+    expect(outcomes).toEqual([]);
+    expect(h.db.getAgentByName("maya")?.status).toEqual("spawning");
+  });
+
+  test("an agent whose session is still running is untouched", async () => {
+    const h = harness();
+    h.db.insertAgent(agent({ status: "working" }));
+    h.tmux.sessions.add("hive-maya");
+
+    expect(await h.recovery.sweep()).toEqual([]);
+    expect(h.db.getAgentByName("maya")?.status).toEqual("working");
+  });
+
+  test("a fail-closed critical control is never converted into death or a resume", async () => {
+    const h = harness();
+    const message = h.db.insertMessage({
+      id: "control-1",
+      from: "orchestrator",
+      to: "maya",
+      body: "stop",
+      createdAt: timestamp,
+      deliveredAt: null,
+      priority: "critical",
+      intent: "stop",
+      state: "queued",
+      injectedAt: null,
+      acknowledgedAt: null,
+      appliedAt: null,
+      deadlineAt: null,
+      alertAt: null,
+      sequence: 1,
+      idempotencyKey: null,
+      capabilityEpoch: 1,
+    });
+    h.db.insertAgent(agent({
+      status: "control-paused",
+      writeRevoked: true,
+      controlMessageId: message.id,
+    }));
+
+    expect(await h.recovery.sweep()).toEqual([]);
+    expect(h.db.getAgentByName("maya")?.status).toEqual("control-paused");
+  });
+
+  test("a control-paused agent without a queued control dies without a resume", async () => {
+    const h = harness();
+    h.db.insertAgent(agent({ status: "control-paused", writeRevoked: true }));
+
+    const outcomes = await h.recovery.sweep();
+
+    expect(outcomes).toMatchObject([{ agent: "maya", action: "marked-dead" }]);
+    expect(h.tmux.created).toEqual([]);
+    expect(h.db.getAgentByName("maya")?.status).toEqual("dead");
+  });
+
+  test("terminal agents are ignored", async () => {
+    const h = harness();
+    h.db.insertAgent(agent({ status: "dead" }));
+    h.db.insertAgent(agent({
+      id: "agent-david",
+      name: "david",
+      status: "done",
+      tmuxSession: "hive-david",
+    }));
+
+    expect(await h.recovery.sweep()).toEqual([]);
+  });
+
+  test("a missing worktree makes active work unresumable: dead with the reason recorded", async () => {
+    const h = harness({ worktreeExists: () => false });
+    h.db.insertAgent(agent({ status: "working", toolSessionId: "sess-1" }));
+
+    const outcomes = await h.recovery.sweep();
+
+    expect(outcomes).toEqual([{
+      agent: "maya",
+      action: "marked-dead",
+      reason: "worktree is missing; session not resumable",
+    }]);
+  });
+
+  test("active work with no discoverable tool session is unresumable", async () => {
+    const h = harness();
+    h.db.insertAgent(agent({ status: "working" }));
+
+    const outcomes = await h.recovery.sweep();
+
+    expect(outcomes).toEqual([{
+      agent: "maya",
+      action: "marked-dead",
+      reason: "no resumable tool session was found for this worktree",
+    }]);
+  });
+});
+
+describe("crash resume", () => {
+  test("a claude agent with a recorded session id is relaunched with --resume in the same worktree", async () => {
+    const h = harness();
+    h.db.insertAgent(agent({
+      status: "working",
+      toolSessionId: "0189-claude-session",
+    }));
+
+    const outcomes = await h.recovery.sweep();
+
+    expect(outcomes).toEqual([{
+      agent: "maya",
+      action: "resumed",
+      sessionId: "0189-claude-session",
+    }]);
+    expect(h.tmux.created).toHaveLength(1);
+    expect(h.tmux.created[0]!.name).toEqual("hive-maya");
+    expect(h.tmux.created[0]!.cwd).toEqual("/repo/.hive/worktrees/maya");
+    expect(h.tmux.created[0]!.command).toContain("claude");
+    expect(h.tmux.created[0]!.command).toContain("--resume");
+    expect(h.tmux.created[0]!.command).toContain("0189-claude-session");
+    expect(h.tmux.created[0]!.command).toContain("--model");
+
+    const record = h.db.getAgentByName("maya");
+    expect(record).toMatchObject({
+      status: "idle",
+      recoveryAttempts: 1,
+      toolSessionId: "0189-claude-session",
+    });
+    // The viewer was reopened and the agent told what happened.
+    expect(h.terminal.opened).toEqual([
+      { session: "hive-maya", title: "maya — claude-fable-5" },
+    ]);
+    expect(record?.terminalHandle).toBeDefined();
+    expect(h.sender.sent.some(({ session, text }) =>
+      session === "hive-maya" && text.includes("resumed your tool session")
+    )).toBe(true);
+    expect(orchestratorAlerts(h.db).some((body) =>
+      body.includes("Resumed maya after a crash")
+    )).toBe(true);
+  });
+
+  test("a codex agent resumes through `codex resume <thread-id>` with its spawn config overrides", async () => {
+    const h = harness();
+    h.db.insertAgent(agent({
+      tool: "codex",
+      model: "gpt-5-codex",
+      status: "working",
+      toolSessionId: "019f-codex-thread",
+      executionIdentity: {
+        tool: "codex",
+        model: "gpt-5-codex",
+        effort: "high",
+      },
+    }));
+
+    const outcomes = await h.recovery.sweep();
+
+    expect(outcomes).toMatchObject([{ agent: "maya", action: "resumed" }]);
+    const command = h.tmux.created[0]!.command;
+    expect(command).toContain("codex");
+    expect(command).toContain("resume");
+    expect(command).toContain("019f-codex-thread");
+    expect(command).toContain("model_reasoning_effort=high");
+    expect(command).toContain("workspace-write");
+  });
+
+  test("a session id discovered on disk is used and persisted when none was captured", async () => {
+    const h = harness({
+      resolveClaudeSessionId: async (worktreePath) =>
+        worktreePath === "/repo/.hive/worktrees/maya" ? "disk-session" : null,
+    });
+    h.db.insertAgent(agent({ status: "working" }));
+
+    const outcomes = await h.recovery.sweep();
+
+    expect(outcomes).toEqual([{
+      agent: "maya",
+      action: "resumed",
+      sessionId: "disk-session",
+    }]);
+    expect(h.db.getAgentByName("maya")?.toolSessionId).toEqual("disk-session");
+  });
+
+  test("the auto-resume attempt cap converts a crash-looping agent into an explicit death", async () => {
+    const h = harness();
+    h.db.insertAgent(agent({
+      status: "working",
+      toolSessionId: "sess-1",
+      recoveryAttempts: MAX_AUTO_RESUME_ATTEMPTS,
+    }));
+
+    const outcomes = await h.recovery.sweep();
+
+    expect(outcomes).toEqual([{
+      agent: "maya",
+      action: "marked-dead",
+      reason:
+        `crash recovery gave up after ${MAX_AUTO_RESUME_ATTEMPTS} resume attempts`,
+    }]);
+    expect(h.tmux.created).toEqual([]);
+  });
+
+  test("a resume whose process dies during the readiness watch falls back to death", async () => {
+    const h = harness();
+    h.db.insertAgent(agent({ status: "working", toolSessionId: "sess-1" }));
+    // The relaunch starts, then the session evaporates before readiness.
+    const tmux = h.tmux;
+    const originalNewSession = tmux.newSession.bind(tmux);
+    tmux.newSession = async (name, cwd, command) => {
+      await originalNewSession(name, cwd, command);
+      tmux.sessions.delete(name);
+    };
+
+    const outcomes = await h.recovery.sweep();
+
+    expect(outcomes).toEqual([{
+      agent: "maya",
+      action: "marked-dead",
+      reason: "resume launch failed: tmux session exited",
+    }]);
+    expect(h.db.getAgentByName("maya")).toMatchObject({
+      status: "dead",
+      recoveryAttempts: 1,
+    });
+  });
+
+  test("a resume that prints a launch failure signature is killed and marked dead", async () => {
+    const h = harness();
+    h.db.insertAgent(agent({ status: "working", toolSessionId: "sess-1" }));
+    h.tmux.panes.set("hive-maya", "Error: No conversation found with session ID sess-1");
+
+    const outcomes = await h.recovery.sweep();
+
+    expect(outcomes).toMatchObject([{ agent: "maya", action: "marked-dead" }]);
+    expect(h.tmux.killed).toContain("hive-maya");
+    expect(h.db.getAgentByName("maya")?.status).toEqual("dead");
+  });
+
+  test("a failed tmux launch settles into death instead of throwing out of the sweep", async () => {
+    const h = harness();
+    h.tmux.failNewSession = true;
+    h.db.insertAgent(agent({ status: "working", toolSessionId: "sess-1" }));
+
+    const outcomes = await h.recovery.sweep();
+
+    expect(outcomes).toEqual([{
+      agent: "maya",
+      action: "marked-dead",
+      reason: "resume launch failed: tmux new-session failed: boom",
+    }]);
+  });
+
+  test("resume closes the stale crash-era viewer before opening a fresh one", async () => {
+    const h = harness();
+    const staleHandle = { app: "iterm2", sessionId: "stale" } as const;
+    h.db.insertAgent(agent({
+      status: "working",
+      toolSessionId: "sess-1",
+      terminalHandle: staleHandle,
+    }));
+
+    await h.recovery.sweep();
+
+    expect(h.closedViewers).toEqual([staleHandle]);
+    expect(h.terminal.opened).toHaveLength(1);
+    expect(h.layoutRequests()).toBeGreaterThanOrEqual(2);
+  });
+
+  test("queued messages flush into the resumed idle session", async () => {
+    const h = harness();
+    h.db.insertAgent(agent({ status: "working", toolSessionId: "sess-1" }));
+    h.db.insertMessage({
+      id: "queued-1",
+      from: "david",
+      to: "maya",
+      body: "pull my branch",
+      createdAt: timestamp,
+      deliveredAt: null,
+      priority: "normal",
+      intent: "instruction",
+      state: "queued",
+      injectedAt: null,
+      acknowledgedAt: null,
+      appliedAt: null,
+      deadlineAt: null,
+      alertAt: null,
+      sequence: 1,
+      idempotencyKey: null,
+      capabilityEpoch: null,
+    });
+
+    await h.recovery.sweep();
+
+    expect(h.sender.sent.some(({ text }) => text.includes("pull my branch")))
+      .toBe(true);
+    expect(h.db.getMessage("queued-1")?.deliveredAt).not.toBeNull();
+  });
+
+  test("stale pending approvals are denied on resume", async () => {
+    const h = harness();
+    h.db.insertAgent(agent({ status: "awaiting-approval", toolSessionId: "s1" }));
+    h.db.insertApproval({
+      id: "approval-1",
+      agentName: "maya",
+      description: "run npm publish",
+      status: "pending",
+      createdAt: timestamp,
+      resolvedAt: null,
+    });
+
+    await h.recovery.sweep();
+
+    expect(h.db.getApproval("approval-1")?.status).toEqual("denied");
+    expect(h.db.getAgentByName("maya")?.status).toEqual("idle");
+  });
+});
+
+describe("dead-path bookkeeping", () => {
+  test("death flags queued messages so deadline alarms stop and the alert names them", async () => {
+    const h = harness({ worktreeExists: () => false });
+    h.db.insertAgent(agent({ status: "working" }));
+    h.db.insertMessage({
+      id: "urgent-1",
+      from: "orchestrator",
+      to: "maya",
+      body: "urgent check-in",
+      createdAt: timestamp,
+      deliveredAt: null,
+      priority: "urgent",
+      intent: "instruction",
+      state: "queued",
+      injectedAt: null,
+      acknowledgedAt: null,
+      appliedAt: null,
+      deadlineAt: timestamp,
+      alertAt: null,
+      sequence: 1,
+      idempotencyKey: null,
+      capabilityEpoch: null,
+    });
+
+    await h.recovery.sweep();
+
+    expect(h.db.getMessage("urgent-1")?.alertAt).not.toBeNull();
+    expect(orchestratorAlerts(h.db)[0]).toContain(
+      "1 queued message(s) were flagged undeliverable",
+    );
+  });
+
+  test("death denies the agent's pending approvals", async () => {
+    const h = harness({ worktreeExists: () => false });
+    h.db.insertAgent(agent({ status: "awaiting-approval" }));
+    h.db.insertApproval({
+      id: "approval-1",
+      agentName: "maya",
+      description: "run rm -rf",
+      status: "pending",
+      createdAt: timestamp,
+      resolvedAt: null,
+    });
+
+    await h.recovery.sweep();
+
+    expect(h.db.getApproval("approval-1")?.status).toEqual("denied");
+  });
+});
+
+describe("manual recovery", () => {
+  test("recovers an agent already marked dead — the bring-her-back path", async () => {
+    const h = harness();
+    h.db.insertAgent(agent({
+      status: "dead",
+      toolSessionId: "sess-1",
+      failureReason: "tmux session missing (reconciled)",
+    }));
+
+    const outcome = await h.recovery.recoverAgent("maya");
+
+    expect(outcome).toEqual({
+      agent: "maya",
+      action: "resumed",
+      sessionId: "sess-1",
+    });
+    expect(h.db.getAgentByName("maya")?.status).toEqual("idle");
+  });
+
+  test("bypasses the auto attempt cap because a human asked", async () => {
+    const h = harness();
+    h.db.insertAgent(agent({
+      status: "dead",
+      toolSessionId: "sess-1",
+      recoveryAttempts: MAX_AUTO_RESUME_ATTEMPTS + 2,
+    }));
+
+    const outcome = await h.recovery.recoverAgent("maya");
+
+    expect(outcome).toMatchObject({ agent: "maya", action: "resumed" });
+  });
+
+  test("skips an agent whose session is running", async () => {
+    const h = harness();
+    h.db.insertAgent(agent({ status: "working" }));
+    h.tmux.sessions.add("hive-maya");
+
+    expect(await h.recovery.recoverAgent("maya")).toEqual({
+      agent: "maya",
+      action: "skipped",
+      reason: "tmux session is running",
+    });
+  });
+
+  test("refuses done and write-revoked agents", async () => {
+    const h = harness();
+    h.db.insertAgent(agent({ status: "done" }));
+    h.db.insertAgent(agent({
+      id: "agent-david",
+      name: "david",
+      status: "control-paused",
+      writeRevoked: true,
+      tmuxSession: "hive-david",
+    }));
+
+    expect(await h.recovery.recoverAgent("maya")).toMatchObject({
+      action: "skipped",
+      reason: "agent is done",
+    });
+    expect((await h.recovery.recoverAgent("david")).action).toEqual("skipped");
+  });
+
+  test("throws for an unknown agent", async () => {
+    const h = harness();
+    expect(h.recovery.recoverAgent("ghost")).rejects.toThrow(
+      "Hive agent not found: ghost",
+    );
+  });
+});

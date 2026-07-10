@@ -66,6 +66,11 @@ export const AgentRecordSchema = z.object({
   worktreePath: z.string().nullable(),
   branch: z.string().nullable(),
   tmuxSession: z.string().min(1),
+  // The tool-level conversation identity (Claude session id, Codex thread id)
+  // captured from hook traffic, so a crashed process can be relaunched with
+  // its native resume instead of respawned from a blank prompt.
+  toolSessionId: z.string().min(1).optional(),
+  recoveryAttempts: z.number().int().nonnegative().default(0),
   terminalHandle: TerminalHandleSchema.optional(),
   contextPct: z.number().min(0).max(100),
   createdAt: z.iso.datetime(),

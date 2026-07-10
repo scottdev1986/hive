@@ -30,6 +30,7 @@ function agent(overrides: Partial<AgentRecord> = {}): AgentRecord {
     contextPct: 12,
     createdAt: timestamp,
     lastEventAt: timestamp,
+    recoveryAttempts: 0,
     capabilityEpoch: 0,
     writeRevoked: false,
     channelsEnabled: false,
@@ -57,6 +58,8 @@ describe("HiveDatabase", () => {
         },
         controlMessageId: "control-1",
         controlQuotaReservationId: "quota-control-1",
+        toolSessionId: "0189-session",
+        recoveryAttempts: 2,
       });
       expect(db.upsertAgent(updated)).toEqual(updated);
       expect(db.listAgents()).toEqual([updated]);
@@ -347,6 +350,20 @@ describe("HiveDatabase", () => {
       expect(db.isAgentNameReserved("cara")).toEqual(true);
       expect(db.releaseAgentName("cara")).toEqual(true);
       expect(db.isAgentNameReserved("cara")).toEqual(false);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("clears stranded spawn-name reservations wholesale at daemon startup", () => {
+    const db = new HiveDatabase(join(home, "reservations-clear.db"));
+    try {
+      expect(db.reserveAgentName("cara", timestamp)).toEqual(true);
+      expect(db.reserveAgentName("liam", timestamp)).toEqual(true);
+      expect(db.clearAgentNameReservations()).toEqual(2);
+      expect(db.isAgentNameReserved("cara")).toEqual(false);
+      expect(db.isAgentNameReserved("liam")).toEqual(false);
+      expect(db.clearAgentNameReservations()).toEqual(0);
     } finally {
       db.close();
     }

@@ -9,6 +9,7 @@ import {
   printStatus,
   readMemoryCli,
   recordQuotaObservation,
+  recoverAgentsCli,
   registerLayoutTerminal,
   reindexMemoryCli,
   searchMemoryCli,
@@ -18,7 +19,11 @@ import {
 } from "./cli/control";
 import { runChannelBridge } from "./cli/channel-bridge";
 import { runDaemon } from "./cli/daemon";
-import { runHiveEvent, type HookEventOptions } from "./cli/event";
+import {
+  readHookStdin,
+  runHiveEvent,
+  type HookEventOptions,
+} from "./cli/event";
 import { launchOrchestrator } from "./cli/orchestrator";
 import { runStatusline } from "./cli/statusline";
 import type { MemoryScope } from "./schemas";
@@ -134,6 +139,16 @@ function parseEventPayload(value: string | undefined): HookEventOptions {
       throw new Error("Event payload usageSource is invalid");
     }
     payload.usageSource = usageSource;
+  }
+  // Codex's notify payload names the conversation "thread-id"; it is the
+  // session id `codex resume` accepts, so crash recovery records it.
+  const toolSessionId = parsed["thread-id"] ?? parsed.threadId ??
+    parsed["session-id"] ?? parsed.sessionId ?? parsed.session_id;
+  if (toolSessionId !== undefined) {
+    if (typeof toolSessionId !== "string" || toolSessionId.length === 0) {
+      throw new Error("Event payload session id must be a non-empty string");
+    }
+    payload.toolSessionId = toolSessionId;
   }
   return payload;
 }
@@ -328,10 +343,13 @@ export function createProgram(): Command {
     )
     .action(async (kind: string, options: EventCliOptions) => {
       try {
+        // Claude hooks deliver session identity on stdin; explicit CLI and
+        // payload options always win over the captured value.
+        const captured = await readHookStdin();
         await runHiveEvent(
           kind,
           parsePort(options.port),
-          buildEventOptions(options),
+          { ...captured, ...buildEventOptions(options) },
         );
       } catch {
         // Commander option parsing and hook delivery must not break agent turns.
@@ -359,6 +377,15 @@ export function createProgram(): Command {
     .requiredOption("--port <number>", "daemon port")
     .action(async (options: { agent: string; port: string }) => {
       await runChannelBridge(options.agent, parsePort(options.port));
+    });
+
+  program
+    .command("recover [name]")
+    .description(
+      "Resume crashed agent sessions (all recoverable agents, or one by name)",
+    )
+    .action(async (name?: string) => {
+      await recoverAgentsCli(name);
     });
 
   program

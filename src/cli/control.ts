@@ -186,6 +186,43 @@ export async function reindexMemoryCli(): Promise<void> {
   console.log(`Rebuilt the memory search index from ${count} fact(s).`);
 }
 
+export interface RecoveryOutcomeView {
+  agent: string;
+  action: "resumed" | "marked-dead" | "skipped";
+  sessionId?: string;
+  reason?: string;
+}
+
+export async function recoverAgentsCli(name?: string): Promise<void> {
+  const port = requireDaemonPort();
+  const response = await fetch(`http://127.0.0.1:${port}/recover`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(name === undefined ? {} : { agent: name }),
+  });
+  const body = await response.json() as {
+    outcomes?: RecoveryOutcomeView[];
+    error?: string;
+  };
+  if (!response.ok) {
+    throw new Error(body.error ?? `Recovery failed (HTTP ${response.status})`);
+  }
+  const outcomes = body.outcomes ?? [];
+  if (outcomes.length === 0) {
+    console.log("No crashed agents to recover.");
+    return;
+  }
+  for (const outcome of outcomes) {
+    if (outcome.action === "resumed") {
+      console.log(`Resumed ${outcome.agent} (session ${outcome.sessionId}).`);
+    } else if (outcome.action === "marked-dead") {
+      console.log(`Marked ${outcome.agent} dead: ${outcome.reason}`);
+    } else {
+      console.log(`Skipped ${outcome.agent}: ${outcome.reason}`);
+    }
+  }
+}
+
 export async function watchAgent(name: string): Promise<void> {
   const port = requireDaemonPort();
   const agents = await fetchAgentStatus(port);

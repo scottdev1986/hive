@@ -9,6 +9,7 @@ export interface HookEventOptions {
   description?: string;
   usageUnits?: number;
   usageSource?: "provider" | "gateway" | "estimated";
+  toolSessionId?: string;
 }
 
 export type EventFetcher = (
@@ -25,6 +26,9 @@ export function buildHookEvent(
     kind,
     agentName: options.agent,
     timestamp,
+    ...(options.toolSessionId === undefined
+      ? {}
+      : { toolSessionId: options.toolSessionId }),
   };
   if (kind === "turn-end") {
     return HookEventSchema.parse({
@@ -60,6 +64,62 @@ export async function postHookEvent(
     body: JSON.stringify(event),
     signal: AbortSignal.timeout(1_000),
   });
+}
+
+// Claude Code pipes a JSON payload with the current session_id into every
+// hook command's stdin. That id is the handle crash recovery needs for
+// `claude --resume`, so the event CLI forwards it on every hook event.
+export function parseHookStdin(
+  text: string,
+): Pick<HookEventOptions, "toolSessionId"> {
+  try {
+    const parsed: unknown = JSON.parse(text);
+    if (
+      typeof parsed === "object" && parsed !== null &&
+      "session_id" in parsed && typeof parsed.session_id === "string" &&
+      parsed.session_id.length > 0
+    ) {
+      return { toolSessionId: parsed.session_id };
+    }
+  } catch {
+    // Anything that is not the documented hook JSON is simply not a capture.
+  }
+  return {};
+}
+
+export interface HookStdinSource {
+  isTTY: boolean;
+  text(): Promise<string>;
+}
+
+const processStdinSource: HookStdinSource = {
+  isTTY: process.stdin.isTTY === true,
+  text: () => new Response(Bun.stdin.stream()).text(),
+};
+
+export async function readHookStdin(
+  source: HookStdinSource = processStdinSource,
+  timeoutMs = 750,
+): Promise<Pick<HookEventOptions, "toolSessionId">> {
+  if (source.isTTY) {
+    return {};
+  }
+  // A hook runner writes its payload and closes stdin immediately; anything
+  // slower is not a hook payload and must never stall the agent's turn.
+  const text = await new Promise<string>((resolveText) => {
+    const timer = setTimeout(() => resolveText(""), timeoutMs);
+    source.text().then(
+      (value) => {
+        clearTimeout(timer);
+        resolveText(value);
+      },
+      () => {
+        clearTimeout(timer);
+        resolveText("");
+      },
+    );
+  });
+  return parseHookStdin(text);
 }
 
 export async function runHiveEvent(

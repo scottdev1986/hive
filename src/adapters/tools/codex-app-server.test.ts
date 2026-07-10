@@ -79,6 +79,7 @@ function agent(): AgentRecord {
     contextPct: 0,
     createdAt: "2026-07-10T12:00:00.000Z",
     lastEventAt: "2026-07-10T12:00:00.000Z",
+    recoveryAttempts: 0,
     capabilityEpoch: 0,
     writeRevoked: false,
     channelsEnabled: false,

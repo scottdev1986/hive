@@ -3,6 +3,9 @@ import { z } from "zod";
 const HookEventBaseSchema = z.object({
   agentName: z.string().min(1),
   timestamp: z.iso.datetime({ offset: true }),
+  // Claude pipes session_id to every hook; Codex notify carries thread-id.
+  // Either one is the handle a crash recovery needs for a native resume.
+  toolSessionId: z.string().min(1).optional(),
 });
 
 export const HookEventSchema = z.discriminatedUnion("kind", [

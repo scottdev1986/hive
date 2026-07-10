@@ -41,6 +41,11 @@ class NoopTmux {
     return "";
   }
   async killSession(_session: string): Promise<void> {}
+  async newSession(
+    _name: string,
+    _cwd: string,
+    _command: string,
+  ): Promise<void> {}
 }
 
 function textValue(result: Awaited<ReturnType<Client["callTool"]>>): unknown {
