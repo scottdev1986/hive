@@ -22,6 +22,29 @@ import { ORCHESTRATOR_BRIEF } from "./orchestrator-brief";
 export type OrchestratorTool = "claude" | "codex";
 export type OrchestratorTerminalApp = "auto" | "terminal" | "iterm2";
 
+export function codexRootSocketPath(home = Bun.env.HIVE_HOME ?? "~/.hive"): string {
+  const safe = home.replaceAll(/[^A-Za-z0-9_-]/g, "-");
+  return `/tmp/hive-codex-root-${safe}.sock`;
+}
+
+/** Authority-first command used by the forthcoming Codex root driver. It is
+ * intentionally exported/tested separately until the second-client delivery
+ * lifecycle is wired; no existing launch path calls it yet. */
+export function buildCodexRootAuthorityCommand(
+  socketPath = codexRootSocketPath(),
+): string[] {
+  return [
+    "sh",
+    "-lc",
+    `codex app-server --listen unix://${socketPath} & authority=$!; ` +
+      `trap 'kill "$authority" 2>/dev/null || true' EXIT INT TERM; ` +
+      `for attempt in $(seq 1 50); do ` +
+      `test -S '${socketPath}' && break; sleep 0.1; done; ` +
+      `test -S '${socketPath}' || { echo 'Codex app-server failed to become ready' >&2; exit 1; }; ` +
+      `exec codex --remote unix://${socketPath}`,
+  ];
+}
+
 const isMissingFileError = (error: unknown): boolean =>
   typeof error === "object" &&
   error !== null &&

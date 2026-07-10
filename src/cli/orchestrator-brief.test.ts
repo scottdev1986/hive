@@ -8,12 +8,19 @@ import { orchestratorTmuxSession } from "../daemon/tmux-sessions";
 import {
   buildOrchestratorCommand,
   buildOrchestratorLaunchCommand,
+  buildCodexRootAuthorityCommand,
   launchOrchestrator,
   prepareOrchestratorConfig,
   registerRunningOrchestratorTerminal,
 } from "./orchestrator";
 
 describe("orchestrator brief", () => {
+  test("builds an authority-first Codex root command without enabling it yet", () => {
+    const command = buildCodexRootAuthorityCommand("/tmp/hive-root.sock");
+    expect(command.slice(0, 2)).toEqual(["sh", "-lc"]);
+    expect(command[2]).toContain("codex app-server --listen unix:///tmp/hive-root.sock");
+    expect(command[2]).toContain("exec codex --remote unix:///tmp/hive-root.sock");
+  });
   test("is non-empty and names every orchestration MCP tool", () => {
     expect(ORCHESTRATOR_BRIEF.trim().length).toBeGreaterThan(100);
     for (const tool of [
