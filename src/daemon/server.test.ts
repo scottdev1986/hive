@@ -164,12 +164,13 @@ describe("HiveDaemon HTTP server", () => {
       db,
       spawner,
       tmuxSender: tmux,
-      port: 0,
     });
-    const server = daemon.start();
-    const baseUrl = `http://127.0.0.1:${server.port}`;
+    const baseUrl = "http://hive";
     const transport = new StreamableHTTPClientTransport(
       new URL(`${baseUrl}/mcp`),
+      {
+        fetch: (input, init) => daemon.fetch(new Request(input, init)),
+      },
     );
     const client = new Client({ name: "hive-test", version: "1.0.0" });
     try {
@@ -232,7 +233,7 @@ describe("HiveDaemon HTTP server", () => {
             description: "Push the branch",
           }),
         });
-      const approvalResponse = await fetch(approvalRequest);
+      const approvalResponse = await daemon.fetch(approvalRequest);
       expect(approvalResponse.status).toEqual(200);
 
       const approvals = textValue(await client.callTool({
@@ -259,6 +260,13 @@ describe("HiveDaemon HTTP server", () => {
       expect(tmux.calls).toEqual([
         ["hive-sam", "📨 message from maya: After approval."],
       ]);
+
+      const stopped = textValue(await client.callTool({
+        name: "hive_mark_dead",
+        arguments: { agent: "sam" },
+      })) as AgentRecord;
+      expect(stopped.status).toEqual("dead");
+      expect(db.getAgentByName("sam")?.status).toEqual("dead");
     } finally {
       await client.close();
       await daemon.stop();

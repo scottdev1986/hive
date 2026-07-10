@@ -1,5 +1,6 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import type { Route } from "../../schemas";
 
 export interface ClaudeSpawnOptions {
@@ -53,13 +54,23 @@ async function readJsonObject(path: string): Promise<Record<string, unknown>> {
 function deepMerge(
   existing: Record<string, unknown>,
   hive: Record<string, unknown>,
+  path: string[] = [],
 ): Record<string, unknown> {
   const merged = { ...existing };
   for (const [key, hiveValue] of Object.entries(hive)) {
     const existingValue = merged[key];
+    const nextPath = [...path, key];
     merged[key] =
       isRecord(existingValue) && isRecord(hiveValue)
-        ? deepMerge(existingValue, hiveValue)
+        ? deepMerge(existingValue, hiveValue, nextPath)
+        : Array.isArray(existingValue) && Array.isArray(hiveValue) &&
+            nextPath.length >= 2 &&
+            (nextPath[0] === "hooks" || nextPath[0] === "permissions")
+        ? [...existingValue, ...hiveValue].filter((value, index, values) =>
+            values.findIndex((candidate) =>
+              isDeepStrictEqual(candidate, value)
+            ) === index
+          )
         : hiveValue;
   }
   return merged;
@@ -107,14 +118,6 @@ export async function writeClaudeAgentConfig(
           "Read",
           "Glob",
           "Grep",
-          "Bash(git status:*)",
-          "Bash(git log:*)",
-          "Bash(git diff:*)",
-          "Bash(ls:*)",
-          "Bash(cat:*)",
-          "Bash(rg:*)",
-          "Bash(grep:*)",
-          "Bash(find:*)",
         ],
       }
     : {

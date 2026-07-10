@@ -63,6 +63,8 @@ export function buildCodexSpawnCommand(options: CodexSpawnOptions): string[] {
   command.push(
     ...buildCodexTrustArgs(options.worktreePath),
     "-c",
+    `mcp_servers.hive.url=${tomlString(`http://127.0.0.1:${options.daemonPort}/mcp`)}`,
+    "-c",
     `notify=[${tomlString(notifyPath)}]`,
   );
 

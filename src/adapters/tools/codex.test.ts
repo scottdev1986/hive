@@ -55,6 +55,8 @@ describe("Codex adapter", () => {
       "-c",
       'projects."/tmp/worktree".trust_level="trusted"',
       "-c",
+      'mcp_servers.hive.url="http://127.0.0.1:4317/mcp"',
+      "-c",
       'notify=["/tmp/worktree/.codex/hive-notify.sh"]',
     ]);
     expect(buildCodexSpawnCommand({ ...base, readOnly: true })).toEqual([
@@ -67,6 +69,8 @@ describe("Codex adapter", () => {
       "read-only",
       "-c",
       'projects."/tmp/worktree".trust_level="trusted"',
+      "-c",
+      'mcp_servers.hive.url="http://127.0.0.1:4317/mcp"',
       "-c",
       'notify=["/tmp/worktree/.codex/hive-notify.sh"]',
     ]);
@@ -90,6 +94,15 @@ describe("Codex adapter", () => {
     expect(notifyOverride).toBeDefined();
     expect(Bun.TOML.parse(notifyOverride ?? "")).toEqual({
       notify: ["/tmp/work tree/.codex/hive-notify.sh"],
+    });
+    const mcpOverride = command.find((argument) =>
+      argument.startsWith("mcp_servers.hive.url=")
+    );
+    expect(mcpOverride).toBeDefined();
+    expect(Bun.TOML.parse(mcpOverride ?? "")).toEqual({
+      mcp_servers: {
+        hive: { url: "http://127.0.0.1:4317/mcp" },
+      },
     });
   });
 

@@ -136,7 +136,7 @@ The sequencing principle: nothing in v1 learns. Learning features compound on to
 
 **v1.1 — make it durable (built by hive).** Handoff-and-respawn automation. The two-scope memory store with index injection. `hive watch` and reattach polish. Stuck-detection heartbeat escalations. This phase is the dogfood gate: if hive can't comfortably build these features itself, that's the most important bug report we'll ever get.
 
-**v2 — make it self-improving.** Skills rule-of-three proposals and authoring. Auto-updating routing manifest. Cross-vendor review routing. Third tool (likely Gemini CLI) to cement vendor neutrality.
+**v2 — make it self-improving.** Skills rule-of-three proposals and authoring. Auto-updating routing manifest. Cross-vendor review routing. Third tool (Grok) to cement vendor neutrality.
 
 ## Open questions and deferred bets
 

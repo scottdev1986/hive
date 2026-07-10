@@ -77,10 +77,9 @@ export async function ensureStarted(): Promise<number> {
 
   cleanupLifecycleFiles();
   const port = readConfiguredPort();
-  const root = resolve(import.meta.dir, "../..");
-  const bun = Bun.which("bun") ?? process.execPath;
-  const child = Bun.spawn([bun, "src/daemon/server.ts"], {
-    cwd: root,
+  const cliEntry = resolve(import.meta.dir, "../cli.ts");
+  const child = Bun.spawn([process.execPath, cliEntry, "daemon"], {
+    cwd: process.cwd(),
     detached: true,
     env: {
       ...process.env,

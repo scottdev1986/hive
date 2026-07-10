@@ -38,6 +38,10 @@ const InboxRequestSchema = z.object({
   agent: z.string().min(1),
 });
 
+const MarkDeadRequestSchema = z.object({
+  agent: z.string().min(1),
+});
+
 const ApprovalDecisionSchema = z.object({
   id: z.string().min(1),
   decision: z.enum(["approve", "deny"]),
@@ -219,6 +223,23 @@ export class HiveDaemon {
       description: "List all Hive agents and their current execution status.",
       inputSchema: z.object({}),
     }, async () => toolResult(this.db.listAgents(), "agents"));
+
+    server.registerTool("hive_mark_dead", {
+      title: "Mark Hive agent dead",
+      description: "Mark a stopped Hive agent as dead in the status table.",
+      inputSchema: MarkDeadRequestSchema,
+    }, async ({ agent: agentName }) => {
+      const agent = this.db.getAgentByName(agentName);
+      if (agent === null) {
+        throw new Error(`Hive agent not found: ${agentName}`);
+      }
+      const updated = this.db.upsertAgent({
+        ...agent,
+        status: "dead",
+        lastEventAt: new Date().toISOString(),
+      });
+      return toolResult(updated, "agent");
+    });
 
     server.registerTool("hive_send", {
       title: "Send agent message",

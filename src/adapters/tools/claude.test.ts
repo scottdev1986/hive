@@ -94,14 +94,6 @@ describe("Claude adapter", () => {
         "Read",
         "Glob",
         "Grep",
-        "Bash(git status:*)",
-        "Bash(git log:*)",
-        "Bash(git diff:*)",
-        "Bash(ls:*)",
-        "Bash(cat:*)",
-        "Bash(rg:*)",
-        "Bash(grep:*)",
-        "Bash(find:*)",
       ],
     });
     expect(settings.enableAllProjectMcpServers).toEqual(true);
@@ -135,8 +127,27 @@ describe("Claude adapter", () => {
       join(claudeDirectory, "settings.local.json"),
       `${JSON.stringify({
         userSetting: "preserved",
-        permissions: { userPermission: true },
-        hooks: { UserPromptSubmit: [{ hooks: [] }] },
+        permissions: {
+          userPermission: true,
+          allow: ["Read", "Bash(custom:*)"],
+        },
+        hooks: {
+          UserPromptSubmit: [{ hooks: [] }],
+          SessionStart: [
+            {
+              hooks: [{
+                type: "command",
+                command: "user-session-start",
+              }],
+            },
+            {
+              hooks: [{
+                type: "command",
+                command: "hive event session-start --agent agent-merge --port 5000",
+              }],
+            },
+          ],
+        },
       })}\n`,
     );
     await writeFile(
@@ -162,8 +173,12 @@ describe("Claude adapter", () => {
       ),
     ) as {
       userSetting: string;
-      permissions: { userPermission: boolean; defaultMode: string };
-      hooks: Record<string, unknown>;
+      permissions: {
+        userPermission: boolean;
+        defaultMode: string;
+        allow: string[];
+      };
+      hooks: Record<string, { hooks: { command?: string }[] }[]>;
     };
     const mcp = JSON.parse(
       await readFile(join(worktreePath, ".mcp.json"), "utf8"),
@@ -175,8 +190,32 @@ describe("Claude adapter", () => {
     expect(settings.userSetting).toEqual("preserved");
     expect(settings.permissions.userPermission).toEqual(true);
     expect(settings.permissions.defaultMode).toEqual("acceptEdits");
+    expect(settings.permissions.allow).toEqual([
+      "Read",
+      "Bash(custom:*)",
+      "Glob",
+      "Grep",
+      "Edit",
+      "Write",
+      "NotebookEdit",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(bun test:*)",
+      "Bash(bun run:*)",
+    ]);
     expect(settings.hooks.UserPromptSubmit).toEqual([{ hooks: [] }]);
-    expect(settings.hooks.SessionStart).toBeDefined();
+    expect(settings.hooks.SessionStart).toHaveLength(2);
+    expect(
+      settings.hooks.SessionStart?.map((entry) =>
+        entry.hooks[0]?.command
+      ),
+    ).toEqual([
+      "user-session-start",
+      "hive event session-start --agent agent-merge --port 5000",
+    ]);
     expect(mcp.projectSetting).toEqual("preserved");
     expect(mcp.mcpServers.existing).toBeDefined();
     expect(mcp.mcpServers.hive?.url).toEqual("http://127.0.0.1:5000/mcp");
