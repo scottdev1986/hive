@@ -739,6 +739,17 @@ describe("HiveDaemon HTTP server", () => {
 
       const health = await daemon.fetch(new Request("http://hive/health"));
       expect(await health.json()).toEqual({ ok: true, version: HIVE_VERSION });
+
+      const reuseHandshake = await daemon.fetch(
+        new Request("http://hive/handshake"),
+      );
+      expect(await reuseHandshake.json()).toMatchObject({
+        productVersion: HIVE_VERSION,
+        wireProtocol: { min: 1, max: 1 },
+        schemaEpoch: 1,
+        capabilities: ["daemon-handshake-v1"],
+        generation: 1,
+      });
     } finally {
       db.close();
     }
