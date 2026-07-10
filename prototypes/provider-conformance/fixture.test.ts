@@ -2,7 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { parseArgs, requiresBillableAuthorization } from "./run";
 import { evaluate } from "./evaluator";
 import { expectedCost, INVALID_MODEL, PROMPTS } from "./prompts";
-import { redact } from "./transport";
+import { join } from "node:path";
+import { JsonWebSocket, redact } from "./transport";
 import { compactReport } from "./promote";
 import { scenarioApplies, type AdapterRun, type EventType, type NormalizedEvent, type Scenario } from "./types";
 
@@ -121,6 +122,38 @@ describe("provider-neutral assertions", () => {
 });
 
 describe("billing and probe safety", () => {
+  test("round-trips JSON-RPC frames over the dual-client WebSocket transport", async () => {
+    const server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch(request, instance) {
+        if (instance.upgrade(request)) return;
+        return new Response("upgrade required", { status: 426 });
+      },
+      websocket: {
+        message(socket, data) {
+          const request = JSON.parse(String(data)) as { id: number };
+          socket.send(JSON.stringify({ id: request.id, result: { ok: true } }));
+        },
+      },
+    });
+    const transport = await JsonWebSocket.connect({
+      url: `ws://127.0.0.1:${server.port}`,
+      capturePath: join(import.meta.dir, "runs", "offline-websocket.frames.jsonl"),
+      timeoutMs: 2_000,
+    });
+    try {
+      transport.send({ id: 7, method: "fixture/ping" });
+      expect(await transport.waitFor((message) => message.id === 7)).toEqual({
+        id: 7,
+        result: { ok: true },
+      });
+    } finally {
+      await transport.close();
+      await server.stop(true);
+    }
+  });
+
   test("classifies every real scenario as billable and does not generalize Claude invalid cost to Codex", () => {
     for (const scenario of Object.keys(PROMPTS) as Scenario[]) {
       if (scenario !== "invalid-model") {

@@ -492,7 +492,7 @@
           "Hive message c1f45c0c-a4b8-4e27-852f-137167841bdf",
           "Hive message 4b225b25-ddb3-41f4-9a77-fe8545055c4d"
         ],
-        "note": "Steer transport acceptance was observed; injected model-visible history plus its TUI-rendered verification response proves cross-client semantic delivery on the shared thread."
+        "note": "Steer transport acceptance was observed; injected model-visible history plus its TUI-rendered verification response proves cross-client semantic delivery on the shared thread. The digest provenance is same-host PATH resolution immediately after the drive, not a digest emitted by that process."
       },
       "billable": {
         "status": "billable",
