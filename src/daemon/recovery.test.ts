@@ -1,4 +1,12 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  test,
+} from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -159,6 +167,28 @@ function orchestratorAlerts(db: HiveDatabase): string[] {
     )
     .map((message) => message.body);
 }
+
+// Claude resumes pre-accept folder trust in ~/.claude.json. Point HOME at a
+// throwaway directory so the suite never writes to the operator's real config.
+let previousHome: string | undefined;
+let claudeHomeRoot = "";
+
+beforeAll(() => {
+  claudeHomeRoot = mkdtempSync(join(tmpdir(), "hive-recovery-home-"));
+  previousHome = Bun.env.HOME;
+  Bun.env.HOME = claudeHomeRoot;
+});
+
+afterAll(() => {
+  if (previousHome === undefined) {
+    delete Bun.env.HOME;
+  } else {
+    Bun.env.HOME = previousHome;
+  }
+  if (claudeHomeRoot !== "") {
+    rmSync(claudeHomeRoot, { recursive: true, force: true });
+  }
+});
 
 describe("crash classification", () => {
   test("a spawning agent with a vanished session is died-during-spawn: dead, worktree kept, task surfaced", async () => {

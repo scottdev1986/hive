@@ -1,6 +1,15 @@
-import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  readdir,
+  readFile,
+  realpath,
+  rename,
+  stat,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import type { ClaudeRoute } from "../../schemas";
 
@@ -94,6 +103,11 @@ const shellToken = (value: string): string => {
 const hook = (command: string): { hooks: { type: "command"; command: string }[] }[] => [
   { hooks: [{ type: "command", command }] },
 ];
+
+/** Claude Code resolves its config from $HOME, not from the passwd entry, so
+ * Hive must read the same variable. os.homedir() ignores a reassigned HOME and
+ * would silently point at the operator's real config. */
+const claudeHome = (): string => process.env.HOME ?? homedir();
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -198,7 +212,7 @@ export function buildClaudeResumeCommand(
 // where the munge replaces every non-alphanumeric path character with "-".
 export function claudeProjectDirectory(
   worktreePath: string,
-  home = homedir(),
+  home = claudeHome(),
 ): string {
   return join(
     home,
@@ -235,6 +249,84 @@ export async function findLatestClaudeSessionId(
     }
   }
   return newest?.sessionId ?? null;
+}
+
+// Claude Code keeps per-project first-run state in ~/.claude.json.
+export function claudeConfigPath(home = claudeHome()): string {
+  return join(home, ".claude.json");
+}
+
+// One writer at a time per process. Parallel spawns would otherwise read the
+// same config, add different worktrees, and the last rename would win.
+let trustSeedQueue: Promise<void> = Promise.resolve();
+
+const positiveInteger = (value: unknown): number =>
+  typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0;
+
+/**
+ * Pre-accept the folder-trust prompt for one Hive-created worktree.
+ *
+ * A fresh worktree is an unknown folder, so `claude` opens on a blocking
+ * "Do you trust the files in this folder?" dialog that an unattended agent
+ * cannot answer. The CLI documents this exact escape hatch in the error it
+ * prints when it drops project settings: set
+ * `projects[<path>].hasTrustDialogAccepted: true` in ~/.claude.json.
+ *
+ * Trust is also load-bearing beyond the dialog: an untrusted workspace makes
+ * the CLI discard the project-scoped permission rules and hooks that Hive
+ * writes into the worktree — including a read-only agent's deny list.
+ *
+ * Scope: this touches exactly one `projects` key, the agent worktree's own
+ * absolute path, and never a global flag. The CLI resolves trust by walking
+ * from the session cwd upward, so the worktree key alone is enough — Hive
+ * never has to trust the repository root or affect the operator's own
+ * sessions. (Accepting the dialog by hand records it against the main repo
+ * instead, which is why this seeds the narrower key. Verified on 2.1.206.)
+ */
+export async function seedClaudeWorktreeTrust(
+  worktreePath: string,
+  home = claudeHome(),
+): Promise<void> {
+  // The CLI keys projects by the resolved path, so a worktree reached through a
+  // symlinked prefix (/tmp and /var are symlinks on macOS) must be seeded under
+  // its real path or the entry silently never matches.
+  const key = await realpath(worktreePath).catch(() => resolve(worktreePath));
+  const configPath = claudeConfigPath(home);
+
+  const seed = async (): Promise<void> => {
+    const config = await readJsonObject(configPath);
+    const projects = isRecord(config.projects) ? config.projects : {};
+    const existing = isRecord(projects[key]) ? projects[key] : {};
+    const seeded = {
+      ...existing,
+      hasTrustDialogAccepted: true,
+      hasCompletedProjectOnboarding: true,
+      projectOnboardingSeenCount: Math.max(
+        1,
+        positiveInteger(existing.projectOnboardingSeenCount),
+      ),
+    };
+    // Re-spawns and crash recovery re-seed the same worktree; skipping the
+    // write keeps us out of the way of the CLI's own config writer.
+    if (isDeepStrictEqual(existing, seeded)) return;
+
+    const next = { ...config, projects: { ...projects, [key]: seeded } };
+    // Rename onto the config so a concurrent reader never sees a half file.
+    const temporaryPath = `${configPath}.hive-${process.pid}-${Date.now()}.tmp`;
+    await mkdir(dirname(configPath), { recursive: true });
+    try {
+      await writeFile(temporaryPath, `${JSON.stringify(next, null, 2)}\n`);
+      await rename(temporaryPath, configPath);
+    } catch (error) {
+      await unlink(temporaryPath).catch(() => undefined);
+      throw error;
+    }
+  };
+
+  // Chain even on failure so one bad seed cannot wedge later spawns.
+  const next = trustSeedQueue.then(seed, seed);
+  trustSeedQueue = next.catch(() => undefined);
+  await next;
 }
 
 export async function writeClaudeAgentConfig(
@@ -292,8 +384,19 @@ export async function writeClaudeAgentConfig(
         ],
       };
 
+  // bypassPermissions raises a blocking "WARNING: Claude Code running in Bypass
+  // Permissions mode" dialog on every launch, whether the mode arrives from the
+  // CLI flag or from these settings. The CLI clears it when
+  // skipDangerousModePermissionPrompt is set in any settings source, and
+  // localSettings (this file) is one of them — so the acceptance stays inside
+  // the agent's worktree instead of relying on the operator's ~/.claude
+  // settings. Measured against claude 2.1.206; without this key an unattended
+  // writer stalls on the dialog forever.
+  const dangerousWriter = !options.readOnly && (options.dangerous ?? false);
+
   const settings = {
     enableAllProjectMcpServers: true,
+    ...(dangerousWriter ? { skipDangerousModePermissionPrompt: true } : {}),
     hooks: {
       SessionStart: hook(eventCommand("session-start")),
       ...(isRecord(existingSettings.hooks) &&

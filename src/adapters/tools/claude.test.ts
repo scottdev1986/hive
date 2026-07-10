@@ -6,7 +6,15 @@ import {
   expect,
   test,
 } from "bun:test";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -17,6 +25,8 @@ import {
   resolveClaudeExecutable,
   findLatestClaudeSessionId,
   writeClaudeAgentConfig,
+  claudeConfigPath,
+  seedClaudeWorktreeTrust,
   CLAUDE_CHANNELS_FLAG,
   HIVE_CHANNEL_SERVER_NAME,
 } from "./claude";
@@ -26,7 +36,9 @@ let worktreePath = "";
 let previousHiveHome: string | undefined;
 
 beforeAll(async () => {
-  tempRoot = await mkdtemp(join(tmpdir(), "hive-claude-"));
+  // mkdtemp hands back /var/... on macOS while the real path is /private/var/...;
+  // Claude keys projects by the resolved path, so resolve it up front.
+  tempRoot = await realpath(await mkdtemp(join(tmpdir(), "hive-claude-")));
   worktreePath = join(tempRoot, "worktree");
   previousHiveHome = Bun.env.HIVE_HOME;
   Bun.env.HIVE_HOME = join(tempRoot, "hive-home");
@@ -584,5 +596,163 @@ describe("detectClaudeCliVersion", () => {
         throw new Error("ENOENT");
       }),
     ).toBeNull();
+  });
+});
+
+describe("unattended launch state", () => {
+  test("a dangerous writer pre-accepts the bypass-permissions disclaimer", async () => {
+    await writeClaudeAgentConfig(worktreePath, {
+      name: "maya",
+      daemonPort: 4317,
+      readOnly: false,
+      dangerous: true,
+    });
+    const settings = JSON.parse(
+      await readFile(
+        join(worktreePath, ".claude", "settings.local.json"),
+        "utf8",
+      ),
+    );
+    // Without this the CLI opens on "WARNING: Claude Code running in Bypass
+    // Permissions mode" and waits for a human that is never there.
+    expect(settings.skipDangerousModePermissionPrompt).toBe(true);
+    expect(settings.permissions.defaultMode).toBe("bypassPermissions");
+  });
+
+  test("read-only and approval-queue sessions never skip the disclaimer", async () => {
+    await writeClaudeAgentConfig(worktreePath, {
+      name: "reader",
+      daemonPort: 4317,
+      readOnly: true,
+    });
+    const readOnly = JSON.parse(
+      await readFile(
+        join(worktreePath, ".claude", "settings.local.json"),
+        "utf8",
+      ),
+    );
+    expect(readOnly.skipDangerousModePermissionPrompt).toBeUndefined();
+
+    await rm(worktreePath, { recursive: true, force: true });
+    await mkdir(worktreePath, { recursive: true });
+    await writeClaudeAgentConfig(worktreePath, {
+      name: "sandboxed",
+      daemonPort: 4317,
+      readOnly: false,
+      dangerous: false,
+    });
+    const sandboxed = JSON.parse(
+      await readFile(
+        join(worktreePath, ".claude", "settings.local.json"),
+        "utf8",
+      ),
+    );
+    expect(sandboxed.skipDangerousModePermissionPrompt).toBeUndefined();
+  });
+
+  test("seeds folder trust for the worktree and nothing else", async () => {
+    const home = join(tempRoot, "home-scoped");
+    await mkdir(home, { recursive: true });
+    await seedClaudeWorktreeTrust(worktreePath, home);
+
+    const config = JSON.parse(
+      await readFile(claudeConfigPath(home), "utf8"),
+    );
+    expect(config.projects[worktreePath]).toEqual({
+      hasTrustDialogAccepted: true,
+      hasCompletedProjectOnboarding: true,
+      projectOnboardingSeenCount: 1,
+    });
+    // Exactly one project key, and no global flag: the operator's own sessions
+    // and every other repository keep their existing trust state.
+    expect(Object.keys(config.projects)).toEqual([worktreePath]);
+    expect(config.hasCompletedOnboarding).toBeUndefined();
+    expect(config.bypassPermissionsModeAccepted).toBeUndefined();
+  });
+
+  test("preserves unrelated config and other projects", async () => {
+    const home = join(tempRoot, "home-merge");
+    await mkdir(home, { recursive: true });
+    await writeFile(
+      claudeConfigPath(home),
+      JSON.stringify({
+        numStartups: 42,
+        oauthAccount: { emailAddress: "scott@example.com" },
+        projects: {
+          "/Users/scott/other": { hasTrustDialogAccepted: false, lastCost: 3 },
+        },
+      }),
+    );
+
+    await seedClaudeWorktreeTrust(worktreePath, home);
+    const config = JSON.parse(await readFile(claudeConfigPath(home), "utf8"));
+
+    expect(config.numStartups).toBe(42);
+    expect(config.oauthAccount).toEqual({ emailAddress: "scott@example.com" });
+    // A neighbouring untrusted project stays untrusted.
+    expect(config.projects["/Users/scott/other"]).toEqual({
+      hasTrustDialogAccepted: false,
+      lastCost: 3,
+    });
+    expect(config.projects[worktreePath].hasTrustDialogAccepted).toBe(true);
+  });
+
+  test("keeps the worktree's own recorded state and is idempotent", async () => {
+    const home = join(tempRoot, "home-idempotent");
+    await mkdir(home, { recursive: true });
+    await writeFile(
+      claudeConfigPath(home),
+      JSON.stringify({
+        projects: {
+          [worktreePath]: {
+            lastSessionId: "session-1",
+            projectOnboardingSeenCount: 5,
+          },
+        },
+      }),
+    );
+
+    await seedClaudeWorktreeTrust(worktreePath, home);
+    const first = await readFile(claudeConfigPath(home), "utf8");
+    const config = JSON.parse(first);
+    expect(config.projects[worktreePath]).toEqual({
+      lastSessionId: "session-1",
+      projectOnboardingSeenCount: 5,
+      hasTrustDialogAccepted: true,
+      hasCompletedProjectOnboarding: true,
+    });
+
+    // Re-spawn and crash recovery re-seed the same worktree; a no-op write
+    // would race the CLI's own writer for no reason.
+    await seedClaudeWorktreeTrust(worktreePath, home);
+    expect(await readFile(claudeConfigPath(home), "utf8")).toBe(first);
+  });
+
+  test("seeds the resolved path when the worktree is reached via a symlink", async () => {
+    const home = join(tempRoot, "home-symlink");
+    await mkdir(home, { recursive: true });
+    const linkedRoot = join(tempRoot, "linked-root");
+    await symlink(tempRoot, linkedRoot);
+
+    // Same worktree, reached through a symlinked prefix — exactly what /tmp and
+    // /var do on macOS. The CLI would look up the resolved path and miss a key
+    // recorded under the symlinked one.
+    await seedClaudeWorktreeTrust(join(linkedRoot, "worktree"), home);
+
+    const config = JSON.parse(await readFile(claudeConfigPath(home), "utf8"));
+    expect(Object.keys(config.projects)).toEqual([worktreePath]);
+  });
+
+  test("concurrent seeds do not lose each other", async () => {
+    const home = join(tempRoot, "home-concurrent");
+    await mkdir(home, { recursive: true });
+    const worktrees = ["alpha", "beta", "gamma", "delta"].map((name) =>
+      join(tempRoot, "concurrent", name)
+    );
+
+    await Promise.all(worktrees.map((path) => seedClaudeWorktreeTrust(path, home)));
+
+    const config = JSON.parse(await readFile(claudeConfigPath(home), "utf8"));
+    expect(Object.keys(config.projects).sort()).toEqual([...worktrees].sort());
   });
 });

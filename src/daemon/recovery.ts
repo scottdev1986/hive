@@ -10,6 +10,7 @@ import {
   buildClaudeResumeCommand,
   findLatestClaudeSessionId,
   resolveClaudeExecutable,
+  seedClaudeWorktreeTrust,
   writeClaudeAgentConfig,
 } from "../adapters/tools/claude";
 import {
@@ -269,6 +270,10 @@ export class CrashRecovery {
     const dangerous = this.deps.autonomy === "dangerous";
     try {
       if (record.tool === "claude") {
+        // Re-seed rather than assume: the operator's ~/.claude.json may have
+        // been reset between the crash and the resume, and an unattended
+        // resume that meets the trust dialog stalls exactly like a spawn.
+        await seedClaudeWorktreeTrust(worktreePath).catch(() => undefined);
         await writeClaudeAgentConfig(worktreePath, {
           daemonPort: this.deps.port,
           name: record.name,

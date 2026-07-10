@@ -1,8 +1,16 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  describe,
+  expect,
+  test,
+} from "bun:test";
 import { mkdtemp, mkdir, readFile, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { TerminalAdapter } from "../adapters/terminal";
+import { CLAUDE_CHANNELS_FLAG } from "../adapters/tools/claude";
 import { DEFAULT_ROUTING, QuotaConfigSchema, isLiveAgent } from "../schemas";
 import type {
   AgentRecord,
@@ -261,6 +269,28 @@ class FailingTerminal implements TerminalAdapter {
 
   async closeWindow(_handle: TerminalHandle): Promise<void> {}
 }
+
+// Claude spawns pre-accept folder trust in ~/.claude.json. Point HOME at a
+// throwaway directory so the suite never writes to the operator's real config.
+let previousHome: string | undefined;
+let claudeHomeRoot = "";
+
+beforeAll(async () => {
+  claudeHomeRoot = await mkdtemp(join(tmpdir(), "hive-spawner-home-"));
+  previousHome = Bun.env.HOME;
+  Bun.env.HOME = claudeHomeRoot;
+});
+
+afterAll(async () => {
+  if (previousHome === undefined) {
+    delete Bun.env.HOME;
+  } else {
+    Bun.env.HOME = previousHome;
+  }
+  if (claudeHomeRoot !== "") {
+    await rm(claudeHomeRoot, { recursive: true, force: true });
+  }
+});
 
 afterEach(async () => {
   await Promise.all(
@@ -1321,9 +1351,10 @@ describe("HiveSpawner wiring", () => {
     expect(tmux.sessions[0]?.[2]).toContain(
       "'--model' 'claude-fable-5'",
     );
-    expect(tmux.sessions[0]?.[2]).toContain(
-      "'server:hive-channel' '--' 'You are maya",
-    );
+    // An unattended agent can never answer the development-channels warning
+    // dialog that this flag raises, so it must never appear in a spawn argv.
+    expect(tmux.sessions[0]?.[2]).not.toContain(CLAUDE_CHANNELS_FLAG);
+    expect(tmux.sessions[0]?.[2]).not.toContain("server:hive-channel");
     expect(tmux.sessions[0]?.[2]).toContain("You are maya");
     // Every writer agent carries the landing protocol for its own branch.
     expect(tmux.sessions[0]?.[2]).toContain(

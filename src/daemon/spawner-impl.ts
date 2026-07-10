@@ -9,11 +9,10 @@ import { shellJoin } from "../adapters/tmux";
 import type { TmuxAdapter } from "../adapters/tmux";
 import {
   buildClaudeSpawnCommand,
-  detectClaudeCliVersion,
   resolveClaudeExecutable,
+  seedClaudeWorktreeTrust,
   writeClaudeAgentConfig,
 } from "../adapters/tools/claude";
-import { CHANNELS_MIN_VERSION, versionAtLeast } from "./channels";
 import {
   buildCodexSpawnCommand,
   writeCodexAgentConfig,
@@ -184,7 +183,6 @@ type TmuxSessionManager = Pick<
 >;
 type Sleep = (milliseconds: number) => Promise<void>;
 type ModelResolver = typeof resolveConcreteModel;
-type ClaudeVersionDetector = () => Promise<string | null>;
 
 /** Mints one agent's capability, writes it to its 0600 credential file, and
  * returns the token. Absent (tests, tooling) the agent is launched with no
@@ -214,14 +212,13 @@ export interface HiveSpawnerDependencies {
   keepWorktreeOnFailure?: boolean;
   sleep?: Sleep;
   resolveModel?: ModelResolver;
-  /** Reads the installed Claude CLI version to gate the Channels preview.
-   * Returning null (or an old version) keeps the tmux fallback. */
-  detectClaudeVersion?: ClaudeVersionDetector;
   /** Test seam for the daemon-resolved Claude binary. */
   claudeExecutable?: string;
   /** Test seam for reading the user's global Codex MCP server names. */
   listCodexMcpServers?: () => Promise<string[]>;
-  /** Operator opt-out for the research preview; the fallback stays maintained. */
+  /** Operator opt-out for the research preview. Agent spawns never launch
+   * Channels regardless (see `useChannels`); this still gates the attended
+   * orchestrator session. */
   channelsEnabled?: boolean;
   /** Fires after a viewer window is attached so the daemon can re-tile the
    * window wall. */
@@ -443,7 +440,6 @@ export class HiveSpawner implements Spawner {
   private readonly cleanupWorktree: WorktreeRemover;
   private readonly wait: Sleep;
   private readonly modelResolver: ModelResolver;
-  private readonly detectClaudeVersion: ClaudeVersionDetector;
   private readonly claudeExecutable: string;
 
   constructor(private readonly dependencies: HiveSpawnerDependencies) {
@@ -453,8 +449,6 @@ export class HiveSpawner implements Spawner {
     this.modelResolver = dependencies.resolveModel ?? resolveConcreteModel;
     this.claudeExecutable = dependencies.claudeExecutable ??
       resolveClaudeExecutable();
-    this.detectClaudeVersion = dependencies.detectClaudeVersion ??
-      (() => detectClaudeCliVersion(undefined, this.claudeExecutable));
   }
 
   /** Servers a Codex spawn would inherit from the user's global config. Read
@@ -471,16 +465,28 @@ export class HiveSpawner implements Spawner {
   }
 
   /**
-   * Decide whether this Claude session launches with Channels. The capability
-   * handshake still gates delivery at runtime (the bridge must register and
-   * the CLI must accept the capability), so a false positive here degrades to
-   * the tmux fallback rather than dropping messages.
+   * Spawned agents never launch with Channels, and the reason is structural
+   * rather than a version gate.
+   *
+   * Hive's bridge is a `server:` channel, and the CLI only accepts those behind
+   * `--dangerously-load-development-channels`. That flag always raises a
+   * blocking "WARNING: Loading development channels" dialog whose only exits
+   * are "I am using this for local development" and "Exit" — and, unlike the
+   * bypass-permissions disclaimer, accepting it persists nothing, so there is
+   * no state Hive can pre-seed. An unattended agent would sit on that dialog
+   * forever. Passing plain `--channels server:hive-channel` skips the dialog
+   * but the CLI then refuses to register the channel ("server: entries need
+   * --dangerously-load-development-channels"), which is a silent no-op.
+   *
+   * So an agent gets Channels or it gets an unattended launch, never both.
+   * Messages reach agents through the maintained tmux pane fallback in
+   * src/daemon/delivery.ts. The orchestrator keeps Channels: a human is sitting
+   * at that session and can answer the dialog once.
+   *
+   * Measured against claude 2.1.206; see SPEC "Spawn wiring".
    */
-  private async useChannels(tool: "claude" | "codex"): Promise<boolean> {
-    if (tool !== "claude") return false;
-    if (this.dependencies.channelsEnabled === false) return false;
-    const version = await this.detectClaudeVersion().catch(() => null);
-    return version !== null && versionAtLeast(version, CHANNELS_MIN_VERSION);
+  private async useChannels(_tool: "claude" | "codex"): Promise<boolean> {
+    return false;
   }
 
   async restartForControl(
@@ -564,6 +570,9 @@ export class HiveSpawner implements Spawner {
     try {
       await provisionSkills(agent.worktreePath, identity.tool);
       if (identity.tool === "claude") {
+        // A revoked agent's replacement is read-only, and its deny list is a
+        // project-scoped permission rule: untrusted, the CLI drops it.
+        await seedClaudeWorktreeTrust(agent.worktreePath);
         await writeClaudeAgentConfig(agent.worktreePath, {
           daemonPort: this.dependencies.port,
           name: agent.name,
@@ -980,6 +989,9 @@ export class HiveSpawner implements Spawner {
     try {
       await provisionSkills(worktree.path, tool);
       if (tool === "claude") {
+        // Before the config, because an untrusted workspace makes the CLI
+        // discard the hooks and permissions we are about to write.
+        await seedClaudeWorktreeTrust(worktree.path);
         await writeClaudeAgentConfig(worktree.path, {
           daemonPort: this.dependencies.port,
           name,
