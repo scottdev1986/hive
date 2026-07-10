@@ -1,5 +1,6 @@
 import {
   AgentMessageSchema,
+  ORCHESTRATOR_NAME,
   type AgentMessage,
 } from "../schemas";
 import { sendKeys } from "../adapters/tmux";
@@ -24,7 +25,11 @@ export class MessageDelivery {
   ) {}
 
   async send(from: string, to: string, body: string): Promise<AgentMessage> {
-    const recipient = this.requireLiveRecipient(to);
+    // The orchestrator runs in the user's terminal, not in a tmux session or
+    // the agents table, so messages to it always queue for hive_inbox.
+    const recipient = to === ORCHESTRATOR_NAME
+      ? null
+      : this.requireLiveRecipient(to);
     const message = AgentMessageSchema.parse({
       id: crypto.randomUUID(),
       from,
@@ -35,7 +40,7 @@ export class MessageDelivery {
     });
     this.db.insertMessage(message);
 
-    if (recipient.status !== "idle") {
+    if (recipient === null || recipient.status !== "idle") {
       return message;
     }
 
@@ -54,6 +59,9 @@ export class MessageDelivery {
   }
 
   async flushQueued(agentName: string): Promise<AgentMessage[]> {
+    if (agentName === ORCHESTRATOR_NAME) {
+      return [];
+    }
     const recipient = this.db.getAgentByName(agentName);
     if (recipient === null || recipient.status === "dead") {
       return [];

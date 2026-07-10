@@ -1,5 +1,11 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { assertSuccess, shellJoin, TmuxAdapter } from "./tmux";
+import {
+  assertSuccess,
+  SEND_ENTER_DELAY_MS,
+  shellJoin,
+  TmuxAdapter,
+  type TmuxRunner,
+} from "./tmux";
 
 const socketName = `hive-test-${crypto.randomUUID()}`;
 const tmux = new TmuxAdapter(socketName);
@@ -52,6 +58,128 @@ afterAll(async () => {
     });
     await process.exited;
   }
+});
+
+interface RecordedTmuxCall {
+  args: string[];
+  stdin: string | null;
+  afterSleeps: number[];
+}
+
+function recordingAdapter(options: {
+  enterDelayMs?: number;
+  failCommand?: string;
+} = {}): {
+  adapter: TmuxAdapter;
+  calls: RecordedTmuxCall[];
+  sleeps: number[];
+} {
+  const calls: RecordedTmuxCall[] = [];
+  const sleeps: number[] = [];
+  const run: TmuxRunner = async (args, _socketName, stdin) => {
+    calls.push({
+      args,
+      stdin: stdin === undefined ? null : new TextDecoder().decode(stdin),
+      afterSleeps: [...sleeps],
+    });
+    if (options.failCommand !== undefined && args[0] === options.failCommand) {
+      return { stdout: "", stderr: "boom", exitCode: 1 };
+    }
+    return { stdout: "", stderr: "", exitCode: 0 };
+  };
+  const adapter = new TmuxAdapter(undefined, {
+    run,
+    sleep: async (milliseconds) => {
+      sleeps.push(milliseconds);
+    },
+    ...(options.enterDelayMs === undefined
+      ? {}
+      : { enterDelayMs: options.enterDelayMs }),
+  });
+  return { adapter, calls, sleeps };
+}
+
+describe("TmuxAdapter.sendKeys injection", () => {
+  test("pastes the text, waits, then submits with exactly one Enter", async () => {
+    const { adapter, calls, sleeps } = recordingAdapter();
+
+    await adapter.sendKeys("hive-maya", "Please review this.");
+
+    expect(calls.length).toEqual(3);
+    const [load, paste, enter] = calls;
+    expect(load?.args.slice(0, 2)).toEqual(["load-buffer", "-b"]);
+    expect(load?.args[3]).toEqual("-");
+    expect(load?.stdin).toEqual("Please review this.");
+
+    expect(paste?.args[0]).toEqual("paste-buffer");
+    expect(paste?.args).toContain("-d");
+    expect(paste?.args).toContain("-p");
+    expect(paste?.args.slice(-2)).toEqual(["-t", "=hive-maya:"]);
+    expect(paste?.args[paste.args.indexOf("-b") + 1]).toEqual(
+      load?.args[2] ?? "",
+    );
+
+    expect(enter?.args).toEqual(["send-keys", "-t", "=hive-maya:", "Enter"]);
+    // The Enter must come after the paste settles, or the TUI treats it as a
+    // pasted newline and the message sits in the composer unsubmitted.
+    expect(paste?.afterSleeps).toEqual([]);
+    expect(enter?.afterSleeps).toEqual([SEND_ENTER_DELAY_MS]);
+    expect(sleeps).toEqual([SEND_ENTER_DELAY_MS]);
+
+    const enterCount = calls.filter((call) =>
+      call.args.includes("Enter")
+    ).length;
+    expect(enterCount).toEqual(1);
+  });
+
+  test("passes special characters verbatim with no shell interpretation", async () => {
+    const text =
+      "📨 message from sam: done; 'quotes' \"double\" $HOME `whoami` \\ --flag\nline two\nline three";
+    const { adapter, calls } = recordingAdapter({ enterDelayMs: 0 });
+
+    await adapter.sendKeys("hive-maya", text);
+
+    expect(calls[0]?.stdin).toEqual(text);
+    // Multi-line bodies must travel as a paste, never as keystrokes where
+    // each newline would submit a partial message.
+    expect(calls.some((call) => call.args[0] === "send-keys" &&
+      call.args.some((arg) => arg.includes("\n")))).toEqual(false);
+    expect(calls.filter((call) => call.args.includes("Enter")).length)
+      .toEqual(1);
+  });
+
+  test("honors a configured Enter delay", async () => {
+    const { adapter, sleeps } = recordingAdapter({ enterDelayMs: 25 });
+    await adapter.sendKeys("hive-maya", "quick");
+    expect(sleeps).toEqual([25]);
+  });
+
+  test("cleans up the paste buffer and skips Enter when pasting fails", async () => {
+    const { adapter, calls } = recordingAdapter({
+      failCommand: "paste-buffer",
+    });
+
+    let message = "";
+    try {
+      await adapter.sendKeys("hive-maya", "will not arrive");
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+
+    expect(message.includes("tmux paste-buffer failed")).toEqual(true);
+    expect(calls.map((call) => call.args[0])).toEqual([
+      "load-buffer",
+      "paste-buffer",
+      "delete-buffer",
+    ]);
+    expect(calls.some((call) => call.args.includes("Enter"))).toEqual(false);
+  });
+
+  test("submits without pasting when the text is empty", async () => {
+    const { adapter, calls } = recordingAdapter({ enterDelayMs: 0 });
+    await adapter.sendKeys("hive-maya", "");
+    expect(calls.map((call) => call.args[0])).toEqual(["send-keys"]);
+  });
 });
 
 describe("TmuxAdapter", () => {

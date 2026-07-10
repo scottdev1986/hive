@@ -208,6 +208,31 @@ describe("HiveSpawner name pool", () => {
       name: "MAYA",
     })).rejects.toThrow('"maya" is already assigned to a live agent');
   });
+
+  test("rejects the reserved orchestrator name before creating a worktree", async () => {
+    let attemptedWorktree = false;
+    const spawner = new HiveSpawner({
+      db: new FakeStore(),
+      repoRoot: "/tmp/hive-reserved-name",
+      port: 4317,
+      config: { terminal: "auto", headless: true },
+      routing: async () => DEFAULT_ROUTING.standard,
+      tmux: new FakeTmux(),
+      terminal: new FakeTerminal(),
+      createWorktree: async () => {
+        attemptedWorktree = true;
+        return { path: "/tmp/unused", branch: "hive/unused-task" };
+      },
+      sleep: async () => {},
+    });
+
+    await expect(spawner.spawn({
+      task: "Impersonate the boss",
+      tier: "standard",
+      name: "Orchestrator",
+    })).rejects.toThrow('"orchestrator" is reserved');
+    expect(attemptedWorktree).toEqual(false);
+  });
 });
 
 describe("HiveSpawner wiring", () => {

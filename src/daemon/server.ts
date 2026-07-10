@@ -359,14 +359,16 @@ export class HiveDaemon {
 
     server.registerTool("hive_send", {
       title: "Send agent message",
-      description: "Send or queue a message for a named Hive agent.",
+      description:
+        'Send or queue a message for a named Hive agent, or to "orchestrator" to reach the root orchestrator inbox.',
       inputSchema: SendRequestSchema,
     }, async ({ from, to, body }) =>
       toolResult(await this.delivery.send(from, to, body), "message"));
 
     server.registerTool("hive_inbox", {
       title: "Read agent inbox",
-      description: "Read and acknowledge queued messages for a Hive agent.",
+      description:
+        'Read and acknowledge queued messages for a Hive agent (the orchestrator reads its own with agent "orchestrator").',
       inputSchema: InboxRequestSchema,
     }, async ({ agent }) =>
       toolResult(this.delivery.inbox(agent), "messages"));
