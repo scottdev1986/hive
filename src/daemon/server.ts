@@ -712,9 +712,10 @@ export class HiveDaemon {
             ? "dead"
             : value.kind === "turn-start"
               ? "working"
-              : value.kind === "notification" ||
-                  value.kind === "approval-request"
+              : value.kind === "approval-request"
                 ? "awaiting-approval"
+                : value.kind === "notification"
+                  ? agent.status
                 : "idle",
           contextPct: value.kind === "turn-end" &&
               value.contextPct !== undefined
@@ -725,13 +726,11 @@ export class HiveDaemon {
         this.db.upsertAgent(updated);
       }
 
-      if (value.kind === "notification" || value.kind === "approval-request") {
+      if (value.kind === "approval-request") {
         this.db.insertApproval({
           id: crypto.randomUUID(),
           agentName: value.agentName,
-          description: value.kind === "approval-request"
-            ? value.description
-            : `Notification from ${value.agentName}`,
+          description: value.description,
           status: "pending",
           createdAt: value.timestamp,
           resolvedAt: null,

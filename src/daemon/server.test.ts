@@ -663,7 +663,7 @@ describe("HiveDaemon HTTP server", () => {
       db.close();
     }
   });
-  test("event ingestion drives every status and creates approvals", async () => {
+  test("only approval requests block agents and enter the approval queue", async () => {
     const db = new HiveDatabase(join(home, "events.db"));
     const daemon = new HiveDaemon({
       db,
@@ -706,7 +706,7 @@ describe("HiveDaemon HTTP server", () => {
         "idle",
         "working",
         "idle",
-        "awaiting-approval",
+        "idle",
         "awaiting-approval",
         "dead",
       ];
@@ -721,11 +721,8 @@ describe("HiveDaemon HTTP server", () => {
       expect(db.getAgentByName("maya")?.contextPct).toEqual(47);
       expect(db.listEvents()).toEqual(events);
       const approvals = db.listApprovals("pending");
-      expect(approvals.length).toEqual(2);
-      expect(approvals.map((approval) => approval.description)).toEqual([
-        "Notification from maya",
-        "Run npm publish",
-      ]);
+      expect(approvals.length).toEqual(1);
+      expect(approvals[0]?.description).toEqual("Run npm publish");
 
       const invalid = await postEvent(daemon, { kind: "dead" });
       expect(invalid.status).toEqual(400);
@@ -733,6 +730,38 @@ describe("HiveDaemon HTTP server", () => {
 
       const health = await daemon.fetch(new Request("http://hive/health"));
       expect(await health.json()).toEqual({ ok: true, version: HIVE_VERSION });
+    } finally {
+      db.close();
+    }
+  });
+
+  test("notification events do not starve message delivery", async () => {
+    const db = new HiveDatabase(join(home, "notification-delivery.db"));
+    const tmux = new SilentTmuxSender();
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new StubSpawner(),
+      tmuxSender: tmux,
+    });
+    db.insertAgent(agent({ status: "idle" }));
+    try {
+      await daemon.processEvent({
+        kind: "notification",
+        agentName: "maya",
+        timestamp,
+      });
+
+      expect(db.getAgentByName("maya")?.status).toEqual("idle");
+      expect(db.listApprovals("pending")).toEqual([]);
+      const message = await daemon.delivery.send(
+        "sam",
+        "maya",
+        "Notifications must not block this.",
+      );
+      expect(message.deliveredAt).not.toBeNull();
+      expect(tmux.calls).toEqual([
+        ["hive-maya", "📨 message from sam: Notifications must not block this."],
+      ]);
     } finally {
       db.close();
     }

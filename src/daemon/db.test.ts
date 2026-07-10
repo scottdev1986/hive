@@ -347,6 +347,52 @@ describe("HiveDatabase", () => {
     }
   });
 
+  test("restart resolves legacy notification approvals without hiding real escalations", () => {
+    const path = join(home, "legacy-notification-approvals.db");
+    let db = new HiveDatabase(path);
+    db.insertAgent(agent({ status: "awaiting-approval" }));
+    db.insertApproval({
+      id: "notification-approval",
+      agentName: "maya",
+      description: "Notification from maya",
+      status: "pending",
+      createdAt: timestamp,
+      resolvedAt: null,
+    });
+    db.close();
+
+    db = new HiveDatabase(path);
+    try {
+      expect(db.listApprovals("pending")).toEqual([]);
+      expect(db.getApproval("notification-approval")).toMatchObject({
+        status: "approved",
+      });
+      expect(db.getAgentByName("maya")?.status).toEqual("idle");
+
+      db.insertApproval({
+        id: "real-approval",
+        agentName: "maya",
+        description: "Run npm publish",
+        status: "pending",
+        createdAt: timestamp,
+        resolvedAt: null,
+      });
+      db.upsertAgent({ ...db.getAgentByName("maya")!, status: "awaiting-approval" });
+    } finally {
+      db.close();
+    }
+
+    db = new HiveDatabase(path);
+    try {
+      expect(db.listApprovals("pending").map((approval) => approval.id)).toEqual([
+        "real-approval",
+      ]);
+      expect(db.getAgentByName("maya")?.status).toEqual("awaiting-approval");
+    } finally {
+      db.close();
+    }
+  });
+
   test("uses HIVE_HOME and enables WAL mode", () => {
     const isolatedHome = mkdtempSync(join(tmpdir(), "hive-home-test-"));
     process.env.HIVE_HOME = isolatedHome;

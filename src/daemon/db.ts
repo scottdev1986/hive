@@ -273,6 +273,26 @@ export class HiveDatabase {
       SET state = 'applied', injectedAt = COALESCE(injectedAt, deliveredAt)
       WHERE deliveredAt IS NOT NULL AND state = 'queued'
     `);
+    const recoveredAt = new Date().toISOString();
+    this.database.transaction(() => {
+      // Older daemons incorrectly turned every informational notification
+      // into a blocking approval. Preserve those rows as resolved history,
+      // then release agents that have no genuine escalation outstanding.
+      this.database.query(`
+        UPDATE approvals SET status = 'approved', resolvedAt = ?
+        WHERE status = 'pending'
+          AND description = 'Notification from ' || agentName
+      `).run(recoveredAt);
+      this.database.query(`
+        UPDATE agents SET status = 'idle', lastEventAt = ?
+        WHERE status = 'awaiting-approval' AND writeRevoked = 0
+          AND NOT EXISTS (
+            SELECT 1 FROM approvals
+            WHERE approvals.agentName = agents.name
+              AND approvals.status = 'pending'
+          )
+      `).run(recoveredAt);
+    })();
   }
 
   close(): void {
