@@ -1,4 +1,13 @@
-# 🐝 hive
+```
+      \     /
+       \___/
+   .--=(o o)=--.
+  /      ^      \
+ /  .----------.  \
+|  /   HIVE     \  |
+|  \____________/  |
+ \________________/
+```
 
 **Run a team of AI coding agents from one terminal — and watch them work.**
 
@@ -21,7 +30,7 @@ The authenticated-XPC prototype lives in [`prototypes/authenticated-xpc/`](proto
 $ cd my-project
 $ hive claude
 
-🐝 hive orchestrator ready.
+hive orchestrator ready.
 
 you  > add rate limiting to the public API, and have the docs updated too
 
