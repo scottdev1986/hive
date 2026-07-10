@@ -21,12 +21,16 @@ export interface ClaudeSpawnOptions {
   readOnly: boolean;
   /** Writer autonomy: bypass every permission prompt so the session needs no
    * human input. Applied through the worktree's settings
-   * (permissions.defaultMode "bypassPermissions"), which starts the session
-   * in bypass mode without the CLI flag's interactive acceptance dialog —
-   * verified against claude 2.1.206. Ignored for read-only sessions. */
+   * (permissions.defaultMode "bypassPermissions"). That mode raises a blocking
+   * acceptance dialog on its own — the CLI keys the disclaimer on the mode, not
+   * on the `--dangerously-skip-permissions` flag — so writeClaudeAgentConfig
+   * pairs it with skipDangerousModePermissionPrompt in the same file. Verified
+   * against claude 2.1.206. Ignored for read-only sessions. */
   dangerous?: boolean;
-  /** Launch with the Channels research preview so the hive-channel bridge
-   * can push daemon messages into the running session. */
+  /** Launch with the Channels research preview so the hive-channel bridge can
+   * push daemon messages into the running session. Attended sessions only: the
+   * flag raises a warning dialog nothing can pre-accept, so spawned agents
+   * leave this off and take tmux delivery instead. */
   channels?: boolean;
   /** Absolute path selected by the daemon. tmux servers can outlive the
    * daemon and retain a different PATH, so production launches must not ask
