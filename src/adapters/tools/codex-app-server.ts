@@ -123,6 +123,49 @@ export class CodexAppServerClient {
   }
 }
 
+/** A second, non-TUI connection to an already-running Codex thread. The
+ * transport is deliberately injected so Unix sockets, WebSockets, and tests
+ * share one protocol implementation without coupling the manager to an
+ * agent-host process. */
+export class CodexAppServerThreadConnection {
+  constructor(private readonly client: CodexAppServerClient) {}
+
+  async initialize(clientName = "hive-root"): Promise<void> {
+    await this.client.request("initialize", {
+      clientInfo: { name: clientName, title: "Hive", version: "0.1.0" },
+      capabilities: { experimentalApi: true },
+    });
+    this.client.notify("initialized");
+  }
+
+  async resume(threadId: string): Promise<void> {
+    await this.client.request("thread/resume", { threadId });
+  }
+
+  async injectItems(threadId: string, text: string): Promise<void> {
+    await this.client.request("thread/inject_items", {
+      threadId,
+      items: [{
+        type: "message",
+        role: "user",
+        content: [{ type: "input_text", text }],
+      }],
+    });
+  }
+
+  async steer(threadId: string, text: string, expectedTurnId?: string): Promise<void> {
+    await this.client.request("turn/steer", {
+      threadId,
+      input: [{ type: "text", text }],
+      ...(expectedTurnId === undefined ? {} : { expectedTurnId }),
+    });
+  }
+
+  async close(): Promise<void> {
+    this.client.close();
+  }
+}
+
 // A JSON-RPC frame is at most a few hundred KB; megabytes of buffered bytes
 // without a newline means the peer is streaming garbage. Dropping the buffer
 // forfeits one unparseable frame instead of letting a broken peer grow the

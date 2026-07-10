@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 import type { AgentRecord, HookEvent } from "../../schemas";
 import {
   CodexAppServerManager,
+  CodexAppServerClient,
+  CodexAppServerThreadConnection,
   type CodexAppServerTransport,
   reapOrphanCodexHosts,
   renderCodexViewerMessage,
@@ -63,6 +65,35 @@ class FakeTransport implements CodexAppServerTransport {
     this.closeHandler = handler;
   }
 }
+
+test("second-client thread connection resumes, injects, and steers without a TUI transport", async () => {
+  const transport = new FakeTransport();
+  const client = new CodexAppServerClient(transport, {
+    notification: () => undefined,
+    request: async () => ({}),
+  });
+  const connection = new CodexAppServerThreadConnection(client);
+  await connection.initialize();
+  await connection.resume("thread-tui");
+  await connection.injectItems("thread-tui", "HIVE_ROOT_MESSAGE");
+  await connection.steer("thread-tui", "continue", "turn-active");
+
+  expect(transport.sent.map((message) => message.method)).toEqual([
+    "initialize",
+    "initialized",
+    "thread/resume",
+    "thread/inject_items",
+    "turn/steer",
+  ]);
+  expect(transport.sent[3]?.params).toEqual({
+    threadId: "thread-tui",
+    items: [{
+      type: "message",
+      role: "user",
+      content: [{ type: "input_text", text: "HIVE_ROOT_MESSAGE" }],
+    }],
+  });
+});
 
 function agent(): AgentRecord {
   return {
