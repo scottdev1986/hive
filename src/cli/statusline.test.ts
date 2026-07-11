@@ -1,13 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import {
   parseStatuslineReport,
   renderStatusLine,
   runStatusline,
 } from "./statusline";
-import { readContextObservation } from "../daemon/context-window";
 
 const observedAt = "2026-07-09T12:00:00.000Z";
 
@@ -90,70 +86,85 @@ describe("renderStatusLine", () => {
   });
 });
 
-describe("runStatusline context window", () => {
-  const noPost = async (): Promise<Response> => new Response("{}");
+describe("the one parse", () => {
+  // Everything below is measured by Claude Code and handed to us on the same
+  // payload. None of it is derivable elsewhere in Hive, which is why there is
+  // exactly one parse -- and why it must not throw any of it away.
 
-  // The denominator the daemon cannot get anywhere else. Claude Code resolves
-  // the window against the account's plan (200k, or 1M on Max/Team/Enterprise)
-  // and hands it to this command; nothing else on the machine knows it.
-  test("records the window Claude Code reports, for the telemetry sweep", async () => {
-    const home = mkdtempSync(join(tmpdir(), "hive-sl-"));
-    const worktree = "/repo/.hive/worktrees/zoe";
-    const previous = process.env.HIVE_HOME;
-    process.env.HIVE_HOME = home;
-    try {
-      await runStatusline(
-        "zoe",
-        41_000,
-        JSON.stringify({
-          ...payload,
-          workspace: { current_dir: worktree },
-          context_window: {
-            context_window_size: 1_000_000,
-            used_percentage: 22,
-          },
-        }),
-        noPost,
-      );
-      expect(readContextObservation(worktree, home)).toMatchObject({
-        contextWindow: 1_000_000,
-        usedPct: 22,
-      });
-    } finally {
-      if (previous === undefined) delete process.env.HIVE_HOME;
-      else process.env.HIVE_HOME = previous;
+  // The denominator. Claude Code resolves it against the account plan (200k, or
+  // 1M where the plan upgrades it) and this is the only place Hive is ever told.
+  test("takes the real window and Claude Code s own percentage", () => {
+    expect(
+      parseStatuslineReport("zoe", {
+        context_window: {
+          context_window_size: 1_000_000,
+          used_percentage: 22,
+          total_input_tokens: 223_652,
+        },
+      }, observedAt),
+    ).toEqual({
+      agent: "zoe",
+      contextWindow: 1_000_000,
+      contextUsedPct: 22,
+      observedAt,
+    });
+  });
+
+  // THE REGRESSION. The quota block and the context window are independent
+  // facts riding the same payload. An API-key account, a third-party provider,
+  // and any session before its first API response all have NO rate_limits --
+  // and gating the report on them threw the window away for exactly those
+  // sessions, silently, with no error anyone would ever see. A payload carrying
+  // independent facts must never be discarded wholesale because one is missing.
+  test("reports the window even when the payload carries no rate limits", () => {
+    const report = parseStatuslineReport("lena", {
+      context_window: { context_window_size: 1_000_000, used_percentage: 27 },
+    }, observedAt);
+
+    expect(report).not.toEqual(null);
+    expect(report?.contextWindow).toEqual(1_000_000);
+    expect(report?.contextUsedPct).toEqual(27);
+    expect(report?.fiveHour).toBeUndefined();
+  });
+
+  // ...and the same in the other direction: quota with no window still reports.
+  test("reports the quota block even when the payload carries no window", () => {
+    const report = parseStatuslineReport("maya", payload, observedAt);
+    expect(report?.fiveHour?.usedPct).toEqual(23.5);
+    expect(report?.contextWindow).toBeUndefined();
+  });
+
+  // A window we were not told is a window we do not know. Substituting a
+  // plausible 200_000 is the bug: it reported live agents at ~22% of a 1M
+  // window as 100% full, and every decision downstream was made against that.
+  test("never defaults a window it was not given", () => {
+    for (
+      const bad of [
+        { context_window: {} },
+        { context_window: { context_window_size: 0 } },
+        { context_window: { context_window_size: -1 } },
+        { context_window: { context_window_size: "1000000" } },
+      ]
+    ) {
+      const report = parseStatuslineReport("zoe", bad, observedAt);
+      expect(report?.contextWindow).toBeUndefined();
+      expect(report?.contextUsedPct).toBeUndefined();
     }
   });
 
-  // The window and the quota ride in on the same payload but are independent:
-  // an API-key account, or any session before its first response, has no
-  // rate_limits at all, and losing the window with them would leave the daemon
-  // with no denominator and force it back to guessing.
-  test("records the window even when the payload carries no rate limits", async () => {
-    const home = mkdtempSync(join(tmpdir(), "hive-sl-"));
-    const worktree = "/repo/.hive/worktrees/lena";
-    const previous = process.env.HIVE_HOME;
-    process.env.HIVE_HOME = home;
-    try {
-      await runStatusline(
-        "lena",
-        41_000,
-        JSON.stringify({
-          context_window: { context_window_size: 200_000 },
-        }),
-        noPost,
-        // No workspace in the payload: the command runs in the session's
-        // worktree, so its own cwd is the correct fallback.
-        worktree,
-      );
-      expect(readContextObservation(worktree, home)).toMatchObject({
-        contextWindow: 200_000,
-        usedPct: null,
-      });
-    } finally {
-      if (previous === undefined) delete process.env.HIVE_HOME;
-      else process.env.HIVE_HOME = previous;
-    }
+  test("keeps the window when the payload carries no percentage", () => {
+    const report = parseStatuslineReport("zoe", {
+      context_window: { context_window_size: 200_000 },
+    }, observedAt);
+    expect(report?.contextWindow).toEqual(200_000);
+    expect(report?.contextUsedPct).toBeUndefined();
+  });
+
+  // Null only when the payload said nothing usable at all.
+  test("reports nothing when it measured nothing", () => {
+    expect(parseStatuslineReport("zoe", { model: {} }, observedAt)).toEqual(null);
+    expect(parseStatuslineReport("zoe", {}, observedAt)).toEqual(null);
+    expect(parseStatuslineReport("zoe", null, observedAt)).toEqual(null);
   });
 });
 

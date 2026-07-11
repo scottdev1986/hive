@@ -3,29 +3,11 @@ import { mkdirSync, mkdtempSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { readClaudeTelemetry, readCodexTelemetry } from "./tool-telemetry";
-import { writeContextObservation } from "./context-window";
 
 const WORKTREE = "/repo/.hive/worktrees/maya";
 
 function makeHome(): string {
   return mkdtempSync(join(tmpdir(), "hive-telemetry-"));
-}
-
-function makeHiveHome(): string {
-  return mkdtempSync(join(tmpdir(), "hive-home-"));
-}
-
-/** Stand in for `hive statusline` having recorded what Claude Code told it. */
-function observeWindow(
-  hiveHome: string,
-  contextWindow: number,
-  usedPct: number | null = null,
-): void {
-  writeContextObservation(
-    WORKTREE,
-    { contextWindow, usedPct, observedAt: "2026-07-11T00:00:00.000Z" },
-    hiveHome,
-  );
 }
 
 function claudeProjectDir(home: string): string {
@@ -44,118 +26,69 @@ function transcriptLine(usage: Record<string, unknown>, sidechain = false): stri
 }
 
 describe("claude transcript telemetry", () => {
-  test("reads context% from the newest transcript's last main-conversation usage", async () => {
+  // The transcript cannot answer this and must not pretend to. It records how
+  // many tokens a turn used but never the window they fill, and the model id
+  // cannot supply it either -- the 1M upgrade rides on the account plan, so
+  // `claude-opus-4-8` is 200k on one plan and 1M on another with an identical
+  // string. Dividing by a hardcoded 200_000 is what reported live agents at
+  // ~22% of a 1M window as 100% full. Occupancy is measured by Claude Code and
+  // arrives via POST /statusline; here it is honestly unknown.
+  test("never guesses occupancy: a transcript alone yields unknown, not a number", async () => {
     const home = makeHome();
     const directory = claudeProjectDir(home);
-    // An older transcript that must lose to the newer one.
+    writeFileSync(
+      join(directory, "session.jsonl"),
+      [
+        transcriptLine({ input_tokens: 8, cache_read_input_tokens: 30_000 }),
+        // Enough tokens to have read 100% against the old hardcoded 200k
+        // window, and ~22% against the 1M window the account actually has.
+        transcriptLine({
+          input_tokens: 8,
+          cache_read_input_tokens: 220_000,
+          cache_creation_input_tokens: 1_121,
+          output_tokens: 753,
+        }),
+      ].join("\n") + "\n",
+    );
+
+    const telemetry = await readClaudeTelemetry(WORKTREE, home);
+    expect(telemetry.contextPct).toEqual(null);
+    // Liveness is the transcript's remaining job, and it still works.
+    expect(telemetry.lastActivityAt).not.toEqual(null);
+  });
+
+  test("reports the newest transcript's mtime as the activity signal", async () => {
+    const home = makeHome();
+    const directory = claudeProjectDir(home);
     writeFileSync(
       join(directory, "old-session.jsonl"),
-      transcriptLine({ input_tokens: 10, cache_read_input_tokens: 190_000 }) + "\n",
+      transcriptLine({ input_tokens: 10 }) + "\n",
     );
-    utimesSync(join(directory, "old-session.jsonl"), new Date("2026-07-09T00:00:00Z"), new Date("2026-07-09T00:00:00Z"));
-    const lines = [
-      transcriptLine({
-        input_tokens: 8,
-        cache_read_input_tokens: 30_000,
-        cache_creation_input_tokens: 1_000,
-        output_tokens: 500,
-      }),
-      // The last usage wins; a later sidechain entry must not override it.
-      transcriptLine({
-        input_tokens: 8,
-        cache_read_input_tokens: 79_000,
-        cache_creation_input_tokens: 1_121,
-        output_tokens: 753,
-      }),
-      transcriptLine({ input_tokens: 4, cache_read_input_tokens: 2_000 }, true),
-      JSON.stringify({ type: "system", message: null }),
-    ];
-    writeFileSync(join(directory, "new-session.jsonl"), lines.join("\n") + "\n");
+    utimesSync(
+      join(directory, "old-session.jsonl"),
+      new Date("2026-07-09T00:00:00Z"),
+      new Date("2026-07-09T00:00:00Z"),
+    );
+    writeFileSync(
+      join(directory, "new-session.jsonl"),
+      transcriptLine({ input_tokens: 8, cache_read_input_tokens: 79_000 }) + "\n",
+    );
 
-    const hiveHome = makeHiveHome();
-    observeWindow(hiveHome, 200_000);
-    const telemetry = await readClaudeTelemetry(WORKTREE, home, hiveHome);
-    // (8 + 79000 + 1121 + 753) / 200_000 ≈ 40.4 → 40
-    expect(telemetry.contextPct).toEqual(40);
+    const telemetry = await readClaudeTelemetry(WORKTREE, home);
     expect(telemetry.lastActivityAt).not.toEqual(null);
+    // The newer transcript wins, so the signal is not the 2026-07-09 one.
+    expect(telemetry.lastActivityAt?.startsWith("2026-07-09")).toEqual(false);
   });
 
-  // The regression this whole module exists to prevent. The same transcript,
-  // against the 1M window the account actually has, is 8% — not 40%. The old
-  // code divided by a hardcoded 200k and could not tell these two apart, so it
-  // reported live agents at ~22% of a 1M window as 100% full and stood one
-  // decision away from recycling them. Nothing about the transcript changes
-  // here; only the measured denominator does.
-  test("divides by the window Claude Code measured, not a hardcoded 200k", async () => {
-    const home = makeHome();
-    const directory = claudeProjectDir(home);
-    writeFileSync(
-      join(directory, "session.jsonl"),
-      transcriptLine({
-        input_tokens: 8,
-        cache_read_input_tokens: 79_000,
-        cache_creation_input_tokens: 1_121,
-        output_tokens: 753,
-      }) + "\n",
-    );
-
-    const small = makeHiveHome();
-    observeWindow(small, 200_000);
-    expect((await readClaudeTelemetry(WORKTREE, home, small)).contextPct)
-      .toEqual(40);
-
-    const large = makeHiveHome();
-    observeWindow(large, 1_000_000);
-    expect((await readClaudeTelemetry(WORKTREE, home, large)).contextPct)
-      .toEqual(8);
-  });
-
-  // An unknown denominator must produce an unknown percentage. The tempting
-  // alternative — fall back to 200k — is exactly the bug: it looks like a
-  // number, it is acted on like a number, and it is wrong by 5x on a 1M plan.
-  test("reports unknown, not a guess, when no window has been observed", async () => {
-    const home = makeHome();
-    const directory = claudeProjectDir(home);
-    writeFileSync(
-      join(directory, "session.jsonl"),
-      transcriptLine({ input_tokens: 8, cache_read_input_tokens: 220_000 }) + "\n",
-    );
-
-    const telemetry = await readClaudeTelemetry(WORKTREE, home, makeHiveHome());
-    expect(telemetry.contextPct).toEqual(null);
-    // Still a live agent: the activity signal survives an unknown window.
-    expect(telemetry.lastActivityAt).not.toEqual(null);
-  });
-
-  // Claude Code computes this itself; we should not re-derive what it measured.
-  test("prefers Claude Code's own percentage over recomputing a ratio", async () => {
-    const home = makeHome();
-    const directory = claudeProjectDir(home);
-    writeFileSync(
-      join(directory, "session.jsonl"),
-      transcriptLine({ input_tokens: 8, cache_read_input_tokens: 500_000 }) + "\n",
-    );
-
-    const hiveHome = makeHiveHome();
-    observeWindow(hiveHome, 1_000_000, 37);
-    // 500k/1M would recompute to 50; Claude Code said 37, so 37 wins.
-    expect((await readClaudeTelemetry(WORKTREE, home, hiveHome)).contextPct)
-      .toEqual(37);
-  });
-
-  test("reports nulls when no project directory or usage exists", async () => {
+  test("reports nulls when no project directory or transcript exists", async () => {
     const home = makeHome();
     expect(await readClaudeTelemetry(WORKTREE, home)).toEqual({
       contextPct: null,
       lastActivityAt: null,
     });
-    const directory = claudeProjectDir(home);
-    writeFileSync(join(directory, "empty.jsonl"), '{"type":"summary"}\n');
-    const telemetry = await readClaudeTelemetry(WORKTREE, home);
-    expect(telemetry.contextPct).toEqual(null);
-    expect(telemetry.lastActivityAt).not.toEqual(null);
   });
 });
+
 
 describe("codex rollout telemetry", () => {
   function writeRollout(home: string, lines: string[]): string {

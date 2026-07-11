@@ -1,24 +1,40 @@
 import type { StatuslineReport } from "../schemas";
 import { agentFetch } from "./credential";
-import {
-  parseContextObservation,
-  payloadWorktree,
-  writeContextObservation,
-} from "../daemon/context-window";
 
 // Claude Code invokes the configured statusLine command on every render and
-// pipes the session JSON to stdin. For Claude.ai subscribers, and only after
-// the session's first API response, that JSON carries `rate_limits` with a
-// used percentage and reset time per rolling window. Hive forwards it to the
-// daemon as a semi-official ("reported") quota observation.
+// pipes the session JSON to stdin. This command is that command
+// (adapters/tools/claude.ts writes it into every agent's settings), which makes
+// it the one place per render where Claude Code hands Hive a set of facts about
+// a live session — and the only place several of them exist at all. So there is
+// exactly ONE parse of this payload, here, and everything downstream travels
+// the single route this parse feeds: POST /statusline -> the agent's row. Two
+// parsers, or a second transport, is how the two halves drift apart and
+// manufacture the next wrong join.
 //
-// The same payload carries `context_window.context_window_size` — the real
-// window, 200000 or 1000000, resolved by Claude Code against the account's
-// plan. Nothing else on the machine knows it: the transcript records tokens
-// but not the window they fill, and the model id cannot imply it because the
-// 1M upgrade rides on the plan rather than the name. This command is therefore
-// the only place the true denominator is ever in Hive's hands, so it writes it
-// down for the daemon's telemetry sweep (daemon/context-window.ts).
+// Three facts ride in, and every one of them is measured rather than inferred:
+//
+//   rate_limits            the subscriber's five-hour/weekly usage, present
+//                          only for Claude.ai accounts and only after the
+//                          session's first API response.
+//   context_window         `context_window_size` is the REAL window — 200000,
+//                          or 1000000 where the account's plan upgrades it.
+//                          Nothing else on this machine knows it: the
+//                          transcript records tokens but never the window they
+//                          fill, and the model id cannot imply it, because the
+//                          1M upgrade is a property of the plan and not of the
+//                          name. `used_percentage` is Claude Code's own
+//                          occupancy figure; it measures, so we do not
+//                          re-derive it.
+//   model                  the model ACTUALLY serving the session. The agent
+//                          row records the model requested at spawn, which goes
+//                          stale the moment a session switches models, so any
+//                          join on it (quota reservation included) is a join
+//                          against a model nobody is running.
+//
+// They are parsed independently and each is optional, deliberately: a payload
+// with no `rate_limits` (an API-key account, or a session before its first
+// response) must still yield the window and the model. Losing them alongside
+// the quota block is how we would end up inferring again.
 //
 // Rejected alternative: the undocumented api.anthropic.com/api/oauth/usage
 // endpoint the CLI itself calls. It is not a published contract, it needs the
@@ -45,25 +61,39 @@ function parseWindow(
   };
 }
 
-/** Extract the subscriber rate-limit block, or null when this session has
- * none (API-key account, third-party provider, or before the first response). */
+/**
+ * The one parse: every fact this payload carries, from a single pass over it.
+ *
+ * Null only when the payload said nothing we can use — not merely when it had
+ * no `rate_limits`. The three facts are independent, and the independence is
+ * load-bearing: an API-key account, a third-party provider, and any session
+ * before its first API response all have NO quota block, and gating the whole
+ * report on one would throw away the window and the live model for exactly
+ * those sessions — pushing the daemon straight back into inferring the things
+ * this parse exists to stop it inferring.
+ */
 export function parseStatuslineReport(
   agent: string,
   payload: unknown,
   observedAt: string,
 ): StatuslineReport | null {
   if (!isRecord(payload)) return null;
-  const limits = payload.rate_limits;
-  if (!isRecord(limits)) return null;
+  const limits = isRecord(payload.rate_limits) ? payload.rate_limits : {};
   const fiveHour = parseWindow(limits.five_hour);
   const sevenDay = parseWindow(limits.seven_day);
-  if (fiveHour === undefined && sevenDay === undefined) return null;
   const model = parseModel(payload);
+  const context = parseContextWindow(payload);
+
+  const measuredNothing = fiveHour === undefined && sevenDay === undefined &&
+    model === undefined && context.contextWindow === undefined;
+  if (measuredNothing) return null;
+
   return {
     agent,
     ...(fiveHour === undefined ? {} : { fiveHour }),
     ...(sevenDay === undefined ? {} : { sevenDay }),
     ...(model === undefined ? {} : { model }),
+    ...context,
     observedAt,
   };
 }
@@ -80,12 +110,50 @@ export function parseStatuslineReport(
  * is "Fable 5", while the usage payload and the model catalog both say "Fable" —
  * three surfaces, two spellings. Joining on a name that is not stable across the
  * very payloads being joined is how a pool ends up bound to the wrong model.
+ *
+ * The id arrives here WITHOUT the `[1m]` suffix — but that is a fact about this
+ * payload, not a universal rule: the `initialize` model catalog spells the same
+ * model `claude-opus-4-8[1m]`. Same model, different surface, different
+ * spelling. Which is exactly why a context window is never inferred from a
+ * model string: `[1m]` tracks the account's plan, not the name.
  */
 function parseModel(payload: Record<string, unknown>): string | undefined {
   const model = payload.model;
   if (!isRecord(model)) return undefined;
   const id = model.id;
   return typeof id === "string" && id.length > 0 ? id : undefined;
+}
+
+/**
+ * The real context window, in tokens, and Claude Code's own occupancy figure.
+ *
+ * Absent rather than defaulted when the payload carries no window. That is the
+ * whole discipline: a window we were not told is a window we do not know, and
+ * the daemon must say "unknown" rather than divide by a plausible-looking
+ * 200000. Defaulting the denominator is what reported live agents at ~22% of a
+ * 1M window as 100% full — and every decision downstream of that number, every
+ * recycle and reuse and respawn, was then made against a fiction.
+ *
+ * `used_percentage` is Claude Code's own occupancy figure. It measures; we do
+ * not re-derive it.
+ */
+function parseContextWindow(
+  payload: Record<string, unknown>,
+): { contextWindow?: number; contextUsedPct?: number } {
+  const block = payload.context_window;
+  if (!isRecord(block)) return {};
+
+  const size = block.context_window_size;
+  if (typeof size !== "number" || !Number.isFinite(size) || size <= 0) {
+    return {};
+  }
+  const used = block.used_percentage;
+  return {
+    contextWindow: size,
+    ...(typeof used === "number" && Number.isFinite(used)
+      ? { contextUsedPct: Math.min(100, Math.max(0, used)) }
+      : {}),
+  };
 }
 
 /** Render the status line the user sees in the agent's window. */
@@ -126,23 +194,17 @@ export async function runStatusline(
   port: number,
   stdin: string,
   fetcher: StatuslineFetcher = agentFetch(agent),
-  cwd: string = process.cwd(),
 ): Promise<string> {
   let report: StatuslineReport | null = null;
   try {
-    const payload: unknown = JSON.parse(stdin);
-    const observedAt = new Date().toISOString();
-
-    // The window first, and on its own: it is the denominator the daemon
-    // cannot obtain anywhere else, and it must survive a payload that carries
-    // no `rate_limits` (an API-key account, or any session before its first
-    // response) rather than being lost with the quota half.
-    const observation = parseContextObservation(payload, observedAt);
-    if (observation !== null) {
-      writeContextObservation(payloadWorktree(payload, cwd), observation);
-    }
-
-    report = parseStatuslineReport(agent, payload, observedAt);
+    report = parseStatuslineReport(
+      agent,
+      JSON.parse(stdin),
+      new Date().toISOString(),
+    );
+    // Fires on ANY measured fact, not just the quota block. A session with no
+    // rate_limits still carries the context window, and the window is the one
+    // number the daemon cannot obtain anywhere else.
     if (report !== null) await postStatuslineReport(report, port, fetcher);
   } catch {
     // The status line renders on every keystroke; it must never throw into
