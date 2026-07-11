@@ -1,4 +1,4 @@
-import { open, readdir, stat } from "node:fs/promises";
+import { open, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { claudeProjectDirectory } from "../adapters/tools/claude";
 import { findLatestCodexRollout } from "../adapters/tools/codex";
@@ -14,10 +14,12 @@ import { findLatestCodexRollout } from "../adapters/tools/codex";
  * unparseable artifact reports nulls, never an error.
  */
 export interface ToolTelemetry {
-  /** 0-100, or null for *unknown* — no usage record, or (for Claude) no
-   * measured context window to divide by. Null is not zero and not full: an
-   * agent whose occupancy is unknown must not be recycled on the strength of
-   * it, and must not be read as having room. */
+  /** 0-100, or null for *unknown* — no usage record in the rollout. Null is
+   * not zero and not full: an agent whose occupancy is unknown must not be
+   * recycled on the strength of it, and must not be read as having room.
+   * Codex only — the Claude reader reports tokens, not a percentage
+   * (ClaudeContextTelemetry below), because its transcript never states the
+   * window they fill. */
   contextPct: number | null;
   /** ISO timestamp of the artifact's last write, or null when none exists.
    * For a Codex TUI agent this is the only mid-turn liveness signal the
@@ -76,88 +78,101 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 const asCount = (value: unknown): number =>
   typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : 0;
 
-function clampPct(value: number): number {
+export function clampPct(value: number): number {
   return Math.min(100, Math.max(0, Math.round(value)));
 }
 
-/** Newest `<session>.jsonl` in the worktree's Claude project directory — the
- * same most-recently-modified rule SPEC decision 2 prescribes over the
- * stale-able Stop-hook transcript_path. */
-async function findLatestClaudeTranscript(
+/**
+ * Claude context telemetry: measured TOKENS, never a percentage.
+ *
+ * The transcript records how many tokens a turn carried but never the window
+ * they fill, and the model id cannot supply the window either: the 1M upgrade
+ * is a property of the account's plan, so `claude-opus-4-8` is 200k on one
+ * plan and 1M on another with a byte-identical string. A previous version of
+ * this file divided by a hardcoded 200_000 and reported live agents at ~22%
+ * of a 1M window as 100% full; every decision downstream of that number was
+ * made against a fiction. So this reader reports the numerator only — the
+ * resident context in tokens, summed from the transcript — and the sweep
+ * (server.ts) divides by the window the statusline payload measured, or
+ * reports unknown when no window has ever been observed.
+ */
+export interface ClaudeContextTelemetry {
+  /** Resident context in tokens — the last non-sidechain assistant turn's
+   * usage sum (input + cache reads + cache writes + output), which is exactly
+   * the quantity Claude Code's own `context_window.current_usage` reports.
+   * Null when no such turn is visible: unknown, not empty. */
+  contextTokens: number | null;
+  /** ISO timestamp of the transcript's last write, or null when none exists. */
+  lastActivityAt: string | null;
+}
+
+export type ClaudeTelemetryReader = (
   worktreePath: string,
-  home?: string,
-): Promise<{ path: string; mtimeMs: number } | null> {
-  const directory = home === undefined
-    ? claudeProjectDirectory(worktreePath)
-    : claudeProjectDirectory(worktreePath, home);
-  let entries: string[];
-  try {
-    entries = await readdir(directory);
-  } catch {
-    return null;
-  }
-  let newest: { path: string; mtimeMs: number } | null = null;
-  for (const entry of entries) {
-    if (!entry.endsWith(".jsonl")) continue;
+  toolSessionId: string | undefined,
+) => Promise<ClaudeContextTelemetry>;
+
+const NO_CLAUDE_TELEMETRY: ClaudeContextTelemetry = {
+  contextTokens: null,
+  lastActivityAt: null,
+};
+
+/** The last non-sidechain assistant turn's usage sum in `tail`, or null.
+ * Scanned backwards: only the most recent turn describes the context that is
+ * resident *now*. Sidechain (subagent) turns report a different conversation's
+ * context and are skipped. */
+export function lastAssistantContextTokens(tail: string): number | null {
+  const lines = tail.split("\n");
+  for (let index = lines.length - 1; index >= 0; index--) {
+    const line = lines[index];
+    if (line === undefined || line.length === 0) continue;
+    let entry: unknown;
     try {
-      const path = join(directory, entry);
-      const info = await stat(path);
-      if (newest === null || info.mtimeMs > newest.mtimeMs) {
-        newest = { path, mtimeMs: info.mtimeMs };
-      }
+      entry = JSON.parse(line);
     } catch {
-      // A transcript deleted mid-scan is simply not a candidate.
+      // The tail may begin mid-line, and a partial write may end it.
+      continue;
     }
+    if (!isRecord(entry) || entry.type !== "assistant") continue;
+    if (entry.isSidechain === true) continue;
+    if (!isRecord(entry.message) || !isRecord(entry.message.usage)) continue;
+    const usage = entry.message.usage;
+    const total = asCount(usage.input_tokens) +
+      asCount(usage.cache_creation_input_tokens) +
+      asCount(usage.cache_read_input_tokens) +
+      asCount(usage.output_tokens);
+    if (total > 0) return total;
   }
-  return newest;
+  return null;
 }
 
 /**
- * Claude's liveness from its transcript — and deliberately NOT its occupancy.
- *
- * This function used to divide the transcript's token count by a hardcoded
- * 200_000, and the comment that justified the constant argued that a
- * larger-window model would merely read "conservatively high", erring toward
- * recycling early. Both halves were wrong.
- *
- * The window is wrong because it cannot be known from here. The transcript
- * records how many tokens a turn used but never the window they fill, and the
- * model id cannot supply it either: the 1M upgrade is a property of the
- * account's plan, so `claude-opus-4-8` is 200k on one plan and 1M on another
- * with a byte-identical string, and the CLI's `[1m]` marker never reaches the
- * transcript. There is no denominator in this file, only a plausible-looking
- * one.
- *
- * The reasoning is wrong because reading high is not the safe direction.
- * Recycling an agent is not free: it discards the context we paid to build and
- * re-pays, out of a quota pool that may be nearly exhausted, to rebuild it. The
- * bug that followed was not a rounding error. Live agents at ~22% of a 1M
- * window reported 100% full, and every decision downstream of that number was
- * made against a fiction — agents were respawned and re-briefed when they
- * should have been reused. A number the orchestrator acts on is never safe to
- * guess in either direction, and "unknown" is a better answer than a confident
- * wrong one, because a missing number stops a bad decision and a wrong number
- * causes one.
- *
- * So occupancy is not computed here at all any more. It is measured by Claude
- * Code, handed to `hive statusline` on every render, and travels the single
- * POST /statusline route onto the agent's row (cli/statusline.ts). This sweep
- * reports `contextPct: null` — unknown — and the transcript's only remaining
- * job is `lastActivityAt`. Codex is untouched below and needs no such
- * surgery: its rollout states `model_context_window` outright, which is the
- * same principle already working. Read what the tool measures; infer only what
- * nothing tells us.
+ * Read this agent's own `<toolSessionId>.jsonl`, never "the newest file in
+ * the directory". Worktrees are reused across respawns, so the project
+ * directory still holds every dead predecessor's transcript, and a fresh
+ * agent that has not spoken yet would otherwise inherit its predecessor's
+ * context reading. No session id means no hook traffic yet and nothing of
+ * this agent's own to read: unknown, not a neighbour's number.
  */
 export async function readClaudeTelemetry(
   worktreePath: string,
+  toolSessionId: string | undefined,
   home?: string,
-): Promise<ToolTelemetry> {
-  const transcript = await findLatestClaudeTranscript(worktreePath, home);
-  if (transcript === null) return NO_TELEMETRY;
-  return {
-    contextPct: null,
-    lastActivityAt: new Date(transcript.mtimeMs).toISOString(),
-  };
+): Promise<ClaudeContextTelemetry> {
+  if (toolSessionId === undefined) return NO_CLAUDE_TELEMETRY;
+  const directory = home === undefined
+    ? claudeProjectDirectory(worktreePath)
+    : claudeProjectDirectory(worktreePath, home);
+  const path = join(directory, `${toolSessionId}.jsonl`);
+  let mtimeMs: number;
+  try {
+    mtimeMs = (await stat(path)).mtimeMs;
+  } catch {
+    return NO_CLAUDE_TELEMETRY;
+  }
+  const lastActivityAt = new Date(mtimeMs).toISOString();
+  const tail = await readFileTail(path);
+  if (tail === null) return { contextTokens: null, lastActivityAt };
+  return { contextTokens: lastAssistantContextTokens(tail), lastActivityAt };
 }
 
 export async function readCodexTelemetry(

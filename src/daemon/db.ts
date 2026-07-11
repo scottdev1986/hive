@@ -73,6 +73,7 @@ const AgentDatabaseRowSchema = AgentRecordSchema.extend({
   executionIdentity: z.string().nullable(),
   terminalHandle: z.string().nullable(),
   toolSessionId: z.string().nullable(),
+  contextWindow: z.number().int().positive().nullable().default(null),
   recoveryAttempts: z.number().int().nonnegative().default(0),
   capabilityEpoch: z.number().int().nonnegative().default(0),
   writeRevoked: z.union([z.boolean(), z.number().int()]).default(0),
@@ -91,6 +92,7 @@ function parseAgentRow(row: unknown): AgentRecord {
     controlQuotaReservationId: value.controlQuotaReservationId ?? undefined,
     controlMessageId: value.controlMessageId ?? undefined,
     toolSessionId: value.toolSessionId ?? undefined,
+    contextWindow: value.contextWindow ?? undefined,
     executionIdentity: value.executionIdentity === null
       ? undefined
       : ExecutionIdentitySchema.parse(JSON.parse(value.executionIdentity)),
@@ -179,6 +181,8 @@ function agentsTableDdl(table: string, ifNotExists = false): string {
       -- Nullable on purpose: null is "not observed", which is a different fact
       -- from 0%, and 0% is the one that gets an agent overloaded.
       contextPct REAL,
+      -- The statusline-observed context window (tokens); null until observed.
+      contextWindow INTEGER,
       createdAt TEXT NOT NULL,
       lastEventAt TEXT NOT NULL,
       failureReason TEXT,
@@ -359,6 +363,9 @@ export class HiveDatabase {
     }
     if (!agentColumnNames.has("toolSessionId")) {
       this.database.exec("ALTER TABLE agents ADD COLUMN toolSessionId TEXT");
+    }
+    if (!agentColumnNames.has("contextWindow")) {
+      this.database.exec("ALTER TABLE agents ADD COLUMN contextWindow INTEGER");
     }
     if (!agentColumnNames.has("recoveryAttempts")) {
       this.database.exec(
@@ -627,9 +634,9 @@ export class HiveDatabase {
         worktreePath, branch, tmuxSession, terminalHandle, contextPct,
         createdAt, lastEventAt, failureReason, failedAt,
         quotaReservationId, controlQuotaReservationId, controlMessageId,
-        executionIdentity, toolSessionId, recoveryAttempts,
+        executionIdentity, toolSessionId, contextWindow, recoveryAttempts,
         capabilityEpoch, writeRevoked, channelsEnabled, closedAt
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         name = excluded.name,
         tool = excluded.tool,
@@ -652,6 +659,7 @@ export class HiveDatabase {
         controlMessageId = excluded.controlMessageId,
         executionIdentity = excluded.executionIdentity,
         toolSessionId = excluded.toolSessionId,
+        contextWindow = excluded.contextWindow,
         recoveryAttempts = excluded.recoveryAttempts,
         capabilityEpoch = excluded.capabilityEpoch,
         writeRevoked = excluded.writeRevoked,
@@ -684,6 +692,7 @@ export class HiveDatabase {
         ? null
         : JSON.stringify(value.executionIdentity),
       value.toolSessionId ?? null,
+      value.contextWindow ?? null,
       value.recoveryAttempts,
       value.capabilityEpoch,
       value.writeRevoked ? 1 : 0,

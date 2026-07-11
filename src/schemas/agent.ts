@@ -116,6 +116,13 @@ export const AgentRecordSchema = z.object({
    * and both must treat null as "not eligible", never as "plenty of room".
    */
   contextPct: z.number().min(0).max(100).nullable(),
+  // The context window Claude Code reported for this session via the
+  // statusLine payload's `context_window_size` — 200000, or 1000000 where the
+  // account's plan upgrades it. Absent until a statusline report has ever
+  // carried it. This is the measured denominator the telemetry sweep divides
+  // the transcript's token count by; it is never defaulted, because a guessed
+  // 200k once reported agents at ~22% of a 1M window as 100% full.
+  contextWindow: z.number().int().positive().optional(),
   createdAt: z.iso.datetime(),
   lastEventAt: z.iso.datetime(),
   capabilityEpoch: z.number().int().nonnegative().default(0),

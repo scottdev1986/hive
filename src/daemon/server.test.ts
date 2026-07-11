@@ -1386,7 +1386,10 @@ describe("HiveDaemon HTTP server", () => {
       tmux: new FakeDaemonTmux(),
       telemetryReaders: {
         claude: async () => ({
-          contextPct: 42,
+          // 420k tokens measured from the transcript. No statusline report
+          // has ever carried this row's window — but 420k tokens cannot fit
+          // a 200k window, so the window is provably the 1M one.
+          contextTokens: 420_000,
           lastActivityAt: "2026-07-09T12:05:00.000Z",
         }),
         codex: async () => ({
@@ -1409,13 +1412,12 @@ describe("HiveDaemon HTTP server", () => {
     try {
       await daemon.refreshToolTelemetry();
 
-      // Claude context% comes from statusline (POST /statusline), never from
-      // this sweep — readClaudeTelemetry can only ever report null, so the
-      // sweep leaves the row's contextPct exactly as it found it, even though
-      // the injected reader here returns 42. Status is still updated.
+      // Claude context% is measured tokens over a measured window. This row
+      // has no statusline-observed window, but 420k resident tokens are an
+      // existence proof of the 1M window: 420k / 1M = 42%.
       expect(db.getAgentByName("maya")).toMatchObject({
         status: "working",
-        contextPct: 14,
+        contextPct: 42,
       });
       // A fresh rollout is proof of codex life: the stuck spawning row
       // becomes working and its lastEventAt tracks the artifact.
@@ -2122,6 +2124,11 @@ describe("the model an agent is actually running", () => {
       // This is the one field the daemon never re-derives: Claude Code measured
       // it against the account's real window, so the report lands verbatim.
       expect(db.getAgentByName("maya")?.contextPct).toBe(28);
+      // And the window itself is persisted: it is the denominator the
+      // telemetry sweep divides the transcript's token count by, so one
+      // report that ever carried it keeps contextPct measurable even if the
+      // statusline goes quiet afterwards.
+      expect(db.getAgentByName("maya")?.contextWindow).toBe(1_000_000);
 
       // A second report with no context block at all — an API-key account, or a
       // render before the session's first response — must not erase the reading
@@ -2139,6 +2146,7 @@ describe("the model an agent is actually running", () => {
       );
       expect(followUp.status).toBe(200);
       expect(db.getAgentByName("maya")?.contextPct).toBe(28);
+      expect(db.getAgentByName("maya")?.contextWindow).toBe(1_000_000);
     } finally {
       await daemon.stop();
       db.close();
@@ -2309,12 +2317,11 @@ describe("an unobservable agent reads unknown, never 0", () => {
       spawner: new StubSpawner(),
       tmux: new FakeDaemonTmux(),
       telemetryReaders: {
-        // A reader that returns a plausible-looking number, to prove the sweep
-        // does not consult it at all for this tool: readClaudeTelemetry can
-        // structurally only ever report null (tool-telemetry.ts), and the sweep
-        // must not use "the reader said something" as license to touch the
-        // field it does not own for Claude.
-        claude: async () => ({ contextPct: 22, lastActivityAt: null }),
+        // 44k measured tokens, but no statusline report has ever carried this
+        // row's window and 44k fits either window — so occupancy is genuinely
+        // unknowable this tick, and the sweep must not divide by a guessed
+        // denominator or disturb the reading the statusline handler landed.
+        claude: async () => ({ contextTokens: 44_000, lastActivityAt: null }),
         // lucas, live: a Codex agent whose rollout carries no usable token count.
         // This is the real one — he did real work and Hive reported 0%.
         codex: async () => ({ contextPct: null, lastActivityAt: null }),
@@ -2338,11 +2345,10 @@ describe("an unobservable agent reads unknown, never 0", () => {
       tool: "claude",
       status: "working",
       // Stands in for a value the statusline handler already landed on this
-      // row. The sweep must leave it alone: for Claude, statusline is the sole
-      // source of truth (POST /statusline -> receiveStatusline), and a sweep
-      // that overwrote it every ~30s with this reader's null would make
-      // contextPct flicker false-unknown between renders — corrupting reuse
-      // decisions, since null marks an agent ineligible for reuse.
+      // row. With no measurable window this sweep has nothing better, and a
+      // sweep that overwrote it with null would make contextPct flicker
+      // false-unknown between renders — corrupting reuse decisions, since
+      // null marks an agent ineligible for reuse.
       contextPct: 55,
     }));
     try {
@@ -2357,9 +2363,47 @@ describe("an unobservable agent reads unknown, never 0", () => {
       expect(formatStatusTable([lucas])).toContain("—");
       expect(formatStatusTable([lucas])).not.toContain("0%");
 
-      // For Claude, the sweep is not a source of truth to record, only a
-      // stand-in for one that does not exist. It must not touch the row.
+      // For Claude, tokens without a window are not an occupancy. The sweep
+      // must not guess a denominator and must not touch the standing reading.
       expect(db.getAgentByName("maya")?.contextPct).toBe(55);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("a statusline-observed window lets the sweep track the transcript continuously", async () => {
+    const db = new HiveDatabase(join(home, "measured-window.db"));
+    // The transcript grows between sweeps, the way a live session's does.
+    let residentTokens = 90_000;
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new StubSpawner(),
+      tmux: new FakeDaemonTmux(),
+      telemetryReaders: {
+        claude: async () => ({
+          contextTokens: residentTokens,
+          lastActivityAt: null,
+        }),
+        codex: async () => ({ contextPct: null, lastActivityAt: null }),
+        liveModel: async () => null,
+      },
+    });
+    db.insertAgent(agent({
+      tool: "claude",
+      status: "working",
+      contextPct: null,
+      // One statusline report carried the account's real window; from then on
+      // the sweep alone keeps contextPct current, even if the statusline
+      // never posts again.
+      contextWindow: 1_000_000,
+    }));
+    try {
+      await daemon.refreshToolTelemetry();
+      expect(db.getAgentByName("maya")?.contextPct).toBe(9);
+
+      residentTokens = 230_000;
+      await daemon.refreshToolTelemetry();
+      expect(db.getAgentByName("maya")?.contextPct).toBe(23);
     } finally {
       db.close();
     }

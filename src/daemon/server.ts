@@ -72,6 +72,8 @@ import {
 } from "./delivery";
 import { CodexRootDelivery } from "./codex-root-delivery";
 import {
+  clampPct,
+  type ClaudeTelemetryReader,
   readClaudeTelemetry,
   readCodexTelemetry,
   type TelemetryReader,
@@ -357,7 +359,7 @@ export interface HiveDaemonOptions {
    * *running* out of its transcript, and returns null when there is nothing to
    * observe (see ./live-model). */
   telemetryReaders?: {
-    claude?: TelemetryReader;
+    claude?: ClaudeTelemetryReader;
     codex?: TelemetryReader;
     liveModel?: (
       worktreePath: string,
@@ -421,7 +423,7 @@ export class HiveDaemon {
   >;
   private readonly recovery: CrashRecovery;
   private readonly repoRoot: string;
-  private readonly readClaudeTelemetry: TelemetryReader;
+  private readonly readClaudeTelemetry: ClaudeTelemetryReader;
   private readonly readCodexTelemetry: TelemetryReader;
   private readonly readLiveModel: (
     worktreePath: string,
@@ -906,11 +908,15 @@ export class HiveDaemon {
       ) continue;
       const worktree = agent.worktreePath;
       if (worktree === null || worktree === undefined) continue;
-      let telemetry: ToolTelemetry;
+      let telemetry: ToolTelemetry | null = null;
+      let claudeContext: number | null = null;
       try {
-        telemetry = agent.tool === "claude"
-          ? await this.readClaudeTelemetry(worktree)
-          : await this.readCodexTelemetry(worktree);
+        if (agent.tool === "claude") {
+          claudeContext = (await this
+            .readClaudeTelemetry(worktree, agent.toolSessionId)).contextTokens;
+        } else {
+          telemetry = await this.readCodexTelemetry(worktree);
+        }
       } catch {
         continue;
       }
@@ -926,16 +932,29 @@ export class HiveDaemon {
       // number stood forever, and for an agent whose telemetry can never be
       // read, the number that stood forever was the 0 it was born with. Unknown
       // is a finding, not the absence of one, so it is recorded like any other.
-      //
-      // Except for Claude: readClaudeTelemetry structurally reports nothing but
-      // null forever (tool-telemetry.ts) because this sweep cannot know the
-      // real context window, only the statusline payload can. For that tool the
-      // sweep is not a source of truth to record, only a stand-in for one that
-      // does not exist — applying it here would overwrite the statusline
-      // handler's real reading with null on every tick, and a null contextPct
-      // marks an agent ineligible for reuse, so the flicker is not cosmetic.
-      if (current.tool !== "claude" && telemetry.contextPct !== current.contextPct) {
+      if (
+        current.tool !== "claude" && telemetry !== null &&
+        telemetry.contextPct !== current.contextPct
+      ) {
         updates.contextPct = telemetry.contextPct;
+      }
+      // Claude occupancy: the transcript's measured token count over a
+      // measured window — never a guessed denominator. The window is the one
+      // the statusline payload carried (contextWindow on the row); when no
+      // report has ever carried it, a token count that exceeds 200k is itself
+      // proof of the 1M window, because the API served a request no 200k
+      // window could hold. With neither, occupancy is unknown and the sweep
+      // writes nothing: unlike the codex branch above it never records null
+      // over a number, because the statusline handler's direct reading may be
+      // the only observation there is, and a null contextPct marks an agent
+      // ineligible for reuse, so the flicker would not be cosmetic.
+      if (current.tool === "claude" && claudeContext !== null) {
+        const window = current.contextWindow ??
+          (claudeContext > 200_000 ? 1_000_000 : undefined);
+        if (window !== undefined) {
+          const pct = clampPct((100 * claudeContext) / window);
+          if (pct !== current.contextPct) updates.contextPct = pct;
+        }
       }
       // The model the agent is *running*. The statusline handler observes this
       // too, but only for agents whose statusline reports actually arrive — which
@@ -950,7 +969,7 @@ export class HiveDaemon {
       if (
         current.tool === "codex" && !current.writeRevoked &&
         current.status !== "control-paused" &&
-        telemetry.lastActivityAt !== null &&
+        telemetry !== null && telemetry.lastActivityAt !== null &&
         telemetry.lastActivityAt > current.lastEventAt
       ) {
         updates.lastEventAt = telemetry.lastActivityAt;
@@ -1686,12 +1705,21 @@ export class HiveDaemon {
         { status: 404 },
       );
     }
-    // The one write this route exists for (tool-telemetry.ts): Claude's own
-    // occupancy figure, landed on the row exactly as measured. Nothing else
-    // ever supplies it for this tool — the transcript-tail heuristic was
-    // deliberately retired because the window it divided by was a guess.
-    if (parsed.data.contextUsedPct !== undefined) {
-      this.reconcileContextPct(agent.name, parsed.data.contextUsedPct);
+    // Claude's own occupancy figure, landed on the row exactly as measured —
+    // and the window it was measured against. The window is the fact the
+    // telemetry sweep cannot obtain anywhere else: once one report has ever
+    // carried it, the sweep can keep contextPct current from the transcript
+    // alone (tool-telemetry.ts), so a statusline that afterwards goes quiet
+    // no longer freezes the reading.
+    if (
+      parsed.data.contextUsedPct !== undefined ||
+      parsed.data.contextWindow !== undefined
+    ) {
+      this.reconcileContext(
+        agent.name,
+        parsed.data.contextUsedPct,
+        parsed.data.contextWindow,
+      );
     }
     // Bind this observation to the model the agent is *running*, not the one it
     // was spawned with. `agent.model` is a spawn-time intention that a `/model`
@@ -1736,17 +1764,31 @@ export class HiveDaemon {
    * report — the live model is the canonical id — so this leaked once per agent.
    */
   /**
-   * Land Claude Code's own occupancy figure onto the agent row.
+   * Land Claude Code's own occupancy figure and its measured context window
+   * onto the agent row.
    *
    * Re-reads before writing for the same reason `followReservationRekey`
    * does: the sweep and this handler both land on this row, and a stale
    * `agent` captured earlier in the request would clobber a concurrent
    * update instead of merging with it.
    */
-  private reconcileContextPct(name: string, contextUsedPct: number): void {
+  private reconcileContext(
+    name: string,
+    contextUsedPct: number | undefined,
+    contextWindow: number | undefined,
+  ): void {
     const current = this.db.getAgentByName(name);
-    if (current === null || current.contextPct === contextUsedPct) return;
-    this.db.upsertAgent({ ...current, contextPct: contextUsedPct });
+    if (current === null) return;
+    const updates: Partial<AgentRecord> = {};
+    if (contextUsedPct !== undefined && current.contextPct !== contextUsedPct) {
+      updates.contextPct = contextUsedPct;
+    }
+    if (contextWindow !== undefined && current.contextWindow !== contextWindow) {
+      updates.contextWindow = contextWindow;
+    }
+    if (Object.keys(updates).length > 0) {
+      this.db.upsertAgent({ ...current, ...updates });
+    }
   }
 
   private followReservationRekey(name: string): void {
