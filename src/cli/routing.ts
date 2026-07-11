@@ -1,6 +1,11 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { loadRoutingPins } from "../config/load";
+import { loadHiveConfig, loadRoutingPins } from "../config/load";
+import {
+  loadTrustedRoutingManifest,
+  type ManifestOrigin,
+  type TrustedRoutingManifest,
+} from "../config/routing-manifest";
 import {
   ClaudeCapabilityProbe,
   CodexCapabilityProbe,
@@ -9,7 +14,6 @@ import {
   deriveRouting,
   describeAge,
   defaultRoutingTable,
-  FIRST_ROUTING_MANIFEST,
   RoutingSnapshotSchema,
   snapshotOf,
   type DerivedCell,
@@ -111,9 +115,16 @@ function formatDiscovery(
     `unflagged launch → ${effective}`;
 }
 
+const ORIGIN_LABEL: Record<ManifestOrigin, string> = {
+  "installed": "installed/signed",
+  "built-in": "built-in",
+  "kill-switch": "KILL SWITCH",
+};
+
 export function formatDerivedRouting(
   derived: DerivedRouting,
   now: Date,
+  trusted: TrustedRoutingManifest,
 ): string {
   const lines: string[] = [
     "Derived routing — INERT. Live spawns still resolve through the shipped " +
@@ -122,9 +133,12 @@ export function formatDerivedRouting(
     "",
   ];
 
+  // The manifest's *trust* is the first thing printed, because every derived
+  // cell below is only as trustworthy as the document that proposed it.
+  lines.push(`  trust      ${ORIGIN_LABEL[trusted.origin]} — ${trusted.detail}`);
   lines.push(
     derived.manifest === null
-      ? "  manifest   none installed — every cell falls to the ladder"
+      ? "  manifest   none in force — every cell falls to the ladder"
       : `  manifest   ${derived.manifest.revision} (published ${derived.manifest.publishedAt}, ` +
         `valid until ${derived.manifest.validUntil}${
           derived.manifest.expired ? " — EXPIRED" : ""
@@ -146,28 +160,44 @@ export function formatDerivedRouting(
     lines.push(...formatCell(tier.claude), ...formatCell(tier.codex), "");
   }
 
-  if (derived.warnings.length > 0) {
+  // The trust warnings lead: a rejected manifest is the reason the rest of the
+  // table looks the way it does.
+  const warnings = [...trusted.warnings, ...derived.warnings];
+  if (warnings.length > 0) {
     lines.push("WARNINGS");
-    for (const warning of derived.warnings) lines.push(`  ! ${warning}`);
+    for (const warning of warnings) lines.push(`  ! ${warning}`);
   }
   return lines.join("\n");
 }
 
 export async function printRouting(): Promise<void> {
   const now = new Date();
+  const config = await loadHiveConfig();
+  const trusted = await loadTrustedRoutingManifest(config);
+  const killed = trusted.origin === "kill-switch";
+
+  // Under the kill switch nothing manifest-derived is consulted — and that
+  // includes the last-known-good snapshot, which was itself derived *from* a
+  // manifest. Replaying it would route on exactly the judgment the switch was
+  // thrown to disown. Discovery is not probed either: with no manifest and no
+  // snapshot, every cell falls to the shipped table, which is what the switch
+  // promises. The reason string says "not probed" rather than "unavailable",
+  // because we did not look, and reporting an act we skipped as a state we
+  // observed is the bug this repo keeps dying of.
+  const unprobed: ProviderDiscovery = {
+    status: "unavailable",
+    reason: "not probed — the routing manifest kill switch is engaged",
+  };
   const [pins, claude, codex, snapshot] = await Promise.all([
     loadRoutingPins(),
-    new ClaudeCapabilityProbe().read(),
-    new CodexCapabilityProbe().read(),
-    readSnapshot(),
+    killed ? unprobed : new ClaudeCapabilityProbe().read(),
+    killed ? unprobed : new CodexCapabilityProbe().read(),
+    killed ? null : readSnapshot(),
   ]);
 
   const derived = deriveRouting({
-    // The shipped manifest. There is no signed manifest pipeline yet, so there
-    // is nothing else to read: an unsigned manifest installed from disk is the
-    // trust hole the pipeline exists to close, and this surface will not open it
-    // early for its own convenience.
-    manifest: FIRST_ROUTING_MANIFEST,
+    manifest: trusted.manifest,
+    manifestAbsentReason: trusted.detail,
     discovery: { claude, codex },
     pins,
     snapshot,
@@ -175,13 +205,14 @@ export async function printRouting(): Promise<void> {
     now,
   });
 
-  console.log(formatDerivedRouting(derived, now));
+  console.log(formatDerivedRouting(derived, now, trusted));
 
   // Feed the next run's first ladder rung. Only cells this run actually derived
   // are recorded, and cells it could not derive keep what the last healthy run
   // learned (`snapshotOf`), so neither a pin, nor a compiled-in guess, nor a
   // provider outage can rewrite the engine's memory of what it once derived.
-  const next = snapshotOf(derived, snapshot);
+  // A killed run derives nothing, so it writes nothing.
+  const next = killed ? null : snapshotOf(derived, snapshot);
   if (next !== null) {
     await Bun.write(snapshotPath(), `${JSON.stringify(next, null, 2)}\n`);
   }

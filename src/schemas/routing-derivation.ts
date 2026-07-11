@@ -160,6 +160,13 @@ export type ProviderDiscovery =
 export interface DerivationInput {
   /** No manifest at all is a real state: every cell then falls to the ladder. */
   manifest: RoutingManifest | null;
+  /**
+   * Why there is no manifest, in the words the warnings print. A manifest that
+   * was *rejected* and one that was *killed* are different facts, and a warning
+   * that says "none is installed" when one is installed and disabled describes a
+   * machine the reader does not have.
+   */
+  manifestAbsentReason?: string;
   discovery: Record<CapabilityProvider, ProviderDiscovery>;
   pins: RoutingPins;
   snapshot: RoutingSnapshot | null;
@@ -315,7 +322,7 @@ function shippedWarning(
   input: DerivationInput,
 ): string {
   const why = input.manifest === null
-    ? "no manifest is installed"
+    ? input.manifestAbsentReason ?? "no manifest is installed"
     : manifestExpired(input)
     ? `manifest ${input.manifest.revision} expired at ${input.manifest.validUntil}`
     : "the manifest ∩ discovery intersection is empty";

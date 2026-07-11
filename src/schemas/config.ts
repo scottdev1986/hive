@@ -41,6 +41,15 @@ export const HiveConfigSchema = z.strictObject({
   // workspace-write + on-request). The read-only orchestrator and read-only
   // control restarts are unaffected by either value.
   autonomy: z.enum(["dangerous", "sandboxed"]).default("dangerous"),
+  // The routing manifest's kill switch. "auto" lets a *verified* installed
+  // manifest supply the candidate lists, falling back to the built-in one when
+  // none is installed or one fails to verify. "off" reverts routing to the
+  // shipped table entirely — no manifest, and nothing derived from one.
+  //
+  // It exists because the day the manifest is wrong is the day the user has no
+  // patience for editing pins tier by tier, and it is one flag rather than a
+  // per-tier retreat for exactly that reason.
+  routingManifest: z.enum(["auto", "off"]).default("auto"),
   resources: ResourceLimitsSchema.prefault({}),
   lifecycle: LifecycleConfigSchema.prefault({}),
 });

@@ -49,6 +49,7 @@ describe("config loading", () => {
       codex: { driver: "tui" },
       channels: "auto",
       autonomy: "dangerous",
+      routingManifest: "auto",
       resources: {
         enabled: true,
         perProcessMemoryMb: 12_288,
@@ -152,6 +153,7 @@ describe("config loading", () => {
       codex: { driver: "app-server" },
       channels: "auto",
       autonomy: "dangerous",
+      routingManifest: "auto",
       resources: {
         enabled: true,
         perProcessMemoryMb: 12_288,

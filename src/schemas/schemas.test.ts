@@ -31,6 +31,7 @@ describe("HiveConfigSchema", () => {
       codex: { driver: "tui" },
       channels: "auto",
       autonomy: "dangerous",
+      routingManifest: "auto",
       resources: {
         enabled: true,
         perProcessMemoryMb: 12_288,

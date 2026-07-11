@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { formatDerivedRouting } from "./routing";
+import type { TrustedRoutingManifest } from "../config/routing-manifest";
 import { known, unknown } from "../schemas/capability";
 import {
   deriveRouting,
@@ -39,6 +40,13 @@ const CODEX_UP: ProviderDiscovery = {
   },
 };
 
+const BUILT_IN: TrustedRoutingManifest = {
+  manifest: FIRST_ROUTING_MANIFEST,
+  origin: "built-in",
+  detail: "no manifest installed; using the compiled-in manifest",
+  warnings: [],
+};
+
 describe("the routing surface prints only what it derived", () => {
   const rendered = (discovery: Record<"claude" | "codex", ProviderDiscovery>) =>
     formatDerivedRouting(
@@ -51,6 +59,7 @@ describe("the routing surface prints only what it derived", () => {
         now: NOW,
       }),
       NOW,
+      BUILT_IN,
     );
 
   test("a value no layer could author prints as unknown, never as a guess", () => {
