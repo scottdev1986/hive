@@ -1,4 +1,3 @@
-import { readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildMemoryIndex } from "../adapters/memory";
@@ -12,10 +11,8 @@ import {
   writeClaudeAgentConfig,
 } from "../adapters/tools/claude";
 import { CHANNELS_MIN_VERSION, versionAtLeast } from "../daemon/channels";
-import {
-  writeCodexAgentConfig,
-} from "../adapters/tools/codex";
 import { writeCredential } from "../daemon/credentials";
+import { getHiveHome } from "../daemon/db";
 import { operatorHeaders } from "./credential";
 import { orchestratorTmuxSession } from "../daemon/orchestrator-lifecycle";
 import { hiveInstanceSuffix } from "../daemon/tmux-sessions";
@@ -72,28 +69,6 @@ export function buildCodexRootAuthorityCommand(
   ];
 }
 
-const isMissingFileError = (error: unknown): boolean =>
-  typeof error === "object" &&
-  error !== null &&
-  "code" in error &&
-  error.code === "ENOENT";
-
-async function readExisting(path: string): Promise<string | null> {
-  try {
-    return await readFile(path, "utf8");
-  } catch (error) {
-    if (isMissingFileError(error)) {
-      return null;
-    }
-    throw error;
-  }
-}
-
-interface FileSnapshot {
-  path: string;
-  contents: string | null;
-}
-
 type OrchestratorSpawn = (
   command: string[],
   options: {
@@ -130,43 +105,8 @@ export async function prepareFreshOrchestratorSession(
   await tmux.killSession(session, { ignoreMissing: true });
 }
 
-async function snapshotFile(path: string): Promise<FileSnapshot> {
-  return { path, contents: await readExisting(path) };
-}
-
-async function restoreFile(snapshot: FileSnapshot): Promise<void> {
-  if (snapshot.contents === null) {
-    await rm(snapshot.path, { force: true });
-    return;
-  }
-  await writeFile(snapshot.path, snapshot.contents);
-}
-
-function claudeConfigPaths(cwd: string): string[] {
-  return [
-    join(cwd, ".claude", "settings.local.json"),
-    join(cwd, ".mcp.json"),
-  ];
-}
-
-async function prepareCodexConfig(cwd: string, port: number): Promise<void> {
-  const configPath = join(cwd, ".codex", "config.toml");
-  const existingConfig = await readExisting(configPath);
-  // No secret ever enters .codex/config.toml: the root's capability travels as
-  // a single-use token FILE whose path rides the -c flag (see
-  // provisionCodexRootToken). A pre-existing config is therefore safe to
-  // restore immediately — the write only exists for the notify script.
-  try {
-    await writeCodexAgentConfig(cwd, {
-      daemonPort: port,
-      name: "orchestrator",
-      readOnly: true,
-    });
-  } finally {
-    if (existingConfig !== null) {
-      await writeFile(configPath, existingConfig);
-    }
-  }
+export function orchestratorConfigRoot(): string {
+  return join(getHiveHome(), "runtime", "orchestrator");
 }
 
 /** The credential-store subject holding the single-use Codex root token. */
@@ -210,18 +150,16 @@ export async function provisionCodexRootToken(
 export async function prepareOrchestratorConfig(
   tool: OrchestratorTool,
   port: number,
-  cwd: string,
+  _cwd: string,
 ): Promise<void> {
   if (tool === "claude") {
-    await writeClaudeAgentConfig(cwd, {
+    await writeClaudeAgentConfig(orchestratorConfigRoot(), {
       daemonPort: port,
       name: "orchestrator",
       readOnly: true,
       channels: true,
     });
-    return;
   }
-  await prepareCodexConfig(cwd, port);
 }
 
 /** Load the repo profile and format the orchestrator's repo-specific doc
@@ -248,6 +186,7 @@ export function buildOrchestratorCommand(
     .filter((part) => part !== "")
     .join("\n\n");
   if (tool === "claude") {
+    const configRoot = orchestratorConfigRoot();
     return [
       ...buildClaudeSpawnCommand({
         name: "orchestrator",
@@ -257,6 +196,8 @@ export function buildOrchestratorCommand(
         readOnly: true,
         channels: true,
         executable,
+        scopedSettingsPath: join(configRoot, ".claude", "settings.local.json"),
+        scopedMcpConfigPath: join(configRoot, ".mcp.json"),
         appendSystemPrompt: brief,
       }),
     ];
@@ -437,10 +378,6 @@ export async function launchOrchestrator(
       );
     }
   }
-  const snapshots = tool === "claude"
-    ? await Promise.all(claudeConfigPaths(cwd).map(snapshotFile))
-    : [];
-
   let registeredTerminal = false;
   try {
     const handle = await captureTerminal();
@@ -508,7 +445,6 @@ export async function launchOrchestrator(
     );
     return await child.exited;
   } finally {
-    await Promise.all(snapshots.map(restoreFile));
     if (registeredTerminal) {
       await unregisterOrchestratorTerminal(port).catch(() => undefined);
     }

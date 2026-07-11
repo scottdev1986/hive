@@ -42,6 +42,9 @@ export interface ClaudeSpawnOptions {
    * configured for the human's interactive sessions. Absent means today's
    * inherit-everything behavior. */
   scopedMcpConfigPath?: string;
+  /** Hive-owned settings file for a launch that must not read project or local
+   * settings from its cwd. User settings still apply. */
+  scopedSettingsPath?: string;
   /** Additional system instructions for this session. Emitted before the
    * Channels `--` terminator, which makes every following argument positional. */
   appendSystemPrompt?: string;
@@ -238,6 +241,14 @@ export function buildClaudeSpawnCommand(
   }
   if (options.readOnly) {
     command.push("--permission-mode", "default");
+  }
+  if (options.scopedSettingsPath !== undefined) {
+    command.push(
+      "--settings",
+      options.scopedSettingsPath,
+      "--setting-sources",
+      "user",
+    );
   }
   if (options.scopedMcpConfigPath !== undefined) {
     // `--mcp-config <configs...>` is variadic in Claude 2.1.206, so the

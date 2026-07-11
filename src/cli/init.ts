@@ -42,6 +42,7 @@ import {
 } from "../adapters/skills";
 import type { RepoProfile } from "../schemas/profile";
 import { projectRootOrCwd } from "./project-root";
+import { repairLeakedProjectConfig } from "./project-config-cleanup";
 
 /** The vendors Hive installs skills for, and the command whose presence on PATH
  * means the user actually has that CLI. Hive does not create a `.claude/` for
@@ -377,7 +378,12 @@ export async function runInitCli(options: {
   seedFacts?: string;
   force?: boolean;
 }): Promise<void> {
-  const result = await runInitProfile(options.cwd ?? projectRootOrCwd(), options);
+  const root = options.cwd ?? projectRootOrCwd();
+  const repaired = await repairLeakedProjectConfig(root);
+  if (repaired.length > 0) {
+    console.log(`Removed stale Hive runtime config: ${repaired.join(", ")}`);
+  }
+  const result = await runInitProfile(root, options);
   for (const line of result.messages) console.log(line);
 }
 

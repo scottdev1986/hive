@@ -27,6 +27,7 @@ import { isRunning } from "../daemon/lifecycle";
 import { liveAgentNames } from "./update";
 import { ensureProfile } from "../adapters/profile";
 import type { UpdateCheck } from "../update/check";
+import { repairLeakedProjectConfig } from "./project-config-cleanup";
 
 export interface StartDeps {
   readonly checkUpdate?: () => Promise<UpdateCheck>;
@@ -36,6 +37,7 @@ export interface StartDeps {
    * `ensureDaemonForBuild` and `ensureStarted`. */
   readonly ensureDaemon?: (cwd: string) => Promise<void>;
   readonly ensurePort?: () => Promise<number>;
+  readonly repairProjectConfig?: (cwd: string) => Promise<unknown>;
 }
 
 /** Resolve the staged-but-not-active version, so the notice can say so. */
@@ -117,6 +119,7 @@ export async function startSession(deps: StartDeps = {}): Promise<StartedSession
     // A broken update check must never stop a project from starting.
   });
   const cwd = deps.cwd ?? process.cwd();
+  await (deps.repairProjectConfig ?? repairLeakedProjectConfig)(cwd);
   await ensureProfile(cwd).catch(() => {
     // Profiling is best-effort: a repo starts even if its profile cannot be
     // written or read, just with poorer briefs.

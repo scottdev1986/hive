@@ -109,6 +109,21 @@ describe("Claude adapter", () => {
       ]);
     });
 
+    test("loads Hive settings without reading project or local settings", () => {
+      expect(buildClaudeSpawnCommand({
+        ...base,
+        scopedSettingsPath: "/home/user/.hive/runtime/orchestrator/settings.json",
+      })).toEqual([
+        "claude",
+        "--model",
+        "sonnet",
+        "--settings",
+        "/home/user/.hive/runtime/orchestrator/settings.json",
+        "--setting-sources",
+        "user",
+      ]);
+    });
+
     // `--mcp-config <configs...>` is variadic: the non-variadic
     // `--strict-mcp-config` must follow it, or the flag list swallows whatever
     // argv holds next — including Hive's positional task prompt.
@@ -157,6 +172,8 @@ describe("Claude adapter", () => {
       const command = buildClaudeSpawnCommand(base);
       expect(command).not.toContain("--strict-mcp-config");
       expect(command).not.toContain("--mcp-config");
+      expect(command).not.toContain("--setting-sources");
+      expect(command).not.toContain("--settings");
     });
 
     test("a resumed session keeps the same scoped surface", () => {

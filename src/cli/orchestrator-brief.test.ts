@@ -11,6 +11,7 @@ import {
   buildCodexRootAuthorityCommand,
   CODEX_ROOT_TOKEN_SUBJECT,
   launchOrchestrator,
+  orchestratorConfigRoot,
   prepareFreshOrchestratorSession,
   prepareOrchestratorConfig,
   provisionCodexRootToken,
@@ -256,7 +257,7 @@ describe("orchestrator brief", () => {
     });
   });
 
-  test("preserves an existing Codex project config while preparing MCP overrides", async () => {
+  test("does not write Codex runtime config into the project", async () => {
     const root = await mkdtemp(join(tmpdir(), "hive-orchestrator-"));
     const codexDirectory = join(root, ".codex");
     const existing = '[features]\ncustom = true\n';
@@ -267,10 +268,7 @@ describe("orchestrator brief", () => {
 
       expect(await readFile(join(codexDirectory, "config.toml"), "utf8"))
         .toEqual(existing);
-      expect(await readFile(
-        join(codexDirectory, "hive-notify.sh"),
-        "utf8",
-      )).toContain("hive event turn-end");
+      expect(existsSync(join(codexDirectory, "hive-notify.sh"))).toBe(false);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -330,17 +328,11 @@ describe("orchestrator brief", () => {
         .not.toContain("capability_token_file");
     });
 
-    test("a freshly written .codex/config.toml carries no secret", async () => {
+    test("does not create a project .codex/config.toml", async () => {
       const root = await mkdtemp(join(tmpdir(), "hive-orchestrator-codex-"));
       try {
         await prepareOrchestratorConfig("codex", 4317, root);
-        const written = await readFile(
-          join(root, ".codex", "config.toml"),
-          "utf8",
-        );
-        expect(written).toContain("mcp_servers.hive");
-        expect(written).not.toContain("Authorization");
-        expect(written).not.toContain("Bearer");
+        expect(existsSync(join(root, ".codex", "config.toml"))).toBe(false);
       } finally {
         await rm(root, { recursive: true, force: true });
       }
@@ -362,13 +354,16 @@ describe("orchestrator brief", () => {
     });
   });
 
-  test("restores existing Claude project config after the process exits", async () => {
+  test("keeps Claude runtime config under HIVE_HOME and never changes the project", async () => {
     const root = await mkdtemp(join(tmpdir(), "hive-orchestrator-"));
+    const home = await mkdtemp(join(tmpdir(), "hive-orchestrator-home-"));
+    const previousHome = process.env.HIVE_HOME;
     const settingsPath = join(root, ".claude", "settings.local.json");
     const mcpPath = join(root, ".mcp.json");
     const existingSettings = '{"customSetting":true}\n';
     const existingMcp = '{"mcpServers":{"custom":{"command":"custom"}}}\n';
     try {
+      process.env.HIVE_HOME = home;
       await mkdir(join(root, ".claude"), { recursive: true });
       await writeFile(settingsPath, existingSettings);
       await writeFile(mcpPath, existingMcp);
@@ -378,12 +373,14 @@ describe("orchestrator brief", () => {
         4317,
         root,
         () => {
-          expect(readFileSync(settingsPath, "utf8")).toContain(
+          expect(readFileSync(join(orchestratorConfigRoot(), ".claude", "settings.local.json"), "utf8")).toContain(
             "enableAllProjectMcpServers",
           );
-          expect(readFileSync(mcpPath, "utf8")).toContain(
+          expect(readFileSync(join(orchestratorConfigRoot(), ".mcp.json"), "utf8")).toContain(
             "http://127.0.0.1:4317/mcp",
           );
+          expect(readFileSync(settingsPath, "utf8")).toEqual(existingSettings);
+          expect(readFileSync(mcpPath, "utf8")).toEqual(existingMcp);
           return { exited: Promise.resolve(17) };
         },
         async () => null,
@@ -396,7 +393,10 @@ describe("orchestrator brief", () => {
       expect(await readFile(settingsPath, "utf8")).toEqual(existingSettings);
       expect(await readFile(mcpPath, "utf8")).toEqual(existingMcp);
     } finally {
+      if (previousHome === undefined) delete process.env.HIVE_HOME;
+      else process.env.HIVE_HOME = previousHome;
       await rm(root, { recursive: true, force: true });
+      await rm(home, { recursive: true, force: true });
     }
   });
 
