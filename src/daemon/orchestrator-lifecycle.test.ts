@@ -147,6 +147,76 @@ describe("event-driven orchestrator lifecycle", () => {
     }
   });
 
+  test("an agent message reaches a codex root through the root protocol", async () => {
+    const db = new HiveDatabase(join(home, "codex-root-wake.db"));
+    const sender = new RecordingSender();
+    const rootProtocol = {
+      live: true,
+      calls: [] as string[],
+      isLive(): boolean {
+        return this.live;
+      },
+      async deliverMessage(content: string): Promise<boolean> {
+        this.calls.push(content);
+        return true;
+      },
+    };
+    const delivery = new MessageDelivery(
+      db,
+      sender,
+      undefined,
+      undefined,
+      undefined,
+      rootProtocol,
+    );
+    try {
+      const message = await delivery.send(
+        "maya",
+        ORCHESTRATOR_NAME,
+        "Codex root, the fix has landed.",
+      );
+
+      expect(message.state).toEqual("injected");
+      expect(sender.calls).toEqual([]);
+      expect(rootProtocol.calls).toHaveLength(1);
+      expect(rootProtocol.calls[0]).toContain('"from":"maya"');
+    } finally {
+      db.close();
+    }
+  });
+
+  test("an unconfirmed root-protocol wake falls through to the Claude channel", async () => {
+    const db = new HiveDatabase(join(home, "root-protocol-fallthrough.db"));
+    const sender = new RecordingSender();
+    const channel = new RecordingChannel();
+    // A stale codex root socket: isLive says yes, delivery cannot confirm.
+    const rootProtocol = {
+      isLive: () => true,
+      deliverMessage: async () => false,
+    };
+    const delivery = new MessageDelivery(
+      db,
+      sender,
+      undefined,
+      undefined,
+      channel,
+      rootProtocol,
+    );
+    try {
+      const message = await delivery.send(
+        "maya",
+        ORCHESTRATOR_NAME,
+        "Report for whichever root is real.",
+      );
+
+      expect(message.state).toEqual("injected");
+      expect(channel.calls).toHaveLength(1);
+      expect(sender.calls).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
+
   test("keeps a root report durable until its verified channel is live", async () => {
     const db = new HiveDatabase(join(home, "root-channel-unavailable.db"));
     const sender = new RecordingSender();

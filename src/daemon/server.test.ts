@@ -1333,6 +1333,54 @@ describe("HiveDaemon HTTP server", () => {
     }
   });
 
+  test("the telemetry sweep updates context% and revives a notify-blind codex agent", async () => {
+    const db = new HiveDatabase(join(home, "telemetry-sweep.db"));
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new StubSpawner(),
+      tmux: new FakeDaemonTmux(),
+      telemetryReaders: {
+        claude: async () => ({
+          contextPct: 42,
+          lastActivityAt: "2026-07-09T12:05:00.000Z",
+        }),
+        codex: async () => ({
+          contextPct: 17,
+          lastActivityAt: "2026-07-09T12:06:00.000Z",
+        }),
+      },
+    });
+    db.insertAgent(agent({ status: "working", tool: "claude", model: "sonnet" }));
+    db.insertAgent(agent({
+      id: "agent-priya",
+      name: "priya",
+      tool: "codex",
+      // The field failure: notify never landed a single event, so the row
+      // froze at "spawning" while the agent worked, landed, and reported.
+      status: "spawning",
+      tmuxSession: "hive-priya",
+      worktreePath: "/tmp/hive-priya",
+    }));
+    try {
+      await daemon.refreshToolTelemetry();
+
+      // Claude context% comes from the transcript sensor; status untouched.
+      expect(db.getAgentByName("maya")).toMatchObject({
+        status: "working",
+        contextPct: 42,
+      });
+      // A fresh rollout is proof of codex life: the stuck spawning row
+      // becomes working and its lastEventAt tracks the artifact.
+      expect(db.getAgentByName("priya")).toMatchObject({
+        status: "working",
+        contextPct: 17,
+        lastEventAt: "2026-07-09T12:06:00.000Z",
+      });
+    } finally {
+      db.close();
+    }
+  });
+
   test("reconciliation handles stuck agents as live", async () => {
     const db = new HiveDatabase(join(home, "reconcile-stuck.db"));
     const tmux = new FakeDaemonTmux();

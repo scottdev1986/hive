@@ -135,10 +135,19 @@ export function codexSessionsDirectory(home = homedir()): string {
 // whose cwd is the agent's worktree is the session to resume.
 const ROLLOUT_SCAN_LIMIT = 100;
 
-export async function findLatestCodexSessionId(
+export interface CodexRolloutLocation {
+  path: string;
+  sessionId: string;
+  mtimeMs: number;
+}
+
+// The newest rollout recorded for a worktree — the shared discovery for
+// crash-recovery resume (session id) and the daemon's rollout telemetry
+// sensor (file path and freshness).
+export async function findLatestCodexRollout(
   worktreePath: string,
   home = homedir(),
-): Promise<string | null> {
+): Promise<CodexRolloutLocation | null> {
   const target = resolve(worktreePath);
   const rollouts: { path: string; mtimeMs: number }[] = [];
   const pending = [codexSessionsDirectory(home)];
@@ -167,10 +176,17 @@ export async function findLatestCodexSessionId(
   for (const rollout of rollouts.slice(0, ROLLOUT_SCAN_LIMIT)) {
     const meta = await readRolloutSessionMeta(rollout.path);
     if (meta !== null && meta.cwd === target) {
-      return meta.sessionId;
+      return { path: rollout.path, sessionId: meta.sessionId, mtimeMs: rollout.mtimeMs };
     }
   }
   return null;
+}
+
+export async function findLatestCodexSessionId(
+  worktreePath: string,
+  home = homedir(),
+): Promise<string | null> {
+  return (await findLatestCodexRollout(worktreePath, home))?.sessionId ?? null;
 }
 
 async function readRolloutSessionMeta(

@@ -483,6 +483,11 @@ export async function writeClaudeAgentConfig(
         : { UserPromptSubmit: hook(eventCommand("turn-start")) }),
       Stop: hook(eventCommand("turn-end")),
       Notification: hook(eventCommand("notification")),
+      // The mid-turn safe boundary for urgent injection (SPEC decision 1):
+      // without it a busy agent's queued urgent controls wait for the end of
+      // a possibly hour-long turn. The daemon treats it as a delivery tick,
+      // never a status change or an events-table row.
+      PostToolUse: hook(eventCommand("tool-boundary")),
     },
     // The statusLine JSON carries the subscriber's five-hour/weekly usage;
     // the command forwards it to the daemon as semi-official quota telemetry.

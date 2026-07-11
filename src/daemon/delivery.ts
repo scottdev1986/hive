@@ -344,6 +344,56 @@ export class MessageDelivery {
     });
   }
 
+  /**
+   * Deliver queued urgent messages to a busy agent at a tool boundary.
+   *
+   * SPEC decision 1: urgent traffic injects at the nearest safe lifecycle
+   * boundary rather than waiting for the turn to end — a deep agent's turn
+   * can run for an hour, which is exactly how two urgent controls blew their
+   * acknowledgement deadlines in the field. Between tool calls the TUI's
+   * composer queues a paste as a steer message the model sees at its next
+   * step, so this skips the idle gate that ordinary traffic honours. Normal
+   * messages still wait for the turn boundary; critical ones have their own
+   * revoke-and-restart machinery and are never pasted.
+   */
+  async flushUrgent(agentName: string): Promise<AgentMessage[]> {
+    const recipient = this.db.getAgentByName(agentName);
+    if (!this.isDeliverable(recipient)) return [];
+    const queuedUrgent = this.db.getUndeliveredMessages(agentName)
+      .filter((message) => message.priority === "urgent");
+    if (queuedUrgent.length === 0) return [];
+    return this.withSessionLock(recipient.tmuxSession, async () => {
+      const currentRecipient = this.db.getAgentByName(agentName);
+      if (!this.isDeliverable(currentRecipient)) return [];
+      const delivered: AgentMessage[] = [];
+      for (const queued of queuedUrgent) {
+        try {
+          const message = this.db.getMessage(queued.id);
+          if (message === null || message.deliveredAt !== null) continue;
+          if (this.nativeControl?.hasAgent(currentRecipient.name)) {
+            delivered.push(await this.deliverNative(message, currentRecipient));
+            continue;
+          }
+          const viaChannel = await this.deliverViaChannel(message);
+          if (viaChannel !== null) {
+            delivered.push(viaChannel);
+            continue;
+          }
+          delivered.push(
+            await this.deliver(message, currentRecipient.tmuxSession),
+          );
+        } catch (error) {
+          console.error(
+            `Hive failed to inject urgent message ${queued.id} to ${agentName} at a tool boundary: ${
+              error instanceof Error ? error.message : "unknown error"
+            }`,
+          );
+        }
+      }
+      return delivered;
+    });
+  }
+
   async inbox(agentName: string): Promise<AgentMessage[]> {
     // The pull path must hold the same per-session lane as every push path
     // (send/flushQueued/deliver): a push that has read a row as undelivered
@@ -402,10 +452,14 @@ export class MessageDelivery {
         formatOrchestratorWake(createOrchestratorEnvelope(message)),
         { sender: message.from, message_id: message.id, sequence: String(message.sequence) },
       ).catch(() => false);
-      if (!confirmed) return null;
-      const now = new Date().toISOString();
-      this.db.markMessageDelivered(message.id, now);
-      return this.db.transitionMessage(message.id, "injected", now)!;
+      // Unconfirmed falls through to the Claude Channels path rather than
+      // giving up: a stale codex root socket (dead app-server, file left in
+      // /tmp) must not cost a Claude root its wake.
+      if (confirmed) {
+        const now = new Date().toISOString();
+        this.db.markMessageDelivered(message.id, now);
+        return this.db.transitionMessage(message.id, "injected", now)!;
+      }
     }
     if (this.channels === undefined || !this.channels.isLive(ORCHESTRATOR_NAME)) {
       return null;

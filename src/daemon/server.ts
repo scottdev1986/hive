@@ -65,8 +65,16 @@ import { MemoryIndex } from "./memory-index";
 import {
   BunTmuxSender,
   MessageDelivery,
+  type RootProtocolDeliverer,
   type TmuxSender,
 } from "./delivery";
+import { CodexRootDelivery } from "./codex-root-delivery";
+import {
+  readClaudeTelemetry,
+  readCodexTelemetry,
+  type TelemetryReader,
+  type ToolTelemetry,
+} from "./tool-telemetry";
 import {
   cleanupLifecycleFiles,
   readConfiguredPort,
@@ -375,6 +383,15 @@ export interface HiveDaemonOptions {
    * attached; an embedded daemon gets its own inert instance. */
   workspacePresence?: WorkspacePresence;
   quota?: QuotaService;
+  /** Root wake transport override for tests; defaults to the lazy Codex
+   * root app-server deliverer, inert when no codex root socket exists. */
+  rootProtocol?: RootProtocolDeliverer;
+  /** Context/activity artifact readers, injectable for tests; default to the
+   * real transcript and rollout sensors. */
+  telemetryReaders?: {
+    claude?: TelemetryReader;
+    codex?: TelemetryReader;
+  };
   codexControl?: Pick<
     CodexAppServerManager,
     | "hasAgent"
@@ -429,6 +446,8 @@ export class HiveDaemon {
   >;
   private readonly recovery: CrashRecovery;
   private readonly repoRoot: string;
+  private readonly readClaudeTelemetry: TelemetryReader;
+  private readonly readCodexTelemetry: TelemetryReader;
   private readonly handshake: () => ReturnType<typeof expectedDaemonHandshake>;
   private readonly cleanupWorktree: typeof removeWorktree;
   private readonly assessStranded: NonNullable<
@@ -512,6 +531,13 @@ export class HiveDaemon {
       },
       this.codexControl,
       this.channels,
+      // The Codex root wake path (SPEC decision 1): dual-client steering into
+      // the root's own app-server. Inert on a Claude-root machine — its
+      // socket never exists — and an unconfirmed delivery falls through to
+      // Claude Channels inside deliverRootViaChannel. Reads this.repoRoot
+      // lazily; it is assigned a few lines below.
+      options.rootProtocol ??
+        new CodexRootDelivery(() => this.repoRoot),
     );
     this.quota?.setAlertSink(async (body) => {
       await this.delivery.send("hive-quota", ORCHESTRATOR_NAME, body);
@@ -531,6 +557,10 @@ export class HiveDaemon {
       ? defaultOrphanDependencies()
       : options.resourceRunners.orphans;
     this.repoRoot = options.repoRoot ?? process.cwd();
+    this.readClaudeTelemetry = options.telemetryReaders?.claude ??
+      readClaudeTelemetry;
+    this.readCodexTelemetry = options.telemetryReaders?.codex ??
+      readCodexTelemetry;
     this.handshake = () => expectedDaemonHandshake(this.repoRoot);
     this.cleanupWorktree = options.removeWorktree ?? removeWorktree;
     this.assessStranded = options.assessStrandedWork ?? assessStrandedWork;
@@ -815,10 +845,70 @@ export class HiveDaemon {
       // the composer is empty, so no report silently rots.
       await this.delivery.wakeOrchestrator();
       await this.reconcileAgents();
+      await this.refreshToolTelemetry().catch((error) => {
+        console.error(
+          `Hive tool telemetry sweep failed: ${
+            error instanceof Error ? error.message : "unknown error"
+          }`,
+        );
+      });
       await this.sweepResources();
       this.db.pruneHistory(new Date().toISOString());
     } finally {
       this.maintenanceRunning = false;
+    }
+  }
+
+  /**
+   * Pull each live agent's context% and artifact freshness from its tool's
+   * durable files (SPEC decision 2): Claude transcripts and Codex rollouts.
+   * Hook traffic carries neither, so this sweep is what keeps the status
+   * table's context column true. For a Codex TUI agent the rollout mtime is
+   * also the only mid-turn liveness signal — a fresh rollout promotes a
+   * stuck "spawning" row to working, which is exactly the row the field
+   * test saw frozen while the agent had long since landed.
+   */
+  async refreshToolTelemetry(): Promise<void> {
+    for (const agent of this.db.listAgents()) {
+      if (
+        agent.status === "dead" || agent.status === "done" ||
+        agent.status === "failed"
+      ) continue;
+      const worktree = agent.worktreePath;
+      if (worktree === null || worktree === undefined) continue;
+      let telemetry: ToolTelemetry;
+      try {
+        telemetry = agent.tool === "claude"
+          ? await this.readClaudeTelemetry(worktree)
+          : await this.readCodexTelemetry(worktree);
+      } catch {
+        continue;
+      }
+      // Re-read after the file I/O: hook events may have advanced the row.
+      const current = this.db.getAgentById(agent.id);
+      if (
+        current === null || current.status === "dead" ||
+        current.status === "done" || current.status === "failed"
+      ) continue;
+      const updates: Partial<AgentRecord> = {};
+      if (
+        telemetry.contextPct !== null &&
+        telemetry.contextPct !== current.contextPct
+      ) {
+        updates.contextPct = telemetry.contextPct;
+      }
+      if (
+        current.tool === "codex" && !current.writeRevoked &&
+        current.status !== "control-paused" &&
+        telemetry.lastActivityAt !== null &&
+        telemetry.lastActivityAt > current.lastEventAt
+      ) {
+        updates.lastEventAt = telemetry.lastActivityAt;
+        if (current.status === "spawning") updates.status = "working";
+      }
+      if (Object.keys(updates).length > 0) {
+        this.db.upsertAgent({ ...current, ...updates });
+      }
     }
   }
 
@@ -1499,6 +1589,27 @@ export class HiveDaemon {
 
   async processEvent(event: HookEvent): Promise<void> {
     const value = HookEventSchema.parse(event);
+    if (value.kind === "tool-boundary") {
+      // A deep agent fires this on every tool call — hundreds per turn — so
+      // it deliberately skips the events table and the quota machinery. It
+      // proves the process is alive mid-turn and marks the one safe moment
+      // to inject urgent traffic into a busy session.
+      const agent = this.db.getAgentByName(value.agentName);
+      if (
+        agent !== null && agent.status !== "dead" &&
+        agent.status !== "done" && agent.status !== "failed"
+      ) {
+        this.db.upsertAgent({
+          ...agent,
+          lastEventAt: new Date(value.timestamp).toISOString(),
+          ...(value.toolSessionId === undefined
+            ? {}
+            : { toolSessionId: value.toolSessionId }),
+        });
+        await this.delivery.flushUrgent(value.agentName);
+      }
+      return;
+    }
     this.db.transaction(() => {
       this.db.insertEvent(value);
 

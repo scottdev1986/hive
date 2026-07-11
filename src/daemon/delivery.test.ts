@@ -206,6 +206,61 @@ describe("MessageDelivery", () => {
     }
   });
 
+  test("urgent messages inject into a busy agent at a tool boundary; normal ones keep waiting", async () => {
+    const db = new HiveDatabase(join(home, "urgent-boundary.db"));
+    const tmux = new RecordingTmuxSender();
+    const daemon = new HiveDaemon({
+      db,
+      spawner: unusedSpawner,
+      tmuxSender: tmux,
+    });
+    try {
+      db.insertAgent(agent("working"));
+      const normal = await daemon.delivery.send("sam", "maya", "Read later.");
+      const urgent = await daemon.delivery.send(
+        "orchestrator",
+        "maya",
+        "Pause before coding the next module.",
+        { priority: "urgent", intent: "instruction" },
+      );
+      // Both queue: the recipient is mid-turn with no live channel.
+      expect(normal.deliveredAt).toEqual(null);
+      expect(urgent.deliveredAt).toEqual(null);
+      expect(tmux.calls).toEqual([]);
+
+      // A completed tool call is the nearest safe boundary (SPEC decision
+      // 1): urgent traffic injects now, ordinary traffic still waits for
+      // the turn to end.
+      const response = await actingAs(daemon, "operator")("http://hive/event", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          kind: "tool-boundary",
+          agentName: "maya",
+          timestamp: "2026-07-09T12:01:00.000Z",
+        }),
+      });
+      expect(response.status).toEqual(200);
+      expect(tmux.calls).toHaveLength(1);
+      expect(tmux.calls[0]?.[0]).toEqual("hive-maya");
+      expect(tmux.calls[0]?.[1]).toContain("URGENT HIVE CONTROL");
+      expect(tmux.calls[0]?.[1]).toContain("Pause before coding");
+      expect(db.getMessage(urgent.id)?.state).toEqual("injected");
+      expect(db.getMessage(normal.id)?.deliveredAt).toEqual(null);
+      // A tool boundary is a delivery tick, not a lifecycle fact: status
+      // stays working, lastEventAt advances, and no event row is persisted.
+      expect(db.getAgentByName("maya")?.status).toEqual("working");
+      expect(db.getAgentByName("maya")?.lastEventAt).toEqual(
+        "2026-07-09T12:01:00.000Z",
+      );
+      expect(
+        db.listEvents().filter((event) => event.agentName === "maya"),
+      ).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
+
   test("inbox drains undelivered messages without waking a working agent", async () => {
     const db = new HiveDatabase(join(home, "inbox.db"));
     const tmux = new RecordingTmuxSender();
