@@ -87,11 +87,35 @@ function buildCodexConfigArgs(
     );
   }
 
+  // The lifecycle hooks ride the command line, not the worktree's
+  // `.codex/config.toml`: codex only loads project-local config when the
+  // directory's trust is persisted in the user's own config file, and Hive
+  // passes trust as a `-c` override precisely so it never edits that file.
+  // A hook defined only in the project file therefore never fires (verified
+  // against codex 0.144.1 — its trust prompt states project config, hooks,
+  // and exec policies load only for trusted directories).
+  const notifyPath = resolve(
+    options.worktreePath,
+    ".codex",
+    CODEX_NOTIFY_SCRIPT,
+  );
+  const hookOverride = (event: string, kind: string): string =>
+    `hooks.${event}=[{hooks=[{type="command",command=${
+      tomlString(`${notifyPath} ${kind}`)
+    },timeout=5}]}]`;
   args.push(
     ...buildCodexTrustArgs(options.worktreePath),
     "--dangerously-bypass-hook-trust",
     "-c",
     "features.hooks=true",
+    "-c",
+    hookOverride("SessionStart", "session-start"),
+    "-c",
+    hookOverride("UserPromptSubmit", "turn-start"),
+    "-c",
+    hookOverride("PostToolUse", "tool-boundary"),
+    "-c",
+    hookOverride("Stop", "turn-end"),
     "-c",
     `mcp_servers.hive.url=${tomlString(`http://127.0.0.1:${options.daemonPort}/mcp`)}`,
     // Detach the human's own servers from this agent. Same override channel as
@@ -244,8 +268,10 @@ export async function writeCodexAgentConfig(
     ].join(" "),
     "",
   ].join("\n");
-  const hookCommand = (kind: string): string =>
-    `${shellToken(notifyPath)} ${kind}`;
+  // No hook tables here: this project-local file only loads for directories
+  // whose trust is persisted in the user's config, which Hive never edits.
+  // The lifecycle hooks ride the spawn command's `-c` overrides instead, and
+  // defining them in both places would double-fire if the file ever loaded.
   const config = [
     "[mcp_servers.hive]",
     `url = ${tomlString(`http://127.0.0.1:${options.daemonPort}/mcp`)}`,
@@ -254,30 +280,6 @@ export async function writeCodexAgentConfig(
       "[mcp_servers.hive.http_headers]",
       `Authorization = ${tomlString(`Bearer ${options.capabilityToken}`)}`,
     ]),
-    "",
-    "[[hooks.SessionStart]]",
-    "[[hooks.SessionStart.hooks]]",
-    'type = "command"',
-    `command = ${tomlString(hookCommand("session-start"))}`,
-    "timeout = 5",
-    "",
-    "[[hooks.UserPromptSubmit]]",
-    "[[hooks.UserPromptSubmit.hooks]]",
-    'type = "command"',
-    `command = ${tomlString(hookCommand("turn-start"))}`,
-    "timeout = 5",
-    "",
-    "[[hooks.PostToolUse]]",
-    "[[hooks.PostToolUse.hooks]]",
-    'type = "command"',
-    `command = ${tomlString(hookCommand("tool-boundary"))}`,
-    "timeout = 5",
-    "",
-    "[[hooks.Stop]]",
-    "[[hooks.Stop.hooks]]",
-    'type = "command"',
-    `command = ${tomlString(hookCommand("turn-end"))}`,
-    "timeout = 5",
     "",
   ].join("\n");
 

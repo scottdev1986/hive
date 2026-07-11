@@ -95,6 +95,21 @@ describe("Codex spawn-scoped MCP surface", () => {
   });
 });
 
+// The lifecycle hooks must ride the command line: codex only loads a
+// project-local `.codex/config.toml` when the directory's trust is persisted
+// in the user's own config file, and Hive passes trust as a `-c` override
+// precisely so it never edits that file (verified against codex 0.144.1).
+const expectedHookOverrides = (worktreePath: string): string[] =>
+  [
+    ["SessionStart", "session-start"],
+    ["UserPromptSubmit", "turn-start"],
+    ["PostToolUse", "tool-boundary"],
+    ["Stop", "turn-end"],
+  ].flatMap(([event, kind]) => [
+    "-c",
+    `hooks.${event}=[{hooks=[{type="command",command="${worktreePath}/.codex/${CODEX_NOTIFY_SCRIPT} ${kind}",timeout=5}]}]`,
+  ]);
+
 describe("Codex adapter", () => {
   test("builds writer and read-only spawn argv", () => {
     const base = {
@@ -120,6 +135,7 @@ describe("Codex adapter", () => {
       "--dangerously-bypass-hook-trust",
       "-c",
       "features.hooks=true",
+      ...expectedHookOverrides("/tmp/worktree"),
       "-c",
       'mcp_servers.hive.url="http://127.0.0.1:4317/mcp"',
     ]);
@@ -136,6 +152,7 @@ describe("Codex adapter", () => {
       "--dangerously-bypass-hook-trust",
       "-c",
       "features.hooks=true",
+      ...expectedHookOverrides("/tmp/worktree"),
       "-c",
       'mcp_servers.hive.url="http://127.0.0.1:4317/mcp"',
     ]);
@@ -201,6 +218,26 @@ describe("Codex adapter", () => {
         hive: { url: "http://127.0.0.1:4317/mcp" },
       },
     });
+
+    // Each hook override is one `-c key=value` whose value is valid inline
+    // TOML addressing the notify script; codex parses it exactly like a
+    // config-file hook table.
+    const hookOverride = command.find((argument) =>
+      argument.startsWith("hooks.SessionStart=")
+    );
+    expect(hookOverride).toBeDefined();
+    expect(Bun.TOML.parse(hookOverride ?? "")).toEqual({
+      hooks: {
+        SessionStart: [{
+          hooks: [{
+            type: "command",
+            command:
+              `/tmp/work tree/.codex/${CODEX_NOTIFY_SCRIPT} session-start`,
+            timeout: 5,
+          }],
+        }],
+      },
+    });
   });
 
   test("builds a resume argv that replays the spawn overrides as `codex resume`", () => {
@@ -227,6 +264,7 @@ describe("Codex adapter", () => {
       "--dangerously-bypass-hook-trust",
       "-c",
       "features.hooks=true",
+      ...expectedHookOverrides("/tmp/worktree"),
       "-c",
       'mcp_servers.hive.url="http://127.0.0.1:4317/mcp"',
       "019f-thread",
@@ -293,7 +331,7 @@ describe("Codex adapter", () => {
     expect(command).toContain("model_reasoning_effort=low");
   });
 
-  test("writes native lifecycle hooks and streamable HTTP MCP config", async () => {
+  test("writes the notify script and MCP config, but no hook tables", async () => {
     await writeCodexAgentConfig(worktreePath, {
       name: "agent-4",
       daemonPort: 4317,
@@ -305,13 +343,17 @@ describe("Codex adapter", () => {
       "utf8",
     );
     const config = Bun.TOML.parse(configSource) as {
-      hooks: Record<string, Array<{ hooks: Array<{ command: string }> }>>;
       mcp_servers: Record<string, { url: string }>;
     };
     const notifyPath = join(worktreePath, ".codex", CODEX_NOTIFY_SCRIPT);
     const script = await readFile(notifyPath, "utf8");
 
     expect(configSource.includes("notify =")).toEqual(false);
+    // Hooks live on the spawn command line, never in this file: codex only
+    // loads project-local config for directories whose trust is persisted in
+    // the user's own config, so a hook defined here would silently not fire —
+    // and would double-fire if that file ever did load.
+    expect(configSource.includes("hooks")).toEqual(false);
     expect(config.mcp_servers.hive?.url).toEqual(
       "http://127.0.0.1:4317/mcp",
     );
@@ -321,18 +363,6 @@ describe("Codex adapter", () => {
         'exec hive event "$1" --agent agent-4 --port 4317',
       ),
     ).toEqual(true);
-    expect(config.hooks.SessionStart?.[0]?.hooks[0]?.command).toEndWith(
-      "hive-notify.sh session-start",
-    );
-    expect(config.hooks.UserPromptSubmit?.[0]?.hooks[0]?.command).toEndWith(
-      "hive-notify.sh turn-start",
-    );
-    expect(config.hooks.PostToolUse?.[0]?.hooks[0]?.command).toEndWith(
-      "hive-notify.sh tool-boundary",
-    );
-    expect(config.hooks.Stop?.[0]?.hooks[0]?.command).toEndWith(
-      "hive-notify.sh turn-end",
-    );
   });
   test("carries the agent capability as a static header in a 0600 config", async () => {
     // Codex has no connect-time headers helper, so its token has to sit in a
