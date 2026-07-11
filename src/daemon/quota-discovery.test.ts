@@ -9,6 +9,7 @@ import { QuotaService, type CodexRateLimitsResponse } from "./quota";
 import {
   ClaudeQuotaProbe,
   CodexQuotaProbe,
+  catalogFromClaudeModels,
   readingsFromClaudeUsage,
   readingsFromCodexResponse,
   orderRateLimitWindows,
@@ -654,7 +655,7 @@ describe("provider unavailable", () => {
 describe("claude usage probe", () => {
   test("maps get_usage onto a reported subscription pool", async () => {
     const probe = new ClaudeQuotaProbe(
-      { readUsage: () => Promise.resolve(claudeUsage) },
+      { readUsage: () => Promise.resolve({ usage: claudeUsage, catalog: [] }) },
       () => now,
     );
     const result = await probe.read();
@@ -666,8 +667,9 @@ describe("claude usage probe", () => {
     expect(subscription?.weekly?.usedPct).toBe(42);
     // `get_usage` is experimental, so its readings are reported, not gospel.
     expect(subscription?.confidence).toBe("reported");
-    // A model-scoped weekly cap is recorded but never routed onto: the provider
-    // gives a display name, not a concrete model id, and Hive will not guess.
+    // A model-scoped weekly cap arrives with a display name and no model id, so
+    // the probe leaves it unbound; the binding is made against the provider's own
+    // model catalog when the pool is resolved, never guessed here.
     expect(scoped?.pool).toBe("weekly:Fable");
     expect(scoped?.models).toEqual([]);
     expect(scoped?.weekly?.usedPct).toBe(71);
@@ -677,9 +679,12 @@ describe("claude usage probe", () => {
     const probe = new ClaudeQuotaProbe({
       readUsage: () =>
         Promise.resolve({
-          subscription_type: null,
-          rate_limits_available: false,
-          rate_limits: null,
+          usage: {
+            subscription_type: null,
+            rate_limits_available: false,
+            rate_limits: null,
+          },
+          catalog: [],
         }),
     });
     const result = await probe.read();
@@ -734,7 +739,199 @@ async function codexPools(
   response: CodexRateLimitsResponse = codexResponse,
 ): Promise<QuotaProbeResult> {
   return new CodexQuotaProbe(
-    { readRateLimits: () => Promise.resolve(response) },
+    { readRateLimits: () => Promise.resolve({ limits: response, catalog: [] }) },
     () => now,
   ).read();
 }
+
+/**
+ * The incident these exist for: on 2026-07-11 the orchestrator put two deep-tier
+ * agents on claude-fable-5 while the Fable weekly pool sat at 99%. The number was
+ * measured, fresh, and provider-sourced — and it gated nothing, because the pool
+ * that carried it was bound to no model at all. A number you measure but never
+ * join to the decision is worth exactly as much as no number.
+ */
+describe("pools gate the models they actually meter", () => {
+  // Verbatim shape of a claude 2.1.207 `initialize` models[] block.
+  const claudeModels = [
+    {
+      value: "default",
+      resolvedModel: "claude-opus-4-8[1m]",
+      displayName: "Default (recommended)",
+    },
+    { value: "opus[1m]", resolvedModel: "claude-opus-4-8[1m]", displayName: "Opus" },
+    {
+      value: "claude-fable-5[1m]",
+      resolvedModel: "claude-fable-5",
+      displayName: "Fable",
+    },
+    { value: "sonnet", resolvedModel: "claude-sonnet-5", displayName: "Sonnet" },
+  ];
+
+  const exhaustedFable: ClaudeUsageResponse = {
+    subscription_type: "max",
+    rate_limits_available: true,
+    rate_limits: {
+      five_hour: { utilization: 12, resets_at: "2026-07-10T19:00:00Z" },
+      seven_day: { utilization: 61, resets_at: "2026-07-11T19:00:00Z" },
+      // The provider names the model but gives no id: `scope.model.id` is null.
+      model_scoped: [
+        { display_name: "Fable", utilization: 99, resets_at: "2026-07-11T19:00:00Z" },
+      ],
+    },
+  };
+
+  const claudeProbe = (usage: ClaudeUsageResponse): QuotaProbe =>
+    new ClaudeQuotaProbe(
+      {
+        readUsage: () =>
+          Promise.resolve({
+            usage,
+            catalog: catalogFromClaudeModels(claudeModels),
+          }),
+      },
+      () => now,
+    );
+
+  test("binds a metered pool to its models through the provider's own catalog", async () => {
+    const { quota } = await service([claudeProbe(exhaustedFable)]);
+    await quota.refreshFromProviders(now, { force: true });
+    const fable = quota.resolvedLimits().find((limit) =>
+      limit.pool === "weekly:Fable"
+    );
+    // Discovered, not hardcoded: "Fable" is joined to the concrete id the CLI
+    // says it resolves to, and every name that model answers to is bound with it
+    // so a pin cannot dodge the meter.
+    expect(fable?.models).toEqual(["claude-fable-5", "claude-fable-5[1m]"]);
+    expect(fable?.routable).toBe(true);
+  });
+
+  test("every id form of a model is bound to the same meter", () => {
+    const catalog = catalogFromClaudeModels(claudeModels);
+    const namesOf = (modelId: string) =>
+      catalog.filter((entry) => entry.modelId === modelId)
+        .map((entry) => entry.displayName).sort();
+    // The 1M context upgrade is a plan property, not a different model, and an
+    // alias is not a different model either. A pool named "Opus" must gate the
+    // run whichever of its four names the spawn was pinned with.
+    expect(namesOf("claude-opus-4-8")).toContain("Opus");
+    expect(namesOf("claude-opus-4-8[1m]")).toContain("Opus");
+    expect(namesOf("opus")).toContain("Opus");
+    expect(namesOf("default")).toContain("Opus");
+  });
+
+  test("an exhausted model pool refuses the spawn and says which pool blocked it", async () => {
+    const { quota } = await service([claudeProbe(exhaustedFable)]);
+    await quota.refreshFromProviders(now, { force: true });
+    const spawn = quota.routeAndReserve({
+      agentName: "deep-worker",
+      tier: "deep",
+      preferredTool: "claude",
+      explicitTool: "claude",
+      candidates: [{ tool: "claude", model: "claude-fable-5" }],
+    });
+    // This is the whole point: the general pool has 39% of its week left, so the
+    // old code admitted the spawn happily. The model's own pool has 1%.
+    await expect(spawn).rejects.toThrow(/weekly:Fable/);
+    await expect(spawn).rejects.toThrow(/resets/);
+  });
+
+  test("falls back to a model whose meters have room, and reports real numbers", async () => {
+    const { quota } = await service([claudeProbe(exhaustedFable)]);
+    await quota.refreshFromProviders(now, { force: true });
+    const decision = await quota.routeAndReserve({
+      agentName: "deep-worker",
+      tier: "deep",
+      preferredTool: "claude",
+      explicitTool: "claude",
+      candidates: [
+        { tool: "claude", model: "claude-fable-5" },
+        { tool: "claude", model: "claude-opus-4-8" },
+      ],
+    });
+    expect(decision.model).toBe("claude-opus-4-8");
+    const status = decision.status;
+    if ("configured" in status) throw new Error("expected a measured pool");
+    expect(status.pool).toBe("subscription");
+    expect(status.weekly.used).toBe(61);
+  });
+
+  test("a model with no meter of its own is metered by the general pool, never 'unknown'", async () => {
+    const { quota } = await service([claudeProbe(exhaustedFable)]);
+    await quota.refreshFromProviders(now, { force: true });
+    // Opus has no dedicated weekly cap and never did. Reporting it as an
+    // unconfigured gap invented a pool that does not exist — and an
+    // "unconstrained" model is the most attractive route there is, so the phantom
+    // actively pulled traffic onto itself.
+    // (Codex still reports a gap here, and should: this install probed only
+    // Claude, so Hive has genuinely never read a Codex number. That is the honest
+    // kind of unknown — it names a provider it cannot see, instead of inventing a
+    // pool for a model it can.)
+    const gaps = quota.statuses(now).filter((status) =>
+      "configured" in status && status.provider === "claude"
+    );
+    expect(gaps).toEqual([]);
+    const governing = quota.poolsGoverning(
+      { tool: "claude", model: "claude-opus-4-8" },
+      now,
+    );
+    expect(governing.map((pool) => pool.pool)).toEqual(["subscription"]);
+    expect(governing[0]?.weekly.used).toBe(61);
+    expect(governing[0]?.weekly.confidence).not.toBe("missing");
+  });
+
+  test("a capped model is gated by BOTH its own pool and the general one", async () => {
+    const { quota } = await service([claudeProbe(exhaustedFable)]);
+    await quota.refreshFromProviders(now, { force: true });
+    const governing = quota.poolsGoverning(
+      { tool: "claude", model: "claude-fable-5" },
+      now,
+    );
+    expect(governing.map((pool) => pool.pool)).toEqual([
+      "subscription",
+      "weekly:Fable",
+    ]);
+  });
+
+  test("account-wide statusLine numbers never land in a model's own pool", async () => {
+    const { quota } = await service([claudeProbe(exhaustedFable)]);
+    await quota.refreshFromProviders(now, { force: true });
+    // The statusLine reports the *account's* windows. Filing them under the
+    // running model would overwrite Fable's measured 99% with the account's 61%
+    // and destroy the very reading the gate depends on.
+    await quota.observeStatusline(
+      { tool: "claude", model: "claude-fable-5" },
+      {
+        fiveHour: { usedPct: 12, resetsAt: null },
+        sevenDay: { usedPct: 61, resetsAt: null },
+        observedAt: new Date(now.getTime() + 60_000).toISOString(),
+      },
+    );
+    expect(pool(quota, "weekly:Fable").weekly.used).toBe(99);
+    expect(pool(quota, "subscription").weekly.used).toBe(61);
+  });
+
+  test("a mid-session model switch re-keys the run onto the meters it truly spends", async () => {
+    const { quota, db } = await service([claudeProbe(exhaustedFable)]);
+    await quota.refreshFromProviders(now, { force: true });
+    await quota.routeAndReserve({
+      agentName: "drifter",
+      tier: "deep",
+      preferredTool: "claude",
+      explicitTool: "claude",
+      candidates: [{ tool: "claude", model: "claude-opus-4-8" }],
+    });
+    // A human switches the session to Fable. The agent is already running, so the
+    // booking must follow it onto the Fable cap even though that cap is full —
+    // refusing would not stop the burn, it would only hide it.
+    await quota.reconcileAgentModel("drifter", "claude-fable-5");
+    const active = db.database.query(
+      "SELECT pool, model FROM quota_reservations WHERE agentName = ? AND status = 'active' ORDER BY pool",
+    ).all("drifter") as { pool: string; model: string }[];
+    expect(active.map((row) => row.pool)).toEqual([
+      "subscription",
+      "weekly:Fable",
+    ]);
+    expect(active.every((row) => row.model === "claude-fable-5")).toBe(true);
+  });
+});

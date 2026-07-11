@@ -175,6 +175,14 @@ export const StatuslineReportSchema = z.object({
   fiveHour: StatuslineRateWindowSchema.optional(),
   sevenDay: StatuslineRateWindowSchema.optional(),
   observedAt: z.iso.datetime({ offset: true }).optional(),
+  /**
+   * The model the session is running *right now*, as `model.id` in the payload —
+   * the concrete id, never the display name, which differs between surfaces
+   * ("Fable 5" here, "Fable" in the usage payload and the model catalog). Hive's
+   * stored model is a spawn-time guess and a human may switch models mid-session;
+   * this is the only live signal that says which meter the run is truly spending.
+   */
+  model: z.string().min(1).optional(),
 });
 export type StatuslineReport = z.infer<typeof StatuslineReportSchema>;
 

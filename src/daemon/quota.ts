@@ -16,8 +16,10 @@ import {
 } from "../schemas";
 import {
   QuotaLedger,
+  type DiscoveredQuotaPool,
   type QuotaAlertState,
   type QuotaReservation,
+  type ReserveQuotaInput,
 } from "./quota-ledger";
 import {
   orderRateLimitWindows,
@@ -47,6 +49,14 @@ export interface QuotaRouteDecision extends QuotaRouteCandidate {
   reservation: QuotaReservation;
   status: QuotaStatus;
   reason: string;
+  /**
+   * What the caller should say out loud about this route. A spawn that succeeds
+   * with a pool near its limit, or that fell back off an exhausted model, is not
+   * a silent success — the orchestrator is promised a warning under quota
+   * pressure, and this is where it comes from. Empty when every governing pool
+   * is comfortable.
+   */
+  warnings: string[];
 }
 
 export interface ControlQuotaRequest extends QuotaRouteCandidate {
@@ -409,6 +419,7 @@ export class QuotaService {
       weeklyWindowMinutes: 7 * 24 * 60,
     }));
     const discovered: ResolvedQuotaLimit[] = [];
+    const bind = this.poolBinder();
     for (const pool of this.ledger.discoveredPools()) {
       if (manualScopes.has(scopeKey(pool))) {
         const override = manual.find((limit) =>
@@ -420,11 +431,12 @@ export class QuotaService {
         }
         continue;
       }
+      const models = bind(pool);
       discovered.push({
         provider: pool.provider,
         account: pool.account,
         pool: pool.pool,
-        models: pool.models,
+        models,
         // A provider reports the fraction of a window it has consumed, never the
         // window's size. Percent is therefore the pool's native currency and 100
         // is its allowance by construction, not by assumption.
@@ -438,7 +450,7 @@ export class QuotaService {
         observationMaxAgeMinutes: discoveredMaxAgeMinutes(this.config),
         origin: "discovered",
         unit: "percent",
-        routable: pool.models.length > 0,
+        routable: models.length > 0,
         label: pool.label,
         overridesDiscovered: false,
         fiveHourWindowMinutes: pool.fiveHourWindowMinutes,
@@ -448,14 +460,144 @@ export class QuotaService {
     return [...manual, ...discovered];
   }
 
+  /**
+   * Join a discovered pool to the models it meters, using the provider's own
+   * model catalog.
+   *
+   * A quota payload names its sub-pools the way the vendor's model catalog names
+   * its models — `"Fable"`, `"GPT-5.3-Codex-Spark"` — but carries no model id
+   * (Claude reports `scope.model.id: null` beside the display name). The catalog
+   * carries both, so the binding is discovered by matching the pool's own label
+   * against the provider's own display names. Nothing is hardcoded and nothing is
+   * guessed: a pool whose label matches no model in the catalog binds to nothing,
+   * stays unroutable, and says so — which is the honest state for a pool whose
+   * subject Hive cannot identify.
+   *
+   * A pool the provider already scoped to every model keeps its wildcard.
+   */
+  private poolBinder(): (pool: DiscoveredQuotaPool) => string[] {
+    const byDisplayName = new Map<string, Set<string>>();
+    for (const entry of this.ledger.modelCatalog()) {
+      const key = `${entry.provider}\0${entry.displayName.toLowerCase()}`;
+      const models = byDisplayName.get(key) ?? new Set<string>();
+      models.add(entry.modelId);
+      byDisplayName.set(key, models);
+    }
+    return (pool) => {
+      if (pool.models.includes("*")) return ["*"];
+      if (pool.label === null) return [];
+      const key = `${pool.provider}\0${pool.label.toLowerCase()}`;
+      return [...byDisplayName.get(key) ?? []].sort();
+    };
+  }
+
+  /**
+   * Every pool that meters this model — not the first one that matches.
+   *
+   * A model with its own cap spends from two meters at once: the account-wide
+   * pool everything draws on, and its own. Returning just one of them is what let
+   * a Fable spawn be checked against the general pool's 61% while Fable's own
+   * pool sat at 99% and never entered the decision. Both govern; the tighter one
+   * decides. A model with no cap of its own is metered by the general pool alone,
+   * which is the ordinary case and is not a gap in coverage.
+   */
+  private limitsFor(candidate: QuotaRouteCandidate): ResolvedQuotaLimit[] {
+    const routable = this.resolvedLimits().filter((limit) =>
+      limit.routable && limit.provider === candidate.tool
+    );
+    const general = routable.filter((limit) => limit.models.includes("*"));
+    const specific = routable.filter((limit) =>
+      !limit.models.includes("*") && limit.models.includes(candidate.model)
+    );
+    return [...general, ...specific];
+  }
+
+  /** The pool a run is booked against: its own cap if it has one, else general. */
   private limitFor(candidate: QuotaRouteCandidate): ResolvedQuotaLimit | null {
-    const routable = this.resolvedLimits().filter((limit) => limit.routable);
-    return routable.find((limit) =>
-      limit.provider === candidate.tool &&
-      limit.models.includes(candidate.model)
-    ) ?? routable.find((limit) =>
-      limit.provider === candidate.tool && limit.models.includes("*")
+    const limits = this.limitsFor(candidate);
+    return limits.at(-1) ?? null;
+  }
+
+  /**
+   * Which pools meter this model, and what each of them currently reads. This is
+   * the question "how much quota does this model have left?" actually reduces to,
+   * and before this it had no answer: a model's numbers were whatever single pool
+   * happened to match it first.
+   */
+  poolsGoverning(
+    candidate: QuotaRouteCandidate,
+    now = this.clock(),
+  ): QuotaPoolStatus[] {
+    return this.limitsFor(candidate).map((limit) =>
+      this.statusForLimit(limit, now)
+    );
+  }
+
+  /** The account-wide pool: what every model spends from, whatever else it has. */
+  private generalLimit(
+    provider: "claude" | "codex",
+  ): ResolvedQuotaLimit | null {
+    return this.resolvedLimits().find((limit) =>
+      limit.routable && limit.provider === provider &&
+      limit.models.includes("*")
     ) ?? null;
+  }
+
+  /**
+   * Point an agent's in-flight reservation at the model it is really running.
+   *
+   * Hive records a model when it spawns an agent, and a human is free to switch
+   * models in that session afterwards — which is normal, supported, and
+   * invisible to the spawn-time record. The reservation then holds capacity in
+   * the wrong meter: quota booked against `claude-fable-5` while the session
+   * actually burns the general subscription pool as Opus, or worse the reverse,
+   * where a switch *onto* a capped model spends a cap nothing is holding.
+   *
+   * What this does, and does not do: the reservation is a forward-looking
+   * estimate that has not been reconciled yet, so it is moved wholesale onto the
+   * pools that meter the new model. Usage already reconciled into the ledger is
+   * left exactly where it is. Nothing records *when* mid-run the switch
+   * happened, so splitting past spend between two pools would mean inventing the
+   * split — and an invented number is worse than a misfiled one, because it
+   * looks like a measurement.
+   *
+   * The re-keyed reservation is written whether or not the new pool has room: the
+   * agent is already running and refusing the booking would not stop it. Pretending
+   * the capacity is not being spent is exactly the blindness this whole change
+   * exists to end — so the spend is recorded, and the pool alerts if it is over.
+   */
+  async reconcileAgentModel(
+    agentName: string,
+    liveModel: string,
+    at = iso(this.clock()),
+  ): Promise<QuotaReservation[] | null> {
+    const held = this.ledger.getActiveReservationForAgent(agentName);
+    if (held === null || held.model === liveModel) return null;
+    const now = new Date(at);
+    const candidate = { tool: held.provider, model: liveModel };
+    const entries = this.limitsFor(candidate).map((limit) => ({
+      limit,
+      status: this.statusForLimit(limit, now),
+    }));
+    if (entries.length === 0) return null;
+    // Release first, then re-book: the released capacity is immediately
+    // available to the pools the run is really spending from, and a run can
+    // never be counted twice while the swap is in flight.
+    this.ledger.release(held.id, at);
+    const reservations = this.ledger.reserveGroupUnchecked(
+      this.reservationInputs(
+        held.agentName,
+        candidate,
+        entries,
+        held.tier,
+        now,
+        held.purpose === "control" && held.controlMessageId !== null
+          ? { purpose: "control", controlMessageId: held.controlMessageId }
+          : undefined,
+      ),
+    );
+    for (const entry of entries) await this.alertPool(entry.limit, now);
+    return reservations;
   }
 
   /**
@@ -475,6 +617,181 @@ export class QuotaService {
     const percent = this.config.estimatesPct[tier] ??
       DEFAULT_PERCENT_ESTIMATES[tier];
     return { fiveHour: percent.fiveHour, weekly: percent.weekly };
+  }
+
+  /** One reservation per pool the run spends from; the first is the primary. */
+  private reservationInputs(
+    agentName: string,
+    candidate: QuotaRouteCandidate,
+    entries: { limit: ResolvedQuotaLimit; status: QuotaPoolStatus }[],
+    tier: RoutingTier,
+    now: Date,
+    purpose?: { purpose: "control"; controlMessageId: string },
+  ): ReserveQuotaInput[] {
+    // Cheap and standard work leaves a floor untouched so a deep run still has
+    // somewhere to land. A deep run itself is allowed to spend down to the line.
+    const preserveDeep = tier === "cheap" || tier === "standard";
+    return entries.map((entry) => {
+      const estimate = this.estimateFor(entry.limit, tier);
+      const bounds = this.windowBounds(entry.limit, now);
+      const supplemental = this.supplemental(entry.limit, entry.status, now);
+      // A window this pool does not meter cannot refuse the run. Handing the
+      // ledger an unbounded allowance for it says exactly that, and keeps the
+      // metered window — the weekly cap that actually governs — doing the gating.
+      const allowanceFor = (window: "fiveHour" | "weekly"): number =>
+        this.meters(entry.limit, entry.status, window)
+          ? (window === "fiveHour"
+            ? entry.limit.fiveHourAllowance
+            : entry.limit.weeklyAllowance)
+          : Number.POSITIVE_INFINITY;
+      return {
+        id: crypto.randomUUID(),
+        agentName,
+        provider: entry.limit.provider,
+        account: entry.limit.account,
+        pool: entry.limit.pool,
+        model: candidate.model,
+        tier,
+        estimatedUnits: estimate.fiveHour,
+        estimatedWeeklyUnits: estimate.weekly,
+        now: iso(now),
+        expiresAt: add(now, this.config.reservationTtlMinutes * 60_000),
+        fiveHourStart: bounds.fiveHourStart,
+        weeklyStart: bounds.weeklyStart,
+        fiveHourObservedAt: supplemental.fiveHourObservedAt,
+        weeklyObservedAt: supplemental.weeklyObservedAt,
+        supplementalFiveHourUsed: supplemental.five,
+        supplementalWeeklyUsed: supplemental.week,
+        fiveHourAllowance: allowanceFor("fiveHour"),
+        weeklyAllowance: allowanceFor("weekly"),
+        fiveHourFloor: preserveDeep
+          ? entry.limit.fiveHourAllowance * this.config.reserveFiveHourPct
+          : 0,
+        weeklyFloor: preserveDeep
+          ? entry.limit.weeklyAllowance * this.config.reserveWeeklyPct
+          : 0,
+        ...(purpose ?? {}),
+      };
+    });
+  }
+
+  /**
+   * Could this candidate be launched right now? Every pool that meters it must
+   * have room — a model whose own cap is spent has no room even when the general
+   * pool is wide open, so it is never offered as a fallback.
+   */
+  private hasRoom(
+    candidate: QuotaRouteCandidate,
+    tier: RoutingTier,
+    now: Date,
+  ): boolean {
+    const limits = this.limitsFor(candidate);
+    const preserveDeep = tier === "cheap" || tier === "standard";
+    const checked = limits.map((limit) => {
+      const status = this.statusForLimit(limit, now);
+      const measured = this.measured(status, limit);
+      if (measured === null) return null;
+      const estimate = this.estimateFor(limit, tier);
+      const fiveFloor = preserveDeep
+        ? limit.fiveHourAllowance * this.config.reserveFiveHourPct
+        : 0;
+      const weekFloor = preserveDeep
+        ? limit.weeklyAllowance * this.config.reserveWeeklyPct
+        : 0;
+      return measured.fiveRemaining - estimate.fiveHour >= fiveFloor &&
+        measured.weekRemaining - estimate.weekly >= weekFloor;
+    });
+    // A fallback is only recommended when Hive can actually see that it fits.
+    // Every pool that could be checked must have room, and at least one must have
+    // been checkable — an unmeasured model is not a *safe* fallback, it is an
+    // unknown one, and recommending it would be the same false confidence that
+    // put two agents on an exhausted model.
+    return checked.some((room) => room !== null) &&
+      checked.every((room) => room !== false);
+  }
+
+  /** The pool with the least room: the one that actually governs the run. */
+  private tightest(
+    entries: { limit: ResolvedQuotaLimit; status: QuotaPoolStatus }[],
+  ): { limit: ResolvedQuotaLimit; status: QuotaPoolStatus } {
+    const room = (entry: { limit: ResolvedQuotaLimit; status: QuotaPoolStatus }) =>
+      Math.min(
+        entry.status.fiveHour.remainingPct ?? Number.POSITIVE_INFINITY,
+        entry.status.weekly.remainingPct ?? Number.POSITIVE_INFINITY,
+      );
+    return entries.reduce((tightest, entry) =>
+      room(entry) < room(tightest) ? entry : tightest
+    );
+  }
+
+  /** Which pool blocked this route, how much is left, and when it comes back. */
+  private describeBlock(
+    candidate: QuotaRouteCandidate,
+    limit: ResolvedQuotaLimit,
+    status: QuotaPoolStatus,
+  ): string {
+    const unit = limit.unit === "percent" ? "%" : "";
+    const window = (name: "fiveHour" | "weekly"): string =>
+      `${describeRemaining(status[name], unit)} remaining` +
+      (status[name].resetsAt === null
+        ? ""
+        : ` (resets ${status[name].resetsAt})`);
+    const scope = limit.models.includes("*")
+      ? `${limit.provider} general pool ${limit.pool}`
+      : `${limit.provider} pool ${limit.pool}`;
+    const windows = this.meters(limit, status, "fiveHour")
+      ? `5h ${window("fiveHour")}, weekly ${window("weekly")}`
+      : `weekly ${window("weekly")}`;
+    return `${candidate.tool}/${candidate.model} is blocked by ${scope}: ${windows}`;
+  }
+
+  /**
+   * A route that squeaked through on a pool near its limit is not a clean
+   * success. The orchestrator is promised a warning under quota pressure, so a
+   * governing pool below the warning threshold — after this run's own estimated
+   * cost — says so by name.
+   */
+  private pressureWarnings(
+    candidate: QuotaRouteCandidate,
+    entries: { limit: ResolvedQuotaLimit; status: QuotaPoolStatus }[],
+    tier: RoutingTier,
+  ): string[] {
+    const warnings: string[] = [];
+    for (const entry of entries) {
+      const measured = this.measured(entry.status, entry.limit);
+      if (measured === null) {
+        if (!entry.limit.models.includes("*")) {
+          warnings.push(
+            `${entry.limit.provider} pool ${entry.limit.pool} meters ` +
+            `${candidate.model} but has no live reading, so it could not be checked.`,
+          );
+        }
+        continue;
+      }
+      const estimate = this.estimateFor(entry.limit, tier);
+      const after = Math.min(
+        (measured.fiveRemaining - estimate.fiveHour) /
+          entry.limit.fiveHourAllowance,
+        (measured.weekRemaining - estimate.weekly) / entry.limit.weeklyAllowance,
+      );
+      if (after > this.config.warningRemainingPct) continue;
+      const unit = entry.limit.unit === "percent" ? "%" : "";
+      const tightWindow =
+        (measured.weekRemaining - estimate.weekly) / entry.limit.weeklyAllowance <
+            (measured.fiveRemaining - estimate.fiveHour) /
+              entry.limit.fiveHourAllowance
+          ? "weekly"
+          : "fiveHour";
+      const status = entry.status[tightWindow];
+      warnings.push(
+        `${entry.limit.provider} pool ${entry.limit.pool} is at ` +
+        `${describeRemaining(status, unit)} remaining ` +
+        `(${tightWindow === "weekly" ? "weekly" : "5h"} window` +
+        `${status.resetsAt === null ? "" : `, resets ${status.resetsAt}`}) ` +
+        `after this ${tier} run.`,
+      );
+    }
+    return warnings;
   }
 
   /**
@@ -525,6 +842,12 @@ export class QuotaService {
         notifiedAt: null,
         boundaryAt: null,
       });
+      // The catalog is what binds a metered sub-pool to the models it gates, so
+      // it is stored before the pools that depend on it are resolved.
+      this.ledger.upsertModelCatalog(result.catalog.map((entry) => ({
+        ...entry,
+        discoveredAt: iso(now),
+      })));
       for (const reading of result.pools) {
         this.ledger.upsertDiscoveredPool({
           provider: reading.provider,
@@ -837,6 +1160,22 @@ export class QuotaService {
     }
     const trackedProviders = new Set<string>();
     for (const unconfigured of this.ledger.unconfiguredScopes()) {
+      // A model that a live pool now meters is not an unmetered model, whatever
+      // an old compatibility-mode reservation left lying in the ledger. Opus has
+      // no dedicated meter and never did — it is metered by the general
+      // subscription pool like every other Claude model without one — so
+      // reporting it as an uncovered gap invented a pool that does not exist and
+      // advertised the healthiest model on the plan as "unconstrained", which is
+      // the single most attractive thing a router can be told. The stale rows stay
+      // for accounting; they are no longer rendered as a hole in coverage.
+      if (
+        this.limitsFor({
+          tool: unconfigured.provider,
+          model: unconfigured.model,
+        }).length > 0
+      ) {
+        continue;
+      }
       trackedProviders.add(unconfigured.provider);
       const totals = this.ledger.usageTotals(
         unconfigured,
@@ -919,20 +1258,44 @@ export class QuotaService {
   }
 
   /**
-   * A pool can only constrain a spawn when both windows have a measured usage.
-   * An unmeasured window is unknown, and Hive will not subtract an estimate from
-   * an unknown to manufacture headroom it cannot see.
+   * A pool can only constrain a spawn when every window it meters has a measured
+   * usage. An unmeasured window is unknown, and Hive will not subtract an
+   * estimate from an unknown to manufacture headroom it cannot see.
+   *
+   * A window the provider does not meter for this pool is a different thing
+   * entirely, and must not be read as unknown. Claude's model-scoped caps are
+   * weekly-only: Fable's pool has no five-hour window at all. Treating that
+   * absence as "unmeasured" would make the pool permanently unknowable, and an
+   * unknowable pool constrains nothing — the 99% weekly number would go right on
+   * being ignored, which is the bug this exists to prevent.
    */
-  private measured(status: QuotaPoolStatus): {
-    fiveRemaining: number;
-    weekRemaining: number;
-  } | null {
-    return status.fiveHour.remaining === null || status.weekly.remaining === null
+  private meters(
+    limit: ResolvedQuotaLimit,
+    status: QuotaPoolStatus,
+    window: "fiveHour" | "weekly",
+  ): boolean {
+    const declared = window === "fiveHour"
+      ? limit.fiveHourWindowMinutes
+      : limit.weeklyWindowMinutes;
+    return declared !== null || status[window].observedAt !== null;
+  }
+
+  private measured(
+    status: QuotaPoolStatus,
+    limit?: ResolvedQuotaLimit,
+  ): { fiveRemaining: number; weekRemaining: number } | null {
+    const unbounded = Number.POSITIVE_INFINITY;
+    const read = (window: "fiveHour" | "weekly"): number | null => {
+      if (limit !== undefined && !this.meters(limit, status, window)) {
+        return unbounded;
+      }
+      return status[window].remaining;
+    };
+    const fiveRemaining = read("fiveHour");
+    const weekRemaining = read("weekly");
+    return fiveRemaining === null || weekRemaining === null
       ? null
-      : {
-        fiveRemaining: status.fiveHour.remaining,
-        weekRemaining: status.weekly.remaining,
-      };
+      : { fiveRemaining, weekRemaining };
   }
 
   async routeAndReserve(request: QuotaRouteRequest): Promise<QuotaRouteDecision> {
@@ -951,28 +1314,37 @@ export class QuotaService {
     }
 
     const evaluated = candidates.map((candidate) => {
-      const limit = this.limitFor(candidate);
-      if (limit === null) {
-        return { candidate, limit, status: null, score: -1 };
-      }
-      const status = this.statusForLimit(limit, now);
-      const measured = this.measured(status);
-      if (measured === null) {
-        // Unknown headroom scores exactly like an unknown pool: it cannot be
-        // ranked against a measured one, and it routes in compatibility mode.
-        return { candidate, limit: null, status: null, score: -1 };
-      }
-      const estimate = this.estimateFor(limit, request.tier);
-      const fivePost = (measured.fiveRemaining - estimate.fiveHour) /
-        limit.fiveHourAllowance;
-      const weekPost = (measured.weekRemaining - estimate.weekly) /
-        limit.weeklyAllowance;
-      return {
-        candidate,
+      const entries = this.limitsFor(candidate).map((limit) => ({
         limit,
-        status,
-        score: Math.min(fivePost, weekPost),
-      };
+        status: this.statusForLimit(limit, now),
+      }));
+      // Compatibility mode is for a provider Hive has no number for at all — not
+      // for a run that merely has one dark meter among several. As long as *some*
+      // governing pool is measured, the run is constrained by it: a Fable pool
+      // read at 99% still refuses the spawn even if the general pool has gone
+      // stale, and a measured general pool still gates a model whose own cap has
+      // not been read yet. Only when every pool that meters this model is unknown
+      // does Hive admit that it cannot judge.
+      const known = entries.filter((entry) =>
+        this.measured(entry.status, entry.limit) !== null
+      );
+      if (entries.length === 0 || known.length === 0) {
+        return { candidate, entries: [], score: -1, unknown: true };
+      }
+      let score = Number.POSITIVE_INFINITY;
+      for (const entry of entries) {
+        const measured = this.measured(entry.status, entry.limit);
+        if (measured === null) continue;
+        const estimate = this.estimateFor(entry.limit, request.tier);
+        score = Math.min(
+          score,
+          (measured.fiveRemaining - estimate.fiveHour) /
+            entry.limit.fiveHourAllowance,
+          (measured.weekRemaining - estimate.weekly) /
+            entry.limit.weeklyAllowance,
+        );
+      }
+      return { candidate, entries, score, unknown: false };
     });
     evaluated.sort((left, right) =>
       right.score - left.score ||
@@ -984,7 +1356,7 @@ export class QuotaService {
     const failures: string[] = [];
     let safeFallback: QuotaRouteCandidate | undefined;
     for (const item of evaluated) {
-      if (item.limit === null || item.status === null) {
+      if (item.unknown) {
         const fallbackEstimate = this.config.estimates[request.tier]!;
         const reservation = this.ledger.insertUnboundedReservation({
           id: crypto.randomUUID(),
@@ -1009,93 +1381,64 @@ export class QuotaService {
           reservation,
           status,
           reason: `${item.candidate.tool} selected in compatibility mode`,
+          warnings: [
+            `Hive has no live usage for ${item.candidate.tool}; ` +
+            `${item.candidate.model} is running unconstrained.`,
+          ],
         };
       }
-      const estimate = this.estimateFor(item.limit, request.tier);
-      const bounds = this.windowBounds(item.limit, now);
-      const supplemental = this.supplemental(item.limit, item.status, now);
-      const preserveDeep = request.tier === "cheap" ||
-        request.tier === "standard";
-      const reservation = this.ledger.tryReserve({
-        id: crypto.randomUUID(),
-        agentName: request.agentName,
-        provider: item.limit.provider,
-        account: item.limit.account,
-        pool: item.limit.pool,
-        model: item.candidate.model,
-        tier: request.tier,
-        estimatedUnits: estimate.fiveHour,
-        estimatedWeeklyUnits: estimate.weekly,
-        now: iso(now),
-        expiresAt: add(now, this.config.reservationTtlMinutes * 60_000),
-        fiveHourStart: bounds.fiveHourStart,
-        weeklyStart: bounds.weeklyStart,
-        fiveHourObservedAt: supplemental.fiveHourObservedAt,
-        weeklyObservedAt: supplemental.weeklyObservedAt,
-        supplementalFiveHourUsed: supplemental.five,
-        supplementalWeeklyUsed: supplemental.week,
-        fiveHourAllowance: item.limit.fiveHourAllowance,
-        weeklyAllowance: item.limit.weeklyAllowance,
-        fiveHourFloor: preserveDeep
-          ? item.limit.fiveHourAllowance * this.config.reserveFiveHourPct
-          : 0,
-        weeklyFloor: preserveDeep
-          ? item.limit.weeklyAllowance * this.config.reserveWeeklyPct
-          : 0,
-      });
-      if (reservation !== null) {
-        if (request.explicitTool === undefined ||
-          item.candidate.tool === request.explicitTool) {
-          await this.alertPool(item.limit, now);
-          return {
-            ...item.candidate,
-            reservation,
-            status: this.statusForLimit(item.limit, now),
-            reason: item.candidate.tool === preferred
-              ? "preferred provider has the best safe headroom"
-              : "preferred provider lacks safe headroom",
-          };
-        }
-        safeFallback = item.candidate;
-        this.ledger.release(reservation.id, iso(now));
-      } else {
-        const unit = item.limit.unit === "percent" ? "%" : "";
-        failures.push(
-          `${item.candidate.tool}/${item.candidate.model}: ` +
-            `5h ${describeRemaining(item.status.fiveHour, unit)} remaining` +
-            `${item.status.fiveHour.resetsAt ? ` (resets ${item.status.fiveHour.resetsAt})` : ""}, ` +
-            `weekly ${describeRemaining(item.status.weekly, unit)} remaining` +
-            `${item.status.weekly.resetsAt ? ` (resets ${item.status.weekly.resetsAt})` : ""}`,
+      const reserved = this.ledger.tryReserveGroup(
+        this.reservationInputs(
+          request.agentName,
+          item.candidate,
+          item.entries,
+          request.tier,
+          now,
+        ),
+      );
+      if (!reserved.ok) {
+        // Name the pool that refused, not just the model. "Fable is blocked" is
+        // useless without which meter blocked it, how much is left, and when it
+        // comes back — the caller has to be able to act on this.
+        const blocked = item.entries.find((entry) =>
+          entry.limit.pool === reserved.blockedBy.pool &&
+          entry.limit.provider === reserved.blockedBy.provider &&
+          entry.limit.account === reserved.blockedBy.account
         );
+        failures.push(
+          blocked === undefined
+            ? `${item.candidate.tool}/${item.candidate.model}: no headroom`
+            : this.describeBlock(item.candidate, blocked.limit, blocked.status),
+        );
+        continue;
       }
+      const primary = reserved.reservations[0]!;
+      const governing = this.tightest(item.entries);
+      if (
+        request.explicitTool === undefined ||
+        item.candidate.tool === request.explicitTool
+      ) {
+        for (const entry of item.entries) await this.alertPool(entry.limit, now);
+        return {
+          ...item.candidate,
+          reservation: primary,
+          status: this.statusForLimit(governing.limit, now),
+          reason: item.candidate.tool === preferred
+            ? "preferred provider has the best safe headroom"
+            : "preferred provider lacks safe headroom",
+          warnings: this.pressureWarnings(item.candidate, item.entries, request.tier),
+        };
+      }
+      safeFallback = item.candidate;
+      this.ledger.release(primary.id, iso(now));
     }
 
     if (request.explicitTool !== undefined) {
       const other = request.candidates.find((candidate) =>
         candidate.tool !== request.explicitTool
       );
-      if (other !== undefined) {
-        const otherLimit = this.limitFor(other);
-        if (otherLimit !== null) {
-          const otherStatus = this.statusForLimit(otherLimit, now);
-          const measured = this.measured(otherStatus);
-          const estimate = this.estimateFor(otherLimit, request.tier);
-          const preserveDeep = request.tier === "cheap" ||
-            request.tier === "standard";
-          const fiveFloor = preserveDeep
-            ? otherLimit.fiveHourAllowance * this.config.reserveFiveHourPct
-            : 0;
-          const weekFloor = preserveDeep
-            ? otherLimit.weeklyAllowance * this.config.reserveWeeklyPct
-            : 0;
-          if (
-            measured !== null &&
-            measured.fiveRemaining - estimate.fiveHour >= fiveFloor &&
-            measured.weekRemaining - estimate.weekly >= weekFloor
-          ) {
-            safeFallback ??= other;
-          }
-        }
+      if (other !== undefined && this.hasRoom(other, request.tier, now)) {
+        safeFallback ??= other;
       }
     }
     throw new QuotaExhaustedError(
@@ -1118,11 +1461,16 @@ export class QuotaService {
     }
 
     const now = this.clock();
-    const limit = this.limitFor(request);
-    const status = limit === null ? null : this.statusForLimit(limit, now);
-    // A pool whose headroom is unknown cannot authorize or refuse a control run.
+    const entries = this.limitsFor(request).map((limit) => ({
+      limit,
+      status: this.statusForLimit(limit, now),
+    }));
+    // A run no pool can measure cannot be authorized or refused on the numbers.
     // Accounting still happens: the run gets an explicit unbounded reservation.
-    if (limit === null || status === null || this.measured(status) === null) {
+    const known = entries.filter((entry) =>
+      this.measured(entry.status, entry.limit) !== null
+    );
+    if (known.length === 0) {
       const reservation = this.ledger.insertUnboundedReservation({
         id: crypto.randomUUID(),
         agentName: request.agentName,
@@ -1141,50 +1489,40 @@ export class QuotaService {
       return this.requireMatchingControlReservation(reservation, request);
     }
 
-    const estimate = this.estimateFor(limit, request.tier);
-    const bounds = this.windowBounds(limit, now);
-    const supplemental = this.supplemental(limit, status, now);
-    const reservation = this.ledger.tryReserve({
-      id: crypto.randomUUID(),
-      agentName: request.agentName,
-      provider: limit.provider,
-      account: limit.account,
-      pool: limit.pool,
-      model: request.model,
-      tier: request.tier,
-      estimatedUnits: estimate.fiveHour,
-      estimatedWeeklyUnits: estimate.weekly,
-      now: iso(now),
-      expiresAt: add(now, this.config.reservationTtlMinutes * 60_000),
-      fiveHourStart: bounds.fiveHourStart,
-      weeklyStart: bounds.weeklyStart,
-      fiveHourObservedAt: supplemental.fiveHourObservedAt,
-      weeklyObservedAt: supplemental.weeklyObservedAt,
-      supplementalFiveHourUsed: supplemental.five,
-      supplementalWeeklyUsed: supplemental.week,
-      fiveHourAllowance: limit.fiveHourAllowance,
-      weeklyAllowance: limit.weeklyAllowance,
-      // A critical acknowledgement may use the last safe capacity. It never
-      // falls back to another provider or model, but it also must not preserve
-      // a deep-work reserve at the expense of delivering the control.
-      fiveHourFloor: 0,
-      weeklyFloor: 0,
-      purpose: "control",
-      controlMessageId: request.controlMessageId,
-    });
-    if (reservation === null) {
-      const unit = limit.unit === "percent" ? "%" : "";
+    // A critical acknowledgement may use the last safe capacity. It never falls
+    // back to another provider or model, but it also must not preserve a
+    // deep-work reserve at the expense of delivering the control — so the floors
+    // the tier would normally protect are dropped to zero here.
+    const inputs = this.reservationInputs(
+      request.agentName,
+      request,
+      entries,
+      request.tier,
+      now,
+      { purpose: "control", controlMessageId: request.controlMessageId },
+    ).map((input) => ({ ...input, fiveHourFloor: 0, weeklyFloor: 0 }));
+    const group = this.ledger.tryReserveGroup(inputs);
+    const governing = this.tightest(entries);
+    const limit = governing.limit;
+    const status = governing.status;
+    if (!group.ok) {
+      const blocked = entries.find((entry) =>
+        entry.limit.pool === group.blockedBy.pool &&
+        entry.limit.provider === group.blockedBy.provider &&
+        entry.limit.account === group.blockedBy.account
+      ) ?? governing;
+      const unit = blocked.limit.unit === "percent" ? "%" : "";
+      const estimate = this.estimateFor(blocked.limit, request.tier);
       throw new QuotaExhaustedError(
         `Insufficient quota for critical control ${request.controlMessageId}: ` +
-          `${request.tool}/${request.model} has ` +
-          `${describeRemaining(status.fiveHour, unit)} five-hour and ` +
-          `${describeRemaining(status.weekly, unit)} weekly remaining; ` +
+          `${this.describeBlock(request, blocked.limit, blocked.status)}; ` +
           `${estimate.fiveHour.toFixed(1)}${unit} five-hour and ` +
           `${estimate.weekly.toFixed(1)}${unit} weekly are required. ` +
           "The agent remains write-revoked, " +
           "the worktree is preserved, and Hive will not switch models.",
       );
     }
+    const reservation = group.reservations[0]!;
     const matched = this.requireMatchingControlReservation(reservation, request);
     await this.alertPool(limit, now);
     return matched;
@@ -1273,14 +1611,37 @@ export class QuotaService {
       fiveHour?: { usedPct: number; resetsAt: string | null };
       sevenDay?: { usedPct: number; resetsAt: string | null };
       observedAt: string;
+      /**
+       * The model this session is *actually* running, as the statusLine payload
+       * reports it. It is the live truth; the model Hive stored at spawn is a
+       * guess that goes stale the moment a human switches models mid-session.
+       * Sent with the agent's name so the run's reservation can be found and
+       * moved onto the meter it is really spending from.
+       */
+      model?: string;
+      agent?: string;
     },
   ): Promise<QuotaObservation | null> {
+    if (report.model !== undefined && report.agent !== undefined) {
+      await this.reconcileAgentModel(
+        report.agent,
+        report.model,
+        report.observedAt,
+      );
+    }
     if (report.fiveHour === undefined && report.sevenDay === undefined) {
       return null;
     }
-    // A statusLine reading from an unconfigured install discovers the pool it
-    // belongs to rather than being thrown away for want of a `quota.toml`.
-    const limit = this.limitFor({ tool: agent.tool, model: agent.model }) ??
+    // These percentages are the *account's* five-hour and seven-day windows, so
+    // they belong to the pool that meters the account — never to a model's own
+    // sub-pool. Writing them against the running model would file the general
+    // pool's numbers under, say, `weekly:Fable`, overwriting a real 99% Fable
+    // measurement with the account's 62% and destroying the very reading the
+    // gate depends on. A statusLine reading from an unconfigured install still
+    // discovers its pool rather than being thrown away for want of a
+    // `quota.toml`; a manual pool that declares no wildcard keeps taking them.
+    const limit = this.generalLimit(agent.tool) ??
+      this.limitFor({ tool: agent.tool, model: agent.model }) ??
       this.discoverStatuslinePool(agent.tool, report.observedAt);
     const prior = this.ledger.getObservation(limit);
     if (

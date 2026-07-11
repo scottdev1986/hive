@@ -49,7 +49,12 @@ export interface DiscoveredPoolReading {
   account: string;
   pool: string;
   label: string | null;
-  /** Empty means informational: the pool is shown but never routed onto. */
+  /**
+   * `["*"]` marks the account-wide pool every model spends from. A metered
+   * sub-pool leaves this empty: the rate-limit payload names the pool but not
+   * the model id it gates, so the binding is resolved later against the model
+   * catalog rather than guessed here. See `ModelCatalogEntry`.
+   */
   models: string[];
   fiveHour: DiscoveredWindow | null;
   weekly: DiscoveredWindow | null;
@@ -58,8 +63,40 @@ export interface DiscoveredPoolReading {
   confidence: "authoritative" | "reported";
 }
 
+/**
+ * One model, as the provider's own catalog names it.
+ *
+ * This is the join that binds a metered sub-pool to the models it actually
+ * meters. Neither vendor's quota payload carries a model id — Claude's
+ * `get_usage` reports `scope.model.id: null` next to `display_name: "Fable"`,
+ * and Codex's `rateLimitsByLimitId` keys a pool `codex_bengalfox` with
+ * `limitName: "GPT-5.3-Codex-Spark"`. Both name the model the way their own
+ * model catalog names it, and both publish that catalog for free:
+ *
+ * - Claude: the `initialize` control response carries `models[]`, each with a
+ *   `displayName` and the concrete `resolvedModel` it launches.
+ * - Codex: the app-server answers `model/list` with `id` and `displayName`.
+ *
+ * So the mapping is discovered, never hardcoded: match the pool's provider-given
+ * name against the provider's own display names and take the model ids. A pool
+ * whose name matches nothing in the catalog stays unbound and says so, rather
+ * than being attached to a model on a guess.
+ */
+export interface ModelCatalogEntry {
+  provider: "claude" | "codex";
+  /** The id a spawn actually launches, e.g. `claude-fable-5`. */
+  modelId: string;
+  /** The provider's display name, e.g. `Fable`. The join key. */
+  displayName: string;
+}
+
 export type QuotaProbeResult =
-  | { status: "ok"; pools: DiscoveredPoolReading[] }
+  | {
+    status: "ok";
+    pools: DiscoveredPoolReading[];
+    /** The provider's model catalog, when the probe could read it. */
+    catalog: ModelCatalogEntry[];
+  }
   | { status: "unavailable"; reason: string };
 
 export interface QuotaProbe {
@@ -116,13 +153,14 @@ export function orderRateLimitWindows(
 /**
  * Translate one `account/rateLimits/read` response into discovered pools.
  *
- * The top-level `rateLimits` snapshot is the account's routable bucket; it is
- * the backward-compatible single-bucket view and the one a spawn spends from.
- * Entries in `rateLimitsByLimitId` describe metered sub-limits (a specific
- * model's own weekly cap, say). Hive cannot map a `limitId` onto a model name
- * without guessing, so those pools are recorded with no models: visible in
- * `hive quota`, never routed onto, and available for an operator to claim with
- * an explicit override.
+ * The top-level `rateLimits` snapshot is the account's routable bucket: every
+ * model spends from it, so it carries `["*"]`. Entries in `rateLimitsByLimitId`
+ * describe metered sub-limits — a specific model's own cap, like
+ * `codex_bengalfox` for GPT-5.3-Codex-Spark. The `limitId` itself is an opaque
+ * codename that maps to no model, but `limitName` is the model's display name,
+ * and the app-server's `model/list` publishes those display names against
+ * concrete ids. The binding is therefore resolved against the catalog rather
+ * than from this payload alone, so it is left empty here.
  */
 export function readingsFromCodexResponse(
   response: CodexRateLimitsResponse,
@@ -159,12 +197,37 @@ export function readingsFromCodexResponse(
   return pools;
 }
 
+/** What one Codex probe session reads: the limits, and the model catalog. */
+export interface CodexProbePayload {
+  limits: CodexRateLimitsResponse;
+  catalog: ModelCatalogEntry[];
+}
+
 export interface CodexProbeTransport {
   /**
-   * Run one `initialize` → `initialized` → `account/rateLimits/read` exchange
-   * against a fresh `codex app-server --stdio` process and return the response.
+   * Run one `initialize` → `initialized` → `account/rateLimits/read` +
+   * `model/list` exchange against a fresh `codex app-server --stdio` process.
    */
-  readRateLimits(timeoutMs: number): Promise<CodexRateLimitsResponse>;
+  readRateLimits(timeoutMs: number): Promise<CodexProbePayload>;
+}
+
+/** `model/list` → catalog entries. Verified against codex-cli 0.144.1. */
+export function catalogFromCodexModelList(result: unknown): ModelCatalogEntry[] {
+  const parsed = CodexModelListSchema.safeParse(result);
+  if (!parsed.success) return [];
+  const entries: ModelCatalogEntry[] = [];
+  for (const model of parsed.data.data) {
+    const id = model.id ?? model.model;
+    const displayName = model.displayName;
+    if (
+      id === null || id === undefined ||
+      displayName === null || displayName === undefined
+    ) {
+      continue;
+    }
+    entries.push({ provider: "codex", modelId: id, displayName });
+  }
+  return entries;
 }
 
 export class CodexQuotaProbe implements QuotaProbe {
@@ -178,11 +241,9 @@ export class CodexQuotaProbe implements QuotaProbe {
 
   async read(): Promise<QuotaProbeResult> {
     try {
-      const response = await this.transport.readRateLimits(
-        HANDSHAKE_TIMEOUT_MS,
-      );
+      const payload = await this.transport.readRateLimits(HANDSHAKE_TIMEOUT_MS);
       const pools = readingsFromCodexResponse(
-        response,
+        payload.limits,
         this.account,
         this.clock().toISOString(),
       );
@@ -193,7 +254,7 @@ export class CodexQuotaProbe implements QuotaProbe {
             "codex app-server returned no usable rate-limit windows; the account may not be signed in",
         };
       }
-      return { status: "ok", pools };
+      return { status: "ok", pools, catalog: payload.catalog };
     } catch (error) {
       return {
         status: "unavailable",
@@ -216,7 +277,7 @@ export class CodexStdioProbeTransport implements CodexProbeTransport {
     private readonly argv: string[] = ["codex", "app-server", "--stdio"],
   ) {}
 
-  async readRateLimits(timeoutMs: number): Promise<CodexRateLimitsResponse> {
+  async readRateLimits(timeoutMs: number): Promise<CodexProbePayload> {
     const child = Bun.spawn(this.argv, {
       stdin: "pipe",
       stdout: "pipe",
@@ -250,6 +311,12 @@ export class CodexStdioProbeTransport implements CodexProbeTransport {
         method: "account/rateLimits/read",
         params: null,
       });
+      // `model/list` publishes the display names the rate-limit payload labels
+      // its sub-pools with, and is the only way to learn which model a limit id
+      // like `codex_bengalfox` actually meters. It starts no thread, so the
+      // catalog read is as free as the limits read beside it. `params` must be
+      // an object — the server rejects a null one as a missing field.
+      send({ jsonrpc: "2.0", id: 3, method: "model/list", params: {} });
       const result = await responses.await("2");
       if (
         typeof result !== "object" || result === null ||
@@ -257,7 +324,15 @@ export class CodexStdioProbeTransport implements CodexProbeTransport {
       ) {
         throw new Error("codex app-server returned no rateLimits field");
       }
-      return result as unknown as CodexRateLimitsResponse;
+      // A catalog we cannot read costs us the sub-pool bindings, not the limits:
+      // the pools still report, they just stay unbound and say so.
+      const catalog = await responses.await("3")
+        .then(catalogFromCodexModelList)
+        .catch(() => [] as ModelCatalogEntry[]);
+      return {
+        limits: result as unknown as CodexRateLimitsResponse,
+        catalog,
+      };
     } finally {
       clearTimeout(timer);
       child.kill();
@@ -418,6 +493,22 @@ const CodexRateLimitsResponseSchema = z.object({
   rateLimitsByLimitId: z.record(z.string(), CodexRateLimitSnapshotSchema).nullable().optional(),
 }).passthrough();
 
+/** `model/list` on the Codex app-server. Only the join keys are required. */
+const CodexModelListSchema = z.object({
+  data: z.array(z.object({
+    id: z.string().nullable().optional(),
+    model: z.string().nullable().optional(),
+    displayName: z.string().nullable().optional(),
+  }).passthrough()),
+}).passthrough();
+
+/** The `models[]` block of a Claude `initialize` control response. */
+const ClaudeModelListSchema = z.array(z.object({
+  value: z.string().nullable().optional(),
+  resolvedModel: z.string().nullable().optional(),
+  displayName: z.string().nullable().optional(),
+}).passthrough());
+
 const ClaudeUsageWindowSchema = z.object({
   utilization: z.number().nullable(),
   resets_at: z.string().nullable(),
@@ -461,12 +552,18 @@ const claudeWindow = (
 /**
  * Turn one `get_usage` response into discovered pools.
  *
- * The account-wide five-hour and seven-day windows form the routable pool.
- * Model-scoped weekly caps (a premium model with its own ceiling) arrive with a
- * display name but often a null model id, and Hive will not guess which concrete
- * model `"Fable"` denotes. They are recorded as informational pools: visible in
- * `hive quota`, never routed onto. When the provider starts populating the model
- * id, they become routable without any change to this shape.
+ * The account-wide five-hour and seven-day windows form the general pool. Every
+ * Claude model spends from it — including the ones with no meter of their own,
+ * which is most of them — so it carries `["*"]` and is the pool a model falls
+ * back to. Opus has no dedicated weekly cap and is metered here; a Claude model
+ * is never "unmetered" while this pool exists.
+ *
+ * A model-scoped weekly cap (a premium model with its own ceiling) arrives with
+ * a display name and a null model id — `scope.model.id` is null next to
+ * `display_name: "Fable"`. The id gap is closed against the CLI's own model
+ * catalog rather than by guessing, so the pool is left unbound here and bound at
+ * resolve time. Its five-hour window is genuinely absent, not merely unread:
+ * the provider meters these caps weekly only.
  */
 export function readingsFromClaudeUsage(
   response: ClaudeUsageResponse,
@@ -519,9 +616,73 @@ export function readingsFromClaudeUsage(
   return pools;
 }
 
+/** What one Claude probe session reads: the usage, and the model catalog. */
+export interface ClaudeProbePayload {
+  usage: ClaudeUsageResponse;
+  catalog: ModelCatalogEntry[];
+}
+
 export interface ClaudeProbeTransport {
-  /** Send `initialize` then `get_usage` and return the usage response. */
-  readUsage(timeoutMs: number): Promise<ClaudeUsageResponse>;
+  /** Send `initialize` then `get_usage`; both frames are free. */
+  readUsage(timeoutMs: number): Promise<ClaudeProbePayload>;
+}
+
+/** The CLI appends `[1m]` to name a 1M-context variant of the same model. */
+const withoutContextSuffix = (model: string): string =>
+  model.replace(/\[\d+m\]$/i, "");
+
+/**
+ * The `models[]` block of an `initialize` control response → catalog entries.
+ *
+ * One model reaches Hive under several names: the alias a human types
+ * (`opus`), the alias the CLI ships (`default`), the 1M-context variant
+ * (`claude-opus-4-8[1m]`), and the concrete id that bills
+ * (`claude-opus-4-8`). They are all the same meter, so every id form of a model
+ * is bound to every display name that model answers to, and a pool named for
+ * any of them gates all of them. Otherwise a spawn could dodge an exhausted
+ * pool by pinning the model under a different one of its own names.
+ */
+export function catalogFromClaudeModels(models: unknown): ModelCatalogEntry[] {
+  const parsed = ClaudeModelListSchema.safeParse(models);
+  if (!parsed.success) return [];
+  const ids = new Map<string, Set<string>>();
+  const names = new Map<string, Set<string>>();
+  for (const model of parsed.data) {
+    const resolved = model.resolvedModel;
+    const displayName = model.displayName;
+    if (
+      resolved === null || resolved === undefined ||
+      displayName === null || displayName === undefined
+    ) {
+      continue;
+    }
+    const base = withoutContextSuffix(resolved);
+    if (base.length === 0) continue;
+    const forms = ids.get(base) ?? new Set<string>();
+    for (
+      const form of [
+        model.value,
+        resolved,
+        withoutContextSuffix(model.value ?? ""),
+        base,
+      ]
+    ) {
+      if (typeof form === "string" && form.length > 0) forms.add(form);
+    }
+    ids.set(base, forms);
+    const display = names.get(base) ?? new Set<string>();
+    display.add(displayName);
+    names.set(base, display);
+  }
+  const entries: ModelCatalogEntry[] = [];
+  for (const [base, forms] of ids) {
+    for (const modelId of forms) {
+      for (const displayName of names.get(base) ?? []) {
+        entries.push({ provider: "claude", modelId, displayName });
+      }
+    }
+  }
+  return entries;
 }
 
 export class ClaudeQuotaProbe implements QuotaProbe {
@@ -535,12 +696,12 @@ export class ClaudeQuotaProbe implements QuotaProbe {
 
   async read(): Promise<QuotaProbeResult> {
     try {
-      const response = await this.transport.readUsage(HANDSHAKE_TIMEOUT_MS);
-      if (response.rate_limits_available !== true) {
+      const payload = await this.transport.readUsage(HANDSHAKE_TIMEOUT_MS);
+      if (payload.usage.rate_limits_available !== true) {
         return { status: "unavailable", reason: CLAUDE_NO_SUBSCRIBER_LIMITS };
       }
       const pools = readingsFromClaudeUsage(
-        response,
+        payload.usage,
         this.account,
         this.clock().toISOString(),
       );
@@ -550,7 +711,7 @@ export class ClaudeQuotaProbe implements QuotaProbe {
           reason: "claude reported no usable rate-limit windows",
         };
       }
-      return { status: "ok", pools };
+      return { status: "ok", pools, catalog: payload.catalog };
     } catch (error) {
       return {
         status: "unavailable",
@@ -585,7 +746,7 @@ export class ClaudeStdioProbeTransport implements ClaudeProbeTransport {
     ],
   ) {}
 
-  async readUsage(timeoutMs: number): Promise<ClaudeUsageResponse> {
+  async readUsage(timeoutMs: number): Promise<ClaudeProbePayload> {
     const child = Bun.spawn(this.argv, {
       stdin: "pipe",
       stdout: "pipe",
@@ -607,7 +768,16 @@ export class ClaudeStdioProbeTransport implements ClaudeProbeTransport {
         request_id: "hive-init",
         request: { subtype: "initialize" },
       });
-      await responses.await("hive-init");
+      // The handshake we already wait on carries the account's model catalog —
+      // display name and resolved id per model. It is the only surface that says
+      // which concrete model the usage payload's `"Fable"` denotes, and it costs
+      // nothing extra: this frame was being awaited and thrown away.
+      const handshake = await responses.await("hive-init");
+      const catalog = catalogFromClaudeModels(
+        typeof handshake === "object" && handshake !== null
+          ? (handshake as Record<string, unknown>).models
+          : undefined,
+      );
       send({
         type: "control_request",
         request_id: "hive-usage",
@@ -617,7 +787,7 @@ export class ClaudeStdioProbeTransport implements ClaudeProbeTransport {
       if (typeof result !== "object" || result === null) {
         throw new Error("claude returned no get_usage payload");
       }
-      return result as unknown as ClaudeUsageResponse;
+      return { usage: result as unknown as ClaudeUsageResponse, catalog };
     } finally {
       clearTimeout(timer);
       child.kill();

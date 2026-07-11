@@ -1,6 +1,6 @@
 # Provider quota surfaces
 
-Everything here was verified by driving the installed binaries on 2026-07-10 — `codex-cli 0.144.0` and `claude 2.1.206`. None of it came from training memory, and most of it is absent from the vendors' prose documentation. Re-verify before trusting it against a newer CLI; these are protocol surfaces, not published contracts.
+Everything here was verified by driving the installed binaries — `codex-cli 0.144.1` and `claude 2.1.207`, re-checked on 2026-07-11. None of it came from training memory, and most of it is absent from the vendors' prose documentation. Re-verify before trusting it against a newer CLI; these are protocol surfaces, not published contracts.
 
 Read [SPEC.md](../../SPEC.md#6-who-picks-the-model) first for what hive does with these facts. This document exists only to record what the providers actually say, so that the next person to touch `src/daemon/quota-sources.ts` does not have to rediscover it.
 
@@ -9,6 +9,8 @@ Read [SPEC.md](../../SPEC.md#6-who-picks-the-model) first for what hive does wit
 Both vendors report the **fraction of a rolling window consumed**, and neither reports the window's absolute size. There is no API that answers "how many tokens does my plan include." Any absolute allowance in hive is therefore either an operator's own planning fiction or an invention — which is why discovered pools are denominated in percent, with an allowance of exactly 100 by construction.
 
 Both surfaces are readable **without starting a model turn**, so hive probes them at startup for free. This is the fact the whole design rests on, and both halves of it were confirmed by running the probes and observing zero cost.
+
+And both vendors meter some models **twice**: once against an account-wide pool that every model spends from, and again against a cap belonging to that model alone. A quota number is therefore only useful once you know *which models it governs* — a measurement you never join to a routing decision is worth exactly as much as no measurement. That join is the subject of the third section, and getting it wrong is not hypothetical: it is what put two deep-tier agents onto `claude-fable-5` while Fable's own weekly pool sat at 99%.
 
 ## Codex — `account/rateLimits/read`
 
@@ -43,6 +45,8 @@ Wire format is camelCase:
 
 `account/rateLimits/updated` arrives as a notification during turns, carrying a *sparse* snapshot the client is expected to merge into the last full read. Siblings that exist but hive does not use: `account/usage/read` (lifetime token counts, daily buckets), `account/read`, `account/rateLimitResetCredit/consume`.
 
+`rateLimitResetCredits` is real headroom hive does not count: the live account carries four unspent "Full reset (Weekly + 5 hr)" grants, each with an `id` and an `expiresAt`. They are readable in the same free call and redeemable through `account/rateLimitResetCredit/consume`. Hive deliberately does not spend one on its own — burning a human's finite reset grant to admit a spawn it would otherwise refuse is a decision a human should make — but the gate refuses today without mentioning that the grants exist. Surfacing them in the refusal message is the obvious next step and is not yet done.
+
 The `initialize` response carries `userAgent`, `codexHome`, `platformFamily`, `platformOs` — and no rate-limit data. The read must be explicit.
 
 ## Claude Code — the `get_usage` control request
@@ -65,11 +69,42 @@ The `initialize` response carries `userAgent`, `codexHome`, `platformFamily`, `p
 
 Note the deliberate inconsistency with the statusLine hook, which describes the same facts differently: statusLine uses `rate_limits.five_hour.used_percentage` with `resets_at` in **unix seconds**, while `get_usage` uses `utilization` with `resets_at` as an **ISO-8601 string**. Both are 0–100. Both must be parsed separately; hive does.
 
-`model_scoped[]` carries a `display_name` and, in every reading observed so far, a null model id. Hive records these pools and refuses to route on them — mapping `"Fable"` onto `claude-fable-5` would be a guess, and a wrong guess refuses a spawn.
+`model_scoped[]` carries a `display_name` and, in every reading observed so far, a **null model id** — the richer `rate_limits.limits[]` array says so outright, with `scope.model: { "id": null, "display_name": "Fable" }`. The pool names its model and withholds its identifier. Closing that gap is what the next section is about.
 
 `get_usage` proxies `api.anthropic.com/api/oauth/usage` through the CLI's own auth. Hive calls the control request rather than the endpoint: the endpoint is undocumented, [rate-limits aggressively under polling](https://github.com/anthropics/claude-code/issues/31637), and would break silently on change. Requests for an official quota API ([#13585](https://github.com/anthropics/claude-code/issues/13585), [#44328](https://github.com/anthropics/claude-code/issues/44328)) remain open.
 
 What Claude does **not** expose: the `initialize` control response returns `account` (email, organization, `subscriptionType`, `apiProvider`) and `models[]`, and contains zero usage data. The statusLine `rate_limits` block appears only for Claude.ai subscribers and only after the session's first API response. Nothing under `~/.claude` caches live rate-limit state; it lives in memory per session.
+
+## Binding a pool to the models it meters
+
+Neither vendor's quota payload carries a model id. Codex keys a sub-pool by an opaque codename — `codex_bengalfox` — and names it `"GPT-5.3-Codex-Spark"`. Claude reports `display_name: "Fable"` next to an explicit `id: null`. Both name the model exactly the way their **own model catalog** names it, and both publish that catalog for free:
+
+- **Claude:** the `initialize` control response already being awaited carries `models[]`, each entry with a `displayName` and the concrete `resolvedModel` it launches (`"Fable"` → `claude-fable-5`). No extra round trip; hive was previously throwing this frame away.
+- **Codex:** the app-server answers `model/list` (params `{}`, not `null` — a null one is rejected as a missing field) with `id` and `displayName` per model. It starts no thread, so it is as free as the limits read beside it.
+
+So the binding is **discovered by joining the pool's provider-given name against the provider's own display names**, and hive routes on the result. A pool whose name matches nothing in the catalog binds to nothing, stays unroutable, and says so — which is the honest state for a pool whose subject cannot be identified.
+
+Two alternatives lost:
+
+*A hardcoded `"Fable" → claude-fable-5` table.* Simple, and wrong the day a vendor ships a model or renames a pool — the table would keep gating the wrong thing while looking correct, and nothing would fail loudly. The vendors already publish the mapping; reading it is strictly better than remembering it.
+
+*Recording model-scoped pools but refusing to route on them* — the previous decision, on the reasoning that mapping `"Fable"` onto `claude-fable-5` was a guess and a wrong guess would refuse a spawn. That reasoning was sound about the payload and wrong about the system: the id is absent from the *quota* surface but present in the *catalog* surface, so no guess is needed. The cost of the caution was total. Fable's 99% was measured, fresh, provider-sourced — and inert, because nothing joined it to a routing decision. A pool that gates nothing is not a safe pool; it is an ignored one.
+
+Three consequences follow, and they are the whole point:
+
+**A model is gated by every pool that meters it, and the tightest one governs.** Checking only the first matching pool is what admitted the Fable spawn: the general pool had 39% of its week left and said yes, while the model's own pool had 1% and was never asked. A run that spends from two meters holds a reservation in each, and they settle together.
+
+**A model with no cap of its own is metered by the general pool — never by nothing.** Opus has no dedicated meter and never did; it is metered under general usage like every other Claude model without one. Minting a per-model pool for it and reporting "usage unknown, routing unconstrained" invented a meter that does not exist, and did the worst possible thing with it: an unconstrained model is the most attractive route there is, so the phantom actively pulled traffic toward itself.
+
+**Every id form of a model binds to the same meter.** One model reaches hive under several names — `claude-opus-4-8`, the 1M-context variant `claude-opus-4-8[1m]`, the alias `opus`, the shipped default `default`. They are one meter, so a pool named for any of them gates all of them; otherwise a spawn could dodge an exhausted pool by pinning the model under a different one of its own names. Note that `[1m]` is an **account-plan** property, not a distinct model: never key a table on a model name and assume a plan-level fact travels with it.
+
+## The model a session is actually running
+
+Hive records a model when it spawns an agent. A human is free to switch models in that session afterwards — normal, supported, and invisible to the spawn-time record. The reservation then holds capacity in the wrong meter, and every number booked for that agent describes a model it is not running.
+
+The statusLine payload is the live correction. Verified against claude 2.1.207 by capturing a real render: it carries `model.id` with the concrete resolved id, it re-renders every turn, and it tracks a mid-session switch. Hive keys on the **id** and ignores the display name here, because the same model is `"Fable 5"` in this payload, `"Fable"` in `get_usage`, and `"Fable"` in the catalog — three surfaces, two spellings. Joining on a name that is not stable across the payloads being joined is how a pool ends up bound to the wrong model.
+
+On a switch, the in-flight reservation is moved wholesale onto the pools that meter the new model. It is a forward-looking estimate that has not been reconciled yet, so re-keying it is simply correcting a prediction. Usage already reconciled into the ledger is **left where it is**: nothing records when mid-run the switch happened, and splitting past spend between two pools would mean inventing the split — an invented number is worse than a misfiled one, because it looks like a measurement. The re-booking is written whether or not the new pool has room, because the agent is already running: refusing the booking would not stop the burn, it would only hide it.
 
 ## Probing safely
 

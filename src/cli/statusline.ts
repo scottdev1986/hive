@@ -58,12 +58,34 @@ export function parseStatuslineReport(
   const fiveHour = parseWindow(limits.five_hour);
   const sevenDay = parseWindow(limits.seven_day);
   if (fiveHour === undefined && sevenDay === undefined) return null;
+  const model = parseModel(payload);
   return {
     agent,
     ...(fiveHour === undefined ? {} : { fiveHour }),
     ...(sevenDay === undefined ? {} : { sevenDay }),
+    ...(model === undefined ? {} : { model }),
     observedAt,
   };
+}
+
+/**
+ * The model this session is actually running.
+ *
+ * Verified by driving claude 2.1.207: every statusLine render carries
+ * `model.id` with the concrete resolved id, and it tracks a mid-session model
+ * switch. That makes it the live correction for the model Hive recorded when it
+ * spawned the agent, which is only ever a guess about the future.
+ *
+ * The id is taken and the display name ignored on purpose. `display_name` here
+ * is "Fable 5", while the usage payload and the model catalog both say "Fable" —
+ * three surfaces, two spellings. Joining on a name that is not stable across the
+ * very payloads being joined is how a pool ends up bound to the wrong model.
+ */
+function parseModel(payload: Record<string, unknown>): string | undefined {
+  const model = payload.model;
+  if (!isRecord(model)) return undefined;
+  const id = model.id;
+  return typeof id === "string" && id.length > 0 ? id : undefined;
 }
 
 /** Render the status line the user sees in the agent's window. */

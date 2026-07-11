@@ -14,9 +14,9 @@ Routine selection: the orchestrator classifies (`deep`/`standard`/`cheap`/`revie
 model = "claude-opus-4-8"
 ```
 
-`~/.hive/routing.toml` now pins all four tiers across both vendors, so every model this account can reach has a standing path. Verified with `resolveRoute` after writing it:
+Pinning all four tiers across both vendors gives every model this account can reach a standing path:
 
-| Model | Path (tier × tool) |
+| Model | Path (tier × tool), once pinned |
 |---|---|
 | `claude-opus-4-8` | `deep` × claude |
 | `claude-sonnet-5` | `standard` × claude, `review` × claude |
@@ -28,7 +28,11 @@ model = "claude-opus-4-8"
 
 Since the orchestrator can override the tool at spawn ("use a Claude agent for this"), pinning both columns of every tier is what makes the override meaningful — a route that discards its model under a tool override is a suggestion, not a route.
 
-Fable 5 is deliberately not the standing deep default: it moves to usage-only billing off the subscription on 2026-07-12 (`FABLE_AUTO_ROUTING_CUTOFF`, `src/schemas/routing.ts`). It stays fully reachable — pass `model: "claude-fable-5"` for one agent, or change the `deep.claude` pin to make it the default. Explicit selection keeps working forever, before or after the cutoff; only *auto*-selection narrows.
+**No `~/.hive/routing.toml` exists on this machine, so the defaults govern** — checked 2026-07-11, and the file is simply absent, not empty. That matters more than it sounds: until `FABLE_AUTO_ROUTING_CUTOFF` (`2026-07-12T00:00:00Z`, `src/schemas/routing.ts`) the default deep route is `best`, and `best` resolves to `claude-fable-5` (`CLAUDE_BEST_MODEL`, `src/adapters/tools/models.ts`). So a deep-tier Claude spawn goes to Fable 5 today, by default, with nothing written down anywhere saying so. Write the pin above if you want Opus sooner; after the cutoff the default deep Claude route becomes `claude-opus-4-8` on its own.
+
+Fable 5 is deliberately not the standing deep default past that date: it moves to usage-only billing off the subscription. It stays fully reachable — pass `model: "claude-fable-5"` for one agent, or change the `deep.claude` pin to make it the default. Explicit selection keeps working forever, before or after the cutoff; only *auto*-selection narrows.
+
+The cutoff is a billing date, not a safety mechanism, and it is worth being clear about what it does **not** do. It does not stop a spawn from landing on a model whose quota is spent — that is the quota gate's job, and the gate now binds each pool to the models it actually meters, so an exhausted per-model cap (Fable's weekly pool at 99%) refuses the spawn and names the pool that blocked it. See [`docs/research/provider-quota-surfaces.md`](research/provider-quota-surfaces.md). A perfect routing table still needs a working gate: the two failures are independent, and on 2026-07-11 both were live at once.
 
 Two rules govern what value to write. **Pins should be concrete IDs, not aliases**: `resolveConcreteModel` (`src/adapters/tools/models.ts:59-74`) maps only `best` and `default` to concrete models — any other alias (`opus`, `sonnet`) passes through verbatim and becomes the agent's recorded execution identity, so `hive_status` and terminal titles would say "opus" while telling you nothing about what a control restart would actually relaunch. Aliases are the right choice only for *shipped defaults*, where entitlement-adaptivity matters more than identity precision (SPEC §6). **The route must survive a tool override**: every tier carries both a `claude` and a `codex` entry precisely because the orchestrator can spawn "use a Claude agent for this" against a Codex-preferred tier — pin both columns if you care about both.
 

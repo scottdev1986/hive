@@ -10,6 +10,13 @@ import type { HiveDatabase } from "./db";
 
 const ReservationSchema = z.object({
   id: z.string(),
+  /**
+   * The reservation this one settles with. A run gated by more than one pool
+   * holds a row per pool, all sharing the primary row's id as their group, so
+   * starting, reconciling, or releasing the run settles every pool it touched.
+   * Null on rows written before groups existed: those are their own group.
+   */
+  groupId: z.string().nullable().default(null),
   agentName: z.string(),
   provider: z.enum(["claude", "codex"]),
   account: z.string(),
@@ -56,6 +63,25 @@ const DiscoveredPoolSchema = z.object({
   source: z.enum(["provider", "statusline"]),
 });
 export type DiscoveredQuotaPool = z.infer<typeof DiscoveredPoolSchema>;
+
+/**
+ * One row of a provider's own model catalog: which display name a model answers
+ * to. This is what binds a metered sub-pool to the models it meters — the quota
+ * payloads name their pools ("Fable", "GPT-5.3-Codex-Spark") but never carry a
+ * model id, and the catalog is where the provider publishes both.
+ *
+ * It is stored rather than resolved on the fly because the free live feeds — the
+ * Codex app-server's push notifications and Claude's statusLine — refresh pool
+ * *usage* without carrying a catalog. Binding at read time from the stored
+ * catalog means a usage update can never silently unbind a pool.
+ */
+const ModelCatalogSchema = z.object({
+  provider: z.enum(["claude", "codex"]),
+  modelId: z.string(),
+  displayName: z.string(),
+  discoveredAt: z.string(),
+});
+export type ModelCatalogRow = z.infer<typeof ModelCatalogSchema>;
 
 const AlertStateSchema = z.object({
   provider: z.string(),
@@ -243,6 +269,13 @@ export class QuotaLedger {
         source TEXT NOT NULL,
         PRIMARY KEY(provider, account, pool)
       );
+      CREATE TABLE IF NOT EXISTS quota_model_catalog (
+        provider TEXT NOT NULL,
+        modelId TEXT NOT NULL,
+        displayName TEXT NOT NULL,
+        discoveredAt TEXT NOT NULL,
+        PRIMARY KEY(provider, modelId, displayName)
+      );
     `);
     const observationColumns = z.array(z.object({ name: z.string() })).parse(
       this.db.database.query("PRAGMA table_info(quota_observations)").all(),
@@ -286,6 +319,22 @@ export class QuotaLedger {
         "ALTER TABLE quota_reservations ADD COLUMN estimatedWeeklyUnits REAL",
       );
     }
+    // A run that spends from two pools at once — the account-wide one and the
+    // model's own cap — holds a reservation in each, and they must settle
+    // together or a released run would keep hold of the sub-pool forever. Rows
+    // written before groups existed are their own group, which is exactly what
+    // a single-pool reservation is.
+    if (!reservationColumnNames.has("groupId")) {
+      this.db.database.exec(
+        "ALTER TABLE quota_reservations ADD COLUMN groupId TEXT",
+      );
+      this.db.database.exec(
+        "UPDATE quota_reservations SET groupId = id WHERE groupId IS NULL",
+      );
+    }
+    this.db.database.exec(
+      "CREATE INDEX IF NOT EXISTS quota_reservations_group ON quota_reservations(groupId)",
+    );
     const usageColumns = z.array(z.object({ name: z.string() })).parse(
       this.db.database.query("PRAGMA table_info(quota_usage)").all(),
     );
@@ -387,52 +436,96 @@ export class QuotaLedger {
     }).parse(row));
   }
 
+  /**
+   * Does this pool have room for the run, once everything already committed
+   * against it is counted? A pool that would be pushed past its allowance (less
+   * whatever floor the caller is protecting) has no room, and the run must not
+   * be admitted onto it.
+   */
+  private fits(input: ReserveQuotaInput): boolean {
+    const totals = this.usageTotals(
+      input,
+      input.fiveHourStart,
+      input.weeklyStart,
+      input,
+    );
+    const weeklyEstimate = input.estimatedWeeklyUnits ?? input.estimatedUnits;
+    const fiveHourCommitted = totals.fiveHour + totals.reserved +
+      input.supplementalFiveHourUsed + input.estimatedUnits;
+    const weeklyCommitted = totals.weekly + totals.reservedWeekly +
+      input.supplementalWeeklyUsed + weeklyEstimate;
+    return fiveHourCommitted <= input.fiveHourAllowance - input.fiveHourFloor &&
+      weeklyCommitted <= input.weeklyAllowance - input.weeklyFloor;
+  }
+
+  private insert(input: ReserveQuotaInput, groupId: string): void {
+    this.db.database.query(`
+      INSERT INTO quota_reservations (
+        id, groupId, agentName, provider, account, pool, model, tier,
+        estimatedUnits, estimatedWeeklyUnits, status, createdAt, expiresAt,
+        startedAt, reconciledAt, actualUnits, source, purpose,
+        controlMessageId
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, NULL, NULL, NULL, NULL, ?, ?)
+    `).run(
+      input.id,
+      groupId,
+      input.agentName,
+      input.provider,
+      input.account,
+      input.pool,
+      input.model,
+      input.tier,
+      input.estimatedUnits,
+      input.estimatedWeeklyUnits ?? null,
+      input.now,
+      input.expiresAt,
+      input.purpose ?? "agent",
+      input.controlMessageId ?? null,
+    );
+  }
+
   tryReserve(input: ReserveQuotaInput): QuotaReservation | null {
+    const result = this.tryReserveGroup([input]);
+    return result.ok ? result.reservations[0]! : null;
+  }
+
+  /**
+   * Reserve one run against every pool that meters it, all or nothing.
+   *
+   * A model with its own cap spends from two meters at once — the account-wide
+   * pool and its own — and a run is only safe when *both* have room. Taking the
+   * pools one at a time would admit a run that fits the general pool and blows
+   * the model's cap, which is exactly how two deep-tier agents landed on a model
+   * whose weekly pool was already at 99%. The tightest pool governs, and the
+   * caller is told which one refused so it can say so out loud.
+   */
+  tryReserveGroup(inputs: ReserveQuotaInput[]):
+    | { ok: true; reservations: QuotaReservation[] }
+    | { ok: false; blockedBy: ReserveQuotaInput }
+  {
+    if (inputs.length === 0) {
+      throw new Error("a reservation must name at least one pool");
+    }
     return this.immediate(() => {
-      if (input.controlMessageId !== undefined) {
-        const existing = this.getActiveControlReservation(input.controlMessageId);
-        if (existing !== null) return existing;
+      const primary = inputs[0]!;
+      if (primary.controlMessageId !== undefined) {
+        const existing = this.getActiveControlReservation(
+          primary.controlMessageId,
+        );
+        if (existing !== null) {
+          return { ok: true as const, reservations: [existing] };
+        }
       }
-      const totals = this.usageTotals(
-        input,
-        input.fiveHourStart,
-        input.weeklyStart,
-        input,
-      );
-      const weeklyEstimate = input.estimatedWeeklyUnits ?? input.estimatedUnits;
-      const fiveHourCommitted = totals.fiveHour + totals.reserved +
-        input.supplementalFiveHourUsed + input.estimatedUnits;
-      const weeklyCommitted = totals.weekly + totals.reservedWeekly +
-        input.supplementalWeeklyUsed + weeklyEstimate;
-      if (
-        fiveHourCommitted > input.fiveHourAllowance - input.fiveHourFloor ||
-        weeklyCommitted > input.weeklyAllowance - input.weeklyFloor
-      ) {
-        return null;
+      // Every pool is checked before any row is written, so a refusal leaves the
+      // ledger exactly as it found it.
+      for (const input of inputs) {
+        if (!this.fits(input)) return { ok: false as const, blockedBy: input };
       }
-      this.db.database.query(`
-        INSERT INTO quota_reservations (
-          id, agentName, provider, account, pool, model, tier,
-          estimatedUnits, estimatedWeeklyUnits, status, createdAt, expiresAt,
-          startedAt, reconciledAt, actualUnits, source, purpose,
-          controlMessageId
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, NULL, NULL, NULL, NULL, ?, ?)
-      `).run(
-        input.id,
-        input.agentName,
-        input.provider,
-        input.account,
-        input.pool,
-        input.model,
-        input.tier,
-        input.estimatedUnits,
-        input.estimatedWeeklyUnits ?? null,
-        input.now,
-        input.expiresAt,
-        input.purpose ?? "agent",
-        input.controlMessageId ?? null,
-      );
-      return this.getReservation(input.id);
+      for (const input of inputs) this.insert(input, primary.id);
+      return {
+        ok: true as const,
+        reservations: inputs.map((input) => this.getReservation(input.id)!),
+      };
     });
   }
 
@@ -448,29 +541,73 @@ export class QuotaLedger {
         const existing = this.getActiveControlReservation(input.controlMessageId);
         if (existing !== null) return existing;
       }
-      this.db.database.query(`
-        INSERT INTO quota_reservations (
-          id, agentName, provider, account, pool, model, tier,
-          estimatedUnits, estimatedWeeklyUnits, status, createdAt, expiresAt,
-          startedAt, reconciledAt, actualUnits, source, purpose,
-          controlMessageId
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, NULL, NULL, NULL, NULL, ?, ?)
-      `).run(
+      this.insert(
+        {
+          ...input,
+          fiveHourStart: input.now,
+          weeklyStart: input.now,
+          fiveHourObservedAt: null,
+          weeklyObservedAt: null,
+          supplementalFiveHourUsed: 0,
+          supplementalWeeklyUsed: 0,
+          fiveHourAllowance: 0,
+          weeklyAllowance: 0,
+          fiveHourFloor: 0,
+          weeklyFloor: 0,
+        },
         input.id,
-        input.agentName,
-        input.provider,
-        input.account,
-        input.pool,
-        input.model,
-        input.tier,
-        input.estimatedUnits,
-        input.estimatedWeeklyUnits ?? null,
-        input.now,
-        input.expiresAt,
-        input.purpose ?? "agent",
-        input.controlMessageId ?? null,
       );
       return this.getReservation(input.id)!;
+    });
+  }
+
+  /**
+   * Record what the provider says its own models are called. Idempotent: a model
+   * keeps every display name it has answered to, so re-probing refreshes the
+   * catalog without unbinding a pool that a transient empty read would drop.
+   */
+  upsertModelCatalog(entries: ModelCatalogRow[]): void {
+    if (entries.length === 0) return;
+    this.immediate(() => {
+      for (const entry of entries) {
+        const value = ModelCatalogSchema.parse(entry);
+        this.db.database.query(`
+          INSERT INTO quota_model_catalog (
+            provider, modelId, displayName, discoveredAt
+          ) VALUES (?, ?, ?, ?)
+          ON CONFLICT(provider, modelId, displayName) DO UPDATE SET
+            discoveredAt = excluded.discoveredAt
+        `).run(
+          value.provider,
+          value.modelId,
+          value.displayName,
+          value.discoveredAt,
+        );
+      }
+    });
+  }
+
+  modelCatalog(): ModelCatalogRow[] {
+    return this.db.database.query(
+      "SELECT * FROM quota_model_catalog ORDER BY provider, modelId, displayName",
+    ).all().map((row) => ModelCatalogSchema.parse(row));
+  }
+
+  /**
+   * Book a run against its pools without asking whether they have room.
+   *
+   * This is for a run that is *already happening* — an agent whose model changed
+   * under Hive after it launched. Refusing the booking would not stop the agent;
+   * it would only mean the capacity it is visibly burning goes unrecorded, which
+   * is the exact blindness the quota gate exists to end. So the spend is written,
+   * the pool may go over, and the alert says so.
+   */
+  reserveGroupUnchecked(inputs: ReserveQuotaInput[]): QuotaReservation[] {
+    if (inputs.length === 0) return [];
+    return this.immediate(() => {
+      const primary = inputs[0]!;
+      for (const input of inputs) this.insert(input, primary.id);
+      return inputs.map((input) => this.getReservation(input.id)!);
     });
   }
 
@@ -544,11 +681,29 @@ export class QuotaLedger {
     return row === null ? null : ReservationSchema.parse(row);
   }
 
+  /**
+   * Every row a run holds. A run gated by two pools settles both together;
+   * settling only the row whose id the caller happens to hold would strand the
+   * other pool's reservation until its TTL expired, quietly withholding headroom
+   * from every spawn in between.
+   */
+  private group(id: string): QuotaReservation[] {
+    return this.db.database.query(`
+      SELECT * FROM quota_reservations
+      WHERE groupId = COALESCE(
+        (SELECT groupId FROM quota_reservations WHERE id = ?), ?
+      ) OR id = ?
+      ORDER BY CASE WHEN id = ? THEN 0 ELSE 1 END, pool
+    `).all(id, id, id, id).map((row) => ReservationSchema.parse(row));
+  }
+
   markStarted(id: string, startedAt: string): QuotaReservation | null {
     this.db.database.query(`
       UPDATE quota_reservations SET startedAt = COALESCE(startedAt, ?)
-      WHERE id = ? AND status = 'active'
-    `).run(startedAt, id);
+      WHERE groupId = COALESCE(
+        (SELECT groupId FROM quota_reservations WHERE id = ?), ?
+      ) AND status = 'active'
+    `).run(startedAt, id, id);
     return this.getReservation(id);
   }
 
@@ -560,33 +715,34 @@ export class QuotaLedger {
     occurredAt: string,
   ): QuotaReservation | null {
     return this.immediate(() => {
-      const reservation = this.getReservation(id);
-      if (reservation === null || reservation.status !== "active") {
-        return reservation;
+      for (const reservation of this.group(id)) {
+        if (reservation.status !== "active") continue;
+        this.db.database.query(`
+          UPDATE quota_reservations
+          SET status = 'reconciled', reconciledAt = ?, actualUnits = ?, source = ?
+          WHERE id = ? AND status = 'active'
+        `).run(occurredAt, units, source, reservation.id);
+        // The spend lands in each pool the run drew from. Both are percent of
+        // their own window, so the same figure is the honest debit for each.
+        this.db.database.query(`
+          INSERT OR IGNORE INTO quota_usage (
+            id, reservationId, provider, account, pool, model,
+            units, weeklyUnits, occurredAt, source, confidence
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(
+          crypto.randomUUID(),
+          reservation.id,
+          reservation.provider,
+          reservation.account,
+          reservation.pool,
+          reservation.model,
+          units,
+          weeklyUnits,
+          occurredAt,
+          source,
+          source === "estimated" ? "estimated" : "authoritative",
+        );
       }
-      this.db.database.query(`
-        UPDATE quota_reservations
-        SET status = 'reconciled', reconciledAt = ?, actualUnits = ?, source = ?
-        WHERE id = ? AND status = 'active'
-      `).run(occurredAt, units, source, id);
-      this.db.database.query(`
-        INSERT OR IGNORE INTO quota_usage (
-          id, reservationId, provider, account, pool, model,
-          units, weeklyUnits, occurredAt, source, confidence
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(
-        crypto.randomUUID(),
-        id,
-        reservation.provider,
-        reservation.account,
-        reservation.pool,
-        reservation.model,
-        units,
-        weeklyUnits,
-        occurredAt,
-        source,
-        source === "estimated" ? "estimated" : "authoritative",
-      );
       return this.getReservation(id);
     });
   }
@@ -595,8 +751,10 @@ export class QuotaLedger {
     this.db.database.query(`
       UPDATE quota_reservations
       SET status = 'released', reconciledAt = ?, actualUnits = 0, source = 'released'
-      WHERE id = ? AND status = 'active'
-    `).run(releasedAt, id);
+      WHERE groupId = COALESCE(
+        (SELECT groupId FROM quota_reservations WHERE id = ?), ?
+      ) AND status = 'active'
+    `).run(releasedAt, id, id);
     return this.getReservation(id);
   }
 
