@@ -368,6 +368,9 @@ export class CrashRecovery {
         ? buildClaudeResumeCommand({
             daemonPort: this.deps.port,
             model,
+            ...(identity?.tool === "claude" && identity.effort !== undefined
+              ? { effort: identity.effort }
+              : {}),
             name: record.name,
             readOnly: false,
             dangerous,

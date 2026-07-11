@@ -96,7 +96,10 @@ describe("RoutingTableSchema", () => {
     ).toThrow(/unrecognized key.*model/i);
   });
 
-  test("rejects a misspelled Claude route key", () => {
+  test("accepts open vendor effort strings and rejects misspelled keys", () => {
+    expect(
+      ClaudeRouteSchema.parse({ model: "sonnet", effort: "future-level" }),
+    ).toEqual({ model: "sonnet", effort: "future-level" });
     expect(() =>
       RoutingTableSchema.parse({
         ...DEFAULT_ROUTING,
@@ -108,10 +111,10 @@ describe("RoutingTableSchema", () => {
     ).toThrow(/unrecognized key.*modle/i);
   });
 
-  test("rejects effort on a Claude route", () => {
+  test("rejects unsafe effort strings", () => {
     expect(() =>
-      ClaudeRouteSchema.parse({ model: "sonnet", effort: "high" })
-    ).toThrow(/unrecognized key.*effort/i);
+      ClaudeRouteSchema.parse({ model: "sonnet", effort: "HIGH!" })
+    ).toThrow();
   });
 
   test("rejects a route missing the codex sub-table", () => {
@@ -284,6 +287,12 @@ describe("HookEventSchema", () => {
       agentName: "agent-3",
       timestamp,
       description: "Run a network install",
+    },
+    {
+      kind: "effort-drift",
+      agentName: "agent-3",
+      timestamp,
+      description: "Execution effort drifted from high to low",
     },
     { kind: "dead", agentName: "agent-3", timestamp },
   ] satisfies HookEvent[];

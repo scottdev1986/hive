@@ -17,6 +17,7 @@ import type { ClaudeRoute } from "../../schemas";
 export interface ClaudeSpawnOptions {
   name: string;
   model: ClaudeRoute["model"];
+  effort?: string;
   worktreePath: string;
   daemonPort: number;
   readOnly: boolean;
@@ -238,6 +239,9 @@ export function buildClaudeSpawnCommand(
   const command = [options.executable ?? "claude"];
   if (options.model !== "default") {
     command.push("--model", options.model);
+  }
+  if (options.effort !== undefined) {
+    command.push("--effort", options.effort);
   }
   if (options.readOnly) {
     command.push("--permission-mode", "default");

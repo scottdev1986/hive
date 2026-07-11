@@ -27,6 +27,10 @@ export const HookEventSchema = z.discriminatedUnion("kind", [
     usageSource: z.enum(["provider", "gateway", "estimated"]).optional(),
   }),
   HookEventBaseSchema.extend({ kind: z.literal("notification") }),
+  HookEventBaseSchema.extend({
+    kind: z.literal("effort-drift"),
+    description: z.string().min(1),
+  }),
   // A completed tool call inside a running turn (Claude's PostToolUse). This
   // is the "nearest safe lifecycle boundary" SPEC decision 1 gives urgent
   // messages: the agent is provably between tool calls, so an injected paste

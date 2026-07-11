@@ -16,6 +16,9 @@ export const SpawnRequestSchema = z.object({
   // substituted — pass it only when the user named a model. Routine spawns
   // keep resolving models through the routing table.
   model: z.string().min(1).optional(),
+  // A user directive, passed verbatim after validation against the resolved
+  // model's discovered capability record. No tier default is implied.
+  effort: z.string().min(1).max(64).regex(/^[a-z0-9-]+$/).optional(),
 });
 
 export type SpawnRequest = z.infer<typeof SpawnRequestSchema>;

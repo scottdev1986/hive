@@ -366,6 +366,63 @@ describe("permission relay through the approval queue", () => {
 });
 
 describe("statusline endpoint", () => {
+  test("freezes the first observed Claude effort into execution identity", async () => {
+    const { daemon: instance, db } = daemon(false);
+    try {
+      db.insertAgent(agent({
+        executionIdentity: { tool: "claude", model: "claude-fable-5" },
+      }));
+      const response = await post(instance, "/statusline", {
+        agent: "maya",
+        effort: "high",
+      });
+      expect(response.status).toBe(200);
+      expect(db.getAgentByName("maya")?.executionIdentity).toEqual({
+        tool: "claude",
+        model: "claude-fable-5",
+        effort: "high",
+      });
+    } finally {
+      db.close();
+    }
+  });
+
+  test("records and surfaces effort drift without mutating identity", async () => {
+    const { daemon: instance, db } = daemon(false);
+    try {
+      db.insertAgent(agent({
+        executionIdentity: {
+          tool: "claude",
+          model: "claude-fable-5",
+          effort: "high",
+        },
+      }));
+      for (let index = 0; index < 2; index += 1) {
+        const response = await post(instance, "/statusline", {
+          agent: "maya",
+          effort: "low",
+        });
+        expect(response.status).toBe(200);
+      }
+      expect(db.getAgentByName("maya")?.executionIdentity?.effort).toBe("high");
+      expect(db.listEvents("maya")).toEqual([
+        expect.objectContaining({
+          kind: "effort-drift",
+          description: expect.stringContaining("high to observed current value low"),
+        }),
+      ]);
+      const alerts = db.listMessages().filter((message) =>
+        message.to === "orchestrator"
+      );
+      expect(alerts).toHaveLength(1);
+      expect(alerts[0]?.body).toContain(
+        "ExecutionIdentity was not changed",
+      );
+    } finally {
+      db.close();
+    }
+  });
+
   test("records a subscriber reading as a reported observation", async () => {
     const { daemon: instance, db } = daemon(true);
     try {

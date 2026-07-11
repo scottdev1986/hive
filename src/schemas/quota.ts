@@ -180,6 +180,7 @@ export const StatuslineRateWindowSchema = z.object({
 
 export const StatuslineReportSchema = z.object({
   agent: z.string().min(1),
+  effort: z.string().min(1).max(64).regex(/^[a-z0-9-]+$/).optional(),
   fiveHour: StatuslineRateWindowSchema.optional(),
   sevenDay: StatuslineRateWindowSchema.optional(),
   observedAt: z.iso.datetime({ offset: true }).optional(),

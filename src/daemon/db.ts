@@ -134,7 +134,7 @@ function parseEventRow(row: unknown): HookEvent {
       ...(value.usageSource === null ? {} : { usageSource: value.usageSource }),
     });
   }
-  if (value.kind === "approval-request") {
+  if (value.kind === "approval-request" || value.kind === "effort-drift") {
     return HookEventSchema.parse({
       kind: value.kind,
       agentName: value.agentName,
@@ -1104,7 +1104,9 @@ export class HiveDatabase {
       value.agentName,
       value.timestamp,
       value.kind === "turn-end" ? value.contextPct ?? null : null,
-      value.kind === "approval-request" ? value.description : null,
+      value.kind === "approval-request" || value.kind === "effort-drift"
+        ? value.description
+        : null,
       value.kind === "turn-end" ? value.usageUnits ?? null : null,
       value.kind === "turn-end" ? value.usageSource ?? null : null,
     );

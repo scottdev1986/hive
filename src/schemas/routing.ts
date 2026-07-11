@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { EffortLevelSchema } from "./capability";
 
 export const RoutingTierSchema = z.enum([
   "deep",
@@ -13,19 +14,14 @@ const ModelSchema = z.union([z.literal("default"), z.string().min(1)]);
 
 export const ClaudeRouteSchema = z.strictObject({
   model: ModelSchema,
+  effort: EffortLevelSchema.optional(),
 });
 
 export type ClaudeRoute = z.infer<typeof ClaudeRouteSchema>;
 
 export const CodexRouteSchema = z.strictObject({
   model: ModelSchema,
-  effort: z.enum([
-    "minimal",
-    "low",
-    "medium",
-    "high",
-    "xhigh",
-  ]).optional(),
+  effort: EffortLevelSchema.optional(),
 });
 
 export type CodexRoute = z.infer<typeof CodexRouteSchema>;

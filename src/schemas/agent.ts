@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { RoutingTierSchema } from "./routing";
+import { EffortLevelSchema } from "./capability";
 
 // Reserved recipient name for the root orchestrator. It is not a spawned
 // agent and has no row in the agents table; delivery routes it through the
@@ -29,11 +30,14 @@ export const ExecutionIdentitySchema = z.discriminatedUnion("tool", [
   z.strictObject({
     tool: z.literal("claude"),
     model: z.string().min(1),
+    // Optional only for the short launch window before Claude's first
+    // statusLine render, and for legacy rows. Once observed it is immutable.
+    effort: EffortLevelSchema.optional(),
   }),
   z.strictObject({
     tool: z.literal("codex"),
     model: z.string().min(1),
-    effort: z.enum(["minimal", "low", "medium", "high", "xhigh"]),
+    effort: EffortLevelSchema,
   }),
 ]);
 

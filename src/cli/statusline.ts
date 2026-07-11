@@ -14,7 +14,7 @@ import { agentFetch } from "./credential";
 // parsers, or a second transport, is how the two halves drift apart and
 // manufacture the next wrong join.
 //
-// Three facts ride in, and every one of them is measured rather than inferred:
+// Four facts ride in, and every one of them is measured rather than inferred:
 //
 //   rate_limits            the subscriber's five-hour/weekly usage, present
 //                          only for Claude.ai accounts and only after the
@@ -33,6 +33,9 @@ import { agentFetch } from "./credential";
 //                          stale the moment a session switches models, so any
 //                          join on it (quota reservation included) is a join
 //                          against a model nobody is running.
+//   effort                 the current effective reasoning effort. The first
+//                          observation freezes launch identity; later changes
+//                          are drift because `/effort` can move it in-session.
 //
 // They are parsed independently and each is optional, deliberately: a payload
 // with no `rate_limits` (an API-key account, or a session before its first
@@ -68,7 +71,7 @@ function parseWindow(
  * The one parse: every fact this payload carries, from a single pass over it.
  *
  * Null only when the payload said nothing we can use — not merely when it had
- * no `rate_limits`. The three facts are independent, and the independence is
+ * no `rate_limits`. The four facts are independent, and the independence is
  * load-bearing: an API-key account, a third-party provider, and any session
  * before its first API response all have NO quota block, and gating the whole
  * report on one would throw away the window and the live model for exactly
@@ -85,18 +88,28 @@ export function parseStatuslineReport(
   const fiveHour = parseWindow(limits.five_hour);
   const sevenDay = parseWindow(limits.seven_day);
   const context = parseContextWindow(payload);
+  const effort = parseEffort(payload.effort);
 
   const measuredNothing = fiveHour === undefined && sevenDay === undefined &&
-    context.contextWindow === undefined;
+    context.contextWindow === undefined && effort === undefined;
   if (measuredNothing) return null;
 
   return {
     agent,
     ...(fiveHour === undefined ? {} : { fiveHour }),
     ...(sevenDay === undefined ? {} : { sevenDay }),
+    ...(effort === undefined ? {} : { effort }),
     ...context,
     observedAt,
   };
+}
+
+function parseEffort(value: unknown): string | undefined {
+  if (!isRecord(value)) return undefined;
+  const level = value.level;
+  return typeof level === "string" && /^[a-z0-9-]{1,64}$/.test(level)
+    ? level
+    : undefined;
 }
 
 // The live model is deliberately NOT taken from here, though this payload does

@@ -131,7 +131,7 @@ export const valueOr = <T>(fact: Discovered<T>, fallback: T): T =>
  * advertises Hive's `minimal`. An unknown future string must survive ingestion
  * and persistence intact so a critical restart can replay it.
  */
-export const EffortLevelSchema = z.string().min(1);
+export const EffortLevelSchema = z.string().min(1).max(64).regex(/^[a-z0-9-]+$/);
 
 export const CapabilityRecordSchema = z.strictObject({
   // --- Identity. Together these form the record's key. ---

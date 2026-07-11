@@ -1824,6 +1824,9 @@ export class HiveDaemon {
         { status: 404 },
       );
     }
+    if (parsed.data.effort !== undefined && agent.tool === "claude") {
+      await this.reconcileClaudeEffort(agent, parsed.data.effort);
+    }
     // Claude's own occupancy figure, landed on the row exactly as measured —
     // and the window it was measured against. The window is the fact the
     // telemetry sweep cannot obtain anywhere else: once one report has ever
@@ -1868,6 +1871,66 @@ export class HiveDaemon {
     ) ?? null;
     this.followReservationRekey(agent.name);
     return json({ observation });
+  }
+
+  /**
+   * Freeze Claude's first measured effort into launch identity. Later status
+   * line values are current mutable state (`/effort` changes them), so a
+   * disagreement is durable drift, never permission to rewrite the identity.
+   */
+  private async reconcileClaudeEffort(
+    agent: AgentRecord,
+    observedEffort: string,
+  ): Promise<void> {
+    const current = this.db.getAgentByName(agent.name);
+    if (current === null || current.tool !== "claude") return;
+    const identity = current.executionIdentity;
+    if (identity === undefined) {
+      if (current.model === "default") return;
+      this.db.upsertAgent({
+        ...current,
+        executionIdentity: {
+          tool: "claude",
+          model: current.model,
+          effort: observedEffort,
+        },
+      });
+      return;
+    }
+    if (identity.tool !== "claude") return;
+    if (identity.effort === undefined) {
+      this.db.upsertAgent({
+        ...current,
+        executionIdentity: { ...identity, effort: observedEffort },
+      });
+      return;
+    }
+    if (identity.effort === observedEffort) return;
+
+    const description =
+      `Execution effort drifted from immutable launch value ${identity.effort} ` +
+      `to observed current value ${observedEffort}`;
+    const alreadyRecorded = this.db.listEvents(current.name).some((event) =>
+      event.kind === "effort-drift" && event.description === description
+    );
+    if (alreadyRecorded) return;
+    const timestamp = new Date().toISOString();
+    this.db.insertEvent({
+      kind: "effort-drift",
+      agentName: current.name,
+      timestamp,
+      description,
+    });
+    await this.delivery.send(
+      "hive-effort",
+      ORCHESTRATOR_NAME,
+      `Effort drift observed for ${current.name}: ${description}. ` +
+        "ExecutionIdentity was not changed.",
+      {
+        idempotencyKey:
+          `effort-drift:${current.id}:${identity.effort}:${observedEffort}`,
+      },
+    ).catch(() => undefined);
   }
 
   /**

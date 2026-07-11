@@ -360,6 +360,11 @@ describe("crash resume", () => {
     h.db.insertAgent(agent({
       status: "working",
       toolSessionId: "0189-claude-session",
+      executionIdentity: {
+        tool: "claude",
+        model: "claude-fable-5",
+        effort: "high",
+      },
     }));
 
     const outcomes = await h.recovery.sweep();
@@ -376,6 +381,7 @@ describe("crash resume", () => {
     expect(h.tmux.created[0]!.command).toContain("--resume");
     expect(h.tmux.created[0]!.command).toContain("0189-claude-session");
     expect(h.tmux.created[0]!.command).toContain("--model");
+    expect(h.tmux.created[0]!.command).toContain("'--effort' 'high'");
 
     const record = h.db.getAgentByName("maya");
     expect(record).toMatchObject({

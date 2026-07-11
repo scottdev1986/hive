@@ -16,6 +16,7 @@ const observedAt = "2026-07-09T12:00:00.000Z";
 // resets_at}, with resets_at in Unix epoch seconds.
 const payload = {
   model: { display_name: "Fable 5" },
+  effort: { level: "high" },
   rate_limits: {
     five_hour: { used_percentage: 23.5, resets_at: 1_738_425_600 },
     seven_day: { used_percentage: 41.2, resets_at: 1_738_857_600 },
@@ -34,6 +35,7 @@ describe("parseStatuslineReport", () => {
         usedPct: 41.2,
         resetsAt: new Date(1_738_857_600_000).toISOString(),
       },
+      effort: "high",
       observedAt,
     });
   });
@@ -136,6 +138,18 @@ describe("the one parse", () => {
     const report = parseStatuslineReport("maya", payload, observedAt);
     expect(report?.fiveHour?.usedPct).toEqual(23.5);
     expect(report?.contextWindow).toBeUndefined();
+  });
+
+  test("captures effective effort without quota or context", () => {
+    expect(
+      parseStatuslineReport("maya", { effort: { level: "low" } }, observedAt),
+    ).toEqual({ agent: "maya", effort: "low", observedAt });
+  });
+
+  test("rejects malformed effort instead of forwarding argv-shaped input", () => {
+    expect(
+      parseStatuslineReport("maya", { effort: { level: "HIGH!" } }, observedAt),
+    ).toBeNull();
   });
 
   // A window we were not told is a window we do not know. Substituting a

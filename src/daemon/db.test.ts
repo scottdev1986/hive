@@ -544,6 +544,12 @@ describe("HiveDatabase", () => {
       { kind: "turn-end", agentName: "maya", timestamp },
       { kind: "notification", agentName: "maya", timestamp },
       {
+        kind: "effort-drift",
+        agentName: "maya",
+        timestamp,
+        description: "Execution effort drifted from high to low",
+      },
+      {
         kind: "approval-request",
         agentName: "maya",
         timestamp,

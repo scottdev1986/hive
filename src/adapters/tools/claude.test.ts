@@ -84,6 +84,24 @@ describe("Claude adapter", () => {
     ]);
   });
 
+  test("passes an explicit effort and omits an absent one", () => {
+    const base = {
+      name: "agent-3",
+      model: "sonnet",
+      worktreePath: "/tmp/worktree",
+      daemonPort: 4317,
+      readOnly: false,
+    };
+    expect(buildClaudeSpawnCommand({ ...base, effort: "xhigh" })).toEqual([
+      "claude",
+      "--model",
+      "sonnet",
+      "--effort",
+      "xhigh",
+    ]);
+    expect(buildClaudeSpawnCommand(base)).not.toContain("--effort");
+  });
+
   describe("spawn-scoped MCP surface", () => {
     const base = {
       name: "agent-3",
