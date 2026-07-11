@@ -932,6 +932,26 @@ export class HiveDatabase {
     return this.getMessage(id);
   }
 
+  /**
+   * The last turn this recipient finished, read from the events table.
+   *
+   * A spawned agent carries its own `lastEventAt` on its row, so it never needs
+   * this. The orchestrator does: it is not a spawned agent and has no agents-row
+   * at all (see `setOrchestratorTerminal`), so `getAgentByName("orchestrator")`
+   * is null and anything that asks a row for the root's turn boundary gets
+   * silence back and mistakes it for "never took one". The root's boundaries are
+   * here, in the events its own hooks post, and this is the only place they
+   * exist. Delivery reconciliation reads it to answer the one question that
+   * decides whether a message reached a mind (see delivery.ts).
+   */
+  latestTurnEndAt(agentName: string): string | null {
+    const row = this.database.query(`
+      SELECT MAX(timestamp) AS value FROM events
+      WHERE agentName = ? AND kind = 'turn-end'
+    `).get(agentName) as { value: string | null };
+    return row.value;
+  }
+
   /** Handed to a recipient, but not yet confirmed to have reached its mind. */
   listInjectedUnapplied(): AgentMessage[] {
     return this.database.query(`

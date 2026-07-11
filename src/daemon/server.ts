@@ -696,15 +696,6 @@ export class HiveDaemon {
           }`,
         );
       });
-      // Close the loop on messages we handed over but never confirmed. Without
-      // this, "injected" is a state nothing ever reads again.
-      void this.delivery.reconcileInjected().catch((error) => {
-        console.error(
-          `Hive delivery reconciliation failed: ${
-            error instanceof Error ? error.message : "unknown error"
-          }`,
-        );
-      });
     }, 30_000);
     this.reconciliationTimer.unref?.();
     void this.runMaintenance().catch((error) => {
@@ -804,7 +795,17 @@ export class HiveDaemon {
     await this.quota.refreshFromProviders(undefined, options);
   }
 
-  private async runMaintenance(): Promise<void> {
+  /**
+   * The daemon's one recurring sweep: every 30s, and once at startup.
+   *
+   * Public because it is the seam a test drives. That is not a cosmetic detail —
+   * the reconciliation below hung off the interval callback instead of living
+   * here, which put it in the one place no test can reach, and so the only thing
+   * standing between "injected" and a state nothing ever reads again was a line
+   * that could be deleted without turning anything red. It is inside maintenance
+   * now, and a test drives maintenance.
+   */
+  async runMaintenance(): Promise<void> {
     if (this.maintenanceRunning) return;
     this.maintenanceRunning = true;
     try {
@@ -823,6 +824,16 @@ export class HiveDaemon {
       // bounded daemon boundary. The row remains queued until tmux confirms
       // the composer is empty, so no report silently rots.
       await this.delivery.wakeOrchestrator();
+      // Close the loop on every message we handed over. Runs after the wake, so a
+      // message injected on this very tick is judged against the deadline it was
+      // actually given rather than the instant it was handed over.
+      await this.delivery.reconcileInjected().catch((error) => {
+        console.error(
+          `Hive delivery reconciliation failed: ${
+            error instanceof Error ? error.message : "unknown error"
+          }`,
+        );
+      });
       await this.reconcileAgents();
       await this.refreshToolTelemetry().catch((error) => {
         console.error(

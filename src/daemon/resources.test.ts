@@ -4,6 +4,8 @@ import {
   descendantsOf,
   parseAvailableMemoryMb,
   parseProcessTable,
+  processCommandName,
+  treeRunsCommand,
   type ProcessSample,
 } from "./resources";
 
@@ -119,5 +121,46 @@ describe("assessResources", () => {
     });
     expect(assessment.kills).toHaveLength(1);
     expect(assessment.memoryPressure).toBe(false);
+  });
+});
+
+describe("is the launched process alive in this pane", () => {
+  // Exactly what `ps -axo pid=,ppid=,rss=,command=` returns for a real hive
+  // pane, captured from one: the pane's process is the wrapper shell, and the
+  // provider is its child.
+  const pane = parseProcessTable([
+    ` 1915  6158   2416 zsh -c (claude "hi"); s=$?; if [ "$s" -ne 0 ]; then sleep 15; fi; exit $s`,
+    " 1917  1915 425488 claude hi",
+  ].join("\n"));
+
+  test("finds the provider under the wrapper shell", () => {
+    expect(treeRunsCommand(pane, [1915], "claude")).toBe(true);
+  });
+
+  test("a wrapper that merely MENTIONS the provider is not the provider", () => {
+    // The load-bearing subtlety. The wrapper's command line contains the string
+    // "claude" — hive put it there — so a substring match would call any wrapper
+    // a live agent, including one whose child has exited, which is the exact
+    // failure this check exists to catch. Only argv[0] names what is running.
+    const orphaned = parseProcessTable(
+      ` 1915  6158   2416 zsh -c (claude "hi"); s=$?; if [ "$s" -ne 0 ]; then sleep 15; fi; exit $s`,
+    );
+    expect(orphaned).toHaveLength(1);
+    expect(treeRunsCommand(orphaned, [1915], "claude")).toBe(false);
+  });
+
+  test("names the binary, not the path it was found at", () => {
+    expect(processCommandName("/Users/x/.local/bin/codex -c model=gpt")).toEqual("codex");
+    expect(processCommandName("claude hi")).toEqual("claude");
+  });
+
+  test("the app-server host is a `hive` process, and is found as one", () => {
+    // A check hardcoded to "codex" would report every app-server agent dead.
+    const host = parseProcessTable([
+      " 2001  6158   2416 zsh -c (hive codex-app-server-host --port 4317)",
+      " 2002  2001  90000 hive codex-app-server-host --port 4317",
+    ].join("\n"));
+    expect(treeRunsCommand(host, [2001], "hive")).toBe(true);
+    expect(treeRunsCommand(host, [2001], "codex")).toBe(false);
   });
 });

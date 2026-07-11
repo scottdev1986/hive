@@ -650,28 +650,43 @@ export class MessageDelivery {
    * waiting after long enough that someone should be told. It is never silent and
    * never forever. SPEC §3 promises work is either merged or explicitly
    * surfaced; a message is work, and this is what extends that promise to it.
+   *
+   * The trap is *where you look for that boundary*, and the first version of this
+   * fell straight into it: it asked `agents.lastEventAt`, which the orchestrator
+   * does not have, because the orchestrator is not a spawned agent and has no
+   * agents row at all. So every root-bound message was unconfirmable by
+   * construction — and root-bound is not an edge case, it is the overwhelming
+   * majority. Measured against the live database: of 107 messages stuck in
+   * "injected", 105 were addressed to the orchestrator. Reading the wrong surface
+   * would therefore have surfaced all 105 as never-confirmed, which is the ninety
+   * lines this function exists to *not* dump into the one context that has to stay
+   * clear, and every one of them would have been a lie: the root had reached a turn
+   * boundary after all 105, and reading the surface that actually records the root's
+   * turns confirms all 105 and surfaces none. `turnBoundaryAt` is that surface.
    */
   async reconcileInjected(now = new Date().toISOString()): Promise<number> {
     let confirmed = 0;
-    const cutoff = new Date(Date.now() - DELIVERY_CONFIRM_DEADLINE_MS)
+    // Anchored to the caller's `now`, not the wall clock, so the deadline means
+    // the same thing to a test as it does to the daemon.
+    const cutoff = new Date(Date.parse(now) - DELIVERY_CONFIRM_DEADLINE_MS)
       .toISOString();
     const stalled: AgentMessage[] = [];
 
     for (const message of this.db.listInjectedUnapplied()) {
       const injectedAt = message.injectedAt;
       if (injectedAt === null) continue;
-      const recipient = this.db.getAgentByName(message.to);
 
       // The recipient took a turn boundary after we injected. That boundary is
       // where the TUI submits whatever it had queued, so the message reached the
       // model — proof from the mechanism rather than from an exit code.
-      if (recipient !== null && recipient.lastEventAt > injectedAt) {
+      const boundary = this.turnBoundaryAt(message.to);
+      if (boundary !== null && boundary > injectedAt) {
         this.db.transitionMessage(message.id, "applied", now);
         confirmed += 1;
         continue;
       }
 
-      // A recipient that no longer exists cannot ever apply it.
+      // No boundary since. Give it the deadline, then tell someone.
       if (injectedAt < cutoff && message.alertAt === null) {
         stalled.push(message);
       }
@@ -690,7 +705,7 @@ export class MessageDelivery {
       for (const message of stalled) {
         this.db.markMessageAlerted(message.id, now);
       }
-      await this.send(
+      const alert = await this.send(
         "hive-control",
         ORCHESTRATOR_NAME,
         `${stalled.length} message(s) were delivered but never confirmed applied ` +
@@ -700,9 +715,36 @@ export class MessageDelivery {
           "Nothing was discarded and every one is still queryable by id.",
         { idempotencyKey: `delivery-unconfirmed:${now.slice(0, 16)}` },
       ).catch(() => undefined);
+
+      // The sweep must never surface its own output. This alert is itself a
+      // message to the root, so if it can stall, the next sweep reports it, and
+      // *that* report stalls too: a loop with no fixed point, feeding on the one
+      // context §3 says must stay clear, and it grows by one message every time
+      // the root is quiet. Born already alerted, it can never be surfaced again.
+      // Nothing is lost by that — the alert IS the surface, and an alert nobody
+      // read is not a new fact, it is the same fact, louder.
+      if (alert !== undefined) this.db.markMessageAlerted(alert.id, now);
     }
 
     return confirmed;
+  }
+
+  /**
+   * When did this recipient last finish a turn — read from whatever surface
+   * actually records it for them?
+   *
+   * A spawned agent carries `lastEventAt` on its own row. The orchestrator has no
+   * row (db.ts is explicit: "not a spawned agent and has no agents-table row"), so
+   * asking for one returns null, and null read as "never took a turn" is what made
+   * every root-bound message permanently unconfirmable. Its turns are in the events
+   * table, posted by its own hooks. Same question, different surface, and the rule
+   * from §2 applies exactly: read what the tool measures and hands you.
+   */
+  private turnBoundaryAt(recipient: string): string | null {
+    if (recipient === ORCHESTRATOR_NAME) {
+      return this.db.latestTurnEndAt(ORCHESTRATOR_NAME);
+    }
+    return this.db.getAgentByName(recipient)?.lastEventAt ?? null;
   }
 
   async alertExpiredControls(now = new Date().toISOString()): Promise<number> {

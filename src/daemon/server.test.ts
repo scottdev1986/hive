@@ -2151,3 +2151,128 @@ describe("an unobservable agent reads unknown, never 0", () => {
     }
   });
 });
+
+/**
+ * The reconciliation sweep, driven the way production drives it.
+ *
+ * Every test here goes through `daemon.runMaintenance()` — the daemon's real
+ * recurring sweep — and never calls `reconcileInjected()` directly. That is the
+ * whole point of them. The sweep was written, was correct-looking, and was hung
+ * off the interval callback rather than maintenance, so no test could reach the
+ * wiring; a test that calls the function directly passes just as happily when
+ * nothing in the daemon calls it at all, which is exactly what had happened.
+ * Delete the call from `runMaintenance` and these go red.
+ */
+describe("delivery reconciliation runs in maintenance", () => {
+  test("a delivered message becomes applied once its recipient takes a turn", async () => {
+    const db = new HiveDatabase(join(home, "reconcile-agent.db"));
+    const tmux = new FakeDaemonTmux();
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new StubSpawner(),
+      tmux,
+      tmuxSender: new SilentTmuxSender(),
+    });
+    try {
+      // Idle: a channel-less recipient mid-turn keeps its message queued, and a
+      // queued message is not what this sweep is about.
+      db.insertAgent(agent({ status: "idle" }));
+      const sent = await daemon.delivery.send("orchestrator", "maya", "Reuse the middleware.");
+      // A paste is not a mind changed: delivery claims only "injected".
+      expect(sent.state).toEqual("injected");
+      expect(sent.appliedAt).toBeNull();
+
+      // The recipient finishes a turn. That boundary is where the TUI submits
+      // what it had queued, so this — and nothing before it — is evidence the
+      // message reached the model. It must land after the injection the real
+      // clock just stamped: that comparison is the thing under test.
+      await daemon.processEvent({
+        kind: "turn-end",
+        agentName: "maya",
+        timestamp: new Date(Date.now() + 60_000).toISOString(),
+      });
+
+      await daemon.runMaintenance();
+
+      const settled = db.getMessage(sent.id);
+      expect(settled?.state).toEqual("applied");
+      expect(settled?.appliedAt).not.toBeNull();
+    } finally {
+      db.close();
+    }
+  });
+
+  test("a root-bound message is confirmed too — the orchestrator has no agents row", async () => {
+    // The case that mattered and the case the first version could not see. The
+    // orchestrator is not a spawned agent and has no row, so a sweep that asks
+    // `agents.lastEventAt` for its turn boundary gets null and concludes the root
+    // never took one. In the live database this was not an edge: 105 of the 107
+    // messages stuck in "injected" were addressed to the orchestrator.
+    const db = new HiveDatabase(join(home, "reconcile-root.db"));
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new StubSpawner(),
+      tmux: new FakeDaemonTmux(),
+      tmuxSender: new SilentTmuxSender(),
+    });
+    try {
+      expect(db.getAgentByName("orchestrator")).toBeNull();
+
+      const sent = await daemon.delivery.send("maya", "orchestrator", "Auth API is done.");
+      // Injected by the root channel, exactly as `deliverRootViaChannel` leaves it.
+      db.transitionMessage(sent.id, "injected", "2026-07-09T12:00:00.000Z");
+
+      // The root's turn boundaries live in the events table and nowhere else.
+      await daemon.processEvent({
+        kind: "turn-end",
+        agentName: "orchestrator",
+        timestamp: "2026-07-09T12:01:00.000Z",
+      });
+
+      await daemon.runMaintenance();
+
+      expect(db.getMessage(sent.id)?.state).toEqual("applied");
+    } finally {
+      db.close();
+    }
+  });
+
+  test("a message that never reached a turn is surfaced once, and the alert never surfaces itself", async () => {
+    const db = new HiveDatabase(join(home, "reconcile-stalled.db"));
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new StubSpawner(),
+      tmux: new FakeDaemonTmux(),
+      tmuxSender: new SilentTmuxSender(),
+    });
+    try {
+      db.insertAgent(agent({ status: "idle" }));
+      const sent = await daemon.delivery.send("orchestrator", "maya", "Rebase before you land.");
+      // Injected, and then nothing: maya never reaches another turn boundary.
+      // Past the deadline this is precisely what must never be silent.
+      const late = new Date(Date.now() + 30 * 60_000).toISOString();
+      expect(await daemon.delivery.reconcileInjected(late)).toEqual(0);
+
+      const alerts = db.listMessages().filter((m) => m.from === "hive-control");
+      expect(alerts).toHaveLength(1);
+      expect(alerts[0]!.body).toContain("1 message(s)");
+      expect(alerts[0]!.body).toContain("maya");
+      expect(db.getMessage(sent.id)?.alertAt).not.toBeNull();
+
+      // And now the loop that would have eaten the root's context. The alert is
+      // itself a message to the orchestrator; if it could stall, the next sweep
+      // would report it, and that report would stall too — one more message every
+      // sweep, forever. It is born already alerted, so the sweep has a fixed
+      // point: a second pass, an hour later, with the alert itself injected and
+      // unread, produces nothing new.
+      db.transitionMessage(alerts[0]!.id, "injected", late);
+      await daemon.delivery.reconcileInjected(
+        new Date(Date.now() + 90 * 60_000).toISOString(),
+      );
+
+      expect(db.listMessages().filter((m) => m.from === "hive-control")).toHaveLength(1);
+    } finally {
+      db.close();
+    }
+  });
+});
