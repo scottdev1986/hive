@@ -569,6 +569,10 @@ export class HiveDaemon {
       tmux: this.tmux,
       port: this.port,
       dropChannel: (agentName) => this.channels.drop(agentName),
+      revokeCapabilities: (agentName) => {
+        this.capabilities.revokeSubject(agentName);
+        removeCredential(agentName);
+      },
       closeTerminal: (handle) => this.closeTerminal(handle),
       send: (from, to, body, sendOptions) =>
         this.delivery.send(from, to, body, sendOptions),

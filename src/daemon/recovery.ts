@@ -81,6 +81,10 @@ export interface CrashRecoveryDependencies {
   /** Drops a stale Claude Channels registration: the connection died with
    * the crashed process, and a resumed process re-registers on its own. */
   dropChannel?: (agentName: string) => void;
+  /** Revokes the dead agent's capability subject and deletes its credential
+   * file — the same guarantee hive_kill and hive_mark_dead give, so a
+   * capability can never outlive its agent through the recovery death path. */
+  revokeCapabilities?: (agentName: string) => void;
   /** Absent (headless or unconfigured) means recovered agents run without a
    * viewer until `hive watch` opens one. */
   terminal?: TerminalAdapter | undefined;
@@ -470,6 +474,7 @@ export class CrashRecovery {
       now,
       reason,
     );
+    this.deps.revokeCapabilities?.(agent.name);
     this.deps.dropChannel?.(agent.name);
     await this.deps.settleQuota(agent);
     this.denyPendingApprovals(agent.name);

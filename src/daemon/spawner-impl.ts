@@ -24,6 +24,7 @@ import { provisionSkills } from "../adapters/skills";
 import {
   CLAUDE_BEST_MODEL,
   CLAUDE_OPUS_MODEL,
+  modelVendor,
   resolveConcreteModel,
 } from "../adapters/tools/models";
 import {
@@ -933,6 +934,26 @@ export class HiveSpawner implements Spawner {
   ): Promise<AgentRecord> {
     const configuredRoute = await this.dependencies.routing(request.tier);
     let tool = request.tool ?? configuredRoute.tool;
+    // An explicit model is bound to its vendor before anything launches: the
+    // tier route must never carry a user-named model onto the other vendor's
+    // CLI (tier=standard once routed tool=codex under an explicit
+    // "claude-opus-4-8" and opened a TUI on a model it can never run). A
+    // recognized model forces the matching tool when the caller pinned none,
+    // and a caller-pinned conflicting tool refuses the spawn outright. An
+    // unrecognizable name stays on the routed tool — it cannot be validated.
+    if (request.model !== undefined) {
+      const vendor = modelVendor(request.model);
+      if (vendor !== null) {
+        if (request.tool !== undefined && request.tool !== vendor) {
+          throw new Error(
+            `Cannot spawn ${name}: model ${JSON.stringify(request.model)} is a ${vendor} model, ` +
+              `but tool=${JSON.stringify(request.tool)} was explicitly requested. ` +
+              `Drop the tool to run it on ${vendor}, or name a ${request.tool} model.`,
+          );
+        }
+        tool = vendor;
+      }
+    }
     // The process, durable identity, terminal title, and hive_status all use
     // the same concrete model. A later control restart can therefore replay
     // the launch without consulting aliases or mutable tool defaults.

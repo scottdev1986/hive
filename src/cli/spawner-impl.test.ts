@@ -1216,6 +1216,74 @@ describe("HiveSpawner wiring", () => {
     expect(tmux.sessions[0]?.[2]).toContain("'--model' 'claude-opus-4-8'");
   });
 
+  test("an explicit claude model forces the claude tool off a codex-routed tier", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-spawner-vendor-force-"));
+    tempRoots.push(root);
+    const store = new FakeStore();
+    const tmux = new FakeTmux();
+    const spawner = new HiveSpawner({
+      db: store,
+      repoRoot: root,
+      port: 4317,
+      config: { terminal: "auto", headless: true },
+      // The field failure: tier=standard routes tool=codex, and the explicit
+      // claude model used to ride onto the Codex TUI verbatim.
+      routing: async () => DEFAULT_ROUTING.standard,
+      tmux,
+      terminal: new FakeTerminal(),
+      createWorktree: async (_repoRoot, name, slug) => {
+        const path = join(root, name);
+        await mkdir(path, { recursive: true });
+        return { path, branch: `hive/${name}-${slug}` };
+      },
+      sleep: async () => {},
+      resolveModel: fakeResolveModel,
+    });
+
+    const spawned = await spawner.spawn({
+      task: "Open an Opus terminal",
+      tier: "standard",
+      model: "claude-opus-4-8",
+    });
+    expect(spawned.tool).toEqual("claude");
+    expect(spawned.executionIdentity).toEqual({
+      tool: "claude",
+      model: "claude-opus-4-8",
+    });
+  });
+
+  test("an explicit model conflicting with an explicit tool refuses the spawn", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-spawner-vendor-conflict-"));
+    tempRoots.push(root);
+    const store = new FakeStore();
+    const spawner = new HiveSpawner({
+      db: store,
+      repoRoot: root,
+      port: 4317,
+      config: { terminal: "auto", headless: true },
+      routing: async () => DEFAULT_ROUTING.standard,
+      tmux: new FakeTmux(),
+      terminal: new FakeTerminal(),
+      createWorktree: async (_repoRoot, name, slug) => {
+        const path = join(root, name);
+        await mkdir(path, { recursive: true });
+        return { path, branch: `hive/${name}-${slug}` };
+      },
+      sleep: async () => {},
+      resolveModel: fakeResolveModel,
+    });
+
+    await expect(spawner.spawn({
+      task: "Impossible identity",
+      tier: "standard",
+      tool: "codex",
+      model: "claude-opus-4-8",
+    })).rejects.toThrow(/claude model.*tool="codex"/s);
+    // The refused spawn must not leave a live agent row behind.
+    expect(store.agents.filter((agent) => agent.status !== "failed"))
+      .toHaveLength(0);
+  });
+
   test("never substitutes another model for an explicit request model under quota pressure", async () => {
     const root = await mkdtemp(join(tmpdir(), "hive-spawner-explicit-quota-"));
     tempRoots.push(root);

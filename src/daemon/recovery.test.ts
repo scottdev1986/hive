@@ -101,6 +101,7 @@ interface Harness {
   sender: SilentSender;
   recovery: CrashRecovery;
   settled: string[];
+  revoked: string[];
   closedViewers: TerminalHandle[];
   layoutRequests: () => number;
 }
@@ -124,6 +125,7 @@ function harness(
   const sender = new SilentSender();
   const delivery = new MessageDelivery(db, sender);
   const settled: string[] = [];
+  const revoked: string[] = [];
   const closedViewers: TerminalHandle[] = [];
   let layoutRequests = 0;
   const recovery = new CrashRecovery({
@@ -138,6 +140,9 @@ function harness(
       settled.push(record.name);
     },
     flushQueued: (name) => delivery.flushQueued(name),
+    revokeCapabilities: (name) => {
+      revoked.push(name);
+    },
     terminal,
     onTerminalsChanged: () => {
       layoutRequests += 1;
@@ -160,6 +165,7 @@ function harness(
     sender,
     recovery,
     settled,
+    revoked,
     closedViewers,
     layoutRequests: () => layoutRequests,
   };
@@ -587,6 +593,18 @@ describe("dead-path bookkeeping", () => {
     await h.recovery.sweep();
 
     expect(h.db.getApproval("approval-1")?.status).toEqual("denied");
+  });
+
+  test("death revokes the agent's capability subject", async () => {
+    const h = harness({ worktreeExists: () => false });
+    h.db.insertAgent(agent({ status: "working" }));
+
+    await h.recovery.sweep();
+
+    // Same guarantee as hive_kill and hive_mark_dead: a capability (and its
+    // credential file) never outlives its agent through the recovery path.
+    expect(h.db.getAgentByName("maya")?.status).toEqual("dead");
+    expect(h.revoked).toEqual(["maya"]);
   });
 });
 

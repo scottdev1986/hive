@@ -18,6 +18,26 @@ export const CLAUDE_BEST_MODEL = "claude-fable-5";
 // value Hive constructs or needs to pass on the `--model` flag.
 export const CLAUDE_OPUS_MODEL = "claude-opus-4-8";
 
+// Which vendor's CLI can actually run a user-named model. An explicit model
+// launches verbatim (never substituted), so launching it on the other
+// vendor's tool produces a vendor-impossible execution identity — the field
+// failure was tier routing picking tool=codex while the caller pinned
+// model="claude-opus-4-8", opening a Codex TUI that can never run it. Null
+// means the name matches no known vendor family and cannot be validated.
+export function modelVendor(model: string): "claude" | "codex" | null {
+  const value = model.trim().toLowerCase();
+  if (
+    /^claude([-.]|$)/.test(value) ||
+    ["best", "sonnet", "opus", "haiku", "fable"].includes(value)
+  ) {
+    return "claude";
+  }
+  if (/^(gpt|codex)([-.]|$)/.test(value) || /^o[0-9]/.test(value)) {
+    return "codex";
+  }
+  return null;
+}
+
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
