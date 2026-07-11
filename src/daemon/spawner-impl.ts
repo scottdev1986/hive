@@ -384,6 +384,30 @@ const CONCISE_TIERS: readonly RoutingTier[] = ["cheap"];
 const CONTINUOUS_EXECUTION =
   `After reporting a landing or milestone, immediately continue with the next authorized piece of your assignment in this same session. Stop only for a genuine blocker, an escalation, or an explicit hold from "${ORCHESTRATOR_NAME}".`;
 
+/** The karpathy guidelines' rules, carried in the prompt rather than left to the
+ * `karpathy-guidelines` skill to be self-invoked.
+ *
+ * Skills are progressively disclosed: an agent sees a name and a description and
+ * chooses whether to open the body. Measured over every agent spawned on
+ * 2026-07-11 that was actually offered the skill, 5 of 23 opened it — 21% of
+ * claude agents, 22% of codex. So four agents in five never read a rule Hive
+ * believed it had given them, and nothing failed loudly when they didn't. A
+ * behavioural guarantee that depends on the agent electing to receive it is not
+ * a guarantee, which is why these rules travel with the prompt: every agent has
+ * them before its first turn, on both vendors, at a cost of ~560 tokens a spawn.
+ *
+ * Like the concise landing protocol, this is a rewrite rather than a subset — no
+ * rule is dropped, only the narration and worked examples, which stay in the
+ * skill for the agent that wants the long form. */
+export const CODING_GUIDELINES = [
+  "Coding guidelines (these are not optional; the karpathy-guidelines skill holds the long form):",
+  "1. Think before coding. State your assumptions; if you are uncertain, ask. If a request has several readings, present them — never pick one silently. If a simpler approach exists, say so and push back. If something is unclear, stop and name it.",
+  "2. Simplicity first. Write the minimum code that solves the problem and nothing speculative: no features beyond what was asked, no abstractions for single-use code, no unrequested flexibility or configurability, no error handling for impossible cases. If it is 200 lines and could be 50, rewrite it. Ask: would a senior engineer call this overcomplicated?",
+  "3. Surgical changes. Touch only what you must. Do not 'improve' adjacent code, comments, or formatting; do not refactor what is not broken; match the existing style even where yours differs. Unrelated dead code gets mentioned, not deleted. Remove only the orphans your own change created. Every changed line must trace to the request.",
+  "4. Goal-driven execution. Turn the task into a verifiable goal before you start ('fix the bug' → 'write a test that reproduces it, then make it pass'), and state a brief plan whose every step names its check. Loop until verified.",
+  "These bias toward caution over speed; on a trivial task, use judgment.",
+].join("\n");
+
 /** The concrete verify commands the landing gate names, from the repo profile
  * (SPEC §14: "the landing gate's 're-run the tests' resolves to the profile's
  * concrete command"). Null means the profile could not discover it; the gate
@@ -486,6 +510,9 @@ export function buildAgentPrompt(
       ];
   return [
     ...preamble,
+    // Every tier, including `cheap`: the trimmed prompt drops narration, never a
+    // rule, and a small model is the one that can least afford to infer these.
+    CODING_GUIDELINES,
     buildLandingProtocol(
       worktree.branch, repoRoot, "main", name, 0, concise, options.landingCommands,
     ),

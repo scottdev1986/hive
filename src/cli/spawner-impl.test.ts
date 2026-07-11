@@ -22,6 +22,7 @@ import type {
 import {
   buildAgentPrompt,
   buildLandingProtocol,
+  CODING_GUIDELINES,
   HiveSpawner,
   LANDING_MAX_ATTEMPTS,
   NAME_POOL,
@@ -2555,5 +2556,127 @@ describe("scoped brief in the spawn prompt", () => {
     expect(prompt.indexOf("SCOPED BRIEF BODY")).toBeLessThan(
       prompt.indexOf("Hive memory index"),
     );
+  });
+});
+
+/**
+ * The karpathy guidelines are a *guarantee*, not an offer.
+ *
+ * They used to live only in the progressively-disclosed `karpathy-guidelines`
+ * skill, which an agent had to elect to open — and measured across every agent
+ * spawned on 2026-07-11 that was offered it, only 5 of 23 did (21% claude, 22%
+ * codex). An agent that declined never learned the rules and nothing failed.
+ * These tests are what makes the silence loud: they assert the rules are in the
+ * prompt Hive actually hands the vendor, on every launch path and every tier, so
+ * no agent can start without them.
+ */
+describe("coding guidelines are guaranteed in context at spawn", () => {
+  const RULES = [
+    "Think before coding",
+    "Simplicity first",
+    "Surgical changes",
+    "Goal-driven execution",
+  ];
+
+  const worktree = { path: "/tmp/wt", branch: "hive/maya-build-auth" };
+
+  test("every rule is in the prompt, and it is not framed as optional", () => {
+    const prompt = buildAgentPrompt("maya", "Build auth API", worktree, "/repo");
+    for (const rule of RULES) expect(prompt).toContain(rule);
+    expect(prompt).toContain("these are not optional");
+  });
+
+  test("the cheap tier is not exempt — a small model needs the rules most", () => {
+    const prompt = buildAgentPrompt("maya", "Build auth API", worktree, "/repo", "", {
+      tier: "cheap",
+    });
+    for (const rule of RULES) expect(prompt).toContain(rule);
+  });
+
+  test("the rules reach a launched CLAUDE agent's argv", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-guidelines-claude-"));
+    tempRoots.push(root);
+    const store = new FakeStore();
+    const tmux = new FakeTmux();
+    const spawner = new HiveSpawner({
+      db: store,
+      repoRoot: root,
+      port: 4317,
+      config: { terminal: "auto", headless: true },
+      routing: async () => ({ ...DEFAULT_ROUTING.standard, tool: "claude" }),
+      tmux,
+      terminal: new FakeTerminal(),
+      createWorktree: async (_repoRoot, name, slug) => {
+        const path = join(root, name);
+        await mkdir(path, { recursive: true });
+        return { path, branch: `hive/${name}-${slug}` };
+      },
+      sleep: signalReadiness(store),
+      resolveModel: fakeResolveModel,
+    });
+
+    await spawner.spawn({ task: "Build auth API", tier: "standard" });
+    const launched = tmux.sessions[0]?.[2] ?? "";
+    // The executable resolves to an absolute path on a real machine.
+    expect(launched).toMatch(/^'[^']*claude'/);
+    for (const rule of RULES) expect(launched).toContain(rule);
+  });
+
+  test("the rules reach a launched CODEX agent — both the TUI argv and the app-server turn", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-guidelines-codex-"));
+    tempRoots.push(root);
+    const starts: string[] = [];
+    const codexSpawner = (driver: "tui" | "app-server", tmux: FakeTmux) =>
+      new HiveSpawner({
+        db: new FakeStore(),
+        repoRoot: root,
+        port: 4317,
+        config: {
+          terminal: "auto",
+          headless: true,
+          ...(driver === "app-server" ? { codex: { driver } } : {}),
+        },
+        routing: async () => ({
+          ...DEFAULT_ROUTING.standard,
+          tool: "codex",
+          codex: { model: "gpt-test", effort: "high" },
+        }),
+        tmux,
+        terminal: new FakeTerminal(),
+        createWorktree: async (_repoRoot, name, slug) => {
+          const path = join(root, `${driver}-${name}`);
+          await mkdir(path, { recursive: true });
+          return { path, branch: `hive/${name}-${slug}` };
+        },
+        sleep: async () => {},
+        resolveModel: fakeResolveModel,
+        codexAppServer: {
+          isAvailable: async () => true,
+          buildHostCommand: () => ["hive", "codex-app-server-host"],
+          startAgent: async (_value, prompt) => {
+            starts.push(prompt);
+          },
+          disconnect: () => undefined,
+        },
+      });
+
+    // Codex has no --append-system-prompt; the prompt IS the carrier, on both drivers.
+    const tuiTmux = new FakeTmux();
+    await codexSpawner("tui", tuiTmux).spawn({ task: "Build auth API", tier: "standard" });
+    const tuiLaunched = tuiTmux.sessions[0]?.[2] ?? "";
+    expect(tuiLaunched).toContain("'codex'");
+    for (const rule of RULES) expect(tuiLaunched).toContain(rule);
+
+    const hostTmux = new FakeTmux();
+    await codexSpawner("app-server", hostTmux).spawn({
+      task: "Build auth API",
+      tier: "standard",
+    });
+    expect(starts).toHaveLength(1);
+    for (const rule of RULES) expect(starts[0]).toContain(rule);
+  });
+
+  test("the guidelines block itself carries every rule (it is the single source the prompt splices in)", () => {
+    for (const rule of RULES) expect(CODING_GUIDELINES).toContain(rule);
   });
 });
