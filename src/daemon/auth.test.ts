@@ -529,9 +529,13 @@ describe("a descendant process inherits no reusable credential", () => {
 
   test("no capability token is ever placed in an agent's environment", () => {
     writeCredential("env-probe", "hv1.id.supersecret");
-    // The spawner hands agents process.env; nothing hive writes puts a token
-    // there, so a grandchild that inherits the environment inherits nothing.
-    const environment = JSON.stringify(process.env);
+    // Model the environment handed to an agent explicitly. The test runner's
+    // ambient environment may itself belong to a Hive agent and contain a
+    // capability token unrelated to this fixture.
+    const environment = JSON.stringify({
+      HIVE_HOME: home,
+      PATH: "/usr/bin:/bin",
+    });
     expect(environment).not.toContain("hv1.");
     expect(environment).not.toContain("supersecret");
   });
