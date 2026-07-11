@@ -1011,6 +1011,12 @@ export class QuotaLedger {
     return this.getReservation(id);
   }
 
+  activeReservations(): QuotaReservation[] {
+    return this.db.database.query(
+      "SELECT * FROM quota_reservations WHERE status = 'active' ORDER BY createdAt, id",
+    ).all().map((row) => ReservationSchema.parse(row));
+  }
+
   expired(now: string): QuotaReservation[] {
     return this.db.database.query(`
       SELECT * FROM quota_reservations

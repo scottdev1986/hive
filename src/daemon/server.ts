@@ -1079,7 +1079,31 @@ export class HiveDaemon {
       ).catch(logAlertDeliveryFailure);
     }
     if (viewersChanged) this.layout?.requestLayout();
+    await this.settleReservationsOfDeadAgents();
     return expired.length;
+  }
+
+  /**
+   * A dead agent may not hold capacity. This asks the reservations themselves
+   * who is still running, rather than trusting each agent row to have named its
+   * live booking correctly — the pointer is what went stale before, and the TTL
+   * that eventually caught it is six hours wide, long enough for the leak to
+   * refuse a spawn Hive had room for.
+   *
+   * A reservation whose agent has no row at all is a spawn still in flight: the
+   * booking is made before the row is written, so settling it here would cancel
+   * a live agent's quota. Those stay with the TTL sweep, which is what it is for.
+   */
+  private async settleReservationsOfDeadAgents(): Promise<void> {
+    if (this.quota === undefined) return;
+    for (const reservation of this.quota.ledger.activeReservations()) {
+      const agent = this.db.getAgentByName(reservation.agentName);
+      if (agent === null) continue;
+      const dead = agent.status === "dead" || agent.status === "done" ||
+        agent.status === "failed";
+      if (!dead) continue;
+      await this.quota.cancel(reservation.id);
+    }
   }
 
   private async settleAgentQuota(
@@ -1485,7 +1509,34 @@ export class HiveDaemon {
         model,
       },
     ) ?? null;
+    this.followReservationRekey(agent.name);
     return json({ observation });
+  }
+
+  /**
+   * Point the agent row at the reservation the run is actually holding.
+   *
+   * A model re-key releases the booking the row names and writes a fresh one.
+   * The row kept naming the released id, and every terminal path dereferences
+   * exactly that id — `markStarted`, the turn-end reconcile, and the cancel on
+   * kill/death/recovery/restart all early-return on a settled reservation. So
+   * the replacement was never started, never reconciled, and never released: it
+   * sat `active` until its six-hour TTL, and `reserved` counted it the whole
+   * time. Spawning with a model alias (`sonnet`) re-keys on the first statusLine
+   * report — the live model is the canonical id — so this leaked once per agent.
+   */
+  private followReservationRekey(name: string): void {
+    const held = this.quota?.ledger.getActiveReservationForAgent(name);
+    if (held === undefined || held === null) return;
+    const agent = this.db.getAgentByName(name);
+    if (agent === null) return;
+    if (held.purpose === "control") {
+      if (agent.controlQuotaReservationId === held.id) return;
+      this.db.upsertAgent({ ...agent, controlQuotaReservationId: held.id });
+      return;
+    }
+    if (agent.quotaReservationId === held.id) return;
+    this.db.upsertAgent({ ...agent, quotaReservationId: held.id });
   }
 
   /**

@@ -4,7 +4,12 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { QuotaConfigSchema, type AgentRecord, type HookEvent } from "../schemas";
+import {
+  QuotaConfigSchema,
+  type AgentRecord,
+  type HookEvent,
+  type QuotaPoolStatus,
+} from "../schemas";
 import { HiveDatabase } from "./db";
 import type { TmuxSender } from "./delivery";
 import { QuotaLedger } from "./quota-ledger";
@@ -2006,6 +2011,7 @@ describe("the model an agent is actually running", () => {
       },
       quota: {
         setAlertSink: () => {},
+        ledger: new QuotaLedger(db),
         observeStatusline: async (binding: { model: string }) => {
           observed.push({ model: binding.model });
           return null;
@@ -2069,6 +2075,7 @@ describe("the model an agent is actually running", () => {
       },
       quota: {
         setAlertSink: () => {},
+        ledger: new QuotaLedger(db),
         observeStatusline: async (binding: { model: string }) => {
           observed.push(binding.model);
           return null;
@@ -2099,6 +2106,109 @@ describe("the model an agent is actually running", () => {
       });
       expect(observed).toEqual(["gpt-5.6-sol"]);
       expect(db.getAgentByName("lucas")?.model).toBe("gpt-5.6-sol");
+    } finally {
+      await daemon.stop();
+      db.close();
+    }
+  });
+
+  // The leak this test exists for, as it actually happened: nadia and owen were
+  // spawned as `sonnet`, ran as `claude-sonnet-5`, were killed cleanly — and
+  // went on holding 4% each of a five-hour window nobody was spending. The
+  // re-key released the booking the agent row named and wrote a new one, but
+  // left the row naming the released id, and every terminal path settles by
+  // that id. So the assertion here is not "cancel was called": it is the number
+  // `hive_quota_status` serves, read from the same surface, before and after.
+  test("a re-keyed reservation is released on kill, and reserved returns to its prior value", async () => {
+    const db = new HiveDatabase(join(home, "rekey-leak.db"));
+    const worktreePath = mkdtempSync(join(tmpdir(), "hive-probe-"));
+    const ledger = new QuotaLedger(db);
+    const quota = new QuotaService(
+      ledger,
+      QuotaConfigSchema.parse({
+        limits: [{
+          provider: "claude",
+          pool: "subscription",
+          models: ["*"],
+          fiveHourAllowance: 100,
+          weeklyAllowance: 100,
+        }],
+      }),
+    );
+    const tmux = new FakeDaemonTmux();
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new StubSpawner(),
+      tmux,
+      tmuxSender: new SilentTmuxSender(),
+      quota,
+      telemetryReaders: {
+        liveModel: (path) => readLiveClaudeModel(path, home),
+      },
+      assessStrandedWork: async () => ({ dirtyFiles: [], unmergedCommits: 0 }),
+    });
+    // The exact figure hive_quota_status reports: QuotaService.statuses().
+    const reserved = (): number =>
+      quota.statuses().find((status): status is QuotaPoolStatus =>
+        !("configured" in status) && status.pool === "subscription"
+      )!.fiveHour.reserved;
+    try {
+      const before = reserved();
+
+      // Spawn, as the spawner does it: book the run, then write the row that
+      // names the booking. `sonnet` is an alias — which is the whole trigger.
+      const decision = await quota.routeAndReserve({
+        agentName: "probe",
+        tier: "standard",
+        preferredTool: "claude",
+        candidates: [{ tool: "claude", model: "sonnet" }],
+      });
+      quota.markStarted(decision.reservation.id);
+      db.insertAgent(agent({
+        id: "agent-probe",
+        name: "probe",
+        tool: "claude",
+        model: "sonnet",
+        tmuxSession: "hive-probe",
+        worktreePath,
+        quotaReservationId: decision.reservation.id,
+      }));
+      tmux.sessions.add("hive-probe");
+      const held = reserved();
+      expect(held).toBeGreaterThan(before);
+
+      // The session reports in. Its transcript names the canonical model, which
+      // is not the alias it was spawned with, so the booking is re-keyed.
+      await transcript(worktreePath, ["claude-sonnet-5"]);
+      const response = await actingAs(daemon, "probe", "writer")(
+        "http://hive/statusline",
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            agent: "probe",
+            fiveHour: { usedPct: 5, resetsAt: null },
+          }),
+        },
+      );
+      expect(response.status).toBe(200);
+      expect(db.getAgentByName("probe")?.liveModel).toBe("claude-sonnet-5");
+      // The swap moves the booking; it neither doubles it nor drops it.
+      expect(reserved()).toBe(held);
+
+      // Kill it through the tool the orchestrator actually calls.
+      const transport = new StreamableHTTPClientTransport(
+        new URL("http://hive/mcp"),
+        { fetch: actingAs(daemon, "operator") },
+      );
+      const client = new Client({ name: "rekey-kill", version: "1.0.0" });
+      await client.connect(transport);
+      await client.callTool({ name: "hive_kill", arguments: { name: "probe" } });
+      await client.close();
+
+      // The state, not the call: a dead agent holds no capacity.
+      expect(reserved()).toBe(before);
+      expect(ledger.activeReservations()).toEqual([]);
     } finally {
       await daemon.stop();
       db.close();

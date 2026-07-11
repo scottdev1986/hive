@@ -600,6 +600,12 @@ export class QuotaService {
           : undefined,
       ),
     );
+    // The run that was already proving life is the same run after the swap. A
+    // re-keyed booking that forgot it had started would settle as "never ran"
+    // and record zero spend for a session that is demonstrably burning quota.
+    if (held.startedAt !== null && reservations[0] !== undefined) {
+      this.ledger.markStarted(reservations[0].id, held.startedAt);
+    }
     for (const entry of entries) await this.alertPool(entry.limit, now);
     return reservations;
   }
