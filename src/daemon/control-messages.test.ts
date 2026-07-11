@@ -64,7 +64,9 @@ describe("priority control messages", () => {
     try {
       db.insertAgent(agent("idle"));
       const normal = await delivery.send("sam", "maya", "ordinary");
-      expect(normal).toMatchObject({ priority: "normal", state: "applied" });
+      // A paste is not proof of application: the recipient's TUI queues the text
+    // and submits it at its next turn boundary. "injected" is what we can prove.
+    expect(normal).toMatchObject({ priority: "normal", state: "injected" });
       expect(sender.calls[0]).toEqual([
         "hive-maya",
         "📨 message from sam: ordinary",
@@ -88,7 +90,7 @@ describe("priority control messages", () => {
       expect(db.getMessage(urgent.id)).toMatchObject({ state: "injected" });
       expect(sender.calls[1]?.[1]).toContain("URGENT HIVE CONTROL");
       expect(sender.calls[2]?.[1]).toEqual("📨 message from sam: ordinary later");
-      expect(db.getMessage(queuedNormal.id)?.state).toEqual("applied");
+      expect(db.getMessage(queuedNormal.id)?.state).toEqual("injected");
       const acknowledged = delivery.acknowledge(
         "maya",
         urgent.id,

@@ -145,7 +145,7 @@ describe("MessageDelivery", () => {
           interrupt: true,
         },
       ]);
-      expect(normal.state).toEqual("applied");
+      expect(normal.state).toEqual("injected");
       expect(urgent.state).toEqual("injected");
       expect(tmux.calls).toEqual([]);
     } finally {
@@ -576,6 +576,103 @@ describe("MessageDelivery", () => {
       ]);
       expect(db.getMessage(first.id)?.deliveredAt).toEqual(null);
       expect(db.getMessage(second.id)?.deliveredAt === null).toEqual(false);
+    } finally {
+      db.close();
+    }
+  });
+});
+
+/**
+ * The ninety orphans. "Injected" was a state nothing ever read again: Hive knew
+ * the message was unconfirmed — that is what the null appliedAt means — and told
+ * nobody, forever. It is now a promise that resolves one of two ways.
+ */
+describe("reconciling messages we handed over", () => {
+  test("a paste is not proof of application", async () => {
+    const db = new HiveDatabase(join(home, "recon-notapplied.db"));
+    const delivery = new MessageDelivery(db, new RecordingTmuxSender());
+    try {
+      db.insertAgent(agent("idle"));
+      const message = await delivery.send("sam", "maya", "hello");
+      // send-keys exited 0. That is all we know, and all we may claim: the
+      // recipient's TUI holds the text until its next turn boundary.
+      expect(message.state).toEqual("injected");
+      expect(message.appliedAt).toEqual(null);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("a turn boundary after injection is what proves it reached the model", async () => {
+    const db = new HiveDatabase(join(home, "recon-applied.db"));
+    const delivery = new MessageDelivery(db, new RecordingTmuxSender());
+    try {
+      db.insertAgent(agent("idle"));
+      const message = await delivery.send("sam", "maya", "hello");
+
+      // The recipient reaches a turn boundary — the exact moment the TUI submits
+      // whatever it had queued. Evidence from the mechanism, not an exit code.
+      const current = db.getAgentByName("maya")!;
+      db.upsertAgent({
+        ...current,
+        lastEventAt: new Date(Date.now() + 60_000).toISOString(),
+      });
+
+      expect(await delivery.reconcileInjected()).toEqual(1);
+      expect(db.getMessage(message.id)?.state).toEqual("applied");
+      expect(db.getMessage(message.id)?.appliedAt).not.toEqual(null);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("a recipient that never takes a turn leaves the message unconfirmed, not applied", async () => {
+    const db = new HiveDatabase(join(home, "recon-stalled.db"));
+    const delivery = new MessageDelivery(db, new RecordingTmuxSender());
+    try {
+      db.insertAgent(agent("idle"));
+      const message = await delivery.send("sam", "maya", "hello");
+      // No turn boundary: the agent is still reasoning, which is normal. We must
+      // not promote it, and we must not pretend it arrived.
+      expect(await delivery.reconcileInjected()).toEqual(0);
+      expect(db.getMessage(message.id)?.state).toEqual("injected");
+      expect(db.getMessage(message.id)?.appliedAt).toEqual(null);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("a message unconfirmed past the deadline is surfaced once, in one line", async () => {
+    const db = new HiveDatabase(join(home, "recon-alert.db"));
+    const delivery = new MessageDelivery(db, new RecordingTmuxSender());
+    try {
+      db.insertAgent(agent("idle"));
+      const message = await delivery.send("sam", "maya", "hello");
+
+      // Backdate the injection past the confirmation deadline.
+      const old = new Date(Date.now() - 10 * 60_000).toISOString();
+      db.transitionMessage(message.id, "injected", old);
+      (db as unknown as { database: { query: (s: string) => { run: (...a: unknown[]) => void } } })
+        .database.query("UPDATE messages SET injectedAt = ? WHERE id = ?")
+        .run(old, message.id);
+
+      await delivery.reconcileInjected();
+
+      const alerts = db.getUndeliveredMessages("orchestrator")
+        .filter((m) => m.body.includes("never confirmed applied"));
+      expect(alerts).toHaveLength(1);
+      // One line naming the count — not ninety messages dumped into the
+      // orchestrator's context.
+      expect(alerts[0]?.body).toContain("1 message(s)");
+      expect(alerts[0]?.body).toContain("maya");
+      expect(alerts[0]?.body).toContain("Nothing was discarded");
+
+      // Surfaced once, never a repeating alarm.
+      await delivery.reconcileInjected();
+      expect(
+        db.getUndeliveredMessages("orchestrator")
+          .filter((m) => m.body.includes("never confirmed applied")),
+      ).toHaveLength(1);
     } finally {
       db.close();
     }

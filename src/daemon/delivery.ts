@@ -16,7 +16,11 @@ import {
 } from "./orchestrator-lifecycle";
 
 export interface TmuxSender {
-  sendMessage(session: string, text: string): Promise<void>;
+  sendMessage(
+    session: string,
+    text: string,
+    options?: { interrupt?: boolean },
+  ): Promise<void>;
 }
 
 /**
@@ -91,14 +95,42 @@ export interface NativeAgentControl {
   ): Promise<void>;
 }
 
-const DEFAULT_URGENT_DEADLINE_MS = 30_000;
+/**
+ * How long a busy agent gets to acknowledge an urgent control, measured from the
+ * moment it was injected rather than sent.
+ *
+ * Thirty seconds was a guess sized for an idle agent, and it false-alarmed on
+ * agents that were merely working: real acknowledgement latencies recorded in
+ * the field were 41s, 54s, 61s, 64s and 109s, every one of them an agent that
+ * simply had to finish a tool call first. Three minutes clears the slowest
+ * observed ack with margin while still catching an agent that has genuinely
+ * stopped listening.
+ */
+const DEFAULT_URGENT_DEADLINE_MS = 180_000;
 const DEFAULT_CRITICAL_DEADLINE_MS = 10_000;
+
+/**
+ * How long a handed-over message may go unconfirmed before Hive says so out loud.
+ *
+ * A message injected into a busy TUI is submitted at the recipient's next tool
+ * boundary — measured, one sat in the composer for over two minutes while the
+ * model reasoned, which is normal and not a fault. So this has to clear a long
+ * reasoning phase without crying wolf. Five minutes without the recipient
+ * reaching a single turn boundary means the message is genuinely still waiting,
+ * and that is worth one line to the orchestrator.
+ */
+const DELIVERY_CONFIRM_DEADLINE_MS = 5 * 60_000;
+
 
 export class BunTmuxSender implements TmuxSender {
   constructor(private readonly tmux: Pick<TmuxAdapter, "sendKeys"> = new TmuxAdapter()) {}
 
-  async sendMessage(session: string, text: string): Promise<void> {
-    await this.tmux.sendKeys(session, text);
+  async sendMessage(
+    session: string,
+    text: string,
+    options: { interrupt?: boolean } = {},
+  ): Promise<void> {
+    await this.tmux.sendKeys(session, text, options);
   }
 
 }
@@ -525,10 +557,17 @@ export class MessageDelivery {
               : ` capabilityEpoch=${message.capabilityEpoch}`
           } applied=true.`,
         ].join("\n");
-    await this.tmux.sendMessage(
-      session,
-      text,
-    );
+    // This is what makes priority mean anything. Until now every level did the
+    // same thing here — paste and press Enter — so "urgent interrupts at the
+    // next safe boundary" was a label on a database row, not a behaviour, and a
+    // critical order revoking write authority could sit unread in a composer
+    // while the agent kept writing. Normal traffic still waits for a turn
+    // boundary: routine coordination is not worth discarding a model's
+    // reasoning, and the cost of an interrupt is that the in-flight turn is
+    // cancelled and never resumed.
+    await this.tmux.sendMessage(session, text, {
+      interrupt: message.priority !== "normal",
+    });
     const delivered = this.markInjected(message);
     if (delivered === null) {
       throw new Error(`Message disappeared during delivery: ${message.id}`);
@@ -593,6 +632,77 @@ export class MessageDelivery {
       updated = this.db.transitionMessage(messageId, "applied", now)!;
     }
     return updated;
+  }
+
+  /**
+   * Close the loop on every message we handed over.
+   *
+   * "Injected" used to be a shrug: the channel bridge accepted the message, Hive
+   * honestly declined to claim it had been applied — and then nothing ever looked
+   * at it again. Ninety messages accumulated in that state, including twenty of
+   * Hive's own control alerts. Hive *knew* they were unconfirmed, which is
+   * exactly what the null appliedAt means, and told nobody, forever.
+   *
+   * Now "injected" is a promise with a deadline, and it resolves one of two ways.
+   * Either the recipient reaches a turn boundary after the injection — which is
+   * the moment the TUI actually submits a queued message, so it is real evidence
+   * the message reached the model, not an exit code — or the message is still
+   * waiting after long enough that someone should be told. It is never silent and
+   * never forever. SPEC §3 promises work is either merged or explicitly
+   * surfaced; a message is work, and this is what extends that promise to it.
+   */
+  async reconcileInjected(now = new Date().toISOString()): Promise<number> {
+    let confirmed = 0;
+    const cutoff = new Date(Date.now() - DELIVERY_CONFIRM_DEADLINE_MS)
+      .toISOString();
+    const stalled: AgentMessage[] = [];
+
+    for (const message of this.db.listInjectedUnapplied()) {
+      const injectedAt = message.injectedAt;
+      if (injectedAt === null) continue;
+      const recipient = this.db.getAgentByName(message.to);
+
+      // The recipient took a turn boundary after we injected. That boundary is
+      // where the TUI submits whatever it had queued, so the message reached the
+      // model — proof from the mechanism rather than from an exit code.
+      if (recipient !== null && recipient.lastEventAt > injectedAt) {
+        this.db.transitionMessage(message.id, "applied", now);
+        confirmed += 1;
+        continue;
+      }
+
+      // A recipient that no longer exists cannot ever apply it.
+      if (injectedAt < cutoff && message.alertAt === null) {
+        stalled.push(message);
+      }
+    }
+
+    if (stalled.length > 0) {
+      // One line, not ninety.
+      //
+      // Both obvious answers are wrong. Replaying every stalled message into the
+      // orchestrator's next turn is a denial of service on the one context that
+      // has to stay clear, and most of them are stale anyway. Dropping them is
+      // precisely the silent loss SPEC §3 forbids. So we surface the FACT and
+      // preserve the DETAIL: the count and the recipients go in one line, every
+      // message stays queryable by id, and none is discarded.
+      const recipients = [...new Set(stalled.map((m) => m.to))].sort();
+      for (const message of stalled) {
+        this.db.markMessageAlerted(message.id, now);
+      }
+      await this.send(
+        "hive-control",
+        ORCHESTRATOR_NAME,
+        `${stalled.length} message(s) were delivered but never confirmed applied ` +
+          `after ${Math.round(DELIVERY_CONFIRM_DEADLINE_MS / 60_000)}m ` +
+          `(recipients: ${recipients.join(", ")}). Their recipients have not ` +
+          "reached a turn boundary since, so we cannot say they were read. " +
+          "Nothing was discarded and every one is still queryable by id.",
+        { idempotencyKey: `delivery-unconfirmed:${now.slice(0, 16)}` },
+      ).catch(() => undefined);
+    }
+
+    return confirmed;
   }
 
   async alertExpiredControls(now = new Date().toISOString()): Promise<number> {
@@ -660,17 +770,46 @@ export class MessageDelivery {
     return recovered;
   }
 
+  /**
+   * Record that a message was handed over — and nothing more than that.
+   *
+   * This used to mark a normal message "applied", the strongest claim in the
+   * system, meaning the recipient acted on it. The entire evidence for that
+   * claim was that `tmux send-keys` did not throw. Measured against a real busy
+   * pane: the paste succeeds, exit 0, and the TUI then prints "Messages to be
+   * submitted after next tool call" and holds the text — unsubmitted for over
+   * two minutes while the model reasoned. Hive recorded "applied" at the exact
+   * moment the screen said the opposite. That is measuring bytes written to a
+   * pane and reporting that a mind changed.
+   *
+   * So delivery claims only what it can prove: the message was injected. It
+   * becomes "applied" in `reconcileInjected`, when the recipient produces a
+   * turn boundary that proves the TUI actually submitted it.
+   */
   private markInjected(message: AgentMessage): AgentMessage {
     const now = new Date().toISOString();
     const injected = this.db.markMessageDelivered(message.id, now);
     if (injected === null) {
       throw new Error(`Message disappeared during delivery: ${message.id}`);
     }
-    return this.db.transitionMessage(
-      message.id,
-      message.priority === "normal" ? "applied" : "injected",
-      now,
-    )!;
+    const stored = this.db.transitionMessage(message.id, "injected", now)!;
+
+    // The acknowledgement clock starts when the agent could first have seen it,
+    // not when the sender pressed send. Charging a recipient for time its message
+    // spent queued is how a control expired seventeen minutes before it arrived.
+    if (stored.deadlineAt !== null && this.ackBudgetMs(stored) !== null) {
+      const deadline = new Date(
+        new Date(now).getTime() + this.ackBudgetMs(stored)!,
+      ).toISOString();
+      return this.db.setMessageDeadline(message.id, deadline) ?? stored;
+    }
+    return stored;
+  }
+
+  private ackBudgetMs(message: AgentMessage): number | null {
+    if (message.priority === "urgent") return DEFAULT_URGENT_DEADLINE_MS;
+    if (message.priority === "critical") return DEFAULT_CRITICAL_DEADLINE_MS;
+    return null;
   }
 
   private getStoredMessage(id: string): AgentMessage {

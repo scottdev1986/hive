@@ -696,6 +696,15 @@ export class HiveDaemon {
           }`,
         );
       });
+      // Close the loop on messages we handed over but never confirmed. Without
+      // this, "injected" is a state nothing ever reads again.
+      void this.delivery.reconcileInjected().catch((error) => {
+        console.error(
+          `Hive delivery reconciliation failed: ${
+            error instanceof Error ? error.message : "unknown error"
+          }`,
+        );
+      });
     }, 30_000);
     this.reconciliationTimer.unref?.();
     void this.runMaintenance().catch((error) => {

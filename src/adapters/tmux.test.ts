@@ -463,3 +463,59 @@ describe("TmuxAdapter", () => {
     sessions.delete(longer);
   });
 });
+
+
+/**
+ * Priority has to mean something at the transport layer. Before this, every
+ * level did the same thing — paste and press Enter — so a critical order
+ * revoking write authority could sit unread in a composer while the agent kept
+ * writing.
+ */
+describe("interrupting a working agent", () => {
+  test("an interrupt escapes, CLEARS the composer, then pastes", async () => {
+    const calls: string[][] = [];
+    const tmux = new TmuxAdapter(undefined, {
+      run: async (args: string[]) => {
+        calls.push(args);
+        return { exitCode: 0, stdout: "", stderr: "" };
+      },
+      sleep: async () => {},
+    } as never);
+
+    await tmux.sendKeys("hive-maya", "stop now", { interrupt: true });
+
+    const keys = calls
+      .filter((c) => c[0] === "send-keys")
+      .map((c) => c[c.length - 1]);
+
+    // Escape cancels the turn, but it also RESTORES the original prompt into the
+    // composer — measured against a real TUI. Pasting on top of that
+    // concatenates the control onto the old prompt and resubmits the mash as one
+    // corrupted turn. C-u is what stops that, and it is not optional.
+    expect(keys[0]).toEqual("Escape");
+    expect(keys[1]).toEqual("C-u");
+    expect(keys[keys.length - 1]).toEqual("Enter");
+    expect(calls.some((c) => c[0] === "paste-buffer")).toBe(true);
+  });
+
+  test("routine traffic never interrupts a thinking agent", async () => {
+    const calls: string[][] = [];
+    const tmux = new TmuxAdapter(undefined, {
+      run: async (args: string[]) => {
+        calls.push(args);
+        return { exitCode: 0, stdout: "", stderr: "" };
+      },
+      sleep: async () => {},
+    } as never);
+
+    await tmux.sendKeys("hive-maya", "fyi");
+
+    const keys = calls
+      .filter((c) => c[0] === "send-keys")
+      .map((c) => c[c.length - 1]);
+    // An interrupt cancels the in-flight turn outright and the agent does not
+    // resume it. That is not a price worth paying for routine coordination.
+    expect(keys).not.toContain("Escape");
+    expect(keys).not.toContain("C-u");
+  });
+});

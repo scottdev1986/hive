@@ -128,7 +128,7 @@ describe("channel-first delivery", () => {
         ["hive-maya", "📨 message from sam: reuse the middleware"],
       ]);
       // The paste-then-Enter path structurally submits the turn.
-      expect(message.state).toBe("applied");
+      expect(message.state).toBe("injected");
     } finally {
       db.close();
     }
@@ -144,7 +144,7 @@ describe("channel-first delivery", () => {
       const message = await delivery.send("sam", "maya", "hello");
       expect(channel.calls).toHaveLength(1);
       expect(tmux.calls).toHaveLength(1);
-      expect(message.state).toBe("applied");
+      expect(message.state).toBe("injected");
     } finally {
       db.close();
     }
@@ -159,7 +159,7 @@ describe("channel-first delivery", () => {
       db.insertAgent(agent("idle"));
       const message = await delivery.send("sam", "maya", "hello");
       expect(tmux.calls).toHaveLength(1);
-      expect(message.state).toBe("applied");
+      expect(message.state).toBe("injected");
     } finally {
       db.close();
     }

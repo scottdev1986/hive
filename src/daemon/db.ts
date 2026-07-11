@@ -876,6 +876,27 @@ export class HiveDatabase {
     return this.getMessage(id);
   }
 
+  /** Handed to a recipient, but not yet confirmed to have reached its mind. */
+  listInjectedUnapplied(): AgentMessage[] {
+    return this.database.query(`
+      SELECT * FROM messages
+      WHERE state = 'injected' AND appliedAt IS NULL AND injectedAt IS NOT NULL
+      ORDER BY injectedAt, sequence, rowid
+    `).all().map((row) => AgentMessageSchema.parse(row));
+  }
+
+  /**
+   * Re-anchor a control's acknowledgement deadline to the moment it was actually
+   * injected. Anchoring it to send time charged the recipient for however long
+   * the message spent queued — in one observed case seventeen minutes — so it
+   * could expire before the agent could physically see it.
+   */
+  setMessageDeadline(id: string, deadlineAt: string): AgentMessage | null {
+    this.database.query(`UPDATE messages SET deadlineAt = ? WHERE id = ?`)
+      .run(deadlineAt, id);
+    return this.getMessage(id);
+  }
+
   markMessageAlerted(id: string, timestamp: string): AgentMessage | null {
     this.database.query(`
       UPDATE messages SET alertAt = COALESCE(alertAt, ?) WHERE id = ?
