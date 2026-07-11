@@ -18,7 +18,7 @@ import { HIVE_VERSION, HiveDaemon, inferLegacyControl } from "./server";
 import { readLiveClaudeModel } from "./live-model";
 import { formatStatusTable } from "../cli/status";
 import { WorkspacePresence } from "./workspace-presence";
-import { actingAs } from "./testing";
+import { actingAs, submitPaste } from "./testing";
 import type { SpawnRequest, Spawner } from "./spawner";
 import { orchestratorTmuxSession } from "./tmux-sessions";
 
@@ -53,8 +53,11 @@ function agent(overrides: Partial<AgentRecord> = {}): AgentRecord {
 class SilentTmuxSender implements TmuxSender {
   readonly calls: Array<[string, string]> = [];
 
+  constructor(private readonly db: HiveDatabase) {}
+
   async sendMessage(session: string, text: string): Promise<void> {
     this.calls.push([session, text]);
+    submitPaste(this.db, session);
   }
 }
 
@@ -208,7 +211,7 @@ describe("HiveDaemon HTTP server", () => {
       db,
       spawner,
       tmux,
-      tmuxSender: new SilentTmuxSender(),
+      tmuxSender: new SilentTmuxSender(db),
       quota,
     });
     try {
@@ -275,7 +278,7 @@ describe("HiveDaemon HTTP server", () => {
       db,
       spawner,
       tmux,
-      tmuxSender: new SilentTmuxSender(),
+      tmuxSender: new SilentTmuxSender(db),
       quota,
     });
     try {
@@ -321,7 +324,7 @@ describe("HiveDaemon HTTP server", () => {
       db,
       spawner,
       tmux,
-      tmuxSender: new SilentTmuxSender(),
+      tmuxSender: new SilentTmuxSender(db),
       quota,
     });
     try {
@@ -374,7 +377,7 @@ describe("HiveDaemon HTTP server", () => {
       db,
       spawner,
       tmux,
-      tmuxSender: new SilentTmuxSender(),
+      tmuxSender: new SilentTmuxSender(db),
       quota,
     });
     try {
@@ -433,7 +436,7 @@ describe("HiveDaemon HTTP server", () => {
     const daemon = new HiveDaemon({
       db,
       spawner: new StubSpawner(),
-      tmuxSender: new SilentTmuxSender(),
+      tmuxSender: new SilentTmuxSender(db),
       quota,
     });
     try {
@@ -492,7 +495,7 @@ describe("HiveDaemon HTTP server", () => {
       db,
       spawner: new StubSpawner(),
       tmux,
-      tmuxSender: new SilentTmuxSender(),
+      tmuxSender: new SilentTmuxSender(db),
       quota,
       assessStrandedWork: async () => ({ dirtyFiles: [], unmergedCommits: 0 }),
     });
@@ -588,7 +591,7 @@ describe("HiveDaemon HTTP server", () => {
       db,
       spawner: new StubSpawner(),
       tmux,
-      tmuxSender: new RootUnavailableTmuxSender(),
+      tmuxSender: new RootUnavailableTmuxSender(db),
       quota,
       closeTerminal: async (handle) => { closed.push(handle); },
       layout: { requestLayout: () => layouts += 1 },
@@ -640,7 +643,7 @@ describe("HiveDaemon HTTP server", () => {
         "Insufficient quota for recorded codex/gpt-5-codex; no model fallback",
       ),
       tmux,
-      tmuxSender: new RootUnavailableTmuxSender(),
+      tmuxSender: new RootUnavailableTmuxSender(db),
       quota,
     });
     try {
@@ -675,7 +678,7 @@ describe("HiveDaemon HTTP server", () => {
       db,
       spawner: new RestartingSpawner(),
       tmux: new FakeDaemonTmux(),
-      tmuxSender: new SilentTmuxSender(),
+      tmuxSender: new SilentTmuxSender(db),
       repoRoot: "/repo",
       port: 0,
       landBranch: async (_root, branch) => {
@@ -715,7 +718,7 @@ describe("HiveDaemon HTTP server", () => {
     const daemon = new HiveDaemon({
       db,
       spawner: new StubSpawner(),
-      tmuxSender: new SilentTmuxSender(),
+      tmuxSender: new SilentTmuxSender(db),
     });
     db.insertAgent(agent());
     try {
@@ -795,7 +798,7 @@ describe("HiveDaemon HTTP server", () => {
 
   test("notification events do not starve message delivery", async () => {
     const db = new HiveDatabase(join(home, "notification-delivery.db"));
-    const tmux = new SilentTmuxSender();
+    const tmux = new SilentTmuxSender(db);
     const daemon = new HiveDaemon({
       db,
       spawner: new StubSpawner(),
@@ -828,7 +831,7 @@ describe("HiveDaemon HTTP server", () => {
   test("all MCP tools work through StreamableHTTPClientTransport", async () => {
     const db = new HiveDatabase(join(home, "mcp.db"));
     const spawner = new StubSpawner();
-    const tmux = new RootUnavailableTmuxSender();
+    const tmux = new RootUnavailableTmuxSender(db);
     const daemonTmux = new FakeDaemonTmux();
     const removedWorktrees: Array<[string, string]> = [];
     const closedTerminals: AgentRecord["terminalHandle"][] = [];
@@ -1050,7 +1053,7 @@ describe("HiveDaemon HTTP server", () => {
     const daemon = new HiveDaemon({
       db,
       spawner: new StubSpawner(),
-      tmuxSender: new SilentTmuxSender(),
+      tmuxSender: new SilentTmuxSender(db),
       tmux: new FakeDaemonTmux(),
       repoRoot: "/tmp/repo",
       removeWorktree: async (_repoRoot, worktreePath, options) => {
@@ -1120,7 +1123,7 @@ describe("HiveDaemon HTTP server", () => {
     const daemon = new HiveDaemon({
       db,
       spawner: new StubSpawner(),
-      tmuxSender: new SilentTmuxSender(),
+      tmuxSender: new SilentTmuxSender(db),
       tmux: new FakeDaemonTmux(),
       repoRoot: "/tmp/repo",
       removeWorktree: async (_repoRoot, worktreePath) => {
@@ -1161,7 +1164,7 @@ describe("HiveDaemon HTTP server", () => {
     const daemon = new HiveDaemon({
       db,
       spawner: new StubSpawner(),
-      tmuxSender: new SilentTmuxSender(),
+      tmuxSender: new SilentTmuxSender(db),
       tmux: new FakeDaemonTmux(),
     });
     db.insertAgent(agent({ status: "working", recoveryAttempts: 2 }));
@@ -1208,7 +1211,7 @@ describe("HiveDaemon HTTP server", () => {
     const daemon = new HiveDaemon({
       db,
       spawner: new StubSpawner(),
-      tmuxSender: new SilentTmuxSender(),
+      tmuxSender: new SilentTmuxSender(db),
       tmux,
       recovery: {
         worktreeExists: () => true,
@@ -1258,7 +1261,7 @@ describe("HiveDaemon HTTP server", () => {
     const daemon = new HiveDaemon({
       db,
       spawner: new StubSpawner(),
-      tmuxSender: new SilentTmuxSender(),
+      tmuxSender: new SilentTmuxSender(db),
       tmux: new FakeDaemonTmux(),
       recovery: { worktreeExists: () => false },
     });
@@ -1520,7 +1523,7 @@ describe("HiveDaemon HTTP server", () => {
     const daemon = new HiveDaemon({
       db,
       spawner: new StubSpawner(),
-      tmuxSender: new SilentTmuxSender(),
+      tmuxSender: new SilentTmuxSender(db),
       tmux: new FakeDaemonTmux(),
       closeTerminal: async (handle) => {
         closedTerminals.push(handle);
@@ -1840,7 +1843,7 @@ describe("HiveDaemon HTTP server", () => {
     const daemon = new HiveDaemon({
       db,
       spawner: new StubSpawner(),
-      tmuxSender: new SilentTmuxSender(),
+      tmuxSender: new SilentTmuxSender(db),
     });
     db.insertAgent(agent());
     db.database.exec(`
@@ -1885,7 +1888,7 @@ describe("resource watchdog", () => {
     availableFloorMb?: number;
   } = {}) {
     const db = new HiveDatabase(":memory:");
-    const sender = new SilentTmuxSender();
+    const sender = new SilentTmuxSender(db);
     const killed: number[] = [];
     const daemon = new HiveDaemon({
       db,
@@ -2140,7 +2143,7 @@ describe("the model an agent is actually running", () => {
       db,
       spawner: new StubSpawner(),
       tmux,
-      tmuxSender: new SilentTmuxSender(),
+      tmuxSender: new SilentTmuxSender(db),
       quota,
       telemetryReaders: {
         liveModel: (path) => readLiveClaudeModel(path, home),
@@ -2281,7 +2284,7 @@ describe("delivery reconciliation runs in maintenance", () => {
       db,
       spawner: new StubSpawner(),
       tmux,
-      tmuxSender: new SilentTmuxSender(),
+      tmuxSender: new SilentTmuxSender(db),
     });
     try {
       // Idle: a channel-less recipient mid-turn keeps its message queued, and a
@@ -2323,7 +2326,7 @@ describe("delivery reconciliation runs in maintenance", () => {
       db,
       spawner: new StubSpawner(),
       tmux: new FakeDaemonTmux(),
-      tmuxSender: new SilentTmuxSender(),
+      tmuxSender: new SilentTmuxSender(db),
     });
     try {
       expect(db.getAgentByName("orchestrator")).toBeNull();
@@ -2353,7 +2356,7 @@ describe("delivery reconciliation runs in maintenance", () => {
       db,
       spawner: new StubSpawner(),
       tmux: new FakeDaemonTmux(),
-      tmuxSender: new SilentTmuxSender(),
+      tmuxSender: new SilentTmuxSender(db),
     });
     try {
       db.insertAgent(agent({ status: "idle" }));

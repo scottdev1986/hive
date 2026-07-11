@@ -952,6 +952,23 @@ export class HiveDatabase {
     return row.value;
   }
 
+  /**
+   * The last moment the agent actually started or finished a turn.
+   *
+   * Delivery used to ask for `lastEventAt` and call it a turn boundary, but
+   * that is the newest event of *any* kind — and `notification` is an event.
+   * An idle agent emits notifications while doing nothing at all, so a paste
+   * that the TUI never submitted could be "confirmed" by the recipient sitting
+   * there. Only turn-start and turn-end mean the model actually ran.
+   */
+  latestTurnBoundaryAt(agentName: string): string | null {
+    const row = this.database.query(`
+      SELECT MAX(timestamp) AS value FROM events
+      WHERE agentName = ? AND kind IN ('turn-start', 'turn-end')
+    `).get(agentName) as { value: string | null };
+    return row.value;
+  }
+
   /** Handed to a recipient, but not yet confirmed to have reached its mind. */
   listInjectedUnapplied(): AgentMessage[] {
     return this.database.query(`

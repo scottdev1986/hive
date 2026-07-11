@@ -62,6 +62,36 @@ export function listAuditEntries(db: HiveDatabase, limit = 100): AuditRow[] {
   `).all(limit).map((row) => AuditRowSchema.parse(row));
 }
 
+/**
+ * Model what a real pane does with a paste, so a fake TmuxSender is a working
+ * TUI rather than a broken one.
+ *
+ * An idle TUI handed a paste submits it and the model starts a turn, and that
+ * turn-start — reported by the agent's own hook stream — is the only evidence
+ * Hive ever gets that a message reached a mind. A fake whose `sendMessage` just
+ * resolves is not a simplified TUI; it is a pane that silently drops every
+ * message while `tmux send-keys` exits 0, which is the defect under test. Call
+ * this from a fake sender to say "and then the agent actually woke up".
+ *
+ * Turns are strictly ordered in time, so this advances its own clock: two
+ * events stamped in the same millisecond are indistinguishable from "no new
+ * turn started".
+ */
+let turnClock = Date.parse("2026-07-09T12:30:00.000Z");
+
+export function submitPaste(db: HiveDatabase, session: string): void {
+  const agent = db.listAgents().find(
+    (record) => record.tmuxSession === session,
+  );
+  if (agent === undefined) return;
+  turnClock += 1_000;
+  db.insertEvent({
+    kind: "turn-start",
+    agentName: agent.name,
+    timestamp: new Date(turnClock).toISOString(),
+  });
+}
+
 export function actingAs(
   daemon: HiveDaemon,
   subject: string,

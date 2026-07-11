@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentRecord } from "../schemas";
 import { HiveDatabase } from "./db";
+import { submitPaste } from "./testing";
 import {
   MessageDelivery,
   formatChannelMessage,
@@ -40,8 +41,10 @@ function agent(status: AgentRecord["status"]): AgentRecord {
 
 class RecordingTmuxSender implements TmuxSender {
   readonly calls: Array<[string, string]> = [];
+  constructor(private readonly db: HiveDatabase) {}
   async sendMessage(session: string, text: string): Promise<void> {
     this.calls.push([session, text]);
+    submitPaste(this.db, session);
   }
 }
 
@@ -75,7 +78,7 @@ const freshDb = (): HiveDatabase =>
 describe("channel-first delivery", () => {
   test("delivers to an idle agent over the channel and never pastes", async () => {
     const db = freshDb();
-    const tmux = new RecordingTmuxSender();
+    const tmux = new RecordingTmuxSender(db);
     const channel = new FakeChannel(true);
     const delivery = new MessageDelivery(db, tmux, undefined, undefined, channel);
     try {
@@ -101,7 +104,7 @@ describe("channel-first delivery", () => {
 
   test("delivers to a busy agent because the CLI queues events for the next turn", async () => {
     const db = freshDb();
-    const tmux = new RecordingTmuxSender();
+    const tmux = new RecordingTmuxSender(db);
     const channel = new FakeChannel(true);
     const delivery = new MessageDelivery(db, tmux, undefined, undefined, channel);
     try {
@@ -117,7 +120,7 @@ describe("channel-first delivery", () => {
 
   test("falls back to tmux paste when no channel is live", async () => {
     const db = freshDb();
-    const tmux = new RecordingTmuxSender();
+    const tmux = new RecordingTmuxSender(db);
     const channel = new FakeChannel(false);
     const delivery = new MessageDelivery(db, tmux, undefined, undefined, channel);
     try {
@@ -136,7 +139,7 @@ describe("channel-first delivery", () => {
 
   test("falls back to tmux when the bridge does not confirm the write", async () => {
     const db = freshDb();
-    const tmux = new RecordingTmuxSender();
+    const tmux = new RecordingTmuxSender(db);
     const channel = new FakeChannel(true, false);
     const delivery = new MessageDelivery(db, tmux, undefined, undefined, channel);
     try {
@@ -152,7 +155,7 @@ describe("channel-first delivery", () => {
 
   test("falls back to tmux when the bridge throws", async () => {
     const db = freshDb();
-    const tmux = new RecordingTmuxSender();
+    const tmux = new RecordingTmuxSender(db);
     const channel = new FakeChannel(true, "throw");
     const delivery = new MessageDelivery(db, tmux, undefined, undefined, channel);
     try {
@@ -167,7 +170,7 @@ describe("channel-first delivery", () => {
 
   test("an unconfirmed channel leaves a busy agent's message durably queued", async () => {
     const db = freshDb();
-    const tmux = new RecordingTmuxSender();
+    const tmux = new RecordingTmuxSender(db);
     const channel = new FakeChannel(true, false);
     const delivery = new MessageDelivery(db, tmux, undefined, undefined, channel);
     try {
@@ -184,7 +187,7 @@ describe("channel-first delivery", () => {
 
   test("flushQueued drains a queued message over the channel at a turn boundary", async () => {
     const db = freshDb();
-    const tmux = new RecordingTmuxSender();
+    const tmux = new RecordingTmuxSender(db);
     const channel = new FakeChannel(false);
     const delivery = new MessageDelivery(db, tmux, undefined, undefined, channel);
     try {
@@ -207,7 +210,7 @@ describe("channel-first delivery", () => {
 
   test("a channel-delivered message is not re-delivered by a later flush", async () => {
     const db = freshDb();
-    const tmux = new RecordingTmuxSender();
+    const tmux = new RecordingTmuxSender(db);
     const channel = new FakeChannel(true);
     const delivery = new MessageDelivery(db, tmux, undefined, undefined, channel);
     try {
@@ -222,7 +225,7 @@ describe("channel-first delivery", () => {
 
   test("an urgent message carries its acknowledgement instruction into the channel", async () => {
     const db = freshDb();
-    const tmux = new RecordingTmuxSender();
+    const tmux = new RecordingTmuxSender(db);
     const channel = new FakeChannel(true);
     const delivery = new MessageDelivery(db, tmux, undefined, undefined, channel);
     try {
@@ -241,7 +244,7 @@ describe("channel-first delivery", () => {
 
   test("a send to an agent that dies mid-lock stays durably queued", async () => {
     const db = freshDb();
-    const tmux = new RecordingTmuxSender();
+    const tmux = new RecordingTmuxSender(db);
     const channel: ChannelDeliverer = {
       isLive: () => true,
       async deliverMessage() {

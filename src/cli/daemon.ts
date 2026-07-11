@@ -7,7 +7,7 @@ import {
   resolveRoute,
 } from "../config/load";
 import { HiveDatabase } from "../daemon/db";
-import type { TmuxSender } from "../daemon/delivery";
+import { BunTmuxSender } from "../daemon/delivery";
 import { TerminalLayoutManager } from "../daemon/layout";
 import { readConfiguredPort } from "../daemon/lifecycle";
 import { HiveDaemon } from "../daemon/server";
@@ -90,9 +90,15 @@ export async function runDaemon(): Promise<void> {
     quota,
     codexAppServer,
   });
-  const tmuxSender: TmuxSender = {
-    sendMessage: (session, text) => tmux.sendKeys(session, text),
-  };
+  // Not a hand-rolled lambda. The previous one was `(session, text) =>
+  // tmux.sendKeys(session, text)`, which structurally cannot forward the
+  // `options` argument delivery passes it — and because `options` is optional
+  // on TmuxSender, a two-parameter function satisfies the interface and
+  // typechecks clean. So every message the real daemon ever sent went out with
+  // interrupt dropped: "urgent interrupts at the next safe boundary" was a
+  // label on a database row, never a behaviour, in production only. Tests
+  // missed it because they use BunTmuxSender, which does forward.
+  const tmuxSender = new BunTmuxSender(tmux);
   daemon = new HiveDaemon({
     db,
     spawner,

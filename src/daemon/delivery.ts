@@ -121,6 +121,15 @@ const DEFAULT_CRITICAL_DEADLINE_MS = 10_000;
  */
 const DELIVERY_CONFIRM_DEADLINE_MS = 5 * 60_000;
 
+/**
+ * How long an idle recipient gets to start a turn before we conclude its TUI
+ * never took the paste. A real submission produced a turn-start in 71ms in the
+ * field; five seconds is that with room for a loaded machine, and it is only
+ * ever paid in full when delivery actually failed.
+ */
+const SUBMIT_CONFIRM_MS = 5_000;
+const SUBMIT_POLL_MS = 100;
+
 
 export class BunTmuxSender implements TmuxSender {
   constructor(private readonly tmux: Pick<TmuxAdapter, "sendKeys"> = new TmuxAdapter()) {}
@@ -145,7 +154,15 @@ export class MessageDelivery {
     private readonly nativeControl?: NativeAgentControl,
     private readonly channels?: ChannelDeliverer,
     private readonly rootProtocol?: RootProtocolDeliverer,
+    private readonly timing: {
+      sleep?: (ms: number) => Promise<void>;
+      submitConfirmMs?: number;
+    } = {},
   ) {}
+
+  private sleep(ms: number): Promise<void> {
+    return (this.timing.sleep ?? ((value: number) => Bun.sleep(value)))(ms);
+  }
 
   async send(
     from: string,
@@ -271,7 +288,7 @@ export class MessageDelivery {
           // idle TUI remains a safe compatibility target; a busy headless
           // session keeps the durable message queued for recovery.
           if (currentRecipient.status !== "idle") return current;
-          return this.deliver(current, currentRecipient.tmuxSession);
+          return this.deliver(current, currentRecipient);
         }
       });
     }
@@ -308,7 +325,7 @@ export class MessageDelivery {
       ) {
         return current;
       }
-      return this.deliver(current, currentRecipient.tmuxSession);
+      return this.deliver(current, currentRecipient);
     });
   }
 
@@ -357,10 +374,7 @@ export class MessageDelivery {
             delivered.push(viaChannel);
             continue;
           }
-          delivered.push(await this.deliver(
-            message,
-            currentRecipient.tmuxSession,
-          ));
+          delivered.push(await this.deliver(message, currentRecipient));
         } catch (error) {
           // A failed pane must not prevent later queued messages from
           // delivery, but a systemic failure (dead bridge, vanished tmux)
@@ -412,7 +426,7 @@ export class MessageDelivery {
             continue;
           }
           delivered.push(
-            await this.deliver(message, currentRecipient.tmuxSession),
+            await this.deliver(message, currentRecipient),
           );
         } catch (error) {
           console.error(
@@ -545,18 +559,10 @@ export class MessageDelivery {
 
   private async deliver(
     message: AgentMessage,
-    session: string,
+    recipient: AgentRecord,
   ): Promise<AgentMessage> {
-    const text = message.priority === "normal"
-      ? `📨 message from ${message.from}: ${message.body}`
-      : [
-          `⚠️ ${message.priority.toUpperCase()} HIVE CONTROL ${message.id} from ${message.from}: ${message.body}`,
-          `Acknowledge with hive_ack_message agent=${JSON.stringify(message.to)} messageId=${JSON.stringify(message.id)}${
-            message.capabilityEpoch === null
-              ? ""
-              : ` capabilityEpoch=${message.capabilityEpoch}`
-          } applied=true.`,
-        ].join("\n");
+    const text = this.formatAgentMessage(message);
+    const boundaryBefore = this.turnBoundaryAt(message.to);
     // This is what makes priority mean anything. Until now every level did the
     // same thing here — paste and press Enter — so "urgent interrupts at the
     // next safe boundary" was a label on a database row, not a behaviour, and a
@@ -565,14 +571,66 @@ export class MessageDelivery {
     // boundary: routine coordination is not worth discarding a model's
     // reasoning, and the cost of an interrupt is that the in-flight turn is
     // cancelled and never resumed.
-    await this.tmux.sendMessage(session, text, {
+    await this.tmux.sendMessage(recipient.tmuxSession, text, {
       interrupt: message.priority !== "normal",
     });
+
+    // An idle TUI that accepts a paste submits it, and the model starts a turn
+    // — 71ms, measured in the field. Nothing else makes an idle agent start
+    // one. So if no turn begins, the paste did not take: the pane swallowed it
+    // (a modal, a permission prompt, a composer that never pressed Enter) and
+    // `tmux send-keys` returned 0 anyway, because exit 0 only ever meant tmux
+    // accepted the keystrokes.
+    //
+    // Claiming "injected" on that exit code is the lie this whole bug is made
+    // of: an orchestrator was told a stop order had landed, believed it, and
+    // the agent kept working and landed the commit. A busy TUI is different and
+    // is not checked here — it holds the paste in its composer until its next
+    // tool call, so there is no new turn to wait for and "injected" is already
+    // the honest maximum.
+    // Re-read rather than trusting the caller's record: a flush loop pastes
+    // several messages under one lock, and the first one to submit takes the
+    // agent from idle to working. The stale record would have us wait five
+    // seconds for a second turn-start that is never coming, and then call a
+    // message queued that is sitting correctly in the composer.
+    const live = this.db.getAgentByName(message.to) ?? recipient;
+    if (
+      live.status === "idle" &&
+      !(await this.turnStarted(message.to, boundaryBefore))
+    ) {
+      console.error(
+        `Hive pasted message ${message.id} into ${message.to}'s pane, but ${message.to} never started a turn. ` +
+          `The agent did not receive it; leaving the message queued rather than reporting it injected.`,
+      );
+      return this.getStoredMessage(message.id);
+    }
+
     const delivered = this.markInjected(message);
     if (delivered === null) {
       throw new Error(`Message disappeared during delivery: ${message.id}`);
     }
     return delivered;
+  }
+
+  /**
+   * Wait for proof, from the recipient's own hook stream, that its TUI actually
+   * submitted what we pasted. This is the difference between measuring what
+   * Hive did and measuring what the agent did.
+   */
+  private async turnStarted(
+    agentName: string,
+    before: string | null,
+  ): Promise<boolean> {
+    const deadline = Date.now() +
+      (this.timing.submitConfirmMs ?? SUBMIT_CONFIRM_MS);
+    for (;;) {
+      const boundary = this.turnBoundaryAt(agentName);
+      if (boundary !== null && (before === null || boundary > before)) {
+        return true;
+      }
+      if (Date.now() >= deadline) return false;
+      await this.sleep(SUBMIT_POLL_MS);
+    }
   }
 
   private async deliverNative(
@@ -744,7 +802,10 @@ export class MessageDelivery {
     if (recipient === ORCHESTRATOR_NAME) {
       return this.db.latestTurnEndAt(ORCHESTRATOR_NAME);
     }
-    return this.db.getAgentByName(recipient)?.lastEventAt ?? null;
+    // Was `lastEventAt`, which is the newest event of any kind. An idle agent
+    // emits `notification` events while doing nothing, so an unsubmitted paste
+    // got "confirmed" by the recipient sitting still. Only a real turn counts.
+    return this.db.latestTurnBoundaryAt(recipient);
   }
 
   async alertExpiredControls(now = new Date().toISOString()): Promise<number> {

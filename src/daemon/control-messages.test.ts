@@ -6,6 +6,7 @@ import { join } from "node:path";
 import type { AgentMessage, AgentRecord } from "../schemas";
 import { orchestratorTmuxSession } from "./tmux-sessions";
 import { HiveDatabase } from "./db";
+import { submitPaste } from "./testing";
 import {
   type CriticalControlRuntime,
   MessageDelivery,
@@ -39,8 +40,10 @@ function agent(status: AgentRecord["status"] = "working"): AgentRecord {
 
 class RecordingSender implements TmuxSender {
   readonly calls: Array<[string, string]> = [];
+  constructor(private readonly db: HiveDatabase) {}
   async sendMessage(session: string, text: string): Promise<void> {
     this.calls.push([session, text]);
+    submitPaste(this.db, session);
   }
 }
 
@@ -59,7 +62,7 @@ class RecordingControlRuntime implements CriticalControlRuntime {
 describe("priority control messages", () => {
   test("normal remains backward compatible while urgent waits for a safe boundary and requires acknowledgement", async () => {
     const db = new HiveDatabase(join(root, "normal-urgent.db"));
-    const sender = new RecordingSender();
+    const sender = new RecordingSender(db);
     const delivery = new MessageDelivery(db, sender);
     try {
       db.insertAgent(agent("idle"));
@@ -108,7 +111,7 @@ describe("priority control messages", () => {
   test("critical revokes the capability epoch before restart and rejects stale acknowledgement", async () => {
     const db = new HiveDatabase(join(root, "critical.db"));
     const runtime = new RecordingControlRuntime();
-    const delivery = new MessageDelivery(db, new RecordingSender(), runtime);
+    const delivery = new MessageDelivery(db, new RecordingSender(db), runtime);
     try {
       db.insertAgent(agent());
       db.insertApproval({
@@ -154,7 +157,7 @@ describe("priority control messages", () => {
   test("a critical control queued during spawn revokes before the first writer turn", async () => {
     const db = new HiveDatabase(join(root, "spawn-race.db"));
     const runtime = new RecordingControlRuntime();
-    const delivery = new MessageDelivery(db, new RecordingSender(), runtime);
+    const delivery = new MessageDelivery(db, new RecordingSender(db), runtime);
     try {
       db.reserveAgentName("maya", timestamp);
       const queued = await delivery.send(
@@ -180,7 +183,7 @@ describe("priority control messages", () => {
   test("idempotency, deadline wakeups, and crash recovery are durable", async () => {
     const path = join(root, "recovery.db");
     let db = new HiveDatabase(path);
-    const sender = new RecordingSender();
+    const sender = new RecordingSender(db);
     const failing = new RecordingControlRuntime(new Error("restart crashed"));
     db.insertAgent(agent());
     const first = await new MessageDelivery(db, sender, failing).send(

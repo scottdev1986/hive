@@ -40,6 +40,13 @@ function agent(status: AgentRecord["status"]): AgentRecord {
   };
 }
 
+/**
+ * A pane that takes the paste and never does anything with it.
+ *
+ * This is a *broken* TUI, and it is what every fake in this file used to be:
+ * `sendMessage` resolves, so `tmux send-keys` "succeeded", and the agent's mind
+ * never changed. Keep it only for the cases that are about exactly that.
+ */
 class RecordingTmuxSender implements TmuxSender {
   readonly calls: Array<[string, string]> = [];
 
@@ -48,15 +55,54 @@ class RecordingTmuxSender implements TmuxSender {
   }
 }
 
+let turnClock = Date.parse("2026-07-09T12:30:00.000Z");
+
+/** Turns are strictly ordered in time; two stamped in one millisecond are not
+ * distinguishable as "a new turn", so the fakes advance a clock. */
+function nextTurnStart(db: HiveDatabase, agentName: string): void {
+  turnClock += 1_000;
+  db.insertEvent({
+    kind: "turn-start",
+    agentName,
+    timestamp: new Date(turnClock).toISOString(),
+  });
+}
+
+/**
+ * A pane that behaves like a real one: an idle TUI handed a paste submits it,
+ * and the model starts a turn, which the agent reports through its hook stream.
+ *
+ * That turn-start is the only evidence Hive ever gets that a message actually
+ * reached a mind, so a fake that omits it is not a simplification — it is a
+ * TUI that silently drops every message while reporting success, which is the
+ * bug under test rather than a stand-in for delivery working.
+ */
+class SubmittingTmuxSender implements TmuxSender {
+  readonly calls: Array<[string, string]> = [];
+
+  constructor(
+    private readonly db: HiveDatabase,
+    private readonly agentName = "maya",
+  ) {}
+
+  async sendMessage(session: string, text: string): Promise<void> {
+    this.calls.push([session, text]);
+    nextTurnStart(this.db, this.agentName);
+  }
+}
+
 class BlockingTmuxSender implements TmuxSender {
   readonly calls: Array<[string, string]> = [];
   private readonly releases: Array<() => void> = [];
+
+  constructor(private readonly db: HiveDatabase) {}
 
   async sendMessage(session: string, text: string): Promise<void> {
     this.calls.push([session, text]);
     await new Promise<void>((resolve) => {
       this.releases.push(resolve);
     });
+    nextTurnStart(this.db, "maya");
   }
 
   releaseNext(): void {
@@ -71,11 +117,14 @@ class BlockingTmuxSender implements TmuxSender {
 class FailingTmuxSender implements TmuxSender {
   readonly calls: Array<[string, string]> = [];
 
+  constructor(private readonly db: HiveDatabase) {}
+
   async sendMessage(session: string, text: string): Promise<void> {
     this.calls.push([session, text]);
     if (text.includes("First message")) {
       throw new Error("tmux pane unavailable");
     }
+    nextTurnStart(this.db, "maya");
   }
 }
 
@@ -155,7 +204,7 @@ describe("MessageDelivery", () => {
 
   test("stores and immediately delivers to an idle agent", async () => {
     const db = new HiveDatabase(join(home, "immediate.db"));
-    const tmux = new RecordingTmuxSender();
+    const tmux = new SubmittingTmuxSender(db);
     const delivery = new MessageDelivery(db, tmux);
     try {
       db.insertAgent(agent("idle"));
@@ -172,7 +221,7 @@ describe("MessageDelivery", () => {
 
   test("defers a working recipient and flushes on a turn-end event", async () => {
     const db = new HiveDatabase(join(home, "deferred.db"));
-    const tmux = new RecordingTmuxSender();
+    const tmux = new SubmittingTmuxSender(db);
     const daemon = new HiveDaemon({
       db,
       spawner: unusedSpawner,
@@ -310,7 +359,7 @@ describe("MessageDelivery", () => {
 
   test("flushes a pre-registration message when the recipient session starts", async () => {
     const db = new HiveDatabase(join(home, "register-and-wake.db"));
-    const tmux = new RecordingTmuxSender();
+    const tmux = new SubmittingTmuxSender(db);
     const daemon = new HiveDaemon({
       db,
       spawner: unusedSpawner,
@@ -365,7 +414,7 @@ describe("MessageDelivery", () => {
 
   test("routes a reused name to its live holder, never the closed one", async () => {
     const db = new HiveDatabase(join(home, "reused-recipient.db"));
-    const delivery = new MessageDelivery(db, new RecordingTmuxSender());
+    const delivery = new MessageDelivery(db, new SubmittingTmuxSender(db));
     try {
       db.insertAgent({ ...agent("dead"), closedAt: timestamp });
       // maya's name was reissued to a new agent with its own session.
@@ -426,7 +475,7 @@ describe("MessageDelivery", () => {
 
   test("orchestrator messages reach an idle agent immediately", async () => {
     const db = new HiveDatabase(join(home, "orchestrator-to-idle.db"));
-    const tmux = new RecordingTmuxSender();
+    const tmux = new SubmittingTmuxSender(db);
     const delivery = new MessageDelivery(db, tmux);
     try {
       db.insertAgent(agent("idle"));
@@ -446,7 +495,7 @@ describe("MessageDelivery", () => {
 
   test("orchestrator messages to a working agent queue and flush on turn-end", async () => {
     const db = new HiveDatabase(join(home, "orchestrator-to-working.db"));
-    const tmux = new RecordingTmuxSender();
+    const tmux = new SubmittingTmuxSender(db);
     const daemon = new HiveDaemon({
       db,
       spawner: unusedSpawner,
@@ -486,7 +535,7 @@ describe("MessageDelivery", () => {
 
   test("serializes concurrent immediate sends for one tmux session", async () => {
     const db = new HiveDatabase(join(home, "serialized.db"));
-    const tmux = new BlockingTmuxSender();
+    const tmux = new BlockingTmuxSender(db);
     const delivery = new MessageDelivery(db, tmux);
     try {
       db.insertAgent(agent("idle"));
@@ -516,7 +565,7 @@ describe("MessageDelivery", () => {
 
   test("rapid queue flushes deliver each message only once", async () => {
     const db = new HiveDatabase(join(home, "flush-race.db"));
-    const tmux = new RecordingTmuxSender();
+    const tmux = new SubmittingTmuxSender(db);
     const delivery = new MessageDelivery(db, tmux);
     try {
       db.insertAgent(agent("working"));
@@ -539,7 +588,7 @@ describe("MessageDelivery", () => {
 
   test("a failed queued send does not abort later sends or the event", async () => {
     const db = new HiveDatabase(join(home, "flush-failure.db"));
-    const tmux = new FailingTmuxSender();
+    const tmux = new FailingTmuxSender(db);
     const daemon = new HiveDaemon({
       db,
       spawner: unusedSpawner,
@@ -590,7 +639,7 @@ describe("MessageDelivery", () => {
 describe("reconciling messages we handed over", () => {
   test("a paste is not proof of application", async () => {
     const db = new HiveDatabase(join(home, "recon-notapplied.db"));
-    const delivery = new MessageDelivery(db, new RecordingTmuxSender());
+    const delivery = new MessageDelivery(db, new SubmittingTmuxSender(db));
     try {
       db.insertAgent(agent("idle"));
       const message = await delivery.send("sam", "maya", "hello");
@@ -605,17 +654,18 @@ describe("reconciling messages we handed over", () => {
 
   test("a turn boundary after injection is what proves it reached the model", async () => {
     const db = new HiveDatabase(join(home, "recon-applied.db"));
-    const delivery = new MessageDelivery(db, new RecordingTmuxSender());
+    const delivery = new MessageDelivery(db, new SubmittingTmuxSender(db));
     try {
       db.insertAgent(agent("idle"));
       const message = await delivery.send("sam", "maya", "hello");
 
-      // The recipient reaches a turn boundary — the exact moment the TUI submits
-      // whatever it had queued. Evidence from the mechanism, not an exit code.
-      const current = db.getAgentByName("maya")!;
-      db.upsertAgent({
-        ...current,
-        lastEventAt: new Date(Date.now() + 60_000).toISOString(),
+      // The recipient finishes the turn the paste started. A real event, not a
+      // bumped `lastEventAt`: an idle agent emits `notification` events while
+      // doing nothing at all, and those used to count as proof the model ran.
+      db.insertEvent({
+        kind: "turn-end",
+        agentName: "maya",
+        timestamp: new Date(Date.now() + 60_000).toISOString(),
       });
 
       expect(await delivery.reconcileInjected()).toEqual(1);
@@ -626,17 +676,56 @@ describe("reconciling messages we handed over", () => {
     }
   });
 
-  test("a recipient that never takes a turn leaves the message unconfirmed, not applied", async () => {
+  test("an idle pane that swallows the paste leaves the message queued, not injected", async () => {
     const db = new HiveDatabase(join(home, "recon-stalled.db"));
-    const delivery = new MessageDelivery(db, new RecordingTmuxSender());
+    // The pane accepts the bytes and the agent never wakes: a modal, a
+    // permission prompt, a composer that never pressed Enter. `tmux send-keys`
+    // exits 0 all the same, because exit 0 only ever meant tmux took the
+    // keystrokes.
+    const delivery = new MessageDelivery(
+      db,
+      new RecordingTmuxSender(),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { submitConfirmMs: 200 },
+    );
     try {
       db.insertAgent(agent("idle"));
       const message = await delivery.send("sam", "maya", "hello");
-      // No turn boundary: the agent is still reasoning, which is normal. We must
-      // not promote it, and we must not pretend it arrived.
+
+      // This is the regression. Hive used to call this "injected" and hand the
+      // orchestrator an `injectedAt`, and an orchestrator that believes a stop
+      // order landed stops chasing it — which is exactly how an agent worked
+      // straight through one and landed the commit it was sent to prevent.
+      expect(message.state).toEqual("queued");
+      expect(message.injectedAt).toEqual(null);
+      expect(message.deliveredAt).toEqual(null);
+      expect(db.getMessage(message.id)?.state).toEqual("queued");
+      // Still undelivered, so the next boundary retries it rather than losing it.
+      expect(db.getUndeliveredMessages("maya")).toHaveLength(1);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("a busy recipient holding a paste in its composer is injected, not applied", async () => {
+    const db = new HiveDatabase(join(home, "recon-busy.db"));
+    const tmux = new RecordingTmuxSender();
+    const delivery = new MessageDelivery(db, tmux);
+    try {
+      db.insertAgent(agent("working"));
+      const urgent = await delivery.send("sam", "maya", "stop", {
+        priority: "urgent",
+      });
+      // A busy TUI genuinely does hold the text until its next tool call, so
+      // "injected" is the honest maximum here — and it is not "applied".
+      const injected = (await delivery.flushUrgent("maya"))[0]!;
+      expect(injected.state).toEqual("injected");
+      expect(injected.appliedAt).toEqual(null);
       expect(await delivery.reconcileInjected()).toEqual(0);
-      expect(db.getMessage(message.id)?.state).toEqual("injected");
-      expect(db.getMessage(message.id)?.appliedAt).toEqual(null);
+      expect(db.getMessage(urgent.id)?.state).toEqual("injected");
     } finally {
       db.close();
     }
@@ -644,7 +733,7 @@ describe("reconciling messages we handed over", () => {
 
   test("a message unconfirmed past the deadline is surfaced once, in one line", async () => {
     const db = new HiveDatabase(join(home, "recon-alert.db"));
-    const delivery = new MessageDelivery(db, new RecordingTmuxSender());
+    const delivery = new MessageDelivery(db, new SubmittingTmuxSender(db));
     try {
       db.insertAgent(agent("idle"));
       const message = await delivery.send("sam", "maya", "hello");

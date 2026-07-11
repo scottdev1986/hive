@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentRecord, TerminalHandle } from "../schemas";
 import { HiveDatabase } from "./db";
+import { submitPaste } from "./testing";
 import { MessageDelivery, type TmuxSender } from "./delivery";
 import {
   CrashRecovery,
@@ -79,8 +80,10 @@ class FakeTmux {
 
 class SilentSender implements TmuxSender {
   readonly sent: { session: string; text: string }[] = [];
+  constructor(private readonly db: HiveDatabase) {}
   async sendMessage(session: string, text: string): Promise<void> {
     this.sent.push({ session, text });
+    submitPaste(this.db, session);
   }
 }
 
@@ -132,7 +135,7 @@ function harness(
   const db = new HiveDatabase(join(home, `${crypto.randomUUID()}.db`));
   const tmux = new FakeTmux();
   const terminal = new FakeTerminal();
-  const sender = new SilentSender();
+  const sender = new SilentSender(db);
   const delivery = new MessageDelivery(db, sender);
   const settled: string[] = [];
   const revoked: string[] = [];
