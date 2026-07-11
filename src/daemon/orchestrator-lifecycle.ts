@@ -14,8 +14,10 @@ export interface ActiveAgentSummary {
   name: string;
   tool: AgentRecord["tool"];
   model: string;
+  /** Null when Hive has not observed this agent's context. The orchestrator's
+   * reuse rule must read null as "not eligible", never as "plenty of room". */
+  contextPct: number | null;
   status: AgentRecord["status"];
-  contextPct: number;
   task: string;
   lastEventAt: string;
 }
@@ -93,9 +95,13 @@ export function compactActiveTeam(
     .map((agent) => ({
       name: agent.name,
       tool: agent.tool,
-      model: agent.model,
+      // The model it is running, not the one it was spawned with — this is the
+      // view the orchestrator routes off.
+      model: agent.liveModel ?? agent.model,
       status: agent.status,
-      contextPct: Math.round(agent.contextPct),
+      contextPct: agent.contextPct === null
+        ? null
+        : Math.round(agent.contextPct),
       task: truncateCodePoints(
         agent.taskDescription.replaceAll(/\s+/g, " ").trim(),
         MAX_TASK_CODE_POINTS,

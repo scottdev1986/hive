@@ -102,7 +102,20 @@ export const AgentRecordSchema = z.object({
   toolSessionId: z.string().min(1).optional(),
   recoveryAttempts: z.number().int().nonnegative().default(0),
   terminalHandle: TerminalHandleSchema.optional(),
-  contextPct: z.number().min(0).max(100),
+  /**
+   * How full this agent's context is, or **null when Hive has not observed it**.
+   *
+   * Null is the whole point of the field being shaped this way. It used to be a
+   * plain number, so "unknown" was unrepresentable and every unobserved agent
+   * fell back to the spawn default of 0 — which does not mean "empty", it means
+   * "we have no idea", and it lies in the *flattering* direction: 0% invites the
+   * orchestrator to pile more work onto an agent it can see nothing about. A
+   * live Codex agent that had done real work sat at 0% for exactly this reason.
+   *
+   * Decision 7's recycle line and the orchestrator's reuse rule both read this,
+   * and both must treat null as "not eligible", never as "plenty of room".
+   */
+  contextPct: z.number().min(0).max(100).nullable(),
   createdAt: z.iso.datetime(),
   lastEventAt: z.iso.datetime(),
   capabilityEpoch: z.number().int().nonnegative().default(0),

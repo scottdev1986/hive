@@ -2105,3 +2105,49 @@ describe("the model an agent is actually running", () => {
     }
   });
 });
+
+describe("an unobservable agent reads unknown, never 0", () => {
+  test("telemetry that returns null clears a stale number instead of leaving it standing", async () => {
+    const db = new HiveDatabase(join(home, "unknown-context.db"));
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new StubSpawner(),
+      tmux: new FakeDaemonTmux(),
+      telemetryReaders: {
+        claude: async () => ({ contextPct: 22, lastActivityAt: null }),
+        // lucas, live: a Codex agent whose rollout carries no usable token count.
+        // This is the real one — he did real work and Hive reported 0%.
+        codex: async () => ({ contextPct: null, lastActivityAt: null }),
+        liveModel: async () => null,
+      },
+    });
+    db.insertAgent(agent({
+      id: "agent-lucas",
+      name: "lucas",
+      tool: "codex",
+      status: "working",
+      tmuxSession: "hive-lucas",
+      worktreePath: "/tmp/hive-lucas",
+      // The 0 he was born with, which nothing ever corrected because a null
+      // observation used to be skipped as "no new information".
+      contextPct: 0,
+    }));
+    db.insertAgent(agent({ name: "maya", tool: "claude", status: "working" }));
+    try {
+      await daemon.refreshToolTelemetry();
+
+      // Unknown is an observation, and it overwrites the fiction.
+      const lucas = db.getAgentByName("lucas")!;
+      expect(lucas.contextPct).toBeNull();
+      // The user's acceptance test: never 0.
+      expect(lucas.contextPct).not.toBe(0);
+      expect(formatStatusTable([lucas])).toContain("—");
+      expect(formatStatusTable([lucas])).not.toContain("0%");
+
+      // And a real reading is still a real reading.
+      expect(db.getAgentByName("maya")?.contextPct).toBe(22);
+    } finally {
+      db.close();
+    }
+  });
+});

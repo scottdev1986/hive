@@ -1106,7 +1106,10 @@ export class HiveSpawner implements Spawner {
       worktreePath: worktree.path,
       branch: worktree.branch,
       tmuxSession: agentTmuxSession(name),
-      contextPct: 0,
+      // Unknown, not empty. A fresh agent has not been observed yet, and 0 was a
+      // claim we had no basis for — one that survived, unchallenged, for the whole
+      // life of any agent whose telemetry we could never read.
+      contextPct: null,
       createdAt: timestamp,
       lastEventAt: timestamp,
       ...(quotaReservationId === undefined ? {} : { quotaReservationId }),

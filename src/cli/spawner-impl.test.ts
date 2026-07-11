@@ -1433,7 +1433,10 @@ describe("HiveSpawner wiring", () => {
     expect(claude.name).toEqual("maya");
     // The stand-in hook event promoted the proven launch out of "spawning".
     expect(claude.status).toEqual("working");
-    expect(claude.contextPct).toEqual(0);
+    // A fresh agent's context is UNKNOWN, not empty. It used to spawn at 0, which
+    // reads as "plenty of room" to the orchestrator's reuse rule and was never
+    // corrected for any agent whose telemetry Hive could not read.
+    expect(claude.contextPct).toBeNull();
     expect(codex.name).toEqual("david");
     expect(claude.terminalHandle).toEqual({
       app: "iterm2",

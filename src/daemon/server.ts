@@ -882,10 +882,12 @@ export class HiveDaemon {
         current.status === "done" || current.status === "failed"
       ) continue;
       const updates: Partial<AgentRecord> = {};
-      if (
-        telemetry.contextPct !== null &&
-        telemetry.contextPct !== current.contextPct
-      ) {
+      // The sweep writes what it *observed*, including "nothing". A null used to
+      // be skipped as "no new information", which quietly meant the last number
+      // stood forever — and for an agent whose telemetry can never be read, the
+      // number that stood forever was the 0 it was born with. Unknown is a
+      // finding, not the absence of one, so it is recorded like any other.
+      if (telemetry.contextPct !== current.contextPct) {
         updates.contextPct = telemetry.contextPct;
       }
       // The model the agent is *running*. The statusline handler observes this
@@ -1452,6 +1454,15 @@ export class HiveDaemon {
           ? {}
           : { sevenDay: parsed.data.sevenDay }),
         observedAt: parsed.data.observedAt ?? new Date().toISOString(),
+        // The re-key chain moves an in-flight reservation onto the meter the run
+        // is really spending from, and it needs the name and the model together
+        // or it deliberately does nothing. Both come from here: the model is the
+        // one we just reconciled from the transcript, not the one the statusLine
+        // payload happened to carry — that payload is absent entirely on an
+        // API-key account, and one fact with two sources is two facts waiting to
+        // disagree.
+        agent: agent.name,
+        model,
       },
     ) ?? null;
     return json({ observation });

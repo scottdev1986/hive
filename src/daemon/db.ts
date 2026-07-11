@@ -147,6 +147,70 @@ function parseEventRow(row: unknown): HookEvent {
   });
 }
 
+/**
+ * The `agents` table, in one place.
+ *
+ * SQLite cannot relax a NOT NULL column in place, so a schema change like
+ * "contextPct must be able to say *unknown*" is a table rebuild: create, copy,
+ * drop, rename. There were three hand-maintained copies of this DDL — the
+ * constructor's and two rebuilds — and a column added to one and forgotten in
+ * another is silently dropped the next time a rebuild runs. One definition, used
+ * by all three, is the only version of this that stays correct.
+ */
+function agentsTableDdl(table: string, ifNotExists = false): string {
+  return `
+    CREATE TABLE ${ifNotExists ? "IF NOT EXISTS " : ""}${table} (
+      id TEXT PRIMARY KEY,
+      -- Deliberately not UNIQUE: a name may be held by many agents across
+      -- time, one at a time. agents_one_live_holder enforces the "one at a
+      -- time" half; the row per holder preserves the closure history that a
+      -- UNIQUE name would overwrite.
+      name TEXT NOT NULL,
+      tool TEXT NOT NULL,
+      model TEXT NOT NULL,
+      liveModel TEXT,
+      tier TEXT NOT NULL,
+      status TEXT NOT NULL,
+      taskDescription TEXT NOT NULL,
+      worktreePath TEXT,
+      branch TEXT,
+      tmuxSession TEXT NOT NULL,
+      terminalHandle TEXT,
+      -- Nullable on purpose: null is "not observed", which is a different fact
+      -- from 0%, and 0% is the one that gets an agent overloaded.
+      contextPct REAL,
+      createdAt TEXT NOT NULL,
+      lastEventAt TEXT NOT NULL,
+      failureReason TEXT,
+      failedAt TEXT,
+      quotaReservationId TEXT,
+      controlQuotaReservationId TEXT,
+      controlMessageId TEXT,
+      executionIdentity TEXT,
+      toolSessionId TEXT,
+      recoveryAttempts INTEGER NOT NULL DEFAULT 0,
+      capabilityEpoch INTEGER NOT NULL DEFAULT 0,
+      writeRevoked INTEGER NOT NULL DEFAULT 0,
+      channelsEnabled INTEGER NOT NULL DEFAULT 0,
+      closedAt TEXT
+    )
+  `;
+}
+
+/** Every column `agentsTableDdl` defines, in its order. The rebuild copies the
+ * intersection of this and what the old table actually had, so a column added to
+ * the DDL and forgotten here is never silently dropped by a later rebuild — which
+ * the previous hand-maintained copy of this list had already started doing to
+ * `liveModel`. */
+const AGENT_COLUMNS = [
+  "id", "name", "tool", "model", "liveModel", "tier", "status", "taskDescription",
+  "worktreePath", "branch", "tmuxSession", "terminalHandle", "contextPct",
+  "createdAt", "lastEventAt", "failureReason", "failedAt",
+  "quotaReservationId", "controlQuotaReservationId", "controlMessageId",
+  "executionIdentity", "toolSessionId", "recoveryAttempts",
+  "capabilityEpoch", "writeRevoked", "channelsEnabled", "closedAt",
+] as const;
+
 export class HiveDatabase {
   readonly path: string;
   readonly database: Database;
@@ -159,39 +223,8 @@ export class HiveDatabase {
     this.database = new Database(path, { create: true });
     this.database.exec("PRAGMA journal_mode = WAL");
     this.database.exec("PRAGMA foreign_keys = ON");
+    this.database.exec(agentsTableDdl("agents", true));
     this.database.exec(`
-      CREATE TABLE IF NOT EXISTS agents (
-        id TEXT PRIMARY KEY,
-        -- Deliberately not UNIQUE: a name may be held by many agents across
-        -- time, one at a time. agents_one_live_holder enforces the "one at a
-        -- time" half; the row per holder preserves the closure history that a
-        -- UNIQUE name would overwrite.
-        name TEXT NOT NULL,
-        tool TEXT NOT NULL,
-        model TEXT NOT NULL,
-        liveModel TEXT,
-        tier TEXT NOT NULL,
-        status TEXT NOT NULL,
-        taskDescription TEXT NOT NULL,
-        worktreePath TEXT,
-        branch TEXT,
-        tmuxSession TEXT NOT NULL,
-        terminalHandle TEXT,
-        contextPct REAL NOT NULL,
-        createdAt TEXT NOT NULL,
-        lastEventAt TEXT NOT NULL,
-        failureReason TEXT,
-        failedAt TEXT,
-        quotaReservationId TEXT,
-        controlQuotaReservationId TEXT,
-        controlMessageId TEXT,
-        executionIdentity TEXT,
-        toolSessionId TEXT,
-        recoveryAttempts INTEGER NOT NULL DEFAULT 0,
-        capabilityEpoch INTEGER NOT NULL DEFAULT 0,
-        writeRevoked INTEGER NOT NULL DEFAULT 0,
-        closedAt TEXT
-      );
       CREATE TABLE IF NOT EXISTS messages (
         id TEXT PRIMARY KEY,
         "from" TEXT NOT NULL,
@@ -360,6 +393,7 @@ export class HiveDatabase {
       `);
     }
     this.dropLegacyUniqueAgentName();
+    this.relaxContextPctNullability();
     this.database.exec(`
       -- The mechanical guarantee behind "a name means exactly one agent": at
       -- most one non-terminal row per name. A second spawn onto a live name
@@ -456,54 +490,68 @@ export class HiveDatabase {
     });
     if (legacy === undefined) return;
 
-    const columns = [
-      "id", "name", "tool", "model", "tier", "status", "taskDescription",
-      "worktreePath", "branch", "tmuxSession", "terminalHandle", "contextPct",
-      "createdAt", "lastEventAt", "failureReason", "failedAt",
-      "quotaReservationId", "controlQuotaReservationId", "controlMessageId",
-      "executionIdentity", "toolSessionId", "recoveryAttempts",
-      "capabilityEpoch", "writeRevoked", "channelsEnabled", "closedAt",
-    ].join(", ");
+    this.rebuildAgentsTable("contextPct");
+  }
+
+  /** The columns the live `agents` table actually has. */
+  private agentColumnNames(): Set<string> {
+    return new Set(
+      z.array(z.object({ name: z.string() })).parse(
+        this.database.query("PRAGMA table_info(agents)").all(),
+      ).map((column) => column.name),
+    );
+  }
+
+  /**
+   * Rebuild `agents` onto the current DDL — the only way SQLite lets a column
+   * stop being NOT NULL. `contextPctExpression` is the SQL that produces the new
+   * `contextPct`: `"contextPct"` preserves it, `"NULL"` discards it.
+   *
+   * Only the columns the old table really had are copied, so this cannot drop a
+   * column it has never heard of, and it runs before the agents indexes are
+   * created, so dropping the table takes no index with it.
+   */
+  private rebuildAgentsTable(contextPctExpression: string): void {
+    const existing = this.agentColumnNames();
+    const copied = AGENT_COLUMNS.filter((column) => existing.has(column));
+    const targets = copied.join(", ");
+    const sources = copied
+      .map((column) =>
+        column === "contextPct" ? `${contextPctExpression} AS contextPct` : column
+      )
+      .join(", ");
     this.database.exec("PRAGMA foreign_keys = OFF");
     this.database.transaction(() => {
-      this.database.exec(`
-        CREATE TABLE agents_rebuilt (
-          id TEXT PRIMARY KEY,
-          name TEXT NOT NULL,
-          tool TEXT NOT NULL,
-          model TEXT NOT NULL,
-          tier TEXT NOT NULL,
-          status TEXT NOT NULL,
-          taskDescription TEXT NOT NULL,
-          worktreePath TEXT,
-          branch TEXT,
-          tmuxSession TEXT NOT NULL,
-          terminalHandle TEXT,
-          contextPct REAL NOT NULL,
-          createdAt TEXT NOT NULL,
-          lastEventAt TEXT NOT NULL,
-          failureReason TEXT,
-          failedAt TEXT,
-          quotaReservationId TEXT,
-          controlQuotaReservationId TEXT,
-          controlMessageId TEXT,
-          executionIdentity TEXT,
-          toolSessionId TEXT,
-          recoveryAttempts INTEGER NOT NULL DEFAULT 0,
-          capabilityEpoch INTEGER NOT NULL DEFAULT 0,
-          writeRevoked INTEGER NOT NULL DEFAULT 0,
-          channelsEnabled INTEGER NOT NULL DEFAULT 0,
-          liveModel TEXT,
-          closedAt TEXT
-        )
-      `);
+      this.database.exec(agentsTableDdl("agents_rebuilt"));
       this.database.exec(
-        `INSERT INTO agents_rebuilt (${columns}) SELECT ${columns} FROM agents`,
+        `INSERT INTO agents_rebuilt (${targets}) SELECT ${sources} FROM agents`,
       );
       this.database.exec("DROP TABLE agents");
       this.database.exec("ALTER TABLE agents_rebuilt RENAME TO agents");
     })();
     this.database.exec("PRAGMA foreign_keys = ON");
+  }
+
+  /**
+   * Make "unknown" storable. `contextPct` was `REAL NOT NULL`, so an agent Hive
+   * could not observe had nowhere to say so and kept its 0% spawn default — and
+   * 0% does not mean "empty", it means "no idea", while reading like an invitation
+   * to load more work on.
+   *
+   * Every existing value is discarded rather than carried across, and that is a
+   * deliberate backfill decision, not laziness: those numbers were computed
+   * against a hardcoded 200k window while agents ran 1M ones, so they are wrong
+   * by up to 5x — the reason two agents sat pinned at 100% while actually near
+   * 22%. Migrating known-wrong numbers forward would preserve exactly the lie
+   * this column is being reshaped to stop telling. Null is honest, and the next
+   * telemetry sweep re-observes every agent it can see.
+   */
+  private relaxContextPctNullability(): void {
+    const notNull = z.array(z.object({ name: z.string(), notnull: z.number() }))
+      .parse(this.database.query("PRAGMA table_info(agents)").all())
+      .some((column) => column.name === "contextPct" && column.notnull === 1);
+    if (!notNull) return;
+    this.rebuildAgentsTable("NULL");
   }
 
   close(): void {

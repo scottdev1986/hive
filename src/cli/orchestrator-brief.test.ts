@@ -186,8 +186,12 @@ describe("orchestrator brief", () => {
     expect(ORCHESTRATOR_BRIEF).toContain("re-reads the repo from zero");
     // The reuse test is the two facts hive_status already reports, so no
     // second source of truth about reusability can go stale.
-    expect(ORCHESTRATOR_BRIEF).toContain("contextPct is under 65");
+    expect(ORCHESTRATOR_BRIEF).toContain("contextPct is a number under 65");
     expect(ORCHESTRATOR_BRIEF).toContain("file scopes would collide");
+    // An unobserved context is not an empty one. The rule has to say so, or the
+    // orchestrator reads null as room and loads work onto an agent it cannot see.
+    expect(ORCHESTRATOR_BRIEF).toContain("NOT eligible for reuse");
+    expect(ORCHESTRATOR_BRIEF).toContain("Treat null as full, not as free");
   });
 
   test("tells the orchestrator to cite doc sections rather than whole docs", () => {

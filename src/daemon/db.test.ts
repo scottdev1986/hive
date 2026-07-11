@@ -654,3 +654,74 @@ describe("HiveDatabase", () => {
     }
   });
 });
+
+describe("contextPct can say 'unknown'", () => {
+  test("a legacy NOT NULL database is rebuilt, and its known-wrong numbers are dropped", () => {
+    const path = join(home, "legacy-contextpct.db");
+    // A database from before unknown was representable: contextPct REAL NOT NULL,
+    // carrying the numbers that made this a bug — computed against a hardcoded
+    // 200k window while the agent ran a 1M one, so 100% when it was really ~22%.
+    const legacy = new Database(path, { create: true });
+    legacy.exec(`
+      CREATE TABLE agents (
+        id TEXT PRIMARY KEY, name TEXT NOT NULL, tool TEXT NOT NULL,
+        model TEXT NOT NULL, tier TEXT NOT NULL, status TEXT NOT NULL,
+        taskDescription TEXT NOT NULL, worktreePath TEXT, branch TEXT,
+        tmuxSession TEXT NOT NULL, terminalHandle TEXT,
+        contextPct REAL NOT NULL,
+        createdAt TEXT NOT NULL, lastEventAt TEXT NOT NULL,
+        failureReason TEXT, failedAt TEXT, quotaReservationId TEXT,
+        controlQuotaReservationId TEXT, controlMessageId TEXT,
+        executionIdentity TEXT, toolSessionId TEXT,
+        recoveryAttempts INTEGER NOT NULL DEFAULT 0,
+        capabilityEpoch INTEGER NOT NULL DEFAULT 0,
+        writeRevoked INTEGER NOT NULL DEFAULT 0,
+        channelsEnabled INTEGER NOT NULL DEFAULT 0,
+        liveModel TEXT,
+        closedAt TEXT
+      )
+    `);
+    legacy.exec(`
+      INSERT INTO agents (id, name, tool, model, liveModel, tier, status,
+        taskDescription, tmuxSession, contextPct, createdAt, lastEventAt)
+      VALUES ('a1', 'zoe', 'claude', 'claude-fable-5', 'claude-opus-4-8',
+        'deep', 'working', 'work', 'hive-zoe', 100,
+        '2026-07-11T12:00:00.000Z', '2026-07-11T12:00:00.000Z')
+    `);
+    legacy.close();
+
+    const db = new HiveDatabase(path);
+    try {
+      const columns = db.database.query("PRAGMA table_info(agents)").all() as Array<
+        { name: string; notnull: number }
+      >;
+      const contextPct = columns.find((column) => column.name === "contextPct");
+      expect(contextPct?.notnull).toBe(0);
+
+      const zoe = db.getAgentByName("zoe");
+      // The 100 is gone, not migrated forward: it was computed against the wrong
+      // denominator and carrying it across would preserve the exact lie this
+      // column is being reshaped to stop telling. Unknown until re-observed.
+      expect(zoe?.contextPct).toBeNull();
+      // And the rebuild copied everything else, including a column the old
+      // hand-maintained copy list had already started forgetting.
+      expect(zoe?.liveModel).toBe("claude-opus-4-8");
+      expect(zoe?.model).toBe("claude-fable-5");
+      expect(zoe?.status).toBe("working");
+    } finally {
+      db.close();
+    }
+  });
+
+  test("null survives a write and a read", () => {
+    const db = new HiveDatabase(join(home, "null-contextpct.db"));
+    try {
+      db.insertAgent(agent({ id: "agent-lucas", name: "lucas", contextPct: null }));
+      expect(db.getAgentByName("lucas")?.contextPct).toBeNull();
+      db.upsertAgent({ ...db.getAgentByName("lucas")!, contextPct: 22 });
+      expect(db.getAgentByName("lucas")?.contextPct).toBe(22);
+    } finally {
+      db.close();
+    }
+  });
+});

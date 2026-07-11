@@ -22,7 +22,9 @@ export function formatStatusTable(agents: AgentRecord[]): string {
     // running models none of them were.
     agent.liveModel ?? agent.model,
     agent.status,
-    `${Math.round(agent.contextPct)}%`,
+    // Unknown renders as "—", never as a number and never as 0%. `Math.round(null)`
+    // is 0, which is how an agent Hive cannot see came to look like an empty one.
+    agent.contextPct === null ? "—" : `${Math.round(agent.contextPct)}%`,
     truncate(agent.taskDescription.replaceAll(/\s+/g, " ").trim(), TASK_WIDTH),
     truncate(
       (agent.failureReason ?? "").replaceAll(/\s+/g, " ").trim(),
