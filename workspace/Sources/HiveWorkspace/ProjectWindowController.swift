@@ -144,7 +144,7 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
         let scrollSession = terminalScrollSession(
             for: pane,
             orchestratorSession: orchestratorSession)
-        let allowsMouseReporting = pane.kind != .orchestrator
+        let allowsMouseReporting = terminalAllowsMouseReporting(for: pane)
         let view = PaneView(
             paneID: paneID,
             title: pane.title,

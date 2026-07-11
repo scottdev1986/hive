@@ -42,6 +42,17 @@ final class ProjectStateTests: XCTestCase {
             "hive-worker-instance")
     }
 
+    func testTerminalAllowsMouseReportingForBothPaneKinds() throws {
+        let state = ProjectState(projectID: ProjectID("project"), displayName: "Project")
+        state.addOrchestrator()
+        state.apply(feed: [agent("worker", session: "hive-worker-instance")])
+        let orchestratorPane = try XCTUnwrap(state.panes[ProjectState.orchestratorPaneID])
+        let agentPane = try XCTUnwrap(state.panes[ProjectState.paneID(forAgent: "worker")])
+
+        XCTAssertTrue(terminalAllowsMouseReporting(for: orchestratorPane))
+        XCTAssertTrue(terminalAllowsMouseReporting(for: agentPane))
+    }
+
     private func agent(_ name: String, status: String = "working",
                        tool: String = "claude", model: String = "opus",
                        task: String = "do things", session: String? = nil,

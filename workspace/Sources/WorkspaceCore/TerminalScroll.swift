@@ -15,6 +15,15 @@ public func terminalScrollSession(
     }
 }
 
+/// Whether wheel events for this pane should be forwarded to the terminal's
+/// SGR mouse-reporting protocol rather than driven through legacy tmux
+/// copy-mode commands. Both pane kinds attach to a session with tmux mouse
+/// mode enabled server-wide (`set-option -g mouse on`) and both run
+/// alt-screen TUIs, which copy-mode cannot scroll — so both forward.
+public func terminalAllowsMouseReporting(for pane: PaneState) -> Bool {
+    true
+}
+
 /// A normalized terminal scroll gesture. The AppKit terminal host translates
 /// this into tmux copy-mode commands when terminal mouse reporting is disabled.
 public struct TerminalScrollRequest: Equatable, Sendable {
