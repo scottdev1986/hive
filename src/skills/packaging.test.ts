@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative, sep } from "node:path";
 import { SHIPPED_SKILLS } from "./shipped";
 
 /**
@@ -116,16 +116,31 @@ test("the compiled binary carries every shipped skill", () => {
  * here needs excusing.
  */
 test("the compiled binary carries no Hive memory and no dev-only skill", async () => {
+  const shippedContent = new Map(
+    SHIPPED_SKILLS.map((skill) => [skill.name, skill.content]),
+  );
+
   const devOnly: string[] = [];
   for (const directory of [".hive/memory", ".hive/skills", ".claude/skills"]) {
-    const entries = await readdir(join(repoRoot, directory), {
+    const root = join(repoRoot, directory);
+    const entries = await readdir(root, {
       withFileTypes: true,
       recursive: true,
     }).catch(() => []);
     for (const entry of entries) {
-      if (entry.isFile() && entry.name.endsWith(".md")) {
-        devOnly.push(join(entry.parentPath, entry.name));
+      if (!entry.isFile() || !entry.name.endsWith(".md")) continue;
+      const path = join(entry.parentPath, entry.name);
+      // Hive provisions verbatim copies of shipped skills into an agent
+      // worktree's .claude/skills for the agent's own use. That's shipped
+      // content living in a dev tree, not dev content leaking out, so it
+      // isn't a hit here — but only when the bytes actually match the
+      // canonical skills/ source; a diverged copy still counts as dev-only.
+      const topLevel = relative(root, entry.parentPath).split(sep)[0] ?? "";
+      const canonical = shippedContent.get(topLevel);
+      if (canonical !== undefined && (await readFile(path, "utf8")) === canonical) {
+        continue;
       }
+      devOnly.push(path);
     }
   }
   // Guard the guard: with nothing found, every assertion below would pass while
