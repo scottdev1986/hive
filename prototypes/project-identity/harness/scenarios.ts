@@ -18,8 +18,8 @@ import {
   sanitizedGitEnv,
   setVolumeHelperPath,
   UnauthenticatedLedgerAccess,
-} from "../src/index";
-import type { BookmarkProvider, ResolveOptions, Resolution } from "../src/index";
+} from "../../../src/daemon/project-identity-core/index";
+import type { BookmarkProvider, ResolveOptions, Resolution } from "../../../src/daemon/project-identity-core/index";
 import { attachDiskImage, buildGitTopology, commitFile, DiskImageUnavailable, git, tempRoot } from "./fixtures";
 import { ensureFsidHelper } from "./helper";
 

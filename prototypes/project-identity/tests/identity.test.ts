@@ -12,8 +12,8 @@ import {
   probeGit,
   sanitizedGitEnv,
   UnauthenticatedLedgerAccess,
-} from "../src/index";
-import type { VolumeBehavior } from "../src/index";
+} from "../../../src/daemon/project-identity-core/index";
+import type { VolumeBehavior } from "../../../src/daemon/project-identity-core/index";
 
 /**
  * The motion scenarios are the real specification. Running them here means `bun test`

@@ -16,6 +16,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentRecord } from "../schemas";
 import { HiveDatabase } from "./db";
+import { listAuditEntries } from "./testing";
 import { readCredential, writeCredential, credentialPath } from "./credentials";
 import { HiveDaemon } from "./server";
 import type { SpawnRequest, Spawner } from "./spawner";
@@ -129,7 +130,7 @@ async function callTool(
 }
 
 const denials = (daemon: HiveDaemon): string[] =>
-  daemon.db.listAuditEntries(50)
+  listAuditEntries(daemon.db, 50)
     .filter((entry) => entry.decision === "deny")
     .map((entry) => entry.reason ?? "");
 
@@ -526,7 +527,7 @@ describe("audit", () => {
 
     await callTool(daemon, token, "hive_land", { agent: "zara", capabilityEpoch: 0 });
 
-    const entry = db.listAuditEntries(50).find((row) =>
+    const entry = listAuditEntries(db, 50).find((row) =>
       row.decision === "deny" && row.action === "branch:land"
     );
     expect(entry).toBeDefined();
@@ -547,7 +548,7 @@ describe("audit", () => {
     await callTool(daemon, token, "hive_spawn", { task: "denied", tier: "standard" });
     await callTool(daemon, token, "hive_land", { agent: "maya", capabilityEpoch: 0 });
 
-    const serialized = JSON.stringify(db.listAuditEntries(50));
+    const serialized = JSON.stringify(listAuditEntries(db, 50));
     expect(serialized).not.toContain(secret);
     expect(serialized.length).toBeGreaterThan(2);
     await daemon.stop();
@@ -560,7 +561,7 @@ describe("audit", () => {
 
     await callTool(daemon, token, "hive_status");
     await callTool(daemon, token, "hive_status");
-    expect(db.listAuditEntries(50)).toHaveLength(0);
+    expect(listAuditEntries(db, 50)).toHaveLength(0);
     await daemon.stop();
   });
 

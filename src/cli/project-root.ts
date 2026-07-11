@@ -8,7 +8,7 @@
  * `probeGit` is the same resolver the daemon uses (env-sanitized, bare-safe,
  * absolute paths), so the CLI and daemon can never disagree about the root.
  */
-import { probeGit } from "../../prototypes/project-identity/src/index";
+import { probeGit } from "../daemon/project-identity-core/index";
 
 /** The canonical worktree root for `cwd`, or null outside a git worktree. */
 export function resolveProjectRoot(cwd: string): string | null {

@@ -354,6 +354,14 @@ export class CapabilityStore {
     this.db.releaseOneShot(capability.id, action);
   }
 
+  /** Re-arms a spent one-shot for a subject by explicit approval (the
+   * land-grant re-arm flow): deleting the consumption row grants exactly one
+   * more spend, and approving the same request twice finds nothing left to
+   * delete. Returns how many rows were released. */
+  rearmOneShot(subject: string, action: Action): number {
+    return this.db.releaseOneShotForSubject(subject, action);
+  }
+
   /** Revocation by subject. Advancing an agent's epoch kills its epoch-checked
    * rights; this kills the credential outright, for kill and mark-dead. */
   revokeSubject(subject: string): number {

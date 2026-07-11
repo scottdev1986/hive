@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { getHiveHome } from "./db";
-import { InMemoryManagedWorktreeLedger, LedgerCapability, ProjectRegistry, resolveOrCreate, type ProjectRegistrySnapshot } from "../../prototypes/project-identity/src/index";
+import { InMemoryManagedWorktreeLedger, LedgerCapability, ProjectRegistry, resolveOrCreate, type ProjectRegistrySnapshot } from "./project-identity-core/index";
 
 const path = () => join(getHiveHome(), "project-registry.json");
 

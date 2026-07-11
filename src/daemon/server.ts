@@ -283,6 +283,15 @@ export type LandBranch = (
   branch: string,
 ) => Promise<{ commit: string }>;
 
+// The land-grant re-arm flow (SPEC decision 4's capability discipline without
+// the integrator round-trip): a refused land on a spent one-shot files an
+// approval, and approving it re-arms exactly one landing. The prefix is the
+// contract between the filing site and the approval hook.
+export const LAND_REARM_PREFIX = "Re-arm landing";
+const LAND_REARM_NOTE =
+  "A re-arm approval has been filed; once the orchestrator approves it, " +
+  "exactly one more hive_land is granted.";
+
 // Resource and control alerts are the only way daemon degradation reaches the
 // orchestrator; a failed alert send must not crash the sweep, but it must not
 // vanish either.
@@ -861,6 +870,27 @@ export class HiveDaemon {
     } finally {
       this.maintenanceRunning = false;
     }
+  }
+
+  /** Files (once) the approval whose grant re-arms one landing for an agent
+   * whose one-shot branch:land grant is spent. */
+  private fileLandRearmApproval(subject: string): void {
+    const alreadyPending = this.db.listApprovals("pending").some(
+      (approval) =>
+        approval.agentName === subject &&
+        approval.description.startsWith(LAND_REARM_PREFIX),
+    );
+    if (alreadyPending) return;
+    this.db.insertApproval({
+      id: crypto.randomUUID(),
+      agentName: subject,
+      description:
+        `${LAND_REARM_PREFIX}: the one-shot branch:land grant for ${subject} is spent. ` +
+        "Approving grants exactly one more landing for this agent.",
+      status: "pending",
+      createdAt: new Date().toISOString(),
+      resolvedAt: null,
+    });
   }
 
   /**
@@ -2049,6 +2079,12 @@ export class HiveDaemon {
       if (approval === null) {
         throw new Error(`Pending approval not found: ${id}`);
       }
+      if (
+        decision === "approve" &&
+        approval.description.startsWith(LAND_REARM_PREFIX)
+      ) {
+        this.capabilities.rearmOneShot(approval.agentName, "branch:land");
+      }
       await this.codexControl?.resolveApproval(
         approval.id,
         decision === "approve",
@@ -2082,7 +2118,18 @@ export class HiveDaemon {
         "Fast-forward land a writer branch only when its durable write capability epoch is current and not revoked.",
       inputSchema: LandRequestSchema,
     }, async ({ agent: name, capabilityEpoch }) => {
-      this.authorizeTool(capability, "hive_land", "branch:land", name);
+      try {
+        this.authorizeTool(capability, "hive_land", "branch:land", name);
+      } catch (error) {
+        // A spent grant is a dead end the caller cannot fix alone (a live
+        // agent asked to land follow-up work simply stalls); surface it as
+        // an approval whose grant re-arms exactly one landing.
+        if (error instanceof Error && error.message.includes("already spent")) {
+          this.fileLandRearmApproval(capability.subject);
+          throw new Error(`${error.message}. ${LAND_REARM_NOTE}`);
+        }
+        throw error;
+      }
       // Reserve the one-shot right before merging, so two concurrent lands
       // cannot both reach git. A lost fast-forward race releases it again:
       // main moved, the writer must rebase, and the retry has to be possible.
@@ -2098,8 +2145,9 @@ export class HiveDaemon {
           decision: "deny",
           reason: "capability.replayed",
         });
+        this.fileLandRearmApproval(capability.subject);
         throw new Error(
-          `The one-shot branch:land grant for ${capability.subject} is already spent`,
+          `The one-shot branch:land grant for ${capability.subject} is already spent. ${LAND_REARM_NOTE}`,
         );
       }
       try {

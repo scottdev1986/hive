@@ -34,7 +34,7 @@ export type CapabilityRow = Omit<
   "secretHash"
 >;
 
-const AuditRowSchema = z.object({
+export const AuditRowSchema = z.object({
   at: z.string().min(1),
   route: z.string().min(1),
   action: z.string().nullable(),
@@ -208,6 +208,10 @@ export class HiveDatabase {
       );
       CREATE INDEX IF NOT EXISTS messages_recipient_delivery
         ON messages("to", deliveredAt, createdAt);
+      -- Critical-control recovery runs on every session-start and every
+      -- maintenance tick; it must never pay for the full message history.
+      CREATE INDEX IF NOT EXISTS messages_queued_critical
+        ON messages(sequence) WHERE priority = 'critical' AND state = 'queued';
       CREATE TABLE IF NOT EXISTS agent_name_reservations (
         name TEXT PRIMARY KEY,
         createdAt TEXT NOT NULL
@@ -680,21 +684,10 @@ export class HiveDatabase {
     return row === null ? null : parseAgentRow(row);
   }
 
-  /** Every holder a name has ever had, oldest first. */
-  listAgentsNamed(name: string): AgentRecord[] {
-    return this.database.query(
-      "SELECT * FROM agents WHERE name = ? ORDER BY createdAt",
-    ).all(name).map(parseAgentRow);
-  }
-
   listAgents(): AgentRecord[] {
     return this.database.query("SELECT * FROM agents ORDER BY createdAt, name")
       .all()
       .map(parseAgentRow);
-  }
-
-  deleteAgent(id: string): boolean {
-    return this.database.query("DELETE FROM agents WHERE id = ?").run(id).changes > 0;
   }
 
   reserveAgentName(name: string, createdAt = new Date().toISOString()): boolean {
@@ -764,6 +757,14 @@ export class HiveDatabase {
     return this.database.query("SELECT * FROM messages ORDER BY rowid")
       .all()
       .map((row) => AgentMessageSchema.parse(row));
+  }
+
+  listQueuedCriticalMessages(): AgentMessage[] {
+    return this.database.query(`
+      SELECT * FROM messages
+      WHERE priority = 'critical' AND state = 'queued'
+      ORDER BY sequence, rowid
+    `).all().map((row) => AgentMessageSchema.parse(row));
   }
 
   findMessageByIdempotency(
@@ -888,10 +889,6 @@ export class HiveDatabase {
     return result.changes === 1 ? this.getMessage(id) : null;
   }
 
-  deleteMessage(id: string): boolean {
-    return this.database.query("DELETE FROM messages WHERE id = ?").run(id).changes > 0;
-  }
-
   insertEvent(event: HookEvent): HookEvent {
     const value = HookEventSchema.parse(event);
     this.database.query(`
@@ -924,14 +921,6 @@ export class HiveDatabase {
           FROM events WHERE agentName = ? ORDER BY id
         `).all(agentName);
     return rows.map(parseEventRow);
-  }
-
-  deleteEvents(agentName?: string): number {
-    if (agentName === undefined) {
-      return this.database.query("DELETE FROM events").run().changes;
-    }
-    return this.database.query("DELETE FROM events WHERE agentName = ?")
-      .run(agentName).changes;
   }
 
   insertCapability(capability: CapabilityRow, secretHash: string): void {
@@ -984,6 +973,18 @@ export class HiveDatabase {
     `).run(capabilityId, action);
   }
 
+  // Re-arms a spent one-shot for whatever live capability the subject holds —
+  // the approval path knows the agent, not the capability id the spend was
+  // recorded under. Revoked capabilities stay spent forever.
+  releaseOneShotForSubject(subject: string, action: string): number {
+    return this.database.query(`
+      DELETE FROM capability_consumptions
+      WHERE action = ? AND capabilityId IN (
+        SELECT id FROM capabilities WHERE subject = ? AND revokedAt IS NULL
+      )
+    `).run(action, subject).changes;
+  }
+
   isOneShotConsumed(capabilityId: string, action: string): boolean {
     const row = this.database.query(`
       SELECT 1 AS present FROM capability_consumptions
@@ -1017,14 +1018,6 @@ export class HiveDatabase {
       entry.decision,
       entry.reason,
     );
-  }
-
-  listAuditEntries(limit = 100): AuditRow[] {
-    return this.database.query(`
-      SELECT at, route, action, callerSubject, callerRole, capabilityId,
-             requestedSubject, epoch, decision, reason
-      FROM audit_log ORDER BY id DESC LIMIT ?
-    `).all(limit).map((row) => AuditRowSchema.parse(row));
   }
 
   insertApproval(approval: Approval): Approval {
@@ -1068,10 +1061,6 @@ export class HiveDatabase {
       WHERE id = ? AND status = 'pending'
     `).run(status, resolvedAt, id);
     return result.changes === 0 ? null : this.getApproval(id);
-  }
-
-  deleteApproval(id: string): boolean {
-    return this.database.query("DELETE FROM approvals WHERE id = ?").run(id).changes > 0;
   }
 
   /**

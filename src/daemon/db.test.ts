@@ -9,6 +9,13 @@ import type {
   HookEvent,
 } from "../schemas";
 import { HiveDatabase, type Approval } from "./db";
+import {
+  deleteAgentRow,
+  deleteApprovalRow,
+  deleteEventRows,
+  deleteMessageRow,
+  listAgentsNamed,
+} from "./testing";
 
 const home = mkdtempSync(join(tmpdir(), "hive-db-test-"));
 process.env.HIVE_HOME = home;
@@ -65,7 +72,7 @@ describe("HiveDatabase", () => {
       const closed = { ...updated, closedAt: "2026-07-09T12:01:00.000Z" };
       expect(db.upsertAgent(updated)).toEqual(closed);
       expect(db.listAgents()).toEqual([closed]);
-      expect(db.deleteAgent(updated.id)).toEqual(true);
+      expect(deleteAgentRow(db, updated.id)).toEqual(true);
       expect(db.getAgentById(updated.id)).toEqual(null);
     } finally {
       db.close();
@@ -113,7 +120,7 @@ describe("HiveDatabase", () => {
         createdAt: "2026-07-09T13:00:00.000Z",
       }));
 
-      const holders = db.listAgentsNamed("maya");
+      const holders = listAgentsNamed(db, "maya");
       expect(holders.map((holder) => holder.id))
         .toEqual(["agent-maya", "agent-maya-2"]);
       // The closed holder keeps its own task and closure instant: history can
@@ -212,7 +219,7 @@ describe("HiveDatabase", () => {
       });
       // And the name is now reusable without overwriting that history.
       db.insertAgent(agent({ id: "agent-maya-2" }));
-      expect(db.listAgentsNamed("maya").map((holder) => holder.id))
+      expect(listAgentsNamed(db, "maya").map((holder) => holder.id))
         .toEqual(["agent-maya", "agent-maya-2"]);
       // The rebuilt table still admits only one live holder.
       expect(() => db.insertAgent(agent({ id: "agent-maya-3" })))
@@ -430,7 +437,7 @@ describe("HiveDatabase", () => {
       ).toEqual(null);
       expect(db.getMessage(message.id)?.deliveredAt).toEqual(deliveredAt);
       expect(db.getUndeliveredMessages("maya")).toEqual([]);
-      expect(db.deleteMessage(message.id)).toEqual(true);
+      expect(deleteMessageRow(db, message.id)).toEqual(true);
     } finally {
       db.close();
     }
@@ -550,7 +557,7 @@ describe("HiveDatabase", () => {
       }
       expect(db.listEvents()).toEqual(events);
       expect(db.listEvents("maya")).toEqual(events);
-      expect(db.deleteEvents("maya")).toEqual(events.length);
+      expect(deleteEventRows(db, "maya")).toEqual(events.length);
       expect(db.listEvents()).toEqual([]);
     } finally {
       db.close();
@@ -579,7 +586,7 @@ describe("HiveDatabase", () => {
       expect(db.resolveApproval(approval.id, "approved", resolvedAt)).toEqual(resolved);
       expect(db.resolveApproval(approval.id, "denied", resolvedAt)).toEqual(null);
       expect(db.listApprovals("approved")).toEqual([resolved]);
-      expect(db.deleteApproval(approval.id)).toEqual(true);
+      expect(deleteApprovalRow(db, approval.id)).toEqual(true);
     } finally {
       db.close();
     }

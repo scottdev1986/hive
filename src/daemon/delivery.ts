@@ -613,11 +613,8 @@ export class MessageDelivery {
   async recoverCriticalControls(): Promise<number> {
     if (this.controls === undefined) return 0;
     let recovered = 0;
-    for (const queued of this.db.listMessages()) {
+    for (const queued of this.db.listQueuedCriticalMessages()) {
       let message = queued;
-      if (message.priority !== "critical" || message.state !== "queued") {
-        continue;
-      }
       let recipient = this.db.getAgentByName(message.to);
       if (recipient === null) continue;
       if (!recipient.writeRevoked) {
