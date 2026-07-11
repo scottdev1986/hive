@@ -84,48 +84,28 @@ export function parseStatuslineReport(
   const limits = isRecord(payload.rate_limits) ? payload.rate_limits : {};
   const fiveHour = parseWindow(limits.five_hour);
   const sevenDay = parseWindow(limits.seven_day);
-  const model = parseModel(payload);
   const context = parseContextWindow(payload);
 
   const measuredNothing = fiveHour === undefined && sevenDay === undefined &&
-    model === undefined && context.contextWindow === undefined;
+    context.contextWindow === undefined;
   if (measuredNothing) return null;
 
   return {
     agent,
     ...(fiveHour === undefined ? {} : { fiveHour }),
     ...(sevenDay === undefined ? {} : { sevenDay }),
-    ...(model === undefined ? {} : { model }),
     ...context,
     observedAt,
   };
 }
 
-/**
- * The model this session is actually running.
- *
- * Verified by driving claude 2.1.207: every statusLine render carries
- * `model.id` with the concrete resolved id, and it tracks a mid-session model
- * switch. That makes it the live correction for the model Hive recorded when it
- * spawned the agent, which is only ever a guess about the future.
- *
- * The id is taken and the display name ignored on purpose. `display_name` here
- * is "Fable 5", while the usage payload and the model catalog both say "Fable" —
- * three surfaces, two spellings. Joining on a name that is not stable across the
- * very payloads being joined is how a pool ends up bound to the wrong model.
- *
- * The id arrives here WITHOUT the `[1m]` suffix — but that is a fact about this
- * payload, not a universal rule: the `initialize` model catalog spells the same
- * model `claude-opus-4-8[1m]`. Same model, different surface, different
- * spelling. Which is exactly why a context window is never inferred from a
- * model string: `[1m]` tracks the account's plan, not the name.
- */
-function parseModel(payload: Record<string, unknown>): string | undefined {
-  const model = payload.model;
-  if (!isRecord(model)) return undefined;
-  const id = model.id;
-  return typeof id === "string" && id.length > 0 ? id : undefined;
-}
+// The live model is deliberately NOT taken from here, though this payload does
+// carry `model.id`. The daemon reconciles it from the transcript instead
+// (server.ts), because the transcript stamps every assistant turn with the model
+// that produced it and is ALWAYS present — while this payload is absent entirely
+// on an API-key account, and was for a long time discarded whenever the session
+// had no `rate_limits` block. A source that cannot fail beats one that can, and
+// one fact with two sources is two facts waiting to disagree.
 
 /**
  * The real context window, in tokens, and Claude Code's own occupancy figure.

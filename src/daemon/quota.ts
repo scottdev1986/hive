@@ -1766,11 +1766,15 @@ export class QuotaService {
       sevenDay?: { usedPct: number; resetsAt: string | null };
       observedAt: string;
       /**
-       * The model this session is *actually* running, as the statusLine payload
-       * reports it. It is the live truth; the model Hive stored at spawn is a
-       * guess that goes stale the moment a human switches models mid-session.
-       * Sent with the agent's name so the run's reservation can be found and
-       * moved onto the meter it is really spending from.
+       * The model this session is *actually* running, reconciled by the daemon
+       * from the agent's transcript — NOT from the statusLine payload, which
+       * also carries a model but is absent entirely on an API-key account. The
+       * transcript stamps every assistant turn with the model that produced it,
+       * so it is the source that cannot fail. It is the live truth; the model
+       * Hive stored at spawn is a guess that goes stale the moment a human
+       * switches models mid-session. Sent with the agent's name so the run's
+       * reservation can be found and moved onto the meter it is really spending
+       * from.
        */
       model?: string;
       agent?: string;

@@ -55,11 +55,14 @@ export function resolveWorkspaceApp(root = installRoot()): string | null {
   return existsSync(app) ? app : null;
 }
 
+// Both of the messages below name a command, and both have earned it. Hive
+// cannot install itself from a source checkout, and it will not silently pull a
+// release over the network because someone typed `hive` — that is the user's
+// call. So each states the fact, then the remedy on one labelled `Fix:` line.
 const INSTALL_HINT =
-  "Install a Hive release first:\n" +
-  "  curl -fsSL https://raw.githubusercontent.com/scottdev1986/hive/main/install.sh | sh\n" +
-  "Then run `hive` again. A source checkout cannot launch the Workspace: " +
-  "`hive` opens the installed release build, never a development build.";
+  "no Hive release is installed; a source checkout cannot launch the Workspace " +
+  "(`hive` opens the installed release build, never a development build)\n" +
+  "Fix: curl -fsSL https://raw.githubusercontent.com/scottdev1986/hive/main/install.sh | sh";
 
 export interface LaunchDeps {
   readonly root?: string;
@@ -93,8 +96,8 @@ export async function launchWorkspace(deps: LaunchDeps): Promise<number> {
   if (app === null) {
     throw new WorkspaceNotInstalledError(
       IS_RELEASE_BUILD
-        ? `The Hive Workspace application is missing from ${currentLink(root)}. ` +
-          "Run `hive update` to repair the installation."
+        ? `the Workspace app is missing from ${currentLink(root)}\n` +
+          "Fix: run `hive update` to repair the installation"
         : INSTALL_HINT,
     );
   }

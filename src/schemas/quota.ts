@@ -183,14 +183,12 @@ export const StatuslineReportSchema = z.object({
   fiveHour: StatuslineRateWindowSchema.optional(),
   sevenDay: StatuslineRateWindowSchema.optional(),
   observedAt: z.iso.datetime({ offset: true }).optional(),
-  /**
-   * The model the session is running *right now*, as `model.id` in the payload —
-   * the concrete id, never the display name, which differs between surfaces
-   * ("Fable 5" here, "Fable" in the usage payload and the model catalog). Hive's
-   * stored model is a spawn-time guess and a human may switch models mid-session;
-   * this is the only live signal that says which meter the run is truly spending.
-   */
-  model: z.string().min(1).optional(),
+  // No `model` here, though the payload carries one. The live model is
+  // reconciled from the transcript instead (server.ts): the transcript stamps
+  // every assistant turn with the model that produced it and is always present,
+  // while this payload is absent entirely on an API-key account. A source that
+  // cannot fail beats one that can — and carrying the same fact on two routes
+  // is how the two routes end up disagreeing.
   /**
    * The context window this session actually has, in tokens, as Claude Code
    * resolved it against the account's plan — 200000, or 1000000 where the plan
