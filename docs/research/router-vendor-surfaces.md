@@ -4,15 +4,17 @@ Hive can learn which models an account can use, and which effort values each mod
 
 This document records wire behavior verified on July 11, 2026 against Claude Code 2.1.207 and Codex CLI 0.144.1 on the signed-in accounts on this machine. “Free” below means no user message, thread turn, model response, or inference request. It does not mean the surface is stable or universally available.
 
+Building the capability records against these binaries (`90e550d`, 2026-07-11) corrected several field-level claims that the router design had asserted from the surfaces' *shape* rather than their contents. Those corrections are folded in below; the load-bearing one has its own section, [The two surfaces are not symmetric](#the-two-surfaces-are-not-symmetric).
+
 ## The discovery surfaces
 
 | Surface | What it tells Hive | Status | Probe cost and risk |
 |---|---|---|---|
-| Claude control `initialize` | Account identity/provider and an account-specific model menu: `value`, `resolvedModel`, `displayName`, `supportsEffort`, `supportedEffortLevels`, `supportsAdaptiveThinking`, `supportsFastMode`, and `supportsAutoMode` where applicable | **Verified, free, incomplete namespace** | One short-lived CLI process and one control frame. No prompt. The menu omits accepted values such as `best` and bare `claude-opus-4-8`, so absence is not proof that a model cannot launch. |
+| Claude control `initialize` | Account identity/provider and an account-specific model menu: `value`, `resolvedModel`, `displayName`, `supportsEffort`, `supportedEffortLevels`, `supportsAdaptiveThinking`, `supportsFastMode`, and `supportsAutoMode` where applicable. It carries **no hidden flag and no per-model recommended effort** for any model | **Verified, free, incomplete namespace** | One short-lived CLI process and one control frame. No prompt. The menu omits accepted values such as `best` and bare `claude-opus-4-8`, so absence is not proof that a model cannot launch. |
 | Claude control `get_usage` | Subscription type, general and model-scoped rate-limit windows, and extra-usage state | **Verified elsewhere in-tree, free, experimental** | No prompt, but Claude labels the request experimental and its schema may change. It reports display names, not stable model ids. See [provider-quota-surfaces.md](provider-quota-surfaces.md). |
 | Claude Platform Models API | API-account model ids, `max_input_tokens`, `max_tokens`, and a capability object | **Documented; not a Claude Code subscription entitlement surface** | A metadata request rather than inference, but it requires Claude API credentials and describes that API account. Hive cannot assume the CLI's OAuth subscription has the same catalog or expose its token for this use. |
 | Claude public model and pricing pages | Current ids, API aliases, prices, context/output limits, thinking mode, and vendor positioning | **Verified public metadata, not account-specific** | Free HTTP fetch. It can seed or annotate policy, but a web page changing or failing must not make spawning impossible. API prices do not state Claude Max quota burn. |
-| Codex app-server `model/list` | Available models plus `id`, `model`, display name/description, hidden/default state, per-model default and supported reasoning efforts, input modalities, service tiers, personality support, and upgrade hints | **Verified, free, officially documented** | Mandatory `initialize`/`initialized`, then a metadata RPC. No `thread/start` or `turn/start`. Paginate and request `includeHidden: true` for the full account-visible list. |
+| Codex app-server `model/list` | Available models plus `id`, `model`, display name/description, a `hidden` flag and an `isDefault` flag, a `defaultReasoningEffort`, a `supportedReasoningEfforts` list, input modalities, service tiers, personality support, and upgrade hints. It carries **no `supportsEffort` boolean** for any model | **Verified, free, officially documented** | Mandatory `initialize`/`initialized`, then a metadata RPC. No `thread/start` or `turn/start`. Paginate and request `includeHidden: true` for the full account-visible list. `supportedReasoningEfforts` is a list of **objects** (`{reasoningEffort, description}`), not of strings. |
 | Codex app-server `config/read` | Effective layered config, including the model and reasoning effort Codex will use when Hive passes no override | **Verified, free, configuration only** | Local metadata RPC. It establishes the effective default, not whether an arbitrary model is entitled. |
 | Codex app-server `account/read` | Auth mode, ChatGPT plan type, and whether OpenAI auth is required | **Verified, free, coarse entitlement context** | Metadata RPC. The live account reported `chatgpt` / `prolite`; no per-model grants are returned. Avoid logging the accompanying email. |
 | Codex app-server `account/rateLimits/read` | General and named sub-limit windows, plan type, and reset credits | **Verified, free, authoritative** | Metadata RPC. Named sub-pools can be joined to `model/list` display names, but a rename that reaches the two surfaces at different times temporarily breaks the join. |
@@ -22,7 +24,7 @@ This document records wire behavior verified on July 11, 2026 against Claude Cod
 | OpenAI `GET /v1/models` | Models visible to an API credential | **Possible without inference, wrong account plane for ChatGPT Codex** | Requires an API key and returns identity metadata, not the rich Codex effort catalog. It cannot prove ChatGPT-plan CLI entitlement. |
 | Trial launch or tiny prompt | Whether a named model actually answers on the current account | **Possible, but not a discovery primitive** | A prompt is billable and spends quota. A thread-only validation may also create durable local state and is unnecessary where `model/list` exists. Never probe by guessing a CLI subcommand: both CLIs may treat the unknown word as a prompt. |
 
-What is genuinely unavailable from a free provider surface today is just as important. Neither vendor returns a task-quality score, a common cross-vendor capability scale, expected tokens or subscription percentage for a future task, or a trustworthy mapping from API dollars to subscription quota. Claude's menu does not enumerate every launchable alias. Codex does not publish per-model token pricing or context size in `model/list`, and its provider-capability RPC is not per-model. Neither account surface promises that tomorrow's display-name rename will be synchronized atomically with a named quota pool. Those facts must remain unknown, user-configured, or learned from explicit evals; inventing them would only make the router confidently wrong.
+What is genuinely unavailable from a free provider surface today is just as important. Neither vendor returns a task-quality score, a common cross-vendor capability scale, expected tokens or subscription percentage for a future task, or a trustworthy mapping from API dollars to subscription quota. **Neither vendor returns an entitlement boolean either**: presence in the account-scoped catalog is the whole of the evidence, so a model the account cannot use is simply *absent*, and no surface ever says `entitled: false`. **Neither catalog carries the CLI version it came from**; that is read separately from `<cli> --version`, which prints and exits without opening a session. Claude's menu does not enumerate every launchable alias. Codex does not publish per-model token pricing or context size in `model/list`, and its provider-capability RPC is not per-model. Neither account surface promises that tomorrow's display-name rename will be synchronized atomically with a named quota pool. Those facts must remain unknown, user-configured, or learned from explicit evals; inventing them would only make the router confidently wrong.
 
 ## What the binaries returned
 
@@ -41,7 +43,7 @@ The 2.1.207 response exposed five menu entries:
 - `sonnet` resolved to `claude-sonnet-5`; it reported the same five effort levels and auto mode, but no `supportsFastMode` field.
 - `haiku` resolved to `claude-haiku-4-5-20251001` and reported none of the effort, adaptive, fast, or auto fields.
 
-Missing booleans must remain missing rather than being silently promoted to `false`: omission may mean unsupported, rollout-dependent, or simply absent from this protocol version. The response also included account email and organization; a production probe should retain only the minimum account key it needs and never put the raw frame in logs.
+Missing booleans must remain missing rather than being silently promoted to `false`: omission may mean unsupported, rollout-dependent, or simply absent from this protocol version. Haiku is the live proof — it carries no effort fields at all, which is *unknown*, not a vendor saying "no effort." The response also included account email and organization; a production probe should retain only the minimum account key it needs and never put the raw frame in logs.
 
 The Codex probe performed `initialize`, sent `initialized`, and then called `model/list` with `{ "includeHidden": true }`, `config/read`, `account/read`, `account/rateLimits/read`, and `modelProvider/capabilities/read`. It never started a thread or turn. The account-visible 0.144.1 catalog was:
 
@@ -56,7 +58,42 @@ The Codex probe performed `initialize`, sent `initialized`, and then called `mod
 | `gpt-5.3-codex-spark` | no | low, medium, high, xhigh | text only; separately metered on this account |
 | `codex-auto-review` | no, hidden | low, medium, high, xhigh | internal picker entry; text+image |
 
-Every entry recommended `medium` except Spark, which recommended `high`. `config/read` independently reported the user's effective default as `gpt-5.6-sol` at `xhigh`. This distinction matters: `isDefault` is the vendor's catalog recommendation, while effective config is what an unflagged launch on this machine actually uses.
+Every entry recommended `medium` except Spark, which recommended `high`. Note the effort column above is a flattening: `supportedReasoningEfforts` is a list of **objects**, each `{reasoningEffort, description}`, and only the level is a routing fact — the description is vendor prose. A consumer that expects a list of strings reads nothing.
+
+`config/read` independently reported the user's effective default as `gpt-5.6-sol` at `xhigh`, while the catalog flags `gpt-5.5` as `isDefault`. This distinction matters and must not be collapsed: **`isDefault` is the vendor's catalog recommendation; the effective default is what an unflagged launch on this machine actually uses.** A router that reads the catalog flag and calls it "the default" is describing a different machine than the one it is about to spawn on.
+
+## The two surfaces are not symmetric
+
+The single most load-bearing correction from driving both binaries: the vendors do not answer the same questions, and a record that assumes a shared field set will manufacture facts to fill the gaps. Observed 2026-07-11 against claude 2.1.207 and codex-cli 0.144.1:
+
+| Fact | Claude control `initialize` | Codex `model/list` |
+|---|---|---|
+| effort supported | `supportsEffort`, boolean per model — **absent on Haiku** | **sent for no model** |
+| effort levels | `supportedEffortLevels`, a list of **strings** — absent on Haiku | `supportedReasoningEfforts`, a list of **objects** |
+| recommended effort | **sent for no model** | `defaultReasoningEffort`, per model |
+| vendor-internal | **sent for no model** | `hidden`, boolean per model |
+| entitlement | **sent by neither vendor** — presence in the catalog is the whole of the evidence | |
+| CLI version | **carried by neither catalog** — read from `<cli> --version` | |
+
+So `defaultEffort` is Codex-only, `supportsEffort` is Claude-only, `hidden` is Codex-only, and `entitled` is nobody's. The traps that follow are specific and each one is a plausible mistake:
+
+- Defaulting a Claude model's recommended effort to `medium` invents a vendor claim. Claude recommends nothing.
+- Reconstructing Codex's `supportsEffort` from its non-empty effort list fabricates a boolean the vendor never sent — and it *looks* right, which is what makes it dangerous.
+- Reading a Claude model's `hidden` as `false` is a guess. Claude has no hidden flag; the honest value is unknown.
+- Waiting for an `entitled: false` record is waiting for something no vendor will ever send. Unusable models are absent, not denied.
+
+**The rule this whole document now carries: an absent field is `unknown(surface-silent)`, never `false`.** Which *kind* of unknown is itself worth recording, because three different things look identical at the call site: `field-absent` (the surface answered for this model and omitted the field — Haiku's effort fields), `surface-silent` (the surface carries the field for *no* model, so its absence says nothing about this one — Claude's `hidden`, Codex's `supportsEffort`), and `malformed` (present but unreadable, which is not a payload that said "none").
+
+### A guessed field name does not error — it reads as "no"
+
+While landing the capability records, victor probed Codex's hidden flag under the guessed key **`isHidden`**. It returned `null` for **every model in the catalog — including `codex-auto-review`, which is genuinely hidden.** Nothing errored. Nothing warned. The column was uniformly empty, which reads exactly like a vendor that simply does not publish the field, and the near-miss was a `hidden`-is-`surface-silent` record for a provider that in fact sends `hidden` on every entry. The real key is `hidden`.
+
+Two rules follow, and they are cheap:
+
+1. **Field names come off the live wire, never from memory or from the shape of a sibling API.** Dump the raw frame and read the keys that are actually there.
+2. **Prove every field with a positive control** — one entry that *must* come back non-null if the key is right. `codex-auto-review` is the control for `hidden`: any read of that flag that returns null for it is a wrong key, not a quiet vendor. An all-null column is a bug hypothesis, not a finding.
+
+This generalizes past this doc: a guessed JSON key is indistinguishable from an honest absence, and the absent-is-unknown rule above is precisely what stops that indistinguishability from becoming a silent `false`.
 
 The fresh [OpenAI API catalog](https://developers.openai.com/api/docs/models) recommends `gpt-5.6-sol` for complex reasoning and coding, `gpt-5.6-terra` for balance, and `gpt-5.6-luna` for cost-sensitive volume. It currently lists their input/output prices as $5/$30, $2.50/$15, and $1/$6 per million tokens. It lists API reasoning values `none`, `low`, `medium`, `high`, `xhigh`, and `max`. That vocabulary is not the Codex CLI vocabulary above: the CLI omitted `none`, added `ultra` to Sol and Terra, and exposed different effort sets for older models. The live app-server catalog must therefore govern CLI validation; the public API page may annotate price and vendor positioning only. OpenAI's [app-server documentation](https://developers.openai.com/codex/app-server#list-models-model-list) explicitly directs clients to call `model/list` to discover available models and capabilities before rendering selectors.
 
@@ -68,7 +105,7 @@ The routing configuration is permissive about model strings and rigid everywhere
 
 `src/schemas/routing.ts` ships the four tier names, preferred vendors, Claude aliases, and Codex efforts. It also ships a calendar event: `FABLE_AUTO_ROUTING_CUTOFF`, plus a duplicated post-cutoff `claude-opus-4-8` literal. A new model tomorrow changes none of these choices. A newly introduced effort tomorrow can make a user's otherwise valid `routing.toml` fail schema parsing; this already happened in principle, because the live Codex catalog advertises `max` and `ultra` while `CodexRouteSchema` accepts only `minimal|low|medium|high|xhigh`.
 
-The same stale effort enum is duplicated in `src/schemas/agent.ts` for immutable execution identities. Even if routing accepted a new value, persistence and critical-control restart would reject it. Defaults fall back to `medium` in several spawner and recovery paths, so “missing” is silently converted into a shipped judgment rather than the model's reported `defaultReasoningEffort`.
+The same stale effort enum is duplicated in `src/schemas/agent.ts` for immutable execution identities. Even if routing accepted a new value, persistence and critical-control restart would reject it. Defaults fall back to `medium` in several spawner and recovery paths, so “missing” is silently converted into a shipped judgment rather than the model's reported `defaultReasoningEffort`. That reported default exists **only on Codex**: Claude publishes no per-model recommended effort, so on Claude there is nothing beneath the shipped `medium` to fall back to — the constant is not a stale cache of a vendor fact there, it is a fabricated one.
 
 `src/adapters/tools/models.ts` hardcodes `CLAUDE_BEST_MODEL = "claude-fable-5"`. The current control catalog cannot establish that claim: the 2.1.207 menu's `default` is Opus 4.8, while `best` is not enumerated at all. The binding may still launch Fable, but Hive can prove it only with a model-running probe—the dated constant is not vendor-surface truth. The function also classifies vendors by prefixes and five Claude aliases. A vendor that introduces a new family name can be unclassifiable until Hive ships; a model whose name happens to match the other vendor's regex can be rejected as a contradiction. Reading `~/.codex/config.toml` and `~/.claude/settings.json` directly also misses layered, managed, project, profile, or built-in defaults; Codex already offers `config/read` for the effective value.
 
@@ -82,7 +119,7 @@ Three adversarial release cases make the failure modes concrete:
 
 1. **A vendor adds a model.** Claude may expose it immediately, Codex will expose it through `model/list`, and Hive's quota join may even learn its pool. The routing table will never select it, the vendor regex may not recognize it, and new effort values can be rejected before launch.
 2. **A vendor renames or retargets a model.** Claude's shipped `best` resolution and Fable special case become wrong. Display-name quota joins can temporarily unbind. Immutable launch records remain reproducible only if the old id stays launchable; otherwise recovery correctly fails closed, but no dynamic successor policy exists.
-3. **A vendor changes effort levels.** Hive can send an invalid effort because defaults are model-independent, or reject a valid one because two schemas freeze the vocabulary. Codex 0.144.1 already demonstrates both sides: no listed model advertises Hive's `minimal`, while several advertise Hive-unknown `max` or `ultra`.
+3. **A vendor changes effort levels.** Hive can send an invalid effort because defaults are model-independent, or reject a valid one because two schemas freeze the vocabulary. Codex 0.144.1 already demonstrates both sides: no listed model advertises Hive's `minimal`, while Sol and Terra advertise `ultra` and Luna, Sol, and Terra advertise `max` — three models carrying levels Hive's shipped enums would reject. Raw vendor strings must survive ingestion; a level Hive drops is a level a critical restart cannot replay.
 
 ## A safe source hierarchy
 
