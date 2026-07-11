@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import {
   assertSuccess,
   FAILED_PROCESS_HOLD_SECONDS,
+  HIVE_HISTORY_LIMIT,
   holdPaneOnFailure,
   SEND_ENTER_DELAY_MS,
   shellJoin,
@@ -15,6 +16,19 @@ const sessions = new Set<string>();
 let socketDirectory = "";
 let previousTmuxTmpDir: string | undefined;
 let previousHiveHome: string | undefined;
+
+async function queryPrivateTmux(...args: string[]): Promise<string> {
+  const process = Bun.spawn(["tmux", "-L", socketName, ...args], {
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, exitCode] = await Promise.all([
+    new Response(process.stdout).text(),
+    process.exited,
+  ]);
+  expect(exitCode).toEqual(0);
+  return stdout.trim();
+}
 
 beforeAll(async () => {
   const process = Bun.spawn(
@@ -112,7 +126,7 @@ describe("TmuxAdapter launch diagnostics", () => {
     );
 
     expect(calls).toHaveLength(1);
-    expect(calls[0]?.args).toEqual([
+    expect(calls[0]?.args.slice(0, 7)).toEqual([
       "new-session",
       "-d",
       "-s",
@@ -121,12 +135,26 @@ describe("TmuxAdapter launch diagnostics", () => {
       "/repo",
       holdPaneOnFailure("'claude' '--model' 'sonnet'"),
     ]);
-    expect(calls[0]?.args.at(-1)).toContain(
+    expect(calls[0]?.args[6]).toContain(
       `[hive] process exited with status %s`,
     );
-    expect(calls[0]?.args.at(-1)).toContain(
+    expect(calls[0]?.args[6]).toContain(
       `sleep ${FAILED_PROCESS_HOLD_SECONDS}`,
     );
+    expect(calls[0]?.args.slice(7)).toEqual([
+      ";",
+      "set-option",
+      "-t",
+      "hive-maya",
+      "mouse",
+      "on",
+      ";",
+      "set-window-option",
+      "-t",
+      "hive-maya:",
+      "history-limit",
+      String(HIVE_HISTORY_LIMIT),
+    ]);
     expect(holdPaneOnFailure("exit 17")).toStartWith("(exit 17);");
   });
 
@@ -344,6 +372,21 @@ describe("TmuxAdapter", () => {
     sessions.add(session);
     expect(await tmux.hasSession(session)).toEqual(true);
     expect((await tmux.listSessions()).includes(session)).toEqual(true);
+    expect(
+      await queryPrivateTmux("show-options", "-v", "-t", session, "mouse"),
+    ).toEqual("on");
+    expect(
+      await queryPrivateTmux(
+        "show-window-options",
+        "-v",
+        "-t",
+        `${session}:`,
+        "history-limit",
+      ),
+    ).toEqual(String(HIVE_HISTORY_LIMIT));
+    expect(
+      await queryPrivateTmux("list-keys", "-T", "root"),
+    ).toContain("copy-mode -e");
 
     const text = "literal hive text; $HOME is not expanded";
     await tmux.sendKeys(session, text);

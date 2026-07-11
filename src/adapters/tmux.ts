@@ -25,6 +25,7 @@ export interface TmuxAdapterOptions {
 export const SEND_ENTER_DELAY_MS = 500;
 export const FAILED_PROCESS_HOLD_SECONDS = 5;
 export const TMUX_TIMEOUT_MS = 10_000;
+export const HIVE_HISTORY_LIMIT = 50_000;
 
 const SESSION_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,99}$/;
 
@@ -130,6 +131,18 @@ export class TmuxAdapter {
         "-c",
         cwd,
         holdPaneOnFailure(command),
+        ";",
+        "set-option",
+        "-t",
+        name,
+        "mouse",
+        "on",
+        ";",
+        "set-window-option",
+        "-t",
+        `${name}:`,
+        "history-limit",
+        String(HIVE_HISTORY_LIMIT),
       ],
       this.socketName,
     );
