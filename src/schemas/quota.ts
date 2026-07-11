@@ -183,6 +183,23 @@ export const StatuslineReportSchema = z.object({
    * this is the only live signal that says which meter the run is truly spending.
    */
   model: z.string().min(1).optional(),
+  /**
+   * The context window this session actually has, in tokens, as Claude Code
+   * resolved it against the account's plan — 200000, or 1000000 where the plan
+   * upgrades it. This payload is the ONLY place Hive is ever told: the
+   * transcript records how many tokens a turn used but never the window they
+   * fill, and the model id cannot imply it, because the 1M upgrade tracks the
+   * plan and not the name (`claude-opus-4-8` is 200k on one plan and 1M on
+   * another, byte-identical). Absent when the payload carried no window, and
+   * absent must stay absent: dividing by a plausible-looking 200000 is what
+   * reported live agents at ~22% of a 1M window as 100% full.
+   */
+  contextWindow: z.number().int().positive().optional(),
+  /**
+   * Claude Code's own occupancy figure for that window. It measures; we do not
+   * re-derive it.
+   */
+  contextUsedPct: z.number().min(0).max(100).optional(),
 });
 export type StatuslineReport = z.infer<typeof StatuslineReportSchema>;
 
