@@ -200,6 +200,112 @@ export async function stageRelease(deps: StageDeps): Promise<StageResult> {
   };
 }
 
+export interface StageOutcome extends StageResult {
+  /** True when the bytes were already on disk and were re-proved rather than refetched. */
+  readonly reused: boolean;
+}
+
+/**
+ * Re-prove a version that is already on disk, using the same gates a fresh
+ * download passes: the digest the signed manifest names, and the binary stating
+ * its own version when asked.
+ *
+ * "It is already staged" is not evidence. The bytes could have been put there by
+ * an older build that had no release key, left behind by a run that crashed
+ * between download and activation, or edited on disk afterwards. Trusting them
+ * because a directory exists would make the whole fail-closed chain conditional
+ * on nothing having gone wrong earlier, which is exactly the assumption an
+ * updater is not allowed to make. Re-hashing 65 MB costs a fraction of a second;
+ * activating an unverified binary costs the machine.
+ */
+async function proveStaged(
+  deps: StageDeps,
+  cli: ReleaseArtifact,
+  trust: { signed: boolean; warning: string | null },
+  root: string,
+): Promise<StageOutcome> {
+  const version = deps.manifest.version;
+  const staged = cliPath(versionDir(version, root));
+
+  const bytes = new Uint8Array(readFileSync(staged));
+  if (!artifactMatches(cli, bytes)) {
+    throw new UpdateError(
+      `Refusing update: the staged copy of hive ${version} at ${staged} does not ` +
+        "match the SHA-256 in the signed manifest",
+    );
+  }
+
+  const reported = await deps.probeVersion(staged).catch((error: unknown) => {
+    throw new UpdateError(
+      `Refusing update: the staged hive ${version} did not run (${
+        error instanceof Error ? error.message : String(error)
+      })`,
+    );
+  });
+  if (!reported.includes(version)) {
+    throw new UpdateError(
+      `Refusing update: the staged binary reported "${reported.trim()}", expected ${version}`,
+    );
+  }
+
+  return {
+    version,
+    directory: versionDir(version, root),
+    signed: trust.signed,
+    warning: trust.warning,
+    cliSha256: cli.sha256,
+    reused: true,
+  };
+}
+
+/**
+ * The one way in. Produce a version directory that has passed every gate —
+ * whether that means downloading it or re-proving what is already there.
+ *
+ * `runUpdate` used to ask `isStaged()` and skip staging entirely when the answer
+ * was yes, which skipped *all three* checks: the manifest signature, the digest,
+ * and the probe. A crash between download and activation was enough to walk a
+ * binary straight past a fail-closed path. Routing both cases through here means
+ * there is no arrangement of prior state that yields an activation without
+ * verification.
+ */
+export async function ensureStaged(deps: StageDeps): Promise<StageOutcome> {
+  const root = deps.root ?? installRoot();
+  const publicKey = deps.publicKey === undefined
+    ? HIVE_RELEASE_PUBLIC_KEY
+    : deps.publicKey;
+
+  const trust = verifyManifest(deps.manifestBytes, deps.signature, publicKey);
+  if (!trust.verified) throw new UpdateError(`Refusing update: ${trust.reason}`);
+  const summary = {
+    signed: trust.signed,
+    warning: trust.signed ? null : trust.warning,
+  };
+
+  const version = deps.manifest.version;
+  const cli = selectArtifact(deps.manifest, "cli", deps.arch);
+  if (cli === null) {
+    throw new UpdateError(
+      `Release ${version} has no CLI build for darwin-${deps.arch}`,
+    );
+  }
+
+  if (isStaged(version, root)) {
+    try {
+      return await proveStaged(deps, cli, summary, root);
+    } catch (error) {
+      // The staged copy is not what the signed manifest describes. Discarding
+      // and refetching is safe *unless* it is the version currently running:
+      // deleting the active install to recover from a bad staging would trade a
+      // refused update for a broken one. There we refuse and say what to remove.
+      if (readInstallState(root).active === version) throw error;
+      await rm(versionDir(version, root), { recursive: true, force: true });
+    }
+  }
+
+  return { ...(await stageRelease(deps)), reused: false };
+}
+
 /** Atomically point `current` at a staged version directory. */
 export async function activate(version: string, root = installRoot()): Promise<void> {
   const target = versionDir(version, root);

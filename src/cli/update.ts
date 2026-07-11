@@ -23,10 +23,10 @@ import {
   UpdateError,
   activateWithHealthCheck,
   ensureBinLink,
-  isStaged,
+  ensureStaged,
   readInstallState,
   rollback,
-  stageRelease,
+  type StageOutcome,
 } from "../update/install";
 import {
   explainRefusal,
@@ -35,7 +35,7 @@ import {
 } from "../update/daemon";
 import { startDownload } from "../update/progress";
 import { yellow } from "../update/notice";
-import { releaseKeys, selectArtifact, verifyManifest } from "../release/manifest";
+import { releaseKeys } from "../release/manifest";
 import { expectedDaemonHandshake } from "../daemon/handshake";
 import { isRunning } from "../daemon/lifecycle";
 import { fetchAgentStatus } from "./mcp";
@@ -175,7 +175,7 @@ export async function runUpdateSkip(): Promise<void> {
     return;
   }
   dismissVersion(cache.latestVersion);
-  console.log(`Silenced notices for hive ${cache.latestVersion}.`);
+  console.log(`Silenced notices for hive ${cache.latestVersion}`);
 }
 
 export async function runRollback(): Promise<void> {
@@ -184,7 +184,7 @@ export async function runRollback(): Promise<void> {
   if (!outcome.activated) {
     throw new UpdateError(outcome.reason);
   }
-  console.log(`hive ${outcome.version} active (rolled back).`);
+  console.log(`hive ${outcome.version} active (rolled back)`);
   await stopStaleDaemonAfterActivation();
 }
 
@@ -214,29 +214,36 @@ async function stopStaleDaemonAfterActivation(): Promise<void> {
 }
 
 /**
- * What was actually checked, said plainly.
+ * What was actually checked, named one by one.
  *
- * "downloaded and verified" — the old line — names no check and so cannot be
- * wrong, which is exactly what is wrong with it. A user deciding whether to
- * trust a binary that is about to replace itself deserves the two facts that
- * decision rests on: the manifest carried a signature we could trace to the key
- * baked into this binary, and the bytes on disk hash to what that signed
- * manifest said they would.
+ * Hive performs three independent integrity checks on every update — the Ed25519
+ * signature over the manifest, the SHA-256 of each artifact against that signed
+ * manifest, and executing the staged binary to make it state its own version
+ * before it can ever be `current` — and for a long time told the user about none
+ * of them. "Downloaded and verified" names no check and so cannot be wrong,
+ * which is exactly what was wrong with it: it neither earns trust nor risks
+ * anything. The answer to a trust complaint is not a stronger adjective, it is
+ * saying plainly what already happens. So the line lists the three checks.
  *
- * The unsigned branch gets the opposite treatment. It is not a footnote; it is
- * the single most important thing on the screen, because it means nothing proves
- * the release came from Hive at all.
+ * The rejected alternative was to keep the vague line and let `hive update
+ * status` carry the detail. It loses because the moment of the claim is the
+ * moment the user is deciding, and nobody audits an install afterwards.
+ *
+ * The unsigned branch is the inverse and must never read as a footnote: it means
+ * nothing proves the release came from Hive at all, so it says so in the line
+ * itself rather than trailing a reassuring one.
  */
-function verifiedLine(version: string, signed: boolean, sha256: string): string {
-  const digest = sha256.slice(0, 12);
-  return signed
-    ? `hive ${version} staged — signature verified (Hive release key), sha256 ${digest} matched.`
-    : `hive ${version} staged — sha256 ${digest} matched, but the release is UNSIGNED.`;
+function verifiedLine(staged: StageOutcome): string {
+  const checks = staged.signed
+    ? "Ed25519 signature, SHA-256, binary probed"
+    : `SHA-256 (${staged.cliSha256.slice(0, 12)}), binary probed — but UNSIGNED`;
+  const how = staged.reused ? "already staged" : "staged";
+  return `hive ${staged.version} ${how} — verified: ${checks}`;
 }
 
 /** Loud, and on a line of its own. A `warning:` prefix on stderr is missable. */
 function announceUnsigned(warning: string, isTTY: boolean): void {
-  const body = `UNSIGNED RELEASE: ${warning}.`;
+  const body = `UNSIGNED RELEASE: ${warning}`;
   console.error(isTTY ? yellow(body) : body);
 }
 
@@ -250,59 +257,43 @@ export async function runUpdate(requested?: string): Promise<void> {
   const version = source.manifest.version;
 
   if (version === HIVE_VERSION && requested === undefined) {
-    console.log(`hive ${HIVE_VERSION} is the latest release.`);
+    console.log(`hive ${HIVE_VERSION} is the latest release`);
     return;
   }
 
-  // Verify the manifest *before* asking whether there is anything to download.
-  //
-  // Staging is where verification used to live, and staging is skipped when the
-  // version is already on disk — so a version staged by an older, keyless build
-  // (or left behind by a crashed run) could be activated by this one with no
-  // signature check at any point. The trust gate cannot be something an earlier
-  // crash gets to skip. The manifest bytes are already in hand, so checking here
-  // costs nothing; `stageRelease` still checks again for callers that reach it
-  // directly.
-  const trust = verifyManifest(
-    source.manifestBytes,
-    source.signature,
-    HIVE_RELEASE_PUBLIC_KEY,
-  );
-  if (!trust.verified) {
-    throw new UpdateError(`Refusing update: ${trust.reason}`);
+  // One way in, whether the bytes arrive now or are already on disk. `isStaged()`
+  // used to short-circuit staging entirely, which skipped all three checks — an
+  // interrupted earlier run was enough to walk a binary past a fail-closed path.
+  const staged = await ensureStaged({
+    manifest: source.manifest,
+    manifestBytes: source.manifestBytes,
+    signature: source.signature,
+    arch: arch(),
+    root,
+    download: source.download,
+    probeVersion,
+    unpackApp,
+    progress: (artifact) => startDownload(artifact.name, artifact.size),
+  });
+  // Unreachable from any current release — every build since 0.0.6 embeds the
+  // key, so `signed` is true and this branch is dead today. It stays anyway, and
+  // deliberately. The pipeline's graceful degradation is real: a build with no
+  // key secret configured still publishes, and the only thing standing between
+  // that and a silently unverified install is this branch. Deleting it as dead
+  // code would convert a loud unsigned release into a quiet one, which is the
+  // precise failure this whole surface exists to prevent. A guard earns its keep
+  // exactly when you expect it never to fire.
+  if (!staged.signed && staged.warning !== null) {
+    announceUnsigned(staged.warning, process.stderr.isTTY === true);
   }
-  if (!trust.signed) {
-    announceUnsigned(trust.warning, process.stderr.isTTY === true);
-  }
-
-  if (!isStaged(version, root)) {
-    const staged = await stageRelease({
-      manifest: source.manifest,
-      manifestBytes: source.manifestBytes,
-      signature: source.signature,
-      arch: arch(),
-      root,
-      download: source.download,
-      probeVersion,
-      unpackApp,
-      progress: (artifact) => startDownload(artifact.name, artifact.size),
-    });
-    console.log(verifiedLine(version, staged.signed, staged.cliSha256));
-  } else {
-    const cli = selectArtifact(source.manifest, "cli", arch());
-    console.log(
-      cli === null
-        ? `hive ${version} is already staged.`
-        : `${verifiedLine(version, trust.signed, cli.sha256)} (already staged)`,
-    );
-  }
+  console.log(verifiedLine(staged));
 
   // The activation half, only when the control plane is provably idle.
   const expected = await expectedDaemonHandshake(process.cwd());
   const daemon = await inspectDaemonForUpdate({ expected, liveAgents: liveAgentNames });
   const refusal = explainRefusal(daemon);
   if (refusal !== null) {
-    console.log(`hive ${version} activates when the team finishes.`);
+    console.log(`hive ${version} activates when the team finishes`);
     console.log(refusal);
     return;
   }
@@ -316,7 +307,7 @@ export async function runUpdate(requested?: string): Promise<void> {
         : `${outcome.reason}; reverted to hive ${outcome.revertedTo}`,
     );
   }
-  console.log(`hive ${outcome.version} active.`);
+  console.log(`hive ${outcome.version} active`);
   await stopStaleDaemonAfterActivation();
 }
 

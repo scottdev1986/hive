@@ -4,6 +4,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   readlinkSync,
   rmSync,
   writeFileSync,
@@ -15,6 +16,7 @@ import {
   UpdateError,
   activate,
   activateWithHealthCheck,
+  ensureStaged,
   isStaged,
   pruneOldVersions,
   readInstallState,
@@ -131,6 +133,73 @@ describe("staging a release", () => {
     await expect(stageRelease({ ...deps, arch: "x64" })).rejects.toThrow(
       /no CLI build for darwin-x64/,
     );
+  });
+});
+
+/**
+ * The bypass. `runUpdate` used to ask `isStaged()` and skip staging entirely when
+ * the answer was yes, which skipped the signature, the digest, and the probe all
+ * at once — an interrupted earlier run was enough to walk a binary past an
+ * otherwise fail-closed path. `ensureStaged` is the single door both cases go
+ * through, and "it is already on disk" is not evidence about what is on disk.
+ */
+describe("ensureStaged: an already-staged version is re-proved, never assumed", () => {
+  test("downloads when nothing is staged", async () => {
+    const result = await ensureStaged(stageDeps("0.0.7"));
+    expect(result.reused).toBe(false);
+    expect(result.version).toBe("0.0.7");
+  });
+
+  test("reuses a staged copy that still matches the signed manifest", async () => {
+    await ensureStaged(stageDeps("0.0.7"));
+    let downloads = 0;
+    const result = await ensureStaged(stageDeps("0.0.7", {
+      download: async () => {
+        downloads += 1;
+        return CLI_BYTES;
+      },
+    }));
+    expect(result.reused).toBe(true);
+    expect(downloads).toBe(0);
+  });
+
+  test("a staged binary tampered with on disk is discarded and refetched", async () => {
+    await ensureStaged(stageDeps("0.0.7"));
+    writeFileSync(cliPath(versionDir("0.0.7", root)), "#!/bin/sh\necho pwned\n");
+
+    const result = await ensureStaged(stageDeps("0.0.7"));
+
+    // Not reused, and the genuine bytes are back on disk.
+    expect(result.reused).toBe(false);
+    expect(readFileSync(cliPath(versionDir("0.0.7", root)))).toEqual(Buffer.from(CLI_BYTES));
+  });
+
+  test("refuses rather than delete the ACTIVE version when its bytes go bad", async () => {
+    await ensureStaged(stageDeps("0.0.7"));
+    writeInstallState({ active: "0.0.7", previous: null }, root);
+    writeFileSync(cliPath(versionDir("0.0.7", root)), "#!/bin/sh\necho pwned\n");
+
+    // Deleting the running install to recover from bad staging would trade a
+    // refused update for a broken one.
+    await expect(ensureStaged(stageDeps("0.0.7"))).rejects.toThrow(
+      /staged copy of hive 0\.0\.7 .* does not match the SHA-256/,
+    );
+    expect(existsSync(cliPath(versionDir("0.0.7", root)))).toBe(true);
+  });
+
+  test("a staged binary that lies about its version is refused", async () => {
+    await ensureStaged(stageDeps("0.0.7"));
+    await expect(
+      ensureStaged(stageDeps("0.0.7", { probeVersion: async () => "hive 9.9.9" })),
+    ).rejects.toThrow(/reported "hive 9\.9\.9", expected 0\.0\.7/);
+  });
+
+  test("an unsigned manifest is still refused when a key is embedded, staged or not", async () => {
+    await ensureStaged(stageDeps("0.0.7"));
+    // Being already on disk must not launder a manifest this build cannot verify.
+    await expect(
+      ensureStaged(stageDeps("0.0.7", { publicKey: "some-embedded-key", signature: null })),
+    ).rejects.toThrow(/Refusing update/);
   });
 });
 

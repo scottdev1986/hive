@@ -27,7 +27,9 @@ Read [docs/versioning-and-release.md](../../../docs/versioning-and-release.md) b
 
 **Signature verification fails closed.** The release public key is embedded (it is a comma-separated *list*, so a key can be rotated without a flag day). A missing, altered, or foreign signature is a refusal — never a downgrade to "unsigned is fine". The keyless branch exists only for a source checkout and for releases before 0.0.6, and it says so out loud; it must never become reachable from a current release.
 
-**Say what you actually verified.** `hive update` names the checks it ran — signature *and* digest — rather than claiming a vague "verified". It must never overclaim, and an unsigned path must announce itself loudly rather than as a missable `warning:` line.
+**Say what you actually verified.** Hive runs three integrity checks on every update — Ed25519 manifest signature, per-artifact SHA-256, and probing the staged binary for its own version — and must name them rather than claim a vague "verified". Never overclaim; never under-claim either. An unsigned path announces itself loudly, not as a missable `warning:` line.
+
+**"Already staged" is not evidence.** Never activate a version because a directory exists. Re-prove a staged copy against the signed manifest (digest + probe) before activating it; skipping staging must never skip verification. Refuse rather than delete the *active* version if its bytes go bad.
 
 **Show the download.** Release assets are tens of megabytes. Stream them, report progress against the size the signed manifest already carries, and degrade honestly: no invented percentage without a `Content-Length`, and no ANSI or carriage returns off a TTY.
 
