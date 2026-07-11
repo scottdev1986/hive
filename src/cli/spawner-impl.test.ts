@@ -2422,6 +2422,19 @@ describe("agent landing protocol", () => {
     expect(escalations.length).toBeGreaterThanOrEqual(2);
     expect(protocol).toContain("never force");
   });
+
+  // Two agents made opposite calls on the same situation: one landed past a
+  // red test it had proven was already red on main, the other refused to land
+  // at all. "Red tests never merge" alone does not say which failures are
+  // "yours" to fix — this carve-out does.
+  test("clarifies that only a red proven identical on unmodified main blocks nothing, and any other red still blocks", () => {
+    const protocol = buildLandingProtocol(worktree.branch, "/repo");
+    expect(protocol).toContain("Red tests never merge");
+    expect(protocol).toContain("proven identical on unmodified main");
+    expect(protocol).toContain("is pre-existing, not yours to fix, and does not block");
+    expect(protocol).toContain("Any other red");
+    expect(protocol).toContain("blocks like any other");
+  });
 });
 
 describe("spawn prompt diet", () => {
@@ -2459,6 +2472,7 @@ describe("spawn prompt diet", () => {
     expect(concise).toContain("git rebase main");
     expect(concise).toContain("git rebase --abort");
     expect(concise).toContain("Red tests never merge");
+    expect(concise).toContain("proven identical on unmodified main");
     expect(concise).toContain("bun run typecheck");
     expect(concise).toContain("neither do type errors");
     expect(concise).toContain("git diff --name-only ORIG_HEAD..HEAD");
