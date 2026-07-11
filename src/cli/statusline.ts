@@ -1,11 +1,24 @@
 import type { StatuslineReport } from "../schemas";
 import { agentFetch } from "./credential";
+import {
+  parseContextObservation,
+  payloadWorktree,
+  writeContextObservation,
+} from "../daemon/context-window";
 
 // Claude Code invokes the configured statusLine command on every render and
 // pipes the session JSON to stdin. For Claude.ai subscribers, and only after
 // the session's first API response, that JSON carries `rate_limits` with a
 // used percentage and reset time per rolling window. Hive forwards it to the
 // daemon as a semi-official ("reported") quota observation.
+//
+// The same payload carries `context_window.context_window_size` — the real
+// window, 200000 or 1000000, resolved by Claude Code against the account's
+// plan. Nothing else on the machine knows it: the transcript records tokens
+// but not the window they fill, and the model id cannot imply it because the
+// 1M upgrade rides on the plan rather than the name. This command is therefore
+// the only place the true denominator is ever in Hive's hands, so it writes it
+// down for the daemon's telemetry sweep (daemon/context-window.ts).
 //
 // Rejected alternative: the undocumented api.anthropic.com/api/oauth/usage
 // endpoint the CLI itself calls. It is not a published contract, it needs the
@@ -91,14 +104,23 @@ export async function runStatusline(
   port: number,
   stdin: string,
   fetcher: StatuslineFetcher = agentFetch(agent),
+  cwd: string = process.cwd(),
 ): Promise<string> {
   let report: StatuslineReport | null = null;
   try {
-    report = parseStatuslineReport(
-      agent,
-      JSON.parse(stdin),
-      new Date().toISOString(),
-    );
+    const payload: unknown = JSON.parse(stdin);
+    const observedAt = new Date().toISOString();
+
+    // The window first, and on its own: it is the denominator the daemon
+    // cannot obtain anywhere else, and it must survive a payload that carries
+    // no `rate_limits` (an API-key account, or any session before its first
+    // response) rather than being lost with the quota half.
+    const observation = parseContextObservation(payload, observedAt);
+    if (observation !== null) {
+      writeContextObservation(payloadWorktree(payload, cwd), observation);
+    }
+
+    report = parseStatuslineReport(agent, payload, observedAt);
     if (report !== null) await postStatuslineReport(report, port, fetcher);
   } catch {
     // The status line renders on every keystroke; it must never throw into

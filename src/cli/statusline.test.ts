@@ -1,9 +1,13 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   parseStatuslineReport,
   renderStatusLine,
   runStatusline,
 } from "./statusline";
+import { readContextObservation } from "../daemon/context-window";
 
 const observedAt = "2026-07-09T12:00:00.000Z";
 
@@ -83,6 +87,73 @@ describe("renderStatusLine", () => {
 
   test("shows just the agent when no quota is reported", () => {
     expect(renderStatusLine("maya", null)).toBe("🐝 maya");
+  });
+});
+
+describe("runStatusline context window", () => {
+  const noPost = async (): Promise<Response> => new Response("{}");
+
+  // The denominator the daemon cannot get anywhere else. Claude Code resolves
+  // the window against the account's plan (200k, or 1M on Max/Team/Enterprise)
+  // and hands it to this command; nothing else on the machine knows it.
+  test("records the window Claude Code reports, for the telemetry sweep", async () => {
+    const home = mkdtempSync(join(tmpdir(), "hive-sl-"));
+    const worktree = "/repo/.hive/worktrees/zoe";
+    const previous = process.env.HIVE_HOME;
+    process.env.HIVE_HOME = home;
+    try {
+      await runStatusline(
+        "zoe",
+        41_000,
+        JSON.stringify({
+          ...payload,
+          workspace: { current_dir: worktree },
+          context_window: {
+            context_window_size: 1_000_000,
+            used_percentage: 22,
+          },
+        }),
+        noPost,
+      );
+      expect(readContextObservation(worktree, home)).toMatchObject({
+        contextWindow: 1_000_000,
+        usedPct: 22,
+      });
+    } finally {
+      if (previous === undefined) delete process.env.HIVE_HOME;
+      else process.env.HIVE_HOME = previous;
+    }
+  });
+
+  // The window and the quota ride in on the same payload but are independent:
+  // an API-key account, or any session before its first response, has no
+  // rate_limits at all, and losing the window with them would leave the daemon
+  // with no denominator and force it back to guessing.
+  test("records the window even when the payload carries no rate limits", async () => {
+    const home = mkdtempSync(join(tmpdir(), "hive-sl-"));
+    const worktree = "/repo/.hive/worktrees/lena";
+    const previous = process.env.HIVE_HOME;
+    process.env.HIVE_HOME = home;
+    try {
+      await runStatusline(
+        "lena",
+        41_000,
+        JSON.stringify({
+          context_window: { context_window_size: 200_000 },
+        }),
+        noPost,
+        // No workspace in the payload: the command runs in the session's
+        // worktree, so its own cwd is the correct fallback.
+        worktree,
+      );
+      expect(readContextObservation(worktree, home)).toMatchObject({
+        contextWindow: 200_000,
+        usedPct: null,
+      });
+    } finally {
+      if (previous === undefined) delete process.env.HIVE_HOME;
+      else process.env.HIVE_HOME = previous;
+    }
   });
 });
 

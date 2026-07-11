@@ -2,6 +2,7 @@ import { open, readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { claudeProjectDirectory } from "../adapters/tools/claude";
 import { findLatestCodexRollout } from "../adapters/tools/codex";
+import { readContextObservation } from "./context-window";
 
 /**
  * Context and activity read from each tool's durable artifacts (SPEC
@@ -14,7 +15,10 @@ import { findLatestCodexRollout } from "../adapters/tools/codex";
  * unparseable artifact reports nulls, never an error.
  */
 export interface ToolTelemetry {
-  /** 0-100, or null when no usage record was found. */
+  /** 0-100, or null for *unknown* — no usage record, or (for Claude) no
+   * measured context window to divide by. Null is not zero and not full: an
+   * agent whose occupancy is unknown must not be recycled on the strength of
+   * it, and must not be read as having room. */
   contextPct: number | null;
   /** ISO timestamp of the artifact's last write, or null when none exists.
    * For a Codex TUI agent this is the only mid-turn liveness signal the
@@ -29,12 +33,6 @@ const NO_TELEMETRY: ToolTelemetry = { contextPct: null, lastActivityAt: null };
 // Enough tail to cover the last few assistant turns of either format without
 // ever reading a multi-hundred-MB transcript whole.
 const TAIL_BYTES = 256 * 1024;
-
-// Claude transcripts do not record the model's context window. Every current
-// Claude model documents 200k; if a larger-window model appears, the percent
-// reads conservatively high, which errs toward recycling early rather than
-// silently degrading past the SPEC decision-7 quality line.
-const CLAUDE_CONTEXT_WINDOW = 200_000;
 
 async function readFileTail(path: string): Promise<string | null> {
   try {
@@ -115,13 +113,49 @@ async function findLatestClaudeTranscript(
   return newest;
 }
 
+/**
+ * Claude's occupancy, against the window Claude Code itself measured.
+ *
+ * The window is not derivable here and must not be guessed. The transcript
+ * records tokens but never the window they fill; the model id cannot imply it,
+ * because the 1M upgrade is a property of the account's plan and
+ * `claude-opus-4-8` is 200k on one plan and 1M on another with an identical
+ * string. Hardcoding 200k is what this function used to do, and the comment
+ * that justified it argued a larger window would merely read "conservatively
+ * high", erring toward recycling early. That reasoning was backwards, and it is
+ * worth being precise about why: recycling is not the cheap direction to err
+ * in. It throws away an agent's context and re-pays, out of a quota pool that
+ * may be nearly exhausted, to rebuild what we just destroyed. The bug it
+ * produced was not a rounding error — agents at ~22% of a 1M window reported
+ * 100% and stood one decision away from being recycled at a fifth of their real
+ * capacity. A number the orchestrator acts on is never safe to guess in either
+ * direction, so when the window is unknown this reports `null`, and null means
+ * unknown: callers must not read it as empty, and must not recycle on it.
+ *
+ * `hive statusline` writes the real window down on every render
+ * (daemon/context-window.ts); we read it back. Claude Code's own percentage is
+ * preferred over any ratio we could recompute — it measures, we should not
+ * re-derive — and the transcript's token sum is the fallback for a payload that
+ * carried a window but no percentage.
+ */
 export async function readClaudeTelemetry(
   worktreePath: string,
   home?: string,
+  hiveHome?: string,
 ): Promise<ToolTelemetry> {
   const transcript = await findLatestClaudeTranscript(worktreePath, home);
   if (transcript === null) return NO_TELEMETRY;
   const lastActivityAt = new Date(transcript.mtimeMs).toISOString();
+
+  const observed = hiveHome === undefined
+    ? readContextObservation(worktreePath)
+    : readContextObservation(worktreePath, hiveHome);
+  // No observation means no denominator, and no denominator means no number.
+  if (observed === null) return { contextPct: null, lastActivityAt };
+  if (observed.usedPct !== null) {
+    return { contextPct: clampPct(observed.usedPct), lastActivityAt };
+  }
+
   const tail = await readFileTail(transcript.path);
   if (tail === null) return { contextPct: null, lastActivityAt };
 
@@ -140,7 +174,7 @@ export async function readClaudeTelemetry(
       asCount(usage.cache_creation_input_tokens) +
       asCount(usage.output_tokens);
     if (total > 0) {
-      contextPct = clampPct((100 * total) / CLAUDE_CONTEXT_WINDOW);
+      contextPct = clampPct((100 * total) / observed.contextWindow);
     }
   }
   return { contextPct, lastActivityAt };
