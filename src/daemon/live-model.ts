@@ -26,7 +26,7 @@
  * model is unknown, and decision 6's routing would rather see the intention
  * than a fabrication.
  */
-import { open, readdir, stat } from "node:fs/promises";
+import { open } from "node:fs/promises";
 import { join } from "node:path";
 import { claudeProjectDirectory } from "../adapters/tools/claude";
 
@@ -59,35 +59,34 @@ async function readTail(path: string): Promise<string | null> {
   }
 }
 
-/** Newest `<session>.jsonl` in the worktree's Claude project directory — the
- * most-recently-modified rule SPEC decision 2 prescribes. */
-async function latestTranscript(
+/**
+ * This agent's own `<session>.jsonl`, named by the session id hook traffic
+ * already put on its row.
+ *
+ * It used to be "the newest transcript in the worktree's project directory",
+ * and that is a different agent's file more often than it sounds. Worktrees are
+ * reused across respawns, so a fresh agent's directory still holds every dead
+ * predecessor's transcript, and until its own first assistant turn lands the
+ * newest file in there is the *predecessor's*. Hive stamped that model onto the
+ * live row: an opus-4.8 agent reported `claude-sonnet-5`, inherited from a dead
+ * sonnet spawn in the same worktree, and then silently corrected itself a turn
+ * later. It read low and transiently false, which is the worst way for this
+ * particular number to be wrong — the rule it feeds is "no claude agent below
+ * opus-4.8", so an operator who looked at the wrong moment saw a violation that
+ * was not real, and could just as easily have missed one that was.
+ *
+ * Keying on the session id makes the read name the agent instead of the
+ * directory, and mtime stops being load-bearing.
+ */
+function transcriptPath(
   worktreePath: string,
+  toolSessionId: string,
   home?: string,
-): Promise<string | null> {
+): string {
   const directory = home === undefined
     ? claudeProjectDirectory(worktreePath)
     : claudeProjectDirectory(worktreePath, home);
-  let entries: string[];
-  try {
-    entries = await readdir(directory);
-  } catch {
-    return null;
-  }
-  let newest: { path: string; mtimeMs: number } | null = null;
-  for (const entry of entries) {
-    if (!entry.endsWith(".jsonl")) continue;
-    try {
-      const path = join(directory, entry);
-      const info = await stat(path);
-      if (newest === null || info.mtimeMs > newest.mtimeMs) {
-        newest = { path, mtimeMs: info.mtimeMs };
-      }
-    } catch {
-      // A transcript deleted mid-scan is simply not a candidate.
-    }
-  }
-  return newest?.path ?? null;
+  return join(directory, `${toolSessionId}.jsonl`);
 }
 
 /** The model id on the most recent assistant turn of `tail`, or null. Scanned
@@ -118,14 +117,18 @@ export function lastAssistantModel(tail: string): string | null {
  * The model this Claude agent is running right now, or null when we cannot see
  * one. Null is never "assume the spawn-time value was right" — it is the caller
  * being told there is no observation, so it can leave what it has alone.
+ *
+ * An agent with no `toolSessionId` yet has produced no hook traffic, so there is
+ * nothing of its own to read: null, and the launch model stands. Guessing from a
+ * neighbouring file is what this function is here to stop doing.
  */
 export async function readLiveClaudeModel(
   worktreePath: string,
+  toolSessionId: string | undefined,
   home?: string,
 ): Promise<string | null> {
-  const transcript = await latestTranscript(worktreePath, home);
-  if (transcript === null) return null;
-  const tail = await readTail(transcript);
+  if (toolSessionId === undefined) return null;
+  const tail = await readTail(transcriptPath(worktreePath, toolSessionId, home));
   if (tail === null) return null;
   return lastAssistantModel(tail);
 }

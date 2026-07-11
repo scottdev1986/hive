@@ -2021,7 +2021,8 @@ describe("the model an agent is actually running", () => {
       // developer's. A stubbed reader would only prove that a stub returns what
       // it was told to.
       telemetryReaders: {
-        liveModel: (worktreePath) => readLiveClaudeModel(worktreePath, home),
+        liveModel: (worktreePath, toolSessionId) =>
+          readLiveClaudeModel(worktreePath, toolSessionId, home),
       },
       quota: {
         setAlertSink: () => {},
@@ -2039,6 +2040,7 @@ describe("the model an agent is actually running", () => {
         tool: "claude",
         model: "claude-fable-5", // what it was spawned with
         worktreePath,
+        toolSessionId: "session", // what hook traffic names its transcript
       }));
       // What it is actually running, after the user typed /model.
       await transcript(worktreePath, ["claude-fable-5", "claude-opus-4-8"]);
@@ -2141,7 +2143,8 @@ describe("the model an agent is actually running", () => {
       db,
       spawner: new StubSpawner(),
       telemetryReaders: {
-        liveModel: (path) => readLiveClaudeModel(path, home),
+        liveModel: (path, toolSessionId) =>
+          readLiveClaudeModel(path, toolSessionId, home),
       },
       quota: {
         setAlertSink: () => {},
@@ -2213,7 +2216,8 @@ describe("the model an agent is actually running", () => {
       tmuxSender: new SilentTmuxSender(db),
       quota,
       telemetryReaders: {
-        liveModel: (path) => readLiveClaudeModel(path, home),
+        liveModel: (path, toolSessionId) =>
+          readLiveClaudeModel(path, toolSessionId, home),
       },
       assessStrandedWork: async () => ({ dirtyFiles: [], unmergedCommits: 0 }),
     });
@@ -2241,6 +2245,7 @@ describe("the model an agent is actually running", () => {
         model: "sonnet",
         tmuxSession: "hive-probe",
         worktreePath,
+        toolSessionId: "session",
         quotaReservationId: decision.reservation.id,
       }));
       tmux.sessions.add("hive-probe");

@@ -359,7 +359,10 @@ export interface HiveDaemonOptions {
   telemetryReaders?: {
     claude?: TelemetryReader;
     codex?: TelemetryReader;
-    liveModel?: (worktreePath: string) => Promise<string | null>;
+    liveModel?: (
+      worktreePath: string,
+      toolSessionId: string | undefined,
+    ) => Promise<string | null>;
   };
   codexControl?: Pick<
     CodexAppServerManager,
@@ -420,7 +423,10 @@ export class HiveDaemon {
   private readonly repoRoot: string;
   private readonly readClaudeTelemetry: TelemetryReader;
   private readonly readCodexTelemetry: TelemetryReader;
-  private readonly readLiveModel: (worktreePath: string) => Promise<string | null>;
+  private readonly readLiveModel: (
+    worktreePath: string,
+    toolSessionId: string | undefined,
+  ) => Promise<string | null>;
   private readonly handshake: () => ReturnType<typeof expectedDaemonHandshake>;
   private readonly cleanupWorktree: typeof removeWorktree;
   private readonly assessStranded: NonNullable<
@@ -537,7 +543,8 @@ export class HiveDaemon {
     this.readCodexTelemetry = options.telemetryReaders?.codex ??
       readCodexTelemetry;
     this.readLiveModel = options.telemetryReaders?.liveModel ??
-      ((worktreePath) => readLiveClaudeModel(worktreePath));
+      ((worktreePath, toolSessionId) =>
+        readLiveClaudeModel(worktreePath, toolSessionId));
     this.handshake = () => expectedDaemonHandshake(this.repoRoot);
     this.cleanupWorktree = options.removeWorktree ?? removeWorktree;
     this.assessStranded = options.assessStrandedWork ?? assessStrandedWork;
@@ -935,7 +942,8 @@ export class HiveDaemon {
       // is a subscriber-only path — so the sweep is what makes it true for
       // everyone. A row nobody corrects is a row `hive status` lies from.
       if (current.tool === "claude" && current.worktreePath !== null) {
-        const live = await this.readLiveModel(current.worktreePath)
+        const live = await this
+          .readLiveModel(current.worktreePath, current.toolSessionId)
           .catch(() => null);
         if (live !== null && live !== current.liveModel) updates.liveModel = live;
       }
@@ -1780,7 +1788,9 @@ export class HiveDaemon {
     const known = agent.liveModel ?? agent.model;
     if (agent.tool !== "claude" || agent.worktreePath === null) return known;
 
-    const live = await this.readLiveModel(agent.worktreePath).catch(() => null);
+    const live = await this
+      .readLiveModel(agent.worktreePath, agent.toolSessionId)
+      .catch(() => null);
     if (live === null) return known;
     if (live !== agent.liveModel) {
       // Re-read before writing: the sweep and this handler both land here, and a
