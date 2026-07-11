@@ -15,7 +15,12 @@ export function formatStatusTable(agents: AgentRecord[]): string {
   const rows = agents.map((agent) => [
     describeAgentName(agent),
     agent.tool,
-    agent.model,
+    // The model it is *running*, not the one it was spawned with. A user who
+    // types `/model` mid-session changes the first and not the second, and the
+    // orchestrator reads this table to decide what to route where — so showing
+    // the spawn-time intention here is how Hive came to report four agents as
+    // running models none of them were.
+    agent.liveModel ?? agent.model,
     agent.status,
     `${Math.round(agent.contextPct)}%`,
     truncate(agent.taskDescription.replaceAll(/\s+/g, " ").trim(), TASK_WIDTH),

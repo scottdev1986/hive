@@ -25,6 +25,7 @@ import {
 } from "../adapters/memory";
 import { ensureProfile } from "../adapters/profile";
 import { landBranch, type LandBranch } from "./landing";
+import { readLiveClaudeModel } from "./live-model";
 import {
   assessStrandedWork,
   removeWorktree,
@@ -352,10 +353,13 @@ export interface HiveDaemonOptions {
    * root app-server deliverer, inert when no codex root socket exists. */
   rootProtocol?: RootProtocolDeliverer;
   /** Context/activity artifact readers, injectable for tests; default to the
-   * real transcript and rollout sensors. */
+   * real transcript and rollout sensors. `liveModel` reads the model an agent is
+   * *running* out of its transcript, and returns null when there is nothing to
+   * observe (see ./live-model). */
   telemetryReaders?: {
     claude?: TelemetryReader;
     codex?: TelemetryReader;
+    liveModel?: (worktreePath: string) => Promise<string | null>;
   };
   codexControl?: Pick<
     CodexAppServerManager,
@@ -413,6 +417,7 @@ export class HiveDaemon {
   private readonly repoRoot: string;
   private readonly readClaudeTelemetry: TelemetryReader;
   private readonly readCodexTelemetry: TelemetryReader;
+  private readonly readLiveModel: (worktreePath: string) => Promise<string | null>;
   private readonly handshake: () => ReturnType<typeof expectedDaemonHandshake>;
   private readonly cleanupWorktree: typeof removeWorktree;
   private readonly assessStranded: NonNullable<
@@ -526,6 +531,8 @@ export class HiveDaemon {
       readClaudeTelemetry;
     this.readCodexTelemetry = options.telemetryReaders?.codex ??
       readCodexTelemetry;
+    this.readLiveModel = options.telemetryReaders?.liveModel ??
+      ((worktreePath) => readLiveClaudeModel(worktreePath));
     this.handshake = () => expectedDaemonHandshake(this.repoRoot);
     this.cleanupWorktree = options.removeWorktree ?? removeWorktree;
     this.assessStranded = options.assessStrandedWork ?? assessStrandedWork;
@@ -880,6 +887,15 @@ export class HiveDaemon {
         telemetry.contextPct !== current.contextPct
       ) {
         updates.contextPct = telemetry.contextPct;
+      }
+      // The model the agent is *running*. The statusline handler observes this
+      // too, but only for agents whose statusline reports actually arrive — which
+      // is a subscriber-only path — so the sweep is what makes it true for
+      // everyone. A row nobody corrects is a row `hive status` lies from.
+      if (current.tool === "claude" && current.worktreePath !== null) {
+        const live = await this.readLiveModel(current.worktreePath)
+          .catch(() => null);
+        if (live !== null && live !== current.liveModel) updates.liveModel = live;
       }
       if (
         current.tool === "codex" && !current.writeRevoked &&
@@ -1421,8 +1437,13 @@ export class HiveDaemon {
         { status: 404 },
       );
     }
+    // Bind this observation to the model the agent is *running*, not the one it
+    // was spawned with. `agent.model` is a spawn-time intention that a `/model`
+    // inside the session silently invalidates, and quota charged to a model
+    // nobody is running is quota charged to nobody.
+    const model = await this.reconcileModel(agent);
     const observation = await this.quota?.observeStatusline(
-      { tool: agent.tool, model: agent.model },
+      { tool: agent.tool, model },
       {
         ...(parsed.data.fiveHour === undefined
           ? {}
@@ -1434,6 +1455,44 @@ export class HiveDaemon {
       },
     ) ?? null;
     return json({ observation });
+  }
+
+  /**
+   * The model `agent` is actually running, observed and persisted onto its row.
+   *
+   * Two things were wrong and they were the same thing: quota was observed
+   * against the spawn-time model, and `hive status` reported the spawn-time
+   * model to the orchestrator, which routes off it. Fixing only the ledger
+   * would leave the display lying.
+   *
+   * The observation is written to `liveModel`, never over `model`. They are
+   * different facts and the difference is load-bearing: `model` is decision 6's
+   * immutable execution identity, and `restartForControl` refuses to restart an
+   * agent whose recorded identity and row disagree — so overwriting `model`
+   * would have left every agent whose user typed `/model` permanently
+   * unrestartable, capability revoked, on the next critical control. The bug was
+   * born of conflating an intention with an observation; the fix does not repeat
+   * it in the other direction.
+   *
+   * No observation — a Codex rollout, which records no model name, or a Claude
+   * session that has not answered yet — leaves `liveModel` untouched, and the
+   * launch model stands. An unknown model is unknown, never a guess.
+   */
+  private async reconcileModel(agent: AgentRecord): Promise<string> {
+    const known = agent.liveModel ?? agent.model;
+    if (agent.tool !== "claude" || agent.worktreePath === null) return known;
+
+    const live = await this.readLiveModel(agent.worktreePath).catch(() => null);
+    if (live === null) return known;
+    if (live !== agent.liveModel) {
+      // Re-read before writing: the sweep and this handler both land here, and a
+      // hook event may have advanced the row under us.
+      const current = this.db.getAgentById(agent.id);
+      if (current !== null) {
+        this.db.upsertAgent({ ...current, liveModel: live });
+      }
+    }
+    return live;
   }
 
   private async registerOrchestratorTerminal(

@@ -60,7 +60,15 @@ export const AgentRecordSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
   tool: z.enum(["claude", "codex"]),
+  /** The model this agent was *launched* with — decision 6's immutable execution
+   * identity, which a control restart replays to reproduce the launch it is
+   * interrupting. It is an intention, and it never changes. */
   model: z.string().min(1),
+  /** The model this agent is *observed* running, read from its transcript. A
+   * user who types `/model` mid-session changes this and not `model`. Absent
+   * means "no observation" — never "the same as spawn", because a guess is what
+   * this field exists to stop. Quota accounting and `hive status` read it first. */
+  liveModel: z.string().min(1).optional(),
   tier: RoutingTierSchema,
   status: z.enum([
     "spawning",

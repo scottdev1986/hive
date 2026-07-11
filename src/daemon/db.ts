@@ -64,6 +64,9 @@ const AgentDatabaseRowSchema = AgentRecordSchema.extend({
   failureReason: z.string().nullable(),
   failedAt: z.string().nullable(),
   closedAt: z.string().nullable(),
+  // Null on every row written before the model was observed separately from the
+  // model it was launched with, and on every agent Hive has not observed yet.
+  liveModel: z.string().nullable().default(null),
   quotaReservationId: z.string().nullable(),
   controlQuotaReservationId: z.string().nullable(),
   controlMessageId: z.string().nullable(),
@@ -83,6 +86,7 @@ function parseAgentRow(row: unknown): AgentRecord {
     failureReason: value.failureReason ?? undefined,
     failedAt: value.failedAt ?? undefined,
     closedAt: value.closedAt ?? undefined,
+    liveModel: value.liveModel ?? undefined,
     quotaReservationId: value.quotaReservationId ?? undefined,
     controlQuotaReservationId: value.controlQuotaReservationId ?? undefined,
     controlMessageId: value.controlMessageId ?? undefined,
@@ -165,6 +169,7 @@ export class HiveDatabase {
         name TEXT NOT NULL,
         tool TEXT NOT NULL,
         model TEXT NOT NULL,
+        liveModel TEXT,
         tier TEXT NOT NULL,
         status TEXT NOT NULL,
         taskDescription TEXT NOT NULL,
@@ -324,6 +329,16 @@ export class HiveDatabase {
         "ALTER TABLE agents ADD COLUMN capabilityEpoch INTEGER NOT NULL DEFAULT 0",
       );
     }
+    // The model an agent is *observed* running, which is a different fact from
+    // `model` — the immutable launch identity decision 6 records so a control
+    // restart reproduces the launch it is interrupting. A user who types `/model`
+    // mid-session changes the first and must not touch the second. They were one
+    // column, and the cost of conflating them was that quota was charged to a
+    // model nobody was running and `hive status` reported it back as truth.
+    // Null means "not observed", never "same as spawn".
+    if (!agentColumnNames.has("liveModel")) {
+      this.database.exec("ALTER TABLE agents ADD COLUMN liveModel TEXT");
+    }
     if (!agentColumnNames.has("writeRevoked")) {
       this.database.exec(
         "ALTER TABLE agents ADD COLUMN writeRevoked INTEGER NOT NULL DEFAULT 0",
@@ -478,6 +493,7 @@ export class HiveDatabase {
           capabilityEpoch INTEGER NOT NULL DEFAULT 0,
           writeRevoked INTEGER NOT NULL DEFAULT 0,
           channelsEnabled INTEGER NOT NULL DEFAULT 0,
+          liveModel TEXT,
           closedAt TEXT
         )
       `);
@@ -503,17 +519,18 @@ export class HiveDatabase {
     const closedAt = this.resolveClosedAt(value);
     this.database.query(`
       INSERT INTO agents (
-        id, name, tool, model, tier, status, taskDescription,
+        id, name, tool, model, liveModel, tier, status, taskDescription,
         worktreePath, branch, tmuxSession, terminalHandle, contextPct,
         createdAt, lastEventAt, failureReason, failedAt,
         quotaReservationId, controlQuotaReservationId, controlMessageId,
         executionIdentity, toolSessionId, recoveryAttempts,
         capabilityEpoch, writeRevoked, channelsEnabled, closedAt
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         name = excluded.name,
         tool = excluded.tool,
         model = excluded.model,
+        liveModel = excluded.liveModel,
         tier = excluded.tier,
         status = excluded.status,
         taskDescription = excluded.taskDescription,
@@ -541,6 +558,7 @@ export class HiveDatabase {
       value.name,
       value.tool,
       value.model,
+      value.liveModel ?? null,
       value.tier,
       value.status,
       value.taskDescription,

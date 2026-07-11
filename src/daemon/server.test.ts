@@ -10,6 +10,8 @@ import type { TmuxSender } from "./delivery";
 import { QuotaLedger } from "./quota-ledger";
 import { QuotaService } from "./quota";
 import { HIVE_VERSION, HiveDaemon, inferLegacyControl } from "./server";
+import { readLiveClaudeModel } from "./live-model";
+import { formatStatusTable } from "../cli/status";
 import { WorkspacePresence } from "./workspace-presence";
 import { actingAs } from "./testing";
 import type { SpawnRequest, Spawner } from "./spawner";
@@ -1959,6 +1961,144 @@ describe("resource watchdog", () => {
         .some((m) => m.body.includes("paused agent spawning")))
         .toBe(true);
       await client.close();
+    } finally {
+      await daemon.stop();
+      db.close();
+    }
+  });
+});
+
+describe("the model an agent is actually running", () => {
+  // Hive believed zoe and lena were on claude-fable-5 and omar on sonnet, while
+  // all of their transcripts said claude-opus-4-8: the user had typed /model
+  // inside the sessions, and `agents.model` is a spawn-time string that nothing
+  // ever corrected. Quota was then reserved and observed against a model nobody
+  // was running, and `hive status` reported the same fiction to the orchestrator,
+  // which routes off it. The transcript is the observation; the row must follow it.
+  const transcript = async (
+    worktreePath: string,
+    models: string[],
+  ): Promise<void> => {
+    const { mkdir, writeFile } = await import("node:fs/promises");
+    const { claudeProjectDirectory } = await import("../adapters/tools/claude");
+    const directory = claudeProjectDirectory(worktreePath, home);
+    await mkdir(directory, { recursive: true });
+    await writeFile(
+      join(directory, "session.jsonl"),
+      models
+        .map((model) => JSON.stringify({ type: "assistant", message: { model } }))
+        .join("\n"),
+    );
+  };
+
+  test("a statusline report rebinds quota to the live model and fixes the row", async () => {
+    const db = new HiveDatabase(join(home, "live-model.db"));
+    const worktreePath = mkdtempSync(join(tmpdir(), "hive-zoe-"));
+    const observed: Array<{ model: string }> = [];
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new StubSpawner(),
+      // The real transcript parser, pointed at this test's home rather than the
+      // developer's. A stubbed reader would only prove that a stub returns what
+      // it was told to.
+      telemetryReaders: {
+        liveModel: (worktreePath) => readLiveClaudeModel(worktreePath, home),
+      },
+      quota: {
+        setAlertSink: () => {},
+        observeStatusline: async (binding: { model: string }) => {
+          observed.push({ model: binding.model });
+          return null;
+        },
+      } as unknown as QuotaService,
+    });
+    try {
+      db.insertAgent(agent({
+        id: "agent-zoe",
+        name: "zoe",
+        tool: "claude",
+        model: "claude-fable-5", // what it was spawned with
+        worktreePath,
+      }));
+      // What it is actually running, after the user typed /model.
+      await transcript(worktreePath, ["claude-fable-5", "claude-opus-4-8"]);
+
+      const response = await actingAs(daemon, "zoe", "writer")(
+        "http://hive/statusline",
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            agent: "zoe",
+            fiveHour: { usedPct: 40, resetsAt: null },
+          }),
+        },
+      );
+      expect(response.status).toBe(200);
+
+      // The ledger is charged to the model that is burning the tokens...
+      expect(observed).toEqual([{ model: "claude-opus-4-8" }]);
+      // ...and the row no longer lies to `hive status`, which is the half that
+      // makes it visible. Fixing only the ledger keeps the display wrong, and
+      // the orchestrator routes off the display.
+      const row = db.getAgentByName("zoe");
+      expect(row?.liveModel).toBe("claude-opus-4-8");
+      expect(formatStatusTable([row!])).toContain("claude-opus-4-8");
+
+      // And the immutable execution identity is untouched. This is not an
+      // incidental detail: `restartForControl` fails closed when the recorded
+      // identity and the row disagree, so writing the observation over `model`
+      // would leave every agent whose user typed `/model` permanently
+      // unrestartable with its capability revoked.
+      expect(row?.model).toBe("claude-fable-5");
+    } finally {
+      await daemon.stop();
+      db.close();
+    }
+  });
+
+  test("a Codex agent is never relabelled from a Claude transcript in its worktree", async () => {
+    const db = new HiveDatabase(join(home, "live-model-none.db"));
+    const worktreePath = mkdtempSync(join(tmpdir(), "hive-lucas-"));
+    const observed: string[] = [];
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new StubSpawner(),
+      telemetryReaders: {
+        liveModel: (path) => readLiveClaudeModel(path, home),
+      },
+      quota: {
+        setAlertSink: () => {},
+        observeStatusline: async (binding: { model: string }) => {
+          observed.push(binding.model);
+          return null;
+        },
+      } as unknown as QuotaService,
+    });
+    try {
+      // A Codex agent whose worktree ALSO holds a Claude transcript — which is
+      // not hypothetical: the live lucas has one, and reading it without checking
+      // the tool would have relabelled a Codex agent as `claude-sonnet-5` and
+      // charged its tokens to a Claude pool. Codex rollouts record no model name,
+      // so there is nothing here to observe, and an unknown model stays unknown.
+      db.insertAgent(agent({
+        id: "agent-lucas",
+        name: "lucas",
+        tool: "codex",
+        model: "gpt-5.6-sol",
+        worktreePath,
+      }));
+      await transcript(worktreePath, ["claude-sonnet-5"]);
+      await actingAs(daemon, "lucas", "writer")("http://hive/statusline", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          agent: "lucas",
+          fiveHour: { usedPct: 10, resetsAt: null },
+        }),
+      });
+      expect(observed).toEqual(["gpt-5.6-sol"]);
+      expect(db.getAgentByName("lucas")?.model).toBe("gpt-5.6-sol");
     } finally {
       await daemon.stop();
       db.close();
