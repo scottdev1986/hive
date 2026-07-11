@@ -59,4 +59,23 @@ suite("live capability discovery", () => {
     );
     expect(hidden.length).toBeGreaterThan(0);
   }, 60_000);
+
+  test("codex config/read answers what an unflagged launch really runs", async () => {
+    const result = await new CodexCapabilityProbe().read();
+    if (result.status !== "ok") {
+      throw new Error(`codex discovery unavailable: ${result.reason}`);
+    }
+    // The positive control on the key names. `config/read`'s keys are snake_case
+    // and were read off the live wire; a *guessed* key would not raise here, it
+    // would read back as `unknown`, and a column of unknowns is indistinguishable
+    // from a vendor that genuinely said nothing. If this ever goes unknown on a
+    // configured machine, suspect the key before suspecting the vendor.
+    expect(result.effectiveDefault.model.state).toBe("known");
+    expect(result.effectiveDefault.model.surface).toBe("codex.config/read");
+
+    // And the fact the whole ladder rung turns on: the effective default is NOT
+    // the catalog's `isDefault`. Verified 2026-07-11 on codex-cli 0.144.1, where
+    // the catalog flags gpt-5.5 and an unflagged launch runs gpt-5.6-sol.
+    expect(result.effectiveDefault.model.surface).not.toBe("codex.model/list");
+  }, 60_000);
 });

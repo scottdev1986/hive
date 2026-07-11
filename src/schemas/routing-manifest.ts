@@ -35,6 +35,15 @@ export const RoutingManifestTierSchema = z.looseObject({
   preferredProvider: z.enum(["claude", "codex"]),
   claude: CandidateListSchema,
   codex: CandidateListSchema,
+  /**
+   * The tier's effort default: the knob that makes a cheap tier actually reason
+   * cheaply. It is a raw vendor string, validated against the *resolved* model's
+   * advertised levels rather than a Hive enum, and it is optional because no
+   * manifest should ship one yet: nothing measures whether an effort step pays
+   * for itself, so automatic effort stays at the provider's default until
+   * effort-sensitive telemetry exists to justify anything else.
+   */
+  defaultEffort: z.string().min(1).optional(),
 });
 
 export type RoutingManifestTier = z.infer<typeof RoutingManifestTierSchema>;

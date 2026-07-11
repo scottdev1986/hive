@@ -42,6 +42,14 @@ export const CapabilitySurfaceSchema = z.enum([
   "claude.initialize",
   /** The Codex app-server's `model/list` reply. */
   "codex.model/list",
+  /**
+   * The Codex app-server's `config/read` reply: the *effective* layered config,
+   * which is the only surface that answers what an unflagged launch runs. The
+   * catalog's `isDefault` is a different fact and is not a substitute for it —
+   * `model/list` flags `gpt-5.5` while `config/read` reports this machine's
+   * unflagged launch as `gpt-5.6-sol` at `xhigh`.
+   */
+  "codex.config/read",
 ]);
 export type CapabilitySurface = z.infer<typeof CapabilitySurfaceSchema>;
 
@@ -248,6 +256,29 @@ export const splitVariant = (
   if (match === null) return { base: name, variant: null };
   return { base: name.slice(0, match.index), variant: match[1]! };
 };
+
+/**
+ * What this account launches when Hive passes no model flag at all.
+ *
+ * This is an account fact, not a model fact, so it does not live on a record. It
+ * is the fallback ladder's second rung, and it is *effective*, never the vendor's
+ * catalog recommendation: a launch with no flags runs whatever this machine's
+ * layered configuration resolves to, which on Codex is `config/read` and is not
+ * the entry `model/list` marks `isDefault`.
+ *
+ * Both fields are `Discovered` because both are genuinely missing on real
+ * machines: a Codex install that never pinned a model reports `null`, and Claude
+ * publishes no effort for any model, so a no-flag Claude launch has an effective
+ * effort Hive cannot observe from any free surface. That gap is left as
+ * `unknown` — filling it with a shipped constant is the invented-vendor-claim the
+ * router design exists to prevent.
+ */
+export const EffectiveDefaultSchema = z.strictObject({
+  provider: CapabilityProviderSchema,
+  model: discovered(z.string().min(1)),
+  effort: discovered(EffortLevelSchema),
+});
+export type EffectiveDefault = z.infer<typeof EffectiveDefaultSchema>;
 
 /**
  * Whether a record is fresh enough to *derive* a route from.

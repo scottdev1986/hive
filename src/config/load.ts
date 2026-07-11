@@ -5,10 +5,12 @@ import {
   DEFAULT_QUOTA_CONFIG,
   HiveConfigSchema,
   QuotaConfigSchema,
+  RoutingPinsSchema,
   RoutingTableSchema,
   type HiveConfig,
   type QuotaConfig,
   type Route,
+  type RoutingPins,
   type RoutingTable,
   type RoutingTier,
 } from "../schemas";
@@ -105,6 +107,28 @@ export async function loadRoutingTable(
 
   try {
     return RoutingTableSchema.parse(merged);
+  } catch (error) {
+    throw new Error(`Invalid routing table at ${path}: ${errorMessage(error)}`);
+  }
+}
+
+/**
+ * The user's pins alone, before the shipped table is merged under them.
+ *
+ * `loadRoutingTable` returns the merge, which is what routing needs and exactly
+ * what an inspection surface must not use: after the merge, a value the user
+ * pinned and a value Hive shipped are the same string in the same slot. Telling
+ * them apart requires reading the file the user actually wrote.
+ */
+export async function loadRoutingPins(): Promise<RoutingPins> {
+  const path = join(hiveHome(), "routing.toml");
+  const raw = await readToml(path);
+  if (raw === undefined) return {};
+  if (!isRecord(raw)) {
+    throw new Error(`Invalid routing table at ${path}: expected a TOML table`);
+  }
+  try {
+    return RoutingPinsSchema.parse(raw);
   } catch (error) {
     throw new Error(`Invalid routing table at ${path}: ${errorMessage(error)}`);
   }

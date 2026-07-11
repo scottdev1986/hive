@@ -4,6 +4,8 @@ import {
   CodexCapabilityProbe,
   recordsFromClaudeInitialize,
   recordsFromCodexModelList,
+  claudeEffectiveDefault,
+  codexEffectiveDefault,
 } from "./capability-discovery";
 import {
   CapabilityRecordSchema,
@@ -11,7 +13,9 @@ import {
   capabilityFreshness,
   capabilityKey,
   fingerprintAccount,
+  known,
   splitVariant,
+  unknown,
   valueOr,
 } from "../schemas/capability";
 
@@ -426,7 +430,12 @@ describe("probes degrade to unknown, never to a guess", () => {
   test("an empty menu is unavailable, not an account with no models", async () => {
     const probe = new CodexCapabilityProbe({
       readCatalog: () =>
-        Promise.resolve({ modelList: { data: [] }, account: null, cliVersion: "0.144.1" }),
+        Promise.resolve({
+          modelList: { data: [] },
+          account: null,
+          config: null,
+          cliVersion: "0.144.1",
+        }),
     });
     const result = await probe.read();
     expect(result.status).toBe("unavailable");
@@ -451,4 +460,72 @@ describe("probes degrade to unknown, never to a guess", () => {
   });
 
   const at2026 = () => new Date("2026-07-11T12:00:00.000Z");
+});
+
+describe("the effective default: what an unflagged launch actually runs", () => {
+  const AT = "2026-07-11T12:00:00.000Z";
+
+  test("codex reads config/read, whose keys came off the live wire", () => {
+    // codex-cli 0.144.1's real payload shape, snake_case and all.
+    const effective = codexEffectiveDefault({
+      config: { model: "gpt-5.6-sol", model_reasoning_effort: "xhigh" },
+    }, AT);
+    expect(effective.model).toEqual(known("gpt-5.6-sol", "codex.config/read", AT));
+    expect(effective.effort).toEqual(known("xhigh", "codex.config/read", AT));
+  });
+
+  test("the catalog's isDefault is NOT the effective default", () => {
+    // The catalog flags gpt-5.5; this machine's unflagged launch runs gpt-5.6-sol.
+    // A router that reads the flag and calls it "the default" is describing a
+    // different machine than the one it is about to spawn on.
+    const records = recordsFromCodexModelList(
+      { data: [{ id: "gpt-5.5", isDefault: true }] },
+      null,
+      "0.144.1",
+      AT,
+    );
+    const effective = codexEffectiveDefault({
+      config: { model: "gpt-5.6-sol", model_reasoning_effort: "xhigh" },
+    }, AT);
+    expect(records[0]!.canonicalId).toBe("gpt-5.5");
+    expect(effective.model.state === "known" && effective.model.value)
+      .toBe("gpt-5.6-sol");
+  });
+
+  test("a config that pins no model is unknown, never a guessed one", () => {
+    const effective = codexEffectiveDefault({
+      config: { model: null, model_reasoning_effort: null },
+    }, AT);
+    expect(effective.model.state).toBe("unknown");
+    expect(effective.effort.state).toBe("unknown");
+  });
+
+  test("an unreadable config is malformed, which is not 'the vendor said none'", () => {
+    const effective = codexEffectiveDefault("not a config at all", AT);
+    expect(effective.model).toEqual(unknown("malformed", "codex.config/read", AT));
+  });
+
+  test("claude's default is the menu entry, and its effort stays unknown", () => {
+    const records = recordsFromClaudeInitialize({
+      models: [
+        { value: "default", resolvedModel: "claude-opus-4-8[1m]" },
+        { value: "sonnet", resolvedModel: "claude-sonnet-5" },
+      ],
+    }, "2.1.207", AT);
+    const effective = claudeEffectiveDefault(records, AT);
+    expect(effective.model).toEqual(known("claude-opus-4-8", "claude.initialize", AT));
+    // Claude publishes no per-model effort anywhere. The effective effort of an
+    // unflagged Claude launch is unobservable, and a shipped `medium` here would
+    // be a Hive guess wearing a vendor's authority.
+    expect(effective.effort).toEqual(
+      unknown("surface-silent", "claude.initialize", AT),
+    );
+  });
+
+  test("a menu with no default entry is unknown, not the first model listed", () => {
+    const records = recordsFromClaudeInitialize({
+      models: [{ value: "sonnet", resolvedModel: "claude-sonnet-5" }],
+    }, "2.1.207", AT);
+    expect(claudeEffectiveDefault(records, AT).model.state).toBe("unknown");
+  });
 });

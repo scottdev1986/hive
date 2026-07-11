@@ -27,6 +27,7 @@ import {
 import { launchOrchestrator } from "./cli/orchestrator";
 import { runInitCli } from "./cli/init";
 import { projectRootOrCwd } from "./cli/project-root";
+import { printRouting } from "./cli/routing";
 import { runStart } from "./cli/start";
 import { runStatusline } from "./cli/statusline";
 import {
@@ -276,6 +277,13 @@ export function createProgram(): Command {
     .command("status")
     .description("Show Hive agent status")
     .action(printStatus);
+
+  program
+    .command("routing")
+    .description(
+      "Show the derived routing table with per-cell provenance (inert: does not route)",
+    )
+    .action(printRouting);
 
   const quota = program
     .command("quota")

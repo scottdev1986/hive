@@ -4,6 +4,7 @@ import {
   type CapabilityProvider,
   type CapabilityRecord,
   type Discovered,
+  type EffectiveDefault,
   capabilityKey,
   fingerprintAccount,
   known,
@@ -41,7 +42,12 @@ import { HIVE_VERSION } from "../version";
 const DISCOVERY_TIMEOUT_MS = 10_000;
 
 export type CapabilityDiscoveryResult =
-  | { status: "ok"; records: CapabilityRecord[] }
+  | {
+    status: "ok";
+    records: CapabilityRecord[];
+    /** What an unflagged launch on this account runs: the ladder's second rung. */
+    effectiveDefault: EffectiveDefault;
+  }
   | { status: "unavailable"; reason: string };
 
 // --------------------------------------------------------------------------
@@ -182,9 +188,85 @@ function merge(base: CapabilityRecord, next: CapabilityRecord): CapabilityRecord
   };
 }
 
+/**
+ * What a no-flag Claude launch runs, read off the same menu.
+ *
+ * Claude's `default` menu entry names its own resolved model, so this is a
+ * discovered fact and not a Hive belief. Its effort is not: Claude publishes no
+ * per-model effort recommendation anywhere, so the effective effort of an
+ * unflagged Claude launch is unobservable from any free surface, and it stays
+ * `unknown` here rather than acquiring a plausible `medium` (the open question in
+ * the router design; phase 3 does not get to close it with a constant).
+ */
+export function claudeEffectiveDefault(
+  records: readonly CapabilityRecord[],
+  observedAt: string,
+): EffectiveDefault {
+  const entry = records.find((record) => record.aliases.includes("default"));
+  return {
+    provider: "claude",
+    model: entry === undefined
+      // The menu answered and carried no `default` entry. That is this menu
+      // lacking the field, not Claude lacking a default.
+      ? unknown("field-absent", CLAUDE, observedAt)
+      : known(entry.canonicalId, CLAUDE, observedAt),
+    effort: unknown("surface-silent", CLAUDE, observedAt),
+  };
+}
+
 // --------------------------------------------------------------------------
-// Codex: the app-server's `model/list`.
+// Codex: the app-server's `model/list` and `config/read`.
 // --------------------------------------------------------------------------
+
+const CODEX_CONFIG = "codex.config/read" as const;
+
+/**
+ * `config/read`, as codex-cli 0.144.1 answers it. The keys are snake_case and
+ * were read off the live wire, not inferred: a guessed key name does not raise,
+ * it reads back as `null`, and a column of nulls is indistinguishable from a
+ * vendor that genuinely said nothing.
+ */
+const CodexConfigSchema = z.object({
+  config: z.object({
+    model: z.string().nullable().optional(),
+    model_reasoning_effort: z.string().nullable().optional(),
+  }).passthrough().nullable().optional(),
+}).passthrough();
+
+/**
+ * What a no-flag Codex launch runs on this machine.
+ *
+ * This is the effective, fully-layered value — the whole reason the ladder reads
+ * `config/read` instead of the catalog's `isDefault`, which describes a different
+ * machine. A null `model` means this install pins none and Codex's own built-in
+ * default governs; `config/read` does not name that model, so Hive does not
+ * either.
+ */
+export function codexEffectiveDefault(
+  config: unknown,
+  observedAt: string,
+): EffectiveDefault {
+  const parsed = CodexConfigSchema.safeParse(config);
+  if (!parsed.success) {
+    return {
+      provider: "codex",
+      model: unknown("malformed", CODEX_CONFIG, observedAt),
+      effort: unknown("malformed", CODEX_CONFIG, observedAt),
+    };
+  }
+  const effective = parsed.data.config;
+  const field = <T extends string>(
+    value: T | null | undefined,
+  ): Discovered<T> =>
+    value === null || value === undefined || value.length === 0
+      ? unknown("field-absent", CODEX_CONFIG, observedAt)
+      : known(value, CODEX_CONFIG, observedAt);
+  return {
+    provider: "codex",
+    model: field(effective?.model),
+    effort: field(effective?.model_reasoning_effort),
+  };
+}
 
 /**
  * `model/list`, as codex-cli 0.144.1 answers it. Note `supportedReasoningEfforts`
@@ -311,6 +393,8 @@ export interface CodexCapabilityPayload {
   modelList: unknown;
   /** The raw `account/read` result, for the account fingerprint. */
   account: unknown;
+  /** The raw `config/read` result, for the effective unflagged default. */
+  config: unknown;
   cliVersion: string;
 }
 
@@ -444,10 +528,15 @@ export class CodexStdioCapabilityTransport implements CodexCapabilityTransport {
         params: { includeHidden: true },
       });
       send({ jsonrpc: "2.0", id: 3, method: "account/read", params: {} });
+      // The effective unflagged default. A local metadata read of the layered
+      // config; it starts nothing and bills nothing, like everything above it.
+      send({ jsonrpc: "2.0", id: 4, method: "config/read", params: {} });
       const modelList = await responses.await("2");
       // An account we cannot read costs the fingerprint, not the catalog.
       const account = await responses.await("3").catch(() => null);
-      return { modelList, account, cliVersion };
+      // A config we cannot read costs the ladder's second rung, not the catalog.
+      const config = await responses.await("4").catch(() => null);
+      return { modelList, account, config, cliVersion };
     } finally {
       clearTimeout(timer);
       child.kill();
@@ -477,10 +566,11 @@ export class ClaudeCapabilityProbe implements CapabilityProbe {
   async read(): Promise<CapabilityDiscoveryResult> {
     try {
       const payload = await this.transport.readCatalog(DISCOVERY_TIMEOUT_MS);
+      const observedAt = this.clock().toISOString();
       const records = recordsFromClaudeInitialize(
         payload.handshake,
         payload.cliVersion,
-        this.clock().toISOString(),
+        observedAt,
       );
       if (records.length === 0) {
         // An empty menu is not "this account has no models" — it is a read we
@@ -490,7 +580,11 @@ export class ClaudeCapabilityProbe implements CapabilityProbe {
           reason: "claude returned no usable model menu",
         };
       }
-      return { status: "ok", records };
+      return {
+        status: "ok",
+        records,
+        effectiveDefault: claudeEffectiveDefault(records, observedAt),
+      };
     } catch (error) {
       return {
         status: "unavailable",
@@ -514,11 +608,12 @@ export class CodexCapabilityProbe implements CapabilityProbe {
   async read(): Promise<CapabilityDiscoveryResult> {
     try {
       const payload = await this.transport.readCatalog(DISCOVERY_TIMEOUT_MS);
+      const observedAt = this.clock().toISOString();
       const records = recordsFromCodexModelList(
         payload.modelList,
         payload.account,
         payload.cliVersion,
-        this.clock().toISOString(),
+        observedAt,
       );
       if (records.length === 0) {
         return {
@@ -526,7 +621,11 @@ export class CodexCapabilityProbe implements CapabilityProbe {
           reason: "codex app-server returned no usable model catalog",
         };
       }
-      return { status: "ok", records };
+      return {
+        status: "ok",
+        records,
+        effectiveDefault: codexEffectiveDefault(payload.config, observedAt),
+      };
     } catch (error) {
       return {
         status: "unavailable",
