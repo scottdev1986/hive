@@ -1,4 +1,5 @@
 export * from "./agent";
+export * from "./capability";
 export * from "./config";
 export * from "./event";
 export * from "./handoff";

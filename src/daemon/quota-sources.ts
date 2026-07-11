@@ -442,7 +442,7 @@ function responseCollector(
 }
 
 /** JSON-RPC 2.0 replies, as the Codex app-server speaks them. */
-const pendingResponses = (stream: ReadableStream<Uint8Array>) =>
+export const pendingResponses = (stream: ReadableStream<Uint8Array>) =>
   responseCollector(stream, (message) => {
     if (typeof message.id !== "number") return null;
     const id = String(message.id);
@@ -452,7 +452,7 @@ const pendingResponses = (stream: ReadableStream<Uint8Array>) =>
   }, "codex app-server closed before answering");
 
 /** `control_response` envelopes, as Claude Code's stream-json protocol speaks them. */
-const pendingControlResponses = (stream: ReadableStream<Uint8Array>) =>
+export const pendingControlResponses = (stream: ReadableStream<Uint8Array>) =>
   responseCollector(stream, (message) => {
     if (message.type !== "control_response") return null;
     const response = message.response;
