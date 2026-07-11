@@ -1,6 +1,6 @@
 # When to recycle an agent
 
-Hive kills an agent and respawns it when its context gets too full. The rule is a percentage: SPEC §7 sets a 65% recycle default, justified by field evidence that "quality dies around ~140K tokens." Both halves of that sentence are wrong, and they are wrong in ways that cancelled out until someone fixed a bug.
+Hive kills an agent and respawns it when its context gets too full. The rule used to be a percentage: SPEC §7 set a 65% recycle default, justified by field evidence that "quality dies around ~140K tokens." Both halves of that sentence are wrong, and they were wrong in ways that cancelled out until someone fixed a bug. This document is the argument that retired them; SPEC §7 now reads as its conclusion.
 
 The percentage was only ever a proxy for the token count. 65% × 200,000 = 130,000, which sits near the claimed 140K line. When Hive's telemetry was corrected to read the true window (commit 856ec11), the proxy broke: 65% × 1,000,000 = 650,000 tokens, 4.6× past the line the rule was built to respect. Fixing the number invalidated the decision resting on it.
 
@@ -14,7 +14,7 @@ Every claim below is marked MEASURED (someone ran an experiment and published nu
 
 The number has none.
 
-Inside this repo, `140K` appears exactly once, at `SPEC.md:164`. `git log -S "140K" -- SPEC.md` puts its introduction in `bc58715` — the initial commit. It was never derived from anything; it arrived as an assumption and has been restated since. To SPEC's credit, it already says so: "The ~140K figure is field lore, not a measurement hive has reproduced, and no practitioner consensus exists on where the line sits."
+Inside this repo, `git log -S "140K" -- SPEC.md` puts its introduction in `bc58715` — the initial commit. It was never derived from anything; it arrived as an assumption and was restated for as long as it survived. To SPEC's credit, it always said so: "The ~140K figure is field lore, not a measurement hive has reproduced, and no practitioner consensus exists on where the line sits." It is gone from SPEC now, and preserved there only as a rejected alternative.
 
 Outside the repo it is worse than unmeasured. The most-repeated attribution in the wild — that Geoffrey Huntley, an engineer at Sourcegraph, found quality degrading at 147,000–152,000 tokens — is a **fabricated citation**. His actual post ([ghuntley.com/gutter](https://ghuntley.com/gutter/)) makes a qualitative argument ("one task, one context") and **contains no token numbers at all**. The figure appears to have been invented by a secondary blog and propagated. Anyone citing it is citing a hallucination.
 
@@ -277,16 +277,18 @@ The substantive edit is that `contextPct` — a percentage — is the wrong quan
 
 And a rule that follows from the cache mechanics rather than from quality: **never switch a live agent's model or effort level.** It silently invalidates the entire prefix. Route the change to a new agent.
 
-### What SPEC §7 should say — recommendation only
+### What this changed in SPEC §7
 
-Not making this change; it is the user's call. What I would change:
+The user ratified this package in full, and SPEC §7 is now written from it. What moved:
 
-1. **Delete the ~140K claim.** It has no provenance, and its most-cited attribution is a fabricated citation. Replace it with what is measured: degradation is a gradient that begins in the tens of thousands of tokens, its onset is an absolute count that varies by model, and no cliff has been found anywhere.
-2. **Delete the 65% default and the percentage framing entirely.** Not re-key it — *delete* it. A fraction of the advertised window is the wrong unit, demonstrated by a 1M-window model degrading earlier in absolute tokens than a 200K one. Replace with a per-model absolute ceiling in config.
-3. **Demote the ceiling to a backstop and promote the real trigger.** The primary recycle signals are task completion and repeated failure. The ceiling is what catches the agent that neither finished nor failed loudly.
-4. **State that recycling is not the safe direction to err.** Both errors cost, and the cheap-looking one is the expensive one (below).
-5. **Revise the `/compact` rejection.** SPEC's quality objection is *correct* and now has hard evidence behind it (Governance Decay). But it is not a cost objection, and compaction is strictly cheaper than respawn on a warm agent. The synthesis: **write the durable handoff artifact to disk first, then compact in place** — keeping the pinned constraints out of the lossy path entirely. That preserves everything SPEC wanted to protect while never paying the cold-spawn toll. Kill-and-respawn remains correct when the agent is *cold*, or when its context is poisoned by its own failures and shedding the trajectory is the point.
-6. **Add an idle/cache-warmth signal.** A cold fat agent is more expensive to resume than to replace, and Hive is currently blind to this.
+1. **The ~140K claim is deleted.** It had no provenance, and its most-cited attribution is a fabricated citation. What replaces it is what is measured: degradation is a gradient that begins in the tens of thousands of tokens, its onset is an absolute count that varies by model, and no cliff has been found anywhere.
+2. **The 65% default and the percentage framing are deleted entirely** — not re-keyed, *deleted*. A fraction of the advertised window is the wrong unit, demonstrated by a 1M-window model degrading earlier in absolute tokens than a 200K one. A per-model absolute ceiling in config replaces it.
+3. **The ceiling is demoted to a backstop, and the real triggers promoted.** The primary recycle signals are task completion and repeated failure. The ceiling only catches the agent that neither finished nor failed loudly.
+4. **Recycling is stated not to be the safe direction to err.** Both errors cost, and the cheap-looking one is the expensive one (below).
+5. **The `/compact` rejection is revised halfway.** SPEC's quality objection is *correct* and now has hard evidence behind it (Governance Decay). But it was never a cost objection, and compaction is strictly cheaper than respawn on a warm agent. The synthesis: **write the durable handoff artifact to disk first, then compact in place** — keeping the pinned constraints out of the lossy path entirely. That preserves everything SPEC wanted to protect while never paying the cold-spawn toll. Kill-and-respawn remains correct when the agent is *cold*, or when its context is poisoned by its own failures and shedding the trajectory is the point.
+6. **Admit and retire are split into two lines.** One number was doing both jobs, so an agent could accept a task at 64% and be killed at 66% still holding it. The gap between the lines is the room to finish what was accepted.
+
+Still missing, and named here because the policy is currently **inert**: an idle/cache-warmth signal (a cold fat agent is more expensive to resume than to replace, and Hive is blind to this), and any actuator at all. See [docs/session-2026-07-11-findings-and-plan.md](../session-2026-07-11-findings-and-plan.md) for what it would take to make this executable.
 
 ## The cost of being wrong, in each direction
 
