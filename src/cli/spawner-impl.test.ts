@@ -252,6 +252,12 @@ class FakeTmux {
     return this.pane;
   }
 
+  /** No fake session has real processes in it, and readiness is told exactly
+   * that: unknown, which it never mistakes for life. */
+  async listPanePids(_name: string): Promise<number[]> {
+    return [];
+  }
+
   async killSession(name: string): Promise<void> {
     this.killed.push(name);
     this.active.delete(name);

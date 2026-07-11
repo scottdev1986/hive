@@ -19,6 +19,9 @@ function deps(over: Partial<ProofOfLifeDeps> = {}): ProofOfLifeDeps {
     capturePane: frozen("idle"),
     lastEventAt: () => null,
     codexActivity: async () => null,
+    // The healthy default: the agent hive launched is running in its pane.
+    launchedProcessAlive: async () => true,
+    launchedCommand: "codex",
     wait: async () => {},
     ...over,
   };
@@ -34,7 +37,10 @@ describe("proof of life", () => {
     const proof = await watchForProofOfLife("s", BASELINE, deps({
       capturePane: tickingPane(),
     }));
-    expect(proof).toEqual({ alive: true, signal: "screen redrawing" });
+    expect(proof).toEqual({
+      alive: true,
+      signal: "screen redrawing (codex running in pane)",
+    });
   });
 
   test("survives far past the retired 15s deadline while it reasons", async () => {
@@ -51,6 +57,66 @@ describe("proof of life", () => {
     }));
     expect(proof.alive).toBe(true);
     expect(polls).toBeGreaterThan(200);
+  });
+
+  test("a spinning wrapper over a dead child is DEAD, however lively the screen", async () => {
+    // The whole defect, reproduced. A wrapper prints a clock once a second while
+    // the provider it launched has already exited; the pane changes on every
+    // poll. Measured against a real tmux pane, this animates 5 of 5 polls — and
+    // the old predicate ("three pane changes") called that a healthy launch and
+    // recorded a dead provider as a successful spawn.
+    let tick = 0;
+    const proof = await watchForProofOfLife("s", BASELINE, deps({
+      capturePane: async () => `[wrapper] launching provider... ${(tick += 1)}`,
+      launchedProcessAlive: async () => false,
+      launchedCommand: "codex",
+    }));
+    expect(proof.alive).toBe(false);
+    if (!proof.alive) {
+      // And it names the death it actually died. This pane was never silent.
+      expect(proof.reason).toContain("no `codex` process is running in it");
+      expect(proof.reason).toContain("died behind a live wrapper");
+      expect(proof.reason).not.toContain("screen never redrew");
+    }
+  });
+
+  test("a thinking agent still lives — the redraw counts when the agent is the one drawing", async () => {
+    // The guard against fixing one bug by restoring another. Same ticking pane
+    // as the deep-tier Codex case, and the only difference from the test above
+    // is that the launched process is genuinely running: no hook event, no
+    // rollout write, no tool call, and it must still read as alive.
+    const proof = await watchForProofOfLife("s", BASELINE, deps({
+      capturePane: tickingPane(),
+      launchedProcessAlive: async () => true,
+    }));
+    expect(proof.alive).toBe(true);
+  });
+
+  test("an unreadable process tree is unknown, and unknown is not life", async () => {
+    // `ps` failed, or tmux reported no pane. That is not evidence the agent is
+    // running, so a redraw we cannot attribute buys nothing — and hive says so
+    // rather than flattering itself with a default.
+    const proof = await watchForProofOfLife("s", BASELINE, deps({
+      capturePane: tickingPane(),
+      launchedProcessAlive: async () => null,
+    }));
+    expect(proof.alive).toBe(false);
+  });
+
+  test("a launched process that is not the provider is still the launched process", async () => {
+    // The Codex app-server path runs `hive codex-app-server-host`, not `codex`.
+    // Readiness looks for the binary hive launched, so an app-server agent
+    // proves life exactly like a TUI one; a check hardcoded to "codex" would
+    // have killed every one of them.
+    const proof = await watchForProofOfLife("s", BASELINE, deps({
+      capturePane: tickingPane(),
+      launchedProcessAlive: async () => true,
+      launchedCommand: "hive",
+    }));
+    expect(proof).toEqual({
+      alive: true,
+      signal: "screen redrawing (hive running in pane)",
+    });
   });
 
   test("a frozen screen with no events and no activity is dead, and says why", async () => {

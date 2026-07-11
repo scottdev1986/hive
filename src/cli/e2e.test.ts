@@ -27,6 +27,10 @@ class FakeTmux implements TmuxSender {
     return "";
   }
 
+  async listPanePids(_session: string): Promise<number[]> {
+    return [];
+  }
+
   async killSession(session: string): Promise<void> {
     const index = this.sessions.indexOf(session);
     if (index !== -1) {

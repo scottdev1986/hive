@@ -27,22 +27,38 @@
  * during reasoning the rollout is not a liveness signal at all.
  *
  * What a thinking agent *does* emit is a redrawing screen. The Codex TUI renders
- * `Working (12s • esc to interrupt)` and increments it once a second; measured,
- * the pane changed on all 24 of 24 consecutive one-second polls while the model
- * reasoned and before it touched a single tool. That is the heartbeat. It is
- * emitted by thinking, not by acting, which is the whole point.
+ * `Working (12s • esc to interrupt)` and increments it once a second; measured
+ * again here against a live gpt-5.6-sol high run, the pane changed on every one
+ * of the 13 consecutive polls it spent reasoning, before it touched a single
+ * tool. That is the heartbeat. It is emitted by thinking, not by acting, which
+ * is the whole point.
  *
- * Three states have to stay distinct, and conflating any two of them is the bug
+ * But a redraw says only that *something* is running an event loop, and the
+ * something is not necessarily the agent. Hive's own launch wraps the provider
+ * in a shell (`holdPaneOnFailure`), so the pane's process is a wrapper and the
+ * agent is its child; any wrapper that prints — a spinner, a clock — redraws the
+ * pane whether or not the child behind it is alive. Measured: a wrapper animating
+ * once a second over a child that had already exited changed the pane on 5 of 5
+ * polls, and this function called it alive. So the redraw is corroborated,
+ * every poll, by the one signal that names the agent instead of describing its
+ * screen: the launched binary is still running in that pane's process tree
+ * (`launchedProcessAlive`). Both halves are checked against the real thing — a
+ * high-effort Codex thinking past 15 seconds still reads alive, and the dead
+ * child behind the live wrapper no longer does.
+ *
+ * Four states have to stay distinct, and conflating any two of them is the bug
  * in one direction or the other:
  *
- *   reasoning     pane redraws ~1/s                       ALIVE  (was killed)
+ *   reasoning     pane redraws ~1/s, agent running         ALIVE  (was killed)
  *   idle at rest  pane frozen, but the turn-end hook fired ALIVE  (event signal)
  *   hung or dead  pane frozen, no hook, no rollout         DEAD   (fail loud)
+ *   dead behind   pane redraws ~1/s, no agent process      DEAD   (was "alive")
+ *   a live wrapper
  *
- * The middle row is why a frozen pane can never mean death on its own: a run
+ * The middle rows are why a frozen pane can never mean death on its own: a run
  * whose turn simply ended goes pane-static within about three seconds. Death is
- * the *conjunction* — a screen that has stopped redrawing AND no events AND no
- * artifact writes.
+ * the *conjunction* — no events, no artifact writes, and no redraw that belongs
+ * to the agent.
  *
  * The fail-loud contract from the commit that introduced this is preserved
  * exactly, and sharpened: an unproven launch is still killed, its reservation
@@ -81,6 +97,9 @@ export const QUIET_LIMIT = 12;
  * come from a single repaint — they mean something is still running an event
  * loop. At 1 Hz this costs about three seconds, which is the price of not
  * mistaking a corpse's last twitch for a pulse.
+ *
+ * What three changes cannot tell you is *whose* event loop. See
+ * `launchedProcessAlive` — the screen is not the agent.
  */
 export const HEARTBEAT_MIN = 3;
 
@@ -105,6 +124,44 @@ export interface ProofOfLifeDeps {
    * the entire reasoning phase.
    */
   readonly codexActivity: () => Promise<string | null>;
+  /**
+   * Is the process hive actually launched still running inside this pane?
+   *
+   * True/false when we can read the pane's process tree; null when we cannot
+   * (no pane, unreadable `ps`) — unknown, and unknown never counts as life.
+   *
+   * This exists because "the pane changed" answers the wrong question. It asks
+   * whether *something* on that screen is moving, and hive's own launch puts a
+   * wrapper shell between tmux and the agent: `holdPaneOnFailure` runs the
+   * provider inside a subshell so a provider that calls `exit` cannot bypass
+   * the diagnostic hold. So the thing tmux calls the pane's process is a shell,
+   * and anything that shell prints — a spinner, a clock, a progress line — is a
+   * redraw the old predicate took as proof that the *agent* was alive.
+   * Constructed and measured: a wrapper animating once a second over a child
+   * that exited
+   * immediately changed the pane on 5 of 5 polls and was reported `alive:true,
+   * signal: "screen redrawing"`. Hive would have recorded a dead launch as a
+   * successful one.
+   *
+   * The obvious discriminator does not work, and it is worth saying why so
+   * nobody tries it again: `pane_current_command` is `zsh` for a perfectly
+   * healthy Codex agent (the wrapper is the foreground process, not the
+   * provider) and `bash` for the dead-child wrapper. Both are shells. The
+   * foreground command cannot tell an agent from its wrapper.
+   *
+   * The process *tree* can, and it is the only thing here that names the agent
+   * rather than describing its screen: measured on a live spawn, pane_pid is the
+   * wrapper shell and the `codex` process is right there as its child. So the
+   * question is whether the binary hive launched into this pane is still among
+   * that pane's descendants. It is the launched command, not a hardcoded
+   * provider name, because the Codex app-server path launches `hive
+   * codex-app-server-host` and not `codex` at all — a check that looked for
+   * "codex" would kill every app-server agent it was meant to protect.
+   */
+  readonly launchedProcessAlive: () => Promise<boolean | null>;
+  /** The command hive launched (`codex`, `claude`, `hive`), for the record and
+   * for the reason string an operator has to read. */
+  readonly launchedCommand: string;
   readonly wait: (ms: number) => Promise<void>;
   /**
    * True once the agent row has left "spawning" — the daemon itself already
@@ -132,6 +189,20 @@ function tailLines(value: string, count: number): string {
 export function quietReason(quietMs: number, paneTail: string): string {
   const base = `no sign of life for ${Math.round(quietMs / 1000)}s ` +
     "(screen never redrew, no hook event, no tool activity)";
+  return paneTail === "" ? base : `${base}; last pane output:\n${paneTail}`;
+}
+
+/**
+ * The death of an agent whose screen is busy and whose process is gone.
+ *
+ * It is a distinct reason from silence because it is a distinct death, and the
+ * operator reading it needs to know which one happened: nothing was silent
+ * here, the pane was redrawing the whole time. The agent simply was not the one
+ * doing it.
+ */
+export function orphanedPaneReason(command: string, paneTail: string): string {
+  const base = `the pane is redrawing but no \`${command}\` process is ` +
+    "running in it: the launch died behind a live wrapper";
   return paneTail === "" ? base : `${base}; last pane output:\n${paneTail}`;
 }
 
@@ -167,6 +238,11 @@ export async function watchForProofOfLife(
   let heartbeats = 0;
   let quiet = 0;
   let lastPaneTail = "";
+  // Redraws we watched happen and refused to credit, because the agent that was
+  // supposed to be drawing them was not running. Counted only so the death can
+  // be reported as the thing it actually was: not a silent pane, a busy one with
+  // nobody behind it.
+  let orphanedRedraws = 0;
 
   for (;;) {
     await deps.wait(pollMs);
@@ -196,6 +272,10 @@ export async function watchForProofOfLife(
       return { alive: false, reason: "tmux session exited" };
     }
 
+    // Whose event loop is drawing this screen? Asked once per poll, because a
+    // redraw is only evidence about the agent if the agent is the one redrawing.
+    const launched = await deps.launchedProcessAlive().catch(() => null);
+
     let paneChanged = false;
     try {
       const pane = await deps.capturePane(session);
@@ -216,20 +296,44 @@ export async function watchForProofOfLife(
       }
     }
 
+    // A redraw is a heartbeat only when the agent is the one with the pulse.
+    // `launched === true` is the whole of the new predicate: the binary hive put
+    // in this pane is still running in it, so the screen it is painting is its
+    // own. A wrapper's animation over a dead child fails here, which is the
+    // point; so does `null`, because a process tree we could not read is not
+    // evidence of life and unknown is never the flattering answer.
     if (paneChanged) {
-      heartbeats += 1;
-      quiet = 0;
-      if (heartbeats >= heartbeatMin) {
-        return { alive: true, signal: "screen redrawing" };
+      if (launched === true) {
+        heartbeats += 1;
+        quiet = 0;
+        if (heartbeats >= heartbeatMin) {
+          return {
+            alive: true,
+            signal: `screen redrawing (${deps.launchedCommand} running in pane)`,
+          };
+        }
+        continue;
       }
-      continue;
+      if (launched === false) orphanedRedraws += 1;
     }
 
-    // Silence is only silence when *nothing* moved: no event, no artifact write,
-    // and a screen that did not redraw.
+    // Silence is the agent giving us nothing, which is not the same as a still
+    // screen. A pane animated by a wrapper whose child is gone is *louder* than
+    // silence and just as dead, so it counts here exactly like a frozen pane
+    // does: no event, no artifact write, and no redraw we can attribute to the
+    // agent. The bound is unchanged — this widened what counts as quiet, not how
+    // long quiet is allowed to last.
     quiet += 1;
     if (quiet >= quietLimit) {
-      return { alive: false, reason: quietReason(quietLimit * pollMs, lastPaneTail) };
+      return {
+        alive: false,
+        // A frozen pane and a pane animated by a wrapper are both death, and an
+        // operator needs to know which one they are looking at: one says the
+        // process wedged, the other says it was never there.
+        reason: orphanedRedraws > 0
+          ? orphanedPaneReason(deps.launchedCommand, lastPaneTail)
+          : quietReason(quietLimit * pollMs, lastPaneTail),
+      };
     }
   }
 }

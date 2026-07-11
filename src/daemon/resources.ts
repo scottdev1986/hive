@@ -122,6 +122,29 @@ export function descendantsOf(
   return result;
 }
 
+/**
+ * The bare name of the binary a `ps` command line is running.
+ *
+ * `ps` reports the full argv (`/Users/x/.local/bin/codex -c model=...`), and the
+ * only part that identifies *what* is running is the basename of argv[0]. Used
+ * to ask whether the command hive launched into a pane is still alive in it.
+ */
+export function processCommandName(command: string): string {
+  const argv0 = command.trim().split(/\s+/)[0] ?? "";
+  return argv0.split("/").pop() ?? "";
+}
+
+/** Is `command` running anywhere in the process tree under these pane pids? */
+export function treeRunsCommand(
+  samples: ProcessSample[],
+  rootPids: number[],
+  command: string,
+): boolean {
+  return descendantsOf(samples, rootPids).some(
+    (sample) => processCommandName(sample.command) === command,
+  );
+}
+
 export interface AssessResourcesInput {
   samples: ProcessSample[];
   sessions: SessionProcessRoots[];

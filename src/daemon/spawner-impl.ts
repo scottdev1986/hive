@@ -47,6 +47,13 @@ import {
 import type { HiveDatabase } from "./db";
 import { readCodexTelemetry } from "./tool-telemetry";
 import { watchForProofOfLife } from "./readiness";
+import {
+  parseProcessTable,
+  processCommandName,
+  runPs,
+  treeRunsCommand,
+  type CommandOutput,
+} from "./resources";
 import type { SpawnRequest, Spawner } from "./spawner";
 import type { QuotaRouteCandidate, QuotaService } from "./quota";
 import { agentTmuxSession } from "./tmux-sessions";
@@ -184,10 +191,22 @@ type WorktreeCreator = (
 type WorktreeRemover = typeof removeWorktree;
 type TmuxSessionManager = Pick<
   TmuxAdapter,
-  "newSession" | "hasSession" | "capturePane" | "killSession"
+  | "newSession"
+  | "hasSession"
+  | "capturePane"
+  | "killSession"
+  // Readiness asks the process tree whether the binary it launched is still
+  // running in the pane, because a redrawing screen alone cannot tell an agent
+  // from the wrapper shell hive launches it behind (see readiness.ts).
+  | "listPanePids"
 >;
 type Sleep = (milliseconds: number) => Promise<void>;
 type ModelResolver = typeof resolveConcreteModel;
+
+/** The binary a launch argv will actually run, as `ps` will report it. */
+function launchedCommandName(argv: string[]): string {
+  return processCommandName(argv[0] ?? "");
+}
 
 /** Mints one agent's capability, writes it to its 0600 credential file, and
  * returns the token. Absent (tests, tooling) the agent is launched with no
@@ -226,6 +245,9 @@ export interface HiveSpawnerDependencies {
   resolveModel?: ModelResolver;
   /** Test seam for the daemon-resolved Claude binary. */
   claudeExecutable?: string;
+  /** Reads the process table for the readiness probe's process-tree check.
+   * Defaults to the real `ps`. */
+  ps?: CommandOutput;
   /** Test seam for reading the user's global Codex MCP server names. */
   listCodexMcpServers?: () => Promise<string[]>;
   /** Operator opt-out for the research preview. Agent spawns never launch
@@ -693,6 +715,10 @@ export class HiveSpawner implements Spawner {
         this.dependencies.codexAppServer !== undefined &&
         argv[1] === "codex-app-server-host";
       if (!nativeCodex) argv.push(controlPrompt);
+      // The binary that will actually be running in the pane. Reassigned below
+      // if the app-server handshake fails and the TUI takes over the session,
+      // because readiness looks for *this* process and nothing else.
+      let launchedCommand = launchedCommandName(argv);
       await this.dependencies.tmux.newSession(
         agent.tmuxSession,
         agent.worktreePath,
@@ -726,6 +752,7 @@ export class HiveSpawner implements Spawner {
             excludeMcpServers,
           });
           fallback.push(controlPrompt);
+          launchedCommand = launchedCommandName(fallback);
           await this.dependencies.tmux.newSession(
             agent.tmuxSession,
             agent.worktreePath,
@@ -733,7 +760,10 @@ export class HiveSpawner implements Spawner {
           );
         }
       }
-      const failureReason = await this.monitorControlReadiness(prepared.record);
+      const failureReason = await this.monitorControlReadiness(
+        prepared.record,
+        launchedCommand,
+      );
       if (failureReason !== null) throw new Error(failureReason);
       this.dependencies.quota.markStarted(reservationId);
     } catch (error) {
@@ -866,6 +896,7 @@ export class HiveSpawner implements Spawner {
 
   private async monitorControlReadiness(
     record: AgentRecord,
+    launchedCommand: string,
   ): Promise<string | null> {
     const proof = await watchForProofOfLife(record.tmuxSession, record.lastEventAt, {
       hasSession: (session) => this.dependencies.tmux.hasSession(session),
@@ -873,9 +904,38 @@ export class HiveSpawner implements Spawner {
       lastEventAt: () =>
         this.dependencies.db.getAgentById(record.id)?.lastEventAt ?? null,
       codexActivity: () => this.readCodexActivityFor(record),
+      launchedProcessAlive: () =>
+        this.launchedProcessAlive(record.tmuxSession, launchedCommand),
+      launchedCommand,
       wait: (ms) => this.wait(ms),
     });
     return proof.alive ? null : proof.reason;
+  }
+
+  /**
+   * Is the binary we launched still running inside that pane?
+   *
+   * Null means we could not tell — no pane, or a `ps` we could not read — and
+   * readiness treats that as no evidence rather than as life. The command is the
+   * one hive actually launched, never a provider name inferred from the record:
+   * the Codex app-server path runs `hive codex-app-server-host`, so looking for
+   * a process called "codex" would report every app-server agent as dead.
+   */
+  private async launchedProcessAlive(
+    session: string,
+    command: string,
+  ): Promise<boolean | null> {
+    try {
+      const rootPids = await this.dependencies.tmux.listPanePids(session);
+      if (rootPids.length === 0) return null;
+      const samples = parseProcessTable(
+        await (this.dependencies.ps ?? runPs)(),
+      );
+      if (samples.length === 0) return null;
+      return treeRunsCommand(samples, rootPids, command);
+    } catch {
+      return null;
+    }
   }
 
   /** A codex agent's rollout mtime, or null when there is none to read.
@@ -1190,6 +1250,9 @@ export class HiveSpawner implements Spawner {
         argv[1] === "codex-app-server-host";
       if (!nativeCodex) argv.push(prompt);
 
+      // See the control-restart path: readiness looks for the process hive
+      // actually launched, so this must follow the session that wins.
+      let launchedCommand = launchedCommandName(argv);
       await this.dependencies.tmux.newSession(
         record.tmuxSession,
         worktree.path,
@@ -1232,6 +1295,7 @@ export class HiveSpawner implements Spawner {
             excludeMcpServers,
           });
           fallback.push(prompt);
+          launchedCommand = launchedCommandName(fallback);
           await this.dependencies.tmux.newSession(
             record.tmuxSession,
             worktree.path,
@@ -1239,7 +1303,7 @@ export class HiveSpawner implements Spawner {
           );
         }
       }
-      const failureReason = await this.monitorReadiness(record);
+      const failureReason = await this.monitorReadiness(record, launchedCommand);
       if (failureReason !== null) {
         return await this.failSpawnIfStillSpawning(
           record,
@@ -1296,7 +1360,10 @@ export class HiveSpawner implements Spawner {
     return this.dependencies.db.getAgentById(record.id) ?? record;
   }
 
-  private async monitorReadiness(record: AgentRecord): Promise<string | null> {
+  private async monitorReadiness(
+    record: AgentRecord,
+    launchedCommand: string,
+  ): Promise<string | null> {
     // Baseline from the live row, not the caller's copy: the app-server
     // fallback re-inserts the record with a fresh lastEventAt, and comparing
     // against a stale snapshot would count that write as a hook event.
@@ -1310,6 +1377,9 @@ export class HiveSpawner implements Spawner {
       lastEventAt: () =>
         this.dependencies.db.getAgentById(record.id)?.lastEventAt ?? null,
       codexActivity: () => this.readCodexActivityFor(record),
+      launchedProcessAlive: () =>
+        this.launchedProcessAlive(record.tmuxSession, launchedCommand),
+      launchedCommand,
       settled: () => !this.isStillSpawning(record.id),
       wait: (ms) => this.wait(ms),
     });

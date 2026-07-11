@@ -71,6 +71,10 @@ class FakeTmux {
   async capturePane(session: string): Promise<string> {
     return this.panes.get(session) ?? "";
   }
+
+  async listPanePids(_session: string): Promise<number[]> {
+    return [];
+  }
 }
 
 class SilentSender implements TmuxSender {
