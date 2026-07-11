@@ -306,7 +306,7 @@ describe("effort resolves against the resolved model, never in parallel", () => 
     const deep = tierOf(deriveRouting(input()), "deep");
     expect(deep.claude.effort.value).toBeNull();
     expect(deep.claude.effort.layer).toBe("unknown");
-    expect(deep.claude.effort.reason).toContain("unobservable");
+    expect(deep.claude.effort.reason).toContain("awaits the live statusLine");
   });
 
   test("the manifest's per-tier default outranks the model's own", () => {

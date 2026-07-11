@@ -514,9 +514,9 @@ describe("the effective default: what an unflagged launch actually runs", () => 
     }, "2.1.207", AT);
     const effective = claudeEffectiveDefault(records, AT);
     expect(effective.model).toEqual(known("claude-opus-4-8", "claude.initialize", AT));
-    // Claude publishes no per-model effort anywhere. The effective effort of an
-    // unflagged Claude launch is unobservable, and a shipped `medium` here would
-    // be a Hive guess wearing a vendor's authority.
+    // Claude publishes no per-model effort anywhere. Discovery cannot name an
+    // unflagged launch's effort before the live statusLine observes it, and a
+    // shipped `medium` here would be a Hive guess wearing vendor authority.
     expect(effective.effort).toEqual(
       unknown("surface-silent", "claude.initialize", AT),
     );

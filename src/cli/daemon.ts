@@ -4,6 +4,7 @@ import { resolveTerminal } from "../adapters/terminal";
 import {
   loadHiveConfig,
   loadQuotaConfig,
+  loadRoutingPins,
   resolveRoute,
 } from "../config/load";
 import { HiveDatabase } from "../daemon/db";
@@ -22,6 +23,10 @@ import {
   CodexStdioProbeTransport,
 } from "../daemon/quota-sources";
 import { ORCHESTRATOR_NAME } from "../schemas";
+import {
+  ClaudeCapabilityProbe,
+  CodexCapabilityProbe,
+} from "../daemon/capability-discovery";
 
 export async function runDaemon(): Promise<void> {
   const repoRoot = process.env.HIVE_PROJECT_ROOT ?? process.cwd();
@@ -79,6 +84,11 @@ export async function runDaemon(): Promise<void> {
       daemon.issueCredential(name, role, epoch),
     config,
     routing: resolveRoute,
+    routingPins: loadRoutingPins,
+    discoverCapabilities: async (provider) =>
+      provider === "claude"
+        ? await new ClaudeCapabilityProbe().read()
+        : await new CodexCapabilityProbe().read(),
     tmux,
     terminal,
     workspacePresent: () => workspacePresence.isPresent(),

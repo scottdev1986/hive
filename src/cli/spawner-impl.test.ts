@@ -11,10 +11,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { TerminalAdapter } from "../adapters/terminal";
 import { CLAUDE_CHANNELS_FLAG } from "../adapters/tools/claude";
-import { DEFAULT_ROUTING, QuotaConfigSchema, isLiveAgent } from "../schemas";
+import {
+  DEFAULT_ROUTING,
+  QuotaConfigSchema,
+  isLiveAgent,
+  known,
+  unknown,
+} from "../schemas";
 import type {
   AgentRecord,
   AgentMessage,
+  CapabilityRecord,
   Route,
   RoutingTier,
   TerminalHandle,
@@ -34,9 +41,53 @@ import { HiveDatabase } from "../daemon/db";
 import { QuotaLedger } from "../daemon/quota-ledger";
 import { QuotaService } from "../daemon/quota";
 import { agentTmuxSession } from "../daemon/tmux-sessions";
+import type { CapabilityDiscoveryResult } from "../daemon/capability-discovery";
 
 const timestamp = "2026-07-09T12:00:00.000Z";
 const tempRoots: string[] = [];
+
+function capabilityRecord(
+  provider: "claude" | "codex",
+  model: string,
+  levels: string[],
+): CapabilityRecord {
+  const surface = provider === "claude"
+    ? "claude.initialize" as const
+    : "codex.model/list" as const;
+  return {
+    provider,
+    accountFingerprint: "account",
+    cliVersion: "test",
+    canonicalId: model,
+    variant: null,
+    launchToken: model,
+    aliases: [],
+    entitled: known(true, surface, timestamp),
+    hidden: unknown("surface-silent", surface, timestamp),
+    supportsEffort: provider === "claude"
+      ? known(true, surface, timestamp)
+      : unknown("surface-silent", surface, timestamp),
+    supportedEffortLevels: known(levels, surface, timestamp),
+    defaultEffort: provider === "codex"
+      ? known(levels[0]!, surface, timestamp)
+      : unknown("surface-silent", surface, timestamp),
+    observedAt: timestamp,
+  };
+}
+
+const discovery = (record: CapabilityRecord): CapabilityDiscoveryResult => ({
+  status: "ok" as const,
+  records: [record],
+  effectiveDefault: {
+    provider: record.provider,
+    model: known(record.canonicalId, record.provider === "claude"
+      ? "claude.initialize"
+      : "codex.model/list", timestamp),
+    effort: unknown("surface-silent", record.provider === "claude"
+      ? "claude.initialize"
+      : "codex.model/list", timestamp),
+  },
+});
 
 const fakeResolveModel = async (
   tool: Route["tool"],
@@ -376,7 +427,7 @@ describe("HiveSpawner name pool", () => {
         capabilityEpoch: 1,
         writeRevoked: true,
         executionIdentity: tool === "claude"
-          ? { tool, model }
+          ? { tool, model, effort: "high" }
           : { tool, model, effort: "high" },
       } satisfies AgentRecord;
       const controlQuota = makeControlQuota(root);
@@ -426,7 +477,7 @@ describe("HiveSpawner name pool", () => {
         : "--sandbox");
       expect(command).toContain(tool === "claude" ? "default" : "read-only");
       expect(command).toContain(model);
-      if (tool === "codex") expect(command).toContain("high");
+      expect(command).toContain("high");
       const restarted = store.getAgentById(controlled.id)!;
       expect(restarted.controlQuotaReservationId).toBeString();
       expect(
@@ -1288,6 +1339,127 @@ describe("HiveSpawner wiring", () => {
       model: "claude-opus-4-8",
     });
     expect(tmux.sessions[0]?.[2]).toContain("'--model' 'claude-opus-4-8'");
+  });
+
+  test("rejects an effort the selected model positively excludes before creating a worktree", async () => {
+    let created = false;
+    const record = capabilityRecord(
+      "claude",
+      "claude-opus-4-8",
+      ["low", "medium", "high"],
+    );
+    const spawner = new HiveSpawner({
+      db: new FakeStore(),
+      repoRoot: "/tmp/hive-effort-reject",
+      port: 4317,
+      config: { terminal: "auto", headless: true },
+      routing: async () => DEFAULT_ROUTING.deep,
+      routingPins: async () => ({}),
+      discoverCapabilities: async () => discovery(record),
+      tmux: new FakeTmux(),
+      terminal: new FakeTerminal(),
+      createWorktree: async () => {
+        created = true;
+        return { path: "/tmp/unused", branch: "hive/unused" };
+      },
+    });
+
+    await expect(spawner.spawn({
+      task: "Reject invalid effort",
+      tier: "deep",
+      model: "claude-opus-4-8",
+      effort: "max",
+    })).rejects.toThrow(
+      "supported effort levels are low, medium, high",
+    );
+    expect(created).toBe(false);
+  });
+
+  test("passes and persists explicit Claude effort on the real spawn path", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-spawner-effort-"));
+    tempRoots.push(root);
+    const store = new FakeStore();
+    const tmux = new FakeTmux();
+    const record = capabilityRecord(
+      "claude",
+      "claude-opus-4-8",
+      ["low", "medium", "high"],
+    );
+    const spawner = new HiveSpawner({
+      db: store,
+      repoRoot: root,
+      port: 4317,
+      config: { terminal: "auto", headless: true },
+      routing: async () => DEFAULT_ROUTING.deep,
+      routingPins: async () => ({}),
+      discoverCapabilities: async () => discovery(record),
+      tmux,
+      terminal: new FakeTerminal(),
+      createWorktree: async (_repoRoot, name, slug) => {
+        const path = join(root, name);
+        await mkdir(path, { recursive: true });
+        return { path, branch: `hive/${name}-${slug}` };
+      },
+      sleep: signalReadiness(store),
+      resolveModel: fakeResolveModel,
+    });
+
+    const spawned = await spawner.spawn({
+      task: "Launch explicit effort",
+      tier: "deep",
+      model: "claude-opus-4-8",
+      effort: "low",
+    });
+    expect(spawned.executionIdentity).toEqual({
+      tool: "claude",
+      model: "claude-opus-4-8",
+      effort: "low",
+    });
+    expect(tmux.sessions[0]?.[2]).toContain("'--effort' 'low'");
+  });
+
+  test("passes and persists explicit Codex effort on the real spawn path", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-spawner-codex-effort-"));
+    tempRoots.push(root);
+    const store = new FakeStore();
+    const tmux = new FakeTmux();
+    const record = capabilityRecord(
+      "codex",
+      "gpt-test",
+      ["low", "medium", "high", "ultra"],
+    );
+    const spawner = new HiveSpawner({
+      db: store,
+      repoRoot: root,
+      port: 4317,
+      config: { terminal: "auto", headless: true },
+      routing: async () => DEFAULT_ROUTING.standard,
+      routingPins: async () => ({}),
+      discoverCapabilities: async () => discovery(record),
+      tmux,
+      terminal: new FakeTerminal(),
+      createWorktree: async (_repoRoot, name, slug) => {
+        const path = join(root, name);
+        await mkdir(path, { recursive: true });
+        return { path, branch: `hive/${name}-${slug}` };
+      },
+      sleep: signalReadiness(store),
+      resolveModel: fakeResolveModel,
+    });
+
+    const spawned = await spawner.spawn({
+      task: "Launch explicit Codex effort",
+      tier: "standard",
+      tool: "codex",
+      model: "gpt-test",
+      effort: "ultra",
+    });
+    expect(spawned.executionIdentity).toEqual({
+      tool: "codex",
+      model: "gpt-test",
+      effort: "ultra",
+    });
+    expect(tmux.sessions[0]?.[2]).toContain("model_reasoning_effort=ultra");
   });
 
   test("an explicit claude model forces the claude tool off a codex-routed tier", async () => {

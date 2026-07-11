@@ -268,10 +268,9 @@ export const splitVariant = (
  *
  * Both fields are `Discovered` because both are genuinely missing on real
  * machines: a Codex install that never pinned a model reports `null`, and Claude
- * publishes no effort for any model, so a no-flag Claude launch has an effective
- * effort Hive cannot observe from any free surface. That gap is left as
- * `unknown` — filling it with a shipped constant is the invented-vendor-claim the
- * router design exists to prevent.
+ * publishes no effort in its discovery menu. Claude's effective value becomes
+ * observable only after launch through `statusLine`; it remains `unknown` here
+ * rather than acquiring a shipped constant before the session reports it.
  */
 export const EffectiveDefaultSchema = z.strictObject({
   provider: CapabilityProviderSchema,

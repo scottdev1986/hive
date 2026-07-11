@@ -193,10 +193,10 @@ function merge(base: CapabilityRecord, next: CapabilityRecord): CapabilityRecord
  *
  * Claude's `default` menu entry names its own resolved model, so this is a
  * discovered fact and not a Hive belief. Its effort is not: Claude publishes no
- * per-model effort recommendation anywhere, so the effective effort of an
- * unflagged Claude launch is unobservable from any free surface, and it stays
- * `unknown` here rather than acquiring a plausible `medium` (the open question in
- * the router design; phase 3 does not get to close it with a constant).
+ * per-model effort recommendation anywhere, so discovery cannot name the
+ * effective effort before launch. The running session later reports it through
+ * `statusLine`; it stays `unknown` here rather than acquiring a plausible
+ * `medium` before that observation exists.
  */
 export function claudeEffectiveDefault(
   records: readonly CapabilityRecord[],

@@ -41,9 +41,12 @@ import {
   type AgentMessage,
   type AgentRecord,
   type ExecutionIdentity,
+  type CapabilityRecord,
   type HiveConfig,
   type Route,
+  type RoutingPins,
   type RoutingTier,
+  splitVariant,
 } from "../schemas";
 import type { HiveDatabase } from "./db";
 import { readCodexTelemetry } from "./tool-telemetry";
@@ -61,6 +64,8 @@ import {
 import type { SpawnRequest, Spawner } from "./spawner";
 import type { QuotaRouteCandidate, QuotaService } from "./quota";
 import { agentTmuxSession } from "./tmux-sessions";
+import { validateEffort } from "./effort";
+import type { CapabilityDiscoveryResult } from "./capability-discovery";
 
 /**
  * Names an agent can be given. Human first names, because the user's interface
@@ -206,6 +211,9 @@ type TmuxSessionManager = Pick<
 >;
 type Sleep = (milliseconds: number) => Promise<void>;
 type ModelResolver = typeof resolveConcreteModel;
+type CapabilityDiscoverer = (
+  provider: "claude" | "codex",
+) => Promise<CapabilityDiscoveryResult>;
 
 /** The binary a launch argv will actually run, as `ps` will report it. */
 function launchedCommandName(argv: string[]): string {
@@ -247,6 +255,10 @@ export interface HiveSpawnerDependencies {
   keepWorktreeOnFailure?: boolean;
   sleep?: Sleep;
   resolveModel?: ModelResolver;
+  /** Live account capability records used only after the final model is chosen. */
+  discoverCapabilities?: CapabilityDiscoverer;
+  /** User pins before the shipped table is merged underneath them. */
+  routingPins?: () => Promise<RoutingPins>;
   /** Test seam for the daemon-resolved Claude binary. */
   claudeExecutable?: string;
   /** Reads the process table for the readiness probe's process-tree check.
@@ -599,6 +611,44 @@ export class HiveSpawner implements Spawner {
     }
   }
 
+  private async resolveSpawnEffort(
+    request: SpawnRequest,
+    route: Route,
+    tool: "claude" | "codex",
+    model: string,
+  ): Promise<string | undefined> {
+    const pins = await this.dependencies.routingPins?.() ?? {};
+    const pinned = pins[request.tier]?.[tool]?.effort;
+    const discoveryConfigured = this.dependencies.discoverCapabilities !== undefined;
+    const discovery = await this.dependencies.discoverCapabilities?.(tool);
+    const records = discovery?.status === "ok" ? discovery.records : [];
+    const base = splitVariant(model).base;
+    const record: CapabilityRecord | undefined = records.find((candidate) =>
+      candidate.launchToken === base || candidate.canonicalId === base ||
+      candidate.aliases.includes(model) || candidate.aliases.includes(base)
+    );
+
+    const requested = request.effort ?? pinned;
+    if (requested !== undefined) {
+      const validated = validateEffort(record, model, requested);
+      if (discoveryConfigured && validated.warning !== undefined) {
+        console.warn(validated.warning);
+      }
+      return validated.effort;
+    }
+    if (tool === "claude") return undefined;
+
+    const discoveredDefault = record?.defaultEffort.state === "known"
+      ? record.defaultEffort.value
+      : undefined;
+    const fallback = discoveredDefault ?? route.codex.effort ?? "medium";
+    const validated = validateEffort(record, model, fallback);
+    if (discoveryConfigured && validated.warning !== undefined) {
+      console.warn(validated.warning);
+    }
+    return validated.effort;
+  }
+
   /**
    * Spawned agents never launch with Channels, and the reason is structural
    * rather than a version gate.
@@ -634,7 +684,8 @@ export class HiveSpawner implements Spawner {
     const identity = agent.executionIdentity;
     if (
       identity === undefined || identity.model === "default" ||
-      identity.tool !== agent.tool || identity.model !== agent.model
+      identity.tool !== agent.tool || identity.model !== agent.model ||
+      (identity.tool === "claude" && identity.effort === undefined)
     ) {
       await this.failClosedControlRestart(
         agent,
@@ -722,6 +773,7 @@ export class HiveSpawner implements Spawner {
         argv = buildClaudeSpawnCommand({
           daemonPort: this.dependencies.port,
           model: identity.model,
+          effort: identity.effort,
           name: agent.name,
           readOnly,
           worktreePath: agent.worktreePath,
@@ -1106,6 +1158,14 @@ export class HiveSpawner implements Spawner {
     let model = request.model ?? await this.modelResolver(tool, configuredRoute);
     let executionIdentity: ExecutionIdentity | undefined;
     let quotaReservationId: string | undefined;
+    let effort: string | undefined;
+    let effortResolved = false;
+    // An explicit model is the sole candidate, so its capability eligibility is
+    // knowable before quota. Reject it before reserving any capacity.
+    if (request.model !== undefined) {
+      effort = await this.resolveSpawnEffort(request, configuredRoute, tool, model);
+      effortResolved = true;
+    }
     if (this.dependencies.quota?.config.enabled === true) {
       let candidates: QuotaRouteCandidate[];
       if (request.model !== undefined) {
@@ -1150,13 +1210,32 @@ export class HiveSpawner implements Spawner {
       model = decision.model;
       quotaReservationId = decision.reservation.id;
     }
+    if (!effortResolved) {
+      try {
+        effort = await this.resolveSpawnEffort(
+          request,
+          configuredRoute,
+          tool,
+          model,
+        );
+      } catch (error) {
+        if (quotaReservationId !== undefined) {
+          await this.dependencies.quota?.cancel(quotaReservationId);
+        }
+        throw error;
+      }
+    }
     if (model !== "default") {
       executionIdentity = tool === "claude"
-        ? { tool, model }
+        ? {
+            tool,
+            model,
+            ...(effort === undefined ? {} : { effort }),
+          }
         : {
             tool,
             model,
-            effort: configuredRoute.codex.effort ?? "medium",
+            effort: effort ?? "medium",
           };
     }
     let worktree: CreatedWorktree;
@@ -1283,6 +1362,7 @@ export class HiveSpawner implements Spawner {
         argv = buildClaudeSpawnCommand({
           daemonPort: this.dependencies.port,
           model,
+          ...(effort === undefined ? {} : { effort }),
           name,
           readOnly: false,
           dangerous,
@@ -1308,7 +1388,7 @@ export class HiveSpawner implements Spawner {
             )
           : buildCodexSpawnCommand({
               daemonPort: this.dependencies.port,
-              effort: configuredRoute.codex.effort ?? "medium",
+              effort: effort ?? "medium",
               model,
               name,
               readOnly: false,
@@ -1347,7 +1427,7 @@ export class HiveSpawner implements Spawner {
             record,
             prompt,
             false,
-            configuredRoute.codex.effort ?? "medium",
+            effort ?? "medium",
           );
         } catch (error) {
           // The binary advertised app-server support but the control process
@@ -1369,7 +1449,7 @@ export class HiveSpawner implements Spawner {
           });
           const fallback = buildCodexSpawnCommand({
             daemonPort: this.dependencies.port,
-            effort: configuredRoute.codex.effort ?? "medium",
+            effort: effort ?? "medium",
             model,
             name,
             readOnly: false,

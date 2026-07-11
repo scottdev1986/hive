@@ -87,7 +87,10 @@ export interface Resolved<T> {
  */
 export const RoutingPinSchema = z.looseObject({
   tool: z.enum(["claude", "codex"]).optional(),
-  claude: z.looseObject({ model: z.string().min(1).optional() }).optional(),
+  claude: z.looseObject({
+    model: z.string().min(1).optional(),
+    effort: z.string().min(1).optional(),
+  }).optional(),
   codex: z.looseObject({
     model: z.string().min(1).optional(),
     effort: z.string().min(1).optional(),
@@ -604,10 +607,9 @@ function effortLadder(
   input: DerivationInput,
   warn: (message: string) => void,
 ): Resolved<string> {
-  // 1. The cell's pinned effort. (`routing.toml` carries effort on Codex cells
-  //    only, so on Claude this rung cannot exist — the schema has no field.)
-  const pinned = input.pins[tier]?.codex?.effort;
-  if (provider === "codex" && pinned !== undefined) {
+  // 1. The cell's pinned effort: a standing user directive on either vendor.
+  const pinned = input.pins[tier]?.[provider]?.effort;
+  if (pinned !== undefined) {
     return {
       value: pinned,
       layer: "pinned",
@@ -683,16 +685,16 @@ function effortLadder(
   }
 
   // 5. Nothing. On Claude this is the common case and it is not a failure: Hive
-  //    passes no effort flag, and what the CLI then uses is unobservable from any
-  //    free surface. The identity is incomplete on that axis, and saying so is
-  //    the only honest option — a shipped `medium` here would be a Hive guess
-  //    wearing a vendor's authority.
+  //    passes no effort flag. Discovery cannot name what the CLI will use; the
+  //    first live statusLine observation completes identity after launch. A
+  //    shipped `medium` here would still be a Hive guess wearing the vendor's
+  //    authority.
   return {
     value: null,
     layer: "unknown",
     reason: provider === "claude"
       ? "claude publishes no per-model default effort and no tier default is " +
-        "set; hive passes no flag, and the effective value is unobservable"
+        "set; hive passes no flag and awaits the live statusLine observation"
       : "no layer names an effort",
   };
 }
