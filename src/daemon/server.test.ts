@@ -1391,10 +1391,13 @@ describe("HiveDaemon HTTP server", () => {
     try {
       await daemon.refreshToolTelemetry();
 
-      // Claude context% comes from the transcript sensor; status untouched.
+      // Claude context% comes from statusline (POST /statusline), never from
+      // this sweep — readClaudeTelemetry can only ever report null, so the
+      // sweep leaves the row's contextPct exactly as it found it, even though
+      // the injected reader here returns 42. Status is still updated.
       expect(db.getAgentByName("maya")).toMatchObject({
         status: "working",
-        contextPct: 42,
+        contextPct: 14,
       });
       // A fresh rollout is proof of codex life: the stuck spawning row
       // becomes working and its lastEventAt tracks the artifact.
@@ -2066,6 +2069,62 @@ describe("the model an agent is actually running", () => {
     }
   });
 
+  test("a statusline report lands Claude's own occupancy figure on the agent row", async () => {
+    const db = new HiveDatabase(join(home, "statusline-context-pct.db"));
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new StubSpawner(),
+      quota: {
+        setAlertSink: () => {},
+        ledger: new QuotaLedger(db),
+        observeStatusline: async () => null,
+      } as unknown as QuotaService,
+    });
+    try {
+      db.insertAgent(
+        agent({ id: "agent-maya", name: "maya", tool: "claude", contextPct: null }),
+      );
+      expect(db.getAgentByName("maya")?.contextPct).toBeNull();
+
+      const response = await actingAs(daemon, "maya", "writer")(
+        "http://hive/statusline",
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            agent: "maya",
+            contextWindow: 1_000_000,
+            contextUsedPct: 28,
+          }),
+        },
+      );
+      expect(response.status).toBe(200);
+      // This is the one field the daemon never re-derives: Claude Code measured
+      // it against the account's real window, so the report lands verbatim.
+      expect(db.getAgentByName("maya")?.contextPct).toBe(28);
+
+      // A second report with no context block at all — an API-key account, or a
+      // render before the session's first response — must not erase the reading
+      // that's already standing.
+      const followUp = await actingAs(daemon, "maya", "writer")(
+        "http://hive/statusline",
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            agent: "maya",
+            fiveHour: { usedPct: 5, resetsAt: null },
+          }),
+        },
+      );
+      expect(followUp.status).toBe(200);
+      expect(db.getAgentByName("maya")?.contextPct).toBe(28);
+    } finally {
+      await daemon.stop();
+      db.close();
+    }
+  });
+
   test("a Codex agent is never relabelled from a Claude transcript in its worktree", async () => {
     const db = new HiveDatabase(join(home, "live-model-none.db"));
     const worktreePath = mkdtempSync(join(tmpdir(), "hive-lucas-"));
@@ -2227,6 +2286,11 @@ describe("an unobservable agent reads unknown, never 0", () => {
       spawner: new StubSpawner(),
       tmux: new FakeDaemonTmux(),
       telemetryReaders: {
+        // A reader that returns a plausible-looking number, to prove the sweep
+        // does not consult it at all for this tool: readClaudeTelemetry can
+        // structurally only ever report null (tool-telemetry.ts), and the sweep
+        // must not use "the reader said something" as license to touch the
+        // field it does not own for Claude.
         claude: async () => ({ contextPct: 22, lastActivityAt: null }),
         // lucas, live: a Codex agent whose rollout carries no usable token count.
         // This is the real one — he did real work and Hive reported 0%.
@@ -2245,11 +2309,24 @@ describe("an unobservable agent reads unknown, never 0", () => {
       // observation used to be skipped as "no new information".
       contextPct: 0,
     }));
-    db.insertAgent(agent({ name: "maya", tool: "claude", status: "working" }));
+    db.insertAgent(agent({
+      id: "agent-maya",
+      name: "maya",
+      tool: "claude",
+      status: "working",
+      // Stands in for a value the statusline handler already landed on this
+      // row. The sweep must leave it alone: for Claude, statusline is the sole
+      // source of truth (POST /statusline -> receiveStatusline), and a sweep
+      // that overwrote it every ~30s with this reader's null would make
+      // contextPct flicker false-unknown between renders — corrupting reuse
+      // decisions, since null marks an agent ineligible for reuse.
+      contextPct: 55,
+    }));
     try {
       await daemon.refreshToolTelemetry();
 
-      // Unknown is an observation, and it overwrites the fiction.
+      // Unknown is an observation, and it overwrites the fiction — for Codex,
+      // whose rollout really is this sweep's only source of truth.
       const lucas = db.getAgentByName("lucas")!;
       expect(lucas.contextPct).toBeNull();
       // The user's acceptance test: never 0.
@@ -2257,8 +2334,9 @@ describe("an unobservable agent reads unknown, never 0", () => {
       expect(formatStatusTable([lucas])).toContain("—");
       expect(formatStatusTable([lucas])).not.toContain("0%");
 
-      // And a real reading is still a real reading.
-      expect(db.getAgentByName("maya")?.contextPct).toBe(22);
+      // For Claude, the sweep is not a source of truth to record, only a
+      // stand-in for one that does not exist. It must not touch the row.
+      expect(db.getAgentByName("maya")?.contextPct).toBe(55);
     } finally {
       db.close();
     }

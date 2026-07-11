@@ -902,12 +902,20 @@ export class HiveDaemon {
         current.status === "done" || current.status === "failed"
       ) continue;
       const updates: Partial<AgentRecord> = {};
-      // The sweep writes what it *observed*, including "nothing". A null used to
-      // be skipped as "no new information", which quietly meant the last number
-      // stood forever — and for an agent whose telemetry can never be read, the
-      // number that stood forever was the 0 it was born with. Unknown is a
-      // finding, not the absence of one, so it is recorded like any other.
-      if (telemetry.contextPct !== current.contextPct) {
+      // The sweep writes what it *observed*, including "nothing" — a null used
+      // to be skipped as "no new information", which quietly meant the last
+      // number stood forever, and for an agent whose telemetry can never be
+      // read, the number that stood forever was the 0 it was born with. Unknown
+      // is a finding, not the absence of one, so it is recorded like any other.
+      //
+      // Except for Claude: readClaudeTelemetry structurally reports nothing but
+      // null forever (tool-telemetry.ts) because this sweep cannot know the
+      // real context window, only the statusline payload can. For that tool the
+      // sweep is not a source of truth to record, only a stand-in for one that
+      // does not exist — applying it here would overwrite the statusline
+      // handler's real reading with null on every tick, and a null contextPct
+      // marks an agent ineligible for reuse, so the flicker is not cosmetic.
+      if (current.tool !== "claude" && telemetry.contextPct !== current.contextPct) {
         updates.contextPct = telemetry.contextPct;
       }
       // The model the agent is *running*. The statusline handler observes this
@@ -1483,6 +1491,13 @@ export class HiveDaemon {
         { status: 404 },
       );
     }
+    // The one write this route exists for (tool-telemetry.ts): Claude's own
+    // occupancy figure, landed on the row exactly as measured. Nothing else
+    // ever supplies it for this tool — the transcript-tail heuristic was
+    // deliberately retired because the window it divided by was a guess.
+    if (parsed.data.contextUsedPct !== undefined) {
+      this.reconcileContextPct(agent.name, parsed.data.contextUsedPct);
+    }
     // Bind this observation to the model the agent is *running*, not the one it
     // was spawned with. `agent.model` is a spawn-time intention that a `/model`
     // inside the session silently invalidates, and quota charged to a model
@@ -1525,6 +1540,20 @@ export class HiveDaemon {
    * time. Spawning with a model alias (`sonnet`) re-keys on the first statusLine
    * report — the live model is the canonical id — so this leaked once per agent.
    */
+  /**
+   * Land Claude Code's own occupancy figure onto the agent row.
+   *
+   * Re-reads before writing for the same reason `followReservationRekey`
+   * does: the sweep and this handler both land on this row, and a stale
+   * `agent` captured earlier in the request would clobber a concurrent
+   * update instead of merging with it.
+   */
+  private reconcileContextPct(name: string, contextUsedPct: number): void {
+    const current = this.db.getAgentByName(name);
+    if (current === null || current.contextPct === contextUsedPct) return;
+    this.db.upsertAgent({ ...current, contextPct: contextUsedPct });
+  }
+
   private followReservationRekey(name: string): void {
     const held = this.quota?.ledger.getActiveReservationForAgent(name);
     if (held === undefined || held === null) return;
