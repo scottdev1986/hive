@@ -192,6 +192,29 @@ The honest reading of that is neither "they are past the line" nor "so it does n
 
 That is the real finding, and it is worse than a wrong threshold: **Hive is flying four long-lived agents deep into unmeasured territory with a broken instrument.** Whether they are actually degraded is the open question below — and it is answerable, because their work is on branches and can be reviewed.
 
+## Triage: what to do with an agent already at 472K
+
+The design above is about not getting here. But Hive *is* here — four agents between 366K and 472K, mid-wave, doing work that looks excellent — and "what do I do with them right now" is a different question from "what should the rule have been." It is also the question the literature does not answer, so what follows is reasoning from the evidence rather than a finding, and is labelled as such.
+
+**First: the economics reverse at this depth, and that is the part everyone gets backwards.** The false-economy warning in this document is aimed at recycling agents at 120–200K, where a respawn needs 12–27 turns of remaining work just to break even. At 472K it inverts. Shedding ~412K of context saves about $0.21/turn against a restart cost of ~$0.81, so **a respawn amortizes in roughly four turns of remaining work** (INFERRED, arithmetic per the break-even formula above). At this depth, recycling is *cheap*. The reason not to recycle zoe is not cost. It never was.
+
+**Second: do not ask a 472K agent to summarize itself.** This is the trap, and it is the one Hive's current SPEC walks straight into by having the outgoing agent write its own handoff. If the agent is degraded, its self-report is the *least* trustworthy artifact it owns — Cognition's finding on exactly this was that "the model didn't know what it didn't know," and that self-authored notes were not a substitute for a proper compaction pass. Worse, an agent that can sense an incoming kill exhibits context anxiety and starts cutting corners *before* it writes anything. And a bad summary is measurably worse than no summary at all. So the handoff for a deep agent must be reconstructed from sources that **cannot** have degraded:
+
+1. **The worktree** — `git diff --stat`, changed files, HEAD, the last test run and its exit code. Computed, not narrated. It cannot hallucinate no matter what state the agent is in.
+2. **The original spawn brief**, still in run state. The constraints and the goal were written before the agent existed and never degraded. Pin them verbatim; do not let the agent restate them.
+3. **A fresh summarizer** reading the transcript — not the incumbent. Summarizer quality alone is worth 6.5 points (CompactionRL), and a fresh summarizer is not self-conditioned on the incumbent's own errors.
+
+**Third, and this is the decision rule I would actually use:** the question is not "is zoe degraded?" — which Hive cannot currently answer — but "**is zoe still better than her replacement?**" And that has a number. A fresh agent with *nothing but the worktree* solves 46.4% of interrupted coding tasks; with a good structured handoff, ~51%. Those are the replacement baselines. An incumbent is worth keeping only while it beats them. This reframes the whole problem usefully: there is no quality *line* to cross, but there is a **quality floor to fall below**, and the floor is not zero — it is a competent fresh agent reading the same repo. That floor is knowable, it does not depend on any threshold anyone invented, and it is the only version of "too degraded" that has a measurement behind it.
+
+**So, concretely, for the four agents on the desk (judgement, not finding):**
+
+- **Do not interrupt them mid-task.** The task boundary is a free recycle point — no handoff to write, no context to reconstruct, no cold-spawn toll, and no risk of a degraded agent authoring its own succession. Let them finish and land. Everything about the economics and the evidence says the cheapest correct moment to retire an agent is the moment it is done, and all four are close enough to that moment that manufacturing an earlier one buys nothing.
+- **Do not give them anything new.** This is the admission-control half of the rule and it is free to apply immediately, today, with no code change: an agent at 472K should not be handed another task, and the reason zoe reached 472K in the first place is that nothing stopped work being added to her. Follow-ups to a deep agent are the mechanism by which agents get deep.
+- **Retire them at completion rather than reusing them**, even though they are warm and the reuse rule would otherwise favour them. At this depth the cache saving no longer justifies the risk, and the break-even is four turns.
+- **Check whether the fear is even real** — see the open question below. Their work is on branches; review it against a shallow agent's. That check costs one review and would tell Hive more about its own curve than every citation in this document.
+
+The honest summary for the orchestrator: **you were not wrong to keep them working, and you are not wrong to be worried now.** The mistake was never a missing threshold — it was that Hive had no admission control, so work kept flowing to agents that had no room for it, and no instrument that could have told anyone. Fix the admission side and the retirement side mostly takes care of itself, because agents that are never overloaded retire at task end for free.
+
 ## What Hive should do
 
 Nothing in this section is implemented, and one clarification is owed first, because it changes what the live risk actually is.
