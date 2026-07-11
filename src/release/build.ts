@@ -21,8 +21,9 @@
  * rewrite the signature into the Mach-O and stapling rewrites the app bundle, so
  * the SHA-256 the manifest records must be of the final, signed, stapled bytes —
  * the exact bytes `hive update` will re-hash on the way in. With no Developer ID
- * in the environment this step is skipped entirely and the artifacts are the
- * unsigned ones the pipeline publishes today.
+ * in the environment this step is skipped entirely and the artifacts go out
+ * unsigned — the graceful-degradation path for a fork, not the one Hive's own
+ * pipeline takes.
  */
 import { createHash } from "node:crypto";
 import { mkdir, rm, writeFile } from "node:fs/promises";

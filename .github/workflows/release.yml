@@ -224,6 +224,20 @@ jobs:
           HIVE_RELEASE_PRIVATE_KEY: ${{ secrets.HIVE_RELEASE_PRIVATE_KEY }}
         run: bun run scripts/signing/sign-manifest.ts dist/hive-release.json
 
+      # Prove the release we are about to publish is one the client will accept.
+      # Verification is fail-closed, so a public/private key pair that disagree —
+      # a bad paste into a secret, a half-finished rotation — would publish a
+      # release that EVERY installed hive refuses, including the ones that would
+      # have carried the fix. Silent at build time, total at update time. This
+      # runs the client's own verifyManifest against the key that was actually
+      # embedded, before the tag exists, so the failure costs a build and not a
+      # version number.
+      - name: Verify the manifest signature the client will check
+        if: steps.plan.outputs.action == 'release'
+        env:
+          HIVE_RELEASE_PUBLIC_KEY: ${{ secrets.HIVE_RELEASE_PUBLIC_KEY }}
+        run: bun run scripts/signing/verify-manifest.ts dist/hive-release.json
+
       # The Gatekeeper gate, on the exact bytes a user downloads: codesign
       # --verify --strict everywhere, codesign --check-notarization on the CLI
       # slices (spctl rejects any bare Mach-O, notarized or not), and spctl

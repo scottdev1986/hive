@@ -26,8 +26,8 @@ export interface NoticeContext {
 }
 
 const ESC = "\u001B";
-const dim = (text: string): string => `${ESC}[2m${text}${ESC}[0m`;
-const yellow = (text: string): string => `${ESC}[33m${text}${ESC}[0m`;
+export const dim = (text: string): string => `${ESC}[2m${text}${ESC}[0m`;
+export const yellow = (text: string): string => `${ESC}[33m${text}${ESC}[0m`;
 
 /**
  * The body of an update-available notice, before colour. Split out because

@@ -33,6 +33,9 @@ import {
   inspectDaemonForUpdate,
   restartStaleDaemon,
 } from "../update/daemon";
+import { startDownload } from "../update/progress";
+import { yellow } from "../update/notice";
+import { releaseKeys, selectArtifact, verifyManifest } from "../release/manifest";
 import { expectedDaemonHandshake } from "../daemon/handshake";
 import { isRunning } from "../daemon/lifecycle";
 import { fetchAgentStatus } from "./mcp";
@@ -104,6 +107,20 @@ function guardSelfUpdate(): void {
   }
 }
 
+/**
+ * The trust posture, stated as a consequence rather than a fact about a
+ * variable. "embedded" tells the reader nothing they can act on; "signatures are
+ * required" tells them what this binary will and will not install.
+ */
+function describeKeys(): string {
+  const keys = releaseKeys(HIVE_RELEASE_PUBLIC_KEY);
+  if (keys.length === 0) {
+    return "none — this build cannot verify a release signature";
+  }
+  const count = keys.length === 1 ? "1 key" : `${keys.length} keys`;
+  return `embedded (${count}) — a valid signature is required to install`;
+}
+
 export async function printUpdateStatus(): Promise<void> {
   const root = installRoot();
   const state = readInstallState(root);
@@ -114,7 +131,7 @@ export async function printUpdateStatus(): Promise<void> {
     `commit:         ${HIVE_COMMIT}`,
     `install:        ${method}`,
     `release build:  ${IS_RELEASE_BUILD ? "yes" : "no (source checkout)"}`,
-    `signature key:  ${HIVE_RELEASE_PUBLIC_KEY === null ? "not embedded — releases are unsigned" : "embedded"}`,
+    `signature key:  ${describeKeys()}`,
     `active:         ${state.active ?? "unknown"}`,
     `retained:       ${state.previous ?? "none"}`,
     `last check:     ${cache === null ? "never" : new Date(cache.checkedAt).toISOString()}`,
@@ -196,6 +213,33 @@ async function stopStaleDaemonAfterActivation(): Promise<void> {
   );
 }
 
+/**
+ * What was actually checked, said plainly.
+ *
+ * "downloaded and verified" — the old line — names no check and so cannot be
+ * wrong, which is exactly what is wrong with it. A user deciding whether to
+ * trust a binary that is about to replace itself deserves the two facts that
+ * decision rests on: the manifest carried a signature we could trace to the key
+ * baked into this binary, and the bytes on disk hash to what that signed
+ * manifest said they would.
+ *
+ * The unsigned branch gets the opposite treatment. It is not a footnote; it is
+ * the single most important thing on the screen, because it means nothing proves
+ * the release came from Hive at all.
+ */
+function verifiedLine(version: string, signed: boolean, sha256: string): string {
+  const digest = sha256.slice(0, 12);
+  return signed
+    ? `hive ${version} staged — signature verified (Hive release key), sha256 ${digest} matched.`
+    : `hive ${version} staged — sha256 ${digest} matched, but the release is UNSIGNED.`;
+}
+
+/** Loud, and on a line of its own. A `warning:` prefix on stderr is missable. */
+function announceUnsigned(warning: string, isTTY: boolean): void {
+  const body = `UNSIGNED RELEASE: ${warning}.`;
+  console.error(isTTY ? yellow(body) : body);
+}
+
 export async function runUpdate(requested?: string): Promise<void> {
   guardSelfUpdate();
   const root = installRoot();
@@ -210,6 +254,27 @@ export async function runUpdate(requested?: string): Promise<void> {
     return;
   }
 
+  // Verify the manifest *before* asking whether there is anything to download.
+  //
+  // Staging is where verification used to live, and staging is skipped when the
+  // version is already on disk — so a version staged by an older, keyless build
+  // (or left behind by a crashed run) could be activated by this one with no
+  // signature check at any point. The trust gate cannot be something an earlier
+  // crash gets to skip. The manifest bytes are already in hand, so checking here
+  // costs nothing; `stageRelease` still checks again for callers that reach it
+  // directly.
+  const trust = verifyManifest(
+    source.manifestBytes,
+    source.signature,
+    HIVE_RELEASE_PUBLIC_KEY,
+  );
+  if (!trust.verified) {
+    throw new UpdateError(`Refusing update: ${trust.reason}`);
+  }
+  if (!trust.signed) {
+    announceUnsigned(trust.warning, process.stderr.isTTY === true);
+  }
+
   if (!isStaged(version, root)) {
     const staged = await stageRelease({
       manifest: source.manifest,
@@ -220,13 +285,16 @@ export async function runUpdate(requested?: string): Promise<void> {
       download: source.download,
       probeVersion,
       unpackApp,
+      progress: (artifact) => startDownload(artifact.name, artifact.size),
     });
-    if (staged.warning !== null) {
-      console.error(`warning: ${staged.warning}`);
-    }
-    console.log(`hive ${version} downloaded and verified.`);
+    console.log(verifiedLine(version, staged.signed, staged.cliSha256));
   } else {
-    console.log(`hive ${version} is already staged.`);
+    const cli = selectArtifact(source.manifest, "cli", arch());
+    console.log(
+      cli === null
+        ? `hive ${version} is already staged.`
+        : `${verifiedLine(version, trust.signed, cli.sha256)} (already staged)`,
+    );
   }
 
   // The activation half, only when the control plane is provably idle.

@@ -38,10 +38,16 @@ export const HIVE_BUILD_DATE = defined(process.env.HIVE_BUILD_DATE) ?? "unknown"
 export const HIVE_BUILD_HASH = defined(process.env.HIVE_BUILD_HASH);
 
 /**
- * Base64 SPKI DER of the offline Ed25519 release key. Absent until Scott
- * generates one. Its absence is not a silent downgrade: `hive update` says out
- * loud that the release is unsigned, and once this is embedded, verification
- * becomes mandatory with no other code change.
+ * Base64 SPKI DER of the offline Ed25519 release key — or several, comma-
+ * separated, which is how a key is rotated without a flag day (see
+ * release/manifest.ts). Inlined at build time, so a release binary's trust
+ * anchor cannot be changed by exporting an environment variable at it; that
+ * immutability is the entire point of pinning rather than trusting on first use.
+ *
+ * Null only in a source checkout and in releases before 0.0.6, which predate the
+ * key. Where it is set, `verifyManifest` is mandatory and fail-closed. Where it
+ * is not, `hive update` says out loud that nothing proves the manifest came
+ * from us.
  */
 export const HIVE_RELEASE_PUBLIC_KEY = defined(process.env.HIVE_RELEASE_PUBLIC_KEY);
 

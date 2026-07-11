@@ -25,7 +25,11 @@ Read [docs/versioning-and-release.md](../../../docs/versioning-and-release.md) b
 
 **Never kill a daemon you have not proven is yours and idle.** `handshakeMismatch` reports the *first* differing field, and product version sorts before project identity — so acting on that string alone can kill another project's daemon. Compare `hiveUuid` first, explicitly. An unreadable agent list means the team is live, not idle.
 
-**Signature verification fails closed.** Once a release public key is embedded, a missing signature is a refusal, never a downgrade to "unsigned is fine".
+**Signature verification fails closed.** The release public key is embedded (it is a comma-separated *list*, so a key can be rotated without a flag day). A missing, altered, or foreign signature is a refusal — never a downgrade to "unsigned is fine". The keyless branch exists only for a source checkout and for releases before 0.0.6, and it says so out loud; it must never become reachable from a current release.
+
+**Say what you actually verified.** `hive update` names the checks it ran — signature *and* digest — rather than claiming a vague "verified". It must never overclaim, and an unsigned path must announce itself loudly rather than as a missable `warning:` line.
+
+**Show the download.** Release assets are tens of megabytes. Stream them, report progress against the size the signed manifest already carries, and degrade honestly: no invented percentage without a `Content-Length`, and no ANSI or carriage returns off a TTY.
 
 ## Before you finish
 

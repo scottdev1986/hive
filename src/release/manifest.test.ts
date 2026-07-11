@@ -4,6 +4,7 @@ import {
   artifactMatches,
   parseReleaseManifest,
   selectArtifact,
+  releaseKeys,
   sha256,
   verifyManifest,
   type ReleaseManifest,
@@ -138,5 +139,58 @@ describe("manifest signature", () => {
 
   test("a garbage public key is a refusal, not a crash", () => {
     expect(verifyManifest(bytes, "AAAA", "not-a-key")).toMatchObject({ verified: false });
+  });
+});
+
+/**
+ * Rotation is the reason the embedded key is a *list*. A release that trusts
+ * {old, new} is the bridge between the release that introduces a key and the
+ * release that starts signing with it, so no single release is the one where
+ * every installation must update or brick.
+ */
+describe("key rotation", () => {
+  const bytes = new TextEncoder().encode(JSON.stringify(manifest));
+
+  test("splits a comma-separated key list and ignores the whitespace", () => {
+    expect(releaseKeys("aaa, bbb ,ccc")).toEqual(["aaa", "bbb", "ccc"]);
+    expect(releaseKeys(null)).toEqual([]);
+    expect(releaseKeys("")).toEqual([]);
+  });
+
+  test("accepts a signature from either key while both are trusted", () => {
+    const old = releaseKey();
+    const next = releaseKey();
+    const both = `${old.publicKey},${next.publicKey}`;
+
+    // Mid-rotation: releases are still signed with the old key.
+    expect(verifyManifest(bytes, old.signBytes(bytes), both))
+      .toMatchObject({ verified: true, signed: true });
+    // Rotation complete: the same binary accepts the new key with no update.
+    expect(verifyManifest(bytes, next.signBytes(bytes), both))
+      .toMatchObject({ verified: true, signed: true });
+  });
+
+  test("a key outside the list is still refused — the list widens trust, it does not remove it", () => {
+    const trusted = releaseKey();
+    const attacker = releaseKey();
+    expect(verifyManifest(bytes, attacker.signBytes(bytes), trusted.publicKey))
+      .toMatchObject({ verified: false });
+    expect(
+      verifyManifest(bytes, attacker.signBytes(bytes), `${trusted.publicKey},${releaseKey().publicKey}`),
+    ).toMatchObject({ verified: false });
+  });
+
+  test("once the old key is dropped, its signature stops verifying", () => {
+    const old = releaseKey();
+    const next = releaseKey();
+    expect(verifyManifest(bytes, old.signBytes(bytes), next.publicKey))
+      .toMatchObject({ verified: false });
+  });
+
+  test("a valid key alongside a malformed one still verifies", () => {
+    // A broken entry in the list must not take the working key down with it.
+    const good = releaseKey();
+    expect(verifyManifest(bytes, good.signBytes(bytes), `not-a-key,${good.publicKey}`))
+      .toMatchObject({ verified: true, signed: true });
   });
 });

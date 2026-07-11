@@ -9,9 +9,10 @@
  *
  * Everything here is gated on `signingConfigFromEnv` returning non-null. When
  * the CI secrets are absent it returns null, `build.ts` skips every call below,
- * and the pipeline publishes exactly the unsigned artifacts it does today — no
- * flag to flip, no second code path to forget. The moment the secrets exist the
- * same build signs, notarizes, staples, and verifies with no other change.
+ * and the pipeline publishes unsigned artifacts — no flag to flip, no second
+ * code path to forget. Hive's own repository has the secrets set, so its
+ * releases take the signed path; the unsigned branch is what a fork gets, and it
+ * degrades to a working build rather than a broken one.
  *
  * Two facts were verified against real tool behaviour on macOS, not memory, and
  * both are load-bearing:

@@ -14,6 +14,7 @@ import {
   parseReleaseManifest,
   type ReleaseManifest,
 } from "../release/manifest";
+import type { ProgressCallback } from "./progress";
 import { HIVE_UPDATE_REPO } from "../version";
 
 const DOWNLOAD_TIMEOUT_MS = 10 * 60 * 1000;
@@ -33,16 +34,72 @@ export interface ReleaseSource {
   /** Exact bytes fetched — key order and whitespace are part of the signature. */
   readonly manifestBytes: Uint8Array;
   readonly signature: string | null;
-  readonly download: (assetName: string) => Promise<Uint8Array>;
+  readonly download: (
+    assetName: string,
+    onProgress?: ProgressCallback,
+  ) => Promise<Uint8Array>;
 }
 
-async function bytes(url: string, fetcher: typeof fetch): Promise<Uint8Array> {
+/**
+ * Read a response body chunk by chunk rather than buffering it whole.
+ *
+ * `response.arrayBuffer()` — what this used to be — cannot report progress even
+ * in principle: it resolves once, at the end. Streaming is what makes a bar
+ * possible at all, and it is also what lets us notice a truncated transfer at
+ * the moment the body ends rather than after the SHA-256 of a short file fails
+ * to explain itself.
+ *
+ * `Content-Length` is the server's claim about the body, not the manifest's.
+ * We report it as-is (null when absent) and let the caller reconcile it with the
+ * signed size; conflating the two here would hide the disagreement that matters.
+ */
+async function bytes(
+  url: string,
+  fetcher: typeof fetch,
+  onProgress?: ProgressCallback,
+): Promise<Uint8Array> {
   const response = await fetcher(url, {
     headers: { Accept: "application/octet-stream" },
     signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
   });
   if (!response.ok) throw new Error(`${url} returned ${response.status}`);
-  return new Uint8Array(await response.arrayBuffer());
+
+  const header = response.headers.get("content-length");
+  const declared = header === null ? null : Number.parseInt(header, 10);
+  const total = declared !== null && Number.isSafeInteger(declared) && declared >= 0
+    ? declared
+    : null;
+
+  if (response.body === null) {
+    // No stream to read (a mocked or bodiless response). Fall back rather than
+    // fail: the digest check downstream is what actually guards the bytes.
+    const buffered = new Uint8Array(await response.arrayBuffer());
+    onProgress?.(buffered.byteLength, total ?? buffered.byteLength);
+    return buffered;
+  }
+
+  const chunks: Uint8Array[] = [];
+  let read = 0;
+  onProgress?.(0, total);
+  for await (const chunk of response.body as AsyncIterable<Uint8Array>) {
+    chunks.push(chunk);
+    read += chunk.byteLength;
+    onProgress?.(read, total);
+  }
+
+  if (total !== null && read !== total) {
+    throw new Error(
+      `${url} sent ${read} bytes but declared ${total}; the download was truncated`,
+    );
+  }
+
+  const body = new Uint8Array(read);
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return body;
 }
 
 /** Resolve a release (latest, or an exact `0.0.4`) into verifiable bytes. */
@@ -90,12 +147,12 @@ export async function githubReleaseSource(
     manifest,
     manifestBytes,
     signature,
-    download: async (assetName: string) => {
+    download: async (assetName: string, onProgress?: ProgressCallback) => {
       const url = assetUrl(assetName);
       if (url === null) {
         throw new Error(`release ${release.tag_name} publishes no ${assetName}`);
       }
-      return bytes(url, fetcher);
+      return bytes(url, fetcher, onProgress);
     },
   };
 }

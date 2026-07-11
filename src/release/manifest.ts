@@ -8,12 +8,27 @@
  * release. A notarized binary served from the wrong manifest is still the wrong
  * update.
  *
- * Until Scott generates the offline release key, `HIVE_RELEASE_PUBLIC_KEY` is
- * absent and the trust anchor is GitHub's immutable release plus TLS plus the
- * SHA-256 in this manifest. That is weaker, and `hive update` says so out loud
- * rather than implying a signature it never checked. The moment a key is
- * embedded, `verifyManifest` becomes mandatory and fail-closed with no other
- * code change — which is why the signature field exists before the key does.
+ * The offline Ed25519 key exists and every release since 0.0.6 is signed with
+ * it: the public half is inlined into each binary at build time, the private
+ * half lives only as a CI secret and touches only `scripts/signing/sign-manifest.ts`.
+ * Verification is therefore mandatory and fail-closed — a build that knows the
+ * key refuses a manifest that is unsigned, altered, or signed by anything else.
+ * A stripped `.sig` is a refusal, not a downgrade, because the alternative is an
+ * attacker choosing our verification policy for us.
+ *
+ * A build with *no* key embedded (a source checkout, or a release from before
+ * 0.0.6) still takes the unsigned branch and says so out loud rather than
+ * implying a signature it never checked. That branch must never be reachable
+ * from a current release, and `hive update status` names which one you are on.
+ *
+ * `HIVE_RELEASE_PUBLIC_KEY` is a *list*, comma-separated, and that is what makes
+ * rotation possible without a flag day: ship a release trusting {old, new},
+ * wait for it to propagate, then sign with new and drop old. Verification
+ * accepts a signature from any listed key, so no single release has to be the
+ * one where every installation either updates or bricks. It buys nothing against
+ * a *compromised* key — an attacker holding the old private half can still sign
+ * for binaries that still list it, and the only answer to that is an
+ * out-of-band reinstall. See docs/versioning-and-release.md.
  */
 import { createHash, createPublicKey, verify as verifySignature } from "node:crypto";
 import { z } from "zod";
@@ -89,18 +104,33 @@ export type ManifestTrust =
   | { verified: true; signed: false; warning: string }
   | { verified: false; reason: string };
 
+/** Split the comma-separated key list; blanks and stray whitespace are ignored. */
+export function releaseKeys(publicKeyBase64: string | null): string[] {
+  if (publicKeyBase64 === null) return [];
+  return publicKeyBase64
+    .split(",")
+    .map((key) => key.trim())
+    .filter((key) => key !== "");
+}
+
 /**
- * Verify the manifest against the embedded release key.
+ * Verify the manifest against the embedded release key (or keys).
  *
  * `manifestBytes` must be the exact bytes fetched, not a re-serialization: JSON
  * key order and whitespace are part of what was signed.
+ *
+ * The one branch worth naming: a build that has a key and gets no signature is a
+ * *refusal*, not a fallback to the unsigned path. Letting a missing `.sig` soften
+ * the check would hand an attacker the ability to turn verification off by
+ * deleting a file.
  */
 export function verifyManifest(
   manifestBytes: Uint8Array,
   signatureBase64: string | null,
   publicKeyBase64: string | null,
 ): ManifestTrust {
-  if (publicKeyBase64 === null) {
+  const keys = releaseKeys(publicKeyBase64);
+  if (keys.length === 0) {
     return {
       verified: true,
       signed: false,
@@ -110,32 +140,42 @@ export function verifyManifest(
     };
   }
   if (signatureBase64 === null) {
-    // Fail closed. A build that knows the key must never accept an unsigned
-    // manifest, or an attacker strips the signature to downgrade the check.
     return { verified: false, reason: `manifest has no ${SIGNATURE_ASSET}` };
   }
-  try {
-    const key = createPublicKey({
-      key: Buffer.from(publicKeyBase64, "base64"),
-      format: "der",
-      type: "spki",
-    });
-    const ok = verifySignature(
-      null,
-      manifestBytes,
-      key,
-      Buffer.from(signatureBase64, "base64"),
-    );
-    return ok ? { verified: true, signed: true } : {
-      verified: false,
-      reason: "manifest signature does not match the embedded release key",
-    };
-  } catch (error) {
+
+  const signature = Buffer.from(signatureBase64, "base64");
+  const failures: string[] = [];
+  for (const candidate of keys) {
+    try {
+      const key = createPublicKey({
+        key: Buffer.from(candidate, "base64"),
+        format: "der",
+        type: "spki",
+      });
+      // Any listed key may vouch for the manifest. That is the whole rotation
+      // mechanism: a release that trusts {old, new} bridges the gap between the
+      // release that introduces a key and the release that starts signing with it.
+      if (verifySignature(null, manifestBytes, key, signature)) {
+        return { verified: true, signed: true };
+      }
+    } catch (error) {
+      failures.push(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  // Every embedded key was unusable — a malformed key list is a broken build,
+  // and saying "signature does not match" would send the reader hunting the
+  // wrong bug.
+  if (failures.length === keys.length) {
     return {
       verified: false,
-      reason: `manifest signature could not be checked: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
+      reason: `manifest signature could not be checked: ${failures[0]}`,
     };
   }
+  return {
+    verified: false,
+    reason: keys.length === 1
+      ? "manifest signature does not match the embedded release key"
+      : `manifest signature does not match any of the ${keys.length} embedded release keys`,
+  };
 }

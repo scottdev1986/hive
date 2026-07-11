@@ -24,7 +24,9 @@ Five constants ride along: the semver, the short commit, the build date, the con
 
 **The build hash** is what the daemon presents in its handshake, and it is a content address of the build's *inputs* — source tree, version, commit, target triple — not of its output. It cannot be a hash of the output, because the output embeds the hash. Addressing the inputs preserves the only property that matters: two different releases always disagree, and a rebuild of one release always agrees with itself. A release binary carries the hash inlined; a checkout hashes the source tree it is actually executing, which is what makes edit-and-rerun reject the daemon still running pre-edit code. This is deliberately not the marketing version: a rebuilt `0.0.7` with different code is a different daemon, and a version-only check would silently adopt it.
 
-**The release public key** is absent until an offline Ed25519 key exists. Its absence is not a silent downgrade. `hive update` verifies every artifact's SHA-256 against the release manifest and then says out loud that the manifest carries no Hive signature, so the trust anchor is GitHub's immutable release plus TLS. The moment a key is embedded, `verifyManifest` becomes mandatory and fail-closed — a stripped signature is a refusal, not a downgrade — with no other code change. That is why the signature field exists before the key does.
+**The release public key** is the offline Ed25519 key's public half, inlined at build time like the rest. Because it is inlined rather than read from the environment, a release binary's trust anchor cannot be swapped by exporting a variable at it — which is the entire reason to pin a key instead of trusting one on first use. Verification is mandatory and fail-closed wherever the key is present: an unsigned, altered, or foreign-signed manifest is refused, and a *stripped* signature is a refusal rather than a fallback, since otherwise deleting a file would be enough to turn verification off. It is null in only two places, and both say so out loud rather than implying a signature they never checked: a source checkout, and releases before 0.0.6, which predate the key.
+
+The value is a comma-separated *list*, and that is what makes rotation possible. Any listed key may vouch for a manifest, so a release can trust {old, new}, propagate, and only then start signing with the new key and drop the old — no single release is the one where every installation must already have updated or be stranded. That flag-day version was the rejected alternative. What the list does not buy is protection against a *compromised* key: whoever holds the old private half can still sign for every binary that still lists it, and the only real answer to that is an out-of-band reinstall.
 
 ## The pipeline
 
@@ -65,9 +67,11 @@ The daemon is the reason activation is not a file copy. A Unix process keeps exe
 
 `hive init` checks for updates and prints one line before doing anything else. It is the session boundary, and the last moment Hive owns the terminal. The check is best-effort and never blocks: a machine with no network prints `could not check for updates (…)` and starts anyway. It never prints "up to date" on a failed check, because that sentence is a claim about the world and we would not have looked. A cached answer is still evidence — we observed that version exist — so an offline machine keeps telling the truth it last learned. But a stale cache saying "you are current" is downgraded to "could not check", because "nothing was newer yesterday" is not evidence that nothing is newer today.
 
-## What Scott still has to do
+## The signing credentials
 
-The pipeline is built and waits on credentials, not code. With no secrets set it publishes the unsigned release it always has; setting the secrets below turns Developer ID signing, notarization, and the manifest signature on with no other change and no flag to flip. Four things need a human, and each is a checklist you can follow top to bottom.
+Both signatures are live. Releases from 0.0.6 are Developer ID-signed, notarized, and carry an Ed25519 signature over the manifest; the secrets below are set on the repository and the pipeline turns each capability on by the *presence* of its secret, with no flag to flip. A fork with no secrets set still builds and publishes — unsigned, and saying so in the release notes and in `hive update`. That graceful degradation is a property worth keeping, not a supported end state for this repo.
+
+This section is therefore the recreate-and-rotate procedure, not a to-do list. Each part is a checklist you can follow top to bottom.
 
 **Verify workflow write permissions.** The repository default for `GITHUB_TOKEN` is read-only. The workflow raises itself to `contents: write`, which is permitted — a workflow may exceed the default, though not what the token can be granted. If the first run fails with a 403 on the tag push, flip Settings → Actions → General → Workflow permissions to "Read and write".
 
@@ -105,7 +109,7 @@ The pipeline is built and waits on credentials, not code. With no secrets set it
    scripts/signing/dry-run.sh --full
    ```
 
-**Generate the offline Ed25519 release key.** Set both halves or neither — the pipeline hard-errors on a half-configured key, because embedding the public half without signing with the private half flips `hive update` fail-closed and then refuses the very release it shipped in. On an offline machine:
+**The offline Ed25519 release key.** Generated on an offline machine, with the private half kept there — a hardware token or an air-gapped password manager, never the repo:
 
 ```sh
 openssl genpkey -algorithm ed25519 -out hive-release-private.pem
@@ -113,13 +117,22 @@ openssl pkey -in hive-release-private.pem -pubout -outform DER | base64   # -> H
 openssl pkey -in hive-release-private.pem -outform DER | base64           # -> HIVE_RELEASE_PRIVATE_KEY
 ```
 
-Set `HIVE_RELEASE_PUBLIC_KEY` and `HIVE_RELEASE_PRIVATE_KEY` as repository secrets and keep `hive-release-private.pem` offline — a hardware token or an air-gapped password manager, never the repo. The public half is embedded in every binary via `build.ts --public-key`; the private half signs `hive-release.json` in the release job through `scripts/signing/sign-manifest.ts` and touches nothing else. From the first release with both set, the binary embeds the key, the job publishes `hive-release.json.sig`, and `hive update` stops printing the unsigned-release warning: verification is mandatory and fail-closed from then on.
+Both halves are repository secrets. Set both or neither: the pipeline hard-errors on a half-configured key, because embedding the public half without signing with the private half flips `hive update` fail-closed and then refuses the very release it shipped in. The public half is inlined into every binary via `build.ts --public-key`; the private half signs `hive-release.json` in the release job through `scripts/signing/sign-manifest.ts` and touches nothing else in the pipeline.
 
-**Confirm it end to end.** After the first signed release, on a clean Mac or a fresh user account that has never trusted your certificate:
+**To rotate the key**, exploit the fact that `HIVE_RELEASE_PUBLIC_KEY` is a comma-separated list and any listed key may vouch for a manifest. Generate the new pair, then take it in three releases, never fewer:
+
+1. Set `HIVE_RELEASE_PUBLIC_KEY` to `<old>,<new>` and leave `HIVE_RELEASE_PRIVATE_KEY` as the old half. This release still signs with the old key but *trusts* both. Nothing breaks, and the new key starts propagating into installed binaries.
+2. Wait until installations have picked that release up. This is the step with no shortcut — a binary that never learned the new key cannot verify a release signed with it.
+3. Swap `HIVE_RELEASE_PRIVATE_KEY` to the new half, and once you are willing to strand anything older than step 1, drop `<old>` from the list.
+
+Skipping step 1 is the flag day: the release that introduces the key is the release that every installation must already have, and the ones that don't are stranded with no upgrade path but a manual reinstall. Note what rotation does *not* fix — a **compromised** private key. Whoever holds it can sign for every binary still listing the matching public half, and no release you publish can revoke that, because the attacker's manifest verifies against a key those binaries already trust. The answer there is out-of-band: a new install script, announced through a channel the attacker does not control.
+
+**Confirming it end to end.** On a clean Mac or a fresh user account that has never trusted the certificate:
 
 - Download `hive-darwin-arm64` from the release page and run `./hive-darwin-arm64 --version`. It must run with no "Apple could not verify … is free of malware" dialog, and `codesign --verify --check-notarization -R="notarized" -v ./hive-darwin-arm64` must exit 0. (Not `spctl --assess` — it rejects every bare Mach-O, notarized or not.)
 - Download and unpack `HiveWorkspace.tar.gz` and open `HiveWorkspace.app`. It must open with no Gatekeeper prompt, and `xcrun stapler validate HiveWorkspace.app` must confirm a stapled ticket.
-- Run `hive update`. It must no longer print the unsigned-release warning, which proves the embedded key verified the manifest signature.
+- Run `hive update status`. `signature key:` must read `embedded (1 key) — a valid signature is required to install`. A binary that says `none` cannot verify anything, and is either a checkout or a release from before 0.0.6.
+- Run `hive update`. It must name what it checked — `signature verified (Hive release key), sha256 … matched` — and must never print the UNSIGNED banner.
 
 **A `hive` Homebrew tap**, if the secondary channel is wanted. Hive already detects a Homebrew-owned install and refuses to rewrite it; nothing else is built.
 

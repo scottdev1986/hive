@@ -25,8 +25,10 @@ import {
   selectArtifact,
   verifyManifest,
   type HiveArch,
+  type ReleaseArtifact,
   type ReleaseManifest,
 } from "../release/manifest";
+import type { ProgressCallback, ProgressReporter } from "./progress";
 import { HIVE_RELEASE_PUBLIC_KEY } from "../version";
 import {
   binLink,
@@ -70,13 +72,22 @@ export interface StageDeps {
   readonly signature: string | null;
   readonly arch: HiveArch;
   readonly root?: string;
-  /** Fetch a named release asset's bytes. */
-  readonly download: (assetName: string) => Promise<Uint8Array>;
+  /** Fetch a named release asset's bytes, reporting progress as they arrive. */
+  readonly download: (
+    assetName: string,
+    onProgress?: ProgressCallback,
+  ) => Promise<Uint8Array>;
   /** Run `<binary> --version` and return stdout. */
   readonly probeVersion: (binaryPath: string) => Promise<string>;
   /** Unpack the Workspace app tarball into a version directory. */
   readonly unpackApp?: (tarball: string, into: string) => Promise<void>;
   readonly publicKey?: string | null;
+  /**
+   * Opens a progress display for one artifact. Staging stays free of rendering:
+   * it reports bytes, and whoever owns the terminal decides what that looks
+   * like. Absent (the daemon's background staging) means download in silence.
+   */
+  readonly progress?: (artifact: ReleaseArtifact) => ProgressReporter;
 }
 
 export class UpdateError extends Error {}
@@ -86,6 +97,8 @@ export interface StageResult {
   readonly directory: string;
   readonly signed: boolean;
   readonly warning: string | null;
+  /** The digest that actually matched, so the CLI can name it rather than allude to it. */
+  readonly cliSha256: string;
 }
 
 /**
@@ -116,13 +129,34 @@ export async function stageRelease(deps: StageDeps): Promise<StageResult> {
   await rm(staging, { recursive: true, force: true });
   await mkdir(staging, { recursive: true });
 
-  const cliBytes = await deps.download(cli.name);
-  if (!artifactMatches(cli, cliBytes)) {
-    await rm(staging, { recursive: true, force: true });
-    throw new UpdateError(
-      `Refusing update: ${cli.name} does not match the SHA-256 in the manifest`,
-    );
-  }
+  /**
+   * Fetch one artifact, show it arriving, and refuse it if the bytes are not the
+   * bytes the signed manifest named. The digest check is the gate every byte
+   * passes through; the progress display is what makes the wait honest.
+   */
+  const fetchArtifact = async (artifact: ReleaseArtifact): Promise<Uint8Array> => {
+    const reporter = deps.progress?.(artifact);
+    let downloaded: Uint8Array;
+    try {
+      downloaded = await deps.download(artifact.name, reporter?.onProgress);
+    } catch (error) {
+      // Retire the bar before the error reaches a terminal, or the message
+      // lands on top of a half-drawn line.
+      reporter?.finish();
+      await rm(staging, { recursive: true, force: true });
+      throw error;
+    }
+    reporter?.finish();
+    if (!artifactMatches(artifact, downloaded)) {
+      await rm(staging, { recursive: true, force: true });
+      throw new UpdateError(
+        `Refusing update: ${artifact.name} does not match the SHA-256 in the manifest`,
+      );
+    }
+    return downloaded;
+  };
+
+  const cliBytes = await fetchArtifact(cli);
   const stagedCli = cliPath(staging);
   await writeFile(stagedCli, cliBytes);
   await chmod(stagedCli, 0o755);
@@ -145,13 +179,7 @@ export async function stageRelease(deps: StageDeps): Promise<StageResult> {
   }
 
   if (app !== null && deps.unpackApp !== undefined) {
-    const appBytes = await deps.download(app.name);
-    if (!artifactMatches(app, appBytes)) {
-      await rm(staging, { recursive: true, force: true });
-      throw new UpdateError(
-        `Refusing update: ${app.name} does not match the SHA-256 in the manifest`,
-      );
-    }
+    const appBytes = await fetchArtifact(app);
     const tarball = join(staging, app.name);
     await writeFile(tarball, appBytes);
     await deps.unpackApp(tarball, staging);
@@ -168,6 +196,7 @@ export async function stageRelease(deps: StageDeps): Promise<StageResult> {
     directory: target,
     signed: trust.signed,
     warning: trust.signed ? null : trust.warning,
+    cliSha256: cli.sha256,
   };
 }
 
