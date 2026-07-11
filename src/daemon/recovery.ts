@@ -20,6 +20,7 @@ import {
 } from "../adapters/tools/codex";
 import { ORCHESTRATOR_NAME, type AgentRecord, type HiveConfig } from "../schemas";
 import type { HiveDatabase } from "./db";
+import { readCodexTelemetry } from "./tool-telemetry";
 
 // Three auto-resumes for one agent means the process is dying on its own,
 // not being killed by crashes; after that the sweep stops retrying and
@@ -104,6 +105,11 @@ export interface CrashRecoveryDependencies {
   /** Writer autonomy, so a resumed agent regains the launch posture it had at
    * spawn. Absent fails safe to the sandboxed approval queue. */
   autonomy?: HiveConfig["autonomy"];
+  /** Test seam for codex rollout activity during the resume watch. A resumed
+   * codex TUI emits no hook event until its first turn-end notify, so a fresh
+   * rollout-file mtime is the only early proof of life it can give. Defaults
+   * to `readCodexTelemetry`. */
+  readCodexActivity?: (worktreePath: string) => Promise<string | null>;
 }
 
 const defaultSleep: Sleep = (milliseconds) =>
@@ -135,6 +141,9 @@ export class CrashRecovery {
   private readonly seedClaudeTrust: (worktreePath: string) => Promise<void>;
   private readonly writeClaudeConfig: typeof writeClaudeAgentConfig;
   private readonly writeCodexConfig: typeof writeCodexAgentConfig;
+  private readonly readCodexActivity: (
+    worktreePath: string,
+  ) => Promise<string | null>;
   // Agents with a recovery already in flight. The sweep (maintenance tick,
   // startup) and manual recovery (hive_recover) share no other interlock, and
   // resume awaits across its hasSession check — without this, both paths see
@@ -153,6 +162,9 @@ export class CrashRecovery {
     this.seedClaudeTrust = deps.seedClaudeTrust ?? seedClaudeWorktreeTrust;
     this.writeClaudeConfig = deps.writeClaudeConfig ?? writeClaudeAgentConfig;
     this.writeCodexConfig = deps.writeCodexConfig ?? writeCodexAgentConfig;
+    this.readCodexActivity = deps.readCodexActivity ??
+      (async (worktreePath) =>
+        (await readCodexTelemetry(worktreePath)).lastActivityAt);
   }
 
   // The maintenance sweep: classify every agent whose tmux session is gone
@@ -439,6 +451,8 @@ export class CrashRecovery {
   }
 
   private async monitorResume(record: AgentRecord): Promise<string | null> {
+    const startedAt = new Date().toISOString();
+    let lastPaneTail = "";
     for (let attempt = 0; attempt < RESUME_READY_ATTEMPTS; attempt += 1) {
       await this.wait(RESUME_READY_POLL_MS);
       const current = this.deps.db.getAgentById(record.id);
@@ -446,14 +460,16 @@ export class CrashRecovery {
         // A hook event arrived from the relaunched process: proof of life.
         return null;
       }
+      if (await this.hasFreshCodexActivity(record, startedAt)) return null;
       if (!(await this.deps.tmux.hasSession(record.tmuxSession))) {
         return "tmux session exited";
       }
       try {
         const pane = await this.deps.tmux.capturePane(record.tmuxSession);
+        lastPaneTail = tailLines(pane, 15);
         const paneTail = tailLines(pane, 5);
         if (RESUME_FAILURE_PATTERNS.some((pattern) => pattern.test(paneTail))) {
-          return tailLines(pane, 15) || "resume process launch error";
+          return lastPaneTail || "resume process launch error";
         }
       } catch {
         if (!(await this.deps.tmux.hasSession(record.tmuxSession))) {
@@ -461,7 +477,31 @@ export class CrashRecovery {
         }
       }
     }
-    return null;
+    // Poll exhaustion with no positive signal is a failed resume, never a
+    // success: an unproven process must not be reported as recovered.
+    const seconds = Math.round(
+      (RESUME_READY_ATTEMPTS * RESUME_READY_POLL_MS) / 1000,
+    );
+    const base = `no proof of life within ${seconds}s ` +
+      "(no hook event and no fresh tool activity)";
+    return lastPaneTail === "" ? base : `${base}; last pane output:\n${lastPaneTail}`;
+  }
+
+  /** True when a codex agent's rollout file gained activity after this resume
+   * watch began — the only proof of life a codex TUI can give before its
+   * first turn-end notify hook. Read at most once per poll tick, only for
+   * codex agents with a worktree; a read failure is simply "no signal yet". */
+  private async hasFreshCodexActivity(
+    record: AgentRecord,
+    monitorStartedAt: string,
+  ): Promise<boolean> {
+    if (record.tool !== "codex" || record.worktreePath === null) return false;
+    try {
+      const lastActivityAt = await this.readCodexActivity(record.worktreePath);
+      return lastActivityAt !== null && lastActivityAt > monitorStartedAt;
+    } catch {
+      return false;
+    }
   }
 
   private async markDead(

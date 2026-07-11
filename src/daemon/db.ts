@@ -208,10 +208,6 @@ export class HiveDatabase {
       );
       CREATE INDEX IF NOT EXISTS messages_recipient_delivery
         ON messages("to", deliveredAt, createdAt);
-      -- Critical-control recovery runs on every session-start and every
-      -- maintenance tick; it must never pay for the full message history.
-      CREATE INDEX IF NOT EXISTS messages_queued_critical
-        ON messages(sequence) WHERE priority = 'critical' AND state = 'queued';
       CREATE TABLE IF NOT EXISTS agent_name_reservations (
         name TEXT PRIMARY KEY,
         createdAt TEXT NOT NULL
@@ -388,6 +384,14 @@ export class HiveDatabase {
       CREATE UNIQUE INDEX IF NOT EXISTS messages_sender_idempotency
       ON messages("from", idempotencyKey)
       WHERE idempotencyKey IS NOT NULL
+    `);
+    // Created after the column migrations above: on a legacy database the
+    // priority/state/sequence columns do not exist until they run. Critical-
+    // control recovery hits this on every session-start and maintenance tick
+    // and must never pay for the full message history.
+    this.database.exec(`
+      CREATE INDEX IF NOT EXISTS messages_queued_critical
+      ON messages(sequence) WHERE priority = 'critical' AND state = 'queued'
     `);
     this.database.exec(`
       UPDATE messages

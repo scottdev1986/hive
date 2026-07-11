@@ -73,7 +73,18 @@ describe("CLI-to-daemon smoke", () => {
         path: worktreePath,
         branch: `hive/${name}-${slug}`,
       }),
-      sleep: async () => {},
+      // The fail-loud launch watch needs proof of life. Advancing lastEventAt
+      // without leaving "spawning" stands in for the first hook event and
+      // keeps the post-spawn status assertion honest.
+      sleep: async () => {
+        const current = db.getAgentByName("maya");
+        if (current !== null && current.status === "spawning") {
+          db.upsertAgent({
+            ...current,
+            lastEventAt: new Date(Date.now() + 60_000).toISOString(),
+          });
+        }
+      },
     });
     let daemon: HiveDaemon | null = null;
     try {

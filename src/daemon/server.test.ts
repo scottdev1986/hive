@@ -1196,6 +1196,10 @@ describe("HiveDaemon HTTP server", () => {
         seedClaudeTrust: async () => {},
         writeClaudeConfig: async () => {},
         writeCodexConfig: async () => {},
+        // The hardened resume monitor fails a resume that never proves life;
+        // fresh codex rollout activity is this resumed TUI's stand-in signal.
+        readCodexActivity: async () =>
+          new Date(Date.now() + 60_000).toISOString(),
       },
     });
     db.insertAgent(agent({

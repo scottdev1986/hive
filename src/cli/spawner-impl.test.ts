@@ -199,6 +199,35 @@ class FakeStore {
   }
 }
 
+/** The hardened readiness monitor treats poll exhaustion with no positive
+ * signal as a failed launch, so every success-path spawn must show proof of
+ * life. This sleep stands in for the agent's first hook event: each poll tick
+ * promotes any still-"spawning" agent to "working", exactly what the daemon
+ * does when a session-start or turn-start event arrives. Failure-path tests
+ * keep a plain `async () => {}` sleep so exhaustion stays signal-free. */
+function signalReadiness(store: FakeStore): () => Promise<void> {
+  return async () => {
+    for (const current of store.listAgents()) {
+      if (current.status === "spawning") {
+        store.insertAgent({ ...current, status: "working" });
+      }
+    }
+  };
+}
+
+/** Control restarts never sit in "spawning" — their monitor proves life by a
+ * lastEventAt advance — so the stand-in hook event moves the clock instead. */
+function signalControlReadiness(store: FakeStore): () => Promise<void> {
+  return async () => {
+    for (const current of store.listAgents()) {
+      store.insertAgent({
+        ...current,
+        lastEventAt: new Date(Date.now() + 60_000).toISOString(),
+      });
+    }
+  };
+}
+
 class FakeTmux {
   readonly sessions: Array<[string, string, string]> = [];
   readonly active = new Set<string>();
@@ -328,7 +357,7 @@ describe("HiveSpawner name pool", () => {
         },
         tmux,
         terminal: new FakeTerminal(),
-        sleep: async () => {},
+        sleep: signalControlReadiness(store),
         resolveModel: fakeResolveModel,
         quota: controlQuota.quota,
       });
@@ -405,7 +434,7 @@ describe("HiveSpawner name pool", () => {
       routing: async () => DEFAULT_ROUTING.standard,
       tmux: new FakeTmux(),
       terminal,
-      sleep: async () => {},
+      sleep: signalControlReadiness(store),
       resolveModel: fakeResolveModel,
       onTerminalsChanged: () => {
         layoutRequests += 1;
@@ -899,9 +928,10 @@ describe("HiveSpawner wiring", () => {
     const root = await mkdtemp(join(tmpdir(), "hive-spawner-tui-default-"));
     tempRoots.push(root);
     const tmux = new FakeTmux();
+    const store = new FakeStore();
     let probedAppServer = false;
     const spawner = new HiveSpawner({
-      db: new FakeStore(),
+      db: store,
       repoRoot: root,
       port: 4317,
       config: { terminal: "auto", headless: true },
@@ -917,7 +947,7 @@ describe("HiveSpawner wiring", () => {
         await mkdir(path, { recursive: true });
         return { path, branch: `hive/${name}-${slug}` };
       },
-      sleep: async () => {},
+      sleep: signalReadiness(store),
       resolveModel: fakeResolveModel,
       codexAppServer: {
         isAvailable: async () => {
@@ -1023,7 +1053,8 @@ describe("HiveSpawner wiring", () => {
         await mkdir(path, { recursive: true });
         return { path, branch: `hive/${name}-${slug}` };
       },
-      sleep: async () => {},
+      // The fallback TUI launch must still prove life on its own.
+      sleep: signalReadiness(store),
       resolveModel: fakeResolveModel,
       codexAppServer: {
         isAvailable: async () => true,
@@ -1091,7 +1122,7 @@ describe("HiveSpawner wiring", () => {
         await mkdir(path, { recursive: true });
         return { path, branch: `hive/${name}-${slug}` };
       },
-      sleep: async () => {},
+      sleep: signalReadiness(store),
       resolveModel: fakeResolveModel,
       quota,
     });
@@ -1165,7 +1196,7 @@ describe("HiveSpawner wiring", () => {
         await mkdir(path, { recursive: true });
         return { path, branch: `hive/${name}-${slug}` };
       },
-      sleep: async () => {},
+      sleep: signalReadiness(store),
       resolveModel: fakeResolveModel,
       quota,
     });
@@ -1198,7 +1229,7 @@ describe("HiveSpawner wiring", () => {
         await mkdir(path, { recursive: true });
         return { path, branch: `hive/${name}-${slug}` };
       },
-      sleep: async () => {},
+      sleep: signalReadiness(store),
       resolveModel: fakeResolveModel,
     });
 
@@ -1236,7 +1267,7 @@ describe("HiveSpawner wiring", () => {
         await mkdir(path, { recursive: true });
         return { path, branch: `hive/${name}-${slug}` };
       },
-      sleep: async () => {},
+      sleep: signalReadiness(store),
       resolveModel: fakeResolveModel,
     });
 
@@ -1389,7 +1420,7 @@ describe("HiveSpawner wiring", () => {
       tmux,
       terminal,
       createWorktree,
-      sleep: async () => {},
+      sleep: signalReadiness(store),
       resolveModel: fakeResolveModel,
     });
 
@@ -1400,7 +1431,8 @@ describe("HiveSpawner wiring", () => {
     });
 
     expect(claude.name).toEqual("maya");
-    expect(claude.status).toEqual("spawning");
+    // The stand-in hook event promoted the proven launch out of "spawning".
+    expect(claude.status).toEqual("working");
     expect(claude.contextPct).toEqual(0);
     expect(codex.name).toEqual("david");
     expect(claude.terminalHandle).toEqual({
@@ -1519,7 +1551,7 @@ describe("HiveSpawner wiring", () => {
           branch: "hive/maya-memory",
         }),
         resolveModel: fakeResolveModel,
-        sleep: async () => {},
+        sleep: signalReadiness(store),
       });
 
       await spawner.spawn({ task: "Fix the flaky test", tier: "standard" });
@@ -1607,7 +1639,7 @@ describe("HiveSpawner wiring", () => {
       terminal: new FakeTerminal(),
       createWorktree,
       claudeExecutable: "/daemon/native/claude",
-      sleep: async () => {},
+      sleep: signalReadiness(store),
       resolveModel: fakeResolveModel,
     });
 
@@ -1644,8 +1676,9 @@ describe("HiveSpawner wiring", () => {
     const root = await mkdtemp(join(tmpdir(), "hive-spawner-cheap-claude-"));
     tempRoots.push(root);
     const tmux = new FakeTmux();
+    const store = new FakeStore();
     const spawner = new HiveSpawner({
-      db: new FakeStore(),
+      db: store,
       repoRoot: root,
       port: 4317,
       config: { terminal: "auto", headless: true },
@@ -1657,7 +1690,7 @@ describe("HiveSpawner wiring", () => {
         await mkdir(path, { recursive: true });
         return { path, branch: `hive/${name}-${slug}` };
       },
-      sleep: async () => {},
+      sleep: signalReadiness(store),
     });
 
     const spawned = await spawner.spawn({
@@ -1675,8 +1708,9 @@ describe("HiveSpawner wiring", () => {
     const root = await mkdtemp(join(tmpdir(), "hive-spawner-configured-route-"));
     tempRoots.push(root);
     const tmux = new FakeTmux();
+    const store = new FakeStore();
     const spawner = new HiveSpawner({
-      db: new FakeStore(),
+      db: store,
       repoRoot: root,
       port: 4317,
       config: { terminal: "auto", headless: true },
@@ -1688,7 +1722,7 @@ describe("HiveSpawner wiring", () => {
         await mkdir(path, { recursive: true });
         return { path, branch: `hive/${name}-${slug}` };
       },
-      sleep: async () => {},
+      sleep: signalReadiness(store),
     });
 
     const spawned = await spawner.spawn({
@@ -1808,7 +1842,19 @@ describe("HiveSpawner wiring", () => {
         branch: "hive/maya-error-handling",
       }),
       resolveModel: fakeResolveModel,
-      sleep: async () => {},
+      // The signal arrives only on the final poll tick, so every earlier
+      // iteration reads the pane and must shrug at the incidental error text.
+      sleep: (() => {
+        let ticks = 0;
+        return async () => {
+          ticks += 1;
+          if (ticks < 15) return;
+          const current = store.listAgents()[0];
+          if (current !== undefined) {
+            store.insertAgent({ ...current, status: "working" });
+          }
+        };
+      })(),
     });
 
     const spawned = await spawner.spawn({
@@ -1816,8 +1862,8 @@ describe("HiveSpawner wiring", () => {
       tier: "standard",
     });
 
-    expect(spawned.status).toEqual("spawning");
-    expect(tmux.capturePaneCalls).toEqual(15);
+    expect(spawned.status).toEqual("working");
+    expect(tmux.capturePaneCalls).toEqual(14);
     expect(tmux.killed).toEqual([]);
   });
 
@@ -1827,8 +1873,9 @@ describe("HiveSpawner wiring", () => {
     const worktreePath = join(root, "maya");
     await mkdir(worktreePath, { recursive: true });
     const tmux = new FlakyCaptureTmux();
+    const store = new FakeStore();
     const spawner = new HiveSpawner({
-      db: new FakeStore(),
+      db: store,
       repoRoot: root,
       port: 4317,
       config: { terminal: "auto", headless: false },
@@ -1840,7 +1887,19 @@ describe("HiveSpawner wiring", () => {
         branch: "hive/maya-transient",
       }),
       resolveModel: fakeResolveModel,
-      sleep: async () => {},
+      // The signal arrives only on the final poll tick, so the transient
+      // capture failure has to be survived, not shortcut around.
+      sleep: (() => {
+        let ticks = 0;
+        return async () => {
+          ticks += 1;
+          if (ticks < 15) return;
+          const current = store.listAgents()[0];
+          if (current !== undefined) {
+            store.insertAgent({ ...current, status: "working" });
+          }
+        };
+      })(),
     });
 
     const spawned = await spawner.spawn({
@@ -1848,9 +1907,96 @@ describe("HiveSpawner wiring", () => {
       tier: "standard",
     });
 
-    expect(spawned.status).toEqual("spawning");
-    expect(tmux.capturePaneCalls).toEqual(15);
+    expect(spawned.status).toEqual("working");
+    expect(tmux.capturePaneCalls).toEqual(14);
     expect(tmux.killed).toEqual([]);
+  });
+
+  test("fresh codex rollout activity is proof of life when no hook event ever arrives", async () => {
+    // A codex TUI sends no session-start hook; its first hook event is the
+    // notify at first turn-end, potentially minutes out. The rollout file's
+    // mtime is the only early signal, and it must count as readiness.
+    const root = await mkdtemp(join(tmpdir(), "hive-spawner-codex-rollout-"));
+    tempRoots.push(root);
+    const store = new FakeStore();
+    const tmux = new FakeTmux();
+    const probed: string[] = [];
+    const spawner = new HiveSpawner({
+      db: store,
+      repoRoot: root,
+      port: 4317,
+      config: { terminal: "auto", headless: true },
+      routing: async () => ({
+        ...DEFAULT_ROUTING.standard,
+        tool: "codex",
+        codex: { model: "gpt-test", effort: "medium" },
+      }),
+      tmux,
+      terminal: new FakeTerminal(),
+      createWorktree: async (_repoRoot, name, slug) => {
+        const path = join(root, name);
+        await mkdir(path, { recursive: true });
+        return { path, branch: `hive/${name}-${slug}` };
+      },
+      // No hook event ever arrives: the DB row stays "spawning" throughout.
+      sleep: async () => {},
+      resolveModel: fakeResolveModel,
+      readCodexActivity: async (worktreePath) => {
+        probed.push(worktreePath);
+        return new Date(Date.now() + 60_000).toISOString();
+      },
+    });
+
+    const spawned = await spawner.spawn({
+      task: "Prove life through the rollout file",
+      tier: "standard",
+    });
+
+    expect(spawned.status).toEqual("spawning");
+    expect(probed).toEqual([join(root, "maya")]);
+    expect(tmux.killed).toEqual([]);
+    expect(tmux.hasSessionCalls).toEqual(0);
+  });
+
+  test("a spawn with no readiness signal at all fails and is torn down", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-spawner-no-signal-"));
+    tempRoots.push(root);
+    const store = new FakeStore();
+    const tmux = new FakeTmux();
+    const spawner = new HiveSpawner({
+      db: store,
+      repoRoot: root,
+      port: 4317,
+      config: { terminal: "auto", headless: true },
+      routing: async () => ({
+        ...DEFAULT_ROUTING.standard,
+        tool: "codex",
+        codex: { model: "gpt-test", effort: "medium" },
+      }),
+      tmux,
+      terminal: new FakeTerminal(),
+      createWorktree: async (_repoRoot, name, slug) => {
+        const path = join(root, name);
+        await mkdir(path, { recursive: true });
+        return { path, branch: `hive/${name}-${slug}` };
+      },
+      removeWorktree: async () => {},
+      sleep: async () => {},
+      resolveModel: fakeResolveModel,
+      readCodexActivity: async () => null,
+    });
+
+    const failed = await spawner.spawn({
+      task: "Hang at launch forever",
+      tier: "standard",
+    });
+
+    // Exhausting the poll budget with no positive signal is a failed launch,
+    // not a silent success left in "spawning" forever.
+    expect(failed.status).toEqual("failed");
+    expect(failed.failureReason).toContain("no readiness signal within 15s");
+    expect(failed.failedAt).toBeDefined();
+    expect(tmux.killed).toEqual([agentTmuxSession("maya")]);
   });
 
   test("workspace presence suppresses spawn viewers until the lease lapses", async () => {
@@ -1882,14 +2028,14 @@ describe("HiveSpawner wiring", () => {
         branch: "hive/presence-test",
       }),
       resolveModel: fakeResolveModel,
-      sleep: async () => {},
+      sleep: signalReadiness(store),
     });
 
     const suppressed = await spawner.spawn({
       task: "Spawn while the app watches",
       tier: "standard",
     });
-    expect(suppressed.status).toEqual("spawning");
+    expect(suppressed.status).toEqual("working");
     expect(terminal.windows).toEqual([]);
     expect(suppressed.terminalHandle).toBeUndefined();
     expect(layouts).toEqual(0);
@@ -1934,7 +2080,7 @@ describe("HiveSpawner wiring", () => {
       tmux: new FakeTmux(),
       terminal,
       workspacePresent: () => true,
-      sleep: async () => {},
+      sleep: signalControlReadiness(store),
       resolveModel: fakeResolveModel,
       quota: controlQuota.quota,
     });
@@ -1974,7 +2120,7 @@ describe("HiveSpawner wiring", () => {
         path: worktreePath,
         branch: "hive/maya-viewer-race",
       }),
-      sleep: async () => {},
+      sleep: signalReadiness(store),
     });
 
     const spawned = await spawner.spawn({
@@ -2016,7 +2162,7 @@ describe("HiveSpawner wiring", () => {
           branch: "hive/maya-layout",
         }),
         resolveModel: fakeResolveModel,
-        sleep: async () => {},
+        sleep: signalReadiness(store),
         onTerminalsChanged: () => {
           terminalsChanged += 1;
         },

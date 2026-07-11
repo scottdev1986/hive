@@ -104,6 +104,12 @@ interface Harness {
   revoked: string[];
   closedViewers: TerminalHandle[];
   layoutRequests: () => number;
+  /** The hardened resume monitor fails a resume that never proves life, so
+   * every successful-resume test must call this before resuming: it makes
+   * each readiness poll tick advance lastEventAt, standing in for the
+   * relaunched process's first hook event. Failure-path tests leave the
+   * default signal-free sleep so exhaustion stays honest. */
+  signalProofOfLife: () => void;
 }
 
 let home = "";
@@ -128,6 +134,7 @@ function harness(
   const revoked: string[] = [];
   const closedViewers: TerminalHandle[] = [];
   let layoutRequests = 0;
+  let proveLife = false;
   const recovery = new CrashRecovery({
     db,
     tmux,
@@ -150,7 +157,15 @@ function harness(
     resolveClaudeSessionId: async () => null,
     resolveCodexSessionId: async () => null,
     worktreeExists: () => true,
-    sleep: async () => {},
+    sleep: async () => {
+      if (!proveLife) return;
+      for (const record of db.listAgents()) {
+        db.upsertAgent({
+          ...record,
+          lastEventAt: new Date(Date.now() + 60_000).toISOString(),
+        });
+      }
+    },
     // Synthetic worktrees: the real config writers would hit the filesystem
     // (and fail the resume, by design), so the harness stubs them out.
     seedClaudeTrust: async () => {},
@@ -168,6 +183,9 @@ function harness(
     revoked,
     closedViewers,
     layoutRequests: () => layoutRequests,
+    signalProofOfLife: () => {
+      proveLife = true;
+    },
   };
 }
 
@@ -331,6 +349,7 @@ describe("crash classification", () => {
 describe("crash resume", () => {
   test("a claude agent with a recorded session id is relaunched with --resume in the same worktree", async () => {
     const h = harness();
+    h.signalProofOfLife();
     h.db.insertAgent(agent({
       status: "working",
       toolSessionId: "0189-claude-session",
@@ -371,7 +390,12 @@ describe("crash resume", () => {
   });
 
   test("a codex agent resumes through `codex resume <thread-id>` with its spawn config overrides", async () => {
-    const h = harness();
+    // The resumed codex TUI emits no hook event before its first turn-end;
+    // fresh rollout-file activity is its proof of life, injected here.
+    const h = harness({
+      readCodexActivity: async () =>
+        new Date(Date.now() + 60_000).toISOString(),
+    });
     h.db.insertAgent(agent({
       tool: "codex",
       model: "gpt-5-codex",
@@ -400,6 +424,7 @@ describe("crash resume", () => {
       resolveClaudeSessionId: async (worktreePath) =>
         worktreePath === "/repo/.hive/worktrees/maya" ? "disk-session" : null,
     });
+    h.signalProofOfLife();
     h.db.insertAgent(agent({ status: "working" }));
 
     const outcomes = await h.recovery.sweep();
@@ -467,6 +492,27 @@ describe("crash resume", () => {
     expect(h.db.getAgentByName("maya")?.status).toEqual("dead");
   });
 
+  test("a resume that never proves life is killed and marked dead", async () => {
+    // The relaunched session stays up and prints nothing suspicious, but no
+    // hook event and no tool activity ever arrive: exhausting the poll budget
+    // is a failed resume, never a silently accepted one.
+    const h = harness();
+    h.db.insertAgent(agent({ status: "working", toolSessionId: "sess-1" }));
+
+    const outcomes = await h.recovery.sweep();
+
+    expect(outcomes).toMatchObject([{ agent: "maya", action: "marked-dead" }]);
+    const reason =
+      (outcomes[0] as { action: "marked-dead"; reason: string }).reason;
+    expect(reason).toContain("resume launch failed");
+    expect(reason).toContain("no proof of life");
+    expect(h.tmux.killed).toContain("hive-maya");
+    expect(h.db.getAgentByName("maya")).toMatchObject({
+      status: "dead",
+      recoveryAttempts: 1,
+    });
+  });
+
   test("a failed tmux launch settles into death instead of throwing out of the sweep", async () => {
     const h = harness();
     h.tmux.failNewSession = true;
@@ -483,6 +529,7 @@ describe("crash resume", () => {
 
   test("resume closes the stale crash-era viewer before opening a fresh one", async () => {
     const h = harness();
+    h.signalProofOfLife();
     const staleHandle = { app: "iterm2", sessionId: "stale" } as const;
     h.db.insertAgent(agent({
       status: "working",
@@ -499,6 +546,7 @@ describe("crash resume", () => {
 
   test("queued messages flush into the resumed idle session", async () => {
     const h = harness();
+    h.signalProofOfLife();
     h.db.insertAgent(agent({ status: "working", toolSessionId: "sess-1" }));
     h.db.insertMessage({
       id: "queued-1",
@@ -529,6 +577,7 @@ describe("crash resume", () => {
 
   test("stale pending approvals are denied on resume", async () => {
     const h = harness();
+    h.signalProofOfLife();
     h.db.insertAgent(agent({ status: "awaiting-approval", toolSessionId: "s1" }));
     h.db.insertApproval({
       id: "approval-1",
@@ -611,6 +660,7 @@ describe("dead-path bookkeeping", () => {
 describe("manual recovery", () => {
   test("recovers an agent already marked dead — the bring-her-back path", async () => {
     const h = harness();
+    h.signalProofOfLife();
     h.db.insertAgent(agent({
       status: "dead",
       toolSessionId: "sess-1",
@@ -629,6 +679,7 @@ describe("manual recovery", () => {
 
   test("concurrent recoveries of one agent resume exactly once", async () => {
     const h = harness();
+    h.signalProofOfLife();
     h.db.insertAgent(agent({
       status: "dead",
       toolSessionId: "sess-1",
@@ -651,6 +702,7 @@ describe("manual recovery", () => {
 
   test("bypasses the auto attempt cap because a human asked", async () => {
     const h = harness();
+    h.signalProofOfLife();
     h.db.insertAgent(agent({
       status: "dead",
       toolSessionId: "sess-1",

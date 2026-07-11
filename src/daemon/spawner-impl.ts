@@ -44,6 +44,7 @@ import {
   type RoutingTier,
 } from "../schemas";
 import type { HiveDatabase } from "./db";
+import { readCodexTelemetry } from "./tool-telemetry";
 import type { SpawnRequest, Spawner } from "./spawner";
 import type { QuotaRouteCandidate, QuotaService } from "./quota";
 import { agentTmuxSession } from "./tmux-sessions";
@@ -239,6 +240,12 @@ export interface HiveSpawnerDependencies {
     CodexAppServerManager,
     "isAvailable" | "buildHostCommand" | "startAgent" | "disconnect"
   >;
+  /** Test seam for codex rollout activity during the readiness watch. A codex
+   * TUI emits no session-start hook — its first hook event is the notify at
+   * first turn-end, potentially minutes away — so a fresh rollout-file mtime
+   * is the only early proof of life it can give. Defaults to
+   * `readCodexTelemetry`. */
+  readCodexActivity?: (worktreePath: string) => Promise<string | null>;
 }
 
 const AGENT_NAME_PATTERN = /^[a-z][a-z0-9-]{1,20}$/;
@@ -254,6 +261,15 @@ const LAUNCH_FAILURE_PATTERNS = [
 
 const sleep: Sleep = (milliseconds) =>
   new Promise((resolve) => setTimeout(resolve, milliseconds));
+
+/** Poll exhaustion with no positive signal is a failed launch, never a
+ * success: an unproven process must not sit in "spawning" forever while its
+ * quota reservation and name stay held. */
+function readinessTimeoutReason(totalMs: number, paneTail: string): string {
+  const base = `no readiness signal within ${Math.round(totalMs / 1000)}s ` +
+    "(no hook event and no fresh tool activity)";
+  return paneTail === "" ? base : `${base}; last pane output:\n${paneTail}`;
+}
 
 function tailLines(value: string, count: number): string {
   const trimmed = value.trimEnd();
@@ -486,6 +502,9 @@ export class HiveSpawner implements Spawner {
   private readonly wait: Sleep;
   private readonly modelResolver: ModelResolver;
   private readonly claudeExecutable: string;
+  private readonly readCodexActivity: (
+    worktreePath: string,
+  ) => Promise<string | null>;
 
   constructor(private readonly dependencies: HiveSpawnerDependencies) {
     this.makeWorktree = dependencies.createWorktree ?? createWorktree;
@@ -494,6 +513,9 @@ export class HiveSpawner implements Spawner {
     this.modelResolver = dependencies.resolveModel ?? resolveConcreteModel;
     this.claudeExecutable = dependencies.claudeExecutable ??
       resolveWorkingClaudeExecutable().path;
+    this.readCodexActivity = dependencies.readCodexActivity ??
+      (async (worktreePath) =>
+        (await readCodexTelemetry(worktreePath)).lastActivityAt);
   }
 
   /** Servers a Codex spawn would inherit from the user's global config. Read
@@ -857,18 +879,22 @@ export class HiveSpawner implements Spawner {
   private async monitorControlReadiness(
     record: AgentRecord,
   ): Promise<string | null> {
+    const startedAt = new Date().toISOString();
+    let lastPaneTail = "";
     for (let attempt = 0; attempt < READINESS_ATTEMPTS; attempt += 1) {
       await this.wait(READINESS_POLL_MS);
       const current = this.dependencies.db.getAgentById(record.id);
       if (current !== null && current.lastEventAt > record.lastEventAt) return null;
+      if (await this.hasFreshCodexActivity(record, startedAt)) return null;
       if (!(await this.dependencies.tmux.hasSession(record.tmuxSession))) {
         return "tmux session exited";
       }
       try {
         const pane = await this.dependencies.tmux.capturePane(record.tmuxSession);
+        lastPaneTail = tailLines(pane, 15);
         const paneTail = tailLines(pane, 5);
         if (LAUNCH_FAILURE_PATTERNS.some((pattern) => pattern.test(paneTail))) {
-          return tailLines(pane, 15) || "Control process launch error";
+          return lastPaneTail || "Control process launch error";
         }
       } catch {
         if (!(await this.dependencies.tmux.hasSession(record.tmuxSession))) {
@@ -876,7 +902,29 @@ export class HiveSpawner implements Spawner {
         }
       }
     }
-    return null;
+    return readinessTimeoutReason(
+      READINESS_ATTEMPTS * READINESS_POLL_MS,
+      lastPaneTail,
+    );
+  }
+
+  /** True when a codex agent's rollout file gained activity after this
+   * readiness watch began — the only proof of life a codex TUI can give
+   * before its first turn-end notify hook. Read at most once per poll tick,
+   * only for codex agents with a worktree; a read failure is simply "no
+   * signal yet". */
+  private async hasFreshCodexActivity(
+    record: AgentRecord,
+    monitorStartedAt: string,
+  ): Promise<boolean> {
+    const tool = record.executionIdentity?.tool ?? record.tool;
+    if (tool !== "codex" || record.worktreePath === null) return false;
+    try {
+      const lastActivityAt = await this.readCodexActivity(record.worktreePath);
+      return lastActivityAt !== null && lastActivityAt > monitorStartedAt;
+    } catch {
+      return false;
+    }
   }
 
   async spawn(request: SpawnRequest): Promise<AgentRecord> {
@@ -1282,11 +1330,26 @@ export class HiveSpawner implements Spawner {
 
   private async monitorReadiness(record: AgentRecord): Promise<string | null> {
     const session = record.tmuxSession;
+    const startedAt = new Date().toISOString();
+    // Baseline from the live row, not the caller's copy: the app-server
+    // fallback re-inserts the record with a fresh lastEventAt, and comparing
+    // against a stale snapshot would count that write as a hook event.
+    const baselineEventAt =
+      this.dependencies.db.getAgentById(record.id)?.lastEventAt ??
+        record.lastEventAt;
+    let lastPaneTail = "";
     for (let attempt = 0; attempt < READINESS_ATTEMPTS; attempt += 1) {
       await this.wait(READINESS_POLL_MS);
       if (!this.isStillSpawning(record.id)) {
         return null;
       }
+      // A hook event that advances lastEventAt without leaving "spawning"
+      // (the tool-boundary events) is proof of life all the same.
+      const current = this.dependencies.db.getAgentById(record.id);
+      if (current !== null && current.lastEventAt > baselineEventAt) {
+        return null;
+      }
+      if (await this.hasFreshCodexActivity(record, startedAt)) return null;
       if (!(await this.dependencies.tmux.hasSession(session))) {
         return "tmux session exited";
       }
@@ -1299,12 +1362,16 @@ export class HiveSpawner implements Spawner {
         }
         continue;
       }
+      lastPaneTail = tailLines(pane, 15);
       const paneTail = tailLines(pane, 5);
       if (LAUNCH_FAILURE_PATTERNS.some((pattern) => pattern.test(paneTail))) {
-        return tailLines(pane, 15) || "Agent launch error";
+        return lastPaneTail || "Agent launch error";
       }
     }
-    return null;
+    return readinessTimeoutReason(
+      READINESS_ATTEMPTS * READINESS_POLL_MS,
+      lastPaneTail,
+    );
   }
 
   private isStillSpawning(agentId: string): boolean {
