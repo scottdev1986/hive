@@ -975,7 +975,8 @@ describe("HiveSpawner wiring", () => {
     expect(probedAppServer).toEqual(false);
     expect(tmux.sessions).toHaveLength(1);
     expect(tmux.sessions[0]?.[2]).toContain("'codex'");
-    expect(tmux.sessions[0]?.[2]).toContain("notify=");
+    expect(tmux.sessions[0]?.[2]).toContain("--dangerously-bypass-hook-trust");
+    expect(tmux.sessions[0]?.[2]).toContain("features.hooks=true");
     expect(tmux.sessions[0]?.[2]).toContain("Visible interactive task");
     expect(tmux.sessions[0]?.[2]).not.toContain("codex-app-server-host");
   });
@@ -1084,7 +1085,8 @@ describe("HiveSpawner wiring", () => {
     expect(tmux.killed).toEqual([agentTmuxSession("maya")]);
     expect(tmux.sessions).toHaveLength(2);
     expect(tmux.sessions[1]?.[2]).toContain("'codex'");
-    expect(tmux.sessions[1]?.[2]).toContain("notify=");
+    expect(tmux.sessions[1]?.[2]).toContain("--dangerously-bypass-hook-trust");
+    expect(tmux.sessions[1]?.[2]).toContain("features.hooks=true");
     expect(tmux.sessions[1]?.[2]).toContain("Fallback task");
   });
 
@@ -1475,7 +1477,8 @@ describe("HiveSpawner wiring", () => {
       `hive_land`,
     );
     expect(tmux.sessions[1]?.[2]).toContain("'codex'");
-    expect(tmux.sessions[1]?.[2]).toContain("notify=");
+    expect(tmux.sessions[1]?.[2]).toContain("--dangerously-bypass-hook-trust");
+    expect(tmux.sessions[1]?.[2]).toContain("features.hooks=true");
     expect(tmux.sessions[1]?.[2]).toContain("You are david");
     expect(claude.model).toEqual("claude-fable-5");
     expect(claude.executionIdentity).toEqual({
@@ -1928,9 +1931,8 @@ describe("HiveSpawner wiring", () => {
   });
 
   test("fresh codex rollout activity is proof of life when no hook event ever arrives", async () => {
-    // A codex TUI sends no session-start hook; its first hook event is the
-    // notify at first turn-end, potentially minutes out. The rollout file's
-    // mtime is the only early signal, and it must count as readiness.
+    // Native SessionStart is primary, but policy can disable hooks and hook
+    // execution can fail. The rollout mtime must remain a readiness fallback.
     const root = await mkdtemp(join(tmpdir(), "hive-spawner-codex-rollout-"));
     tempRoots.push(root);
     const store = new FakeStore();

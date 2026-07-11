@@ -117,10 +117,11 @@ describe("Codex adapter", () => {
       'approval_policy="on-request"',
       "-c",
       'projects."/tmp/worktree".trust_level="trusted"',
+      "--dangerously-bypass-hook-trust",
+      "-c",
+      "features.hooks=true",
       "-c",
       'mcp_servers.hive.url="http://127.0.0.1:4317/mcp"',
-      "-c",
-      'notify=["/tmp/worktree/.codex/hive-notify.sh"]',
     ]);
     expect(buildCodexSpawnCommand({ ...base, readOnly: true })).toEqual([
       "codex",
@@ -132,10 +133,11 @@ describe("Codex adapter", () => {
       "read-only",
       "-c",
       'projects."/tmp/worktree".trust_level="trusted"',
+      "--dangerously-bypass-hook-trust",
+      "-c",
+      "features.hooks=true",
       "-c",
       'mcp_servers.hive.url="http://127.0.0.1:4317/mcp"',
-      "-c",
-      'notify=["/tmp/worktree/.codex/hive-notify.sh"]',
     ]);
   });
 
@@ -173,7 +175,7 @@ describe("Codex adapter", () => {
     expect(readOnly).not.toContain('approval_policy="never"');
   });
 
-  test("builds trusted-project and TOML notify CLI overrides", () => {
+  test("builds trusted-project, native-hook, and MCP CLI overrides", () => {
     expect(buildCodexTrustArgs("/tmp/work tree")).toEqual([
       "-c",
       'projects."/tmp/work tree".trust_level="trusted"',
@@ -187,11 +189,9 @@ describe("Codex adapter", () => {
       daemonPort: 4317,
       readOnly: false,
     });
-    const notifyOverride = command.at(-1);
-    expect(notifyOverride).toBeDefined();
-    expect(Bun.TOML.parse(notifyOverride ?? "")).toEqual({
-      notify: ["/tmp/work tree/.codex/hive-notify.sh"],
-    });
+    expect(command).toContain("--dangerously-bypass-hook-trust");
+    expect(command).toContain("features.hooks=true");
+    expect(command.join(" ")).not.toContain("notify=");
     const mcpOverride = command.find((argument) =>
       argument.startsWith("mcp_servers.hive.url=")
     );
@@ -224,10 +224,11 @@ describe("Codex adapter", () => {
       'approval_policy="on-request"',
       "-c",
       'projects."/tmp/worktree".trust_level="trusted"',
+      "--dangerously-bypass-hook-trust",
+      "-c",
+      "features.hooks=true",
       "-c",
       'mcp_servers.hive.url="http://127.0.0.1:4317/mcp"',
-      "-c",
-      'notify=["/tmp/worktree/.codex/hive-notify.sh"]',
       "019f-thread",
     ]);
   });
@@ -292,7 +293,7 @@ describe("Codex adapter", () => {
     expect(command).toContain("model_reasoning_effort=low");
   });
 
-  test("writes notify wrapper and streamable HTTP MCP config", async () => {
+  test("writes native lifecycle hooks and streamable HTTP MCP config", async () => {
     await writeCodexAgentConfig(worktreePath, {
       name: "agent-4",
       daemonPort: 4317,
@@ -304,23 +305,34 @@ describe("Codex adapter", () => {
       "utf8",
     );
     const config = Bun.TOML.parse(configSource) as {
-      notify?: string[];
+      hooks: Record<string, Array<{ hooks: Array<{ command: string }> }>>;
       mcp_servers: Record<string, { url: string }>;
     };
     const notifyPath = join(worktreePath, ".codex", CODEX_NOTIFY_SCRIPT);
     const script = await readFile(notifyPath, "utf8");
 
-    expect(config.notify).toBeUndefined();
-    expect(configSource.includes("notify")).toEqual(false);
+    expect(configSource.includes("notify =")).toEqual(false);
     expect(config.mcp_servers.hive?.url).toEqual(
       "http://127.0.0.1:4317/mcp",
     );
     expect(script.startsWith("#!/bin/sh\n")).toEqual(true);
     expect(
       script.includes(
-        'exec hive event turn-end --agent agent-4 --port 4317 --payload "$1"',
+        'exec hive event "$1" --agent agent-4 --port 4317',
       ),
     ).toEqual(true);
+    expect(config.hooks.SessionStart?.[0]?.hooks[0]?.command).toEndWith(
+      "hive-notify.sh session-start",
+    );
+    expect(config.hooks.UserPromptSubmit?.[0]?.hooks[0]?.command).toEndWith(
+      "hive-notify.sh turn-start",
+    );
+    expect(config.hooks.PostToolUse?.[0]?.hooks[0]?.command).toEndWith(
+      "hive-notify.sh tool-boundary",
+    );
+    expect(config.hooks.Stop?.[0]?.hooks[0]?.command).toEndWith(
+      "hive-notify.sh turn-end",
+    );
   });
   test("carries the agent capability as a static header in a 0600 config", async () => {
     // Codex has no connect-time headers helper, so its token has to sit in a

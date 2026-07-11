@@ -105,9 +105,9 @@ export interface CrashRecoveryDependencies {
   /** Writer autonomy, so a resumed agent regains the launch posture it had at
    * spawn. Absent fails safe to the sandboxed approval queue. */
   autonomy?: HiveConfig["autonomy"];
-  /** Test seam for codex rollout activity during the resume watch. A resumed
-   * codex TUI emits no hook event until its first turn-end notify, so a fresh
-   * rollout-file mtime is the only early proof of life it can give. Defaults
+  /** Test seam for codex rollout activity during the resume watch. Native
+   * SessionStart is the primary signal; a fresh rollout mtime remains an
+   * independent fallback when hooks are disabled by policy or fail. Defaults
    * to `readCodexTelemetry`. */
   readCodexActivity?: (worktreePath: string) => Promise<string | null>;
 }
@@ -488,9 +488,9 @@ export class CrashRecovery {
   }
 
   /** True when a codex agent's rollout file gained activity after this resume
-   * watch began — the only proof of life a codex TUI can give before its
-   * first turn-end notify hook. Read at most once per poll tick, only for
-   * codex agents with a worktree; a read failure is simply "no signal yet". */
+   * watch began — an independent fallback when its native SessionStart hook
+   * does not arrive. Read at most once per poll tick, only for codex agents
+   * with a worktree; a read failure is simply "no signal yet". */
   private async hasFreshCodexActivity(
     record: AgentRecord,
     monitorStartedAt: string,

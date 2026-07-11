@@ -271,11 +271,10 @@ export interface HiveSpawnerDependencies {
     CodexAppServerManager,
     "isAvailable" | "buildHostCommand" | "startAgent" | "disconnect"
   >;
-  /** Test seam for codex rollout activity during the readiness watch. A codex
-   * TUI emits no session-start hook — its first hook event is the notify at
-   * first turn-end, potentially minutes away — so a fresh rollout-file mtime
-   * is the only early proof of life it can give. Defaults to
-   * `readCodexTelemetry`. */
+  /** Test seam for codex rollout activity during the readiness watch. Native
+   * SessionStart is the primary signal; a fresh rollout mtime remains an
+   * independent fallback when hooks are disabled by policy or fail. Defaults
+   * to `readCodexTelemetry`. */
   readCodexActivity?: (worktreePath: string) => Promise<string | null>;
 }
 

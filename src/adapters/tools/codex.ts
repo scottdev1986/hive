@@ -87,19 +87,15 @@ function buildCodexConfigArgs(
     );
   }
 
-  const notifyPath = resolve(
-    options.worktreePath,
-    ".codex",
-    CODEX_NOTIFY_SCRIPT,
-  );
   args.push(
     ...buildCodexTrustArgs(options.worktreePath),
+    "--dangerously-bypass-hook-trust",
+    "-c",
+    "features.hooks=true",
     "-c",
     `mcp_servers.hive.url=${tomlString(`http://127.0.0.1:${options.daemonPort}/mcp`)}`,
-    "-c",
-    `notify=[${tomlString(notifyPath)}]`,
     // Detach the human's own servers from this agent. Same override channel as
-    // notify and trust, so spawn and resume stay one shape.
+    // hooks and trust, so spawn and resume stay one shape.
     ...buildCodexMcpExclusionArgs(options.excludeMcpServers ?? []).args,
   );
 
@@ -240,15 +236,16 @@ export async function writeCodexAgentConfig(
   const notifyScript = [
     "#!/bin/sh",
     [
-      "exec hive event turn-end",
+      'exec hive event "$1"',
       "--agent",
       shellToken(options.name),
       "--port",
       String(options.daemonPort),
-      '--payload "$1"',
     ].join(" "),
     "",
   ].join("\n");
+  const hookCommand = (kind: string): string =>
+    `${shellToken(notifyPath)} ${kind}`;
   const config = [
     "[mcp_servers.hive]",
     `url = ${tomlString(`http://127.0.0.1:${options.daemonPort}/mcp`)}`,
@@ -257,6 +254,30 @@ export async function writeCodexAgentConfig(
       "[mcp_servers.hive.http_headers]",
       `Authorization = ${tomlString(`Bearer ${options.capabilityToken}`)}`,
     ]),
+    "",
+    "[[hooks.SessionStart]]",
+    "[[hooks.SessionStart.hooks]]",
+    'type = "command"',
+    `command = ${tomlString(hookCommand("session-start"))}`,
+    "timeout = 5",
+    "",
+    "[[hooks.UserPromptSubmit]]",
+    "[[hooks.UserPromptSubmit.hooks]]",
+    'type = "command"',
+    `command = ${tomlString(hookCommand("turn-start"))}`,
+    "timeout = 5",
+    "",
+    "[[hooks.PostToolUse]]",
+    "[[hooks.PostToolUse.hooks]]",
+    'type = "command"',
+    `command = ${tomlString(hookCommand("tool-boundary"))}`,
+    "timeout = 5",
+    "",
+    "[[hooks.Stop]]",
+    "[[hooks.Stop.hooks]]",
+    'type = "command"',
+    `command = ${tomlString(hookCommand("turn-end"))}`,
+    "timeout = 5",
     "",
   ].join("\n");
 
