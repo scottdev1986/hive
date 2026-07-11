@@ -89,7 +89,7 @@ export async function ensureDaemonForBuild(cwd = process.cwd()): Promise<void> {
 
   const outcome = await restartStaleDaemon(state, { isRunning: () => isRunning() });
   if (!outcome.stopped) {
-    throw new Error(`Cannot start: ${outcome.reason}`);
+    throw new Error(`cannot start: ${outcome.reason}`);
   }
   process.stderr.write(
     "Stopped a daemon running a previous Hive build; starting the current one.\n",
@@ -128,6 +128,10 @@ export async function startSession(deps: StartDeps = {}): Promise<StartedSession
 
 export async function runStart(deps: StartDeps = {}): Promise<void> {
   const { port, cwd } = await startSession(deps);
-  console.log(`Hive is running for ${cwd} (daemon port ${port}).`);
-  console.log("Run `hive` to open the Workspace, or `hive claude` for an orchestrator.");
+  // State the state. Neither Claude Code nor Codex makes its own name the
+  // subject of a status line ("Claude Code is running for /path"), and neither
+  // puts a full stop at the end of one. The second line is what is now
+  // possible, not a chore being handed back.
+  console.log(`ready — ${cwd} (daemon port ${port})`);
+  console.log("`hive` opens the Workspace; `hive claude` starts an orchestrator");
 }

@@ -19,8 +19,8 @@ export function operatorHeaders(): Record<string, string> {
   const headers = authorizationHeaders(OPERATOR_SUBJECT);
   if (headers === null) {
     throw new Error(
-      "No Hive operator credential is available. The daemon mints it at " +
-        "startup; start one with `hive claude` or `hive codex`.",
+      "no operator credential is available; the daemon mints one at startup\n" +
+        "Fix: start a daemon with `hive claude` or `hive codex`",
     );
   }
   return headers;
@@ -61,7 +61,7 @@ export function agentFetch(
 export function runCredentialHelper(subject: string): 0 | 1 {
   const headers = authorizationHeaders(subject);
   if (headers === null) {
-    console.error(`No Hive credential for ${subject}`);
+    console.error(`no credential for ${subject}`);
     return 1;
   }
   console.log(JSON.stringify(headers));

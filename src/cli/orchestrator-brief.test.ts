@@ -168,8 +168,19 @@ describe("orchestrator brief", () => {
       hasSession: async () => true,
       listClientTtys: async () => ["/dev/ttys003"],
       killSession: async () => { killed = true; },
-    })).rejects.toThrow("already active");
+    })).rejects.toThrow("already running");
     expect(killed).toEqual(false);
+  });
+
+  // Hive genuinely must not close a live orchestrator out from under the user,
+  // so this message has earned the command it names — and therefore states it
+  // as a labelled one-line `Fix:` rather than burying it in prose.
+  test("names the user's remedy as a Fix: line, not as prose", async () => {
+    await expect(prepareFreshOrchestratorSession({
+      hasSession: async () => true,
+      listClientTtys: async () => ["/dev/ttys003"],
+      killSession: async () => {},
+    })).rejects.toThrow(/Fix: close it, or run `hive stop`/);
   });
 
   test("forbids background polling and makes status explicitly on-demand", () => {
@@ -414,7 +425,7 @@ describe("orchestrator brief", () => {
       },
       async () => null,
       async () => null,
-    )).rejects.toThrow("requires Claude Channels");
+    )).rejects.toThrow(/needs Claude .* or newer/);
   });
 
   test("launches when Terminal.app capture reports pgrep's no-match error", async () => {

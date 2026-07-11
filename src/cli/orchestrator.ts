@@ -39,8 +39,8 @@ export function codexRootSocketPath(hiveHome?: string): string {
   // its cause, not as an inscrutable bind error inside the tmux shell command.
   if (Buffer.byteLength(socket) > 103) {
     throw new Error(
-      `Codex root socket path exceeds the AF_UNIX length limit: ${socket}. ` +
-        "Point TMPDIR at a shorter directory.",
+      `the Codex socket path is too long for this system: ${socket}\n` +
+        "Fix: point TMPDIR at a shorter directory",
     );
   }
   return socket;
@@ -120,9 +120,11 @@ export async function prepareFreshOrchestratorSession(
 
   const clients = await tmux.listClientTtys(session);
   if (clients.length > 0) {
+    // A command the user has earned: Hive will not close a live orchestrator
+    // out from under them in order to start another one.
     throw new Error(
-      `A Hive orchestrator is already active in tmux session ${session}; ` +
-        "close it or run `hive stop` before starting another.",
+      `an orchestrator is already running in tmux session ${session}\n` +
+        "Fix: close it, or run `hive stop`, before starting another",
     );
   }
   await tmux.killSession(session, { ignoreMissing: true });
@@ -424,7 +426,8 @@ export async function launchOrchestrator(
     const version = await (detectVersion ?? (async () => claude.version))();
     if (version === null || !versionAtLeast(version, CHANNELS_MIN_VERSION)) {
       throw new Error(
-        `The Hive orchestrator requires Claude Channels (Claude >= ${CHANNELS_MIN_VERSION}).`,
+        `the orchestrator needs Claude ${CHANNELS_MIN_VERSION} or newer (for Channels)\n` +
+          "Fix: update Claude Code, then retry",
       );
     }
   }
@@ -442,10 +445,16 @@ export async function launchOrchestrator(
   } catch (error) {
     // Window layout is cosmetic. Adapter, permission, and daemon registration
     // failures must never prevent the orchestrator process from launching.
+    //
+    // The user is told, because this one they can actually fix — it is nearly
+    // always the macOS automation permission. What they are NOT shown is
+    // whatever string the adapter happened to throw: "registration skipped"
+    // names an internal step, not a thing that went wrong for them.
     console.warn(
-      `hive: terminal layout registration skipped: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
+      "Warning: could not arrange this session's window automatically; " +
+        "continuing without it\n" +
+        "Fix: System Settings > Privacy & Security > Automation, if macOS " +
+        `blocked it (${error instanceof Error ? error.message : String(error)})`,
     );
   }
 
@@ -456,12 +465,16 @@ export async function launchOrchestrator(
     if (tool === "codex") {
       const provisioned = await provisionCodexRootToken(port).catch(() => null);
       if (provisioned === null) {
-        // Pre-token daemons have no mint endpoint; degrade to the old
-        // unauthenticated root instead of refusing to launch, but say so.
-        console.warn(
-          "hive: no single-use Codex root token available from the daemon; " +
-            "launching the Codex orchestrator without one.",
-        );
+        // A daemon predating the mint endpoint; degrade to the old
+        // unauthenticated root rather than refuse to launch.
+        //
+        // Deliberately not printed. "No single-use Codex root token available
+        // from the daemon" names our own plumbing, and there is nothing the
+        // user can do with it — no command, no setting, no decision. A message
+        // that cannot be acted on is not a warning, it is noise, and it trains
+        // people to ignore the messages that do matter. The condition is real,
+        // so it goes where a real diagnostic goes: the daemon's log, on the
+        // side that knows it happened.
       } else {
         codexTokenFile = provisioned;
       }

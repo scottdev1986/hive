@@ -199,16 +199,25 @@ export async function restartStaleDaemon(
   return { stopped: true, pid: state.pid };
 }
 
-/** Human-readable explanation for a state the update flow refuses to act on. */
+/**
+ * Why the update flow will not act, and the one thing the user can do about it.
+ *
+ * Both cases name a command, and both have earned it. Hive will not kill a live
+ * team to activate a release, and it will not stop a daemon serving a different
+ * project — those are the user's calls, not ours. That is the test a command in
+ * a message has to pass: never ask for work Hive could have done itself, and
+ * when the user genuinely must decide, say it in one labelled `Fix:` line
+ * rather than burying it in prose.
+ */
 export function explainRefusal(state: DaemonUpdateState): string | null {
   switch (state.state) {
     case "busy":
-      return `${state.liveAgents.length} agent(s) live (${state.liveAgents.join(", ")}) — ` +
-        "the running daemon and team are unaffected until they finish. " +
-        "Run `hive stop` first to activate now.";
+      return `${state.liveAgents.length} agent(s) still working (${state.liveAgents.join(", ")}); ` +
+        "the running daemon and team are unaffected\n" +
+        "Fix: run `hive stop` to activate now";
     case "foreign":
-      return `Port ${state.port} serves a different project (${state.reason}). ` +
-        "Stop that daemon before updating this project.";
+      return `port ${state.port} serves a different project (${state.reason})\n` +
+        "Fix: stop that daemon, then update this project";
     default:
       return null;
   }

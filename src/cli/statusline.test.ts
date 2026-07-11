@@ -1,8 +1,12 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   parseStatuslineReport,
   renderStatusLine,
   runStatusline,
+  statuslineErrorPath,
 } from "./statusline";
 
 const observedAt = "2026-07-09T12:00:00.000Z";
@@ -165,6 +169,60 @@ describe("the one parse", () => {
     expect(parseStatuslineReport("zoe", { model: {} }, observedAt)).toEqual(null);
     expect(parseStatuslineReport("zoe", {}, observedAt)).toEqual(null);
     expect(parseStatuslineReport("zoe", null, observedAt)).toEqual(null);
+  });
+});
+
+// The catch in runStatusline must stay silent to the agent's terminal — it
+// renders on every keystroke. But it used to be silent EVERYWHERE: a hard
+// ReferenceError in the parse was indistinguishable from "nothing to report
+// this render", so the transport was dead and nothing anywhere said so. Silent
+// to the terminal is right; silent to us is how the next one hides too.
+describe("a swallowed failure still leaves a trace", () => {
+  test("records the error where a human can find it, and still renders", async () => {
+    const home = mkdtempSync(join(tmpdir(), "hive-sl-err-"));
+    const previous = process.env.HIVE_HOME;
+    process.env.HIVE_HOME = home;
+    try {
+      const line = await runStatusline("maya", 41_000, JSON.stringify(payload), () => {
+        throw new Error("daemon exploded");
+      });
+
+      // The agent's terminal sees a clean status line, never the exception.
+      expect(line).toBe("🐝 maya · 5h 24% · 7d 41%");
+
+      const trace = JSON.parse(readFileSync(statuslineErrorPath(), "utf8"));
+      expect(trace).toMatchObject({
+        agent: "maya",
+        error: "daemon exploded",
+        count: 1,
+      });
+    } finally {
+      if (previous === undefined) delete process.env.HIVE_HOME;
+      else process.env.HIVE_HOME = previous;
+    }
+  });
+
+  // A status line that fails once fails on every keystroke. The trace counts;
+  // it must never append, or it would fill the disk with the same error.
+  test("counts repeats instead of growing without bound", async () => {
+    const home = mkdtempSync(join(tmpdir(), "hive-sl-err-"));
+    const previous = process.env.HIVE_HOME;
+    process.env.HIVE_HOME = home;
+    try {
+      const boom = () => {
+        throw new Error("still broken");
+      };
+      for (let i = 0; i < 3; i += 1) {
+        await runStatusline("maya", 41_000, JSON.stringify(payload), boom);
+      }
+      const trace = JSON.parse(readFileSync(statuslineErrorPath(), "utf8"));
+      expect(trace.count).toBe(3);
+      expect(trace.firstAt).not.toBeUndefined();
+      expect(trace.lastAt).not.toBeUndefined();
+    } finally {
+      if (previous === undefined) delete process.env.HIVE_HOME;
+      else process.env.HIVE_HOME = previous;
+    }
   });
 });
 

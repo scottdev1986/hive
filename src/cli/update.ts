@@ -84,25 +84,25 @@ const healthCheck = async (binary: string): Promise<boolean> =>
 function guardSelfUpdate(): void {
   const disabled = updatesDisabled();
   if (disabled !== null) {
-    throw new UpdateError(`Updates are disabled (${disabled}).`);
+    throw new UpdateError(`updates are disabled (${disabled})`);
   }
   const method = detectInstallMethod(process.execPath);
   if (method === "source") {
     throw new UpdateError(
-      "This is a source checkout, not an installed release. `hive update` only " +
-        "updates an installed Hive; pull and rebuild instead.",
+      "this is a source checkout, not an installed release; `hive update` only " +
+        "updates an installed hive\nFix: pull and rebuild instead",
     );
   }
   if (method === "homebrew") {
     throw new UpdateError(
-      "This Hive was installed by Homebrew, which owns the install. " +
-        "Run `brew upgrade hive`.",
+      "Homebrew installed this hive and owns the install\n" +
+        "Fix: run `brew upgrade hive`",
     );
   }
   if (method === "unmanaged") {
     throw new UpdateError(
-      `This hive binary (${process.execPath}) was not installed by Hive's ` +
-        "installer, so there is nothing safe to replace.",
+      `this hive binary (${process.execPath}) was not installed by hive's ` +
+        "installer, so there is nothing safe to replace",
     );
   }
 }

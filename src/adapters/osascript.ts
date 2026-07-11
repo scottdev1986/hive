@@ -20,11 +20,13 @@ export function osascriptFailure(operation: string, detail: string): Error {
   if (!MACOS_PERMISSION_DENIED.test(detail)) {
     return new Error(message);
   }
+  // A command the user has earned: only they can grant this permission, and it
+  // is granted in System Settings, not by anything Hive can run for them.
   return new Error(
-    `${message}. macOS denied terminal automation. Open System Settings > ` +
-      "Privacy & Security > Automation and allow the app that launched Hive " +
-      "(Terminal or your terminal emulator) to control the selected terminal " +
-      "application, then run `hive stop` and retry",
+    `${message}\nmacOS denied terminal automation\n` +
+      "Fix: System Settings > Privacy & Security > Automation — allow the app " +
+      "that launched Hive (Terminal, or your terminal emulator) to control the " +
+      "selected terminal application, then run `hive stop` and retry",
   );
 }
 

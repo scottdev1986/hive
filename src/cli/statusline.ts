@@ -1,4 +1,7 @@
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import type { StatuslineReport } from "../schemas";
+import { getHiveHome } from "../daemon/db";
 import { agentFetch } from "./credential";
 
 // Claude Code invokes the configured statusLine command on every render and
@@ -189,6 +192,55 @@ export async function postStatuslineReport(
   });
 }
 
+/**
+ * Where a swallowed status-line failure goes to be found.
+ *
+ * The catch below has to stay silent — this renders on every keystroke and an
+ * exception here would land in the agent's terminal. But silent to the terminal
+ * and silent everywhere are different things, and this function used to be the
+ * latter: a hard ReferenceError in the parse presented, indistinguishably, as
+ * "no observation this render". The transport was dead and nothing anywhere
+ * said so.
+ *
+ * So the failure is recorded rather than merely dropped. The file is
+ * OVERWRITTEN, never appended: a status line that fails once fails on every
+ * keystroke, and an append here would be a disk-filling loop. A count and a
+ * first/last timestamp say "this has been broken for two hours" without
+ * growing.
+ */
+export const statuslineErrorPath = (): string =>
+  join(getHiveHome(), "statusline-error.json");
+
+function recordStatuslineFailure(agent: string, error: unknown): void {
+  try {
+    const path = statuslineErrorPath();
+    const now = new Date().toISOString();
+    let previous: { count?: number; firstAt?: string } = {};
+    try {
+      previous = JSON.parse(readFileSync(path, "utf8")) as typeof previous;
+    } catch {
+      // No prior failure recorded, or the file is unreadable. Either way this
+      // is the first one we know about.
+    }
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(
+      path,
+      `${
+        JSON.stringify({
+          agent,
+          error: error instanceof Error ? error.message : String(error),
+          count: (previous.count ?? 0) + 1,
+          firstAt: previous.firstAt ?? now,
+          lastAt: now,
+        })
+      }\n`,
+    );
+  } catch {
+    // A trace we cannot write is not a reason to break the render. This is the
+    // one catch in this file that is genuinely allowed to lose information.
+  }
+}
+
 export async function runStatusline(
   agent: string,
   port: number,
@@ -206,9 +258,9 @@ export async function runStatusline(
     // rate_limits still carries the context window, and the window is the one
     // number the daemon cannot obtain anywhere else.
     if (report !== null) await postStatuslineReport(report, port, fetcher);
-  } catch {
-    // The status line renders on every keystroke; it must never throw into
-    // the agent's terminal, and a missed observation is simply a stale one.
+  } catch (error) {
+    // Silent to the agent's terminal, which is right. Not silent to us.
+    recordStatuslineFailure(agent, error);
   }
   return renderStatusLine(agent, report);
 }

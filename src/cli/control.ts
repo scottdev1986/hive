@@ -106,7 +106,7 @@ export function requireDaemonPort(): number {
   const port = readDaemonPort();
   if (port === null || port <= 0 || port > 65_535) {
     throw new Error(
-      "Hive daemon is not running; start one with `hive claude` or `hive codex`.",
+      "no daemon is running\nFix: start one with `hive claude` or `hive codex`",
     );
   }
   return port;
@@ -148,7 +148,7 @@ export async function searchMemoryCli(
 ): Promise<void> {
   const results = await searchMemory(requireDaemonPort(), query, options);
   if (results.length === 0) {
-    console.log("No matching memory facts.");
+    console.log("no matching memory facts");
     return;
   }
   for (const result of results) {
@@ -160,7 +160,7 @@ export async function searchMemoryCli(
 
 export async function writeMemoryCli(input: MemoryWriteInput): Promise<void> {
   const fact = await writeMemory(requireDaemonPort(), input);
-  console.log(`Wrote [${fact.scope}] ${fact.id} — ${fact.path}`);
+  console.log(`wrote [${fact.scope}] ${fact.id} — ${fact.path}`);
 }
 
 export async function readMemoryCli(
@@ -198,7 +198,7 @@ export async function deleteMemoryCli(
 
 export async function reindexMemoryCli(): Promise<void> {
   const count = await reindexMemory(requireDaemonPort());
-  console.log(`Rebuilt the memory search index from ${count} fact(s).`);
+  console.log(`rebuilt the memory search index from ${count} fact(s)`);
 }
 
 export interface RecoveryOutcomeView {
@@ -226,16 +226,16 @@ export async function recoverAgentsCli(name?: string): Promise<void> {
   }
   const outcomes = body.outcomes ?? [];
   if (outcomes.length === 0) {
-    console.log("No crashed agents to recover.");
+    console.log("no crashed agents to recover");
     return;
   }
   for (const outcome of outcomes) {
     if (outcome.action === "resumed") {
-      console.log(`Resumed ${outcome.agent} (session ${outcome.sessionId}).`);
+      console.log(`resumed ${outcome.agent} (session ${outcome.sessionId})`);
     } else if (outcome.action === "marked-dead") {
-      console.log(`Marked ${outcome.agent} dead: ${outcome.reason}`);
+      console.log(`marked ${outcome.agent} dead: ${outcome.reason}`);
     } else {
-      console.log(`Skipped ${outcome.agent}: ${outcome.reason}`);
+      console.log(`skipped ${outcome.agent}: ${outcome.reason}`);
     }
   }
 }
@@ -248,13 +248,14 @@ export async function watchAgent(name: string): Promise<void> {
     const known = agents.length === 0
       ? "No agents are currently registered."
       : `Known agents: ${agents.map((candidate) => candidate.name).join(", ")}.`;
-    throw new Error(`Unknown Hive agent: ${name}. ${known}`);
+    throw new Error(`unknown agent: ${name}. ${known}`);
   }
 
   const tmux = new TmuxAdapter();
   if (!(await tmux.hasSession(agent.tmuxSession))) {
     throw new Error(
-      `Agent ${name} is known, but tmux session ${agent.tmuxSession} is gone. Check \`hive status\` and spawn a replacement if needed.`,
+      `${name} is known, but its tmux session ${agent.tmuxSession} is gone\n` +
+        "Fix: check `hive status`, then spawn a replacement",
     );
   }
   const config = await loadHiveConfig();
