@@ -32,6 +32,7 @@ import {
   removeWorktree,
   slugify,
   type CreatedWorktree,
+  assessStrandedWork,
 } from "../adapters/worktrees";
 import {
   ORCHESTRATOR_NAME,
@@ -45,6 +46,7 @@ import {
 } from "../schemas";
 import type { HiveDatabase } from "./db";
 import { readCodexTelemetry } from "./tool-telemetry";
+import { watchForProofOfLife } from "./readiness";
 import type { SpawnRequest, Spawner } from "./spawner";
 import type { QuotaRouteCandidate, QuotaService } from "./quota";
 import { agentTmuxSession } from "./tmux-sessions";
@@ -212,6 +214,13 @@ export interface HiveSpawnerDependencies {
   terminal: TerminalAdapter;
   createWorktree?: WorktreeCreator;
   removeWorktree?: WorktreeRemover;
+  /** Asks whether a worktree holds work worth keeping. Injectable for tests;
+   * defaults to the real git probe. */
+  assessStrandedWork?: (
+    repoRoot: string,
+    worktreePath: string | null,
+    branch: string | null,
+  ) => Promise<{ dirtyFiles: string[]; unmergedCommits: number }>;
   keepWorktreeOnFailure?: boolean;
   sleep?: Sleep;
   resolveModel?: ModelResolver;
@@ -249,35 +258,10 @@ export interface HiveSpawnerDependencies {
 }
 
 const AGENT_NAME_PATTERN = /^[a-z][a-z0-9-]{1,20}$/;
-const READINESS_POLL_MS = 1_000;
-const READINESS_ATTEMPTS = 15;
-const LAUNCH_FAILURE_PATTERNS = [
-  /^(Error|error):/m,
-  /^\[hive\] process exited with status \d+$/m,
-  /command not found/,
-  /not supported/i,
-  /not found\.?$/m,
-];
 
 const sleep: Sleep = (milliseconds) =>
   new Promise((resolve) => setTimeout(resolve, milliseconds));
 
-/** Poll exhaustion with no positive signal is a failed launch, never a
- * success: an unproven process must not sit in "spawning" forever while its
- * quota reservation and name stay held. */
-function readinessTimeoutReason(totalMs: number, paneTail: string): string {
-  const base = `no readiness signal within ${Math.round(totalMs / 1000)}s ` +
-    "(no hook event and no fresh tool activity)";
-  return paneTail === "" ? base : `${base}; last pane output:\n${paneTail}`;
-}
-
-function tailLines(value: string, count: number): string {
-  const trimmed = value.trimEnd();
-  if (trimmed.length === 0) {
-    return "";
-  }
-  return trimmed.split(/\r?\n/).slice(-count).join("\n").trim();
-}
 
 /** When this holder closed, for ordering reuse. Old rows predate closedAt. */
 const closureInstant = (agent: AgentRecord): string =>
@@ -499,6 +483,9 @@ export function claudeMcpConfigPath(worktreePath: string): string {
 export class HiveSpawner implements Spawner {
   private readonly makeWorktree: WorktreeCreator;
   private readonly cleanupWorktree: WorktreeRemover;
+  private readonly assessStranded: NonNullable<
+    HiveSpawnerDependencies["assessStrandedWork"]
+  >;
   private readonly wait: Sleep;
   private readonly modelResolver: ModelResolver;
   private readonly claudeExecutable: string;
@@ -509,6 +496,7 @@ export class HiveSpawner implements Spawner {
   constructor(private readonly dependencies: HiveSpawnerDependencies) {
     this.makeWorktree = dependencies.createWorktree ?? createWorktree;
     this.cleanupWorktree = dependencies.removeWorktree ?? removeWorktree;
+    this.assessStranded = dependencies.assessStrandedWork ?? assessStrandedWork;
     this.wait = dependencies.sleep ?? sleep;
     this.modelResolver = dependencies.resolveModel ?? resolveConcreteModel;
     this.claudeExecutable = dependencies.claudeExecutable ??
@@ -879,51 +867,27 @@ export class HiveSpawner implements Spawner {
   private async monitorControlReadiness(
     record: AgentRecord,
   ): Promise<string | null> {
-    const startedAt = new Date().toISOString();
-    let lastPaneTail = "";
-    for (let attempt = 0; attempt < READINESS_ATTEMPTS; attempt += 1) {
-      await this.wait(READINESS_POLL_MS);
-      const current = this.dependencies.db.getAgentById(record.id);
-      if (current !== null && current.lastEventAt > record.lastEventAt) return null;
-      if (await this.hasFreshCodexActivity(record, startedAt)) return null;
-      if (!(await this.dependencies.tmux.hasSession(record.tmuxSession))) {
-        return "tmux session exited";
-      }
-      try {
-        const pane = await this.dependencies.tmux.capturePane(record.tmuxSession);
-        lastPaneTail = tailLines(pane, 15);
-        const paneTail = tailLines(pane, 5);
-        if (LAUNCH_FAILURE_PATTERNS.some((pattern) => pattern.test(paneTail))) {
-          return lastPaneTail || "Control process launch error";
-        }
-      } catch {
-        if (!(await this.dependencies.tmux.hasSession(record.tmuxSession))) {
-          return "tmux session exited";
-        }
-      }
-    }
-    return readinessTimeoutReason(
-      READINESS_ATTEMPTS * READINESS_POLL_MS,
-      lastPaneTail,
-    );
+    const proof = await watchForProofOfLife(record.tmuxSession, record.lastEventAt, {
+      hasSession: (session) => this.dependencies.tmux.hasSession(session),
+      capturePane: (session) => this.dependencies.tmux.capturePane(session),
+      lastEventAt: () =>
+        this.dependencies.db.getAgentById(record.id)?.lastEventAt ?? null,
+      codexActivity: () => this.readCodexActivityFor(record),
+      wait: (ms) => this.wait(ms),
+    });
+    return proof.alive ? null : proof.reason;
   }
 
-  /** True when a codex agent's rollout file gained activity after this
-   * readiness watch began — the only proof of life a codex TUI can give
-   * before its first turn-end notify hook. Read at most once per poll tick,
-   * only for codex agents with a worktree; a read failure is simply "no
-   * signal yet". */
-  private async hasFreshCodexActivity(
-    record: AgentRecord,
-    monitorStartedAt: string,
-  ): Promise<boolean> {
+  /** A codex agent's rollout mtime, or null when there is none to read.
+   * Still a positive signal — it just cannot be the only one, because the
+   * rollout stays silent for the whole reasoning phase (see readiness.ts). */
+  private async readCodexActivityFor(record: AgentRecord): Promise<string | null> {
     const tool = record.executionIdentity?.tool ?? record.tool;
-    if (tool !== "codex" || record.worktreePath === null) return false;
+    if (tool !== "codex" || record.worktreePath === null) return null;
     try {
-      const lastActivityAt = await this.readCodexActivity(record.worktreePath);
-      return lastActivityAt !== null && lastActivityAt > monitorStartedAt;
+      return await this.readCodexActivity(record.worktreePath);
     } catch {
-      return false;
+      return null;
     }
   }
 
@@ -1330,49 +1294,23 @@ export class HiveSpawner implements Spawner {
   }
 
   private async monitorReadiness(record: AgentRecord): Promise<string | null> {
-    const session = record.tmuxSession;
-    const startedAt = new Date().toISOString();
     // Baseline from the live row, not the caller's copy: the app-server
     // fallback re-inserts the record with a fresh lastEventAt, and comparing
     // against a stale snapshot would count that write as a hook event.
     const baselineEventAt =
       this.dependencies.db.getAgentById(record.id)?.lastEventAt ??
         record.lastEventAt;
-    let lastPaneTail = "";
-    for (let attempt = 0; attempt < READINESS_ATTEMPTS; attempt += 1) {
-      await this.wait(READINESS_POLL_MS);
-      if (!this.isStillSpawning(record.id)) {
-        return null;
-      }
-      // A hook event that advances lastEventAt without leaving "spawning"
-      // (the tool-boundary events) is proof of life all the same.
-      const current = this.dependencies.db.getAgentById(record.id);
-      if (current !== null && current.lastEventAt > baselineEventAt) {
-        return null;
-      }
-      if (await this.hasFreshCodexActivity(record, startedAt)) return null;
-      if (!(await this.dependencies.tmux.hasSession(session))) {
-        return "tmux session exited";
-      }
-      let pane: string;
-      try {
-        pane = await this.dependencies.tmux.capturePane(session);
-      } catch (error) {
-        if (!(await this.dependencies.tmux.hasSession(session))) {
-          return "tmux session exited";
-        }
-        continue;
-      }
-      lastPaneTail = tailLines(pane, 15);
-      const paneTail = tailLines(pane, 5);
-      if (LAUNCH_FAILURE_PATTERNS.some((pattern) => pattern.test(paneTail))) {
-        return lastPaneTail || "Agent launch error";
-      }
-    }
-    return readinessTimeoutReason(
-      READINESS_ATTEMPTS * READINESS_POLL_MS,
-      lastPaneTail,
-    );
+
+    const proof = await watchForProofOfLife(record.tmuxSession, baselineEventAt, {
+      hasSession: (session) => this.dependencies.tmux.hasSession(session),
+      capturePane: (session) => this.dependencies.tmux.capturePane(session),
+      lastEventAt: () =>
+        this.dependencies.db.getAgentById(record.id)?.lastEventAt ?? null,
+      codexActivity: () => this.readCodexActivityFor(record),
+      settled: () => !this.isStillSpawning(record.id),
+      wait: (ms) => this.wait(ms),
+    });
+    return proof.alive ? null : proof.reason;
   }
 
   private isStillSpawning(agentId: string): boolean {
@@ -1409,6 +1347,7 @@ export class HiveSpawner implements Spawner {
       await this.dependencies.quota?.cancel(record.quotaReservationId, failedAt);
     }
     const cleanupErrors: string[] = [];
+    let preserved: string | null = null;
 
     try {
       await this.dependencies.tmux.killSession(record.tmuxSession, {
@@ -1420,24 +1359,65 @@ export class HiveSpawner implements Spawner {
       );
     }
 
+    // Never delete work to tidy up after ourselves.
+    //
+    // This path force-removed the worktree and force-deleted its branch
+    // unconditionally, so a launch Hive *believed* had failed destroyed
+    // everything the agent had actually written — which is exactly what a false
+    // death did to a live agent's worktree. The judgement of whether a spawn
+    // succeeded is fallible; the destruction of committed work is not
+    // reversible, and those two facts must never be wired together. So we ask
+    // first, with the same probe the close and kill paths already use.
+    //
+    // An empty worktree is still cleaned up: a genuinely dead launch wrote
+    // nothing, and leaving debris behind for every failed spawn would be its own
+    // bug. Only work survives.
     if (!(this.dependencies.keepWorktreeOnFailure ?? false)) {
-      try {
-        await this.cleanupWorktree(
-          this.dependencies.repoRoot,
-          worktree.path,
-          { deleteBranch: true },
-        );
-      } catch (error) {
-        cleanupErrors.push(
-          error instanceof Error ? error.message : "worktree cleanup failed",
-        );
+      const stranded = await this.assessStranded(
+        this.dependencies.repoRoot,
+        worktree.path,
+        worktree.branch,
+      ).catch(() => null);
+
+      // A probe that could not answer is treated as "there might be work".
+      // Guessing wrong in that direction costs a stale directory; guessing wrong
+      // in the other costs the work itself.
+      const hasWork = stranded === null ||
+        stranded.dirtyFiles.length > 0 || stranded.unmergedCommits > 0;
+
+      if (hasWork) {
+        const detail = stranded === null
+          ? "its contents could not be checked"
+          : `${stranded.dirtyFiles.length} uncommitted file(s), ` +
+            `${stranded.unmergedCommits} unmerged commit(s)`;
+        preserved =
+          `Kept the worktree at ${worktree.path} (branch ${worktree.branch}): ` +
+          `${detail}. Nothing was discarded.`;
+      } else {
+        try {
+          await this.cleanupWorktree(
+            this.dependencies.repoRoot,
+            worktree.path,
+            { deleteBranch: true },
+          );
+        } catch (error) {
+          cleanupErrors.push(
+            error instanceof Error ? error.message : "worktree cleanup failed",
+          );
+        }
       }
     }
 
-    if (cleanupErrors.length > 0) {
+    const notes = [
+      ...(preserved === null ? [] : [preserved]),
+      ...(cleanupErrors.length > 0
+        ? [`Cleanup failed: ${cleanupErrors.join("; ")}`]
+        : []),
+    ];
+    if (notes.length > 0) {
       failed = this.dependencies.db.insertAgent({
         ...failed,
-        failureReason: `${failureReason}\nCleanup failed: ${cleanupErrors.join("; ")}`,
+        failureReason: `${failureReason}\n${notes.join("\n")}`,
       });
     }
     return failed;

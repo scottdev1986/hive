@@ -1842,13 +1842,14 @@ describe("HiveSpawner wiring", () => {
         branch: "hive/maya-error-handling",
       }),
       resolveModel: fakeResolveModel,
-      // The signal arrives only on the final poll tick, so every earlier
-      // iteration reads the pane and must shrug at the incidental error text.
+      // The signal arrives a few ticks in, so the earlier iterations read the
+      // pane and must shrug at the incidental error text rather than call it a
+      // launch failure.
       sleep: (() => {
         let ticks = 0;
         return async () => {
           ticks += 1;
-          if (ticks < 15) return;
+          if (ticks < 5) return;
           const current = store.listAgents()[0];
           if (current !== undefined) {
             store.insertAgent({ ...current, status: "working" });
@@ -1863,7 +1864,7 @@ describe("HiveSpawner wiring", () => {
     });
 
     expect(spawned.status).toEqual("working");
-    expect(tmux.capturePaneCalls).toEqual(14);
+    expect(tmux.capturePaneCalls).toEqual(4);
     expect(tmux.killed).toEqual([]);
   });
 
@@ -1893,7 +1894,7 @@ describe("HiveSpawner wiring", () => {
         let ticks = 0;
         return async () => {
           ticks += 1;
-          if (ticks < 15) return;
+          if (ticks < 5) return;
           const current = store.listAgents()[0];
           if (current !== undefined) {
             store.insertAgent({ ...current, status: "working" });
@@ -1908,7 +1909,7 @@ describe("HiveSpawner wiring", () => {
     });
 
     expect(spawned.status).toEqual("working");
-    expect(tmux.capturePaneCalls).toEqual(14);
+    expect(tmux.capturePaneCalls).toEqual(4);
     expect(tmux.killed).toEqual([]);
   });
 
@@ -1994,9 +1995,123 @@ describe("HiveSpawner wiring", () => {
     // Exhausting the poll budget with no positive signal is a failed launch,
     // not a silent success left in "spawning" forever.
     expect(failed.status).toEqual("failed");
-    expect(failed.failureReason).toContain("no readiness signal within 15s");
+    expect(failed.failureReason).toContain("no sign of life");
     expect(failed.failedAt).toBeDefined();
     expect(tmux.killed).toEqual([agentTmuxSession("maya")]);
+  });
+
+  test("a failed spawn never deletes a worktree that holds work", async () => {
+    // The false-death case, and the one that actually destroyed an agent's work:
+    // Hive decided the launch had failed while the agent was alive and writing.
+    // The verdict is fallible; `git worktree remove --force` + `branch -D` is not
+    // reversible. Those two must never be wired together.
+    const root = await mkdtemp(join(tmpdir(), "hive-spawner-keepwork-"));
+    tempRoots.push(root);
+    const store = new FakeStore();
+    const tmux = new FakeTmux();
+    let removed = 0;
+    const spawner = new HiveSpawner({
+      db: store,
+      repoRoot: root,
+      port: 4317,
+      config: { terminal: "auto", headless: true },
+      routing: async () => DEFAULT_ROUTING.standard,
+      tmux,
+      terminal: new FakeTerminal(),
+      createWorktree: async (_repoRoot, name, slug) => {
+        const path = join(root, name);
+        await mkdir(path, { recursive: true });
+        return { path, branch: `hive/${name}-${slug}` };
+      },
+      removeWorktree: async () => {
+        removed += 1;
+      },
+      assessStrandedWork: async () => ({
+        dirtyFiles: ["src/thing.ts"],
+        unmergedCommits: 2,
+      }),
+      sleep: async () => {},
+      resolveModel: fakeResolveModel,
+      readCodexActivity: async () => null,
+    });
+
+    const failed = await spawner.spawn({ task: "Hang at launch", tier: "standard" });
+
+    expect(failed.status).toEqual("failed");
+    expect(removed).toEqual(0);
+    expect(failed.failureReason).toContain("Kept the worktree");
+    expect(failed.failureReason).toContain("2 unmerged commit(s)");
+  });
+
+  test("a failed spawn still cleans up a worktree with nothing in it", async () => {
+    // A genuinely dead launch wrote nothing, and leaving debris behind for every
+    // failed spawn would be its own bug. Only work survives.
+    const root = await mkdtemp(join(tmpdir(), "hive-spawner-cleanempty-"));
+    tempRoots.push(root);
+    const store = new FakeStore();
+    let removed = 0;
+    const spawner = new HiveSpawner({
+      db: store,
+      repoRoot: root,
+      port: 4317,
+      config: { terminal: "auto", headless: true },
+      routing: async () => DEFAULT_ROUTING.standard,
+      tmux: new FakeTmux(),
+      terminal: new FakeTerminal(),
+      createWorktree: async (_repoRoot, name, slug) => {
+        const path = join(root, name);
+        await mkdir(path, { recursive: true });
+        return { path, branch: `hive/${name}-${slug}` };
+      },
+      removeWorktree: async () => {
+        removed += 1;
+      },
+      assessStrandedWork: async () => ({ dirtyFiles: [], unmergedCommits: 0 }),
+      sleep: async () => {},
+      resolveModel: fakeResolveModel,
+      readCodexActivity: async () => null,
+    });
+
+    const failed = await spawner.spawn({ task: "Hang at launch", tier: "standard" });
+    expect(failed.status).toEqual("failed");
+    expect(removed).toEqual(1);
+  });
+
+  test("a worktree whose contents cannot be checked is kept, not guessed away", async () => {
+    // Guessing wrong toward "keep" costs a stale directory. Guessing wrong the
+    // other way costs the work itself.
+    const root = await mkdtemp(join(tmpdir(), "hive-spawner-unknownwork-"));
+    tempRoots.push(root);
+    const store = new FakeStore();
+    let removed = 0;
+    const spawner = new HiveSpawner({
+      db: store,
+      repoRoot: root,
+      port: 4317,
+      config: { terminal: "auto", headless: true },
+      routing: async () => DEFAULT_ROUTING.standard,
+      tmux: new FakeTmux(),
+      terminal: new FakeTerminal(),
+      createWorktree: async (_repoRoot, name, slug) => {
+        const path = join(root, name);
+        await mkdir(path, { recursive: true });
+        return { path, branch: `hive/${name}-${slug}` };
+      },
+      removeWorktree: async () => {
+        removed += 1;
+      },
+      assessStrandedWork: async () => {
+        throw new Error("git is unavailable");
+      },
+      sleep: async () => {},
+      resolveModel: fakeResolveModel,
+      readCodexActivity: async () => null,
+    });
+
+    const failed = await spawner.spawn({ task: "Hang at launch", tier: "standard" });
+    expect(failed.status).toEqual("failed");
+    expect(removed).toEqual(0);
+    expect(failed.failureReason).toContain("could not be checked");
   });
 
   test("workspace presence suppresses spawn viewers until the lease lapses", async () => {
