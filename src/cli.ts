@@ -50,7 +50,6 @@ export interface EventCliOptions {
   agent?: string;
   port?: string;
   payload?: string;
-  contextPct?: string;
   description?: string;
   usageUnits?: string;
   usageSource?: "provider" | "gateway" | "estimated";
@@ -113,17 +112,6 @@ function parsePort(value: string | undefined): number {
   return port;
 }
 
-function parseContextPct(value: string | undefined): number | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-  const contextPct = Number(value);
-  if (!Number.isFinite(contextPct) || contextPct < 0 || contextPct > 100) {
-    throw new Error(`Invalid context percentage: ${value}`);
-  }
-  return contextPct;
-}
-
 function parseEventPayload(value: string | undefined): HookEventOptions {
   if (value === undefined) {
     return {};
@@ -140,12 +128,6 @@ function parseEventPayload(value: string | undefined): HookEventOptions {
       throw new Error("Event payload agent must be a string");
     }
     payload.agent = agent;
-  }
-  if (parsed.contextPct !== undefined) {
-    if (typeof parsed.contextPct !== "number") {
-      throw new Error("Event payload contextPct must be a number");
-    }
-    payload.contextPct = parseContextPct(String(parsed.contextPct));
   }
   if (parsed.description !== undefined) {
     if (typeof parsed.description !== "string") {
@@ -183,11 +165,9 @@ function parseEventPayload(value: string | undefined): HookEventOptions {
 
 export function buildEventOptions(options: EventCliOptions): HookEventOptions {
   const payload = parseEventPayload(options.payload);
-  const cliContextPct = parseContextPct(options.contextPct);
   return {
     ...payload,
     ...(options.agent === undefined ? {} : { agent: options.agent }),
-    ...(cliContextPct === undefined ? {} : { contextPct: cliContextPct }),
     ...(options.description === undefined
       ? {}
       : { description: options.description }),
@@ -444,7 +424,6 @@ export function createProgram(): Command {
     .option("--agent <name>", "agent name")
     .option("--port <number>", "daemon port")
     .option("--payload <json>", "tool hook JSON payload")
-    .option("--context-pct <number>", "agent context utilization")
     .option("--description <text>", "approval description")
     .option("--usage-units <number>", "provider or gateway usage units")
     .option(

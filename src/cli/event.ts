@@ -6,7 +6,6 @@ import { agentFetch } from "./credential";
 
 export interface HookEventOptions {
   agent?: string;
-  contextPct?: number;
   description?: string;
   usageUnits?: number;
   usageSource?: "provider" | "gateway" | "estimated";
@@ -34,9 +33,6 @@ export function buildHookEvent(
   if (kind === "turn-end") {
     return HookEventSchema.parse({
       ...base,
-      ...(options.contextPct === undefined
-        ? {}
-        : { contextPct: options.contextPct }),
       ...(options.usageUnits === undefined
         ? {}
         : { usageUnits: options.usageUnits }),

@@ -131,11 +131,9 @@ describe("CLI-to-daemon smoke", () => {
 
       expect(await runHiveEvent("turn-end", port, {
         agent: "maya",
-        contextPct: 54,
       }, daemonFetch)).toEqual(0);
       const [finished] = await fetchAgentStatus(port, daemonFetch);
       expect(finished?.status).toEqual("idle");
-      expect(finished?.contextPct).toEqual(54);
     } finally {
       await daemon?.stop();
       db.close();

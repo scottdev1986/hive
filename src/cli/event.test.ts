@@ -17,7 +17,6 @@ describe("hive event", () => {
     expect(buildEventOptions({
       agent: "maya",
       payload: JSON.stringify({
-        contextPct: 64,
         description: "Payload description",
         usage_units: 7,
         usage_source: "gateway",
@@ -25,34 +24,30 @@ describe("hive event", () => {
       }),
     })).toEqual({
       agent: "maya",
-      contextPct: 64,
       description: "Payload description",
       usageUnits: 7,
       usageSource: "gateway",
     });
     expect(buildEventOptions({
       agent: "maya",
-      contextPct: "72",
       description: "CLI description",
       payload: JSON.stringify({
         agentName: "payload-agent",
-        contextPct: 64,
         description: "Payload description",
       }),
     })).toEqual({
       agent: "maya",
-      contextPct: 72,
       description: "CLI description",
     });
   });
 
-  test("rejects malformed or invalid recognized payload fields", () => {
+  test("rejects malformed recognized payload fields", () => {
     expect(() => buildEventOptions({ payload: "[]" })).toThrow(
       "Event payload must be a JSON object",
     );
     expect(() => buildEventOptions({
-      payload: JSON.stringify({ contextPct: "64" }),
-    })).toThrow("Event payload contextPct must be a number");
+      payload: JSON.stringify({ usage_units: "seven" }),
+    })).toThrow("Event payload usageUnits must be a nonnegative number");
   });
 
   test("builds every valid HookEvent kind and round-trips through the schema", () => {
@@ -63,7 +58,6 @@ describe("hive event", () => {
         "turn-end",
         {
           agent: "maya",
-          contextPct: 42,
           usageUnits: 7,
           usageSource: "provider",
         },
@@ -84,7 +78,6 @@ describe("hive event", () => {
     }
     expect(events[2]).toMatchObject({
       kind: "turn-end",
-      contextPct: 42,
       usageUnits: 7,
       usageSource: "provider",
     });
@@ -106,7 +99,7 @@ describe("hive event", () => {
     });
     expect(buildHookEvent(
       "turn-end",
-      { agent: "maya", contextPct: 10, toolSessionId: "0189-session" },
+      { agent: "maya", toolSessionId: "0189-session" },
       timestamp,
     )).toMatchObject({ toolSessionId: "0189-session" });
   });
@@ -167,7 +160,7 @@ describe("hive event", () => {
     expect(await runHiveEvent(
       "turn-end",
       4317,
-      { agent: "maya", contextPct: 8 },
+      { agent: "maya" },
       unavailableFetch,
     )).toEqual(0);
   });
