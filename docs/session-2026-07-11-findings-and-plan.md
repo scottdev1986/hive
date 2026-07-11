@@ -1,10 +1,10 @@
 # Session 2026-07-11: what Hive got wrong, and what it now knows
 
-Twenty-one commits landed on 2026-07-11, and **none of them are running.** That is the first thing to fix and the reason this document opens with it rather than with the work.
+Twenty-three commits landed on 2026-07-11, and **none of them are running.** That is the first thing to fix and the reason this document opens with it rather than with the work.
 
-What the day was actually about: a user complained about two small things — a nag telling him to run `hive init --refresh`, and `hive update` downloading a binary with no visible progress ("user trust is important"). Chasing those two complaints surfaced twelve bugs, and every one of them was the same bug.
+What the day was actually about: a user complained about two small things — a nag telling him to run `hive init --refresh`, and `hive update` downloading a binary with no visible progress ("user trust is important"). Chasing those two complaints surfaced thirteen bugs, and every one of them was the same bug.
 
-**Hive already held the correct answer and joined it to the wrong conclusion.** Not one was a missing capability. Not one was a measurement Hive could not take. Every measurement was already correct, already arriving, already in memory — and was then discarded, overridden by a guess, clamped by an invented constant, or stamped with a label it had not earned. Every one of the twelve passed its tests. The suite is green at **1029 pass / 11 skip / 0 fail** across 72 files (`bun test`), and it was green while all twelve were live. **A green suite is not evidence of health, and this session is the proof.**
+**Hive already held the correct answer and joined it to the wrong conclusion.** Not one was a missing capability. Not one was a measurement Hive could not take. Every measurement was already correct, already arriving, already in memory — and was then discarded, overridden by a guess, clamped by an invented constant, or stamped with a label it had not earned. Every one of them passed its tests. The suite is green at **1040 pass / 11 skip / 0 fail** (`bun test`), and it was green while all of them were live. **A green suite is not evidence of health, and this session is the proof.**
 
 This document carries the evidence, not just the conclusions — measured numbers, `file:line`, commit hashes, raw provider field names, citations. A conclusion without its evidence gets re-litigated at full token price. That is the whole reason it exists.
 
@@ -29,14 +29,18 @@ Two independent proofs, because this is load-bearing enough to deserve them:
 
 The orchestrator that ran this session is at very deep context. Per the research below, a deep agent's self-report is the least trustworthy artifact it owns, so this document was written by a fresh agent who treated the incoming account as a set of claims and checked each against the repo. Four things did not survive:
 
-1. **The review's first HIGH defect is a false positive.** `reconcileInjected` was reported as "defined and never called — the twelfth instance of the disease, committed by the agent diagnosing it." It is called, at `src/daemon/server.ts:701`, on the 30-second reconciliation timer. The method and its caller were added by the *same commit*, `f5ab08a`; `git show f5ab08a^:src/daemon/delivery.ts | grep -c reconcileInjected` returns 0, so it never existed in a state without a caller. There is **one** real HIGH defect, not two.
+1. **The review's headline finding was a false positive — and a worse bug was hiding behind it.** `reconcileInjected` was reported as "defined and never called." It *is* called (`src/daemon/server.ts:701`); `git show f5ab08a^:src/daemon/delivery.ts | grep -c reconcileInjected` returns 0, so it never existed uncalled. But *called* is not *working*: it was silently unable to confirm **105 of the 107** messages it had to reconcile. Chasing the false positive is what found the real one.
 2. **The never-fired count is three, not four** — and a fourth, genuinely uncalled, turned up somewhere else (`poolsGoverning`, below).
-3. **SPEC §7 was already rewritten** in `73bebe7`, which makes the research doc's closing "recommendation only — not making this change" section stale and self-contradictory at HEAD. Fixed in the same commit as this document.
+3. **SPEC §7 was already rewritten** in `73bebe7`, which made the research doc's closing "recommendation only — not making this change" section stale and self-contradictory. Fixed.
 4. **The fleet is deeper than reported**, because it kept working after it was measured. Re-measured numbers below.
 
 Read the rest of this document the same way: verify against the worktree before you act. Over-trusting a predecessor is a measured failure mode ([Handoff Debt, arXiv 2606.02875](https://arxiv.org/abs/2606.02875)), and this section is what that warning looks like when it is taken seriously.
 
-## The twelve
+**And it cuts both ways, which is the finding this session actually earned.** The fresh agent verified the deep orchestrator and caught five errors. The deep orchestrator then verified the fresh agent and caught one that mattered: this document, in its first version, credited a commit to the wrong agent and concluded from it that both NO-SHIP defects had landed. They had not — and the error would have quietly retired an open HIGH from the plan. It has since been fixed and the defect has since been landed, but the near-miss is the point.
+
+So the rule is not "trust the fresh agent," and it is certainly not "trust the deep one." **A reviewer's findings are claims to verify — and so are a summarizer's, and so are these.** Neither party's care was what caught the errors. The loop caught them. See the closing section, which is the only conclusion of the day that generalizes.
+
+## The thirteen
 
 Each entry: what Hive **measured correctly**, what it **concluded**, the **mechanism**, the **fix**, and **how it was found** — the finding method is the reusable part.
 
@@ -65,22 +69,26 @@ Hive published 12%, authoritative. Fixed in `82bd592`: a label now describes the
 
 **9. The spawn-failure path that destroyed real work.** `failSpawn` force-removed the worktree and force-deleted the branch **unconditionally** — while `assessStrandedWork()` already existed, and the kill and close paths already called it. The spawn-failure path simply never asked. Real work was destroyed (agent `liam`). Fixed in `1cdab2a`: `failSpawn` now calls `this.assessStranded` (`src/daemon/spawner-impl.ts:1387`) and preserves the worktree when work is found.
 
-**10. Delivery that claimed what it could not prove.** Two failures in one. About **90 messages** to the orchestrator sat in `state="injected"`, `appliedAt` NULL, never reconciled — no deadline, no sweep, no alert. And a normal tmux delivery marked itself **"applied"** — the strongest claim available, meaning *the recipient acted on it* — purely because `tmux send-keys` exited 0. Measured: the TUI queues the message and prints `Messages to be submitted after next tool call (press esc to interrupt and send immediately)`, and it sat **unsubmitted for 2m00s** while the model reasoned. **The TUI gates submission on a tool call; a reasoning agent makes none.** This is the same disease as the readiness probe, one layer up: both make *acting* the precondition for *existing*. Zoe's line for it: "measuring bytes written to a pane and reporting that a mind changed." Fixed in `f5ab08a`.
+**10. Delivery that claimed what it could not prove.** A normal tmux delivery marked itself **"applied"** — the strongest claim available, meaning *the recipient acted on it* — purely because `tmux send-keys` exited 0. Measured: the TUI queues the message and prints `Messages to be submitted after next tool call (press esc to interrupt and send immediately)`, and it sat **unsubmitted for 2m00s** while the model reasoned. **The TUI gates submission on a tool call; a reasoning agent makes none.** This is the same disease as the readiness probe, one layer up: both make *acting* the precondition for *existing*. Zoe's line for it: "measuring bytes written to a pane and reporting that a mind changed." This is where genuine message loss came from. Fixed in `f5ab08a`.
+
+A companion failure was misdiagnosed all day and the correction matters: a large backlog of messages sat in `state="injected"`, `appliedAt` NULL, never reconciled. They were reported as **silently lost**. They were not lost — they *arrived*, and are in the orchestrator's conversation. What was broken was Hive's ability to **confirm** delivery. See the live HIGH below, which is the same bug still open.
 
 **11. A deadline that fired before the agent could see the message.** The 30-second ack deadline was anchored to `createdAt`, not `injectedAt` — one message was alarmed as having "missed its deadline" **seventeen minutes before the agent could physically see it**. And 30s was far too short regardless: measured real ack latencies were **41s, 54s, 61s, 64s, 109s**. Fixed in `f5ab08a`.
 
 **12. One vendor's model billed to the other's meter.** A `quota_usage` row billed a Claude model's spend to the **Codex** meter: agent `oscar`, `tier=standard`, where tier routing chose `tool=codex` while the caller pinned `model=claude-opus-4-8`. The ledger accepted an impossible `(tool, model)` pair without ever asking whether it could exist. Fixed in `1b30b55`: the pair is now validated, and an impossible route is refused rather than recorded.
 
+**13. `hive_kill` calls merged work stranded, because it counts commits instead of content.** `assessStrandedWork` asks `git rev-list --count main..branch` (`src/adapters/worktrees.ts:177`). That counts commit **objects** unreachable from main — which is a proxy for "is this work on main," and the proxy breaks the moment an integrator **cherry-picks**. omar's work was recovered by `ryan` and merged as `2beee6b`; the content was on main, the original commit object was not an ancestor, and `hive_kill` reported the work as stranded anyway. Verified by content grep before anything was discarded. Same shape as the rest: a proxy was measured, and a conclusion was drawn about the thing the proxy stood for. Outstanding. (The incident itself can no longer be re-examined — omar's branch was cleaned up — which is its own small lesson about destroying the evidence of a bug while closing the ticket.)
+
 ## "Conservative" was the bug, twice
 
-Two of the twelve were defended **in code comments** as the safe direction to err. Both were wrong the same way: they assumed one direction of error was free, and never asked what it cost.
+Two of them were defended **in code comments** as the safe direction to err. Both were wrong the same way: they assumed one direction of error was free, and never asked what it cost.
 
 - The `max()` quota floor took the larger of guess and measurement "to be safe." It published a fabricated 12%, stamped authoritative, on a pool the provider measured at 0.
 - The 200K context denominator was justified on the reasoning that a larger-window model would merely read "conservatively high," erring toward recycling early. It clamped healthy agents to a fake 100%, which drove the orchestrator to spawn fresh agents and re-pay full briefings all day out of a quota pool that reached 99%.
 
 > **The rule: name what each direction of error actually costs before you call one of them safe.**
 
-Corollaries, each earned by one of the twelve: a measurement beats an estimate. A label describes the number actually *published*, not the reading it was built from. And an honest `null` beats a confident wrong number — **a missing number stops a bad decision; a wrong one causes it.** That last one is now load-bearing in the code: `contextPct` is nullable end to end (`6fd526a`), null reads as *full, not free*, and an agent Hive cannot sense is an agent it will not reuse.
+Corollaries, each earned by one of them: a measurement beats an estimate. A label describes the number actually *published*, not the reading it was built from. And an honest `null` beats a confident wrong number — **a missing number stops a bad decision; a wrong one causes it.** That last one is now load-bearing in the code: `contextPct` is nullable end to end (`6fd526a`), null reads as *full, not free*, and an agent Hive cannot sense is an agent it will not reuse.
 
 ## What the research settled
 
@@ -146,15 +154,57 @@ To run it properly: the reviewer must be **structurally unable** to see a branch
 
 Five Claude agents and a green suite of over a thousand tests produced this code. A fresh Codex agent then reviewed it cold. That is worth doing again — but the results below are also a lesson in verifying the reviewer.
 
-**Not a defect — the first HIGH did not survive verification.** `reconcileInjected` was reported as defined and never called. It is called at `src/daemon/server.ts:701`, inside the 30-second reconciliation timer, and `f5ab08a` added the method and the caller in the same commit. This was reported as "the twelfth instance of the disease, committed by the agent diagnosing it," which is a good story and did not happen. **A review finding is a claim, exactly like everything else here.**
+**The first HIGH did not survive verification — and something worse was behind it.** `reconcileInjected` was reported as defined and never called. It **is** called, at `src/daemon/server.ts:701`, inside the 30-second reconciliation timer; `f5ab08a` added the method and the caller in the same commit, and `git show f5ab08a^:src/daemon/delivery.ts | grep -c reconcileInjected` returns 0, so it never existed uncalled. The story it came wrapped in — "the twelfth instance of the disease, committed by the agent diagnosing it" — is a good story that did not happen.
 
-**HIGH — real, and now fixed.** `src/daemon/quota-ledger.ts` summed spend since an observation with a strict `occurredAt > ?`. A provider reading and a spend landing in the **same millisecond** had no order between them, so the spend fell into neither the snapshot nor the "spend since" added on top of it. It failed in the **dangerous** direction: Hive under-counted and could admit a spawn past a limit the user had really hit. Equal wall-clock timestamps cannot encode ordering, and `>=` would only have moved the error. Fixed in `65cfca6` with a monotonic ledger sequence (`quota_usage_sequence`), backfilled from SQLite's `rowid` — which *is* the insertion order the sequence records.
+But "it is called" is not "it works." The mechanism is called and is **broken for 105 of the 107 messages it currently has to reconcile** (next section). The false positive was standing directly in front of a real, live HIGH, and had it been actioned as briefed, the fix would have shipped a self-amplifying alert loop. **A wrong diagnosis of a real symptom is more dangerous than no diagnosis**, because it consumes the attention the symptom earned. A review finding is a claim, exactly like everything else here — and so is a *dismissal* of one.
 
-**MEDIUM — fixed in the same commit.** The agents-table rebuild ran `PRAGMA foreign_keys = OFF` with no `try`/`finally`, so a throw inside the transaction left foreign keys unenforced for the life of the process. It now captures the prior state and restores it in a `finally` (`src/daemon/db.ts:584`). The *other* half of that finding does **not** hold: the rebuild copies `AGENT_COLUMNS.filter(c => existing.has(c))` — the intersection — so it cannot drop a column it has never heard of, and the comment claiming as much is accurate.
+**HIGH — real, and landed by `isla` in `65cfca6`.** `src/daemon/quota-ledger.ts` summed spend since an observation with a strict `occurredAt > ?`. A provider reading and a spend landing in the **same millisecond** had no order between them, so the spend fell into neither the snapshot nor the "spend since" added on top of it. It failed in the **dangerous** direction: Hive under-counted and could admit a spawn past a limit the user had really hit. Equal wall-clock timestamps cannot encode ordering, and `>=` would only have moved the error. Fixed with a monotonic ledger sequence (`quota_usage_sequence`), backfilled from SQLite's `rowid` — which *is* the insertion order the sequence records.
 
-**MEDIUM — outstanding.** `src/daemon/readiness.ts` counts any pane change as life, so a wrapper spinner over a dead child reads as alive. Untouched by either fix commit. The redraw heartbeat is a large improvement over time-to-first-tool-call, but it is still a proxy for *something on screen moving* — the same shape of proxy, one level less wrong.
+**MEDIUM — landed in the same commit.** The agents-table rebuild ran `PRAGMA foreign_keys = OFF` with no `try`/`finally`, so a throw inside the transaction left foreign keys unenforced for the life of the process. It now captures the prior state and restores it in a `finally` (`src/daemon/db.ts:584`). The *other* half of that finding does **not** hold: the rebuild copies `AGENT_COLUMNS.filter(c => existing.has(c))` — the intersection — so it cannot drop a column it has never heard of, and the comment claiming as much is accurate.
+
+**MEDIUM — landed by `henry` in `3ca8ed9`.** `src/daemon/readiness.ts` counted *any* pane change as life, so a wrapper spinner over a dead child read as alive. Detail below, because how he got there is worth more than the fix.
 
 **CLEAN under adversarial scrutiny: release signing and staging.** No production activation path bypasses `ensureStaged()`; multi-key Ed25519 verification is correct; active-version corruption fails closed. This is the one area where a mistake would be a supply-chain compromise, and it held.
+
+**So the outstanding list is empty — and the verdict was right for the wrong reasons.** All four review findings are resolved (`isla`: `65cfca6`; `henry`: `3ca8ed9` and `45def6b`). The sentence to keep from the whole review story is this: **the reviewer's NO-SHIP verdict was correct in verdict and wrong in reason.** He pointed at a mechanism that was wired up fine, and the thing he was pointing *near* was worse than what he described.
+
+### The bug the false positive was standing in front of
+
+`reconcileInjected` **is** called. It was also **broken for almost every message it would ever see**, and that is what the "never called" finding was obscuring.
+
+It confirmed a message by looking the recipient up in the **agents** table. But the orchestrator is not a spawned agent, and `src/daemon/db.ts` says so outright: *"The orchestrator is not a spawned agent and has no agents-table row."* So `getAgentByName("orchestrator")` is **always null**, and a root-bound message could **never** be confirmed. Not rarely — never, by construction.
+
+Measured against the live `~/.hive/hive.db`, reproduced independently for this document:
+
+| Stuck `injected` / `appliedAt IS NULL` | 107 |
+|---|---|
+| Addressed to `orchestrator` | **105** |
+| …of those, from `hive-control` itself | 25 |
+| Addressed to a real agent | **2** (`anna`, `elena`) |
+
+**This corrects the narrative that ran all day.** The backlog was reported as ~90 messages *silently lost*. They were not lost. 105 of the 107 are root-bound; they **reached the orchestrator** and are in its conversation. What was broken was Hive's ability to *confirm* delivery. Genuine loss came from the other mechanism in bug #10 — the tmux path that inferred "applied" from an exit code.
+
+**And the fix as originally briefed would have shipped a disaster.** `henry` ran the *real* sweep — real `HiveDatabase`, real `MessageDelivery` — against a **copy of the live production database**, both ways:
+
+- **As briefed:** confirms 2, and announces *"102 message(s) were delivered but never confirmed applied."* That is precisely the ninety-line dump SPEC §3 exists to prevent — and **all 102 were a lie.** The root had reached a turn boundary after every single one.
+- **As fixed:** confirms **107**, surfaces **0**. The one message left unconfirmed was this document's own report to the orchestrator, injected 30 seconds earlier and still inside its five-minute deadline — correctly not yet surfaced.
+
+It would also have **fed on itself**: the alert is *itself* a root-bound message, so a stalled alert gets re-surfaced, and that report stalls too — a loop with no fixed point, growing by one message every time the root is quiet, in the one context SPEC §3 says must stay clear. The alert is now **born already alerted** (`delivery.ts`, after the `send`), so it can never surface itself. As the comment puts it: *"an alert nobody read is not a new fact, it is the same fact, louder."*
+
+The fix reads the surface the root actually writes: the **events** table's `turn-end` rows (`turnBoundaryAt`, backed by `db.ts:950`). Verified live — the orchestrator has **129 `turn-end` rows**, ISO-stamped.
+
+**And he mutation-checked the wiring**, which is codification item 1 in action rather than in theory: delete the call and **2 tests go red**; revert the root-surface fix and a **third** goes red. The test the reviewer actually wanted — one that fails if the call is removed — now exists.
+
+### The readiness fix, and the two traps that only measurement caught
+
+Both belong here as evidence for *measure, do not assume* — because the obvious implementation was wrong twice, and both wrongs were invisible to reasoning.
+
+- **`pane_current_command` cannot tell an agent from its wrapper.** tmux reports it as **`zsh` for a perfectly healthy Codex agent** and **`bash` for the dead-child wrapper** — both are shells, because Hive's own `holdPaneOnFailure` runs the provider in a subshell. The tempting discriminator loses on measurement. He keyed on the pane's **process tree** instead.
+- **A hardcoded `"codex"` check would have killed every app-server agent.** The app-server path launches `hive codex-app-server-host`, not `codex` at all. He keyed on the **launched `argv[0]`**, never a provider name.
+
+Verified against the real thing, in both directions: a dead child behind an animating wrapper now reads `alive: false` (the old code called it alive after 3 polls, and a constructed wrapper animating over a corpse changed the pane on 5 of 5). And a real high-effort Codex agent **reasoning for 27.3 seconds with 25 consecutive redraws, no hook event, no rollout write and no tool call** reads **alive** throughout — where the retired 15-second deadline would have killed it at second 15.
+
+**The honest residue, kept rather than sanded off:** a child that is alive but *wedged*, behind a wrapper that animates, **still reads as alive**. No screen can distinguish it. Hive's wrapper prints nothing while the child runs, so there is nothing to animate it today — but the honest bound is that this check proves *the process exists*, not that it is *making progress*. That went into SPEC as a stated limit rather than a fixed problem, and that is the standard the rest of this work should be held to.
 
 ## The never-fired mechanisms — and a fourth, found while verifying
 
@@ -206,9 +256,10 @@ Preserved because the way a fabricated constant survives is by nobody writing do
 
 **1. Rebuild and restart the daemon.** *(minutes)* Nothing below matters until this is done, and nothing above is true of the running system until it is. Then verify: `hive status` should report real percentages against a 1M window, deep agents should stop reading a clamped 100%, and lucas should read `—` rather than `0%`.
 
-**2. Close out the review.** *(small)* The NO-SHIP defects landed while this document was being written — the quota-ledger sequence and the `db.ts` `finally` in `65cfca6`, the live-model source in `2beee6b`. What remains:
-   - **MEDIUM:** `src/daemon/readiness.ts` — a wrapper spinner over a dead child still reads as alive. Untouched by either fix.
-   - **The corrected scope matters here:** `reconcileInjected` is **not** a defect and needs no work, and the `db.ts` column-drop half of that finding does **not** hold. Do not spend an agent re-fixing either.
+**2. Nothing from the review is left, but one bug from this document is.** *(small)* All four review findings landed: `isla` in `65cfca6` (quota-ledger sequence, `db.ts` `finally`), `henry` in `3ca8ed9` and `45def6b` (readiness predicate, delivery sweep). What is still open:
+   - **From bug #13:** `assessStrandedWork` counts commit *objects* (`src/adapters/worktrees.ts:177`), so cherry-picked work reads as stranded. Compare content, not ancestry.
+   - **From the never-fired section:** `poolsGoverning` (`src/daemon/quota.ts:531`) has no production caller.
+   - **Corrected scope, so nobody re-fixes a non-bug:** `reconcileInjected` never needed a caller; the `db.ts` column-drop half of that finding does not hold; and `2beee6b` is omar's recovered work merged by the integrator `ryan`, unrelated to the review.
 
 **3. Build admission control.** *(1 agent, one session — the highest-leverage item)* This is the real diagnosis and it needs **no recycle actuator at all**: do not hand work to an agent without room for it. `admit(agent, task) := resident_tokens + estimated_task_cost + handoff_reserve < ceiling(model)` AND no unresolved repeated failure AND cache warm. The estimate already exists — the orchestrator tiers every task (`src/schemas/quota.ts`). Ship this before anything else in the recycling design, because it is the half that prevents the problem rather than cleaning up after it.
 
@@ -223,3 +274,15 @@ Preserved because the way a fabricated constant survives is by nobody writing do
 **8. Cross-vendor review as a release gate.** *(process)* Worth adopting — with the correction that a reviewer's findings are claims to verify, not facts to act on. The headline catch from this session's review was a false positive, and a fresh reviewer still found a real HIGH that five Claude agents and a thousand green tests missed. Both halves of that sentence are the lesson.
 
 **9. Run the degradation experiment properly.** *(1 agent + 1 fresh reviewer)* Anonymised squashed diffs in a scratch repo with no refs, controlling for diff size. It would replace the last inherited constant in this design with a measurement of Hive's own curve — and it is the only open question here that is answerable today without building anything.
+
+## What actually caught the bugs
+
+Every layer of this system produced a confident, wrong claim today. Every one was caught by something **outside** it.
+
+The **code** was wrong, and the tests did not catch it — they were green through every one. The **tests** were caught by agents who *executed* the thing instead of inspecting it: a rollout frozen at 35,730 bytes, a message sitting unsubmitted for 2m00s, a sweep run against a copy of the real database. The **agents** were caught by an independent cross-vendor reviewer, who found a real NO-SHIP that five Claude agents and a thousand green tests had missed. The **reviewer** was caught by two fresh agents who verified his finding and found it false — and found, behind it, a worse bug he had walked past. And the **summarizer** who wrote this document caught the orchestrator in five errors, then was caught by the orchestrator in one that mattered: it credited a landing to the wrong agent and would have retired an open HIGH from this plan.
+
+**No individual in that chain was reliable. The chain was.**
+
+That is the thing worth codifying, and it is what every item above is really buying. It is also why item 8 must be *"a reviewer's findings are claims to verify"* and never *"get a second vendor and trust it."* Adding a smarter checker to the end of the chain does not help if the chain has an end. What made today work was that every claim had something outside itself that could contradict it — and what made today expensive was every place where it didn't: a constant nobody re-derived, a comment defending a guess, a percentage nobody divided out by hand.
+
+The failure mode to fear is not a wrong answer. It is a **confident answer with nothing outside it that could have said otherwise.**
