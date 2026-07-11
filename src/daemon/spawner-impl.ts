@@ -47,6 +47,9 @@ import {
 } from "../schemas";
 import type { HiveDatabase } from "./db";
 import { readCodexTelemetry } from "./tool-telemetry";
+import { readinessFailureLayer } from "./launch-failure";
+import type { LaunchFailureLayer } from "./launch-failure";
+import { promptArgument, writeLaunchPrompt } from "./launch-prompt";
 import { watchForProofOfLife } from "./readiness";
 import {
   parseProcessTable,
@@ -765,7 +768,11 @@ export class HiveSpawner implements Spawner {
       const nativeCodex = identity.tool === "codex" &&
         this.dependencies.codexAppServer !== undefined &&
         argv[1] === "codex-app-server-host";
-      if (!nativeCodex) argv.push(controlPrompt);
+      // The control order enters through the launch shell, never an argv: it
+      // carries the agent's whole prior assignment and is bounded by nothing.
+      const promptSuffix = ` ${
+        promptArgument(await writeLaunchPrompt(agent.tmuxSession, controlPrompt))
+      }`;
       // The token value enters through the launch shell, never an argv.
       const restartWorktreePath = agent.worktreePath;
       const withCapabilityEnv = (command: string): string =>
@@ -780,7 +787,7 @@ export class HiveSpawner implements Spawner {
       await this.dependencies.tmux.newSession(
         agent.tmuxSession,
         agent.worktreePath,
-        withCapabilityEnv(shellJoin(argv)),
+        withCapabilityEnv(shellJoin(argv) + (nativeCodex ? "" : promptSuffix)),
       );
       if (nativeCodex) {
         try {
@@ -810,14 +817,14 @@ export class HiveSpawner implements Spawner {
             excludeMcpServers,
             withCapabilityToken: capabilityToken !== undefined,
           });
-          fallback.push(controlPrompt);
           launchedCommand = launchedCommandName(fallback);
+          const fallbackCommand = shellJoin(fallback) + promptSuffix;
           const fallbackShell = capabilityToken !== undefined
             ? wrapCodexSpawnWithCapabilityEnv(
-              shellJoin(fallback),
+              fallbackCommand,
               agent.worktreePath,
             )
-            : shellJoin(fallback);
+            : fallbackCommand;
           await this.dependencies.tmux.newSession(
             agent.tmuxSession,
             agent.worktreePath,
@@ -1314,7 +1321,12 @@ export class HiveSpawner implements Spawner {
       const nativeCodex = tool === "codex" &&
         this.dependencies.codexAppServer !== undefined &&
         argv[1] === "codex-app-server-host";
-      if (!nativeCodex) argv.push(prompt);
+      // The brief enters through the launch shell, never an argv: tmux caps a
+      // command well below ARG_MAX and Hive's briefs outgrow that cap by design.
+      // Written even for the app-server, whose TUI fallback below needs it.
+      const promptSuffix = ` ${
+        promptArgument(await writeLaunchPrompt(record.tmuxSession, prompt))
+      }`;
       // The token value enters through the launch shell, never an argv.
       const withCapabilityEnv = (command: string): string =>
         tool === "codex" && !nativeCodex && capabilityToken !== undefined
@@ -1327,7 +1339,7 @@ export class HiveSpawner implements Spawner {
       await this.dependencies.tmux.newSession(
         record.tmuxSession,
         worktree.path,
-        withCapabilityEnv(shellJoin(argv)),
+        withCapabilityEnv(shellJoin(argv) + (nativeCodex ? "" : promptSuffix)),
       );
       if (nativeCodex) {
         try {
@@ -1366,14 +1378,14 @@ export class HiveSpawner implements Spawner {
             excludeMcpServers,
             withCapabilityToken: capabilityToken !== undefined,
           });
-          fallback.push(prompt);
           launchedCommand = launchedCommandName(fallback);
+          const fallbackCommand = shellJoin(fallback) + promptSuffix;
           const fallbackShell = capabilityToken !== undefined
             ? wrapCodexSpawnWithCapabilityEnv(
-              shellJoin(fallback),
+              fallbackCommand,
               worktree.path,
             )
-            : shellJoin(fallback);
+            : fallbackCommand;
           await this.dependencies.tmux.newSession(
             record.tmuxSession,
             worktree.path,
@@ -1383,20 +1395,32 @@ export class HiveSpawner implements Spawner {
       }
       const failureReason = await this.monitorReadiness(record, launchedCommand);
       if (failureReason !== null) {
+        // The command ran, so this is the model's answer — unless the pane shows
+        // the binary never executed at all.
         return await this.failSpawnIfStillSpawning(
           record,
           worktree,
           failureReason,
+          readinessFailureLayer(failureReason),
         );
       }
       if (quotaReservationId !== undefined) {
         this.dependencies.quota?.markStarted(quotaReservationId);
       }
     } catch (error) {
+      // Nothing thrown here has been past the transport. Building the argv,
+      // writing the config, and handing the command to tmux all happen on this
+      // machine, before the model is contacted — so a throw is never evidence
+      // about the route, and must never be recorded against it.
       const reason = error instanceof Error
         ? error.message
         : "Agent launch failed";
-      return await this.failSpawnIfStillSpawning(record, worktree, reason);
+      return await this.failSpawnIfStillSpawning(
+        record,
+        worktree,
+        reason,
+        "transport",
+      );
     }
 
     if (this.viewersEnabled()) {
@@ -1473,18 +1497,20 @@ export class HiveSpawner implements Spawner {
     record: AgentRecord,
     worktree: CreatedWorktree,
     failureReason: string,
+    layer: LaunchFailureLayer,
   ): Promise<AgentRecord> {
     const current = this.dependencies.db.getAgentById(record.id);
     if (current !== null && current.status !== "spawning") {
       return current;
     }
-    return await this.failSpawn(record, worktree, failureReason);
+    return await this.failSpawn(record, worktree, failureReason, layer);
   }
 
   private async failSpawn(
     record: AgentRecord,
     worktree: CreatedWorktree,
     failureReason: string,
+    layer: LaunchFailureLayer,
   ): Promise<AgentRecord> {
     const failedAt = new Date().toISOString();
     let failed = this.dependencies.db.insertAgent({
@@ -1495,14 +1521,21 @@ export class HiveSpawner implements Spawner {
       lastEventAt: failedAt,
     });
     if (record.quotaReservationId !== undefined) {
-      // This agent never became a working agent, so the route it was launched on
-      // is suspect until one does. Quota records it against that route and passes
-      // the route over for automatic selection until it proves itself again —
-      // headroom alone was never enough to call a route eligible.
+      // Only a model-layer failure is evidence about the route: the CLI came up
+      // and the model refused, or never answered. Quota then passes that route
+      // over until it proves itself again — headroom alone was never enough to
+      // call a route eligible.
+      //
+      // A transport failure is not that. tmux, the shell, the filesystem, a
+      // binary that would not exec — none of them reached the model, and
+      // quarantining a model Hive never contacted is how a single over-long
+      // brief benched Opus for half an hour and quietly downgraded every spawn
+      // that followed. The reservation is still released; only the health signal
+      // is withheld.
       await this.dependencies.quota?.cancel(
         record.quotaReservationId,
         failedAt,
-        failureReason,
+        layer === "model" ? failureReason : undefined,
       );
     }
     const cleanupErrors: string[] = [];

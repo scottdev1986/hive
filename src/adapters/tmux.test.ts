@@ -9,6 +9,8 @@ import {
   TmuxAdapter,
   type TmuxRunner,
 } from "./tmux";
+import { join } from "node:path";
+import { promptArgument, writeLaunchPrompt } from "../daemon/launch-prompt";
 
 const socketName = `hive-test-${crypto.randomUUID()}`;
 const tmux = new TmuxAdapter(socketName);
@@ -537,5 +539,64 @@ describe("interrupting a working agent", () => {
     // resume it. That is not a price worth paying for routine coordination.
     expect(keys).not.toContain("Escape");
     expect(keys).not.toContain("C-u");
+  });
+});
+
+/**
+ * The limit that started this: tmux hands a command to its server in a single
+ * imsg and refuses anything much past 16KB, which is 64x below the 1MB ARG_MAX
+ * the launch design assumed. These run against a real tmux server, because the
+ * whole bug was a belief about tmux that no fake would have contradicted.
+ */
+describe("TmuxAdapter launch prompt limit", () => {
+  const brief = `BRIEF ${"context ".repeat(12_500)}`; // ~100KB
+
+  test("rejects a brief passed on the command line, as Hive used to pass it", async () => {
+    const session = `hive-inline-${crypto.randomUUID()}`;
+    let message = "";
+    try {
+      await tmux.newSession(
+        session,
+        socketDirectory,
+        shellJoin(["sh", "-c", "exit 0", "sh", brief]),
+      );
+      sessions.add(session);
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+    if (message.includes("Operation not permitted")) return; // sandboxed
+    expect(message).toContain("command too long");
+  });
+
+  test("carries the same brief intact when the launch shell reads it from a file", async () => {
+    const session = `hive-outofband-${crypto.randomUUID()}`;
+    const report = join(socketDirectory, `${session}.bytes`);
+    const promptPath = await writeLaunchPrompt(session, brief);
+    // A stand-in agent: report the size of the single argument it was handed.
+    const command = `${
+      shellJoin(["sh", "-c", `printf %s "$1" | wc -c > ${report}`, "sh"])
+    } ${promptArgument(promptPath)}`;
+
+    // Whatever the brief weighs, what tmux carries stays small.
+    expect(command.length).toBeLessThan(1_000);
+
+    try {
+      await tmux.newSession(session, socketDirectory, command);
+      sessions.add(session);
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        error.message.includes("Operation not permitted")
+      ) return; // sandboxed
+      throw error;
+    }
+
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      if (await Bun.file(report).exists()) break;
+      await Bun.sleep(20);
+    }
+    const delivered = Number((await Bun.file(report).text()).trim());
+    // Arrived whole, as exactly one argument — not split on its whitespace.
+    expect(delivered).toEqual(Buffer.byteLength(brief));
   });
 });

@@ -207,6 +207,19 @@ class FakeStore {
  * promotes any still-"spawning" agent to "working", exactly what the daemon
  * does when a session-start or turn-start event arrives. Failure-path tests
  * keep a plain `async () => {}` sleep so exhaustion stays signal-free. */
+/**
+ * The brief no longer rides the tmux command line — it would not fit — so the
+ * launch shell reads it from a file. Follow the same path the shell takes to see
+ * what the agent was actually handed.
+ */
+async function deliveredPrompt(command: string): Promise<string> {
+  const path = /\$\(cat '([^']+)'\)/.exec(command)?.[1];
+  if (path === undefined) {
+    throw new Error(`launch command carries no prompt file: ${command}`);
+  }
+  return await readFile(path, "utf8");
+}
+
 function signalReadiness(store: FakeStore): () => Promise<void> {
   return async () => {
     for (const current of store.listAgents()) {
@@ -307,15 +320,19 @@ class FailingTerminal implements TerminalAdapter {
   async closeWindow(_handle: TerminalHandle): Promise<void> {}
 }
 
-// Claude spawns pre-accept folder trust in ~/.claude.json. Point HOME at a
-// throwaway directory so the suite never writes to the operator's real config.
+// Claude spawns pre-accept folder trust in ~/.claude.json, and every launch now
+// writes its brief under HIVE_HOME. Point both at throwaway directories so the
+// suite never writes to the operator's real config.
 let previousHome: string | undefined;
+let previousHiveHome: string | undefined;
 let claudeHomeRoot = "";
 
 beforeAll(async () => {
   claudeHomeRoot = await mkdtemp(join(tmpdir(), "hive-spawner-home-"));
   previousHome = Bun.env.HOME;
+  previousHiveHome = Bun.env.HIVE_HOME;
   Bun.env.HOME = claudeHomeRoot;
+  Bun.env.HIVE_HOME = claudeHomeRoot;
 });
 
 afterAll(async () => {
@@ -323,6 +340,11 @@ afterAll(async () => {
     delete Bun.env.HOME;
   } else {
     Bun.env.HOME = previousHome;
+  }
+  if (previousHiveHome === undefined) {
+    delete Bun.env.HIVE_HOME;
+  } else {
+    Bun.env.HIVE_HOME = previousHiveHome;
   }
   if (claudeHomeRoot !== "") {
     await rm(claudeHomeRoot, { recursive: true, force: true });
@@ -395,8 +417,10 @@ describe("HiveSpawner name pool", () => {
       } satisfies AgentMessage;
       await spawner.restartForControl(controlled, message);
       const command = tmux.sessions[0]?.[2] ?? "";
-      expect(command).toContain("CRITICAL HIVE CONTROL");
-      expect(command).toContain("This process is read-only");
+      // The order itself travels in the prompt file; the flags stay on the argv.
+      const order = await deliveredPrompt(command);
+      expect(order).toContain("CRITICAL HIVE CONTROL");
+      expect(order).toContain("This process is read-only");
       expect(command).toContain(tool === "claude"
         ? "--permission-mode"
         : "--sandbox");
@@ -979,7 +1003,9 @@ describe("HiveSpawner wiring", () => {
     expect(tmux.sessions[0]?.[2]).toContain("'codex'");
     expect(tmux.sessions[0]?.[2]).toContain("--dangerously-bypass-hook-trust");
     expect(tmux.sessions[0]?.[2]).toContain("features.hooks=true");
-    expect(tmux.sessions[0]?.[2]).toContain("Visible interactive task");
+    expect(await deliveredPrompt(tmux.sessions[0]?.[2] ?? "")).toContain(
+      "Visible interactive task",
+    );
     expect(tmux.sessions[0]?.[2]).not.toContain("codex-app-server-host");
   });
 
@@ -1089,7 +1115,9 @@ describe("HiveSpawner wiring", () => {
     expect(tmux.sessions[1]?.[2]).toContain("'codex'");
     expect(tmux.sessions[1]?.[2]).toContain("--dangerously-bypass-hook-trust");
     expect(tmux.sessions[1]?.[2]).toContain("features.hooks=true");
-    expect(tmux.sessions[1]?.[2]).toContain("Fallback task");
+    expect(await deliveredPrompt(tmux.sessions[1]?.[2] ?? "")).toContain(
+      "Fallback task",
+    );
   });
 
   test("reserves quota before worktree creation and launches the selected fallback model", async () => {
@@ -1473,15 +1501,16 @@ describe("HiveSpawner wiring", () => {
     // dialog that this flag raises, so it must never appear in a spawn argv.
     expect(tmux.sessions[0]?.[2]).not.toContain(CLAUDE_CHANNELS_FLAG);
     expect(tmux.sessions[0]?.[2]).not.toContain("server:hive-channel");
-    expect(tmux.sessions[0]?.[2]).toContain("You are maya");
+    const mayaPrompt = await deliveredPrompt(tmux.sessions[0]?.[2] ?? "");
+    expect(mayaPrompt).toContain("You are maya");
     // Every writer agent carries the landing protocol for its own branch.
-    expect(tmux.sessions[0]?.[2]).toContain(
-      `hive_land`,
-    );
+    expect(mayaPrompt).toContain(`hive_land`);
     expect(tmux.sessions[1]?.[2]).toContain("'codex'");
     expect(tmux.sessions[1]?.[2]).toContain("--dangerously-bypass-hook-trust");
     expect(tmux.sessions[1]?.[2]).toContain("features.hooks=true");
-    expect(tmux.sessions[1]?.[2]).toContain("You are david");
+    expect(await deliveredPrompt(tmux.sessions[1]?.[2] ?? "")).toContain(
+      "You are david",
+    );
     expect(claude.model).toEqual("claude-fable-5");
     expect(claude.executionIdentity).toEqual({
       tool: "claude",
@@ -1575,7 +1604,7 @@ describe("HiveSpawner wiring", () => {
 
       await spawner.spawn({ task: "Fix the flaky test", tier: "standard" });
 
-      const launched = tmux.sessions[0]?.[2] ?? "";
+      const launched = await deliveredPrompt(tmux.sessions[0]?.[2] ?? "");
       expect(launched).toContain("Hive memory index");
       expect(launched).toContain(
         "[repo] flaky-login-test (2026-06-01): The login test is flaky",
@@ -2623,9 +2652,12 @@ describe("coding guidelines are guaranteed in context at spawn", () => {
     });
 
     await spawner.spawn({ task: "Build auth API", tier: "standard" });
-    const launched = tmux.sessions[0]?.[2] ?? "";
+    const command = tmux.sessions[0]?.[2] ?? "";
     // The executable resolves to an absolute path on a real machine.
-    expect(launched).toMatch(/^'[^']*claude'/);
+    expect(command).toMatch(/^'[^']*claude'/);
+    // The rules ride the prompt the vendor receives, not the pipe that carries
+    // it: the brief outgrew the tmux command line and now travels in a file.
+    const launched = await deliveredPrompt(command);
     for (const rule of RULES) expect(launched).toContain(rule);
   });
 
@@ -2670,8 +2702,9 @@ describe("coding guidelines are guaranteed in context at spawn", () => {
     // Codex has no --append-system-prompt; the prompt IS the carrier, on both drivers.
     const tuiTmux = new FakeTmux();
     await codexSpawner("tui", tuiTmux).spawn({ task: "Build auth API", tier: "standard" });
-    const tuiLaunched = tuiTmux.sessions[0]?.[2] ?? "";
-    expect(tuiLaunched).toContain("'codex'");
+    const tuiCommand = tuiTmux.sessions[0]?.[2] ?? "";
+    expect(tuiCommand).toContain("'codex'");
+    const tuiLaunched = await deliveredPrompt(tuiCommand);
     for (const rule of RULES) expect(tuiLaunched).toContain(rule);
 
     const hostTmux = new FakeTmux();
@@ -2686,5 +2719,216 @@ describe("coding guidelines are guaranteed in context at spawn", () => {
   test("the two blocks between them carry every rule (they are what the prompt splices in)", () => {
     const blocks = `${CODING_GUIDELINES}\n${HIVE_PROTOCOL_RULES}`;
     for (const rule of RULES) expect(blocks).toContain(rule);
+  });
+});
+
+/**
+ * The spawn prompt travels out-of-band, and a failure to carry it is not a
+ * verdict on the model.
+ *
+ * Two defects, one launch. tmux hands a command to its server in a single imsg
+ * and rejects anything much past 16KB with "command too long" — measured
+ * against tmux 3.7b, which takes 16000 bytes and refuses 20000, far below the
+ * 1MB ARG_MAX the design assumed. Hive's briefs embed extracted doc sections
+ * with file:line pointers, so they cross that line by design. The second defect
+ * is what Hive concluded from the first: the spawn error was recorded against
+ * the *route*, quarantining a model that was never contacted.
+ */
+describe("HiveSpawner launch prompt transport", () => {
+  const hugeBrief = `Rewrite the router. ${"context ".repeat(6_000)}`;
+  let savedHiveHome: string | undefined;
+
+  beforeAll(async () => {
+    savedHiveHome = process.env.HIVE_HOME;
+    const home = await mkdtemp(join(tmpdir(), "hive-prompt-home-"));
+    tempRoots.push(home);
+    process.env.HIVE_HOME = home;
+  });
+
+  afterAll(() => {
+    if (savedHiveHome === undefined) delete process.env.HIVE_HOME;
+    else process.env.HIVE_HOME = savedHiveHome;
+  });
+
+  /** Real tmux refuses an over-long command rather than truncating it. */
+  class LimitedTmux extends FakeTmux {
+    override async newSession(
+      name: string,
+      cwd: string,
+      command: string,
+    ): Promise<void> {
+      if (Buffer.byteLength(command) > 16_384) {
+        throw new Error("tmux new-session failed: command too long");
+      }
+      await super.newSession(name, cwd, command);
+    }
+  }
+
+  /** Every tmux command fails, whatever its length: a transport that is simply
+   * broken on this machine. The model is never reached. */
+  class BrokenTmux extends FakeTmux {
+    override async newSession(): Promise<void> {
+      throw new Error("tmux new-session failed: no server running");
+    }
+  }
+
+  function makeQuota(root: string): { db: HiveDatabase; quota: QuotaService } {
+    const db = new HiveDatabase(join(root, "spawn-quota.db"));
+    return {
+      db,
+      quota: new QuotaService(
+        new QuotaLedger(db),
+        QuotaConfigSchema.parse({
+          discovery: false,
+          limits: [{
+            provider: "claude",
+            pool: "claude",
+            models: ["claude-opus-4-8"],
+            fiveHourAllowance: 500,
+            weeklyAllowance: 500,
+          }],
+        }),
+        () => new Date(timestamp),
+      ),
+    };
+  }
+
+  function makeSpawner(
+    root: string,
+    tmux: FakeTmux,
+    quota: QuotaService,
+    store: FakeStore,
+    sleep: () => Promise<void>,
+  ): HiveSpawner {
+    return new HiveSpawner({
+      db: store,
+      repoRoot: root,
+      port: 4317,
+      config: { terminal: "auto", headless: true },
+      routing: async () => DEFAULT_ROUTING.standard,
+      tmux,
+      terminal: new FakeTerminal(),
+      createWorktree: async (_repoRoot, name, slug) => {
+        const path = join(root, name);
+        await mkdir(path, { recursive: true });
+        return { path, branch: `hive/${name}-${slug}` };
+      },
+      resolveModel: fakeResolveModel,
+      quota,
+      sleep,
+    });
+  }
+
+  test("a brief far past the tmux command limit still spawns", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-prompt-long-"));
+    tempRoots.push(root);
+    const tmux = new LimitedTmux();
+    const { db, quota } = makeQuota(root);
+    const store = new FakeStore();
+    const spawner = makeSpawner(
+      root,
+      tmux,
+      quota,
+      store,
+      signalReadiness(store),
+    );
+
+    const spawned = await spawner.spawn({
+      task: hugeBrief,
+      tier: "standard",
+      model: "claude-opus-4-8",
+    });
+
+    expect(spawned.status).toEqual("working");
+    const command = tmux.sessions[0]?.[2] ?? "";
+    // The brief is not on the command line at all, and what is left is small.
+    expect(command).not.toContain("Rewrite the router");
+    expect(Buffer.byteLength(command)).toBeLessThan(4_096);
+    // It reached the agent intact, through a file outside the user's repo.
+    const promptPath = /\$\(cat '([^']+)'\)/.exec(command)?.[1] ?? "";
+    expect(promptPath).toStartWith(process.env.HIVE_HOME!);
+    expect(promptPath).not.toStartWith(root);
+    expect(await readFile(promptPath, "utf8")).toContain(hugeBrief);
+    db.close();
+  });
+
+  test("a transport failure never marks the model unhealthy", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-prompt-transport-"));
+    tempRoots.push(root);
+    const { db, quota } = makeQuota(root);
+    const spawner = makeSpawner(
+      root,
+      new BrokenTmux(),
+      quota,
+      new FakeStore(),
+      async () => {},
+    );
+
+    const failed = await spawner.spawn({
+      task: "Ship the thing",
+      tier: "standard",
+      model: "claude-opus-4-8",
+    });
+
+    expect(failed.status).toEqual("failed");
+    expect(failed.failureReason).toContain("tmux");
+    // tmux broke. The model was never contacted, so it has nothing to answer
+    // for: quarantining it here is how one bad launch downgrades every later
+    // spawn for half an hour.
+    expect(quota.ledger.routeHealth("claude", "claude-opus-4-8")).toBeNull();
+    db.close();
+  });
+
+  test("a binary that never executed never marks the model unhealthy", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-prompt-exec-"));
+    tempRoots.push(root);
+    const { db, quota } = makeQuota(root);
+    // The pane died because the CLI is not on this machine. tmux carried the
+    // command; the shell could not run it. The model was still never contacted.
+    const tmux = new FakeTmux("zsh: command not found: claude");
+    const spawner = makeSpawner(
+      root,
+      tmux,
+      quota,
+      new FakeStore(),
+      async () => {},
+    );
+
+    const failed = await spawner.spawn({
+      task: "Ship the thing",
+      tier: "standard",
+      model: "claude-opus-4-8",
+    });
+
+    expect(failed.status).toEqual("failed");
+    expect(quota.ledger.routeHealth("claude", "claude-opus-4-8")).toBeNull();
+    db.close();
+  });
+
+  test("a genuine model failure still marks the model unhealthy", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-prompt-model-"));
+    tempRoots.push(root);
+    const { db, quota } = makeQuota(root);
+    // The process launched and the model itself refused: real evidence.
+    const tmux = new FakeTmux("Error: model not supported");
+    const spawner = makeSpawner(
+      root,
+      tmux,
+      quota,
+      new FakeStore(),
+      async () => {},
+    );
+
+    const failed = await spawner.spawn({
+      task: "Ship the thing",
+      tier: "standard",
+      model: "claude-opus-4-8",
+    });
+
+    expect(failed.status).toEqual("failed");
+    const health = quota.ledger.routeHealth("claude", "claude-opus-4-8");
+    expect(health?.consecutiveFailures).toEqual(1);
+    expect(health?.lastFailureReason).toContain("model not supported");
+    db.close();
   });
 });

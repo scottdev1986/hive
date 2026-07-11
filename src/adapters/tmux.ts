@@ -37,7 +37,7 @@ function validateSessionName(session: string): void {
   }
 }
 
-const shellQuote = (value: string): string =>
+export const shellQuote = (value: string): string =>
   `'${value.replaceAll("'", `'\\''`)}'`;
 
 export function shellJoin(argv: string[]): string {

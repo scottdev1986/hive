@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -55,6 +55,23 @@ class FakeTerminal implements TerminalAdapter {
 }
 
 describe("CLI-to-daemon smoke", () => {
+  // A spawn writes its brief under HIVE_HOME. Point it at a throwaway directory
+  // so the suite never writes into the operator's real ~/.hive.
+  let previousHiveHome: string | undefined;
+  let hiveHome = "";
+
+  beforeAll(async () => {
+    hiveHome = await mkdtemp(join(tmpdir(), "hive-e2e-home-"));
+    previousHiveHome = Bun.env.HIVE_HOME;
+    Bun.env.HIVE_HOME = hiveHome;
+  });
+
+  afterAll(async () => {
+    if (previousHiveHome === undefined) delete Bun.env.HIVE_HOME;
+    else Bun.env.HIVE_HOME = previousHiveHome;
+    if (hiveHome !== "") await rm(hiveHome, { recursive: true, force: true });
+  });
+
   test("real event POSTs drive status observed through the real MCP client", async () => {
     const root = await mkdtemp(join(tmpdir(), "hive-cli-e2e-"));
     const worktreePath = join(root, "worktree");
