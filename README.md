@@ -15,50 +15,47 @@
 [![latest](https://img.shields.io/github/v/release/scottdev1986/hive)](https://github.com/scottdev1986/hive/releases/latest)
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Hive is a macOS command-line tool that turns the AI coding CLIs you already have — [Claude Code](https://code.claude.com/docs) and [Codex](https://developers.openai.com/codex) — into a coordinated team. You talk to one orchestrator like you'd talk to a tech lead: *"build this feature"*, *"find out why the tests are flaky"*, *"have a second model review the auth code"*. The orchestrator doesn't write code itself. It splits the work, picks a tool and model for each piece (capable models for hard problems, cheap ones for chores), and spawns agents that each get their own live terminal window. Agents work in isolated copies of your repo, the results are merged step by step, and anything irreversible comes back to you for a yes/no first.
+Hive is a macOS command-line tool that turns the AI coding CLIs you already have — [Claude Code](https://code.claude.com/docs) and [Codex](https://developers.openai.com/codex) — into a coordinated team. You talk to one orchestrator like you'd talk to a tech lead: *"build this feature"*, *"find out why the tests are flaky"*, *"have a second model review the auth code"*. The orchestrator doesn't write code itself. It splits the work, picks a tool and model for each piece (capable models for hard problems, cheap ones for chores), and spawns agents that each get their own live terminal. Agents work in isolated copies of your repo, and finished work is merged back one gate at a time.
 
 > Hive is young. Releases are 0.0.x and things will change between versions; if you hit something broken, an issue report is genuinely useful right now.
 
 ## What it looks like
 
+Running `hive` opens the Workspace: one window, the orchestrator front and center, and every agent as a live terminal pane running the real Claude Code or Codex interface. In the orchestrator pane:
+
 ```
-$ cd my-project
-$ hive claude
-
-hive orchestrator ready.
-
 you  > add rate limiting to the public API, and have the docs updated too
 
 hive > Splitting this into 3 tasks:
-       • maya  (Claude Opus)  — rate-limit middleware      [window opened]
-       • david (Codex)        — apply it to the routes     [window opened]
-       • sam   (Haiku, cheap) — update the API docs        [window opened]
+       • maya  (Claude, deep tier)  — rate-limit middleware      [pane opened]
+       • david (Codex)              — apply it to the routes     [pane opened]
+       • sam   (cheap tier)         — update the API docs        [pane opened]
 
 you  > what's david doing?
 
 hive > david finished the routes and is waiting; maya is mid-way
        through the middleware. Merging david's work…
-
-hive > ⚠️  sam wants to run `npm install express-rate-limit` — allow? (y/n)
 ```
 
-Each agent runs in its own window, and Hive keeps the wall tidy: the orchestrator sits front and center, agent windows tile around it, and the layout reflows as agents join and finish. Closing a window never stops an agent — it keeps working in the background, and `hive watch <name>` brings the view back.
+Panes tile in as agents spawn and leave as they finish. Typing into a pane talks directly to that agent's own interface. The agents themselves live in background tmux sessions, so closing the window never stops one — running `hive` again reattaches the Workspace, and `hive watch <name>` opens a plain terminal window on a single agent.
 
 ## Features
 
 - **One conversation, many agents.** You talk to a single orchestrator; it manages the team.
-- **The right model for the job.** Hard problems go to capable models, chores go to fast cheap ones, so a changelog update doesn't burn the same budget as a refactor.
+- **The right model for the job.** Tasks are tiered — cheap, standard, deep, review — and each tier maps to a tool and model, so a changelog update doesn't burn the same budget as a refactor.
 - **Mixed vendors on one team.** Claude Code and Codex agents work side by side, and one vendor's model can review the other's code.
 - **Quota-aware.** Hive reads your real usage limits from the providers themselves and routes around whichever pool is running low. There is nothing to configure, and it never invents a number: a window it hasn't measured prints `unknown`.
-- **Sandboxed by default.** Each agent can only write inside its own isolated working copy. Publishing, pushing, installing outside the sandbox — all of it waits in one approval queue until you say yes.
+- **Isolated working copies.** Each agent works in its own git worktree on its own branch, and finished work reaches your main branch only through Hive's merge gate, one fast-forward at a time — main is never edited by two agents at once.
+- **Autonomous by default, sandboxed by choice.** Out of the box, agents run with their CLI's permission prompts off, the same trust you'd give `claude --dangerously-skip-permissions`. Set `autonomy = "sandboxed"` in `~/.hive/config.toml` and agents run inside their vendor sandboxes instead, with risky actions queued for your approval.
+- **Remembers your repo.** Facts agents learn about the codebase persist as durable memory, ride into every future agent's brief, and are yours to inspect with `hive memory`.
 - **Steerable mid-flight.** Redirect an agent, or pause and stop it, while it works. A stopped agent's work is preserved, never half-merged.
 - **No black boxes.** Every agent is a live terminal you can watch, scroll, and reopen.
 
 ## Requirements
 
 - macOS (Apple Silicon or Intel)
-- iTerm2 or the built-in Terminal app
 - tmux (`brew install tmux`) and git
+- iTerm2 or the built-in Terminal app (for `hive watch` viewer windows)
 - At least one AI coding CLI, installed and signed in: [Claude Code](https://code.claude.com/docs) and/or [Codex](https://developers.openai.com/codex)
 
 Hive uses your existing Claude / OpenAI subscriptions or API keys and adds no fees of its own.
@@ -69,55 +66,70 @@ Hive uses your existing Claude / OpenAI subscriptions or API keys and adds no fe
 curl -fsSL https://raw.githubusercontent.com/scottdev1986/hive/main/install.sh | sh
 ```
 
-The script downloads the latest release, verifies every artifact's SHA-256 against the release manifest, checks that the binary runs, and only then links `~/.local/bin/hive`. It's [short enough to read first](install.sh), and you should. Binaries are signed with a Developer ID and notarized by Apple, so macOS runs them without a Gatekeeper prompt.
+The script downloads the latest release, verifies every artifact's SHA-256 against the release manifest, checks that the binary runs and reports the right version, and only then links `~/.local/bin/hive`. It's [short enough to read first](install.sh), and you should. If `~/.local/bin` isn't on your PATH, the script says so. Binaries are signed with a Developer ID and notarized by Apple, so macOS runs them without a Gatekeeper prompt.
 
-To update later, run `hive update`. Hive also checks for new versions on `hive init` and prints one line if there is one; set `HIVE_NO_UPDATE_CHECK=1` to silence the check or `HIVE_DISABLE_UPDATES=1` to turn self-update off entirely.
+To update later, run `hive update` — it repeats those checks and additionally verifies the release manifest's Ed25519 signature against a key embedded in the binary. The new version is downloaded and staged immediately but activated only when no agents are mid-task; if you want it now, that's `hive stop && hive update`. `hive update status` shows what's active and what's retained, and `hive update rollback` reactivates the previous version. Hive also checks for new releases at session start and prints one dim line when there is one; set `HIVE_NO_UPDATE_CHECK=1` to silence the check or `HIVE_DISABLE_UPDATES=1` to turn self-update off entirely.
 
 ## Quick start
 
 1. `cd` into any project folder (a git repository).
-2. Run `hive`. It brings up the project's daemon and opens the Workspace: one window, the orchestrator front and center, and every agent as a live terminal pane running the real Claude Code or Codex interface.
-3. Tell the orchestrator what you want done, in plain English.
-4. Watch the agent panes, and answer the occasional approval prompt in the orchestrator pane. Typing into any pane talks directly to that agent's own interface.
 
-Prefer plain terminals? `hive claude` / `hive codex` run the same orchestrator in the terminal you're in, with agents in their own windows.
+2. Run `hive init` once. It profiles the repo, installs Hive's agent skills for whichever CLIs you have, and brings up the project's daemon:
+
+   ```
+   $ hive init
+   Profiled the repo: 1 briefable doc.
+   Claude Code: installed hive-claude, karpathy-guidelines into .claude/skills/ (created)
+   Codex: installed hive-codex, karpathy-guidelines into .agents/skills/ (created)
+   ready — /Users/you/my-project (daemon port 4483)
+   `hive` opens the Workspace; `hive claude` starts an orchestrator
+   ```
+
+3. Run `hive`. The Workspace opens: the orchestrator front and center, agents joining as live terminal panes.
+
+4. Tell the orchestrator what you want done, in plain English. Watch the agent panes; type into any pane to talk to that agent directly. From any other terminal, `hive status` shows the team and `hive stop` winds it down.
+
+`hive claude` and `hive codex` do the same as `hive`, but choose which vendor's CLI runs the orchestrator.
 
 ## Commands
 
 | Command | What it does |
 |---|---|
-| `hive` | Open the project's Workspace — daemon, orchestrator, and agent panes in one window |
-| `hive init` | Initialize or refresh the repo profile, then bring up its daemon without opening a window (`--refresh` updates the profile only) |
-| `hive claude` / `hive codex` | Start a terminal orchestrator in the current folder |
-| `hive status` | Show all running agents and what they're doing |
-| `hive quota` | Show remaining capacity per provider, with reset times |
-| `hive watch <name>` | Reopen a closed agent window |
-| `hive update` | Install the latest release |
-| `hive stop` | Wind down all agents cleanly |
+| `hive` | Bring up the project's daemon and open the Workspace |
+| `hive init` | Profile the repo, install agent skills, seed memory, and bring up the daemon — no window (`--refresh` re-profiles only) |
+| `hive claude` / `hive codex` | Open the Workspace with that vendor's CLI as the orchestrator |
+| `hive status` | Show all agents, their model, status, context use, and task |
+| `hive quota` | Show remaining capacity per provider, with reservations and reset times |
+| `hive watch <name>` | Open a terminal window viewing one agent |
+| `hive recover [name]` | Resume crashed agent sessions |
+| `hive memory <search\|read\|write\|delete\|reindex>` | Inspect and edit the durable facts Hive has learned about the repo |
+| `hive stop` | Stop live agents and the daemon |
+| `hive update` | Install the latest release (`check`, `status`, `rollback`, `skip`) |
 
-`hive quota` shows what routing sees — how much of each provider's five-hour and weekly window is left, read from the providers directly:
+`hive quota` shows what routing sees — how much of each provider's five-hour and weekly window is left, read from the providers directly, plus what's already reserved for running agents:
 
 ```
 $ hive quota
 claude/default/subscription (max) [discovered, fresh]
-  5h: 91.0% remaining, reset 2026-07-10T19:00:00Z
-  week: 57.0% remaining, reset 2026-07-11T19:00:00Z
+  5h: 89.0% of 100.0% remaining, 8.0% reserved (est), reset 2026-07-12T04:20:00.000Z [reported from statusline]
+  week: 91.5% of 100.0% remaining, 1.5% reserved (est), reset 2026-07-18T19:00:00.000Z [reported from statusline]
 codex/default/codex (prolite) [discovered, fresh]
-  5h: 41.0% remaining, reset 2026-07-10T18:25:18Z
-  week: 59.0% remaining, reset 2026-07-16T22:11:53Z
+  5h: 44.0% of 100.0% remaining, 0.0% reserved (est), reset 2026-07-11T23:59:20.000Z [estimated from provider]
+  week: 88.3% of 100.0% remaining, 0.0% reserved (est), reset 2026-07-18T13:59:08.000Z [estimated from provider]
 ```
 
 ## Configuration
 
-None required. If you want to change the defaults, Hive reads `~/.hive/config.toml`:
+None required. If you want to change the defaults, Hive reads three optional files:
 
-- `layout = "off"` stops Hive from arranging its windows. It only ever moves its own windows either way, never anything else you have open.
-- `~/.hive/quota.toml` can optionally overlay your own planning allowances and warning thresholds on top of the limits Hive discovers from the providers.
+- `~/.hive/config.toml` — `autonomy = "sandboxed"` turns the approval queue on (the default, `"dangerous"`, runs agents without permission prompts). `layout = "off"` stops Hive from arranging its windows — it only ever moves its own windows either way, never anything else you have open. `terminal = "iterm2"` or `"terminal"` pins which app viewer windows open in.
+- `~/.hive/routing.toml` — override which tool and model serve each task tier (`cheap`, `standard`, `deep`, `review`).
+- `~/.hive/quota.toml` — overlay your own planning allowances and warning thresholds on top of the limits Hive discovers from the providers.
 
 ## FAQ
 
 **Is it safe to let agents run on my machine?**
-Each agent can only write inside its own isolated working copy of your project. Anything beyond that — publishing packages, pushing to remotes, installing outside the sandbox — is blocked until you approve it, and you review one approval queue in one window.
+Treat it like running Claude Code or Codex with permission prompts turned off — because by default, that is exactly what each agent is. What contains them: every agent works in its own git worktree on its own branch, and nothing reaches your main branch except a fast-forward merge through Hive's gate. If you want prompts back, set `autonomy = "sandboxed"` in `~/.hive/config.toml`: agents then run inside their vendor sandboxes and anything beyond their working copy — installs, pushes, publishing — waits in one approval queue until you say yes.
 
 **What does it cost?**
 Whatever your Claude / OpenAI plans already cost. Hive routes easy tasks to cheaper models specifically to keep your usage down.
@@ -128,8 +140,11 @@ No, one is enough. With both installed, Hive can mix them on one team and route 
 **What happens to my code?**
 Agents work on isolated branches and the work is merged step by step, so your main branch is never edited by multiple agents at once. Everything stays on your machine except the AI API calls your CLIs already make.
 
+**Can I run two projects at once?**
+Not yet — Hive runs one project's daemon at a time, and starting a second project tells you so. `hive stop` the first, then start the second.
+
 **Why is it macOS-only?**
-The first version targets the terminals it can integrate with best (iTerm2, Terminal.app). The core design isn't Mac-specific, so other platforms can follow.
+The first version targets the platform it can integrate with best. The core design isn't Mac-specific, so other platforms can follow.
 
 ## Contributing
 
