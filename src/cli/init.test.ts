@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -15,6 +15,7 @@ import {
   parseMemoryFile,
 } from "../adapters/memory";
 import { bootstrapProfile } from "../adapters/profile";
+import { shippedSkillsFor } from "../skills/shipped";
 
 // `hive init` profiles the repo like any other start, and the profile lands in
 // Hive's own home — a throwaway one here, never the developer's.
@@ -215,6 +216,133 @@ describe("runInit", () => {
       // The old init printed "Run `hive memory reindex` ... to index the seeded
       // facts", which is Hive asking to be finished by hand.
       expect(result.messages.every((m) => !m.includes("hive memory reindex"))).toBe(true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("runInit — installing the shipped skills", () => {
+  /** A machine with exactly these CLIs on it. Nothing shells out: the test says
+   * what the machine has. */
+  const machineWith = (...clis: string[]): typeof defaultInitDeps => ({
+    ...testDeps(),
+    hasCli: (command) => clis.includes(command),
+  });
+
+  const skillFile = (root: string, native: string, name: string): string =>
+    join(root, native, "skills", name, "SKILL.md");
+
+  test("installs each vendor's skills where that vendor actually reads them", async () => {
+    const root = await tsRepo();
+    try {
+      const result = await runInit(root, {}, machineWith("claude", "codex"));
+
+      // Vendor-verified paths: Claude Code reads .claude/skills, Codex .agents/skills.
+      expect(await readFile(skillFile(root, ".claude", "hive-claude"), "utf8"))
+        .toEqual(shippedSkillsFor("claude")[0]!.content);
+      expect(await readFile(skillFile(root, ".agents", "hive-codex"), "utf8"))
+        .toEqual(shippedSkillsFor("codex")[0]!.content);
+      // The shared skill goes to both; the vendor-specific ones do not cross over.
+      expect(await Bun.file(skillFile(root, ".claude", "karpathy-guidelines")).exists())
+        .toBe(true);
+      expect(await Bun.file(skillFile(root, ".agents", "karpathy-guidelines")).exists())
+        .toBe(true);
+      expect(await Bun.file(skillFile(root, ".claude", "hive-codex")).exists())
+        .toBe(false);
+      expect(await Bun.file(skillFile(root, ".agents", "hive-claude")).exists())
+        .toBe(false);
+
+      expect(result.skills.map((report) => report.tool)).toEqual(["claude", "codex"]);
+      expect(result.skills.every((report) => report.createdDirectory)).toBe(true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("a vendor whose CLI is absent gets no directory at all", async () => {
+    const root = await tsRepo();
+    try {
+      const result = await runInit(root, {}, machineWith("claude"));
+
+      // Someone with no Codex does not get a .agents/ directory in their repo.
+      expect(await Bun.file(join(root, ".agents")).exists()).toBe(false);
+      expect(await Bun.file(skillFile(root, ".claude", "hive-claude")).exists())
+        .toBe(true);
+      expect(result.skills.map((report) => report.tool)).toEqual(["claude"]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("with neither CLI installed, init touches no vendor directory and says so", async () => {
+    const root = await tsRepo();
+    try {
+      const result = await runInit(root, {}, machineWith());
+
+      expect(await Bun.file(join(root, ".claude")).exists()).toBe(false);
+      expect(await Bun.file(join(root, ".agents")).exists()).toBe(false);
+      expect(result.skills).toEqual([]);
+      expect(result.messages.some((m) => m.includes("No Claude Code or Codex CLI")))
+        .toBe(true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("merges into a .claude the user already has, touching nothing of theirs", async () => {
+    const root = await tsRepo();
+    try {
+      // A repo that already uses Claude Code, with settings and a skill of their own.
+      await mkdir(join(root, ".claude", "skills", "their-skill"), { recursive: true });
+      await writeFile(join(root, ".claude", "settings.json"), '{"theirs":true}\n');
+      await writeFile(
+        join(root, ".claude", "skills", "their-skill", "SKILL.md"),
+        "# their skill\n",
+      );
+
+      const result = await runInit(root, {}, machineWith("claude"));
+
+      expect(await readFile(join(root, ".claude", "settings.json"), "utf8"))
+        .toEqual('{"theirs":true}\n');
+      expect(await readFile(skillFile(root, ".claude", "their-skill"), "utf8"))
+        .toEqual("# their skill\n");
+      expect(await Bun.file(skillFile(root, ".claude", "hive-claude")).exists())
+        .toBe(true);
+      expect(result.skills[0]!.createdDirectory).toBe(false);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("an edited skill survives init, is reported, and yields only to --force", async () => {
+    const root = await tsRepo();
+    try {
+      await runInit(root, {}, machineWith("claude"));
+      const edited = skillFile(root, ".claude", "karpathy-guidelines");
+      await writeFile(edited, "# my own rules\n");
+
+      const second = await runInit(root, {}, machineWith("claude"));
+      expect(second.skills[0]!.drifted).toEqual(["karpathy-guidelines"]);
+      expect(await readFile(edited, "utf8")).toEqual("# my own rules\n");
+      expect(second.messages.some((m) => m.includes("--force"))).toBe(true);
+
+      const forced = await runInit(root, { force: true }, machineWith("claude"));
+      expect(forced.skills[0]!.installed).toContain("karpathy-guidelines");
+      expect(await readFile(edited, "utf8")).not.toEqual("# my own rules\n");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("seeds no memory of its own: only facts derived from the user's repo", async () => {
+    const root = await tsRepo();
+    try {
+      // Bare `hive init` supplies no facts, so it seeds none. Hive's own
+      // development memories live in Hive's repo and are never a source here.
+      const result = await runInitProfile(root, {});
+      expect(result.factsSeeded).toEqual([]);
+      expect(await discoverMemoryFacts(root, "repo")).toEqual([]);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

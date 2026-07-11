@@ -11,7 +11,8 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { provisionSkills } from "./skills";
+import { installShippedSkills, provisionSkills } from "./skills";
+import { shippedSkillsFor } from "../skills/shipped";
 
 const tempRoots: string[] = [];
 
@@ -83,7 +84,7 @@ describe("skill provisioning", () => {
       .toEqual("# vendor\n");
   });
 
-  test("does nothing when neither canonical source exists", async () => {
+  test("installs the shipped skills even when the user has none of their own", async () => {
     const root = await mkdtemp(join(tmpdir(), "hive-skills-empty-"));
     tempRoots.push(root);
     const worktree = join(root, "worktree");
@@ -91,6 +92,74 @@ describe("skill provisioning", () => {
 
     await provisionSkills(worktree, "codex", join(root, "missing-global"));
 
-    await expect(realpath(join(worktree, ".agents"))).rejects.toThrow();
+    // Hive's own skills come from the binary, not from the user's disk, so an
+    // agent gets them in a repo that has never heard of Hive.
+    for (const skill of shippedSkillsFor("codex")) {
+      expect(
+        await readFile(
+          join(worktree, ".agents", "skills", skill.name, "SKILL.md"),
+          "utf8",
+        ),
+      ).toEqual(skill.content);
+    }
+  });
+
+  test("an edited skill is never clobbered, is reported, and yields to --force", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-skills-drift-"));
+    tempRoots.push(root);
+    const edited = join(root, ".claude", "skills", "hive-claude", "SKILL.md");
+    const shipped = shippedSkillsFor("claude").find(
+      (skill) => skill.name === "hive-claude",
+    )!;
+
+    const first = await installShippedSkills(root, "claude");
+    expect(first.installed).toContain("hive-claude");
+    expect(first.createdDirectory).toEqual(true);
+
+    // Running again changes nothing and says so.
+    const again = await installShippedSkills(root, "claude");
+    expect(again.installed).toEqual([]);
+    expect(again.unchanged).toContain("hive-claude");
+    expect(again.createdDirectory).toEqual(false);
+
+    // The user edits it. Their edit survives, and is reported as drift.
+    await writeFile(edited, "# mine now\n");
+    const drifted = await installShippedSkills(root, "claude");
+    expect(drifted.drifted).toEqual(["hive-claude"]);
+    expect(drifted.installed).toEqual([]);
+    expect(await readFile(edited, "utf8")).toEqual("# mine now\n");
+
+    // --force is the only way their copy is replaced.
+    const forced = await installShippedSkills(root, "claude", { force: true });
+    expect(forced.installed).toContain("hive-claude");
+    expect(await readFile(edited, "utf8")).toEqual(shipped.content);
+  });
+
+  test("a user's own skill of the same name wins over the shipped one", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-skills-precedence-"));
+    tempRoots.push(root);
+    const worktree = join(root, "worktree");
+    const mine = await makeSkill(
+      join(worktree, ".hive", "skills"),
+      "karpathy-guidelines",
+      "my own guidelines",
+    );
+
+    await provisionSkills(worktree, "claude", join(root, "missing-global"));
+
+    const native = join(worktree, ".claude", "skills");
+    // Still their file, reached through their symlink — Hive did not write
+    // through it, and did not replace it.
+    expect(await linkTarget(join(native, "karpathy-guidelines"))).toEqual(mine);
+    expect(
+      await readFile(join(native, "karpathy-guidelines", "SKILL.md"), "utf8"),
+    ).toEqual("# my own guidelines\n");
+    // The shipped skill they did not override is still installed.
+    expect(
+      await readFile(join(native, "hive-claude", "SKILL.md"), "utf8"),
+    ).toEqual(
+      shippedSkillsFor("claude").find((skill) => skill.name === "hive-claude")!
+        .content,
+    );
   });
 });

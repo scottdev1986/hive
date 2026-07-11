@@ -228,10 +228,15 @@ export function createProgram(): Command {
     .option("--refresh", "force a re-scan of the repo profile; never required")
     .option("--scaffold-agents", "offer to scaffold an AGENTS.md when none exists")
     .option("--seed-facts <path>", "JSON file of narrative facts to seed (source: init)")
+    .option(
+      "--force",
+      "replace a Hive skill you have edited with the version Hive ships",
+    )
     .action(async (options: {
       refresh?: boolean;
       scaffoldAgents?: boolean;
       seedFacts?: string;
+      force?: boolean;
     }) => {
       const root = projectRootOrCwd();
       await runInitCli({
@@ -243,6 +248,7 @@ export function createProgram(): Command {
         ...(options.seedFacts === undefined
           ? {}
           : { seedFacts: options.seedFacts }),
+        ...(options.force === undefined ? {} : { force: options.force }),
       });
       if (options.refresh !== true) await runStart({ cwd: root });
     });

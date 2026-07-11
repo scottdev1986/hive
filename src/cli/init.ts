@@ -35,8 +35,22 @@ import {
 } from "../adapters/memory";
 import { readDaemonPort } from "../daemon/lifecycle";
 import { reindexMemory } from "./mcp";
+import {
+  installShippedSkills,
+  type SkillInstallReport,
+  type SkillTool,
+} from "../adapters/skills";
 import type { RepoProfile } from "../schemas/profile";
 import { projectRootOrCwd } from "./project-root";
+
+/** The vendors Hive installs skills for, and the command whose presence on PATH
+ * means the user actually has that CLI. Hive does not create a `.claude/` for
+ * someone who has no Claude Code: an empty vendor directory in a stranger's repo
+ * is litter, not a feature. */
+const VENDORS: ReadonlyArray<{ tool: SkillTool; command: string; label: string }> = [
+  { tool: "claude", command: "claude", label: "Claude Code" },
+  { tool: "codex", command: "codex", label: "Codex" },
+];
 
 /** A narrative fact for init to seed. Structured truth never comes through here
  * — it lives in the profile (SPEC §14). A stable id keeps a `hive init --refresh`
@@ -57,6 +71,9 @@ export interface InitOptions {
   scaffoldAgents?: boolean;
   /** Model-authored narrative facts to seed with `source: "init"`. */
   facts?: InitFact[];
+  /** Replace a skill the user has edited with Hive's shipped version. Without
+   * it, an edited skill is reported as drifted and left exactly as it is. */
+  force?: boolean;
   /** Injected for tests; defaults to today. */
   today?: string;
 }
@@ -67,6 +84,9 @@ export interface InitResult {
   agentsScaffolded: boolean;
   /** Ids of the facts seeded (upserted) this run. */
   factsSeeded: string[];
+  /** One report per vendor CLI found on the machine. A vendor that is not
+   * installed produces no report and no directory. */
+  skills: SkillInstallReport[];
   messages: string[];
 }
 
@@ -84,6 +104,14 @@ export interface InitDeps {
   /** Index freshly seeded facts. Best-effort: with no daemon up there is nothing
    * to tell, because the next one rebuilds the index when it starts. */
   reindexMemory: () => Promise<void>;
+  /** Is this CLI installed on the machine? A dependency so a test can decide
+   * what the machine has without a real `claude` on PATH. */
+  hasCli: (command: string) => boolean;
+  installShippedSkills: (
+    root: string,
+    tool: SkillTool,
+    options: { force?: boolean },
+  ) => Promise<SkillInstallReport>;
   today: () => string;
 }
 
@@ -109,6 +137,8 @@ export const defaultInitDeps: InitDeps = {
     if (port === null) return;
     await reindexMemory(port);
   },
+  hasCli: (command) => Bun.which(command) !== null,
+  installShippedSkills,
   today: () => new Date().toISOString().slice(0, 10),
 };
 
@@ -246,7 +276,49 @@ export async function runInit(
     }
   }
 
-  // 3. Seed narrative facts (source: init). Structured truth stays in the
+  // 3. Skills. Hive's own skills live in the binary (src/skills/shipped.ts), so
+  //    this works on a machine that has only the binary and never consults a
+  //    checkout. We install for the CLIs the user actually has, into the
+  //    directory each vendor actually reads, creating `.claude/` or `.agents/`
+  //    when they are missing and merging into them when they are not. Nothing
+  //    the user wrote is overwritten; drift is reported, and `--force` is the
+  //    only way to take Hive's copy over theirs.
+  const skills: SkillInstallReport[] = [];
+  const installed = VENDORS.filter((vendor) => deps.hasCli(vendor.command));
+  if (installed.length === 0) {
+    messages.push(
+      "No Claude Code or Codex CLI found on PATH; installed no skills and created no vendor directories.",
+    );
+  }
+  for (const vendor of installed) {
+    const report = await deps.installShippedSkills(cwd, vendor.tool, {
+      ...(options.force === true ? { force: true } : {}),
+    });
+    skills.push(report);
+    const where = `${report.nativeDirectory}/${report.createdDirectory ? " (created)" : " (merged into what was already there)"}`;
+    if (report.installed.length > 0) {
+      messages.push(
+        `${vendor.label}: installed ${report.installed.join(", ")} into ${where}`,
+      );
+    }
+    if (report.unchanged.length > 0) {
+      messages.push(
+        `${vendor.label}: ${report.unchanged.join(", ")} already up to date; left alone.`,
+      );
+    }
+    if (report.userOwned.length > 0) {
+      messages.push(
+        `${vendor.label}: ${report.userOwned.join(", ")} is provided by your own skills; yours wins, left alone.`,
+      );
+    }
+    if (report.drifted.length > 0) {
+      messages.push(
+        `${vendor.label}: ${report.drifted.join(", ")} differs from the version Hive ships — your copy is untouched. Re-run \`hive init --force\` to take Hive's.`,
+      );
+    }
+  }
+
+  // 4. Seed narrative facts (source: init). Structured truth stays in the
   //    profile; only genuinely narrative knowledge is seeded here. A seeded fact
   //    that is not in the search index is not yet a fact anyone can find, so we
   //    index it now rather than printing the reindex command at someone.
@@ -264,7 +336,7 @@ export async function runInit(
     );
   }
 
-  return { profileWritten, agentsScaffolded, factsSeeded, messages };
+  return { profileWritten, agentsScaffolded, factsSeeded, skills, messages };
 }
 
 /** Read a JSON array of `InitFact`s from a file, so a human or orchestrator can
@@ -303,6 +375,7 @@ export async function runInitCli(options: {
   refresh?: boolean;
   scaffoldAgents?: boolean;
   seedFacts?: string;
+  force?: boolean;
 }): Promise<void> {
   const result = await runInitProfile(options.cwd ?? projectRootOrCwd(), options);
   for (const line of result.messages) console.log(line);
@@ -312,7 +385,12 @@ export async function runInitCli(options: {
  * independently testable. */
 export async function runInitProfile(
   cwd: string,
-  options: { refresh?: boolean; scaffoldAgents?: boolean; seedFacts?: string },
+  options: {
+    refresh?: boolean;
+    scaffoldAgents?: boolean;
+    seedFacts?: string;
+    force?: boolean;
+  },
 ): Promise<InitResult> {
   const facts = options.seedFacts === undefined
     ? []
@@ -322,6 +400,7 @@ export async function runInitProfile(
     ...(options.scaffoldAgents === undefined
       ? {}
       : { scaffoldAgents: options.scaffoldAgents }),
+    ...(options.force === true ? { force: true } : {}),
     facts,
   });
 }
