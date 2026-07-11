@@ -11,6 +11,7 @@ Building the capability records against these binaries (`90e550d`, 2026-07-11) c
 | Surface | What it tells Hive | Status | Probe cost and risk |
 |---|---|---|---|
 | Claude control `initialize` | Account identity/provider and an account-specific model menu: `value`, `resolvedModel`, `displayName`, `supportsEffort`, `supportedEffortLevels`, `supportsAdaptiveThinking`, `supportsFastMode`, and `supportsAutoMode` where applicable. It carries **no hidden flag and no per-model recommended effort** for any model | **Verified, free, incomplete namespace** | One short-lived CLI process and one control frame. No prompt. The menu omits accepted values such as `best` and bare `claude-opus-4-8`, so absence is not proof that a model cannot launch. |
+| Claude `statusLine` input | The live session's effective effort at `effort.level`, including when no `--effort` flag was passed. It follows `/effort` changes during the session | **Verified, free, runtime-only** | Claude invokes the configured status-line command with JSON on stdin. Hive already configures this command for its agents and receives the full payload; the value is unavailable before the first render and is current state rather than an immutable launch stamp. |
 | Claude control `get_usage` | Subscription type, general and model-scoped rate-limit windows, and extra-usage state | **Verified elsewhere in-tree, free, experimental** | No prompt, but Claude labels the request experimental and its schema may change. It reports display names, not stable model ids. See [provider-quota-surfaces.md](provider-quota-surfaces.md). |
 | Claude Platform Models API | API-account model ids, `max_input_tokens`, `max_tokens`, and a capability object | **Documented; not a Claude Code subscription entitlement surface** | A metadata request rather than inference, but it requires Claude API credentials and describes that API account. Hive cannot assume the CLI's OAuth subscription has the same catalog or expose its token for this use. |
 | Claude public model and pricing pages | Current ids, API aliases, prices, context/output limits, thinking mode, and vendor positioning | **Verified public metadata, not account-specific** | Free HTTP fetch. It can seed or annotate policy, but a web page changing or failing must not make spawning impossible. API prices do not state Claude Max quota burn. |
@@ -44,6 +45,18 @@ The 2.1.207 response exposed five menu entries:
 - `haiku` resolved to `claude-haiku-4-5-20251001` and reported none of the effort, adaptive, fast, or auto fields.
 
 Missing booleans must remain missing rather than being silently promoted to `false`: omission may mean unsupported, rollout-dependent, or simply absent from this protocol version. Haiku is the live proof — it carries no effort fields at all, which is *unknown*, not a vendor saying "no effort." The response also included account email and organization; a production probe should retain only the minimum account key it needs and never put the raw frame in logs.
+
+Claude's live status-line payload answers the separate question the menu does not: the session's effective effort is the string at `effort.level`. The positive control replaced the status-line command for one interactive probe with a reader equivalent to:
+
+```sh
+jq -r '.effort.level'
+```
+
+An explicit `claude --effort low` session reported `low`; a launch with no effort flag reported `high`. Repeating the no-flag launch with `--setting-sources project,local` also reported `high`, with no project or local settings file present. The user's `~/.claude/settings.json` already set `effortLevel` to `high`, so this does **not** distinguish the provider default from the configured value; it proves the status line reports the effective value Hive needs either way. The key was present in both the explicit and no-flag controls, rather than appearing only for a non-default value.
+
+The same session then ran `/effort low` and `/effort high`. The next status-line renders reported `low` and `high` respectively, so `effort.level` is current mutable state, not a fixed launch attribute. Hive already writes `hive statusline --agent <name> --port <port>` into each Claude agent's project-local settings and passes the full stdin object to `src/cli/statusline.ts`; no second hook or replacement of the user's global status-line setting is needed to receive this field. The parser does not yet retain it.
+
+The session transcript is deliberately not a substitute for this surface. The explicit positive-control transcript at `~/.claude/projects/-Users-scottkellar-Projects-hive--hive-worktrees-abel/82ef418b-6676-46e1-aa0e-b7c1cb239bf3.jsonl` and the no-flag transcript beside it at `901a0c60-4567-4473-9ceb-376b7c6033b5.jsonl` contain no effort key at any depth. The print-mode result JSON also omits effort. The explicit transcript is the control that makes this absence meaningful: the flag was accepted and the status line reported `low`, but persistence still recorded no effort.
 
 The Codex probe performed `initialize`, sent `initialized`, and then called `model/list` with `{ "includeHidden": true }`, `config/read`, `account/read`, `account/rateLimits/read`, and `modelProvider/capabilities/read`. It never started a thread or turn. The account-visible 0.144.1 catalog was:
 
