@@ -96,6 +96,12 @@ export type QuotaProbeResult =
     pools: DiscoveredPoolReading[];
     /** The provider's model catalog, when the probe could read it. */
     catalog: ModelCatalogEntry[];
+    /**
+     * Unspent usage-limit reset grants the account is holding. Hive surfaces
+     * this in a refusal and never redeems one itself: spending a human's finite
+     * credit to admit a spawn is the human's decision to make.
+     */
+    resetCredits?: number;
   }
   | { status: "unavailable"; reason: string };
 
@@ -254,7 +260,17 @@ export class CodexQuotaProbe implements QuotaProbe {
             "codex app-server returned no usable rate-limit windows; the account may not be signed in",
         };
       }
-      return { status: "ok", pools, catalog: payload.catalog };
+      const credits = CodexResetCreditsSchema.safeParse(
+        payload.limits.rateLimitResetCredits,
+      );
+      return {
+        status: "ok",
+        pools,
+        catalog: payload.catalog,
+        ...(credits.success && credits.data.availableCount !== undefined
+          ? { resetCredits: credits.data.availableCount }
+          : {}),
+      };
     } catch (error) {
       return {
         status: "unavailable",
@@ -263,6 +279,10 @@ export class CodexQuotaProbe implements QuotaProbe {
     }
   }
 }
+
+const CodexResetCreditsSchema = z.object({
+  availableCount: z.number().int().nonnegative().optional(),
+}).passthrough();
 
 /**
  * Drive a throwaway `codex app-server` over stdio. The handshake is mandatory —

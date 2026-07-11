@@ -98,6 +98,20 @@ Three consequences follow, and they are the whole point:
 
 **Every id form of a model binds to the same meter.** One model reaches hive under several names — `claude-opus-4-8`, the 1M-context variant `claude-opus-4-8[1m]`, the alias `opus`, the shipped default `default`. They are one meter, so a pool named for any of them gates all of them; otherwise a spawn could dodge an exhausted pool by pinning the model under a different one of its own names. Note that `[1m]` is an **account-plan** property, not a distinct model: never key a table on a model name and assume a plan-level fact travels with it.
 
+## What a usage number means, and what it may be called
+
+A pool's usage has two possible sources: what the provider measured, and what Hive guessed. They are not equal, and conflating them produced the most embarrassing failure in this system's history — `hive quota` reporting 12% of the Codex week consumed, stamped `source: provider, confidence: authoritative`, while the provider's own payload said `usedPercent: 0` and the user could see 100% available on his own screen. Every one of those 12 points was Hive's own `estimatesPct` guesswork, written to the ledger at `confidence: "estimated"` and then published under the provider's badge.
+
+**A measurement beats an estimate.** The provider's reading already counts everything spent before it was taken — Hive's own runs included — so the only spend it cannot know about is what happened *after* it. That, and only that, is what Hive adds:
+
+    used = reportedUsed + (ledger spend recorded after that reading)
+
+**The label describes the number published, not the reading it was built from.** If any part of the figure is Hive's estimate of unreported spend, the figure is `estimated`. `authoritative` is the strongest claim this system makes and is reserved for a number the provider alone produced.
+
+The rejected alternative is the previous design, and it is worth stating exactly: usage was `max(Hive's entire ledger for the window, the reading plus spend since)`, so that "an optimistic provider number can never free capacity Hive knows it spent." Every word of that reasoning holds except *knows*. Hive never knew — it guessed, from a static per-tier table. The floor therefore let a guess outrank a measurement, and once the guess won the `max()` it inherited the measurement's provenance, which is how an invented number came to wear the word `authoritative`. A confidently wrong number is worse than an admitted unknown; a fabricated one that claims to be measured is worse than both.
+
+The floor's real fear — a provider that lags — is answered without it. Spend recorded after the reading is exactly the spend the reading cannot have seen, and it is still counted. What is no longer counted is spend the provider had every opportunity to see and did not report, because in that case the provider is right and Hive's estimate is wrong.
+
 ## The model a session is actually running
 
 Hive records a model when it spawns an agent. A human is free to switch models in that session afterwards — normal, supported, and invisible to the spawn-time record. The reservation then holds capacity in the wrong meter, and every number booked for that agent describes a model it is not running.

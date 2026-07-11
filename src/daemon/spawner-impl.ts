@@ -1347,7 +1347,15 @@ export class HiveSpawner implements Spawner {
       lastEventAt: failedAt,
     });
     if (record.quotaReservationId !== undefined) {
-      await this.dependencies.quota?.cancel(record.quotaReservationId, failedAt);
+      // This agent never became a working agent, so the route it was launched on
+      // is suspect until one does. Quota records it against that route and passes
+      // the route over for automatic selection until it proves itself again —
+      // headroom alone was never enough to call a route eligible.
+      await this.dependencies.quota?.cancel(
+        record.quotaReservationId,
+        failedAt,
+        failureReason,
+      );
     }
     const cleanupErrors: string[] = [];
     let preserved: string | null = null;

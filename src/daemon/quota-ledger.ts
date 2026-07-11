@@ -83,6 +83,33 @@ const ModelCatalogSchema = z.object({
 });
 export type ModelCatalogRow = z.infer<typeof ModelCatalogSchema>;
 
+/**
+ * Whether a route actually starts, learned from what happened when Hive tried.
+ *
+ * Headroom is not eligibility. A route can have all the quota in the world and
+ * still be incapable of producing a working agent — deep-tier Codex was exactly
+ * this on 2026-07-11 — and a gate that refuses an exhausted model only to hand
+ * the work to a route that cannot start has protected nothing. So a launch that
+ * never proves life is recorded against its route, and a route that recently
+ * failed to start is not offered as an automatic choice.
+ *
+ * This is an observation, never a belief. Nothing here names a vendor or encodes
+ * "codex deep is broken" — that fact expires the moment someone fixes it. A
+ * success clears the route instantly, and the quarantine lapses on its own, so
+ * the guard stops guarding the moment the route starts working again. That
+ * expiry is not a nicety: a route excluded forever can never produce the success
+ * that would clear it, and the guard would quietly become the outage.
+ */
+const RouteHealthSchema = z.object({
+  provider: z.enum(["claude", "codex"]),
+  model: z.string(),
+  consecutiveFailures: z.number().int().nonnegative(),
+  lastFailureAt: z.string().nullable(),
+  lastFailureReason: z.string().nullable(),
+  lastSuccessAt: z.string().nullable(),
+});
+export type RouteHealth = z.infer<typeof RouteHealthSchema>;
+
 const AlertStateSchema = z.object({
   provider: z.string(),
   account: z.string(),
@@ -275,6 +302,15 @@ export class QuotaLedger {
         displayName TEXT NOT NULL,
         discoveredAt TEXT NOT NULL,
         PRIMARY KEY(provider, modelId, displayName)
+      );
+      CREATE TABLE IF NOT EXISTS quota_route_health (
+        provider TEXT NOT NULL,
+        model TEXT NOT NULL,
+        consecutiveFailures INTEGER NOT NULL DEFAULT 0,
+        lastFailureAt TEXT,
+        lastFailureReason TEXT,
+        lastSuccessAt TEXT,
+        PRIMARY KEY(provider, model)
       );
     `);
     const observationColumns = z.array(z.object({ name: z.string() })).parse(
@@ -585,6 +621,55 @@ export class QuotaLedger {
         );
       }
     });
+  }
+
+  /** A launch that never proved life. The route is suspect until one does. */
+  recordLaunchFailure(
+    provider: "claude" | "codex",
+    model: string,
+    reason: string,
+    at: string,
+  ): void {
+    this.db.database.query(`
+      INSERT INTO quota_route_health (
+        provider, model, consecutiveFailures, lastFailureAt, lastFailureReason,
+        lastSuccessAt
+      ) VALUES (?, ?, 1, ?, ?, NULL)
+      ON CONFLICT(provider, model) DO UPDATE SET
+        consecutiveFailures = quota_route_health.consecutiveFailures + 1,
+        lastFailureAt = excluded.lastFailureAt,
+        lastFailureReason = excluded.lastFailureReason
+    `).run(provider, model, at, reason);
+  }
+
+  /**
+   * An agent came up on this route. That is proof, and it wipes the slate: one
+   * working launch says more about a route than any number of old failures, and
+   * it is what lets the guard release the route the instant it is fixed.
+   */
+  recordLaunchSuccess(
+    provider: "claude" | "codex",
+    model: string,
+    at: string,
+  ): void {
+    this.db.database.query(`
+      INSERT INTO quota_route_health (
+        provider, model, consecutiveFailures, lastFailureAt, lastFailureReason,
+        lastSuccessAt
+      ) VALUES (?, ?, 0, NULL, NULL, ?)
+      ON CONFLICT(provider, model) DO UPDATE SET
+        consecutiveFailures = 0,
+        lastFailureAt = NULL,
+        lastFailureReason = NULL,
+        lastSuccessAt = excluded.lastSuccessAt
+    `).run(provider, model, at);
+  }
+
+  routeHealth(provider: "claude" | "codex", model: string): RouteHealth | null {
+    const row = this.db.database.query(
+      "SELECT * FROM quota_route_health WHERE provider = ? AND model = ?",
+    ).get(provider, model);
+    return row === null ? null : RouteHealthSchema.parse(row);
   }
 
   modelCatalog(): ModelCatalogRow[] {

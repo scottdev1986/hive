@@ -247,6 +247,8 @@ export interface CodexRateLimitSnapshot {
 export interface CodexRateLimitsResponse {
   rateLimits: CodexRateLimitSnapshot;
   rateLimitsByLimitId?: Record<string, CodexRateLimitSnapshot> | null;
+  /** Unspent "full reset" grants. Hive reports them and never redeems one. */
+  rateLimitResetCredits?: { availableCount?: number } | null;
 }
 
 export interface CodexQuotaReading {
@@ -286,6 +288,8 @@ export class QuotaService {
   private alertSink: QuotaAlertSink | null = null;
   private readonly probes: QuotaProbe[];
   private readonly probeErrors = new Map<"claude" | "codex", string>();
+  /** Unspent usage-limit reset grants, as the provider reports them. Read only. */
+  private readonly resetCredits = new Map<"claude" | "codex", number>();
   private lastRefreshAt: Date | null = null;
 
   constructor(
@@ -676,6 +680,52 @@ export class QuotaService {
   }
 
   /**
+   * Is this route currently known not to start? Returns the moment it becomes
+   * eligible again, or null when nothing is holding it back.
+   *
+   * Eligibility is headroom *and* viability. Ranking on headroom alone is what
+   * made this necessary: Codex sitting at 0% weekly outscores Claude at 63% every
+   * time, so the emptiest pool silently outranked the question of whether a route
+   * could produce a working agent at all — and a gate that refuses an exhausted
+   * model only to hand the work to a route that cannot start has protected
+   * nothing.
+   *
+   * Nothing here knows the name of a vendor or a tier. It reports what happened
+   * when Hive last tried, and it forgets on a schedule.
+   */
+  private quarantinedUntil(
+    candidate: QuotaRouteCandidate,
+    now: Date,
+  ): { until: string; reason: string } | null {
+    const health = this.ledger.routeHealth(candidate.tool, candidate.model);
+    if (
+      health === null || health.consecutiveFailures === 0 ||
+      health.lastFailureAt === null
+    ) {
+      return null;
+    }
+    // Repeat failures hold the route back longer, but never indefinitely: the
+    // cooldown is capped so a route always gets retried and can always come back.
+    const minutes = Math.min(
+      this.config.launchQuarantineMinutes * health.consecutiveFailures,
+      this.config.launchQuarantineMinutes * 4,
+    );
+    const until = add(new Date(health.lastFailureAt), minutes * 60_000);
+    return new Date(until) <= now ? null : {
+      until,
+      reason: health.lastFailureReason ?? "a previous launch never proved life",
+    };
+  }
+
+  /** An agent came up. Whatever we thought about this route, it works. */
+  noteLaunchSucceeded(
+    candidate: QuotaRouteCandidate,
+    at = iso(this.clock()),
+  ): void {
+    this.ledger.recordLaunchSuccess(candidate.tool, candidate.model, at);
+  }
+
+  /**
    * Could this candidate be launched right now? Every pool that meters it must
    * have room — a model whose own cap is spent has no room even when the general
    * pool is wide open, so it is never offered as a fallback.
@@ -685,6 +735,8 @@ export class QuotaService {
     tier: RoutingTier,
     now: Date,
   ): boolean {
+    // A route that cannot start is not a fallback, whatever its headroom says.
+    if (this.quarantinedUntil(candidate, now) !== null) return false;
     const limits = this.limitsFor(candidate);
     const preserveDeep = tier === "cheap" || tier === "standard";
     const checked = limits.map((limit) => {
@@ -848,6 +900,9 @@ export class QuotaService {
         ...entry,
         discoveredAt: iso(now),
       })));
+      if (result.resetCredits !== undefined) {
+        this.resetCredits.set(probe.provider, result.resetCredits);
+      }
       for (const reading of result.pools) {
         this.ledger.upsertDiscoveredPool({
           provider: reading.provider,
@@ -1061,19 +1116,33 @@ export class QuotaService {
       const afterObservation = window === "fiveHour"
         ? totals.afterFiveHourObservation
         : totals.afterWeeklyObservation;
-      // The conservative combination from SPEC: an external reading and the local
-      // ledger merge by max(), so an optimistic provider number can never free
-      // capacity Hive already knows it spent.
-      const supplemental = observationValid
-        ? Math.max(0, reportedUsed + afterObservation - ledgerUsed)
-        : 0;
+      // A measurement beats an estimate. The provider's reading already counts
+      // everything spent before it was taken — Hive's own runs included — so the
+      // only spend it cannot know about is what happened *after* it. That, and
+      // only that, is what Hive adds.
+      //
+      // Hive used to take max(its whole ledger, the reading), on the reasoning
+      // that an optimistic provider number must never free capacity Hive knew it
+      // had spent. But Hive never knew: those ledger rows are its own
+      // `estimatesPct` guesses, written at `confidence: "estimated"`. The floor
+      // therefore let a guess outrank a measurement, and it did — on 2026-07-11
+      // Codex reported 0% of the weekly window used, Hive's estimates summed to
+      // 12%, and `hive quota` published 12% under `source: provider,
+      // confidence: authoritative`. The user could see the real number on his own
+      // screen. A confidently wrong number is worse than an admitted unknown, and
+      // an estimate wearing a measurement's badge is the worst of both.
+      const unverified = observationValid ? afterObservation : 0;
       // A percent pool measures the *account*, which the human also spends from
       // outside Hive. Without a live reading — never taken, or voided by a reset
       // that has since passed — its usage is genuinely unknown. A unit pool can
       // still fall back on the operator's allowance and Hive's own ledger, and
       // reports that fallback as the estimate it is.
       const unmeasured = limit.unit === "percent" && !observationValid;
-      const used = unmeasured ? null : ledgerUsed + supplemental;
+      const used = unmeasured
+        ? null
+        : observationValid
+          ? reportedUsed + unverified
+          : ledgerUsed;
       const remaining = used === null
         ? null
         : Math.max(0, allowance - used - reserved);
@@ -1086,13 +1155,20 @@ export class QuotaService {
         ? (earliest === null ? null : add(new Date(earliest), 5 * HOUR_MS))
         : bounds.weeklyEnd ??
           (earliest === null ? null : add(new Date(earliest), 7 * DAY_MS));
+      // The label describes the number actually being published, not the reading
+      // it was built from. A measured base with Hive's own estimate of the spend
+      // since is partly a guess, and calling it `authoritative` would be a claim
+      // Hive cannot support — `authoritative` is the strongest thing this system
+      // ever says, so it is reserved for a figure the provider alone produced.
       const confidence: QuotaConfidence = unmeasured
         ? "missing"
         : !observationValid
           ? "estimated"
-          : fresh(observedAt)
-            ? observation?.[`${window}Confidence`] ?? observation!.confidence
-            : "stale";
+          : !fresh(observedAt)
+            ? "stale"
+            : unverified > 0
+              ? "estimated"
+              : observation?.[`${window}Confidence`] ?? observation!.confidence;
       return {
         unit: limit.unit,
         allowance: used === null ? null : allowance,
@@ -1250,9 +1326,17 @@ export class QuotaService {
       bounds.weeklyStart,
       cutoffs,
     );
+    // What the ledger does *not* already account for. The reserve path adds the
+    // ledger's own total back on top of this, so handing it `used - ledgerUsed`
+    // makes the committed figure come out at exactly `used` — the same number
+    // `hive quota` publishes. It is deliberately allowed to go negative: when
+    // Hive's estimates have over-counted against what the provider actually
+    // measured, the correction must be able to give that headroom back, or the
+    // gate would go on refusing spawns on the strength of a fiction the provider
+    // has already contradicted.
     return {
-      five: Math.max(0, (status.fiveHour.used ?? 0) - totals.fiveHour),
-      week: Math.max(0, (status.weekly.used ?? 0) - totals.weekly),
+      five: (status.fiveHour.used ?? 0) - totals.fiveHour,
+      week: (status.weekly.used ?? 0) - totals.weekly,
       ...cutoffs,
     };
   }
@@ -1353,9 +1437,35 @@ export class QuotaService {
       left.candidate.tool.localeCompare(right.candidate.tool)
     );
 
+    // Viability, before headroom gets a vote. A route Hive has just watched fail
+    // to produce a working agent is not a route, however much quota it has.
+    const quarantine = new Map<
+      typeof evaluated[number],
+      { until: string; reason: string }
+    >();
+    for (const item of evaluated) {
+      const held = this.quarantinedUntil(item.candidate, now);
+      if (held !== null) quarantine.set(item, held);
+    }
+    const viable = evaluated.filter((item) => !quarantine.has(item));
+    // If every route is quarantined, try anyway rather than refuse everything.
+    // Hive's own recent bad luck is a weaker fact than a human needing an agent,
+    // and this is also what lets a single explicitly-pinned model still launch:
+    // an explicit directive is not overridden by a cooldown. It warns, loudly.
+    const attemptable = viable.length > 0 ? viable : evaluated;
+    const quarantineWarnings = attemptable === evaluated
+      ? [...quarantine.values()].map((held) =>
+        `Every candidate route recently failed to start (${held.reason}); ` +
+        `launching anyway because there is no alternative.`
+      )
+      : [...quarantine.entries()].map(([item, held]) =>
+        `${item.candidate.tool}/${item.candidate.model} was passed over: it ` +
+        `failed to start (${held.reason}) and is retried after ${held.until}.`
+      );
+
     const failures: string[] = [];
     let safeFallback: QuotaRouteCandidate | undefined;
-    for (const item of evaluated) {
+    for (const item of attemptable) {
       if (item.unknown) {
         const fallbackEstimate = this.config.estimates[request.tier]!;
         const reservation = this.ledger.insertUnboundedReservation({
@@ -1384,6 +1494,7 @@ export class QuotaService {
           warnings: [
             `Hive has no live usage for ${item.candidate.tool}; ` +
             `${item.candidate.model} is running unconstrained.`,
+            ...quarantineWarnings,
           ],
         };
       }
@@ -1426,7 +1537,10 @@ export class QuotaService {
           reason: item.candidate.tool === preferred
             ? "preferred provider has the best safe headroom"
             : "preferred provider lacks safe headroom",
-          warnings: this.pressureWarnings(item.candidate, item.entries, request.tier),
+          warnings: [
+            ...this.pressureWarnings(item.candidate, item.entries, request.tier),
+            ...quarantineWarnings,
+          ],
         };
       }
       safeFallback = item.candidate;
@@ -1441,13 +1555,41 @@ export class QuotaService {
         safeFallback ??= other;
       }
     }
+    const blockedProviders = new Set(
+      attemptable.map((item) => item.candidate.tool),
+    );
     throw new QuotaExhaustedError(
       `Quota pressure makes this spawn unsafe. ${failures.join("; ")}` +
         (safeFallback === undefined
           ? ". No safe fallback is currently known."
-          : `. Recommended fallback: ${safeFallback.tool}/${safeFallback.model}.`),
+          : `. Recommended fallback: ${safeFallback.tool}/${safeFallback.model}.`) +
+        quarantineWarnings.map((warning) => ` ${warning}`).join("") +
+        this.describeResetCredits(blockedProviders),
       safeFallback,
     );
+  }
+
+  /**
+   * Mention the unspent reset grants; never spend one.
+   *
+   * The account carries a finite number of "full reset" credits, readable in the
+   * same free call as the limits. Hive will not redeem one to get its own way:
+   * an agent that can quietly spend a human's scarce credits to unblock itself is
+   * a bad agent, and the fact that it would look helpful is exactly what makes it
+   * dangerous. The human is told the option exists and decides.
+   */
+  private describeResetCredits(providers: Set<"claude" | "codex">): string {
+    const notes: string[] = [];
+    for (const provider of providers) {
+      const credits = this.resetCredits.get(provider) ?? 0;
+      if (credits <= 0) continue;
+      notes.push(
+        ` ${provider} reports ${credits} unspent usage-limit reset ` +
+        `${credits === 1 ? "credit" : "credits"}. Hive will not spend one on ` +
+        `its own — redeem it yourself if you want this run to proceed now.`,
+      );
+    }
+    return notes.join("");
   }
 
   async reserveControlRun(
@@ -1528,8 +1670,20 @@ export class QuotaService {
     return matched;
   }
 
+  /**
+   * The run proved life. That is the only evidence that a route works, so it is
+   * also what clears the route: whatever Hive concluded from an earlier failed
+   * launch, a working agent supersedes it, and the quarantine lifts at once.
+   */
   markStarted(reservationId: string, at = iso(this.clock())): void {
     this.ledger.markStarted(reservationId, at);
+    const reservation = this.ledger.getReservation(reservationId);
+    if (reservation === null) return;
+    this.ledger.recordLaunchSuccess(
+      reservation.provider,
+      reservation.model,
+      at,
+    );
   }
 
   /**
@@ -1570,12 +1724,30 @@ export class QuotaService {
     if (limit !== null) await this.alertPool(limit, new Date(at));
   }
 
+  /**
+   * Settle a reservation whose run is over or never happened.
+   *
+   * `launchFailure` is the caller saying "this route did not produce a working
+   * agent" — the spawn failed outright, not merely a worktree that could not be
+   * created or a name that collided. Only that is evidence about the *route*, so
+   * only that is recorded against it. Attributing an unrelated failure to a model
+   * would quarantine a healthy route and make Hive the outage.
+   */
   async cancel(
     reservationId: string,
     at = iso(this.clock()),
+    launchFailure?: string,
   ): Promise<void> {
     const reservation = this.ledger.getReservation(reservationId);
     if (reservation === null || reservation.status !== "active") return;
+    if (launchFailure !== undefined && reservation.startedAt === null) {
+      this.ledger.recordLaunchFailure(
+        reservation.provider,
+        reservation.model,
+        launchFailure,
+        at,
+      );
+    }
     if (reservation.startedAt === null) {
       this.ledger.release(reservationId, at);
     } else {

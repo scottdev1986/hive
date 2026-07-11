@@ -90,6 +90,14 @@ export const QuotaConfigSchema = z.strictObject({
   reserveFiveHourPct: z.number().min(0).max(1).default(0.15),
   reserveWeeklyPct: z.number().min(0).max(1).default(0.2),
   reservationTtlMinutes: z.number().positive().default(360),
+  /**
+   * How long a route that failed to produce a working agent is passed over for
+   * automatic selection. It is a cooldown, not a ban: the route is retried when
+   * it lapses, and any successful launch clears it immediately. A permanent
+   * exclusion could never produce the success that would lift it, so the guard
+   * would silently become the outage it was meant to prevent.
+   */
+  launchQuarantineMinutes: z.number().positive().default(15),
   estimates: EstimateSchema.default({
     deep: 20,
     standard: 10,

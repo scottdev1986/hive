@@ -935,3 +935,161 @@ describe("pools gate the models they actually meter", () => {
     expect(active.every((row) => row.model === "claude-fable-5")).toBe(true);
   });
 });
+
+/**
+ * Headroom is not eligibility. Codex sitting at 0% weekly outscores Claude at
+ * 63% every time, so ranking on headroom alone silently promoted the emptiest
+ * pool over the question of whether a route could produce a working agent at
+ * all — and on 2026-07-11 deep-tier Codex could not: Hive's readiness probe
+ * killed any Codex agent that thought before its first tool call. A gate that
+ * refuses an exhausted model only to hand the work to a dead route has
+ * protected nothing.
+ */
+describe("a route that cannot start is not a route", () => {
+  const both = [
+    { tool: "claude" as const, model: "claude-opus-4-8" },
+    { tool: "codex" as const, model: "gpt-5.6-sol" },
+  ];
+
+  const generalPool = (
+    provider: "claude" | "codex",
+    pool: string,
+    fivePct: number,
+    weekPct: number,
+  ) => ({
+    provider,
+    account: "default",
+    pool,
+    label: null,
+    models: ["*"],
+    fiveHour: { usedPct: fivePct, windowMinutes: 300, resetsAt: null },
+    weekly: { usedPct: weekPct, windowMinutes: 10_080, resetsAt: null },
+    observedAt: now.toISOString(),
+    source: "provider" as const,
+    confidence: "authoritative" as const,
+  });
+
+  // Both providers measured and roomy, with codex the emptier of the two — so on
+  // headroom alone codex wins every time.
+  const healthy = async () => {
+    const made = await service([
+      new StubProbe("claude", {
+        status: "ok",
+        pools: [generalPool("claude", "subscription", 10, 60)],
+        catalog: [],
+      }),
+      new StubProbe("codex", {
+        status: "ok",
+        pools: [generalPool("codex", "codex", 0, 0)],
+        catalog: [],
+      }),
+    ]);
+    await made.quota.refreshFromProviders(now, { force: true });
+    return made;
+  };
+
+  test("headroom alone would pick the route that cannot start", async () => {
+    const { quota } = await healthy();
+    const decision = await quota.routeAndReserve({
+      agentName: "deep-worker",
+      tier: "deep",
+      preferredTool: "claude",
+      candidates: both,
+    });
+    // Baseline: this is the hazard. The emptiest pool wins on score.
+    expect(decision.tool).toBe("codex");
+  });
+
+  test("a launch that never proved life takes its route out of the running", async () => {
+    const { quota } = await healthy();
+    const first = await quota.routeAndReserve({
+      agentName: "deep-worker",
+      tier: "deep",
+      preferredTool: "claude",
+      candidates: both,
+    });
+    expect(first.tool).toBe("codex");
+    // The agent never came up. failSpawn settles the reservation and says why.
+    await quota.cancel(
+      first.reservation.id,
+      now.toISOString(),
+      "no readiness signal within 15s",
+    );
+
+    const second = await quota.routeAndReserve({
+      agentName: "deep-worker-2",
+      tier: "deep",
+      preferredTool: "claude",
+      candidates: both,
+    });
+    // Codex still has all the headroom in the world. It is still not chosen.
+    expect(second.tool).toBe("claude");
+    expect(second.warnings.join(" ")).toContain("failed to start");
+    expect(second.warnings.join(" ")).toContain("no readiness signal");
+  });
+
+  test("the guard stops guarding the moment the route works again", async () => {
+    const { quota } = await healthy();
+    const failed = await quota.routeAndReserve({
+      agentName: "a",
+      tier: "deep",
+      preferredTool: "claude",
+      candidates: both,
+    });
+    await quota.cancel(failed.reservation.id, now.toISOString(), "never started");
+    expect(
+      (await quota.routeAndReserve({
+        agentName: "b",
+        tier: "deep",
+        preferredTool: "claude",
+        candidates: both,
+      })).tool,
+    ).toBe("claude");
+
+    // Someone fixes the underlying cause and a codex agent proves life. That is
+    // the only evidence that matters, and it supersedes everything Hive
+    // concluded from the failure — no operator action, no expiry to wait out.
+    const pinned = await quota.routeAndReserve({
+      agentName: "c",
+      tier: "deep",
+      preferredTool: "codex",
+      explicitTool: "codex",
+      candidates: [both[1]!],
+    });
+    quota.markStarted(pinned.reservation.id, now.toISOString());
+
+    expect(
+      (await quota.routeAndReserve({
+        agentName: "d",
+        tier: "deep",
+        preferredTool: "claude",
+        candidates: both,
+      })).tool,
+    ).toBe("codex");
+  });
+
+  test("an only candidate still launches, quarantined or not, and warns", async () => {
+    const { quota } = await healthy();
+    const failed = await quota.routeAndReserve({
+      agentName: "a",
+      tier: "deep",
+      preferredTool: "codex",
+      explicitTool: "codex",
+      candidates: [both[1]!],
+    });
+    await quota.cancel(failed.reservation.id, now.toISOString(), "never started");
+
+    // A human pinning the one model Hive is currently sulking about must still
+    // get their agent. Refusing everything helps nobody; the cooldown is Hive's
+    // own recent bad luck, which is a weaker fact than a human's explicit ask.
+    const pinned = await quota.routeAndReserve({
+      agentName: "b",
+      tier: "deep",
+      preferredTool: "codex",
+      explicitTool: "codex",
+      candidates: [both[1]!],
+    });
+    expect(pinned.tool).toBe("codex");
+    expect(pinned.warnings.join(" ")).toContain("no alternative");
+  });
+});

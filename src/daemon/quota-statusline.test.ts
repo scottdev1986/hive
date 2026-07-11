@@ -85,10 +85,11 @@ describe("statusLine quota telemetry", () => {
     }
   });
 
-  test("keeps the local estimate as the floor when the reading is lower", async () => {
+  test("a measurement overrules Hive's own estimate of the same spend", async () => {
     const { quota, db } = await service();
     try {
-      // A completed deep run recorded 80 estimated units locally.
+      // A completed deep run recorded 80 units locally — but those units are
+      // Hive's own `estimatesPct` guess, not anything anybody measured.
       const reservation = await quota.reserveControlRun({
         agentName: "maya",
         tier: "deep",
@@ -99,15 +100,54 @@ describe("statusLine quota telemetry", () => {
       await quota.reconcile(reservation.id, 80, "estimated", now.toISOString());
       expect(poolStatus(quota).fiveHour.used).toBe(80);
 
-      // statusLine optimistically claims only 10% (20 units) is used.
+      // Then the provider reports what the window *actually* holds: 10% (20
+      // units), a reading taken after that run had already completed.
+      await quota.observeStatusline(claude, {
+        fiveHour: { usedPct: 10, resetsAt: null },
+        observedAt: new Date(now.getTime() + 1_000).toISOString(),
+      });
+
+      // The reading wins. Hive used to keep its own 80 as a floor, on the
+      // reasoning that an optimistic external number must never free capacity it
+      // knew it had spent — but it never *knew*, it guessed, and the floor let
+      // the guess outrank the measurement. That is how `hive quota` came to
+      // publish 12% of the Codex week as used, stamped `authoritative`, while
+      // the provider and the user's own screen both said 0%.
+      expect(poolStatus(quota).fiveHour.used).toBe(20);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("spend the reading cannot have seen is still counted, and says it is a guess", async () => {
+    const { quota, db } = await service();
+    try {
+      // The provider reads 10% (20 units) used...
       await quota.observeStatusline(claude, {
         fiveHour: { usedPct: 10, resetsAt: null },
         observedAt: now.toISOString(),
       });
+      expect(poolStatus(quota).fiveHour.used).toBe(20);
+      expect(poolStatus(quota).fiveHour.confidence).toBe("reported");
 
-      // max() of ledger and observation: an optimistic external number can
-      // never free capacity inside the current window.
-      expect(poolStatus(quota).fiveHour.used).toBe(80);
+      // ...and only then does a run complete. The provider could not possibly
+      // have counted it, so Hive's estimate of it is added on top — this is the
+      // one thing a local estimate is legitimately for.
+      const reservation = await quota.reserveControlRun({
+        agentName: "maya",
+        tier: "deep",
+        controlMessageId: "control-2",
+        ...claude,
+      });
+      const after = new Date(now.getTime() + 60_000).toISOString();
+      quota.markStarted(reservation.id, after);
+      await quota.reconcile(reservation.id, 30, "estimated", after);
+
+      const status = poolStatus(quota).fiveHour;
+      expect(status.used).toBe(50);
+      // And the blended number says out loud that part of it is a guess. A
+      // measured base plus an unverified estimate is not authoritative.
+      expect(status.confidence).toBe("estimated");
     } finally {
       db.close();
     }
