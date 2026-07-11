@@ -7,8 +7,12 @@
 //  1. A request body is evidence of intent, never of authority. The subject a
 //     caller names is compared against the subject bound into its capability;
 //     it is never used to widen what the caller may do.
-//  2. Only the daemon mints. There is no delegation, no token exchange, and no
-//     attenuation grammar, so the authority graph is exactly one level deep.
+//  2. Only the daemon mints. There is no delegation and no attenuation
+//     grammar, so the authority graph is exactly one level deep. The single
+//     carve-out is the Codex root token (`root-token:mint`): the operator's
+//     launcher asks the daemon to mint the orchestrator credential the codex
+//     root will present, because that root has no spawn path of its own —
+//     still daemon-minted, still one level deep.
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import type { HiveDatabase } from "./db";
 
@@ -35,7 +39,8 @@ export type Action =
   | "telemetry:report"
   | "channel:use"
   | "viewer:attach"
-  | "terminal:register";
+  | "terminal:register"
+  | "root-token:mint";
 
 export interface RoleGrant {
   /** The explicit action allowlist. Anything absent is denied. */
@@ -59,6 +64,10 @@ const OPERATOR_ACTIONS: readonly Action[] = [
   "message:send", "message:ack", "message:read", "inbox:read",
   "branch:land", "memory:read", "memory:write", "event:report",
   "telemetry:report", "viewer:attach", "terminal:register",
+  // The one sanctioned token issuance outside the daemon's own spawn path:
+  // the launcher mints the Codex root's capability (SPEC decision 4's "no
+  // delegation" rule carves out exactly this exchange).
+  "root-token:mint",
 ];
 
 // The orchestrator decides what work happens; the writer puts code on main.

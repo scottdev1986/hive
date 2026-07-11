@@ -367,6 +367,7 @@ export interface HiveDaemonOptions {
     seedClaudeTrust?: CrashRecoveryDependencies["seedClaudeTrust"];
     writeClaudeConfig?: CrashRecoveryDependencies["writeClaudeConfig"];
     writeCodexConfig?: CrashRecoveryDependencies["writeCodexConfig"];
+    readCodexActivity?: CrashRecoveryDependencies["readCodexActivity"];
   };
   /** Writer autonomy, forwarded to crash recovery so a resumed agent relaunches
    * with the posture it spawned with. */
@@ -610,6 +611,9 @@ export class HiveDaemon {
       ...(options.recovery?.writeCodexConfig === undefined
         ? {}
         : { writeCodexConfig: options.recovery.writeCodexConfig }),
+      ...(options.recovery?.readCodexActivity === undefined
+        ? {}
+        : { readCodexActivity: options.recovery.readCodexActivity }),
     });
     // The daemon that owns the lifecycle files owns the operator and
     // orchestrator credentials. Embedded daemons (tests, tooling) mint in
@@ -622,9 +626,10 @@ export class HiveDaemon {
   }
 
   /** Mints a credential for one subject and writes it to its 0600 file,
-   * revoking whatever that subject held before. This is the only path by which
-   * a token comes into existence outside the daemon's own process: there is no
-   * mint tool, no token exchange, and no delegation. */
+   * revoking whatever that subject held before. Tokens come into existence
+   * only from the daemon: here at spawn, and through the single sanctioned
+   * launcher request (`POST /codex-root-token`) that mints the codex root's
+   * short-lived credential. There is no delegation and no attenuation. */
   issueCredential(
     subject: string,
     role: Role,
@@ -1262,10 +1267,40 @@ export class HiveDaemon {
     if (url.pathname === "/recover" && request.method === "POST") {
       return this.recoverEndpoint(request);
     }
+    if (url.pathname === "/codex-root-token" && request.method === "POST") {
+      return this.mintCodexRootToken(request);
+    }
     if (url.pathname === "/mcp") {
       return this.handleMcp(request);
     }
     return json({ error: "Not found" }, { status: 404 });
+  }
+
+  /** POST /codex-root-token — the operator's launcher (`hive codex`) asks the
+   * daemon to mint the orchestrator credential the codex root will present.
+   * Short TTL: the launcher writes it to a 0600 credential file and boots
+   * codex immediately, so a minute covers the hand-off window. This is the
+   * one sanctioned issuance outside the daemon's own spawn path (the
+   * `root-token:mint` carve-out in capabilities.ts). */
+  private mintCodexRootToken(request: Request): Response {
+    const authenticated = this.authenticate(request, "/codex-root-token");
+    if (!authenticated.ok) return this.denied(authenticated);
+    const authorized = this.authorize(
+      authenticated.capability,
+      "/codex-root-token",
+      "root-token:mint",
+      undefined,
+    );
+    if (!authorized.ok) return this.denied(authorized);
+    const ttlMs = 60_000;
+    const { token } = this.capabilities.mint(ORCHESTRATOR_NAME, "orchestrator", {
+      epoch: 0,
+      ttlMs,
+    });
+    return json({
+      token,
+      expiresAt: new Date(Date.now() + ttlMs).toISOString(),
+    });
   }
 
   private async handleChannel(

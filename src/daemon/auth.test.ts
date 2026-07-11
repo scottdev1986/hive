@@ -333,6 +333,44 @@ describe("a revoked epoch invalidates a capability", () => {
   });
 });
 
+describe("the codex root token endpoint", () => {
+  test("mints a short-lived orchestrator credential for the operator", async () => {
+    const { daemon } = harness();
+    const operator = daemon.capabilities.mint("operator", "operator", { epoch: 0 });
+
+    const response = await authorized(daemon, operator.token)(
+      "http://hive/codex-root-token",
+      { method: "POST" },
+    );
+    expect(response.status).toEqual(200);
+    const body = await response.json() as { token: string; expiresAt: string };
+    expect(body.token.length).toBeGreaterThan(0);
+    expect(new Date(body.expiresAt).getTime()).toBeGreaterThan(Date.now());
+
+    // The minted token authenticates as the orchestrator subject.
+    expect((await callTool(daemon, body.token, "hive_status")).ok).toBe(true);
+    await daemon.stop();
+  });
+
+  test("refuses writers and anonymous callers", async () => {
+    const { daemon, db } = harness();
+    db.upsertAgent(agentRecord());
+    const writer = daemon.capabilities.mint("maya", "writer", { epoch: 0 });
+
+    const denied = await authorized(daemon, writer.token)(
+      "http://hive/codex-root-token",
+      { method: "POST" },
+    );
+    expect(denied.status).toEqual(403);
+    const anonymous = await authorized(daemon, null)(
+      "http://hive/codex-root-token",
+      { method: "POST" },
+    );
+    expect(anonymous.status).toEqual(401);
+    await daemon.stop();
+  });
+});
+
 describe("a one-shot landing grant cannot be replayed", () => {
   test("the second land with the same capability is denied", async () => {
     const { daemon, db, landed } = harness();
@@ -347,6 +385,60 @@ describe("a one-shot landing grant cannot be replayed", () => {
     expect(replay.error).toContain("already spent");
     expect(landed).toEqual(["hive/maya-work"]);
     expect(denials(daemon)).toContain("capability.replayed");
+    await daemon.stop();
+  });
+
+  test("a refused land files a re-arm approval and approving grants one more landing", async () => {
+    const { daemon, db, landed } = harness();
+    db.upsertAgent(agentRecord());
+    const { token } = daemon.capabilities.mint("maya", "writer", { epoch: 0 });
+    const operator = daemon.capabilities.mint("operator", "operator", { epoch: 0 });
+
+    // Land once (spends the grant), then land follow-up work: refused, but
+    // the refusal files exactly one pending re-arm approval, even across
+    // repeated refusals.
+    expect((await callTool(daemon, token, "hive_land", { agent: "maya", capabilityEpoch: 0 })).ok).toBe(true);
+    const refused = await callTool(daemon, token, "hive_land", { agent: "maya", capabilityEpoch: 0 });
+    expect(refused.ok).toBe(false);
+    expect(refused.error).toContain("re-arm approval has been filed");
+    await callTool(daemon, token, "hive_land", { agent: "maya", capabilityEpoch: 0 });
+    const pending = db.listApprovals("pending").filter(
+      (approval) => approval.agentName === "maya",
+    );
+    expect(pending).toHaveLength(1);
+    expect(pending[0]?.description).toContain("Re-arm landing");
+
+    // Approval re-arms exactly one landing: the next land succeeds, the one
+    // after is refused again.
+    const approved = await callTool(daemon, operator.token, "hive_approve", {
+      id: pending[0]!.id,
+      decision: "approve",
+    });
+    expect(approved.ok).toBe(true);
+    expect((await callTool(daemon, token, "hive_land", { agent: "maya", capabilityEpoch: 0 })).ok).toBe(true);
+    expect(landed).toEqual(["hive/maya-work", "hive/maya-work"]);
+    expect((await callTool(daemon, token, "hive_land", { agent: "maya", capabilityEpoch: 0 })).ok).toBe(false);
+    await daemon.stop();
+  });
+
+  test("denying the re-arm approval leaves the grant spent", async () => {
+    const { daemon, db, landed } = harness();
+    db.upsertAgent(agentRecord());
+    const { token } = daemon.capabilities.mint("maya", "writer", { epoch: 0 });
+    const operator = daemon.capabilities.mint("operator", "operator", { epoch: 0 });
+
+    expect((await callTool(daemon, token, "hive_land", { agent: "maya", capabilityEpoch: 0 })).ok).toBe(true);
+    expect((await callTool(daemon, token, "hive_land", { agent: "maya", capabilityEpoch: 0 })).ok).toBe(false);
+    const pending = db.listApprovals("pending").filter(
+      (approval) => approval.agentName === "maya",
+    );
+    expect(pending).toHaveLength(1);
+    expect((await callTool(daemon, operator.token, "hive_approve", {
+      id: pending[0]!.id,
+      decision: "deny",
+    })).ok).toBe(true);
+    expect((await callTool(daemon, token, "hive_land", { agent: "maya", capabilityEpoch: 0 })).ok).toBe(false);
+    expect(landed).toEqual(["hive/maya-work"]);
     await daemon.stop();
   });
 
