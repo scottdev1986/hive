@@ -1043,6 +1043,16 @@ export class HiveDatabase {
     `).all(agentName).map((row) => AgentMessageSchema.parse(row));
   }
 
+  /** True while a message addressed to this agent is still queued or
+   * injected-but-unconfirmed — the idle-reap sweep's "nothing pending" gate. */
+  hasPendingMessages(agentName: string): boolean {
+    const row = this.database.query(`
+      SELECT COUNT(*) AS count FROM messages
+      WHERE "to" = ? AND state IN ('queued', 'injected')
+    `).get(agentName) as { count: number };
+    return row.count > 0;
+  }
+
   claimUndeliveredMessages(
     agentName: string,
     deliveredAt: string,

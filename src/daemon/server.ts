@@ -107,7 +107,7 @@ import {
   type CommandOutput,
   type SessionProcessRoots,
 } from "./resources";
-import type { ResourceLimits } from "../schemas";
+import type { LifecycleConfig, ResourceLimits } from "../schemas";
 import { HIVE_VERSION } from "../version";
 
 export { HIVE_VERSION };
@@ -375,6 +375,9 @@ export interface HiveDaemonOptions {
   /** Memory watchdog limits; the sweep stays off when omitted so embedded
    * daemons (tests, tooling) never sample or kill real processes. */
   resources?: ResourceLimits;
+  /** Idle-agent reap sweep (config `[lifecycle]`); stays off when omitted so
+   * embedded daemons (tests, tooling) never close an agent unasked. */
+  lifecycle?: LifecycleConfig;
   /** Test seams for the resource sweep's process interrogation. */
   resourceRunners?: {
     ps?: CommandOutput;
@@ -432,6 +435,7 @@ export class HiveDaemon {
   private reconciliationTimer: ReturnType<typeof setInterval> | null = null;
   private maintenanceRunning = false;
   private readonly resources: ResourceLimits | null;
+  private readonly lifecycleConfig: LifecycleConfig | null;
   private readonly psSample: CommandOutput;
   private readonly vmStatSample: CommandOutput;
   private readonly panePids: (session: string) => Promise<number[]>;
@@ -517,6 +521,7 @@ export class HiveDaemon {
     this.workspacePresence = options.workspacePresence ?? new WorkspacePresence();
     this.land = options.landBranch ?? landBranch;
     this.resources = options.resources ?? null;
+    this.lifecycleConfig = options.lifecycle ?? null;
     this.psSample = options.resourceRunners?.ps ?? runPs;
     this.vmStatSample = options.resourceRunners?.vmStat ?? runVmStat;
     this.panePids = options.resourceRunners?.panePids ??
@@ -843,6 +848,13 @@ export class HiveDaemon {
         );
       });
       await this.sweepResources();
+      await this.reapIdleAgents().catch((error) => {
+        console.error(
+          `Hive idle-reap sweep failed: ${
+            error instanceof Error ? error.message : "unknown error"
+          }`,
+        );
+      });
       this.db.pruneHistory(new Date().toISOString());
     } finally {
       this.maintenanceRunning = false;
@@ -1125,6 +1137,125 @@ export class HiveDaemon {
     }
   }
 
+  /**
+   * The one teardown path for closing a live agent: kill its tmux session,
+   * mark it dead, settle its quota reservation, and — only when asked —
+   * remove its worktree and branch. `hive_kill` and the idle-reap sweep
+   * (reapIdleAgents) both funnel through here so there is exactly one place
+   * that can delete a worktree, and exactly one guard protecting it.
+   *
+   * Work is either merged or explicitly surfaced — never silently lost. This
+   * therefore always reports stranded work (unmerged commits or uncommitted
+   * files), and removal refuses to delete it unless the caller passes
+   * discardWork.
+   */
+  private async killAgentTeardown(
+    agent: AgentRecord,
+    options: { removeWorktree?: boolean; discardWork?: boolean } = {},
+  ): Promise<{
+    agent: AgentRecord;
+    cleaned: {
+      tmuxSession: string;
+      worktreePath: string | null;
+      branch: string | null;
+    };
+    stranded: {
+      branch: string | null;
+      worktreePath: string | null;
+      dirtyFiles: string[];
+      unmergedCommits: number;
+      note: string;
+    } | null;
+  }> {
+    this.capabilities.revokeSubject(agent.name);
+    removeCredential(agent.name);
+
+    await this.tmux.killSession(agent.tmuxSession, { ignoreMissing: true });
+    const timestamp = new Date().toISOString();
+    const killed = this.db.markAgentDeadAndDetachTerminal(agent.id, timestamp);
+    if (killed === null) {
+      throw new Error(`Hive agent not found: ${agent.name}`);
+    }
+    this.channels.drop(killed.agent.name);
+    await this.settleAgentQuota(killed.agent, timestamp);
+    if (killed.terminalHandle !== undefined) {
+      try {
+        await this.closeTerminal(killed.terminalHandle);
+      } catch {
+        // Terminal cleanup is best-effort; killing and marking dead must win.
+      }
+      this.layout?.requestLayout();
+    }
+    let updated = killed.agent;
+    const cleaned: {
+      tmuxSession: string;
+      worktreePath: string | null;
+      branch: string | null;
+    } = {
+      tmuxSession: agent.tmuxSession,
+      worktreePath: null,
+      branch: null,
+    };
+
+    let stranded:
+      | {
+        branch: string | null;
+        worktreePath: string | null;
+        dirtyFiles: string[];
+        unmergedCommits: number;
+        note: string;
+      }
+      | null = null;
+    if (agent.worktreePath !== null || agent.branch !== null) {
+      try {
+        const work = await this.assessStranded(
+          this.repoRoot,
+          agent.worktreePath,
+          agent.branch,
+        );
+        if (work.dirtyFiles.length > 0 || work.unmergedCommits > 0) {
+          stranded = {
+            branch: agent.branch,
+            worktreePath: agent.worktreePath,
+            dirtyFiles: work.dirtyFiles,
+            unmergedCommits: work.unmergedCommits,
+            note:
+              `${agent.name} left work that is not on main; merge it via an integrator agent or pass discardWork to delete it.`,
+          };
+        }
+      } catch (error) {
+        stranded = {
+          branch: agent.branch,
+          worktreePath: agent.worktreePath,
+          dirtyFiles: [],
+          unmergedCommits: 0,
+          note: `stranded-work check failed (${
+            error instanceof Error ? error.message : "unknown error"
+          }); worktree kept.`,
+        };
+      }
+    }
+
+    if (
+      (options.removeWorktree ?? false) && agent.worktreePath !== null &&
+      (stranded === null || (options.discardWork ?? false))
+    ) {
+      await this.cleanupWorktree(this.repoRoot, agent.worktreePath, {
+        deleteBranch: true,
+        discardTracked: options.discardWork ?? false,
+      });
+      cleaned.worktreePath = agent.worktreePath;
+      cleaned.branch = agent.branch;
+      updated = this.db.upsertAgent({
+        ...updated,
+        worktreePath: null,
+        branch: null,
+      });
+    }
+
+    return { agent: updated, cleaned, stranded };
+  }
+
   async stop(): Promise<void> {
     if (this.reconciliationTimer !== null) {
       clearInterval(this.reconciliationTimer);
@@ -1150,6 +1281,62 @@ export class HiveDaemon {
   // dead with its worktree preserved and the stranded state surfaced.
   async reconcileAgents(): Promise<RecoveryOutcome[]> {
     return this.recovery.sweep();
+  }
+
+  /**
+   * The idle-reap sweep (config `[lifecycle]`, off entirely when the daemon
+   * is not given a lifecycle config — embedded daemons in tests and tooling
+   * must never close an agent unasked). An agent earns closure only when its
+   * work is already off its plate: idle, nothing queued or injected for it,
+   * a clean worktree, and no commits main hasn't seen — for at least
+   * idleReapMinutes. Any one of those failing leaves the agent alone; the
+   * orchestrator keeps deciding for everything short of "there is nothing
+   * left to decide". Reuses killAgentTeardown (hive_kill's own path) so the
+   * same stranded-work guard that protects a manual kill protects this sweep
+   * — unmerged commits or dirty files are never discarded, reap or not.
+   */
+  async reapIdleAgents(): Promise<void> {
+    const lifecycle = this.lifecycleConfig;
+    if (lifecycle === null || !lifecycle.idleReap) return;
+    const thresholdMs = lifecycle.idleReapMinutes * 60_000;
+    const now = Date.now();
+    for (const record of this.db.listAgents()) {
+      if (record.name === ORCHESTRATOR_NAME) continue;
+      if (record.status !== "idle") continue;
+      const idleMs = now - Date.parse(record.lastEventAt);
+      if (!(idleMs >= thresholdMs)) continue;
+      if (this.db.hasPendingMessages(record.name)) continue;
+      let stranded: StrandedWork;
+      try {
+        stranded = await this.assessStranded(
+          this.repoRoot,
+          record.worktreePath,
+          record.branch,
+        );
+      } catch {
+        // Cannot prove the worktree is clean, so it is not reaped this tick.
+        continue;
+      }
+      if (stranded.dirtyFiles.length > 0 || stranded.unmergedCommits > 0) {
+        continue;
+      }
+      try {
+        await this.killAgentTeardown(record, { removeWorktree: true });
+        const idleMinutes = Math.floor(idleMs / 60_000);
+        await this.delivery.send(
+          "hive-lifecycle",
+          ORCHESTRATOR_NAME,
+          `Reaped ${record.name}: idle ${idleMinutes}m with a clean worktree and nothing unmerged.`,
+          { idempotencyKey: `idle-reap:${record.id}` },
+        ).catch(logAlertDeliveryFailure);
+      } catch (error) {
+        console.error(
+          `Hive idle-reap of ${record.name} failed: ${
+            error instanceof Error ? error.message : "unknown error"
+          }`,
+        );
+      }
+    }
   }
 
   async recoverCrashedAgents(name?: string): Promise<RecoveryOutcome[]> {
@@ -2026,100 +2213,13 @@ export class HiveDaemon {
       if (agent === null) {
         throw new Error(`Hive agent not found: ${name}`);
       }
-      this.capabilities.revokeSubject(agent.name);
-      removeCredential(agent.name);
-
-      await this.tmux.killSession(agent.tmuxSession, { ignoreMissing: true });
-      const timestamp = new Date().toISOString();
-      const killed = this.db.markAgentDeadAndDetachTerminal(
-        agent.id,
-        timestamp,
+      return toolResult(
+        await this.killAgentTeardown(agent, {
+          removeWorktree: shouldRemoveWorktree,
+          discardWork,
+        }),
+        "result",
       );
-      if (killed === null) {
-        throw new Error(`Hive agent not found: ${name}`);
-      }
-      this.channels.drop(killed.agent.name);
-      await this.settleAgentQuota(killed.agent, timestamp);
-      if (killed.terminalHandle !== undefined) {
-        try {
-          await this.closeTerminal(killed.terminalHandle);
-        } catch {
-          // Terminal cleanup is best-effort; killing and marking dead must win.
-        }
-        this.layout?.requestLayout();
-      }
-      let updated = killed.agent;
-      const cleaned: {
-        tmuxSession: string;
-        worktreePath: string | null;
-        branch: string | null;
-      } = {
-        tmuxSession: agent.tmuxSession,
-        worktreePath: null,
-        branch: null,
-      };
-
-      // Work is either merged or explicitly surfaced — never silently lost.
-      // A kill therefore always reports stranded work (unmerged commits or
-      // uncommitted files), and removal refuses to delete it unless the
-      // caller passes discardWork.
-      let stranded:
-        | {
-          branch: string | null;
-          worktreePath: string | null;
-          dirtyFiles: string[];
-          unmergedCommits: number;
-          note: string;
-        }
-        | null = null;
-      if (agent.worktreePath !== null || agent.branch !== null) {
-        try {
-          const work = await this.assessStranded(
-            this.repoRoot,
-            agent.worktreePath,
-            agent.branch,
-          );
-          if (work.dirtyFiles.length > 0 || work.unmergedCommits > 0) {
-            stranded = {
-              branch: agent.branch,
-              worktreePath: agent.worktreePath,
-              dirtyFiles: work.dirtyFiles,
-              unmergedCommits: work.unmergedCommits,
-              note:
-                `${agent.name} left work that is not on main; merge it via an integrator agent or pass discardWork to delete it.`,
-            };
-          }
-        } catch (error) {
-          stranded = {
-            branch: agent.branch,
-            worktreePath: agent.worktreePath,
-            dirtyFiles: [],
-            unmergedCommits: 0,
-            note: `stranded-work check failed (${
-              error instanceof Error ? error.message : "unknown error"
-            }); worktree kept.`,
-          };
-        }
-      }
-
-      if (
-        (shouldRemoveWorktree ?? false) && agent.worktreePath !== null &&
-        (stranded === null || (discardWork ?? false))
-      ) {
-        await this.cleanupWorktree(this.repoRoot, agent.worktreePath, {
-          deleteBranch: true,
-          discardTracked: discardWork ?? false,
-        });
-        cleaned.worktreePath = agent.worktreePath;
-        cleaned.branch = agent.branch;
-        updated = this.db.upsertAgent({
-          ...updated,
-          worktreePath: null,
-          branch: null,
-        });
-      }
-
-      return toolResult({ agent: updated, cleaned, stranded }, "result");
     });
 
     server.registerTool("hive_send", {

@@ -54,6 +54,10 @@ describe("config loading", () => {
         perProcessMemoryMb: 12_288,
         minSystemAvailableMb: 4_096,
       },
+      lifecycle: {
+        idleReap: true,
+        idleReapMinutes: 10,
+      },
     });
     const beforeFableCutoff = new Date(
       new Date(FABLE_AUTO_ROUTING_CUTOFF).getTime() - 1,
@@ -152,6 +156,10 @@ describe("config loading", () => {
         enabled: true,
         perProcessMemoryMb: 12_288,
         minSystemAvailableMb: 4_096,
+      },
+      lifecycle: {
+        idleReap: true,
+        idleReapMinutes: 10,
       },
     });
     const routing = await loadRoutingTable();

@@ -36,6 +36,10 @@ describe("HiveConfigSchema", () => {
         perProcessMemoryMb: 12_288,
         minSystemAvailableMb: 4_096,
       },
+      lifecycle: {
+        idleReap: true,
+        idleReapMinutes: 10,
+      },
     });
   });
 

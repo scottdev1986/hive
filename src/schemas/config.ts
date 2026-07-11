@@ -12,6 +12,16 @@ export const ResourceLimitsSchema = z.strictObject({
   minSystemAvailableMb: z.number().int().positive().default(4_096),
 });
 
+// An agent whose work is merged (or who never had any to merge) and who then
+// sits idle earns no further quota reservation or human attention, so the
+// daemon closes it itself rather than leaving that judgment to the
+// orchestrator. 10 minutes is long enough that a human reading the idle
+// agent's output has time to react before it is gone.
+export const LifecycleConfigSchema = z.strictObject({
+  idleReap: z.boolean().default(true),
+  idleReapMinutes: z.number().int().positive().default(10),
+});
+
 export const HiveConfigSchema = z.strictObject({
   terminal: z.enum(["iterm2", "terminal", "auto"]).default("auto"),
   headless: z.boolean().default(false),
@@ -32,7 +42,9 @@ export const HiveConfigSchema = z.strictObject({
   // control restarts are unaffected by either value.
   autonomy: z.enum(["dangerous", "sandboxed"]).default("dangerous"),
   resources: ResourceLimitsSchema.prefault({}),
+  lifecycle: LifecycleConfigSchema.prefault({}),
 });
 
 export type ResourceLimits = z.infer<typeof ResourceLimitsSchema>;
+export type LifecycleConfig = z.infer<typeof LifecycleConfigSchema>;
 export type HiveConfig = z.infer<typeof HiveConfigSchema>;

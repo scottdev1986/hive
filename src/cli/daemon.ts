@@ -114,6 +114,7 @@ export async function runDaemon(): Promise<void> {
     quota,
     codexControl: codexAppServer,
     resources: config.resources,
+    lifecycle: config.lifecycle,
     autonomy: config.autonomy,
   });
   daemon.start();
