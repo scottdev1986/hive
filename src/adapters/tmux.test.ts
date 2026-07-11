@@ -591,11 +591,15 @@ describe("TmuxAdapter launch prompt limit", () => {
       throw error;
     }
 
-    for (let attempt = 0; attempt < 100; attempt += 1) {
-      if (await Bun.file(report).exists()) break;
-      await Bun.sleep(20);
+    // Wait for the count, not for the file: the launch shell opens the redirect
+    // target when the pipeline starts, so it exists — and reads back empty —
+    // before wc has written a byte into it.
+    let written = "";
+    for (let attempt = 0; attempt < 100 && !written; attempt += 1) {
+      written = (await Bun.file(report).text().catch(() => "")).trim();
+      if (!written) await Bun.sleep(20);
     }
-    const delivered = Number((await Bun.file(report).text()).trim());
+    const delivered = Number(written);
     // Arrived whole, as exactly one argument — not split on its whitespace.
     expect(delivered).toEqual(Buffer.byteLength(brief));
   });
