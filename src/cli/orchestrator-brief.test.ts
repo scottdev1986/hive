@@ -61,6 +61,13 @@ describe("orchestrator brief", () => {
     expect(ORCHESTRATOR_BRIEF).toContain("never merge or edit files yourself");
   });
 
+  test("states the standing idle-reap lifecycle rule: Hive closes merged-and-idle agents itself, and never a holder of unmerged work", () => {
+    expect(ORCHESTRATOR_BRIEF).toContain("Hive closes agents itself");
+    expect(ORCHESTRATOR_BRIEF).toContain("do not need to hive_kill a finished agent yourself");
+    expect(ORCHESTRATOR_BRIEF).toContain("Reaped");
+    expect(ORCHESTRATOR_BRIEF).toContain("is not done no matter how long it has been idle");
+  });
+
   test("builds a read-only Claude command with the required Channels bridge", () => {
     const claude = buildOrchestratorCommand("claude", 4317);
     expect(claude).toContain("--dangerously-load-development-channels");
