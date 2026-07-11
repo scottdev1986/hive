@@ -26,7 +26,7 @@
  * pipeline takes.
  */
 import { createHash } from "node:crypto";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { currentBuildHash } from "../daemon/handshake";
 import { DAEMON_SCHEMA_EPOCH, DAEMON_WIRE_PROTOCOL } from "../daemon/handshake";
@@ -170,6 +170,8 @@ const INFO_PLIST = (version: string): string =>
   <key>CFBundleDevelopmentRegion</key><string>en</string>
   <key>CFBundleExecutable</key><string>HiveWorkspace</string>
   <key>CFBundleIdentifier</key><string>dev.hive.workspace</string>
+  <key>CFBundleIconFile</key><string>AppIcon</string>
+  <key>CFBundleIconName</key><string>AppIcon</string>
   <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
   <key>CFBundleName</key><string>Hive Workspace</string>
   <key>CFBundlePackageType</key><string>APPL</string>
@@ -194,9 +196,13 @@ async function compileWorkspace(options: Options): Promise<string> {
 
   const bundle = join(options.out, WORKSPACE_BUNDLE);
   const macos = join(bundle, "Contents", "MacOS");
+  const resources = join(bundle, "Contents", "Resources");
   await rm(bundle, { recursive: true, force: true });
   await mkdir(macos, { recursive: true });
+  await mkdir(resources, { recursive: true });
   await writeFile(join(bundle, "Contents", "Info.plist"), INFO_PLIST(options.version));
+  await copyFile(join(workspace, "Resources", "AppIcon.icns"), join(resources, "AppIcon.icns"));
+  await copyFile(join(workspace, "Resources", "Assets.car"), join(resources, "Assets.car"));
   await sh(["cp", join(binPath, "HiveWorkspace"), join(macos, "HiveWorkspace")], options.repoRoot);
   return bundle;
 }
