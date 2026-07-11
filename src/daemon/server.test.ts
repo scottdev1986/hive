@@ -682,8 +682,21 @@ describe("HiveDaemon HTTP server", () => {
       expect(landed).toEqual(["hive/maya-server"]);
 
       db.revokeAgentCapabilities("maya", new Date().toISOString());
+      // "revoked or stale" told an agent neither which of the two it was nor
+      // what to do about it, and they need opposite things. Revocation is
+      // authority maya no longer has: only the orchestrator can give it back.
       await expect(daemon.landAgent("maya", 0)).rejects.toThrow(
-        /revoked or stale/,
+        /write authority was revoked/,
+      );
+      await expect(daemon.landAgent("maya", 0)).rejects.toThrow(/Fix:/);
+      expect(landed).toHaveLength(1);
+
+      // A stale epoch is the agent's own to fix, and the message hands it the
+      // number to retry with rather than making it go and look.
+      const current = db.getAgentByName("maya")?.capabilityEpoch ?? 0;
+      db.upsertAgent({ ...db.getAgentByName("maya")!, writeRevoked: false });
+      await expect(daemon.landAgent("maya", current + 7)).rejects.toThrow(
+        new RegExp(`capabilityEpoch ${current}\\b`),
       );
       expect(landed).toHaveLength(1);
     } finally {

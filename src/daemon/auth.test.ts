@@ -400,7 +400,12 @@ describe("a one-shot landing grant cannot be replayed", () => {
     expect((await callTool(daemon, token, "hive_land", { agent: "maya", capabilityEpoch: 0 })).ok).toBe(true);
     const refused = await callTool(daemon, token, "hive_land", { agent: "maya", capabilityEpoch: 0 });
     expect(refused.ok).toBe(false);
-    expect(refused.error).toContain("re-arm approval has been filed");
+    // The refusal names what happened, and tells the agent there is nothing for
+    // *it* to run — Hive filed the approval itself. The only action left is the
+    // orchestrator's, so that is the one thing on the Fix: line.
+    expect(refused.error).toContain("already spent");
+    expect(refused.error).toContain("Hive has already filed the re-arm approval");
+    expect(refused.error).toContain("Fix: the orchestrator approves");
     await callTool(daemon, token, "hive_land", { agent: "maya", capabilityEpoch: 0 });
     const pending = db.listApprovals("pending").filter(
       (approval) => approval.agentName === "maya",

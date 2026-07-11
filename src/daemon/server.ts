@@ -24,6 +24,7 @@ import {
   writeMemoryFact as writeMemoryFactFile,
 } from "../adapters/memory";
 import { ensureProfile } from "../adapters/profile";
+import { landBranch, type LandBranch } from "./landing";
 import {
   assessStrandedWork,
   removeWorktree,
@@ -278,10 +279,7 @@ const ChannelPermissionRequestSchema = z.object({
   inputPreview: z.string().default(""),
 });
 
-export type LandBranch = (
-  repoRoot: string,
-  branch: string,
-) => Promise<{ commit: string }>;
+export type { LandBranch };
 
 // The land-grant re-arm flow (SPEC decision 4's capability discipline without
 // the integrator round-trip): a refused land on a spent one-shot files an
@@ -289,8 +287,8 @@ export type LandBranch = (
 // contract between the filing site and the approval hook.
 export const LAND_REARM_PREFIX = "Re-arm landing";
 const LAND_REARM_NOTE =
-  "A re-arm approval has been filed; once the orchestrator approves it, " +
-  "exactly one more hive_land is granted.";
+  "Hive has already filed the re-arm approval for you — there is no command to run.\n" +
+  "Fix: the orchestrator approves that request, which grants exactly one more hive_land.";
 
 // Resource and control alerts are the only way daemon degradation reaches the
 // orchestrator; a failed alert send must not crash the sweep, but it must not
@@ -303,49 +301,6 @@ function logAlertDeliveryFailure(error: unknown): undefined {
   );
   return undefined;
 }
-
-// A hung git (stale index.lock, filesystem stall) must fail the land, not
-// wedge the hive_land handler forever; a ff-only merge on a local repo that
-// has not finished in 30s is not going to.
-const LAND_GIT_TIMEOUT_MS = 30_000;
-
-async function runGit(
-  repoRoot: string,
-  args: string[],
-): Promise<{ exitCode: number; stdout: string; stderr: string }> {
-  const proc = Bun.spawn(["git", "-C", repoRoot, ...args], {
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const timeout = setTimeout(() => proc.kill(), LAND_GIT_TIMEOUT_MS);
-  try {
-    const [exitCode, stdout, stderr] = await Promise.all([
-      proc.exited,
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-    ]);
-    if (proc.killed && exitCode !== 0) {
-      throw new Error(
-        `git ${args[0]} timed out after ${LAND_GIT_TIMEOUT_MS}ms`,
-      );
-    }
-    return { exitCode, stdout, stderr };
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-const landBranch: LandBranch = async (repoRoot, branch) => {
-  const merge = await runGit(repoRoot, ["merge", "--ff-only", branch]);
-  if (merge.exitCode !== 0) {
-    throw new Error(
-      merge.stderr.trim() || `git merge exited ${merge.exitCode}`,
-    );
-  }
-  const revision = await runGit(repoRoot, ["rev-parse", "HEAD"]);
-  if (revision.exitCode !== 0) throw new Error(revision.stderr.trim());
-  return { commit: revision.stdout.trim() };
-};
 
 export interface HiveDaemonOptions {
   spawner: Spawner;
@@ -1138,13 +1093,32 @@ export class HiveDaemon {
     name: string,
     capabilityEpoch: number,
   ): Promise<{ commit: string }> {
+    // Each refusal below names the one thing that is wrong and, where a person
+    // has to act, says so in a single labeled line. "Landing capability revoked
+    // or stale" told an agent neither which of the two it was nor what to do,
+    // and they need opposite things: a stale epoch is the agent's own to fix by
+    // re-reading it, while a revocation is authority it no longer has.
     const agent = this.db.getAgentByName(name);
-    if (agent === null || agent.branch === null) {
-      throw new Error(`Agent branch not found: ${name}`);
-    }
-    if (agent.writeRevoked || agent.capabilityEpoch !== capabilityEpoch) {
+    if (agent === null) {
       throw new Error(
-        `Landing capability revoked or stale for ${name}: current epoch ${agent.capabilityEpoch}`,
+        `Cannot land ${name}: no agent by that name is registered with this daemon.`,
+      );
+    }
+    if (agent.branch === null) {
+      throw new Error(
+        `Cannot land ${name}: it has no branch — it was spawned without a worktree, so there is nothing to merge.`,
+      );
+    }
+    if (agent.writeRevoked) {
+      throw new Error(
+        `Cannot land ${name}: its write authority was revoked by a critical control message, so it may not merge.\n` +
+          `Fix: the orchestrator must restore ${name}'s authority (or land the work through an integrator) before this can proceed.`,
+      );
+    }
+    if (agent.capabilityEpoch !== capabilityEpoch) {
+      throw new Error(
+        `Cannot land ${name}: the capabilityEpoch passed (${capabilityEpoch}) is not ${name}'s current epoch (${agent.capabilityEpoch}) — a control message re-issued its capability since this one was minted.\n` +
+          `Fix: call hive_land again with capabilityEpoch ${agent.capabilityEpoch}.`,
       );
     }
     return this.land(this.repoRoot, agent.branch);
