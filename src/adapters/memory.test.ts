@@ -403,15 +403,15 @@ describe("merged memory index for context injection", () => {
       source: "agent",
       verified: "2026-03-01",
     });
-    const withoutProfile = await buildMemoryIndex(root);
-    expect(withoutProfile).not.toContain("profile.toml");
-
-    await mkdir(join(root, ".hive"), { recursive: true });
-    await writeFileRaw(join(root, ".hive", "profile.toml"), "primary_doc = \"SPEC.md\"\n");
-    const withProfile = await buildMemoryIndex(root);
-    expect(withProfile).toContain(".hive/profile.toml");
-    // The pointer names the profile; it does not copy a profile field in.
-    expect(withProfile).not.toContain("SPEC.md");
+    const index = await buildMemoryIndex(root);
+    // Memory's boundary is stated unconditionally: structured repo truth is the
+    // profile's, and an agent already has what it needs from its brief. The
+    // index does not name a file — the profile is Hive's own state now, not a
+    // path in the repo an agent could be tempted to open.
+    expect(index).toContain("memory holds only narrative lessons");
+    expect(index).not.toContain("profile.toml");
+    // It draws the line; it does not copy a profile field across it.
+    expect(index).not.toContain("SPEC.md");
   });
 });
 

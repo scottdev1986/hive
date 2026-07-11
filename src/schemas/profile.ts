@@ -1,13 +1,19 @@
 import { z } from "zod";
 
-// The repo profile is Hive's portability seam (SPEC.md decision 14): a single
-// committed `.hive/profile.toml` that records this repo's doc names, commands,
-// and shape, so every mechanism that assumed the hive repo's own layout reads a
-// per-repo answer instead of a hardcoded guess. It is *structured* truth read
-// deterministically by product code — never parsed out of prose, never a memory
-// fact (decision 5's boundary: memory holds narrative truth, the profile holds
-// structured truth, and neither stores the other's).
-export const PROFILE_SCHEMA_VERSION = 1;
+// The repo profile is Hive's portability seam (SPEC.md decision 14): the doc
+// names, commands, and shape of *this* repo, so every mechanism that would
+// otherwise assume hive's own layout reads a per-repo answer instead of a
+// hardcoded guess. It is *structured* truth read deterministically by product
+// code — never parsed out of prose, never a memory fact (decision 5's boundary:
+// memory holds narrative truth, the profile holds structured truth, and neither
+// stores the other's).
+//
+// The profile is *derived*, not authored. Everything below is recoverable from
+// the tree in tens of milliseconds with zero model tokens, which is why it lives
+// in Hive's own per-project state directory rather than in the repo: it is a
+// cache, and a cache that a human must maintain is not a cache. The one part a
+// human *does* own is the override (bottom of this file), which is committed.
+export const PROFILE_SCHEMA_VERSION = 2;
 
 // The briefable doc set and which doc earns the bare-name `§`-selector rule that
 // `brief.ts` used to hardcode for "SPEC". `primary` is null when the repo has no
@@ -43,21 +49,15 @@ export const ProfileConventionsSchema = z.object({
 });
 export type ProfileConventions = z.infer<typeof ProfileConventionsSchema>;
 
-// aider's `--map-tokens` made explicit and scaled to the repo: a 200-file repo
-// and a 20k-file monorepo cannot share one index budget or the big repo drowns
-// every context it touches. `fileCount` is the size signal; `mapTokens` the
-// derived cap. This is distinct from decision 5's memory-index cap, which is
-// driven by fact count, not repo size.
-export const ProfileIndexBudgetSchema = z.object({
-  fileCount: z.number().int().nonnegative(),
-  mapTokens: z.number().int().positive(),
-});
-export type ProfileIndexBudget = z.infer<typeof ProfileIndexBudgetSchema>;
-
-// The cheap staleness signal recomputed every start (SPEC §14): a hash over the
-// profile's declared inputs plus the commit and date that produced it. A match
-// means fresh and start proceeds in silence; a mismatch means the tree drifted,
-// and `commit` lets Hive report *how many commits* stale without re-profiling.
+// The staleness signal, recomputed on every start (SPEC §14): a hash over the
+// inputs that actually *determine* the profile — the doc inventory, the
+// manifests, the lockfiles, the file count. A mismatch means the profile is
+// genuinely wrong, so Hive regenerates it in place and says nothing.
+//
+// It deliberately does *not* hash the Git tree. It used to, and that single line
+// made every commit to any file in the repo — a test fixture, a typo in a
+// comment — mark the profile stale, which is how a profile whose every derived
+// field was still correct came to nag the user to refresh it by hand.
 export const ProfileFingerprintSchema = z.object({
   generated: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "generated must be YYYY-MM-DD"),
   hiveVersion: z.string(),
@@ -66,13 +66,53 @@ export const ProfileFingerprintSchema = z.object({
 });
 export type ProfileFingerprint = z.infer<typeof ProfileFingerprintSchema>;
 
+// Everything below is read by product code. That is the whole membership rule,
+// and it is load-bearing: the profile used to also carry an `index_budget` — a
+// repo file count and a derived `map_tokens` cap, aider's `--map-tokens`
+// analogue — that nothing ever read. A cached number nobody consumes is not free.
+// It went stale on every commit that added a file, which invalidated the cache
+// and, back when staleness was something a human was told about, was one of the
+// things that told them. A field with no reader can only cost.
 export const RepoProfileSchema = z.object({
   schemaVersion: z.number().int().positive(),
   docs: ProfileDocsSchema,
   commands: ProfileCommandsSchema,
   conventions: ProfileConventionsSchema,
   entryPoints: z.array(z.string()),
-  indexBudget: ProfileIndexBudgetSchema,
   fingerprint: ProfileFingerprintSchema,
 });
 export type RepoProfile = z.infer<typeof RepoProfileSchema>;
+
+// ---------------------------------------------------------------------------
+// The override — the only half of the profile a human owns.
+//
+// Detection is a heuristic, and a heuristic is sometimes wrong: a repo whose
+// real test command is `make test-ci` will be read as `npm test` forever, and
+// before this file there was nowhere to say otherwise that a regeneration would
+// not erase. So the derived profile is a cache Hive rewrites at will, and
+// `.hive/profile.override.toml` is a small, committed, hand-edited file that
+// layers over it and is never written by Hive.
+//
+// It is committed on purpose, and it is the *only* part of the profile that
+// should be: a correction is a team fact — the whole team's agents were reading
+// the wrong test command — while everything it corrects is a derivation any
+// clone reproduces in milliseconds. Absent file means no override; every field
+// is optional, and an absent field means "your detection was right".
+// ---------------------------------------------------------------------------
+
+export const ProfileOverrideSchema = z.object({
+  commands: z.object({
+    build: z.string().optional(),
+    test: z.string().optional(),
+    typecheck: z.string().optional(),
+    lint: z.string().optional(),
+    run: z.string().optional(),
+  }).default({}),
+  docs: z.object({
+    /** Force the primary design doc when inbound-link ranking picks wrong. */
+    primary: z.string().optional(),
+    /** Docs to add to the briefable allowlist that the scan did not find. */
+    briefableAdd: z.array(z.string()).default([]),
+  }).default({ briefableAdd: [] }),
+});
+export type ProfileOverride = z.infer<typeof ProfileOverrideSchema>;

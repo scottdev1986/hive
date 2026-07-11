@@ -1,8 +1,9 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  defaultInitDeps,
   readSeedFactsFile,
   runInit,
   runInitProfile,
@@ -14,6 +15,28 @@ import {
   parseMemoryFile,
 } from "../adapters/memory";
 import { bootstrapProfile } from "../adapters/profile";
+
+// `hive init` profiles the repo like any other start, and the profile lands in
+// Hive's own home — a throwaway one here, never the developer's.
+let hiveHome: string;
+const originalHiveHome = process.env.HIVE_HOME;
+
+beforeAll(async () => {
+  hiveHome = await mkdtemp(join(tmpdir(), "hive-home-"));
+  process.env.HIVE_HOME = hiveHome;
+});
+
+afterAll(async () => {
+  if (originalHiveHome === undefined) delete process.env.HIVE_HOME;
+  else process.env.HIVE_HOME = originalHiveHome;
+  await rm(hiveHome, { recursive: true, force: true });
+});
+
+/** Init's real dependencies, minus the one that would talk to a daemon. */
+const testDeps = (): typeof defaultInitDeps => ({
+  ...defaultInitDeps,
+  reindexMemory: async () => {},
+});
 
 function git(root: string, args: string[]): void {
   Bun.spawnSync(["git", "-C", root, ...args], {
@@ -137,40 +160,61 @@ describe("runInit", () => {
     }
   });
 
-  test("without --refresh, leaves an existing profile in place", async () => {
+  test("a correct profile is left alone, and nothing is asked of anyone", async () => {
     const root = await tsRepo();
     try {
-      await runInit(root, {}); // writes it once
+      await runInit(root, {}); // profiles it once
       const result = await runInit(root, {});
       expect(result.profileWritten).toBe(false);
-      expect(result.messages.some((m) => m.includes("--refresh"))).toBe(true);
+      // The old init ended with "pass --refresh to re-scan". There is nothing to
+      // re-scan and no flag to reach for: init never names a next command.
+      expect(result.messages.some((m) => m.includes("--refresh"))).toBe(false);
+      expect(result.messages.every((m) => !m.includes("Run `"))).toBe(true);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
   });
 
-  test("--refresh re-scans and rewrites an existing profile", async () => {
+  test("a drifted profile is rebuilt without --refresh, because --refresh is not a chore", async () => {
+    const root = await tsRepo();
+    try {
+      await runInit(root, {});
+      await writeFile(join(root, "DESIGN.md"), "# Design\n\na new doc\n");
+      git(root, ["add", "-A"]);
+      git(root, ["commit", "-m", "drift", "--no-gpg-sign"]);
+
+      const result = await runInitProfile(root, {});
+      expect(result.profileWritten).toBe(true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("--refresh forces a re-scan, for a detection you want to watch rerun", async () => {
     const root = await tsRepo();
     try {
       await runInit(root, {});
       const result = await runInit(root, { refresh: true });
       expect(result.profileWritten).toBe(true);
-      expect(result.messages.some((m) => m.includes("Refreshed"))).toBe(true);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
   });
 
-  test("ordinary CLI init refreshes a stale profile without --refresh", async () => {
+  test("seeded facts are indexed on the way out, not left as a chore", async () => {
     const root = await tsRepo();
+    let reindexed = 0;
     try {
-      await runInit(root, {});
-      await writeFile(join(root, "SPEC.md"), "# Spec\n\nchanged\n");
-      git(root, ["add", "-A"]);
-      git(root, ["commit", "-m", "drift", "--no-gpg-sign"]);
-      const result = await runInitProfile(root, {});
-      expect(result.profileWritten).toBe(true);
-      expect(result.messages.some((message) => message.includes("Refreshed"))).toBe(true);
+      const result = await runInit(
+        root,
+        { facts: [{ title: "A gotcha", body: "x" }], today: "2026-07-11" },
+        { ...testDeps(), reindexMemory: async () => { reindexed += 1; } },
+      );
+      expect(result.factsSeeded).toEqual(["a-gotcha"]);
+      expect(reindexed).toBe(1);
+      // The old init printed "Run `hive memory reindex` ... to index the seeded
+      // facts", which is Hive asking to be finished by hand.
+      expect(result.messages.every((m) => !m.includes("hive memory reindex"))).toBe(true);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

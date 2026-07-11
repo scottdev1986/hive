@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { basename, isAbsolute, relative, resolve } from "node:path";
-import { loadProfile } from "./profile";
+import { ensureProfile } from "./profile";
 
 // A spawned agent that is told "read the spec" reads all ~20K tokens of it to
 // find the two sections its task actually names. The brief inverts that: the
@@ -13,8 +13,8 @@ import { loadProfile } from "./profile";
 // allowlist, the briefable directories, and which doc earns the bare-name
 // `§`-selector rule all come from the repo profile, read per-repo.
 
-/** The repo-specific inputs the brief mechanism needs, sourced from the profile
- * (`.hive/profile.toml`) rather than hardcoded. `primaryDoc` is the design doc
+/** The repo-specific inputs the brief mechanism needs, sourced from the repo
+ * profile rather than hardcoded. `primaryDoc` is the design doc
  * that earns the bare-name selector rule (a task citing "DESIGN §3" in a repo
  * whose profile names `DESIGN.md` primary), and is null when the repo has none
  * — dropping a special case it never needed. */
@@ -36,11 +36,12 @@ const EMPTY_BRIEF_CONFIG: BriefConfig = {
   primaryDoc: null,
 };
 
-/** Derive the brief inputs from the repo profile. A repo with no profile yet
- * (bootstrap has not run) briefs nothing rather than assuming hive's own doc
- * names — the safe, portable default. */
+/** Derive the brief inputs from the repo profile, generating it if this repo has
+ * never been profiled — a fresh clone's very first spawn is briefed like any
+ * other. A repo whose profile cannot be built at all briefs nothing rather than
+ * assuming hive's own doc names: the safe, portable default. */
 export async function loadBriefConfig(root: string): Promise<BriefConfig> {
-  const profile = await loadProfile(root);
+  const profile = await ensureProfile(root).catch(() => null);
   if (profile === null) return EMPTY_BRIEF_CONFIG;
   return {
     briefableDocs: profile.docs.briefable,

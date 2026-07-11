@@ -378,17 +378,14 @@ export async function buildMemoryIndex(root: string): Promise<string> {
   const omitted = sorted.length - shown.length;
   const header =
     "Hive memory index — durable facts from past runs. Pull the full fact with memory_read(scope, id) before relying on it; a fact marked [unverified] or [stale] that names a path, command, or flag must be re-checked against the repo before you act on it. Search more with memory_search.";
-  // The index points at the profile rather than restating it (§14): structured
-  // repo truth — build/test commands, entry points, doc allowlist — lives in
-  // .hive/profile.toml, read by product code, never duplicated into a fact.
+  // The index draws memory's boundary rather than restating what is on the other
+  // side of it (§14): structured repo truth — build/test commands, entry points,
+  // doc allowlist — is the profile's, derived by Hive and handed to an agent in
+  // its brief, and it is never duplicated into a fact.
   const profilePointer =
-    (await fileExists(join(root, ".hive", "profile.toml")))
-      ? [
-        "Structured repo facts (build/test commands, entry points, layout) live in .hive/profile.toml, not here — memory holds only narrative lessons.",
-      ]
-      : [];
+    "Structured repo facts (build/test commands, entry points, layout) are Hive's to derive and are already in your brief — memory holds only narrative lessons, so never write one here.";
   const footer = omitted > 0
     ? [`(${omitted} older fact${omitted === 1 ? "" : "s"} omitted — use memory_search to find them)`]
     : [];
-  return [header, ...profilePointer, ...lines, ...footer].join("\n");
+  return [header, profilePointer, ...lines, ...footer].join("\n");
 }

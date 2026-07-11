@@ -48,6 +48,11 @@ yarn-error.log*
 .hive/worktrees/
 .hive/*.db
 .hive/*.pid
+# The repo profile is derived, not authored: Hive regenerates it in its own
+# per-project state dir (~/.hive/projects/<id>/) in milliseconds. This entry is
+# for the copy older Hives committed here — inert now, and nobody's diff.
+# `.hive/profile.override.toml` is the opposite: hand-written, and committed.
+.hive/profile.toml
 
 #Coding Agents
 .claude/worktrees

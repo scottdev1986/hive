@@ -21,7 +21,7 @@ import { orchestratorTmuxSession } from "../daemon/orchestrator-lifecycle";
 import { hiveInstanceSuffix } from "../daemon/tmux-sessions";
 import type { TerminalHandle } from "../schemas";
 import { ORCHESTRATOR_BRIEF, orchestratorDocGuidance } from "./orchestrator-brief";
-import { loadProfile } from "../adapters/profile";
+import { ensureProfile } from "../adapters/profile";
 
 export type OrchestratorTool = "claude" | "codex";
 export type OrchestratorTerminalApp = "auto" | "terminal" | "iterm2";
@@ -223,10 +223,10 @@ export async function prepareOrchestratorConfig(
 }
 
 /** Load the repo profile and format the orchestrator's repo-specific doc
- * guidance. A repo with no profile yet contributes "", leaving the generic
- * brief untouched rather than teaching hive's own doc names. */
+ * guidance. A repo whose profile cannot be built contributes "", leaving the
+ * generic brief untouched rather than teaching hive's own doc names. */
 export async function buildOrchestratorDocGuidance(cwd: string): Promise<string> {
-  const profile = await loadProfile(cwd).catch(() => null);
+  const profile = await ensureProfile(cwd).catch(() => null);
   if (profile === null) return "";
   return orchestratorDocGuidance({
     primary: profile.docs.primary,

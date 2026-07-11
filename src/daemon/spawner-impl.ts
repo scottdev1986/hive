@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { buildScopedBrief } from "../adapters/brief";
 import { buildMemoryIndex } from "../adapters/memory";
-import { loadProfile } from "../adapters/profile";
+import { ensureProfile } from "../adapters/profile";
 import {
   buildAgentTerminalTitle,
   type TerminalAdapter,
@@ -1076,11 +1076,12 @@ export class HiveSpawner implements Spawner {
       }
       throw error;
     }
-    // The profile is read once from the worktree — an agent's excerpt and its
-    // verify commands must match the tree it is about to edit (SPEC §14). A
-    // worktree with no profile yet degrades to no brief and generic landing
+    // The profile is a property of the *project*, not of the branch an agent
+    // happens to be on, so it is read from the repo root and generated on demand
+    // (SPEC §14) — a fresh clone's first spawn is briefed like any other. A repo
+    // whose profile cannot be built degrades to no brief and generic landing
     // wording rather than assuming hive's own doc names or commands.
-    const profile = await loadProfile(worktree.path).catch((error: unknown) => {
+    const profile = await ensureProfile(this.dependencies.repoRoot).catch((error: unknown) => {
       console.error(
         `Hive could not load the repo profile for ${name}'s worktree; spawning with generic landing wording: ${
           error instanceof Error ? error.message : "unknown error"

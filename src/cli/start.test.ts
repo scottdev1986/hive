@@ -1,12 +1,25 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { announceProfile, startSession } from "./start";
-import { loadProfile } from "../adapters/profile";
+import { startSession } from "./start";
+import { loadDerivedProfile, profilePath } from "../adapters/profile";
 
-// `hive init`'s single profile line (SPEC §14). Exercised directly rather than
-// through the full daemon bring-up, which `runStart` owns.
+// The session boundary profiles the repo and says nothing about it (SPEC §14).
+// Hive's own state goes to a throwaway HIVE_HOME here, never into the repo.
+let hiveHome: string;
+const originalHiveHome = process.env.HIVE_HOME;
+
+beforeAll(async () => {
+  hiveHome = await mkdtemp(join(tmpdir(), "hive-home-"));
+  process.env.HIVE_HOME = hiveHome;
+});
+
+afterAll(async () => {
+  if (originalHiveHome === undefined) delete process.env.HIVE_HOME;
+  else process.env.HIVE_HOME = originalHiveHome;
+  await rm(hiveHome, { recursive: true, force: true });
+});
 
 function git(root: string, args: string[]): void {
   Bun.spawnSync(["git", "-C", root, ...args], {
@@ -37,7 +50,7 @@ async function repoWithSpec(): Promise<string> {
 // e2e-real.test.ts); here the seams prove the boundary's shape: order, the
 // returned port, and the best-effort steps staying best-effort.
 describe("startSession", () => {
-  test("checks, announces the profile, then brings the daemon up — and returns the port", async () => {
+  test("checks, profiles the repo in silence, then brings the daemon up — and returns the port", async () => {
     const root = await repoWithSpec();
     const steps: string[] = [];
     try {
@@ -57,11 +70,12 @@ describe("startSession", () => {
         write: (line) => steps.push(`write:${line.slice(0, 5)}`),
       });
       expect(session).toEqual({ port: 45_017, cwd: root });
-      // The update check ran first and its failure stopped nothing. The
-      // profile line (a fresh repo writes one) came BEFORE the daemon: the
-      // daemon bootstraps the profile too, and announcing afterwards loses
-      // the first-start line to that race (the e2e suite pins this).
-      expect(steps).toEqual(["check", "write:Wrote", `ensure:${root}`, "port"]);
+      // The update check ran first and its failure stopped nothing. A repo that
+      // has never been profiled gets profiled here — before the daemon, and
+      // without a word: the profile is Hive's business, not the user's.
+      expect(steps).toEqual(["check", `ensure:${root}`, "port"]);
+      expect(await loadDerivedProfile(root)).not.toBeNull();
+      expect(profilePath(root).startsWith(hiveHome)).toBe(true);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -112,50 +126,39 @@ describe("startSession", () => {
   });
 });
 
-describe("announceProfile", () => {
-  test("on an uninitialized repo, writes the profile and prints one line", async () => {
+describe("the profile never speaks", () => {
+  test("a drifted repo starts silently, on a profile that has already been fixed", async () => {
     const root = await repoWithSpec();
     const lines: string[] = [];
-    try {
-      await announceProfile(root, (line) => lines.push(line));
-      expect(lines).toHaveLength(1);
-      expect(lines[0]).toContain(".hive/profile.toml");
-      expect(lines[0]).toContain("hive init");
-      // The file really exists and is loadable afterwards.
-      expect(await loadProfile(root)).not.toBeNull();
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
-  });
+    const start = (): Promise<unknown> =>
+      startSession({
+        cwd: root,
+        checkUpdate: async () => {
+          throw new Error("offline");
+        },
+        ensureDaemon: async () => {},
+        ensurePort: async () => 45_021,
+        write: (line) => lines.push(line),
+      });
 
-  test("a fresh profile proceeds in silence", async () => {
-    const root = await repoWithSpec();
-    const lines: string[] = [];
     try {
-      await announceProfile(root, () => {}); // first call writes it
-      await announceProfile(root, (line) => lines.push(line));
-      expect(lines).toEqual([]);
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
-  });
+      await start();
 
-  test("a drifted profile prints the refresh note but does not rewrite", async () => {
-    const root = await repoWithSpec();
-    const lines: string[] = [];
-    try {
-      await announceProfile(root, () => {});
-      const before = await Bun.file(join(root, ".hive/profile.toml")).text();
-      // Drift a declared input and commit.
-      await writeFile(join(root, "SPEC.md"), "# Spec\n\nv2 more\n");
+      // Drift the profile for real: a new doc changes the briefable allowlist.
+      await writeFile(join(root, "DESIGN.md"), "# Design\n\nsee SPEC.md\n");
       git(root, ["add", "-A"]);
-      git(root, ["commit", "-m", "edit", "--no-gpg-sign"]);
+      git(root, ["commit", "-m", "add design doc", "--no-gpg-sign"]);
 
-      await announceProfile(root, (line) => lines.push(line));
-      expect(lines).toHaveLength(1);
-      expect(lines[0]).toContain("hive init --refresh");
-      // Stale is not a rewrite: the committed profile is left in place.
-      expect(await Bun.file(join(root, ".hive/profile.toml")).text()).toBe(before);
+      lines.length = 0;
+      await start();
+
+      // The old behavior was to print "the profile is N commits stale... run
+      // `hive init --refresh`" and then start anyway on the stale profile. It
+      // now regenerates and says nothing: there was never a decision for the
+      // user to make here, so there was never anything to tell them.
+      expect(lines).toEqual([]);
+      expect((await loadDerivedProfile(root))?.docs.briefable)
+        .toContain("DESIGN.md");
     } finally {
       await rm(root, { recursive: true, force: true });
     }

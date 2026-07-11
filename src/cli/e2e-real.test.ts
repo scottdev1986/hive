@@ -236,31 +236,42 @@ afterAll(async () => {
 });
 
 e2e("real hive CLI against a real daemon and real tmux", () => {
-  test("hive init in a fresh repo writes the profile once and brings the daemon up", async () => {
+  /** The profile Hive cached for `repo`, wherever under its home it put it. */
+  const cachedProfile = async (): Promise<string> => {
+    const glob = new Bun.Glob("projects/*/profile.toml");
+    for await (const hit of glob.scan({ cwd: hiveHome, absolute: true })) return hit;
+    throw new Error(`no profile cached under ${hiveHome}`);
+  };
+
+  test("hive init profiles a fresh repo into Hive's home, not the repo, and brings the daemon up", async () => {
     const run = await runCli(["init"]);
     const output = run.stdout + run.stderr;
     expect(run.exitCode).toEqual(0);
-    // The init-once bootstrap announced itself…
-    expect(output).toContain("Wrote .hive/profile.toml");
-    // …and really wrote the file…
-    expect(existsSync(join(repo, ".hive", "profile.toml"))).toEqual(true);
+    // The profile is Hive's own state: it goes under HIVE_HOME…
+    expect(existsSync(await cachedProfile())).toEqual(true);
+    // …and the repo is left exactly as the user had it. Nothing to commit.
+    expect(existsSync(join(repo, ".hive", "profile.toml"))).toEqual(false);
     // …and a real daemon answers on the advertised port.
     expect(output).toContain(`daemon port ${port}`);
     await until(health, "daemon /health");
   }, MINUTE);
 
-  test("a second hive init is a no-op on a fresh profile — the field-test regression", async () => {
-    const profilePath = join(repo, ".hive", "profile.toml");
+  test("a second hive init is a no-op, and never asks for a third — the field-test regression", async () => {
+    const profilePath = await cachedProfile();
     const before = await readFile(profilePath, "utf8");
     const mtimeBefore = (await stat(profilePath)).mtimeMs;
 
     const run = await runCli(["init"]);
     const output = run.stdout + run.stderr;
     expect(run.exitCode).toEqual(0);
-    expect(output).not.toContain("Wrote .hive/profile.toml");
     // Not rewritten, not even touched.
     expect(await readFile(profilePath, "utf8")).toEqual(before);
     expect((await stat(profilePath)).mtimeMs).toEqual(mtimeBefore);
+    // And it does not close by naming another command to run. The profile is
+    // never stale in a way anyone has to fix, so there is nothing to say.
+    expect(output).not.toContain("--refresh");
+    expect(output).not.toContain("hive memory reindex");
+    expect(output).not.toContain("stale");
     expect(await health()).toEqual(true);
   }, MINUTE);
 

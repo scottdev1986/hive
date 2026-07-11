@@ -1,48 +1,119 @@
 /**
  * The repo profile — Hive's portability seam (SPEC.md decision 14).
  *
- * A single committed `.hive/profile.toml` that records this repo's doc names,
- * commands, and shape, so every mechanism that used to assume the hive repo's
- * own layout (the scoped brief, the orchestrator's citation guidance, the
- * landing gate) reads a per-repo answer instead of a compiled-in guess. This
- * module is the *structured reader* the design demands: product code calls
- * `loadProfile` and gets a typed object, never a Markdown fact body parsed out
- * of prose.
+ * A structured record of this repo's doc names, commands, and shape, so every
+ * mechanism that used to assume the hive repo's own layout (the scoped brief,
+ * the orchestrator's citation guidance, the landing gate) reads a per-repo
+ * answer instead of a compiled-in guess. Product code calls `ensureProfile` and
+ * gets a typed object, never a Markdown fact body parsed out of prose.
  *
- * Two tiers, per the derive-then-refine split:
- *   - `bootstrapProfile` is the **deterministic** pass — zero model tokens,
- *     instant, run at the first session boundary in an uninitialized repo. It reads the
- *     package manager and commands out of the manifests, inventories docs, picks
- *     the most-cited as primary, and sizes the index budget from the file count.
- *   - `hive init` (src/cli/init.ts) is the richer, gated pass that enriches what
- *     the bootstrap could not.
+ * The profile is a **cache, not a document**. Everything in it is derived from
+ * the tree by reading manifests and listing docs — tens of milliseconds, zero
+ * model tokens — so there is nothing in it a human is meant to maintain, and no
+ * reason to make anyone think about it. Two consequences run through this file:
+ *
+ *   - It lives in Hive's own per-project state directory
+ *     (`~/.hive/projects/<hiveUuid>/profile.toml`), not in the repo. It is not
+ *     the repo's business, it does not belong in anyone's diff, and it never
+ *     goes stale in a way a human has to fix.
+ *   - It regenerates *silently*. `ensureProfile` compares a fingerprint of the
+ *     inputs that actually determine the profile and rewrites it when they
+ *     drift. It prints nothing, asks for nothing, and there is no refresh
+ *     command to forget to run.
+ *
+ * The one part a human owns is `.hive/profile.override.toml` — committed, small,
+ * hand-edited, never written by Hive — which layers over the derived answers
+ * when detection gets one wrong. See `ProfileOverrideSchema`.
  *
  * Machine-specific things — absolute worktree paths, the daemon port — are never
- * written here; they are rebuilt at runtime. The profile is pure repo facts,
- * which is exactly what makes it shareable.
+ * written here; they are rebuilt at runtime.
  */
 import { createHash } from "node:crypto";
 import { readFile, stat, writeFile, mkdir, rename } from "node:fs/promises";
-import { join, relative } from "node:path";
+import { dirname, join } from "node:path";
 import {
   PROFILE_SCHEMA_VERSION,
+  ProfileOverrideSchema,
   RepoProfileSchema,
   type ProfileCommands,
+  type ProfileOverride,
   type RepoProfile,
 } from "../schemas/profile";
+import { getHiveHome } from "../daemon/db";
+import { resolveHandshakeProject } from "../daemon/project-identity";
 import { HIVE_VERSION } from "../version";
 
-export const PROFILE_RELATIVE_PATH = ".hive/profile.toml";
-
-export function profilePath(root: string): string {
-  return join(root, PROFILE_RELATIVE_PATH);
-}
+/** The human-owned override, committed, relative to the repo root. The derived
+ * profile has no repo-relative path at all — it is not in the repo. */
+export const OVERRIDE_RELATIVE_PATH = ".hive/profile.override.toml";
 
 const isMissingFileError = (error: unknown): boolean =>
   typeof error === "object" &&
   error !== null &&
   "code" in error &&
   (error as { code?: unknown }).code === "ENOENT";
+
+// ---------------------------------------------------------------------------
+// Where the profile lives. Hive keeps its own state in its own directory, one
+// per project, keyed by the `hiveUuid` the project registry already mints —
+// which is what makes this survive a repo being renamed or moved.
+//
+// The key is resolved from the repo's *primary* worktree, never the calling
+// directory. Every agent runs in a linked worktree, and the registry gives a
+// linked worktree its own identity; keying on the caller would hand each agent
+// a private profile of its own branch. One repo, one profile.
+// ---------------------------------------------------------------------------
+
+/** Git helpers — cheap, best-effort. A directory that is not a Git checkout
+ * profiles fine; it is simply its own project. */
+function git(root: string, args: string[]): string | null {
+  try {
+    const result = Bun.spawnSync(["git", "-C", root, ...args], {
+      stdout: "pipe",
+      stderr: "ignore",
+      timeout: 5_000,
+      killSignal: "SIGKILL",
+    });
+    if (result.exitCode !== 0) return null;
+    return result.stdout.toString().trim();
+  } catch {
+    return null;
+  }
+}
+
+/** The main working tree of `root`'s repo. `--git-common-dir` is the one
+ * question whose answer is shared by every worktree of a repo: it names the main
+ * `.git`, whose parent is the checkout the profile belongs to. */
+function primaryWorktree(root: string): string {
+  const common = git(root, [
+    "rev-parse",
+    "--path-format=absolute",
+    "--git-common-dir",
+  ]);
+  return common === null ? root : dirname(common);
+}
+
+// Resolving identity touches the registry, so memoize per root: a spawn-heavy
+// daemon asks this question constantly and the answer cannot change under it.
+const stateDirs = new Map<string, string>();
+
+/** The directory Hive keeps this project's derived state in. */
+export function projectStateDir(root: string): string {
+  const cached = stateDirs.get(root);
+  if (cached !== undefined) return cached;
+  const { hiveUuid } = resolveHandshakeProject(primaryWorktree(root));
+  const dir = join(getHiveHome(), "projects", hiveUuid);
+  stateDirs.set(root, dir);
+  return dir;
+}
+
+export function profilePath(root: string): string {
+  return join(projectStateDir(root), "profile.toml");
+}
+
+export function overridePath(root: string): string {
+  return join(root, OVERRIDE_RELATIVE_PATH);
+}
 
 // ---------------------------------------------------------------------------
 // TOML serialization. Bun.TOML.parse handles reading; TOML has no stringifier,
@@ -107,13 +178,6 @@ export function serializeProfile(profile: RepoProfile): string {
   );
 
   sections.push(
-    ["[index_budget]",
-      `file_count = ${profile.indexBudget.fileCount}`,
-      `map_tokens = ${profile.indexBudget.mapTokens}`,
-    ].join("\n"),
-  );
-
-  sections.push(
     ["[fingerprint]", ...tableLines([
       ["generated", profile.fingerprint.generated],
       ["hive_version", profile.fingerprint.hiveVersion],
@@ -122,10 +186,11 @@ export function serializeProfile(profile: RepoProfile): string {
     ])].join("\n"),
   );
 
-  return `# .hive/profile.toml — Hive repo profile (SPEC.md decision 14).\n` +
-    `# Committed structured truth: doc names, commands, and shape, so Hive's\n` +
-    `# token economics hold on this repo without re-profiling. Written by Hive's\n` +
-    `# bootstrap and enriched by \`hive init\`; do not hand-edit the fingerprint.\n\n` +
+  return `# Hive's derived profile of this repo — generated, cached, disposable.\n` +
+    `# Hive rewrites this file whenever the repo drifts; nothing here is worth\n` +
+    `# editing, because the next start will overwrite it. To *correct* a wrong\n` +
+    `# answer, put it in the repo's ${OVERRIDE_RELATIVE_PATH}, which Hive never\n` +
+    `# touches and always layers on top.\n\n` +
     sections.join("\n\n") + "\n";
 }
 
@@ -134,9 +199,10 @@ const asString = (value: unknown): string | null =>
 const asStringArray = (value: unknown): string[] =>
   Array.isArray(value) ? value.filter((v): v is string => typeof v === "string") : [];
 
-/** Parse and validate a `.hive/profile.toml`. Returns null when it is absent or
- * unreadable — an uninitialized repo, not an error. */
-export async function loadProfile(root: string): Promise<RepoProfile | null> {
+/** Parse and validate the derived profile. Returns null when it is absent or
+ * unreadable — an uncached repo, not an error. Callers get the *effective*
+ * profile from `ensureProfile`; this is the raw cache read. */
+export async function loadDerivedProfile(root: string): Promise<RepoProfile | null> {
   let source: string;
   try {
     source = await readFile(profilePath(root), "utf8");
@@ -154,7 +220,6 @@ export async function loadProfile(root: string): Promise<RepoProfile | null> {
   const commands = (raw.commands ?? {}) as Record<string, unknown>;
   const conventions = (raw.conventions ?? {}) as Record<string, unknown>;
   const entryPoints = (raw.entry_points ?? {}) as Record<string, unknown>;
-  const budget = (raw.index_budget ?? {}) as Record<string, unknown>;
   const fingerprint = (raw.fingerprint ?? {}) as Record<string, unknown>;
 
   const candidate = {
@@ -180,10 +245,6 @@ export async function loadProfile(root: string): Promise<RepoProfile | null> {
       monorepo: conventions.monorepo === true,
     },
     entryPoints: asStringArray(entryPoints.ranked),
-    indexBudget: {
-      fileCount: typeof budget.file_count === "number" ? budget.file_count : 0,
-      mapTokens: typeof budget.map_tokens === "number" ? budget.map_tokens : 1_000,
-    },
     fingerprint: {
       generated: asString(fingerprint.generated) ?? "1970-01-01",
       hiveVersion: asString(fingerprint.hive_version) ?? "unknown",
@@ -196,65 +257,112 @@ export async function loadProfile(root: string): Promise<RepoProfile | null> {
 }
 
 /** Write the profile atomically (temp + rename) so a concurrent reader never
- * sees a half-written file, and so two processes bootstrapping the same
- * deterministic content at once cannot corrupt it. */
+ * sees a half-written file, and so two processes regenerating the same
+ * deterministic content at once cannot corrupt it. Skips the write entirely when
+ * the bytes would be identical, so an unchanged profile does not even churn its
+ * mtime. */
 export async function writeProfile(
   root: string,
   profile: RepoProfile,
 ): Promise<void> {
   const path = profilePath(root);
-  await mkdir(join(root, ".hive"), { recursive: true });
+  const next = serializeProfile(profile);
+  try {
+    if ((await readFile(path, "utf8")) === next) return;
+  } catch {
+    // No readable profile yet — fall through and write one.
+  }
+  await mkdir(dirname(path), { recursive: true });
   const temporary = `${path}.${process.pid}.tmp`;
-  await writeFile(temporary, serializeProfile(profile));
+  await writeFile(temporary, next);
   await rename(temporary, path);
 }
 
 // ---------------------------------------------------------------------------
-// Git helpers — cheap, best-effort. A repo that is not a Git checkout profiles
-// fine; it just loses the commit-distance staleness signal.
+// The override: the repo's committed correction of a derivation Hive got wrong.
 // ---------------------------------------------------------------------------
 
-function git(root: string, args: string[]): string | null {
+/** Read `.hive/profile.override.toml`. Absent, malformed, or empty all mean the
+ * same thing — no override — because a typo in a hand-edited file must degrade
+ * to Hive's own answer, never break the session that reads it. */
+export async function loadOverride(root: string): Promise<ProfileOverride | null> {
+  let source: string;
   try {
-    const result = Bun.spawnSync(["git", "-C", root, ...args], {
-      stdout: "pipe",
-      stderr: "ignore",
-      timeout: 5_000,
-      killSignal: "SIGKILL",
-    });
-    if (result.exitCode !== 0) return null;
-    return result.stdout.toString().trim();
+    source = await readFile(overridePath(root), "utf8");
   } catch {
     return null;
   }
+  let raw: Record<string, unknown>;
+  try {
+    raw = Bun.TOML.parse(source) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+  // The file is written by a human, so its keys are TOML's snake_case; the schema
+  // is the codebase's camelCase. Map them across explicitly — handing the raw
+  // table to zod would let `briefable_add` parse "successfully" as an absent
+  // field, and a correction that silently does nothing is worse than no file.
+  const commands = (raw.commands ?? {}) as Record<string, unknown>;
+  const docs = (raw.docs ?? {}) as Record<string, unknown>;
+  const parsed = ProfileOverrideSchema.safeParse({
+    commands: {
+      ...(typeof commands.build === "string" ? { build: commands.build } : {}),
+      ...(typeof commands.test === "string" ? { test: commands.test } : {}),
+      ...(typeof commands.typecheck === "string"
+        ? { typecheck: commands.typecheck }
+        : {}),
+      ...(typeof commands.lint === "string" ? { lint: commands.lint } : {}),
+      ...(typeof commands.run === "string" ? { run: commands.run } : {}),
+    },
+    docs: {
+      ...(typeof docs.primary === "string" ? { primary: docs.primary } : {}),
+      briefableAdd: asStringArray(docs.briefable_add),
+    },
+  });
+  return parsed.success ? parsed.data : null;
 }
 
-function gitHead(root: string): string | null {
-  return git(root, ["rev-parse", "HEAD"]);
-}
-
-function gitTreeHash(root: string): string | null {
-  return git(root, ["rev-parse", "HEAD^{tree}"]);
-}
-
-/** Commits between the profile's recorded commit and current HEAD — the "N" in
- * "the profile is N commits stale". Null when either commit is unknown or the
- * recorded commit is not an ancestor (a rebase/force-push), where a count is
- * meaningless. */
-export function commitsBehind(root: string, recorded: string | null): number | null {
-  if (recorded === null) return null;
-  const count = git(root, ["rev-list", "--count", `${recorded}..HEAD`]);
-  if (count === null) return null;
-  const n = Number(count);
-  return Number.isSafeInteger(n) && n >= 0 ? n : null;
+/** Layer a human's corrections over the derived answers. Commands replace,
+ * `primary` replaces, and `briefableAdd` adds — nothing here can *remove* a doc
+ * Hive found, because an override is a correction, not a second implementation
+ * of the scan. */
+export function applyOverride(
+  profile: RepoProfile,
+  override: ProfileOverride | null,
+): RepoProfile {
+  if (override === null) return profile;
+  const commands: ProfileCommands = {
+    build: override.commands.build ?? profile.commands.build,
+    test: override.commands.test ?? profile.commands.test,
+    typecheck: override.commands.typecheck ?? profile.commands.typecheck,
+    lint: override.commands.lint ?? profile.commands.lint,
+    run: override.commands.run ?? profile.commands.run,
+  };
+  const briefable = [
+    ...new Set([...profile.docs.briefable, ...override.docs.briefableAdd]),
+  ].sort();
+  return {
+    ...profile,
+    commands,
+    docs: {
+      ...profile.docs,
+      briefable,
+      primary: override.docs.primary ?? profile.docs.primary,
+    },
+  };
 }
 
 // ---------------------------------------------------------------------------
-// Fingerprint. A hash over the profile's declared inputs (the doc set, the
-// manifests and lockfile, the Git tree). The Git tree hash captures every
-// committed content change in one call; per-file stat sizes catch uncommitted
-// edits to the small declared set. Neither reads a large file whole, so the
-// check stays "a few stats and hashes" and never sits on the hot path.
+// Fingerprint. A hash over the inputs that actually determine the profile: the
+// current doc inventory, the manifests and lockfiles, the tracked-file count.
+// Sizes stand in for contents — cheap, and a doc edit that changes a file's
+// length is exactly the edit that can move the inbound-link ranking.
+//
+// It deliberately does NOT hash the Git tree. It used to, which meant every
+// commit to any file marked the profile stale; a profile whose every derived
+// field was still correct would announce itself as "20 commits stale" and ask to
+// be refreshed by hand. Staleness now means the profile is *wrong*, and a
+// profile that is wrong gets rewritten without anyone being told.
 // ---------------------------------------------------------------------------
 
 const MANIFEST_FILES = [
@@ -279,6 +387,20 @@ const LOCKFILES = [
   "poetry.lock",
 ] as const;
 
+const CONVENTION_FILES = ["AGENTS.md", "CLAUDE.md"] as const;
+
+// Conventional entry files. They determine `entryPoints`, so their appearance or
+// disappearance is drift, and the fingerprint has to see it.
+const ENTRY_CANDIDATES = [
+  "src/cli.ts",
+  "src/index.ts",
+  "src/main.ts",
+  "index.ts",
+  "index.js",
+  "main.py",
+  "cmd/main.go",
+] as const;
+
 async function fileSize(path: string): Promise<number | null> {
   try {
     return (await stat(path)).size;
@@ -287,98 +409,46 @@ async function fileSize(path: string): Promise<number | null> {
   }
 }
 
-/** The set of files whose drift should trip staleness: the briefable docs plus
- * whichever manifests and lockfiles exist. Reproducible from the profile at any
- * later start, so generation and recompute hash the same set. */
-async function declaredInputPaths(
-  root: string,
-  briefableDocs: string[],
-): Promise<string[]> {
-  const candidates = [
-    ...briefableDocs,
-    ...MANIFEST_FILES,
-    ...LOCKFILES,
-  ];
-  const present: string[] = [];
-  for (const relativePath of candidates) {
-    if ((await fileSize(join(root, relativePath))) !== null) {
-      present.push(relativePath);
-    }
-  }
-  return [...new Set(present)].sort();
-}
-
 export interface FingerprintInputs {
   inputsHash: string;
   commit: string | null;
 }
 
-export async function computeFingerprint(
-  root: string,
-  briefableDocs: string[],
-): Promise<FingerprintInputs> {
-  const tree = gitTreeHash(root) ?? "";
-  const inputs = await declaredInputPaths(root, briefableDocs);
-  const parts = [`tree:${tree}`];
-  for (const relativePath of inputs) {
+/**
+ * Hash everything `bootstrapProfile` reads, without reading any of it whole.
+ *
+ * The doc inventory is re-listed rather than taken from the existing profile,
+ * which is the difference between a fingerprint that notices a *new* doc and one
+ * that cannot: a check driven by the recorded allowlist can only ever see the
+ * files it already knows about.
+ */
+export async function computeFingerprint(root: string): Promise<FingerprintInputs> {
+  const { briefable, briefableDirectories } = await inventoryDocPaths(root);
+  const parts = [
+    `docs:${briefable.join(",")}`,
+    `docdirs:${briefableDirectories.join(",")}`,
+  ];
+  const sized = [
+    ...briefable,
+    ...MANIFEST_FILES,
+    ...LOCKFILES,
+    ...CONVENTION_FILES,
+    ...ENTRY_CANDIDATES,
+  ];
+  for (const relativePath of [...new Set(sized)].sort()) {
     const size = await fileSize(join(root, relativePath));
-    parts.push(`${relativePath}:${size ?? "missing"}`);
+    if (size !== null) parts.push(`${relativePath}:${size}`);
   }
   return {
     inputsHash: createHash("sha256").update(parts.join("\n")).digest("hex"),
-    commit: gitHead(root),
+    commit: git(root, ["rev-parse", "HEAD"]),
   };
 }
 
 // ---------------------------------------------------------------------------
-// Staleness evaluation, recomputed every start. Never blocks: a slightly stale
-// allowlist beats none, so a drifted profile still drives the spawn while Hive
-// notes that `hive init --refresh` would update it.
+// Deterministic generation — zero model tokens. Reads the manifests and docs and
+// produces the profile that un-hardcodes the brief mechanism on any repo.
 // ---------------------------------------------------------------------------
-
-export type ProfileStatus =
-  | { state: "uninitialized" }
-  | { state: "fresh"; profile: RepoProfile }
-  | {
-      state: "stale";
-      profile: RepoProfile;
-      commitsBehind: number | null;
-      note: string;
-    };
-
-export async function evaluateProfile(root: string): Promise<ProfileStatus> {
-  const profile = await loadProfile(root);
-  if (profile === null) return { state: "uninitialized" };
-  const { inputsHash } = await computeFingerprint(root, profile.docs.briefable);
-  if (inputsHash === profile.fingerprint.inputsHash) {
-    return { state: "fresh", profile };
-  }
-  const behind = commitsBehind(root, profile.fingerprint.commit);
-  const distance = behind === null
-    ? "the tree has changed"
-    : `the profile is ${behind} commit${behind === 1 ? "" : "s"} stale`;
-  return {
-    state: "stale",
-    profile,
-    commitsBehind: behind,
-    note:
-      `Hive repo profile: ${distance} since it was written. Spawns still use it ` +
-      `(a slightly stale allowlist beats none); run \`hive init --refresh\` to update it.`,
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Deterministic bootstrap — zero model tokens. Reads the manifests and docs and
-// writes the profile that un-hardcodes the brief mechanism on any repo.
-// ---------------------------------------------------------------------------
-
-/** aider's `--map-tokens` scaled to the repo: the entry-point index budget must
- * grow with file count so a monorepo's map does not drown every context, and
- * stay bounded so it never dominates the brief. 1k floor (aider's default), 8k
- * ceiling. */
-export function sizeIndexBudget(fileCount: number): number {
-  return Math.min(8_000, Math.max(1_000, Math.round(fileCount * 4)));
-}
 
 function detectPackageManager(root: string): string | null {
   const has = (name: string): boolean =>
@@ -510,6 +580,28 @@ async function listMarkdownUnder(root: string, dir: string): Promise<string[]> {
   return [];
 }
 
+/** The doc inventory, by path only. Split out from `inventoryDocs` because the
+ * fingerprint needs the *paths* on every start and must never pay for reading
+ * the corpus, which only the primary-doc ranking requires. */
+async function inventoryDocPaths(root: string): Promise<{
+  rootDocs: string[];
+  briefable: string[];
+  briefableDirectories: string[];
+}> {
+  const rootDocs = await listRootMarkdown(root);
+  const briefableDirectories: string[] = [];
+  const dirDocs: string[] = [];
+  for (const dir of DOC_DIRECTORIES) {
+    const docs = await listMarkdownUnder(root, dir);
+    if (docs.length > 0) {
+      briefableDirectories.push(dir);
+      dirDocs.push(...docs);
+    }
+  }
+  const briefable = [...new Set([...rootDocs, ...dirDocs])].sort();
+  return { rootDocs, briefable, briefableDirectories };
+}
+
 /** Rank docs by inbound links (how often each is referenced by path across the
  * corpus) with a small role boost, and return the most-cited as primary. This
  * is the doc-level analogue of aider's symbol ranking; the primary is "the one
@@ -548,20 +640,10 @@ async function inventoryDocs(root: string): Promise<{
   briefableDirectories: string[];
   primary: string | null;
 }> {
-  const rootDocs = await listRootMarkdown(root);
-  const briefableDirectories: string[] = [];
-  const dirDocs: string[] = [];
-  for (const dir of DOC_DIRECTORIES) {
-    const docs = await listMarkdownUnder(root, dir);
-    if (docs.length > 0) {
-      briefableDirectories.push(dir);
-      dirDocs.push(...docs);
-    }
-  }
-  const briefable = [...new Set([...rootDocs, ...dirDocs])].sort();
+  const { rootDocs, briefable, briefableDirectories } = await inventoryDocPaths(root);
 
   // Rank primarily against the root docs (a repo's primary design doc lives at
-  // the root); read their text plus a sample of directory docs to count links.
+  // the root); read their text plus the directory docs to count links.
   const corpus: Array<{ path: string; text: string }> = [];
   for (const path of briefable) {
     try {
@@ -575,7 +657,7 @@ async function inventoryDocs(root: string): Promise<{
 }
 
 function detectConventionsFile(root: string): string | null {
-  for (const name of ["AGENTS.md", "CLAUDE.md"]) {
+  for (const name of CONVENTION_FILES) {
     if (Bun.spawnSync(["test", "-e", join(root, name)]).exitCode === 0) {
       return name;
     }
@@ -613,26 +695,12 @@ function detectEntryPoints(root: string, pkg: PackageJson | null): string[] {
     for (const value of Object.values(pkg.bin)) push(value);
   }
   // Conventional entry files that exist, when the manifest named none.
-  for (const candidate of [
-    "src/cli.ts",
-    "src/index.ts",
-    "src/main.ts",
-    "index.ts",
-    "index.js",
-    "main.py",
-    "cmd/main.go",
-  ]) {
+  for (const candidate of ENTRY_CANDIDATES) {
     if (Bun.spawnSync(["test", "-e", join(root, candidate)]).exitCode === 0) {
       push(candidate);
     }
   }
   return out.slice(0, 8);
-}
-
-function countFiles(root: string): number {
-  const out = git(root, ["ls-files"]);
-  if (out === null) return 0;
-  return out.split("\n").filter((line) => line.length > 0).length;
 }
 
 function todayIsoDate(): string {
@@ -649,8 +717,7 @@ export async function bootstrapProfile(root: string): Promise<RepoProfile> {
     detectCommands(root, pm, pkg),
     inventoryDocs(root),
   ]);
-  const fileCount = countFiles(root);
-  const { inputsHash, commit } = await computeFingerprint(root, docs.briefable);
+  const { inputsHash, commit } = await computeFingerprint(root);
 
   return RepoProfileSchema.parse({
     schemaVersion: PROFILE_SCHEMA_VERSION,
@@ -663,7 +730,6 @@ export async function bootstrapProfile(root: string): Promise<RepoProfile> {
       monorepo: await detectMonorepo(root, pkg),
     },
     entryPoints: detectEntryPoints(root, pkg),
-    indexBudget: { fileCount, mapTokens: sizeIndexBudget(fileCount) },
     fingerprint: {
       generated: todayIsoDate(),
       hiveVersion: HIVE_VERSION,
@@ -673,17 +739,40 @@ export async function bootstrapProfile(root: string): Promise<RepoProfile> {
   });
 }
 
-/** First-start bootstrap: if the repo has no profile, write the deterministic
- * one and report that it was created. Idempotent — an existing profile is left
- * untouched (staleness is a separate, non-writing check), so two processes
- * racing on first start converge on identical deterministic content. Returns
- * the action taken so the caller can print the single start-time line. */
-export async function bootstrapIfUninitialized(
-  root: string,
-): Promise<{ created: boolean; profile: RepoProfile }> {
-  const existing = await loadProfile(root);
-  if (existing !== null) return { created: false, profile: existing };
-  const profile = await bootstrapProfile(root);
-  await writeProfile(root, profile);
-  return { created: true, profile };
+// ---------------------------------------------------------------------------
+// The only entry point product code needs.
+// ---------------------------------------------------------------------------
+
+/**
+ * The effective profile for `root`, generating or regenerating it as needed.
+ *
+ * Generation costs a `git ls-files`, a handful of `stat`s, and a read of the
+ * repo's markdown — tens of milliseconds, zero model tokens. That measurement is
+ * the whole design: because being wrong is cheap to fix, being wrong is not
+ * worth *telling anyone about*. There is no stale state, no refresh command, and
+ * no output on any path. A repo whose profile has drifted simply gets a correct
+ * one before the caller sees it.
+ *
+ * Two processes racing here converge: generation is deterministic, and the write
+ * is atomic and skipped when the bytes match.
+ */
+export async function ensureProfile(root: string): Promise<RepoProfile> {
+  const cached = await loadDerivedProfile(root);
+  if (cached !== null && cached.schemaVersion === PROFILE_SCHEMA_VERSION) {
+    const { inputsHash } = await computeFingerprint(root);
+    if (inputsHash === cached.fingerprint.inputsHash) {
+      return applyOverride(cached, await loadOverride(root));
+    }
+  }
+  return regenerateProfile(root);
+}
+
+/** Rebuild the profile from the tree unconditionally, ignoring the fingerprint.
+ * Nothing in normal operation needs this — `ensureProfile` already regenerates
+ * whenever the answer would change. It exists for `hive init --refresh`, as the
+ * escape hatch for a detection you think is wrong and want to watch rerun. */
+export async function regenerateProfile(root: string): Promise<RepoProfile> {
+  const fresh = await bootstrapProfile(root);
+  await writeProfile(root, fresh);
+  return applyOverride(fresh, await loadOverride(root));
 }

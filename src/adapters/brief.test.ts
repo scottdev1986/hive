@@ -11,8 +11,8 @@ import {
   selectSections,
 } from "./brief";
 
-// The brief inputs this repo's generated `.hive/profile.toml` produces. Passing
-// them explicitly keeps the unit tests independent of the on-disk profile while
+// The brief inputs this repo's generated profile produces. Passing
+// them explicitly keeps the unit tests independent of the cached profile while
 // exercising exactly the config product code derives from it. A dedicated test
 // below asserts `loadBriefConfig` recovers these from the committed profile.
 const CONFIG: BriefConfig = {
@@ -195,8 +195,9 @@ describe("selectSections", () => {
 
 describe("loadBriefConfig", () => {
   test("recovers this repo's briefable docs and primary from the profile", async () => {
-    // The committed `.hive/profile.toml` two directories up from this worktree
-    // file (src/adapters/ → repo root). Product code reads exactly this.
+    // Against this very repo, two directories up from this file (src/adapters/ →
+    // repo root). Nothing is committed for it to read: the profile is derived on
+    // demand, which is exactly what product code relies on.
     const root = new URL("../..", import.meta.url).pathname;
     const config = await loadBriefConfig(root);
     expect(config.briefableDocs).toContain("SPEC.md");

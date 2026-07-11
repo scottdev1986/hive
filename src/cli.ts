@@ -223,9 +223,9 @@ export function createProgram(): Command {
   program
     .command("init")
     .description(
-      "Initialize or refresh this repo profile, then bring its Hive daemon up",
+      "Scaffold this repo's agent conventions and seed its memory, then bring its Hive daemon up",
     )
-    .option("--refresh", "re-scan the profile only; do not start the daemon")
+    .option("--refresh", "force a re-scan of the repo profile; never required")
     .option("--scaffold-agents", "offer to scaffold an AGENTS.md when none exists")
     .option("--seed-facts <path>", "JSON file of narrative facts to seed (source: init)")
     .action(async (options: {

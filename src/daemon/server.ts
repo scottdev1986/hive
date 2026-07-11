@@ -23,7 +23,7 @@ import {
   readMemoryFact,
   writeMemoryFact as writeMemoryFactFile,
 } from "../adapters/memory";
-import { bootstrapIfUninitialized, evaluateProfile } from "../adapters/profile";
+import { ensureProfile } from "../adapters/profile";
 import {
   assessStrandedWork,
   removeWorktree,
@@ -763,10 +763,10 @@ export class HiveDaemon {
         }`,
       );
     });
-    // The repo profile (SPEC §14): bootstrap it if this repo has never been met,
-    // and — when it exists but the tree has drifted — emit the one durable
-    // orchestrator note. Never blocks startup; a repo runs without a profile.
-    void this.checkRepoProfile().catch((error) => {
+    // The repo profile (SPEC §14): generate it if this repo has never been met,
+    // regenerate it if it drifted, in silence. Never blocks startup; a repo runs
+    // without a profile, just with poorer briefs.
+    void this.ensureRepoProfile().catch((error) => {
       console.error(
         `Hive repo profile check failed: ${
           error instanceof Error ? error.message : "unknown error"
@@ -809,27 +809,17 @@ export class HiveDaemon {
   }
 
   /**
-   * The repo profile's start-time duties the daemon owns (SPEC §14). It has the
-   * repo root, the message bus, and no terminal — the complement of `hive init`,
-   * which has a terminal but wants the durable note to survive it:
-   *   - Uninitialized: write the deterministic profile, so a repo entered through
-   *     `hive claude` (never `hive init`) still gets un-hardcoded briefs. The
-   *     idempotent, atomic write converges with any concurrent `hive init`.
-   *   - Stale: enqueue exactly one durable orchestrator note. The idempotency key
-   *     is the profile's own fingerprint, so re-boots at the same staleness never
-   *     spam, and a `hive init --refresh` (new fingerprint) re-arms the note.
+   * The repo profile's start-time duty the daemon owns (SPEC §14): have a
+   * correct profile ready before the first spawn asks for one, whether this repo
+   * has ever been seen or has drifted since it was.
+   *
+   * It says nothing to anyone. This used to enqueue a durable note telling the
+   * orchestrator the profile was N commits stale and that a human should run
+   * `hive init --refresh` — a message about a file nobody chose to have, naming a
+   * command that does what the daemon could simply have done. It does it.
    */
-  private async checkRepoProfile(): Promise<void> {
-    const status = await evaluateProfile(this.repoRoot);
-    if (status.state === "uninitialized") {
-      await bootstrapIfUninitialized(this.repoRoot);
-      return;
-    }
-    if (status.state === "stale") {
-      await this.delivery.send("hive-profile", ORCHESTRATOR_NAME, status.note, {
-        idempotencyKey: `profile-stale:${status.profile.fingerprint.inputsHash}`,
-      });
-    }
+  private async ensureRepoProfile(): Promise<void> {
+    await ensureProfile(this.repoRoot);
   }
 
   /**
@@ -2206,7 +2196,7 @@ export class HiveDaemon {
     server.registerTool("memory_write", {
       title: "Write a Hive memory fact",
       description:
-        "Create or update one durable narrative memory fact. WRITE POLICY (SPEC decision 5): a lesson earns a fact only if it is durable (true past this run), non-derivable (not recoverable from the code, git, or the profile), and load-bearing (it would change what a future agent does) — chit-chat, restatements, and anything a grep or .hive/profile.toml already answers do not qualify, and structured truth (commands, layout, entry points) belongs in the profile, never here. DEDUP-BEFORE-WRITE: memory_search first and pass that fact's scope+id to update it in place rather than adding a near-duplicate. CORRECTION-NOT-APPEND: to fix a wrong fact, overwrite it (same id) or memory_delete it — never append a contradiction; git history is the changelog. Set `source` to who is writing (agent at landing, orchestrator for its decisions, init for seeded facts, human for hand-authored) and `verified` to today when you have confirmed the fact against the repo. Omit id to create (slug derived from title); repo scope is committed and travels with the clone, global accumulates lessons across projects. Writes are serialized and immediately reflected in search.",
+        "Create or update one durable narrative memory fact. WRITE POLICY (SPEC decision 5): a lesson earns a fact only if it is durable (true past this run), non-derivable (not recoverable from the code, git, or the profile), and load-bearing (it would change what a future agent does) — chit-chat, restatements, and anything a grep or the repo profile already answers do not qualify, and structured truth (commands, layout, entry points) belongs in the profile, never here. DEDUP-BEFORE-WRITE: memory_search first and pass that fact's scope+id to update it in place rather than adding a near-duplicate. CORRECTION-NOT-APPEND: to fix a wrong fact, overwrite it (same id) or memory_delete it — never append a contradiction; git history is the changelog. Set `source` to who is writing (agent at landing, orchestrator for its decisions, init for seeded facts, human for hand-authored) and `verified` to today when you have confirmed the fact against the repo. Omit id to create (slug derived from title); repo scope is committed and travels with the clone, global accumulates lessons across projects. Writes are serialized and immediately reflected in search.",
       inputSchema: MemoryWriteRequestSchema,
     }, async (input) => {
       this.authorizeTool(capability, "memory_write", "memory:write");

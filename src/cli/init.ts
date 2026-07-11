@@ -1,11 +1,11 @@
 /**
- * `hive init` — the richer, gated profiling pass (SPEC.md decision 14).
+ * `hive init` — the gated enrichment pass (SPEC.md decision 14).
  *
- * The deterministic bootstrap used by every session boundary already
- * un-hardcodes the brief mechanism for zero quota. `hive init` is the pass that
- * does what the bootstrap cannot and must be paid for or confirmed:
- *   - (Re)write the profile, refreshing its fingerprint against the current tree
- *     (`--refresh` re-scans even when a profile already exists).
+ * The profile itself is no longer this command's job. Every session boundary
+ * ensures a correct profile silently, so there is nothing for a human to
+ * initialize and nothing to keep up to date; `hive init` is left with only the
+ * work that *must* be asked for, because it writes into the user's repo or
+ * spends their tokens:
  *   - When no `AGENTS.md` exists, *offer* to scaffold one (opt-in, never blind —
  *     Codex caps the AGENTS.md chain at 32 KiB and truncates silently, so we
  *     never append to a human's existing instructions).
@@ -14,27 +14,27 @@
  *     distinct from the earned facts an agent learns. Structured facts never
  *     become memory; they are already in the profile.
  *
- * It is human- or orchestrator-gated and never silent: running the command is
- * the authorization, and every action it takes is printed. Model-authored
- * narrative (the conventions summary, inferred gotchas) is supplied by the
- * caller — hive's models are its agents, not this CLI — and written through the
- * same seeding path, so the seam with the memory store (decision 5) is exercised
- * whether the facts came from a human, an agent, or a `--seed-facts` file.
+ * Running the command is the authorization, and every action it takes is
+ * printed — but it never ends by asking for another command. Anything Hive can
+ * finish itself, it finishes here (the memory index below is the example: seeded
+ * facts are indexed on the spot, not left with a note to go reindex them).
+ * Model-authored narrative is supplied by the caller — hive's models are its
+ * agents, not this CLI — and written through the same seeding path.
  */
 import { access, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
-  bootstrapProfile,
-  evaluateProfile,
-  loadProfile,
-  PROFILE_RELATIVE_PATH,
-  writeProfile,
+  ensureProfile,
+  loadDerivedProfile,
+  regenerateProfile,
 } from "../adapters/profile";
 import {
   listMemoryFacts,
   writeMemoryFact,
   type MemoryWriteFileInput,
 } from "../adapters/memory";
+import { readDaemonPort } from "../daemon/lifecycle";
+import { reindexMemory } from "./mcp";
 import type { RepoProfile } from "../schemas/profile";
 import { projectRootOrCwd } from "./project-root";
 
@@ -49,7 +49,9 @@ export interface InitFact {
 }
 
 export interface InitOptions {
-  /** Re-scan and rewrite an existing profile, not just fill in a missing one. */
+  /** Force a re-scan even when the profile is already correct. Never required —
+   * every start regenerates a drifted profile on its own — so this is a debug
+   * escape hatch, not a maintenance ritual. */
   refresh?: boolean;
   /** Opt-in `AGENTS.md` scaffold. Only ever writes when none exists. */
   scaffoldAgents?: boolean;
@@ -60,6 +62,7 @@ export interface InitOptions {
 }
 
 export interface InitResult {
+  /** Whether this run rebuilt the derived profile (forced, first-ever, or drifted). */
   profileWritten: boolean;
   agentsScaffolded: boolean;
   /** Ids of the facts seeded (upserted) this run. */
@@ -68,9 +71,9 @@ export interface InitResult {
 }
 
 export interface InitDeps {
-  loadProfile: (root: string) => Promise<RepoProfile | null>;
-  bootstrapProfile: (root: string) => Promise<RepoProfile>;
-  writeProfile: (root: string, profile: RepoProfile) => Promise<void>;
+  ensureProfile: (root: string) => Promise<RepoProfile>;
+  regenerateProfile: (root: string) => Promise<RepoProfile>;
+  loadDerivedProfile: (root: string) => Promise<RepoProfile | null>;
   writeMemoryFact: (
     root: string,
     input: MemoryWriteFileInput,
@@ -78,13 +81,16 @@ export interface InitDeps {
   listMemoryFacts: (root: string) => Promise<Array<{ id: string; scope: string }>>;
   fileExists: (path: string) => Promise<boolean>;
   writeFile: (path: string, contents: string) => Promise<void>;
+  /** Index freshly seeded facts. Best-effort: with no daemon up there is nothing
+   * to tell, because the next one rebuilds the index when it starts. */
+  reindexMemory: () => Promise<void>;
   today: () => string;
 }
 
-const defaultDeps: InitDeps = {
-  loadProfile,
-  bootstrapProfile,
-  writeProfile,
+export const defaultInitDeps: InitDeps = {
+  ensureProfile,
+  regenerateProfile,
+  loadDerivedProfile,
   writeMemoryFact,
   listMemoryFacts,
   fileExists: async (path) => {
@@ -97,6 +103,11 @@ const defaultDeps: InitDeps = {
   },
   writeFile: async (path, contents) => {
     await writeFile(path, contents);
+  },
+  reindexMemory: async () => {
+    const port = readDaemonPort();
+    if (port === null) return;
+    await reindexMemory(port);
   },
   today: () => new Date().toISOString().slice(0, 10),
 };
@@ -123,7 +134,7 @@ export async function seedInitFacts(
   root: string,
   facts: InitFact[],
   today: string,
-  deps: Pick<InitDeps, "writeMemoryFact"> = defaultDeps,
+  deps: Pick<InitDeps, "writeMemoryFact"> = defaultInitDeps,
 ): Promise<string[]> {
   const seeded: string[] = [];
   for (const fact of facts) {
@@ -195,33 +206,29 @@ export function scaffoldAgentsMd(profile: RepoProfile): string {
 export async function runInit(
   cwd: string,
   options: InitOptions = {},
-  deps: InitDeps = defaultDeps,
+  deps: InitDeps = defaultInitDeps,
 ): Promise<InitResult> {
   const today = options.today ?? deps.today();
   const messages: string[] = [];
 
-  // 1. Profile: write when missing, or re-scan on --refresh.
-  const existing = await deps.loadProfile(cwd);
-  let profile = existing;
-  let profileWritten = false;
-  if (existing === null || options.refresh === true) {
-    profile = await deps.bootstrapProfile(cwd);
-    await deps.writeProfile(cwd, profile);
-    profileWritten = true;
-    messages.push(
-      existing === null
-        ? `Wrote ${PROFILE_RELATIVE_PATH}.`
-        : `Refreshed ${PROFILE_RELATIVE_PATH} against the current tree.`,
-    );
-  } else {
-    messages.push(
-      `${PROFILE_RELATIVE_PATH} is already present; pass --refresh to re-scan.`,
-    );
-  }
+  // 1. Profile. Nothing to decide: it is generated if this repo has never been
+  //    profiled and regenerated if it drifted, here exactly as on every other
+  //    start. We report what was found, never what to run next.
+  const before = await deps.loadDerivedProfile(cwd);
+  const profile = options.refresh === true
+    ? await deps.regenerateProfile(cwd)
+    : await deps.ensureProfile(cwd);
+  const profileWritten = options.refresh === true || before === null ||
+    before.fingerprint.inputsHash !== profile.fingerprint.inputsHash;
+  messages.push(
+    `Profiled the repo: ${profile.docs.briefable.length} briefable doc${
+      profile.docs.briefable.length === 1 ? "" : "s"
+    }${profile.commands.test === null ? "" : `, tests run with \`${profile.commands.test}\``}.`,
+  );
 
-  // 2. AGENTS.md: offer to scaffold, never overwrite. `profile` is non-null here.
+  // 2. AGENTS.md: offer to scaffold, never overwrite.
   let agentsScaffolded = false;
-  if (options.scaffoldAgents === true && profile !== null) {
+  if (options.scaffoldAgents === true) {
     const agentsPath = join(cwd, "AGENTS.md");
     const claudePath = join(cwd, "CLAUDE.md");
     const hasAgents = await deps.fileExists(agentsPath);
@@ -240,14 +247,20 @@ export async function runInit(
   }
 
   // 3. Seed narrative facts (source: init). Structured truth stays in the
-  //    profile; only genuinely narrative knowledge is seeded here.
+  //    profile; only genuinely narrative knowledge is seeded here. A seeded fact
+  //    that is not in the search index is not yet a fact anyone can find, so we
+  //    index it now rather than printing the reindex command at someone.
   const facts = options.facts ?? [];
   const factsSeeded = facts.length === 0
     ? []
     : await seedInitFacts(cwd, facts, today, deps);
   if (factsSeeded.length > 0) {
+    await deps.reindexMemory().catch(() => {
+      // No daemon, or one that would not answer: the next daemon to start
+      // rebuilds the index from the files on disk anyway.
+    });
     messages.push(
-      `Seeded ${factsSeeded.length} narrative memory fact${factsSeeded.length === 1 ? "" : "s"} (source: init).`,
+      `Seeded and indexed ${factsSeeded.length} narrative memory fact${factsSeeded.length === 1 ? "" : "s"} (source: init).`,
     );
   }
 
@@ -279,7 +292,9 @@ export async function readSeedFactsFile(path: string): Promise<InitFact[]> {
   });
 }
 
-/** CLI entry: `hive init [--refresh] [--scaffold-agents] [--seed-facts <path>]`. */
+/** CLI entry: `hive init [--refresh] [--scaffold-agents] [--seed-facts <path>]`.
+ * Prints what it did and stops. It never ends by naming another command: the
+ * profile needs no maintenance and seeded facts are indexed on the way out. */
 export async function runInitCli(options: {
   /** The project root; defaults to the git toplevel of process.cwd(), so
    * `hive init` from a repo subdirectory profiles the repo, not the
@@ -291,30 +306,19 @@ export async function runInitCli(options: {
 }): Promise<void> {
   const result = await runInitProfile(options.cwd ?? projectRootOrCwd(), options);
   for (const line of result.messages) console.log(line);
-  if (result.factsSeeded.length > 0) {
-    console.log(
-      "Run `hive memory reindex` (or restart the daemon) to index the seeded facts.",
-    );
-  }
 }
 
-/** Apply the CLI policy: a normal init refreshes a stale profile automatically;
- * `--refresh` forces the same pass. Session startup remains at registration so
- * this profile operation is independently testable. */
+/** Run init's profile pass. Kept separate from the session boundary so it is
+ * independently testable. */
 export async function runInitProfile(
   cwd: string,
   options: { refresh?: boolean; scaffoldAgents?: boolean; seedFacts?: string },
 ): Promise<InitResult> {
-  // Ordinary init refreshes only when declared inputs drift. `--refresh`
-  // forces that same profile pass and is handled by the command registration
-  // as profile-only (no session start).
-  const status = await evaluateProfile(cwd);
-  const refresh = options.refresh === true || status.state === "stale";
   const facts = options.seedFacts === undefined
     ? []
     : await readSeedFactsFile(options.seedFacts);
   return runInit(cwd, {
-    ...(refresh ? { refresh: true } : {}),
+    ...(options.refresh === true ? { refresh: true } : {}),
     ...(options.scaffoldAgents === undefined
       ? {}
       : { scaffoldAgents: options.scaffoldAgents }),

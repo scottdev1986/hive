@@ -25,11 +25,7 @@ import { isStaged, readInstallState } from "../update/install";
 import { renderStartNotice } from "../update/notice";
 import { isRunning } from "../daemon/lifecycle";
 import { liveAgentNames } from "./update";
-import {
-  bootstrapIfUninitialized,
-  evaluateProfile,
-  PROFILE_RELATIVE_PATH,
-} from "../adapters/profile";
+import { ensureProfile } from "../adapters/profile";
 import type { UpdateCheck } from "../update/check";
 
 export interface StartDeps {
@@ -100,44 +96,6 @@ export async function ensureDaemonForBuild(cwd = process.cwd()): Promise<void> {
   );
 }
 
-/**
- * Meet the repo at the shared session boundary (SPEC §14). Bare `hive` and
- * direct orchestrator entry can reach this without the richer init pass, so it
- * recomputes the fingerprint and compares:
- *   - Uninitialized: run the deterministic, zero-quota bootstrap, write the
- *     profile, and print the single line that says it was written.
- *   - Stale (inputs drifted): proceed on the existing profile — a slightly stale
- *     allowlist beats none — and print the one-line `hive init --refresh` note.
- *     The durable orchestrator note is enqueued by the daemon on the same start.
- *   - Fresh: proceed in silence.
- * Any failure here is swallowed by the caller: profiling must never stop a session.
- *
- * This runs *before* the daemon comes up. The daemon bootstraps the profile
- * too (server.ts `checkRepoProfile`, for repos entered through `hive claude`),
- * and by the time `ensureStarted` has seen /health that bootstrap has usually
- * already won — evaluated afterwards, a first session reads as "fresh" and the
- * one line that says the profile was written is silently lost. Both writers
- * are deterministic and idempotent, so ordering the terminal-owning one first
- * costs nothing and makes the announcement reliable.
- */
-export async function announceProfile(
-  cwd: string,
-  write: (line: string) => void,
-): Promise<void> {
-  const status = await evaluateProfile(cwd);
-  if (status.state === "uninitialized") {
-    const { profile } = await bootstrapIfUninitialized(cwd);
-    write(
-      `Wrote ${PROFILE_RELATIVE_PATH} (${profile.docs.briefable.length} briefable ` +
-        "docs, discovered with zero model tokens). Run `hive init` to enrich it.",
-    );
-    return;
-  }
-  if (status.state === "stale") {
-    write(status.note);
-  }
-}
-
 export interface StartedSession {
   readonly port: number;
   readonly cwd: string;
@@ -145,23 +103,23 @@ export interface StartedSession {
 
 /**
  * The session boundary itself, shared by `hive init` and bare `hive`: update
- * notice (best-effort), stale-daemon restart, daemon bring-up, and the
- * init-once profile line (best-effort). Everything a session needs before
- * anything attaches to it — and nothing about *what* attaches, which is why
- * bare `hive` can run this and then hand the port to the Workspace app while
- * `hive init` just prints where the daemon is.
+ * notice (best-effort), stale-daemon restart, and daemon bring-up. Everything a
+ * session needs before anything attaches to it — and nothing about *what*
+ * attaches, which is why bare `hive` can run this and then hand the port to the
+ * Workspace app while `hive init` just prints where the daemon is.
+ *
+ * The repo profile is ensured here too, before the daemon, and says nothing on
+ * any path (SPEC §14). The daemon ensures it as well; both are deterministic and
+ * idempotent, and neither announces itself, so racing them costs nothing.
  */
 export async function startSession(deps: StartDeps = {}): Promise<StartedSession> {
   await printStartNotice(deps).catch(() => {
     // A broken update check must never stop a project from starting.
   });
   const cwd = deps.cwd ?? process.cwd();
-  const write = deps.write ??
-    ((line: string) => process.stderr.write(`${line}\n`));
-  // Before the daemon: see announceProfile on why the order is load-bearing.
-  await announceProfile(cwd, write).catch(() => {
+  await ensureProfile(cwd).catch(() => {
     // Profiling is best-effort: a repo starts even if its profile cannot be
-    // written or read.
+    // written or read, just with poorer briefs.
   });
   await (deps.ensureDaemon ?? ensureDaemonForBuild)(cwd);
   const port = await (deps.ensurePort ?? ensureStarted)();
