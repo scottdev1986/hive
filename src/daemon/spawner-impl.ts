@@ -408,6 +408,28 @@ export const CODING_GUIDELINES = [
   "These bias toward caution over speed; on a trivial task, use judgment.",
 ].join("\n");
 
+/** Hive's non-negotiable protocol rules.
+ *
+ * These lived only in `.hive/memory`, which is committed to *this* repo and so
+ * travels with it — but a user installing Hive into their own repo starts with
+ * zero memories, and every one of these rules was therefore invisible to them.
+ * A rule that exists only as a memory is a note, not a behaviour. They ship in
+ * the prompt for the same reason the coding guidelines do: no agent should have
+ * to elect to receive them.
+ *
+ * Rules 1 and 2 are additionally enforced where they are *decided* rather than
+ * merely stated — `hive_send`'s tool description carries them, so an agent meets
+ * them at the moment it picks a priority, not as something it had to remember.
+ * Rules 3 and 4 are epistemic and have no such choke point: they are prose, and
+ * prose is the weaker guarantee. */
+export const HIVE_PROTOCOL_RULES = [
+  "Hive protocol (non-negotiable):",
+  "1. Urgent is a turn kill, not a fast lane. An urgent or critical message CANCELS the recipient's in-flight turn, which is never resumed — the reasoning so far is discarded. Send ordinary guidance as normal; reserve urgent for genuine preemption.",
+  "2. Sent is not stopped. There is no preemption inside a running tool call: the boundary arrives only when the call returns, so an agent inside a 60-minute command holds your urgent — or your critical stop — for up to 60 minutes. Never report an agent as stopped or informed until it has acknowledged.",
+  '3. An absent field is unknown, never false. A missing or misspelled key does not raise — it reads back as "no". Before trusting a negative, prove your reader can see a positive (a positive control): an all-empty result is usually a bad key, not an empty world.',
+  '4. Measure, do not infer. Never accept an ACT as proof of a STATE: "the command exited 0" is not "the message was received"; "the skill shipped" is not "the agent read it"; "the screen redrew" is not "the agent is alive". Read the thing that records the state.',
+].join("\n");
+
 /** The concrete verify commands the landing gate names, from the repo profile
  * (SPEC §14: "the landing gate's 're-run the tests' resolves to the profile's
  * concrete command"). Null means the profile could not discover it; the gate
@@ -513,6 +535,7 @@ export function buildAgentPrompt(
     // Every tier, including `cheap`: the trimmed prompt drops narration, never a
     // rule, and a small model is the one that can least afford to infer these.
     CODING_GUIDELINES,
+    HIVE_PROTOCOL_RULES,
     buildLandingProtocol(
       worktree.branch, repoRoot, "main", name, 0, concise, options.landingCommands,
     ),

@@ -23,6 +23,7 @@ import {
   buildAgentPrompt,
   buildLandingProtocol,
   CODING_GUIDELINES,
+  HIVE_PROTOCOL_RULES,
   HiveSpawner,
   LANDING_MAX_ATTEMPTS,
   NAME_POOL,
@@ -2572,10 +2573,16 @@ describe("scoped brief in the spawn prompt", () => {
  */
 describe("coding guidelines are guaranteed in context at spawn", () => {
   const RULES = [
+    // karpathy guidelines
     "Think before coding",
     "Simplicity first",
     "Surgical changes",
     "Goal-driven execution",
+    // hive protocol — memory-only until now, so a fresh install was blind to them
+    "Urgent is a turn kill",
+    "Sent is not stopped",
+    "An absent field is unknown, never false",
+    "Measure, do not infer",
   ];
 
   const worktree = { path: "/tmp/wt", branch: "hive/maya-build-auth" };
@@ -2676,7 +2683,8 @@ describe("coding guidelines are guaranteed in context at spawn", () => {
     for (const rule of RULES) expect(starts[0]).toContain(rule);
   });
 
-  test("the guidelines block itself carries every rule (it is the single source the prompt splices in)", () => {
-    for (const rule of RULES) expect(CODING_GUIDELINES).toContain(rule);
+  test("the two blocks between them carry every rule (they are what the prompt splices in)", () => {
+    const blocks = `${CODING_GUIDELINES}\n${HIVE_PROTOCOL_RULES}`;
+    for (const rule of RULES) expect(blocks).toContain(rule);
   });
 });

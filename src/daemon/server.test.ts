@@ -906,6 +906,16 @@ describe("HiveDaemon HTTP server", () => {
         tool.title !== undefined && tool.description !== undefined
       )).toEqual(true);
 
+      // Two protocol rules enforced where they are DECIDED, not merely stated in
+      // a prompt the agent had to remember: an agent reading this description is
+      // choosing a priority right now. "urgent interrupts at the next safe
+      // boundary" used to read as "arrives promptly" — it actually discards the
+      // recipient's in-flight reasoning, and sending is not stopping.
+      const send = tools.tools.find((tool) => tool.name === "hive_send");
+      expect(send?.description).toContain("CANCEL");
+      expect(send?.description).toContain("never resumed");
+      expect(send?.description).toContain("not RECEIVED and not STOPPED");
+
       const missingRecipient = await client.callTool({
         name: "hive_send",
         arguments: { from: "maya", to: "nobody", body: "Hello?" },

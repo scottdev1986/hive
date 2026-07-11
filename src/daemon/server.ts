@@ -2235,7 +2235,7 @@ export class HiveDaemon {
     server.registerTool("hive_send", {
       title: "Send agent message",
       description:
-        'Send a durable message and return its real lifecycle state. normal waits for an ordinary boundary; urgent interrupts at the next safe boundary and requires acknowledgement; critical revokes write/landing authority and restarts the target read-only. Prefer structured priority and intent. Recipient "orchestrator" wakes the root.',
+        'Send a durable message and return its real lifecycle state. normal waits for an ordinary boundary — use it for ordinary guidance. urgent and critical CANCEL the recipient\'s in-flight turn, which is never resumed: its reasoning so far is discarded, so this is preemption, not a fast lane. critical additionally revokes write/landing authority and restarts the target read-only. The returned state is the truth: "queued"/"injected" means SENT, which is not RECEIVED and not STOPPED — there is no preemption inside a running tool call, so an agent inside a long command holds even a critical until that call returns. Never report a target as stopped or informed until it has acknowledged. Recipient "orchestrator" wakes the root.',
       inputSchema: SendRequestSchema,
     }, async ({ from, to, body, ...requested }) => {
       // `from` is a claim about identity, so it is checked against the bound
