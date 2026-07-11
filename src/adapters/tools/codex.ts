@@ -1,14 +1,15 @@
 import {
   chmod,
   mkdir,
-  open,
   readdir,
   rm,
   stat,
   writeFile,
 } from "node:fs/promises";
+import { createReadStream } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
+import { createInterface } from "node:readline";
 import type { CodexRoute } from "../../schemas";
 import { buildCodexMcpExclusionArgs } from "./mcp-scope";
 
@@ -260,17 +261,14 @@ async function readRolloutSessionMeta(
 ): Promise<{ sessionId: string; cwd: string } | null> {
   let firstLine: string;
   try {
-    const handle = await open(path, "r");
+    const input = createReadStream(path);
+    const lines = createInterface({ input, crlfDelay: Infinity });
     try {
-      const { buffer, bytesRead } = await handle.read(
-        Buffer.alloc(8192),
-        0,
-        8192,
-        0,
-      );
-      firstLine = buffer.subarray(0, bytesRead).toString("utf8").split("\n")[0] ?? "";
+      const next = await lines[Symbol.asyncIterator]().next();
+      firstLine = next.done ? "" : next.value;
     } finally {
-      await handle.close();
+      lines.close();
+      input.destroy();
     }
   } catch {
     return null;

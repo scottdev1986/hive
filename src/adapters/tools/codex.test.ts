@@ -320,6 +320,29 @@ describe("Codex adapter", () => {
     ).toBeNull();
   });
 
+  test("rollout disk discovery reads session_meta lines larger than 8 KiB", async () => {
+    const fakeHome = join(tempRoot, "large-meta-codex-home");
+    const dayDir = join(codexSessionsDirectory(fakeHome), "2026", "07", "11");
+    await mkdir(dayDir, { recursive: true });
+    const firstLine = JSON.stringify({
+      timestamp: "2026-07-11T09:00:00.000Z",
+      type: "session_meta",
+      payload: {
+        id: "large-meta-session",
+        cwd: worktreePath,
+        base_instructions: "x".repeat(17_000),
+      },
+    });
+    expect(Buffer.byteLength(firstLine)).toBeGreaterThan(8192);
+    await writeFile(
+      join(dayDir, "rollout-2026-07-11T09-00-00-large.jsonl"),
+      `${firstLine}\n`,
+    );
+
+    expect(await findLatestCodexSessionId(worktreePath, fakeHome))
+      .toEqual("large-meta-session");
+  });
+
   test("omits the model override for the account default", () => {
     const command = buildCodexSpawnCommand({
       name: "agent-4",
