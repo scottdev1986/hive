@@ -1,10 +1,10 @@
 # Session 2026-07-11: what Hive got wrong, and what it now knows
 
-Nineteen commits landed on 2026-07-11, and **none of them are running.** That is the first thing to fix and the reason this document opens with it rather than with the work.
+Twenty-one commits landed on 2026-07-11, and **none of them are running.** That is the first thing to fix and the reason this document opens with it rather than with the work.
 
 What the day was actually about: a user complained about two small things — a nag telling him to run `hive init --refresh`, and `hive update` downloading a binary with no visible progress ("user trust is important"). Chasing those two complaints surfaced twelve bugs, and every one of them was the same bug.
 
-**Hive already held the correct answer and joined it to the wrong conclusion.** Not one was a missing capability. Not one was a measurement Hive could not take. Every measurement was already correct, already arriving, already in memory — and was then discarded, overridden by a guess, clamped by an invented constant, or stamped with a label it had not earned. Every one of the twelve passed its tests. The suite is green at 1023 pass / 11 skip / 0 fail across 72 files (`bun test`, verified at `73bebe7`), and it was green while all twelve were live.
+**Hive already held the correct answer and joined it to the wrong conclusion.** Not one was a missing capability. Not one was a measurement Hive could not take. Every measurement was already correct, already arriving, already in memory — and was then discarded, overridden by a guess, clamped by an invented constant, or stamped with a label it had not earned. Every one of the twelve passed its tests. The suite is green at **1029 pass / 11 skip / 0 fail** across 72 files (`bun test`), and it was green while all twelve were live. **A green suite is not evidence of health, and this session is the proof.**
 
 This document carries the evidence, not just the conclusions — measured numbers, `file:line`, commit hashes, raw provider field names, citations. A conclusion without its evidence gets re-litigated at full token price. That is the whole reason it exists.
 
@@ -144,19 +144,17 @@ To run it properly: the reviewer must be **structurally unable** to see a branch
 
 ## The cross-vendor review: what held, what did not
 
-Five Claude agents and 1,034 green tests reviewed this code. A fresh Codex agent then reviewed it cold. That is worth doing again — but the results below are also a lesson in verifying the reviewer.
+Five Claude agents and a green suite of over a thousand tests produced this code. A fresh Codex agent then reviewed it cold. That is worth doing again — but the results below are also a lesson in verifying the reviewer.
 
 **Not a defect — the first HIGH did not survive verification.** `reconcileInjected` was reported as defined and never called. It is called at `src/daemon/server.ts:701`, inside the 30-second reconciliation timer, and `f5ab08a` added the method and the caller in the same commit. This was reported as "the twelfth instance of the disease, committed by the agent diagnosing it," which is a good story and did not happen. **A review finding is a claim, exactly like everything else here.**
 
-**HIGH — real and outstanding.** `src/daemon/quota-ledger.ts:416-417` uses strict `occurredAt > ?` to sum spend since an observation. Spend landing in the **same millisecond** as an observation is dropped, so Hive under-counts and can admit a spawn past a real limit. Equal wall-clock timestamps cannot encode ordering; this needs a monotonic sequence or a tie-break, not `>=`.
+**HIGH — real, and now fixed.** `src/daemon/quota-ledger.ts` summed spend since an observation with a strict `occurredAt > ?`. A provider reading and a spend landing in the **same millisecond** had no order between them, so the spend fell into neither the snapshot nor the "spend since" added on top of it. It failed in the **dangerous** direction: Hive under-counted and could admit a spawn past a limit the user had really hit. Equal wall-clock timestamps cannot encode ordering, and `>=` would only have moved the error. Fixed in `65cfca6` with a monotonic ledger sequence (`quota_usage_sequence`), backfilled from SQLite's `rowid` — which *is* the insertion order the sequence records.
 
-**MEDIUM — outstanding.** `src/daemon/db.ts:523` executes `PRAGMA foreign_keys = OFF`, then runs the rebuild transaction, then turns them back ON at line 532 — **with no `try`/`finally`**. A throw inside the transaction leaves foreign keys permanently unenforced for the life of the process. (The related "rebuild drops unknown columns" concern does **not** hold: the code copies `AGENT_COLUMNS.filter(c => existing.has(c))` — the intersection — so it cannot drop a column it has never heard of, and the comment at `src/daemon/db.ts:200` is accurate.)
+**MEDIUM — fixed in the same commit.** The agents-table rebuild ran `PRAGMA foreign_keys = OFF` with no `try`/`finally`, so a throw inside the transaction left foreign keys unenforced for the life of the process. It now captures the prior state and restores it in a `finally` (`src/daemon/db.ts:584`). The *other* half of that finding does **not** hold: the rebuild copies `AGENT_COLUMNS.filter(c => existing.has(c))` — the intersection — so it cannot drop a column it has never heard of, and the comment claiming as much is accurate.
 
-**MEDIUM — outstanding.** `src/daemon/readiness.ts` counts any pane change as life, so a wrapper spinner over a dead child reads as alive. The redraw heartbeat is a large improvement over time-to-first-tool-call, but it is still a proxy for *something on screen moving*.
+**MEDIUM — outstanding.** `src/daemon/readiness.ts` counts any pane change as life, so a wrapper spinner over a dead child reads as alive. Untouched by either fix commit. The redraw heartbeat is a large improvement over time-to-first-tool-call, but it is still a proxy for *something on screen moving* — the same shape of proxy, one level less wrong.
 
 **CLEAN under adversarial scrutiny: release signing and staging.** No production activation path bypasses `ensureStaged()`; multi-key Ed25519 verification is correct; active-version corruption fails closed. This is the one area where a mistake would be a supply-chain compromise, and it held.
-
-**Neither `henry` nor `isla` landed anything.** Both branches exist and both are empty (`git log main..hive/henry-…` and `…isla-…` return nothing). The outstanding defects above are genuinely outstanding.
 
 ## The never-fired mechanisms — and a fourth, found while verifying
 
@@ -208,11 +206,9 @@ Preserved because the way a fabricated constant survives is by nobody writing do
 
 **1. Rebuild and restart the daemon.** *(minutes)* Nothing below matters until this is done, and nothing above is true of the running system until it is. Then verify: `hive status` should report real percentages against a 1M window, deep agents should stop reading a clamped 100%, and lucas should read `—` rather than `0%`.
 
-**2. Land the outstanding NO-SHIP defects.** *(~1 agent, half a session)* `henry` and `isla` landed nothing; both branches are empty.
-   - **HIGH:** `src/daemon/quota-ledger.ts:416-417` — strict `occurredAt > ?` drops same-millisecond spend and can admit a spawn past a real limit.
-   - **MEDIUM:** `src/daemon/db.ts:523` — `PRAGMA foreign_keys = OFF` with no `try`/`finally`; a throw leaves them off for the process lifetime.
-   - **MEDIUM:** `src/daemon/readiness.ts` — a wrapper spinner over a dead child still reads as alive.
-   - Note the corrected scope: `reconcileInjected` is **not** a defect, and the `db.ts` column-drop concern does **not** hold.
+**2. Close out the review.** *(small)* The NO-SHIP defects landed while this document was being written — the quota-ledger sequence and the `db.ts` `finally` in `65cfca6`, the live-model source in `2beee6b`. What remains:
+   - **MEDIUM:** `src/daemon/readiness.ts` — a wrapper spinner over a dead child still reads as alive. Untouched by either fix.
+   - **The corrected scope matters here:** `reconcileInjected` is **not** a defect and needs no work, and the `db.ts` column-drop half of that finding does **not** hold. Do not spend an agent re-fixing either.
 
 **3. Build admission control.** *(1 agent, one session — the highest-leverage item)* This is the real diagnosis and it needs **no recycle actuator at all**: do not hand work to an agent without room for it. `admit(agent, task) := resident_tokens + estimated_task_cost + handoff_reserve < ceiling(model)` AND no unresolved repeated failure AND cache warm. The estimate already exists — the orchestrator tiers every task (`src/schemas/quota.ts`). Ship this before anything else in the recycling design, because it is the half that prevents the problem rather than cleaning up after it.
 
@@ -224,6 +220,6 @@ Preserved because the way a fabricated constant survives is by nobody writing do
 
 **7. Constants must cite what measured them.** *(small)* `200_000`, `65%`, `140K`, `15s`, `30s` — every one wrong, every one inherited, none ever re-verified. `QUIET_LIMIT = 12` is the model to copy: justified in-comment against a measured 1Hz redraw. Lint: no bare numeric literal in a constants or config file without a provenance comment naming its measurement.
 
-**8. Cross-vendor review as a release gate.** *(process)* Worth adopting — with the correction that a reviewer's findings are claims to verify, not facts to act on. The headline catch from this session's review was a false positive, and a fresh reviewer still found a real HIGH that five Claude agents and 1,034 green tests missed. Both halves of that sentence are the lesson.
+**8. Cross-vendor review as a release gate.** *(process)* Worth adopting — with the correction that a reviewer's findings are claims to verify, not facts to act on. The headline catch from this session's review was a false positive, and a fresh reviewer still found a real HIGH that five Claude agents and a thousand green tests missed. Both halves of that sentence are the lesson.
 
 **9. Run the degradation experiment properly.** *(1 agent + 1 fresh reviewer)* Anonymised squashed diffs in a scratch repo with no refs, controlling for diff size. It would replace the last inherited constant in this design with a measurement of Hive's own curve — and it is the only open question here that is answerable today without building anything.
