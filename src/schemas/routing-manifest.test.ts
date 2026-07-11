@@ -71,6 +71,13 @@ describe("RoutingManifestSchema", () => {
 
     expect(parsed.futureTopLevel).toEqual({ kept: true });
     expect(parsed.schema.futureSchemaField).toBe("kept");
+    expect(parsed.models["gpt-5.6-sol"]?.codingCapable).toEqual({
+      value: true,
+      provenance: {
+        source: "docs/research/model-routing-and-token-efficiency.md",
+        declaredAt: "2026-07-11T00:00:00Z",
+      },
+    });
   });
 
   test("rejects an unknown major schema version", () => {
@@ -200,11 +207,16 @@ describe("manifestCandidates", () => {
 
     const mechanicalOnly = RoutingManifestSchema.parse({
       ...FIRST_ROUTING_MANIFEST,
-      tiers: {
-        ...FIRST_ROUTING_MANIFEST.tiers,
-        cheap: {
-          ...FIRST_ROUTING_MANIFEST.tiers.cheap,
-          codex: [{ canonicalId: "gpt-5.6-sol", codingCapable: false }],
+      models: {
+        ...FIRST_ROUTING_MANIFEST.models,
+        "gpt-5.6-sol": {
+          codingCapable: {
+            value: false,
+            provenance: {
+              source: "test-review",
+              declaredAt: "2026-07-11T00:00:00Z",
+            },
+          },
         },
       },
     });
@@ -233,6 +245,34 @@ describe("manifestCandidates", () => {
     }
   });
 
+  test("treats an undeclared coding capability as unknown, not false", () => {
+    const { ["gpt-5.6-sol"]: _undeclared, ...models } =
+      FIRST_ROUTING_MANIFEST.models;
+    const manifest = RoutingManifestSchema.parse({
+      ...FIRST_ROUTING_MANIFEST,
+      models,
+    });
+
+    expect(manifestCandidates(
+      manifest,
+      "cheap",
+      "codex",
+      "coding",
+      records,
+      now,
+      60,
+    )).toEqual([]);
+    expect(manifestCandidates(
+      manifest,
+      "cheap",
+      "codex",
+      "mechanical",
+      records,
+      now,
+      60,
+    )).toHaveLength(1);
+  });
+
   test("keeps non-primary entries in the chain but never promotes them", () => {
     const manifest = RoutingManifestSchema.parse({
       ...FIRST_ROUTING_MANIFEST,
@@ -243,11 +283,9 @@ describe("manifestCandidates", () => {
           claude: [
             {
               canonicalId: "claude-fable-5",
-              codingCapable: true,
             },
             {
               canonicalId: "claude-opus-4-8",
-              codingCapable: true,
               autoRoute: false,
             },
           ],

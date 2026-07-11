@@ -15,7 +15,6 @@ const TimestampSchema = z.string().datetime({ offset: true });
 
 export const RoutingManifestCandidateSchema = z.looseObject({
   canonicalId: z.string().min(1),
-  codingCapable: z.boolean(),
   autoRoute: z.boolean().default(true),
   validFrom: TimestampSchema.optional(),
   validUntil: TimestampSchema.optional(),
@@ -40,6 +39,18 @@ export const RoutingManifestTierSchema = z.looseObject({
 
 export type RoutingManifestTier = z.infer<typeof RoutingManifestTierSchema>;
 
+export const RoutingManifestModelSchema = z.looseObject({
+  codingCapable: z.looseObject({
+    value: z.boolean(),
+    provenance: z.looseObject({
+      source: z.string().min(1),
+      declaredAt: TimestampSchema,
+    }),
+  }).optional(),
+});
+
+export type RoutingManifestModel = z.infer<typeof RoutingManifestModelSchema>;
+
 export const RoutingManifestAliasSchema = z.looseObject({
   provider: z.enum(["claude", "codex"]),
   alias: z.string().min(1),
@@ -62,6 +73,7 @@ export const RoutingManifestSchema = z.looseObject({
   revision: z.string().min(1),
   publishedAt: TimestampSchema,
   validUntil: TimestampSchema,
+  models: z.record(z.string().min(1), RoutingManifestModelSchema),
   aliases: z.array(RoutingManifestAliasSchema),
   tiers: z.record(RoutingTierSchema, RoutingManifestTierSchema),
 });
@@ -125,7 +137,10 @@ export function manifestCandidates(
   const candidates = manifest.tiers[tier][provider].flatMap((policy) => {
     const record = recordsById.get(policy.canonicalId);
     if (record === undefined || !activeAt(policy, now)) return [];
-    if (kindRequiresCodingCapability(kind) && !policy.codingCapable) return [];
+    const codingCapable = manifest.models[policy.canonicalId]?.codingCapable;
+    if (kindRequiresCodingCapability(kind) && codingCapable?.value !== true) {
+      return [];
+    }
     if (record.entitled.state !== "known" || !record.entitled.value) return [];
     if (record.hidden.state === "known" && record.hidden.value) return [];
     if (capabilityFreshness(record, freshnessMinutes, now) === "stale") {
@@ -144,6 +159,23 @@ export const FIRST_ROUTING_MANIFEST: RoutingManifest =
     revision: "initial",
     publishedAt: "2026-07-11T00:00:00Z",
     validUntil: "2026-08-11T00:00:00Z",
+    models: Object.fromEntries(
+      [
+        "claude-fable-5",
+        "claude-opus-4-8",
+        "claude-sonnet-5",
+        "claude-haiku-4-5-20251001",
+        "gpt-5.6-sol",
+      ].map((canonicalId) => [canonicalId, {
+        codingCapable: {
+          value: true,
+          provenance: {
+            source: "docs/research/model-routing-and-token-efficiency.md",
+            declaredAt: "2026-07-11T00:00:00Z",
+          },
+        },
+      }]),
+    ),
     aliases: [
       {
         provider: "claude",
@@ -188,31 +220,29 @@ export const FIRST_ROUTING_MANIFEST: RoutingManifest =
         claude: [
           {
             canonicalId: "claude-fable-5",
-            codingCapable: true,
           },
-          { canonicalId: "claude-opus-4-8", codingCapable: true },
+          { canonicalId: "claude-opus-4-8" },
         ],
-        codex: [{ canonicalId: "gpt-5.6-sol", codingCapable: true }],
+        codex: [{ canonicalId: "gpt-5.6-sol" }],
       },
       standard: {
         preferredProvider: "codex",
-        claude: [{ canonicalId: "claude-sonnet-5", codingCapable: true }],
-        codex: [{ canonicalId: "gpt-5.6-sol", codingCapable: true }],
+        claude: [{ canonicalId: "claude-sonnet-5" }],
+        codex: [{ canonicalId: "gpt-5.6-sol" }],
       },
       cheap: {
         preferredProvider: "codex",
         claude: [
           {
             canonicalId: "claude-haiku-4-5-20251001",
-            codingCapable: true,
           },
         ],
-        codex: [{ canonicalId: "gpt-5.6-sol", codingCapable: true }],
+        codex: [{ canonicalId: "gpt-5.6-sol" }],
       },
       review: {
         preferredProvider: "claude",
-        claude: [{ canonicalId: "claude-sonnet-5", codingCapable: true }],
-        codex: [{ canonicalId: "gpt-5.6-sol", codingCapable: true }],
+        claude: [{ canonicalId: "claude-sonnet-5" }],
+        codex: [{ canonicalId: "gpt-5.6-sol" }],
       },
     },
   });
