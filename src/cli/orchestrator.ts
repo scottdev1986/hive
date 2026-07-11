@@ -392,7 +392,8 @@ export function buildOrchestratorLaunchCommand(
       codexTokenFile,
     );
     return ["tmux", "new-session", "-s", orchestratorTmuxSession(), "-c", cwd,
-      ...buildCodexRootAuthorityCommand(undefined, codexCommand.slice(1))];
+      ...buildCodexRootAuthorityCommand(undefined, codexCommand.slice(1)),
+      ";", "set-option", "-g", "mouse", "on"];
   }
   return [
     "tmux",
@@ -402,6 +403,11 @@ export function buildOrchestratorLaunchCommand(
     "-c",
     cwd,
     ...buildOrchestratorCommand(tool, port, memoryIndex, docGuidance, executable),
+    ";",
+    "set-option",
+    "-g",
+    "mouse",
+    "on",
   ];
 }
 

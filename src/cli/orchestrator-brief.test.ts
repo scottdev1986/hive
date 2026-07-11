@@ -108,6 +108,9 @@ describe("orchestrator brief", () => {
     ]);
     expect(command).not.toContain("-A");
     expect(command).toContain(ORCHESTRATOR_BRIEF);
+    expect(command.slice(-5)).toEqual([
+      ";", "set-option", "-g", "mouse", "on",
+    ]);
   });
 
   test("runs Codex root through an app-server authority and remote TUI", () => {
@@ -123,7 +126,7 @@ describe("orchestrator brief", () => {
     expect(command.slice(0, 7)).toEqual([
       "tmux", "new-session", "-s", orchestratorTmuxSession(), "-c", "/repo", "sh",
     ]);
-    const shellCommand = command.at(-1)!;
+    const shellCommand = command[command.indexOf(";") - 1]!;
     expect(shellCommand).toContain("codex app-server --listen 'unix://");
     expect(shellCommand).toContain("'codex' '--remote' 'unix://");
     expect(shellCommand).toContain("mcp_servers.hive.url=");
@@ -131,6 +134,9 @@ describe("orchestrator brief", () => {
     expect(shellCommand).toContain(ORCHESTRATOR_BRIEF.slice(0, 80));
     expect(shellCommand).toContain(guidance);
     expect(shellCommand).toContain(memory);
+    expect(command.slice(-5)).toEqual([
+      ";", "set-option", "-g", "mouse", "on",
+    ]);
   });
 
   test("Codex launch does not resolve or version-gate Claude", async () => {
@@ -149,7 +155,9 @@ describe("orchestrator brief", () => {
       noExistingRoot,
     );
     expect(exitCode).toEqual(0);
-    expect(command.at(-1)).toContain(ORCHESTRATOR_BRIEF.slice(0, 80));
+    expect(command[command.indexOf(";") - 1]).toContain(
+      ORCHESTRATOR_BRIEF.slice(0, 80),
+    );
   });
 
   test("kills an unattached stale root before launch", async () => {
@@ -348,7 +356,7 @@ describe("orchestrator brief", () => {
         "claude",
         "/home/x/.hive/credentials/codex-root.cap",
       );
-      const shellCommand = command.at(-1)!;
+      const shellCommand = command[command.indexOf(";") - 1]!;
       expect(shellCommand).toContain("capability_token_file");
       expect(shellCommand).toContain("codex-root.cap");
     });

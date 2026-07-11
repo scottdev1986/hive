@@ -144,8 +144,7 @@ describe("TmuxAdapter launch diagnostics", () => {
     expect(calls[0]?.args.slice(7)).toEqual([
       ";",
       "set-option",
-      "-t",
-      "hive-maya",
+      "-g",
       "mouse",
       "on",
       ";",
@@ -373,7 +372,7 @@ describe("TmuxAdapter", () => {
     expect(await tmux.hasSession(session)).toEqual(true);
     expect((await tmux.listSessions()).includes(session)).toEqual(true);
     expect(
-      await queryPrivateTmux("show-options", "-v", "-t", session, "mouse"),
+      await queryPrivateTmux("show-options", "-Av", "-t", session, "mouse"),
     ).toEqual("on");
     expect(
       await queryPrivateTmux(
@@ -403,6 +402,27 @@ describe("TmuxAdapter", () => {
     await tmux.killSession(session);
     expect(await tmux.hasSession(session)).toEqual(false);
     sessions.delete(session);
+  });
+
+  test("enables mouse for sessions that survived from before the fix", async () => {
+    const existing = `hive-existing-${crypto.randomUUID()}`;
+    const fresh = `hive-fresh-${crypto.randomUUID()}`;
+
+    await tmux.newSession(existing, socketDirectory, "cat");
+    sessions.add(existing);
+    await queryPrivateTmux("set-option", "-gu", "mouse");
+    expect(
+      await queryPrivateTmux("show-options", "-Av", "-t", existing, "mouse"),
+    ).toEqual("off");
+
+    await tmux.newSession(fresh, socketDirectory, "cat");
+    sessions.add(fresh);
+    expect(
+      await queryPrivateTmux("show-options", "-Av", "-t", existing, "mouse"),
+    ).toEqual("on");
+    expect(
+      await queryPrivateTmux("show-options", "-Av", "-t", fresh, "mouse"),
+    ).toEqual("on");
   });
 
   test("preserves a real failed pane long enough to capture its cause", async () => {
