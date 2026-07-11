@@ -1,4 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { loadHiveConfig } from "../config/load";
 import type { AgentRecord } from "../schemas";
 import { HiveDatabase } from "./db";
 import type { TmuxSender } from "./delivery";
@@ -206,6 +210,52 @@ describe("idle-agent reap sweep", () => {
 
       expect(db.getAgentByName("maya")?.status).toEqual("idle");
       expect(tmux.killed).toEqual([]);
+    } finally {
+      await daemon.stop();
+      db.close();
+    }
+  });
+
+  test("a fresh install with no [lifecycle] config resolves to an enabled reap sweep with zero setup", async () => {
+    // Reproduces exactly what `hive init` leaves behind (no config.toml) and
+    // what cli/daemon.ts's runDaemon() does with the result: `const config =
+    // await loadHiveConfig(); ... lifecycle: config.lifecycle`. This is the
+    // real startup path, not a re-assertion of the schema default in isolation.
+    const tempRoot = await mkdtemp(join(tmpdir(), "hive-daemon-default-"));
+    const hiveHome = join(tempRoot, "home");
+    await mkdir(hiveHome, { recursive: true });
+    const previousHiveHome = Bun.env.HIVE_HOME;
+    Bun.env.HIVE_HOME = hiveHome;
+    let config;
+    try {
+      config = await loadHiveConfig();
+    } finally {
+      if (previousHiveHome === undefined) {
+        delete Bun.env.HIVE_HOME;
+      } else {
+        Bun.env.HIVE_HOME = previousHiveHome;
+      }
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+    expect(config.lifecycle).toEqual({ idleReap: true, idleReapMinutes: 10 });
+
+    const db = new HiveDatabase(":memory:");
+    const tmux = new FakeDaemonTmux();
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new StubSpawner(),
+      tmuxSender: new SilentTmuxSender(db),
+      tmux,
+      repoRoot: "/tmp/repo",
+      lifecycle: config.lifecycle,
+      removeWorktree: async () => {},
+      assessStrandedWork: async () => ({ dirtyFiles: [], unmergedCommits: 0 }),
+    });
+    db.insertAgent(agent({ lastEventAt: OLD_ENOUGH }));
+    try {
+      await daemon.reapIdleAgents();
+
+      expect(db.getAgentByName("maya")?.status).toEqual("dead");
     } finally {
       await daemon.stop();
       db.close();
