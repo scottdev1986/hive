@@ -166,6 +166,32 @@ Three further mechanics from Anthropic's docs bear directly on Hive's architectu
 
 **One hard unknown, stated as such.** The unit of the Claude Pro/Max subscription limit — and whether cache reads are discounted inside it — is **not publicly documented**. Anthropic's support article names the factors ("length and complexity of your conversations, the features you use, which Claude model, the effort level") but never states the unit and never mentions cache tokens. Codex is worse documented still. Per this repo's `accurate-numbers-only-rule`: **we do not know, and Hive's quota logic must not infer a token-cost model for subscriptions from the API price list.** What *is* documented is that Claude Code requests the 1-hour TTL automatically on a subscription because "usage is included in your plan rather than billed per token," and drops to 5 minutes the moment you are billed for overage — which tells us Anthropic itself treats the write premium as material only when metered.
 
+## What Hive's own agents actually carry
+
+Every number above was measured on someone else's workload. These were measured on this fleet, on 2026-07-11, by summing the last assistant `usage` entry in each agent's transcript — not by inverting a reported percentage:
+
+| Agent | Resident tokens | Turns | Daemon reports |
+|---|---|---|---|
+| zoe | **472,090** | 632 | 100% |
+| lena | **425,724** | 585 | 100% |
+| emma | **384,827** | 466 | 100% |
+| omar | **366,692** | 491 | 100% |
+| mia | 191,245 | 156 | 35% |
+
+Four facts fall out, and they are worth more than any citation in this document because they are ours.
+
+**The window is 1M, proven by existence rather than inference.** zoe's most recent request carried **470,699 cache-read tokens in a single API call**, and the API served it. That is impossible against a 200K window. No denominator needs to be assumed or trusted; the request either fits or it does not, and it fit. Her trajectory grows monotonically from 33,817 to 472,090 with no reset, so this is genuine accumulated context and not a compaction artifact.
+
+**The daemon is still dividing by 200,000**, which the same table proves from the other side: 472,090 ÷ 200,000 clamps to 100%, while ÷ 1,000,000 would read 47%. Four agents pinned at exactly 100 is the clamp, not a coincidence. So the fix in `856ec11` is committed but not running, and every percentage the orchestrator currently reads is meaningless.
+
+**Cold start is ~33K tokens, now corroborated across two independent agents** (zoe's first turn 33,817; mia's 33,076). That is the briefing a respawn re-pays before doing any work. Net context growth runs roughly 700–750 tokens/turn.
+
+**And the fleet is far deeper into its windows than anyone believed.** This is where I have to correct myself. I earlier told the orchestrator that "no agent is anywhere near any quality line," reasoning that a reported 28% must be 28% of 200K ≈ 56,000 tokens. That was wrong, and it was wrong in exactly the way this document exists to warn against: **I inverted a percentage instead of measuring the transcript.** The 28% had come from a 1M denominator, not the daemon's. The agents are at 366K–472K, not 56K. Proof by existence beats proof by denominator, and I should have reached for it first.
+
+The honest reading of that is neither "they are past the line" nor "so it does not matter," because this document's central claim is that **there is no line** — no measured threshold, in this repo or the literature, and certainly not at 140K. What can be said is sharper and more uncomfortable than the folklore it replaces: the only fixed-task agentic curve anyone has published (LOCA-bench) puts Claude-4.5-Opus at 34% success by 128K and 14.7% by 256K, and **zoe is at 472K — off the end of that table entirely.** We cannot say she has crossed a threshold. We can say she is operating in a region where every published measurement of every model shows severe degradation, that Hive has never checked whether she has degraded, and that Hive's telemetry currently cannot tell anyone either way.
+
+That is the real finding, and it is worse than a wrong threshold: **Hive is flying four long-lived agents deep into unmeasured territory with a broken instrument.** Whether they are actually degraded is the open question below — and it is answerable, because their work is on branches and can be reviewed.
+
 ## What Hive should do
 
 Nothing in this section is implemented, and one clarification is owed first, because it changes what the live risk actually is.
@@ -250,6 +276,8 @@ Neither error is free, and the assumption that one of them is — that "conserva
 The asymmetry that should be encoded: **a too-late recycle costs one bad commit that review can catch; a too-early recycle costs quota on every agent, forever, and silently drops constraints.** Erring early is not caution. It is a recurring tax with a correctness risk attached.
 
 ## Open questions
+
+**Are zoe, lena, emma and omar actually degraded right now?** They are carrying 366K–472K tokens each, which is past every published curve, and nobody has looked. This is the one open question that can be answered today without building anything: their work is on branches, so review it. If the code landing from a 472K agent is measurably worse than the code landing from a 190K one — more verbose, contradicting earlier decisions, ignoring stated constraints — that is Hive's own first data point on its own curve, and it is worth more than every citation in this document. If it is *not* worse, that is equally informative, and it is an argument that thinking models tolerate depth far better than the folklore assumes. Either way, do not guess: SlopCodeBench's warning is that quality rots while the tests stay green, so a green suite is not evidence of health.
 
 **Where does *Hive's* curve actually break?** Every number in this document was measured on someone else's workload. LOCA-bench is the closest — a fixed task with context inflated around it — but its tasks are mock-server exploration, not code edits in a git worktree. **We do not know Hive's curve, and we should measure it rather than inherit one.** The experiment is cheap and this repo is the ideal instrument: take a fixed, verifiable coding task with a known-good solution; run it in a fresh agent, and again in agents pre-loaded with 32K / 64K / 128K / 256K of *irrelevant but plausible* repo context (other files, prior unrelated transcripts); score solve rate, constraint adherence (plant an explicit "do not modify file X"), and turn count. That is LOCA-bench's design, pointed at Hive's actual workload, and it would replace the last inherited constant in this design with a measurement.
 
