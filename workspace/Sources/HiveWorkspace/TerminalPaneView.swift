@@ -2,7 +2,8 @@ import AppKit
 import SwiftTerm
 import WorkspaceCore
 
-/// Serializes and coalesces tmux copy-mode commands. Trackpads can emit many
+/// Serializes and coalesces tmux copy-mode commands for panes where Hive
+/// intentionally suppresses terminal mouse reporting. Trackpads can emit many
 /// events while one tmux process is running; adjacent events in the same
 /// direction become one command instead of an unbounded subprocess queue.
 private final class TmuxScrollController: @unchecked Sendable {
@@ -88,6 +89,7 @@ final class TerminalPaneView: NSView, LocalProcessTerminalViewDelegate {
 
     let terminal = LocalProcessTerminalView(frame: .zero)
     private let tmuxScroller: TmuxScrollController?
+    private let forwardsScrollWheel: Bool
     private var scrollMonitor: Any?
 
     private var pendingLaunch: (command: String, workingDirectory: String)?
@@ -96,6 +98,7 @@ final class TerminalPaneView: NSView, LocalProcessTerminalViewDelegate {
 
     init(tmuxSession: String? = nil, allowsMouseReporting: Bool = true) {
         tmuxScroller = tmuxSession.map(TmuxScrollController.init)
+        forwardsScrollWheel = allowsMouseReporting
         super.init(frame: .zero)
         terminal.allowMouseReporting = allowsMouseReporting
         terminal.processDelegate = self
@@ -125,10 +128,28 @@ final class TerminalPaneView: NSView, LocalProcessTerminalViewDelegate {
         scrollMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
             guard let self, event.window === self.window,
                   self.bounds.contains(self.convert(event.locationInWindow, from: nil)),
-                  self.submitScroll(deltaY: event.scrollingDeltaY)
+                  self.submitScroll(event)
             else { return event }
             return nil
         }
+    }
+
+    @discardableResult
+    func submitScroll(_ event: NSEvent, locationInTerminal: CGPoint? = nil) -> Bool {
+        guard event.scrollingDeltaY != 0 else { return false }
+        if forwardsScrollWheel {
+            let term = terminal.getTerminal()
+            let point = locationInTerminal
+                ?? terminal.convert(event.locationInWindow, from: nil)
+            let column = min(max(Int(point.x / max(terminal.bounds.width, 1)
+                                     * CGFloat(term.cols)) + 1, 1), term.cols)
+            let row = min(max(term.rows - Int(point.y / max(terminal.bounds.height, 1)
+                                              * CGFloat(term.rows)), 1), term.rows)
+            let button = event.scrollingDeltaY > 0 ? 64 : 65
+            terminal.send(txt: "\u{1b}[<\(button);\(column);\(row)M")
+            return true
+        }
+        return submitScroll(deltaY: event.scrollingDeltaY)
     }
 
     @discardableResult

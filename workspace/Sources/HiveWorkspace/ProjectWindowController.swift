@@ -244,9 +244,25 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
         paneViews[pane]?.contentView.send(text: text)
     }
 
-    /// Exercises the wheel gesture path in the running terminal pane.
-    func postScrollWheel(deltaY: CGFloat, pane: PaneID) {
-        paneViews[pane]?.contentView.submitScroll(deltaY: deltaY)
+    /// Delivers a wheel event to the running terminal pane through the same
+    /// routing method as the AppKit event monitor.
+    @discardableResult
+    func postScrollWheel(deltaY: CGFloat, pane: PaneID) -> Bool {
+        guard let contentView = paneViews[pane]?.contentView else { return false }
+        guard let cgEvent = CGEvent(
+            scrollWheelEvent2Source: nil,
+            units: .pixel,
+            wheelCount: 1,
+            wheel1: Int32(deltaY),
+            wheel2: 0,
+            wheel3: 0),
+              let event = NSEvent(cgEvent: cgEvent)
+        else { return false }
+        return contentView.submitScroll(
+            event,
+            locationInTerminal: CGPoint(
+                x: contentView.terminal.bounds.midX,
+                y: contentView.terminal.bounds.midY))
     }
 
     func terminalChildRunning(pane: PaneID) -> Bool {

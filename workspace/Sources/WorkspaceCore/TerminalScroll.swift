@@ -16,7 +16,7 @@ public func terminalScrollSession(
 }
 
 /// A normalized terminal scroll gesture. The AppKit terminal host translates
-/// this into tmux copy-mode commands for panes attached to tmux sessions.
+/// this into tmux copy-mode commands when terminal mouse reporting is disabled.
 public struct TerminalScrollRequest: Equatable, Sendable {
     public enum Direction: Equatable, Sendable {
         case up

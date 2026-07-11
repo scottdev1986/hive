@@ -113,16 +113,20 @@ final class SmokeRunner {
         }
 
 
-        // 4. Wheel events in both pane kinds enter authoritative tmux
-        // copy-mode through the running terminal pane's gesture path.
-        if let agent = expectedAgents.first,
-           let session = controller.state.panes[ProjectState.paneID(forAgent: agent.name)]?.tmuxSession {
-            controller.postScrollWheel(deltaY: 10, pane: ProjectState.paneID(forAgent: agent.name))
-            check(waitUntil(5) { self.tmuxPaneIsInCopyMode(session) },
-                  "agent wheel enters tmux copy-mode")
+        // 4. Agent panes encode wheel gestures for tmux, which can forward them
+        // to a mouse-aware TUI. The orchestrator suppresses mouse reporting, so
+        // Workspace keeps its explicit copy-mode path.
+        if let agent = expectedAgents.first {
+            check(controller.postScrollWheel(
+                deltaY: 10,
+                pane: ProjectState.paneID(forAgent: agent.name)),
+                "agent wheel is sent through tmux mouse routing")
         }
         if let session = config.orchestratorSession {
-            controller.postScrollWheel(deltaY: 10, pane: ProjectState.orchestratorPaneID)
+            check(controller.postScrollWheel(
+                deltaY: 10,
+                pane: ProjectState.orchestratorPaneID),
+                "orchestrator wheel uses Workspace copy-mode routing")
             check(waitUntil(5) { self.tmuxPaneIsInCopyMode(session) },
                   "orchestrator wheel enters tmux copy-mode")
         } else {
