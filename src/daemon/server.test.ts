@@ -985,8 +985,16 @@ describe("HiveDaemon HTTP server", () => {
       expect(approved.resolvedAt === null).toEqual(false);
       expect(db.listApprovals("pending")).toEqual([]);
       expect(db.getAgentByName("sam")?.status).toEqual("idle");
+      // The approval-resolution notice is deliberately fire-and-forget (it
+      // must not make hive_approve's response wait on pane delivery), so give
+      // its microtask chain a tick to land before asserting on the pane.
+      await new Promise((resolve) => setTimeout(resolve, 10));
       expect(tmux.calls).toEqual([
         ["hive-sam", "📨 message from maya: After approval."],
+        [
+          "hive-sam",
+          '📨 message from hive-approvals: Your approval request "Push the branch" was approved.',
+        ],
       ]);
 
       const terminalHandle = {

@@ -2378,6 +2378,29 @@ export class HiveDaemon {
         });
         await this.delivery.flushQueued(approval.agentName);
       }
+      // A resolution the requesting agent is never told about is a resolution
+      // it cannot act on: an agent whose land-rearm approval was silently
+      // granted has no reason to retry hive_land, so it just sits idle until a
+      // human notices and prods it with an urgent message. Every resolution —
+      // approve or deny — gets an explicit envelope naming the approval and
+      // the outcome, independent of whatever channel/relay/status-flush path
+      // above already applies.
+      const resolutionBody = decision === "approve"
+        ? approval.description.startsWith(LAND_REARM_PREFIX)
+          ? `Your approval request "${approval.description}" was approved — re-arm granted, retry hive_land now.`
+          : `Your approval request "${approval.description}" was approved.`
+        : `Your approval request "${approval.description}" was denied — do not retry it; report back with the blocker instead.`;
+      // Not awaited: a live-channel recipient's delivery can wait several
+      // seconds for the bridge's ack before falling back, and hive_approve's
+      // response must not hang on that. The message row itself is written
+      // synchronously before send() reaches its first await, so it is durable
+      // the instant this call is made.
+      void this.delivery.send(
+        "hive-approvals",
+        approval.agentName,
+        resolutionBody,
+        { idempotencyKey: `approval-resolved:${approval.id}` },
+      ).catch(logAlertDeliveryFailure);
       return toolResult(approval, "approval");
     });
 

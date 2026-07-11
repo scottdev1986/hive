@@ -420,6 +420,17 @@ describe("a one-shot landing grant cannot be replayed", () => {
       decision: "approve",
     });
     expect(approved.ok).toBe(true);
+
+    // Nothing tells a waiting agent its re-arm resolved unless the daemon
+    // says so itself — this is the notification that replaces the human
+    // having to prod it with an urgent message.
+    const notice = db.listMessages().find(
+      (message) => message.from === "hive-approvals" && message.to === "maya",
+    );
+    expect(notice?.body).toContain(pending[0]!.description);
+    expect(notice?.body).toContain("approved");
+    expect(notice?.body).toContain("retry hive_land now");
+
     expect((await callTool(daemon, token, "hive_land", { agent: "maya", capabilityEpoch: 0 })).ok).toBe(true);
     expect(landed).toEqual(["hive/maya-work", "hive/maya-work"]);
     expect((await callTool(daemon, token, "hive_land", { agent: "maya", capabilityEpoch: 0 })).ok).toBe(false);
@@ -442,6 +453,16 @@ describe("a one-shot landing grant cannot be replayed", () => {
       id: pending[0]!.id,
       decision: "deny",
     })).ok).toBe(true);
+
+    // A denial must not leave the agent waiting or guessing: it is told
+    // explicitly, so it reports back instead of retrying blindly.
+    const notice = db.listMessages().find(
+      (message) => message.from === "hive-approvals" && message.to === "maya",
+    );
+    expect(notice?.body).toContain(pending[0]!.description);
+    expect(notice?.body).toContain("denied");
+    expect(notice?.body).toContain("report back");
+
     expect((await callTool(daemon, token, "hive_land", { agent: "maya", capabilityEpoch: 0 })).ok).toBe(false);
     expect(landed).toEqual(["hive/maya-work"]);
     await daemon.stop();
