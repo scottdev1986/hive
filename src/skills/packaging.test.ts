@@ -107,18 +107,14 @@ test("the compiled binary carries every shipped skill", () => {
 });
 
 /**
- * The one dev file whose text may legitimately appear in the binary:
- * `.hive/skills/kaparthy-guidelines` is this repo's own copy of the same
- * guidance Hive ships as `karpathy-guidelines` (note the older directory's
- * misspelling), so its words are shipped words.
- *
- * The exemption is by *path*, deliberately. The earlier version of this test
- * exempted any dev text that also appeared in a shipped skill, and that rule
- * turned out to swallow a real leak: text pasted into a shipped skill exempted
- * itself. An exemption you can grant yourself by leaking is not an exemption.
+ * No exemptions, deliberately. An earlier version of this test excused any dev
+ * text that also appeared in a shipped skill — and that rule turned out to
+ * swallow a real leak, because text pasted into a shipped skill exempts itself.
+ * An exemption you can grant yourself by leaking is not an exemption. The
+ * shipped guidance moved *out* of `.hive/skills/` rather than being copied, so
+ * there is no dev file whose words are legitimately in the binary, and nothing
+ * here needs excusing.
  */
-const DEV_TWIN_OF_A_SHIPPED_SKILL = "kaparthy-guidelines";
-
 test("the compiled binary carries no Hive memory and no dev-only skill", async () => {
   const devOnly: string[] = [];
   for (const directory of [".hive/memory", ".hive/skills", ".claude/skills"]) {
@@ -139,7 +135,6 @@ test("the compiled binary carries no Hive memory and no dev-only skill", async (
   const leaked: string[] = [];
   let checked = 0;
   for (const path of devOnly) {
-    if (path.includes(DEV_TWIN_OF_A_SHIPPED_SKILL)) continue;
     const mark = fingerprint(await readFile(path, "utf8"));
     // Too short to be evidence of anything. Counted as unchecked rather than
     // quietly passed, so `checked` below stays an honest coverage number.
