@@ -1,4 +1,12 @@
-import { chmod, mkdir, open, readdir, stat, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  open,
+  readdir,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import type { CodexRoute } from "../../schemas";
@@ -21,6 +29,13 @@ export interface CodexSpawnOptions {
    * process only, via a config override; the user's file is never touched.
    * Hive's own `hive` server is never in this list. */
   excludeMcpServers?: readonly string[];
+  /** A capability token was minted for this agent, so the spawn tells codex
+   * to read the bearer from the launch environment. Only the env var NAME
+   * rides the argv; the value enters through the tmux launch command's
+   * `$(cat ...)` substitution (wrapCodexSpawnWithCapabilityEnv), which `ps`
+   * shows unexpanded. Never emitted without a token: codex 0.144.1 silently
+   * disables an MCP server whose bearer_token_env_var is unset. */
+  withCapabilityToken?: boolean;
 }
 
 export type CodexAgentConfigOptions = Pick<
@@ -28,13 +43,38 @@ export type CodexAgentConfigOptions = Pick<
   "name" | "daemonPort" | "readOnly"
 > & {
   /** The agent's capability token. Codex has no connect-time headers helper,
-   * so unlike Claude its token has to sit in a file. It goes in the 0600
-   * config.toml as a static header rather than in `bearer_token_env_var`,
-   * because an environment variable is inherited by every descendant. */
+   * so unlike Claude its token has to sit in a file: a dedicated 0600
+   * `capability-token` whose contents the launch shell exports as
+   * CODEX_CAPABILITY_TOKEN_ENV for `bearer_token_env_var`. It must never ride
+   * an argv (visible in `ps`) and never sit in the project config.toml —
+   * codex does not read that file under Hive's launch. */
   capabilityToken?: string;
 };
 
 export const CODEX_NOTIFY_SCRIPT = "hive-notify.sh";
+
+/** The env var codex reads the agent's bearer from (bearer_token_env_var).
+ * Populated only inside the agent's tmux launch shell, never in any argv. */
+export const CODEX_CAPABILITY_TOKEN_ENV = "HIVE_CAPABILITY_TOKEN";
+
+export function codexCapabilityTokenPath(worktreePath: string): string {
+  return join(worktreePath, ".codex", "capability-token");
+}
+
+/** Prefixes a codex launch shell command so the capability token file's
+ * contents reach the codex process environment without ever appearing in an
+ * argv: `ps` shows the `$(cat ...)` text, not the secret. Codex 0.144.1 does
+ * pass its environment to exec-tool children (shell_environment_policy
+ * exclude/include_only were both ignored when tested), so the agent's own
+ * commands can read the var — the same exposure as the 0600 token file
+ * itself, which any same-user process can already read. */
+export function wrapCodexSpawnWithCapabilityEnv(
+  command: string,
+  worktreePath: string,
+): string {
+  const tokenPath = shellToken(codexCapabilityTokenPath(worktreePath));
+  return `${CODEX_CAPABILITY_TOKEN_ENV}="$(cat ${tokenPath})" ${command}`;
+}
 
 const shellToken = (value: string): string => {
   if (/^[A-Za-z0-9_./:@+-]+$/.test(value)) {
@@ -118,6 +158,12 @@ function buildCodexConfigArgs(
     hookOverride("Stop", "turn-end"),
     "-c",
     `mcp_servers.hive.url=${tomlString(`http://127.0.0.1:${options.daemonPort}/mcp`)}`,
+    ...((options.withCapabilityToken ?? false)
+      ? [
+        "-c",
+        `mcp_servers.hive.bearer_token_env_var=${tomlString(CODEX_CAPABILITY_TOKEN_ENV)}`,
+      ]
+      : []),
     // Detach the human's own servers from this agent. Same override channel as
     // hooks and trust, so spawn and resume stay one shape.
     ...buildCodexMcpExclusionArgs(options.excludeMcpServers ?? []).args,
@@ -268,25 +314,32 @@ export async function writeCodexAgentConfig(
     ].join(" "),
     "",
   ].join("\n");
-  // No hook tables here: this project-local file only loads for directories
-  // whose trust is persisted in the user's config, which Hive never edits.
-  // The lifecycle hooks ride the spawn command's `-c` overrides instead, and
-  // defining them in both places would double-fire if the file ever loaded.
+  // No hook tables and no Authorization header here: this project-local file
+  // only loads for directories whose trust is persisted in the user's config,
+  // which Hive never edits. The lifecycle hooks ride the spawn command's `-c`
+  // overrides, and the capability token travels through a 0600 file whose
+  // contents the launch shell exports for bearer_token_env_var — never
+  // through config codex will not read.
   const config = [
     "[mcp_servers.hive]",
     `url = ${tomlString(`http://127.0.0.1:${options.daemonPort}/mcp`)}`,
-    ...(options.capabilityToken === undefined ? [] : [
-      "",
-      "[mcp_servers.hive.http_headers]",
-      `Authorization = ${tomlString(`Bearer ${options.capabilityToken}`)}`,
-    ]),
     "",
   ].join("\n");
 
   const configPath = join(codexDirectory, "config.toml");
+  const tokenPath = codexCapabilityTokenPath(worktreePath);
   await Promise.all([
     writeFile(configPath, config, { mode: 0o600 }),
     writeFile(notifyPath, notifyScript, { mode: 0o755 }),
+    options.capabilityToken === undefined
+      // A leftover token from an earlier process must not outlive the spawn
+      // that owned it.
+      ? rm(tokenPath, { force: true })
+      : writeFile(tokenPath, options.capabilityToken, { mode: 0o600 }),
   ]);
-  await Promise.all([chmod(configPath, 0o600), chmod(notifyPath, 0o755)]);
+  await Promise.all([
+    chmod(configPath, 0o600),
+    chmod(notifyPath, 0o755),
+    ...(options.capabilityToken === undefined ? [] : [chmod(tokenPath, 0o600)]),
+  ]);
 }

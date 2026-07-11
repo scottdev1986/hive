@@ -16,6 +16,7 @@ import {
 } from "../adapters/tools/claude";
 import {
   buildCodexSpawnCommand,
+  wrapCodexSpawnWithCapabilityEnv,
   writeCodexAgentConfig,
 } from "../adapters/tools/codex";
 import { listInheritedCodexMcpServers } from "../adapters/tools/mcp-scope";
@@ -699,6 +700,7 @@ export class HiveSpawner implements Spawner {
             readOnly,
             worktreePath: agent.worktreePath,
             excludeMcpServers,
+            withCapabilityToken: capabilityToken !== undefined,
           });
         }
       }
@@ -714,6 +716,13 @@ export class HiveSpawner implements Spawner {
         this.dependencies.codexAppServer !== undefined &&
         argv[1] === "codex-app-server-host";
       if (!nativeCodex) argv.push(controlPrompt);
+      // The token value enters through the launch shell, never an argv.
+      const restartWorktreePath = agent.worktreePath;
+      const withCapabilityEnv = (command: string): string =>
+        identity.tool === "codex" && !nativeCodex &&
+          capabilityToken !== undefined
+          ? wrapCodexSpawnWithCapabilityEnv(command, restartWorktreePath)
+          : command;
       // The binary that will actually be running in the pane. Reassigned below
       // if the app-server handshake fails and the TUI takes over the session,
       // because readiness looks for *this* process and nothing else.
@@ -721,7 +730,7 @@ export class HiveSpawner implements Spawner {
       await this.dependencies.tmux.newSession(
         agent.tmuxSession,
         agent.worktreePath,
-        shellJoin(argv),
+        withCapabilityEnv(shellJoin(argv)),
       );
       if (nativeCodex) {
         try {
@@ -749,13 +758,20 @@ export class HiveSpawner implements Spawner {
             readOnly,
             worktreePath: agent.worktreePath,
             excludeMcpServers,
+            withCapabilityToken: capabilityToken !== undefined,
           });
           fallback.push(controlPrompt);
           launchedCommand = launchedCommandName(fallback);
+          const fallbackShell = capabilityToken !== undefined
+            ? wrapCodexSpawnWithCapabilityEnv(
+              shellJoin(fallback),
+              agent.worktreePath,
+            )
+            : shellJoin(fallback);
           await this.dependencies.tmux.newSession(
             agent.tmuxSession,
             agent.worktreePath,
-            shellJoin(fallback),
+            fallbackShell,
           );
         }
       }
@@ -1242,12 +1258,18 @@ export class HiveSpawner implements Spawner {
               dangerous,
               worktreePath: worktree.path,
               excludeMcpServers,
+              withCapabilityToken: capabilityToken !== undefined,
             });
       }
       const nativeCodex = tool === "codex" &&
         this.dependencies.codexAppServer !== undefined &&
         argv[1] === "codex-app-server-host";
       if (!nativeCodex) argv.push(prompt);
+      // The token value enters through the launch shell, never an argv.
+      const withCapabilityEnv = (command: string): string =>
+        tool === "codex" && !nativeCodex && capabilityToken !== undefined
+          ? wrapCodexSpawnWithCapabilityEnv(command, worktree.path)
+          : command;
 
       // See the control-restart path: readiness looks for the process hive
       // actually launched, so this must follow the session that wins.
@@ -1255,7 +1277,7 @@ export class HiveSpawner implements Spawner {
       await this.dependencies.tmux.newSession(
         record.tmuxSession,
         worktree.path,
-        shellJoin(argv),
+        withCapabilityEnv(shellJoin(argv)),
       );
       if (nativeCodex) {
         try {
@@ -1292,13 +1314,20 @@ export class HiveSpawner implements Spawner {
             dangerous,
             worktreePath: worktree.path,
             excludeMcpServers,
+            withCapabilityToken: capabilityToken !== undefined,
           });
           fallback.push(prompt);
           launchedCommand = launchedCommandName(fallback);
+          const fallbackShell = capabilityToken !== undefined
+            ? wrapCodexSpawnWithCapabilityEnv(
+              shellJoin(fallback),
+              worktree.path,
+            )
+            : shellJoin(fallback);
           await this.dependencies.tmux.newSession(
             record.tmuxSession,
             worktree.path,
-            shellJoin(fallback),
+            fallbackShell,
           );
         }
       }

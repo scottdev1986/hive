@@ -4,11 +4,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   findLatestCodexSessionId,
+  codexCapabilityTokenPath,
   codexSessionsDirectory,
   buildCodexResumeCommand,
   buildCodexSpawnCommand,
   buildCodexTrustArgs,
+  CODEX_CAPABILITY_TOKEN_ENV,
   CODEX_NOTIFY_SCRIPT,
+  wrapCodexSpawnWithCapabilityEnv,
   writeCodexAgentConfig,
 } from "./codex";
 
@@ -364,10 +367,11 @@ describe("Codex adapter", () => {
       ),
     ).toEqual(true);
   });
-  test("carries the agent capability as a static header in a 0600 config", async () => {
-    // Codex has no connect-time headers helper, so its token has to sit in a
-    // file. It must never land in `bearer_token_env_var`: an environment
-    // variable is inherited by every descendant of the agent's process.
+  test("carries the agent capability in a dedicated 0600 token file", async () => {
+    // Codex has no connect-time headers helper and does not read the
+    // project config.toml under Hive's launch, so the secret sits in its own
+    // 0600 file; the launch shell exports it for bearer_token_env_var. It
+    // must never land in the config file or any argv.
     await writeCodexAgentConfig(worktreePath, {
       daemonPort: 4317,
       name: "maya",
@@ -375,14 +379,22 @@ describe("Codex adapter", () => {
       capabilityToken: "hv1.abc.secret-token",
     });
     const configPath = join(worktreePath, ".codex", "config.toml");
+    const tokenPath = codexCapabilityTokenPath(worktreePath);
     const config = await readFile(configPath, "utf8");
-    expect(config).toContain("[mcp_servers.hive.http_headers]");
-    expect(config).toContain('Authorization = "Bearer hv1.abc.secret-token"');
-    expect(config).not.toContain("bearer_token_env_var");
+    expect(config).not.toContain("secret-token");
+    expect(config).not.toContain("Authorization");
+    expect(await readFile(tokenPath, "utf8")).toEqual("hv1.abc.secret-token");
+    expect((await stat(tokenPath)).mode & 0o777).toEqual(0o600);
     expect((await stat(configPath)).mode & 0o777).toEqual(0o600);
   });
 
-  test("omits the header entirely when no capability was issued", async () => {
+  test("removes a stale token file when no capability was issued", async () => {
+    await writeCodexAgentConfig(worktreePath, {
+      daemonPort: 4317,
+      name: "maya",
+      readOnly: false,
+      capabilityToken: "hv1.abc.stale-token",
+    });
     await writeCodexAgentConfig(worktreePath, {
       daemonPort: 4317,
       name: "maya",
@@ -394,5 +406,41 @@ describe("Codex adapter", () => {
     );
     expect(config).not.toContain("http_headers");
     expect(config).not.toContain("Authorization");
+    expect(stat(codexCapabilityTokenPath(worktreePath))).rejects.toThrow();
+  });
+
+  test("a minted capability rides the launch env, never the argv", async () => {
+    const base = {
+      name: "maya",
+      model: "gpt-5-codex",
+      effort: "high" as const,
+      worktreePath: "/tmp/worktree",
+      daemonPort: 4317,
+      readOnly: false,
+    };
+    const withToken = buildCodexSpawnCommand({
+      ...base,
+      withCapabilityToken: true,
+    });
+    expect(withToken).toContain(
+      `mcp_servers.hive.bearer_token_env_var="${CODEX_CAPABILITY_TOKEN_ENV}"`,
+    );
+    // Without a token the override must be absent entirely: codex 0.144.1
+    // silently disables an MCP server whose bearer_token_env_var is unset.
+    expect(buildCodexSpawnCommand(base).join(" ")).not.toContain(
+      "bearer_token_env_var",
+    );
+
+    // The launch wrapper reads the 0600 file inside the spawn shell, so `ps`
+    // shows the substitution text, never the secret.
+    expect(wrapCodexSpawnWithCapabilityEnv("codex -c x=1", "/tmp/worktree"))
+      .toEqual(
+        `${CODEX_CAPABILITY_TOKEN_ENV}="$(cat /tmp/worktree/.codex/capability-token)" codex -c x=1`,
+      );
+    expect(
+      wrapCodexSpawnWithCapabilityEnv("codex", "/tmp/work tree"),
+    ).toEqual(
+      `${CODEX_CAPABILITY_TOKEN_ENV}="$(cat '/tmp/work tree/.codex/capability-token')" codex`,
+    );
   });
 });
