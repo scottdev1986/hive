@@ -138,7 +138,10 @@ describe("idle-agent reap sweep", () => {
     }
   });
 
-  test("refuses to reap dirty or unmerged work", async () => {
+  test("refuses to reap dirty or unmerged work, and says so out loud", async () => {
+    // The refusal is the safety property and it stays. What changed is that it
+    // is no longer silent: this test used to assert an empty inbox, which meant
+    // an agent could sit here holding unlanded commits forever with nobody told.
     const { db, daemon, tmux, removedWorktrees } = reapDaemon({
       assessStrandedWork: async () => ({
         dirtyFiles: ["src/wip.ts"],
@@ -152,7 +155,70 @@ describe("idle-agent reap sweep", () => {
       expect(db.getAgentByName("maya")?.status).toEqual("idle");
       expect(tmux.killed).toEqual([]);
       expect(removedWorktrees).toEqual([]);
-      expect(await daemon.delivery.orchestratorInbox()).toEqual([]);
+
+      const notice = (await daemon.delivery.orchestratorInbox())[0];
+      expect(notice?.from).toEqual("hive-lifecycle");
+      expect(notice?.body).toContain("maya");
+      expect(notice?.body).toContain("NOT reaped");
+      expect(notice?.body).toContain("1 unmerged commit(s)");
+      expect(notice?.body).toContain("hive/maya-server");
+      expect(notice?.body).toContain("Nothing was deleted");
+    } finally {
+      await daemon.stop();
+      db.close();
+    }
+  });
+
+  test("re-alerts when the stranded work grows, but not on unchanged state", async () => {
+    let unmergedCommits = 1;
+    const { db, daemon } = reapDaemon({
+      assessStrandedWork: async () => ({ dirtyFiles: [], unmergedCommits }),
+    });
+    db.insertAgent(agent({ lastEventAt: OLD_ENOUGH }));
+    try {
+      await daemon.reapIdleAgents();
+      await daemon.reapIdleAgents();
+      // Same state on both ticks: the idempotency key collapses them, so a
+      // stranded agent does not flood the orchestrator every 30 seconds.
+      // (orchestratorInbox is a consuming read — it drains what it returns.)
+      const first = await daemon.delivery.orchestratorInbox();
+      expect(first.length).toEqual(1);
+      expect(first[0]?.body).toContain("1 unmerged commit(s)");
+
+      unmergedCommits = 2;
+      await daemon.reapIdleAgents();
+
+      // The work grew, so the agent is reported again rather than silenced by
+      // the alert it already sent.
+      const second = await daemon.delivery.orchestratorInbox();
+      expect(second.length).toEqual(1);
+      expect(second[0]?.body).toContain("2 unmerged commit(s)");
+    } finally {
+      await daemon.stop();
+      db.close();
+    }
+  });
+
+  test("alerts when it cannot even tell whether the work is clean", async () => {
+    // "I could not tell" is not permission to say nothing. The agent is still
+    // not reaped, so without this alert it idles here unreported forever.
+    const { db, daemon, tmux, removedWorktrees } = reapDaemon({
+      assessStrandedWork: async () => {
+        throw new Error("git index.lock exists");
+      },
+    });
+    db.insertAgent(agent({ lastEventAt: OLD_ENOUGH }));
+    try {
+      await daemon.reapIdleAgents();
+
+      expect(db.getAgentByName("maya")?.status).toEqual("idle");
+      expect(tmux.killed).toEqual([]);
+      expect(removedWorktrees).toEqual([]);
+
+      const notice = (await daemon.delivery.orchestratorInbox())[0];
+      expect(notice?.body).toContain("maya");
+      expect(notice?.body).toContain("cannot be reaped");
+      expect(notice?.body).toContain("git index.lock exists");
     } finally {
       await daemon.stop();
       db.close();

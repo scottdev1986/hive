@@ -28,9 +28,11 @@ import { landBranch, type LandBranch } from "./landing";
 import { readLiveClaudeModel } from "./live-model";
 import {
   assessStrandedWork,
+  listUnmergedHiveBranches,
   removeWorktree,
   type RemoveWorktreeOptions,
   type StrandedWork,
+  type UnmergedBranch,
 } from "../adapters/worktrees";
 import {
   HookEventSchema,
@@ -120,6 +122,21 @@ const OPERATOR_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 // (see defaultSocketPath); the daemon reaps children whose host died without
 // running its own cleanup.
 const CODEX_SOCKET_DIR = "/tmp";
+
+// An agent in one of these statuses still owns its branch, so unlanded commits
+// on it are work in progress rather than stranded work. Every other status —
+// done, dead, failed — has closed, and anything it left unmerged is stranded.
+// Enumerated on the live side deliberately: a status added later reads as
+// closed and gets reported, because a false alert is cheap and silence is what
+// loses work.
+const LIVE_STATUSES: AgentRecord["status"][] = [
+  "spawning",
+  "working",
+  "idle",
+  "awaiting-approval",
+  "control-paused",
+  "stuck",
+];
 
 function defaultOrphanDependencies(): ReapOrphanDependencies {
   return {
@@ -341,6 +358,7 @@ export interface HiveDaemonOptions {
     worktreePath: string | null,
     branch: string | null,
   ) => Promise<StrandedWork>;
+  listUnmergedHiveBranches?: (repoRoot: string) => Promise<UnmergedBranch[]>;
   landBranch?: LandBranch;
   port?: number;
   hostname?: string;
@@ -434,6 +452,14 @@ export class HiveDaemon {
   private readonly assessStranded: NonNullable<
     HiveDaemonOptions["assessStrandedWork"]
   >;
+  private readonly listUnmergedBranches: NonNullable<
+    HiveDaemonOptions["listUnmergedHiveBranches"]
+  >;
+  /** Stranded branches already reported this boot, keyed by branch and tip.
+   * In memory on purpose: a restart must re-report, because the orchestrator
+   * that heard the first alert did not survive it. */
+  private readonly alertedStrandedBranches = new Set<string>();
+  private readonly bootId = crypto.randomUUID();
   private readonly closeTerminal: TerminalCloser;
   private readonly layout: LayoutCoordinator | null;
   private readonly quota: QuotaService | undefined;
@@ -550,6 +576,8 @@ export class HiveDaemon {
     this.handshake = () => expectedDaemonHandshake(this.repoRoot);
     this.cleanupWorktree = options.removeWorktree ?? removeWorktree;
     this.assessStranded = options.assessStrandedWork ?? assessStrandedWork;
+    this.listUnmergedBranches = options.listUnmergedHiveBranches ??
+      listUnmergedHiveBranches;
     this.recovery = new CrashRecovery({
       db: this.db,
       tmux: this.tmux,
@@ -860,6 +888,16 @@ export class HiveDaemon {
       await this.reapIdleAgents().catch((error) => {
         console.error(
           `Hive idle-reap sweep failed: ${
+            error instanceof Error ? error.message : "unknown error"
+          }`,
+        );
+      });
+      // Runs at startup, which is the moment that matters: a restart is
+      // precisely when work whose agent row is gone would otherwise fall out
+      // of the world unannounced.
+      await this.reconcileStrandedBranches().catch((error) => {
+        console.error(
+          `Hive stranded-branch reconciliation failed: ${
             error instanceof Error ? error.message : "unknown error"
           }`,
         );
@@ -1333,6 +1371,7 @@ export class HiveDaemon {
       const idleMs = now - Date.parse(record.lastEventAt);
       if (!(idleMs >= thresholdMs)) continue;
       if (this.db.hasPendingMessages(record.name)) continue;
+      const idleMinutes = Math.floor(idleMs / 60_000);
       let stranded: StrandedWork;
       try {
         stranded = await this.assessStranded(
@@ -1340,16 +1379,45 @@ export class HiveDaemon {
           record.worktreePath,
           record.branch,
         );
-      } catch {
+      } catch (error) {
         // Cannot prove the worktree is clean, so it is not reaped this tick.
+        // "I could not tell" is not permission to say nothing: an agent that
+        // never becomes assessable would otherwise idle here forever, unreaped
+        // and unreported.
+        await this.delivery.send(
+          "hive-lifecycle",
+          ORCHESTRATOR_NAME,
+          `${record.name} is idle ${idleMinutes}m and cannot be reaped: its stranded-work check failed (${
+            error instanceof Error ? error.message : "unknown error"
+          }), so Hive cannot prove the worktree is clean. Nothing was deleted. Inspect ${
+            record.worktreePath ?? "its worktree"
+          } and land or discard it explicitly.`,
+          { idempotencyKey: `stranded-idle-unknown:${record.id}` },
+        ).catch(logAlertDeliveryFailure);
         continue;
       }
       if (stranded.dirtyFiles.length > 0 || stranded.unmergedCommits > 0) {
+        // The guard that protects unlanded work must not also hide it. The
+        // reaper never deletes this agent, so without an alert it simply sits
+        // here every tick until a daemon restart drops it from the world.
+        await this.delivery.send(
+          "hive-lifecycle",
+          ORCHESTRATOR_NAME,
+          `${record.name} is idle ${idleMinutes}m and was NOT reaped: it holds ${stranded.unmergedCommits} unmerged commit(s) on ${
+            record.branch ?? "no branch"
+          } and ${stranded.dirtyFiles.length} uncommitted file(s). Nothing was deleted. Land it with an integrator agent, or discard it explicitly with hive_kill discardWork.`,
+          {
+            // Re-alerts when the work grows, so a stranded agent that keeps
+            // committing is reported again rather than silenced by the first
+            // alert; identical state does not re-alert every tick.
+            idempotencyKey:
+              `stranded-idle:${record.id}:${stranded.unmergedCommits}:${stranded.dirtyFiles.length}`,
+          },
+        ).catch(logAlertDeliveryFailure);
         continue;
       }
       try {
         await this.killAgentTeardown(record, { removeWorktree: true });
-        const idleMinutes = Math.floor(idleMs / 60_000);
         await this.delivery.send(
           "hive-lifecycle",
           ORCHESTRATOR_NAME,
@@ -1363,6 +1431,57 @@ export class HiveDaemon {
           }`,
         );
       }
+    }
+  }
+
+  /**
+   * Reports every hive/* branch holding unlanded commits that no live agent
+   * owns.
+   *
+   * Every other safety mechanism here — the reaper, crash recovery, agent
+   * reconciliation — iterates the agents table, so a branch whose row is gone
+   * is invisible to all of them. That is not hypothetical: a branch outlives
+   * the database, so a reset (or a lost row) strands its work permanently and
+   * silently, with no row left to iterate. This sweep is the one check that
+   * derives from git instead, which is why it can see work the agents table
+   * has forgotten.
+   *
+   * It never deletes. Unlanded work is reported, and a human or an integrator
+   * decides.
+   */
+  async reconcileStrandedBranches(): Promise<void> {
+    const branches = await this.listUnmergedBranches(this.repoRoot);
+    if (branches.length === 0) return;
+    const agents = this.db.listAgents();
+
+    for (const { branch, tip, unmergedCommits } of branches) {
+      const owners = agents.filter((agent) => agent.branch === branch);
+      // A live agent is still working on its own branch; that is not stranded
+      // work, it is work in progress.
+      if (owners.some((agent) => LIVE_STATUSES.includes(agent.status))) {
+        continue;
+      }
+      // Alert once per branch tip per daemon boot. A restarted daemon reports
+      // it again on purpose: the orchestrator that was told is gone, and the
+      // new one has never heard of this work. A durable idempotency key would
+      // silence exactly the restart that made the work invisible in the first
+      // place.
+      const alertKey = `${branch}:${tip}`;
+      if (this.alertedStrandedBranches.has(alertKey)) continue;
+      this.alertedStrandedBranches.add(alertKey);
+
+      const closed = owners[0];
+      const detail = closed === undefined
+        // The case that stranded david: a branch with unlanded commits and no
+        // agent row at all. Nothing in the agents table can ever surface this.
+        ? `no agent row owns it (its row predates this database or was lost), so nothing in the agent table can account for it`
+        : `its agent ${closed.name} is ${closed.status} and left it behind`;
+      await this.delivery.send(
+        "hive-lifecycle",
+        ORCHESTRATOR_NAME,
+        `Stranded work: ${branch} holds ${unmergedCommits} commit(s) not on main and ${detail}. Nothing was deleted. Assess it with an integrator agent and land or discard it explicitly.`,
+        { idempotencyKey: `stranded-branch:${alertKey}:${this.bootId}` },
+      ).catch(logAlertDeliveryFailure);
     }
   }
 

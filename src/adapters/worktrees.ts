@@ -30,6 +30,12 @@ export interface StrandedWork {
   unmergedCommits: number;
 }
 
+export interface UnmergedBranch {
+  branch: string;
+  tip: string;
+  unmergedCommits: number;
+}
+
 async function runGit(repoRoot: string, args: string[]): Promise<GitResult> {
   const process = Bun.spawn(["git", "-C", repoRoot, ...args], {
     stdout: "pipe",
@@ -190,6 +196,45 @@ export async function assessStrandedWork(
   }
 
   return { dirtyFiles, unmergedCommits };
+}
+
+/**
+ * Every hive/* branch holding commits that are not on main.
+ *
+ * This is the one inventory of unlanded work that is not anchored to the
+ * agents table. Reaping, recovery, and reconciliation all iterate agent rows,
+ * so work whose row is gone — a reset database, a lost row — is invisible to
+ * every one of them. Branch refs outlive the database, so re-deriving this
+ * list from git each boot is what makes orphaned work findable at all.
+ */
+export async function listUnmergedHiveBranches(
+  repoRoot: string,
+  mainBranch = "main",
+): Promise<UnmergedBranch[]> {
+  const result = await runGit(repoRoot, [
+    "branch",
+    "--list",
+    "hive/*",
+    "--no-merged",
+    mainBranch,
+    "--format=%(refname:short) %(objectname)",
+  ]);
+  // A repository with no main branch yet has nothing to be unmerged from.
+  if (result.exitCode !== 0) return [];
+
+  const branches: UnmergedBranch[] = [];
+  for (const line of result.stdout.split("\n")) {
+    const [branch, tip] = line.trim().split(" ");
+    if (branch === undefined || branch === "" || tip === undefined) continue;
+    const { unmergedCommits } = await assessStrandedWork(
+      repoRoot,
+      null,
+      branch,
+      mainBranch,
+    );
+    branches.push({ branch, tip, unmergedCommits });
+  }
+  return branches;
 }
 
 export async function removeWorktree(

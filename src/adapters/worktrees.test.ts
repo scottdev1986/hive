@@ -5,6 +5,7 @@ import { join } from "node:path";
 import {
   assessStrandedWork,
   createWorktree,
+  listUnmergedHiveBranches,
   listWorktrees,
   removeWorktree,
   slugify,
@@ -206,5 +207,60 @@ describe("git worktree manager", () => {
       message = error instanceof Error ? error.message : String(error);
     }
     expect(message.includes("not a git repository")).toEqual(true);
+  });
+});
+
+describe("unmerged hive branch inventory", () => {
+  test("finds a branch holding commits that never reached main", async () => {
+    // Built the way david's branch was: a hive/* branch with a commit on it,
+    // whose worktree is long gone. The ref is the only surviving trace.
+    await git("branch", "hive/david-channels", "main");
+    const worktree = join(tempRoot, "david-wt");
+    await git("worktree", "add", worktree, "hive/david-channels");
+    await writeFile(join(worktree, "channels.ts"), "export const x = 1;\n");
+    const inWorktree = async (...args: string[]) => {
+      const process = Bun.spawn(["git", "-C", worktree, ...args], {
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      await process.exited;
+    };
+    await inWorktree("add", "channels.ts");
+    await inWorktree("commit", "-m", "rescue david's channels work");
+    await git("worktree", "remove", "--force", worktree);
+
+    const stranded = await listUnmergedHiveBranches(repoRoot);
+
+    expect(stranded).toEqual([
+      {
+        branch: "hive/david-channels",
+        tip: await git("rev-parse", "hive/david-channels"),
+        unmergedCommits: 1,
+      },
+    ]);
+  });
+
+  test("ignores a hive branch whose commits are already on main", async () => {
+    await git("branch", "hive/landed-work", "main");
+
+    const stranded = await listUnmergedHiveBranches(repoRoot);
+
+    expect(stranded.map((entry) => entry.branch)).not.toContain(
+      "hive/landed-work",
+    );
+  });
+
+  test("reports nothing rather than throwing when main does not exist", async () => {
+    const bare = await mkdtemp(join(tmpdir(), "hive-no-main-"));
+    const init = Bun.spawn(["git", "-C", bare, "init", "-b", "trunk"], {
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    await init.exited;
+    try {
+      expect(await listUnmergedHiveBranches(bare)).toEqual([]);
+    } finally {
+      await rm(bare, { recursive: true, force: true });
+    }
   });
 });
