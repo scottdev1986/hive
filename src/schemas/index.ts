@@ -8,3 +8,4 @@ export * from "./message";
 export * from "./profile";
 export * from "./quota";
 export * from "./routing";
+export * from "./routing-manifest";
