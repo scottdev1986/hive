@@ -197,19 +197,37 @@ function agentsTableDdl(table: string, ifNotExists = false): string {
   `;
 }
 
-/** Every column `agentsTableDdl` defines, in its order. The rebuild copies the
- * intersection of this and what the old table actually had, so a column added to
- * the DDL and forgotten here is never silently dropped by a later rebuild — which
- * the previous hand-maintained copy of this list had already started doing to
- * `liveModel`. */
-const AGENT_COLUMNS = [
-  "id", "name", "tool", "model", "liveModel", "tier", "status", "taskDescription",
-  "worktreePath", "branch", "tmuxSession", "terminalHandle", "contextPct",
-  "createdAt", "lastEventAt", "failureReason", "failedAt",
-  "quotaReservationId", "controlQuotaReservationId", "controlMessageId",
-  "executionIdentity", "toolSessionId", "recoveryAttempts",
-  "capabilityEpoch", "writeRevoked", "channelsEnabled", "closedAt",
-] as const;
+/** One column as SQLite itself describes it, which is all a rebuild can know
+ * about a column no version of this code has ever heard of. */
+const AgentColumnSchema = z.object({
+  name: z.string(),
+  type: z.string(),
+  notnull: z.number(),
+  /** The raw SQL text of the default, e.g. `'us-east-1'` or `0`. */
+  dflt_value: z.union([z.string(), z.number()]).nullable(),
+});
+type AgentColumn = z.infer<typeof AgentColumnSchema>;
+
+const quoteIdentifier = (name: string): string =>
+  `"${name.replaceAll('"', '""')}"`;
+
+/**
+ * Recreate a column Hive's DDL does not define, as faithfully as SQLite's own
+ * description of it allows.
+ *
+ * `NOT NULL` is kept only where a default comes with it, because SQLite refuses
+ * `ADD COLUMN ... NOT NULL` without one — which is also the only way such a
+ * column could have reached the old table. If one somehow did, the values are
+ * worth more than the constraint: carrying them into a nullable column loses
+ * nothing, and failing the migration would strand the whole table.
+ */
+const columnDefinition = (column: AgentColumn): string => {
+  const type = column.type === "" ? "BLOB" : column.type;
+  const hasDefault = column.dflt_value !== null;
+  const notNull = column.notnull === 1 && hasDefault ? " NOT NULL" : "";
+  const dflt = hasDefault ? ` DEFAULT ${column.dflt_value}` : "";
+  return `${quoteIdentifier(column.name)} ${type}${notNull}${dflt}`;
+};
 
 export class HiveDatabase {
   readonly path: string;
@@ -493,13 +511,16 @@ export class HiveDatabase {
     this.rebuildAgentsTable("contextPct");
   }
 
+  /** Everything the live `agents` table declares, column by column. */
+  private agentColumns(): AgentColumn[] {
+    return z.array(AgentColumnSchema).parse(
+      this.database.query("PRAGMA table_info(agents)").all(),
+    );
+  }
+
   /** The columns the live `agents` table actually has. */
   private agentColumnNames(): Set<string> {
-    return new Set(
-      z.array(z.object({ name: z.string() })).parse(
-        this.database.query("PRAGMA table_info(agents)").all(),
-      ).map((column) => column.name),
-    );
+    return new Set(this.agentColumns().map((column) => column.name));
   }
 
   /**
@@ -507,29 +528,64 @@ export class HiveDatabase {
    * stop being NOT NULL. `contextPctExpression` is the SQL that produces the new
    * `contextPct`: `"contextPct"` preserves it, `"NULL"` discards it.
    *
-   * Only the columns the old table really had are copied, so this cannot drop a
-   * column it has never heard of, and it runs before the agents indexes are
-   * created, so dropping the table takes no index with it.
+   * Every column the old table had is carried across, including ones this build
+   * has never heard of. A rebuild that copied only a hand-maintained list of
+   * known columns would permanently drop the rest and their values with them — a
+   * newer Hive's column erased by an older one, or a hand-added column erased by
+   * any of them — and it had already started doing exactly that to `liveModel`.
+   * So neither table is described from memory: the old one's columns come from
+   * SQLite, the new one's come from SQLite, and any column the new table lacks is
+   * recreated on it from the old one's own declaration. Dropping a column has to
+   * be a decision somebody made, never a side effect of not recognising it.
+   *
+   * The rebuild runs before the agents indexes are created, so dropping the table
+   * takes no index of Hive's with it.
    */
   private rebuildAgentsTable(contextPctExpression: string): void {
-    const existing = this.agentColumnNames();
-    const copied = AGENT_COLUMNS.filter((column) => existing.has(column));
-    const targets = copied.join(", ");
-    const sources = copied
+    const columns = this.agentColumns();
+    const targets = columns
+      .map((column) => quoteIdentifier(column.name))
+      .join(", ");
+    const sources = columns
       .map((column) =>
-        column === "contextPct" ? `${contextPctExpression} AS contextPct` : column
+        column.name === "contextPct"
+          ? `${contextPctExpression} AS contextPct`
+          : quoteIdentifier(column.name)
       )
       .join(", ");
+    // Restore enforcement to whatever it was, even if the rebuild throws. A
+    // connection that silently stops enforcing foreign keys for the rest of its
+    // life is a worse outcome than the failed migration that caused it, and it
+    // would never announce itself.
+    const enforced = z.array(z.object({ foreign_keys: z.number() })).parse(
+      this.database.query("PRAGMA foreign_keys").all(),
+    )[0]?.foreign_keys ?? 1;
     this.database.exec("PRAGMA foreign_keys = OFF");
-    this.database.transaction(() => {
-      this.database.exec(agentsTableDdl("agents_rebuilt"));
+    try {
+      this.database.transaction(() => {
+        this.database.exec(agentsTableDdl("agents_rebuilt"));
+        const defined = new Set(
+          z.array(z.object({ name: z.string() })).parse(
+            this.database.query("PRAGMA table_info(agents_rebuilt)").all(),
+          ).map((column) => column.name),
+        );
+        for (const column of columns) {
+          if (defined.has(column.name)) continue;
+          this.database.exec(
+            `ALTER TABLE agents_rebuilt ADD COLUMN ${columnDefinition(column)}`,
+          );
+        }
+        this.database.exec(
+          `INSERT INTO agents_rebuilt (${targets}) SELECT ${sources} FROM agents`,
+        );
+        this.database.exec("DROP TABLE agents");
+        this.database.exec("ALTER TABLE agents_rebuilt RENAME TO agents");
+      })();
+    } finally {
       this.database.exec(
-        `INSERT INTO agents_rebuilt (${targets}) SELECT ${sources} FROM agents`,
+        `PRAGMA foreign_keys = ${enforced === 0 ? "OFF" : "ON"}`,
       );
-      this.database.exec("DROP TABLE agents");
-      this.database.exec("ALTER TABLE agents_rebuilt RENAME TO agents");
-    })();
-    this.database.exec("PRAGMA foreign_keys = ON");
+    }
   }
 
   /**

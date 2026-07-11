@@ -724,4 +724,84 @@ describe("contextPct can say 'unknown'", () => {
       db.close();
     }
   });
+
+  // The rebuild used to copy only the columns this build knows the name of, and
+  // drop the rest — while its own comment claimed it could not. A newer Hive's
+  // column, erased by an older one; a hand-added column, erased by any of them.
+  test("a column the rebuild has never heard of survives it, values and all", () => {
+    const path = join(home, "stray-column.db");
+    const legacy = new Database(path, { create: true });
+    legacy.exec(`
+      CREATE TABLE agents (
+        id TEXT PRIMARY KEY, name TEXT NOT NULL, tool TEXT NOT NULL,
+        model TEXT NOT NULL, tier TEXT NOT NULL, status TEXT NOT NULL,
+        taskDescription TEXT NOT NULL, worktreePath TEXT, branch TEXT,
+        tmuxSession TEXT NOT NULL, terminalHandle TEXT,
+        contextPct REAL NOT NULL,
+        createdAt TEXT NOT NULL, lastEventAt TEXT NOT NULL
+      )
+    `);
+    legacy.exec("ALTER TABLE agents ADD COLUMN deploymentRegion TEXT");
+    legacy.exec(
+      "ALTER TABLE agents ADD COLUMN shardIndex INTEGER NOT NULL DEFAULT 7",
+    );
+    legacy.exec(`
+      INSERT INTO agents (id, name, tool, model, tier, status, taskDescription,
+        tmuxSession, contextPct, createdAt, lastEventAt, deploymentRegion)
+      VALUES ('a1', 'zoe', 'claude', 'claude-opus-4-8', 'deep', 'idle', 'work',
+        'hive-zoe', 42, '2026-07-11T12:00:00.000Z', '2026-07-11T12:00:00.000Z',
+        'us-east-1')
+    `);
+    legacy.close();
+
+    const db = new HiveDatabase(path);
+    try {
+      const columns = db.database.query("PRAGMA table_info(agents)").all() as Array<
+        { name: string; notnull: number; dflt_value: unknown }
+      >;
+      const shard = columns.find((column) => column.name === "shardIndex");
+      expect(columns.some((column) => column.name === "deploymentRegion")).toBe(true);
+      // Rebuilt from the old table's own declaration, so the constraint and the
+      // default come across too, not just the name.
+      expect(shard?.notnull).toBe(1);
+      expect(String(shard?.dflt_value)).toBe("7");
+
+      const row = db.database.query(
+        "SELECT deploymentRegion, shardIndex FROM agents WHERE id = 'a1'",
+      ).get() as { deploymentRegion: string; shardIndex: number };
+      expect(row.deploymentRegion).toBe("us-east-1");
+      expect(row.shardIndex).toBe(7);
+      // The one column the migration does mean to discard, still discarded.
+      expect(db.getAgentByName("zoe")?.contextPct).toBeNull();
+    } finally {
+      db.close();
+    }
+  });
+
+  // Foreign keys go off for the rebuild, and a throw in between used to leave
+  // them off for the rest of the connection's life — silently, and long after
+  // the failed migration that caused it had been forgotten.
+  test("a rebuild that throws still restores foreign key enforcement", () => {
+    const db = new HiveDatabase(join(home, "rebuild-throws.db"));
+    try {
+      const enforced = (): number =>
+        (db.database.query("PRAGMA foreign_keys").get() as {
+          foreign_keys: number;
+        }).foreign_keys;
+      expect(enforced()).toBe(1);
+
+      // Fail the rebuild where it hurts: after foreign keys are already off.
+      db.database.exec("CREATE TABLE agents_rebuilt (taken TEXT)");
+      expect(() =>
+        (db as unknown as { rebuildAgentsTable(expression: string): void })
+          .rebuildAgentsTable("NULL")
+      ).toThrow();
+
+      expect(enforced()).toBe(1);
+      // And the transaction rolled the half-built table back, so agents is whole.
+      expect(db.listAgents()).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
 });

@@ -728,3 +728,106 @@ describe("quota telemetry and alerts", () => {
     db.close();
   });
 });
+
+/**
+ * A wall clock cannot order two events that share a millisecond, so it must not
+ * be asked to. Spend that lands in the same millisecond as a provider reading is
+ * in neither the reading nor the "spend since" it is added to — it simply
+ * vanishes, and it vanishes in the dangerous direction: Hive under-counts, and
+ * admits a spawn past a limit the user has really already hit.
+ */
+describe("spend is ordered against a reading by sequence, not by the clock", () => {
+  const scope = {
+    provider: "claude" as const,
+    account: "personal",
+    pool: "claude-premium",
+  };
+  const windowStart = "2026-07-04T00:00:00.000Z";
+  const observedAt = "2026-07-11T14:00:00.123Z";
+
+  const settle = (ledger: QuotaLedger, id: string, at: string): void => {
+    ledger.insertUnboundedReservation({
+      id,
+      agentName: "maya",
+      ...scope,
+      model: "claude-model",
+      tier: "standard",
+      estimatedUnits: 1,
+      estimatedWeeklyUnits: 1,
+      now: at,
+      expiresAt: "2026-07-12T00:00:00.000Z",
+    });
+    ledger.reconcile(id, 1, 1, "estimated", at);
+  };
+
+  const report = (ledger: QuotaLedger, weeklyUsed: number, at: string): void => {
+    ledger.upsertObservation({
+      ...scope,
+      fiveHourUsed: 0,
+      weeklyUsed,
+      observedAt: at,
+      fiveHourResetAt: null,
+      weeklyResetAt: null,
+      source: "provider",
+      confidence: "authoritative",
+      fiveHourObservedAt: at,
+      fiveHourSource: "provider",
+      fiveHourConfidence: "authoritative",
+      weeklyObservedAt: at,
+      weeklySource: "provider",
+      weeklyConfidence: "authoritative",
+    });
+  };
+
+  const after = (ledger: QuotaLedger): number =>
+    ledger.usageTotals(scope, windowStart, windowStart).afterWeeklyObservation;
+
+  // The provider reports 99% at an instant; a turn settles one unit immediately
+  // after and is handed that same instant by the clock. The reading cannot
+  // contain it. Hive must not report 99.
+  test("a spend at the reading's own millisecond is counted, not dropped", async () => {
+    const { db } = await fileDatabase("same-ms");
+    const ledger = new QuotaLedger(db);
+    report(ledger, 99, observedAt);
+    settle(ledger, "run-1", observedAt);
+    expect(after(ledger)).toBe(1);
+    db.close();
+  });
+
+  // The other write order. Widening the comparison to `>=` would have counted
+  // the first case and double-counted this one; a sequence gets both right.
+  test("and it is counted exactly once, whichever landed first", async () => {
+    const { db } = await fileDatabase("same-ms-reversed");
+    const ledger = new QuotaLedger(db);
+    settle(ledger, "run-1", observedAt);
+    report(ledger, 99, observedAt);
+    expect(after(ledger)).toBe(1);
+    db.close();
+  });
+
+  // The rule this fix must not undo: a measurement beats an estimate. Everything
+  // the provider had already seen when it measured stays inside its number.
+  test("spend the reading already saw is not added on top of it", async () => {
+    const { db } = await fileDatabase("already-measured");
+    const ledger = new QuotaLedger(db);
+    settle(ledger, "run-1", "2026-07-11T13:00:00.000Z");
+    settle(ledger, "run-2", "2026-07-11T13:30:00.000Z");
+    report(ledger, 0, observedAt);
+    // Codex really did report 0% while Hive's own estimates summed to 12%. The
+    // estimates lose: they are guesses, and the reading is a measurement.
+    expect(after(ledger)).toBe(0);
+    db.close();
+  });
+
+  // A boundary is pinned when the reading lands and never moved. Recomputing it
+  // later would let an old reading grow forward and swallow spend it never saw.
+  test("re-reporting the same instant does not swallow the spend since", async () => {
+    const { db } = await fileDatabase("same-instant-repeat");
+    const ledger = new QuotaLedger(db);
+    report(ledger, 99, observedAt);
+    settle(ledger, "run-1", observedAt);
+    report(ledger, 99, observedAt);
+    expect(after(ledger)).toBe(1);
+    db.close();
+  });
+});

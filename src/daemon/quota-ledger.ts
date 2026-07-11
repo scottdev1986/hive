@@ -133,14 +133,18 @@ export interface UsageTotals {
 }
 
 /**
- * Each window is observed on its own schedule, so each carries its own cutoff.
- * Using one row-level timestamp for both would drop every unit spent between an
- * older weekly reading and a newer five-hour one, and that spend is exactly the
+ * The last spend each window's own reading had already been able to see. Each
+ * window is observed on its own schedule, so each carries its own boundary:
+ * one row-level boundary for both would drop every unit spent between an older
+ * weekly reading and a newer five-hour one, and that spend is exactly the
  * headroom a concurrent spawn would then overcommit.
+ *
+ * These are ledger sequence numbers, not timestamps — see `usageWatermark`.
+ * Null means the window was never observed, and there is nothing to be "after".
  */
-export interface ObservationCutoffs {
-  fiveHourObservedAt: string | null;
-  weeklyObservedAt: string | null;
+interface ObservationWatermarks {
+  fiveHour: number | null;
+  weekly: number | null;
 }
 
 export interface UnconfiguredQuotaScope extends QuotaScope {
@@ -158,8 +162,6 @@ export interface ReserveQuotaInput extends QuotaScope {
   expiresAt: string;
   fiveHourStart: string;
   weeklyStart: string;
-  fiveHourObservedAt: string | null;
-  weeklyObservedAt: string | null;
   supplementalFiveHourUsed: number;
   supplementalWeeklyUsed: number;
   fiveHourAllowance: number;
@@ -235,10 +237,22 @@ export class QuotaLedger {
         units REAL NOT NULL CHECK(units >= 0),
         occurredAt TEXT NOT NULL,
         source TEXT NOT NULL,
-        confidence TEXT NOT NULL
+        confidence TEXT NOT NULL,
+        -- The order these rows were committed in, which is the only ordering
+        -- they actually have. occurredAt is a wall clock, and a wall clock
+        -- cannot say which of two things that share a millisecond came first.
+        seq INTEGER
       );
       CREATE INDEX IF NOT EXISTS quota_usage_scope_time
         ON quota_usage(provider, account, pool, occurredAt);
+      -- The sequence outlives the rows: it is only ever incremented, so a number
+      -- cannot be handed out twice even if usage is one day pruned. A watermark
+      -- pointing at a recycled sequence would mark a *new* spend as already
+      -- measured — precisely the failure the sequence exists to prevent.
+      CREATE TABLE IF NOT EXISTS quota_usage_sequence (
+        id INTEGER PRIMARY KEY CHECK(id = 0),
+        next INTEGER NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS quota_reservations (
         id TEXT PRIMARY KEY,
         agentName TEXT NOT NULL,
@@ -321,18 +335,23 @@ export class QuotaLedger {
       observationColumns.map((column) => column.name),
     );
     for (
-      const column of [
-        "fiveHourObservedAt",
-        "fiveHourSource",
-        "fiveHourConfidence",
-        "weeklyObservedAt",
-        "weeklySource",
-        "weeklyConfidence",
-      ]
+      const [column, type] of [
+        ["fiveHourObservedAt", "TEXT"],
+        ["fiveHourSource", "TEXT"],
+        ["fiveHourConfidence", "TEXT"],
+        ["weeklyObservedAt", "TEXT"],
+        ["weeklySource", "TEXT"],
+        ["weeklyConfidence", "TEXT"],
+        // Which spend each window's reading already accounts for. Hive's own
+        // bookkeeping, not the provider's fact, which is why it lives here and
+        // not on `QuotaObservation`.
+        ["fiveHourUsageSeq", "INTEGER"],
+        ["weeklyUsageSeq", "INTEGER"],
+      ] as const
     ) {
       if (observationColumnNames.has(column)) continue;
       this.db.database.exec(
-        `ALTER TABLE quota_observations ADD COLUMN ${column} TEXT`,
+        `ALTER TABLE quota_observations ADD COLUMN ${column} ${type}`,
       );
     }
     const reservationColumns = z.array(z.object({ name: z.string() })).parse(
@@ -380,11 +399,131 @@ export class QuotaLedger {
         "ALTER TABLE quota_usage ADD COLUMN weeklyUnits REAL",
       );
     }
+    if (!usageColumns.some((column) => column.name === "seq")) {
+      this.db.database.exec("ALTER TABLE quota_usage ADD COLUMN seq INTEGER");
+    }
+    // Spend written before Hive kept a sequence still has one: SQLite's rowid is
+    // the order those rows were inserted, which is the fact the sequence records.
+    this.db.database.exec(
+      "UPDATE quota_usage SET seq = rowid WHERE seq IS NULL",
+    );
+    this.db.database.exec(`
+      CREATE UNIQUE INDEX IF NOT EXISTS quota_usage_seq ON quota_usage(seq);
+      CREATE INDEX IF NOT EXISTS quota_usage_scope_seq
+        ON quota_usage(provider, account, pool, seq);
+    `);
+    this.db.database.exec(`
+      INSERT OR IGNORE INTO quota_usage_sequence (id, next)
+      VALUES (0, (SELECT COALESCE(MAX(seq), 0) FROM quota_usage))
+    `);
     this.db.database.exec(`
       CREATE UNIQUE INDEX IF NOT EXISTS quota_reservations_active_control
       ON quota_reservations(controlMessageId)
       WHERE controlMessageId IS NOT NULL AND status = 'active'
     `);
+    this.backfillObservationWatermarks();
+  }
+
+  /**
+   * An observation stored before Hive sequenced its spend knows only *when* it
+   * was taken. Reconstruct its boundary once, from that timestamp, so the read
+   * path never has to compare a wall clock again. Old rows keep the meaning they
+   * were written with; new ones get the ordering the timestamp could not give.
+   */
+  private backfillObservationWatermarks(): void {
+    const stale = z.array(z.object({
+      provider: z.enum(["claude", "codex"]),
+      account: z.string(),
+      pool: z.string(),
+      fiveHourObservedAt: z.string().nullable(),
+      weeklyObservedAt: z.string().nullable(),
+    })).parse(this.db.database.query(`
+      SELECT
+        provider, account, pool,
+        COALESCE(fiveHourObservedAt, observedAt) AS fiveHourObservedAt,
+        COALESCE(weeklyObservedAt, observedAt) AS weeklyObservedAt
+      FROM quota_observations
+      WHERE fiveHourUsageSeq IS NULL OR weeklyUsageSeq IS NULL
+    `).all());
+    for (const row of stale) {
+      this.db.database.query(`
+        UPDATE quota_observations
+        SET fiveHourUsageSeq = COALESCE(fiveHourUsageSeq, ?),
+            weeklyUsageSeq = COALESCE(weeklyUsageSeq, ?)
+        WHERE provider = ? AND account = ? AND pool = ?
+      `).run(
+        this.usageWatermark(row, row.fiveHourObservedAt),
+        this.usageWatermark(row, row.weeklyObservedAt),
+        row.provider,
+        row.account,
+        row.pool,
+      );
+    }
+  }
+
+  /** The next number in the ledger's commit order. Never rewound, never reused. */
+  private nextUsageSeq(): number {
+    return z.object({ next: z.number() }).parse(
+      this.db.database.query(
+        "UPDATE quota_usage_sequence SET next = next + 1 WHERE id = 0 RETURNING next",
+      ).get(),
+    ).next;
+  }
+
+  /**
+   * The last spend a reading taken at `observedAt` could already have counted.
+   *
+   * This is a prefix of the ledger's own commit sequence, not a timestamp
+   * comparison, because a wall clock is not a happens-before relation: two events
+   * that share a millisecond have no order in it at all. The boundary is the last
+   * row before the first spend the reading cannot have seen — anything bearing the
+   * reading's own instant or later — and everything committed afterwards falls
+   * outside it by construction, whatever timestamp it carries.
+   *
+   * Ties therefore go to "not covered": a spend that lands in the same
+   * millisecond as a reading is counted on top of it. The two directions of error
+   * are not symmetric. Over-counting refuses a spawn that would have fit, and the
+   * next observation takes the refusal back minutes later. Under-counting spends
+   * quota the user does not have, admits the spawn past a real limit, and nothing
+   * downstream ever corrects it. Hive pays the cheap error.
+   */
+  private usageWatermark(scope: QuotaScope, observedAt: string | null): number | null {
+    if (observedAt === null) return null;
+    return z.object({ watermark: z.number() }).parse(
+      this.db.database.query(`
+        SELECT COALESCE(MAX(seq), 0) AS watermark FROM quota_usage
+        WHERE provider = ? AND account = ? AND pool = ?
+          AND seq < COALESCE((
+            SELECT MIN(seq) FROM quota_usage
+            WHERE provider = ? AND account = ? AND pool = ? AND occurredAt >= ?
+          ), 9223372036854775807)
+      `).get(
+        scope.provider,
+        scope.account,
+        scope.pool,
+        scope.provider,
+        scope.account,
+        scope.pool,
+        observedAt,
+      ),
+    ).watermark;
+  }
+
+  /** Each window's stored boundary, or null for a window nobody ever measured. */
+  private watermarks(scope: QuotaScope): ObservationWatermarks {
+    const row = this.db.database.query(`
+      SELECT fiveHourUsageSeq, weeklyUsageSeq FROM quota_observations
+      WHERE provider = ? AND account = ? AND pool = ?
+    `).get(scope.provider, scope.account, scope.pool);
+    if (row === null) return { fiveHour: null, weekly: null };
+    const parsed = z.object({
+      fiveHourUsageSeq: z.number().nullable(),
+      weeklyUsageSeq: z.number().nullable(),
+    }).parse(row);
+    return {
+      fiveHour: parsed.fiveHourUsageSeq,
+      weekly: parsed.weeklyUsageSeq,
+    };
   }
 
   private immediate<T>(operation: () => T): T {
@@ -395,15 +534,17 @@ export class QuotaLedger {
     scope: QuotaScope,
     fiveHourStart: string,
     weeklyStart: string,
-    cutoffs: ObservationCutoffs = {
-      fiveHourObservedAt: null,
-      weeklyObservedAt: null,
-    },
   ): UsageTotals {
+    // Which window a spend falls in is a question about the clock, and the clock
+    // answers it. Whether a *reading* already counted that spend is a question
+    // about order, and only the sequence answers that — hence the two different
+    // comparisons below, on purpose.
+    //
     // A run consumes a different fraction of each window, so its weekly cost is
     // recorded alongside its five-hour cost rather than inferred from it. Rows
     // written before that distinction existed carry only `units` and fall back
     // to it, which is precisely their old behaviour.
+    const watermarks = this.watermarks(scope);
     const row = z.object({
       fiveHour: z.number(),
       weekly: z.number(),
@@ -413,17 +554,17 @@ export class QuotaLedger {
       SELECT
         COALESCE(SUM(CASE WHEN occurredAt >= ? THEN units ELSE 0 END), 0) AS fiveHour,
         COALESCE(SUM(CASE WHEN occurredAt >= ? THEN COALESCE(weeklyUnits, units) ELSE 0 END), 0) AS weekly,
-        COALESCE(SUM(CASE WHEN ? IS NOT NULL AND occurredAt > ? THEN units ELSE 0 END), 0) AS afterFiveHourObservation,
-        COALESCE(SUM(CASE WHEN ? IS NOT NULL AND occurredAt > ? THEN COALESCE(weeklyUnits, units) ELSE 0 END), 0) AS afterWeeklyObservation
+        COALESCE(SUM(CASE WHEN ? IS NOT NULL AND seq > ? THEN units ELSE 0 END), 0) AS afterFiveHourObservation,
+        COALESCE(SUM(CASE WHEN ? IS NOT NULL AND seq > ? THEN COALESCE(weeklyUnits, units) ELSE 0 END), 0) AS afterWeeklyObservation
       FROM quota_usage
       WHERE provider = ? AND account = ? AND pool = ?
     `).get(
       fiveHourStart,
       weeklyStart,
-      cutoffs.fiveHourObservedAt,
-      cutoffs.fiveHourObservedAt,
-      cutoffs.weeklyObservedAt,
-      cutoffs.weeklyObservedAt,
+      watermarks.fiveHour,
+      watermarks.fiveHour,
+      watermarks.weekly,
+      watermarks.weekly,
       scope.provider,
       scope.account,
       scope.pool,
@@ -484,7 +625,6 @@ export class QuotaLedger {
       input,
       input.fiveHourStart,
       input.weeklyStart,
-      input,
     );
     const weeklyEstimate = input.estimatedWeeklyUnits ?? input.estimatedUnits;
     const fiveHourCommitted = totals.fiveHour + totals.reserved +
@@ -597,7 +737,6 @@ export class QuotaLedger {
 
   insertUnboundedReservation(input: Omit<ReserveQuotaInput,
     | "fiveHourStart" | "weeklyStart"
-    | "fiveHourObservedAt" | "weeklyObservedAt"
     | "supplementalFiveHourUsed" | "supplementalWeeklyUsed"
     | "fiveHourAllowance" | "weeklyAllowance"
     | "fiveHourFloor" | "weeklyFloor"
@@ -612,8 +751,6 @@ export class QuotaLedger {
           ...input,
           fiveHourStart: input.now,
           weeklyStart: input.now,
-          fiveHourObservedAt: null,
-          weeklyObservedAt: null,
           supplementalFiveHourUsed: 0,
           supplementalWeeklyUsed: 0,
           fiveHourAllowance: 0,
@@ -842,8 +979,8 @@ export class QuotaLedger {
         this.db.database.query(`
           INSERT OR IGNORE INTO quota_usage (
             id, reservationId, provider, account, pool, model,
-            units, weeklyUnits, occurredAt, source, confidence
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            units, weeklyUnits, occurredAt, source, confidence, seq
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(
           crypto.randomUUID(),
           reservation.id,
@@ -856,6 +993,7 @@ export class QuotaLedger {
           occurredAt,
           source,
           source === "estimated" ? "estimated" : "authoritative",
+          this.nextUsageSeq(),
         );
       }
       return this.getReservation(id);
@@ -892,13 +1030,35 @@ export class QuotaLedger {
     return this.immediate(() => {
       const prior = this.getObservation(value);
       const merged = mergeObservationWindows(prior, value);
+      const stored = this.watermarks(value);
+      /**
+       * A reading's boundary is pinned the moment it lands, and never moved
+       * again. Only a window whose reading is *strictly* newer than the stored
+       * one gets a fresh boundary; a repeat of the same instant is the same
+       * measurement and keeps the boundary it already had. Recomputing an old
+       * reading's boundary against rows written since would let it grow forward
+       * and swallow — stop counting — spend it never saw, which is the very
+       * under-count this whole mechanism exists to prevent.
+       */
+      const pin = (
+        incomingAt: string | null,
+        priorAt: string | null,
+        priorSeq: number | null,
+        mergedAt: string | null,
+      ): number | null => {
+        if (incomingAt !== null && (priorAt === null || incomingAt > priorAt)) {
+          return this.usageWatermark(value, incomingAt);
+        }
+        return priorSeq ?? this.usageWatermark(value, mergedAt);
+      };
       this.db.database.query(`
         INSERT INTO quota_observations (
           provider, account, pool, fiveHourUsed, weeklyUsed, observedAt,
           fiveHourResetAt, weeklyResetAt, source, confidence,
           fiveHourObservedAt, fiveHourSource, fiveHourConfidence,
-          weeklyObservedAt, weeklySource, weeklyConfidence
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          weeklyObservedAt, weeklySource, weeklyConfidence,
+          fiveHourUsageSeq, weeklyUsageSeq
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(provider, account, pool) DO UPDATE SET
           fiveHourUsed = excluded.fiveHourUsed,
           weeklyUsed = excluded.weeklyUsed,
@@ -912,7 +1072,9 @@ export class QuotaLedger {
           fiveHourConfidence = excluded.fiveHourConfidence,
           weeklyObservedAt = excluded.weeklyObservedAt,
           weeklySource = excluded.weeklySource,
-          weeklyConfidence = excluded.weeklyConfidence
+          weeklyConfidence = excluded.weeklyConfidence,
+          fiveHourUsageSeq = excluded.fiveHourUsageSeq,
+          weeklyUsageSeq = excluded.weeklyUsageSeq
       `).run(
         merged.provider,
         merged.account,
@@ -930,14 +1092,34 @@ export class QuotaLedger {
         merged.weeklyObservedAt,
         merged.weeklySource,
         merged.weeklyConfidence,
+        pin(
+          value.fiveHourObservedAt,
+          prior?.fiveHourObservedAt ?? null,
+          stored.fiveHour,
+          merged.fiveHourObservedAt,
+        ),
+        pin(
+          value.weeklyObservedAt,
+          prior?.weeklyObservedAt ?? null,
+          stored.weekly,
+          merged.weeklyObservedAt,
+        ),
       );
       return this.getObservation(merged)!;
     });
   }
 
   getObservation(scope: QuotaScope): QuotaObservation | null {
+    // Named, not `*`: an observation is what the provider said, and the usage
+    // watermarks alongside it are Hive's own bookkeeping. Selecting them here
+    // would smuggle them into a fact that is supposed to be the provider's.
     const row = this.db.database.query(`
-      SELECT * FROM quota_observations
+      SELECT
+        provider, account, pool, fiveHourUsed, weeklyUsed, observedAt,
+        fiveHourResetAt, weeklyResetAt, source, confidence,
+        fiveHourObservedAt, fiveHourSource, fiveHourConfidence,
+        weeklyObservedAt, weeklySource, weeklyConfidence
+      FROM quota_observations
       WHERE provider = ? AND account = ? AND pool = ?
     `).get(scope.provider, scope.account, scope.pool);
     if (row === null) return null;

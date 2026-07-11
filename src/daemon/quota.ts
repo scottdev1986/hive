@@ -662,8 +662,6 @@ export class QuotaService {
         expiresAt: add(now, this.config.reservationTtlMinutes * 60_000),
         fiveHourStart: bounds.fiveHourStart,
         weeklyStart: bounds.weeklyStart,
-        fiveHourObservedAt: supplemental.fiveHourObservedAt,
-        weeklyObservedAt: supplemental.weeklyObservedAt,
         supplementalFiveHourUsed: supplemental.five,
         supplementalWeeklyUsed: supplemental.week,
         fiveHourAllowance: allowanceFor("fiveHour"),
@@ -1079,10 +1077,6 @@ export class QuotaService {
       scope,
       bounds.fiveHourStart,
       bounds.weeklyStart,
-      {
-        fiveHourObservedAt: observation?.fiveHourObservedAt ?? null,
-        weeklyObservedAt: observation?.weeklyObservedAt ?? null,
-      },
     );
     const fresh = (observedAt: string | null): boolean => {
       if (observedAt === null) return false;
@@ -1308,23 +1302,12 @@ export class QuotaService {
     limit: ResolvedQuotaLimit,
     status: QuotaPoolStatus,
     now: Date,
-  ): {
-    five: number;
-    week: number;
-    fiveHourObservedAt: string | null;
-    weeklyObservedAt: string | null;
-  } {
+  ): { five: number; week: number } {
     const bounds = this.windowBounds(limit, now);
-    const observation = this.ledger.getObservation(limit);
-    const cutoffs = {
-      fiveHourObservedAt: observation?.fiveHourObservedAt ?? null,
-      weeklyObservedAt: observation?.weeklyObservedAt ?? null,
-    };
     const totals = this.ledger.usageTotals(
       limit,
       bounds.fiveHourStart,
       bounds.weeklyStart,
-      cutoffs,
     );
     // What the ledger does *not* already account for. The reserve path adds the
     // ledger's own total back on top of this, so handing it `used - ledgerUsed`
@@ -1337,7 +1320,6 @@ export class QuotaService {
     return {
       five: (status.fiveHour.used ?? 0) - totals.fiveHour,
       week: (status.weekly.used ?? 0) - totals.weekly,
-      ...cutoffs,
     };
   }
 
