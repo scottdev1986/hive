@@ -1093,3 +1093,110 @@ describe("a route that cannot start is not a route", () => {
     expect(pinned.warnings.join(" ")).toContain("no alternative");
   });
 });
+
+describe("a refusal names the way out, and never takes it", () => {
+  test("an exhausted pool's refusal reports unspent reset credits without spending one", async () => {
+    const { quota } = await service([
+      new StubProbe("codex", {
+        status: "ok",
+        pools: [{
+          provider: "codex",
+          account: "default",
+          pool: "codex",
+          label: "prolite",
+          models: ["*"],
+          fiveHour: { usedPct: 100, windowMinutes: 300, resetsAt: null },
+          weekly: { usedPct: 100, windowMinutes: 10_080, resetsAt: null },
+          observedAt: now.toISOString(),
+          source: "provider",
+          confidence: "authoritative",
+        }],
+        catalog: [],
+        // The account is holding four unspent "Full reset" grants, readable in
+        // the same free call as the limits.
+        resetCredits: 4,
+      }),
+    ]);
+    await quota.refreshFromProviders(now, { force: true });
+
+    const spawn = quota.routeAndReserve({
+      agentName: "worker",
+      tier: "deep",
+      preferredTool: "codex",
+      explicitTool: "codex",
+      candidates: [{ tool: "codex", model: "gpt-5.6-sol" }],
+    });
+    // The human is told the door exists. Hive does not open it: burning a finite
+    // credit to admit a spawn is the human's call, and an agent that can quietly
+    // spend the user's scarce resources to get its own way is a bad agent —
+    // looking helpful while doing it is exactly what makes it dangerous. There is
+    // no call to account/rateLimitResetCredit/consume anywhere in Hive.
+    await expect(spawn).rejects.toThrow(/4 unspent usage-limit reset credits/);
+    await expect(spawn).rejects.toThrow(/will not spend one on its own/);
+  });
+});
+
+describe("a spend belongs to the vendor whose model produced it", () => {
+  test("the ledger refuses to bill a Claude model to the Codex meter", async () => {
+    const { db } = await service();
+    const ledger = new QuotaLedger(db);
+    const reserve = () =>
+      ledger.tryReserveGroup([{
+        id: "r1",
+        agentName: "oscar",
+        provider: "codex",
+        account: "default",
+        pool: "codex",
+        // Exactly the row sitting in the live ledger: tier routing picked
+        // tool=codex while the caller had pinned a Claude model, and the ledger
+        // recorded the impossible pair without ever asking whether it could exist.
+        model: "claude-opus-4-8",
+        tier: "standard",
+        estimatedUnits: 4,
+        now: now.toISOString(),
+        expiresAt: new Date(now.getTime() + 60_000).toISOString(),
+        fiveHourStart: now.toISOString(),
+        weeklyStart: now.toISOString(),
+        fiveHourObservedAt: null,
+        weeklyObservedAt: null,
+        supplementalFiveHourUsed: 0,
+        supplementalWeeklyUsed: 0,
+        fiveHourAllowance: 100,
+        weeklyAllowance: 100,
+        fiveHourFloor: 0,
+        weeklyFloor: 0,
+      }]);
+    expect(reserve).toThrow(/Refusing to bill claude model/);
+  });
+
+  test("a model whose vendor cannot be placed is recorded, not guessed at", async () => {
+    const { db } = await service();
+    const ledger = new QuotaLedger(db);
+    // `default` is a real Codex alias, and an unrecognised name may simply be
+    // new. Only a *provable* contradiction is an impossible fact; Hive does not
+    // get to guess which meter an unfamiliar model's spend belongs to.
+    const result = ledger.tryReserveGroup([{
+      id: "r2",
+      agentName: "worker",
+      provider: "codex",
+      account: "default",
+      pool: "codex",
+      model: "default",
+      tier: "standard",
+      estimatedUnits: 4,
+      now: now.toISOString(),
+      expiresAt: new Date(now.getTime() + 60_000).toISOString(),
+      fiveHourStart: now.toISOString(),
+      weeklyStart: now.toISOString(),
+      fiveHourObservedAt: null,
+      weeklyObservedAt: null,
+      supplementalFiveHourUsed: 0,
+      supplementalWeeklyUsed: 0,
+      fiveHourAllowance: 100,
+      weeklyAllowance: 100,
+      fiveHourFloor: 0,
+      weeklyFloor: 0,
+    }]);
+    expect(result.ok).toBe(true);
+  });
+});

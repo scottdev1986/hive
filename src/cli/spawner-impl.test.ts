@@ -334,15 +334,20 @@ describe("HiveSpawner name pool", () => {
     for (const tool of ["claude", "codex"] as const) {
       const root = await mkdtemp(join(tmpdir(), `hive-control-${tool}-`));
       tempRoots.push(root);
+      // The model has to belong to the tool that runs it. Pairing a Codex model
+      // name with the Claude CLI is an identity that cannot exist, and the quota
+      // ledger now refuses to bill one vendor's model to the other's meter.
+      const model = tool === "claude" ? "claude-test" : "gpt-test";
       const controlled = {
         ...agent("maya", "control-paused"),
         tool,
+        model,
         worktreePath: root,
         capabilityEpoch: 1,
         writeRevoked: true,
         executionIdentity: tool === "claude"
-          ? { tool, model: "gpt-test" }
-          : { tool, model: "gpt-test", effort: "high" },
+          ? { tool, model }
+          : { tool, model, effort: "high" },
       } satisfies AgentRecord;
       const controlQuota = makeControlQuota(root);
       const store = new FakeStore([controlled]);
@@ -388,7 +393,7 @@ describe("HiveSpawner name pool", () => {
         ? "--permission-mode"
         : "--sandbox");
       expect(command).toContain(tool === "claude" ? "default" : "read-only");
-      expect(command).toContain("gpt-test");
+      expect(command).toContain(model);
       if (tool === "codex") expect(command).toContain("high");
       const restarted = store.getAgentById(controlled.id)!;
       expect(restarted.controlQuotaReservationId).toBeString();

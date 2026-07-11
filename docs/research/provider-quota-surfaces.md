@@ -112,6 +112,16 @@ The rejected alternative is the previous design, and it is worth stating exactly
 
 The floor's real fear — a provider that lags — is answered without it. Spend recorded after the reading is exactly the spend the reading cannot have seen, and it is still counted. What is no longer counted is spend the provider had every opportunity to see and did not report, because in that case the provider is right and Hive's estimate is wrong.
 
+A spend also belongs to the vendor whose model produced it. The ledger holds one row that disagrees — agent `oscar`, `pool=codex`, `model=claude-opus-4-8`, a Claude model's usage billed to the Codex meter, written when tier routing chose `tool=codex` while the caller had pinned a Claude model. The spawner refuses that pairing now, but the ledger had accepted it without ever asking whether the pair could exist, and a ledger that accepts one incoherent fact will accept the next. The check belongs at the write, so it is there: a provable contradiction between a model's vendor and its pool's provider throws. Only a *provable* one — `default` is a real Codex alias and an unfamiliar name may simply be new, and Hive does not get to guess which meter an unknown model's spend belongs to. The existing bad row stays where it is, visible: it is history, and a misattributed past that can be seen is better than a smoothed one that cannot.
+
+### "Conservative" was the bug, twice
+
+Both of the failures above were defended, in comments, as the *safe* direction. Usage merged by `max()` so that an optimistic provider number "can never free capacity Hive knows it spent." Elsewhere in this codebase a context-window denominator was pinned to 200,000 so that an inflated percentage "errs toward recycling early rather than silently degrading." Each assumed one direction of error was free. Neither asked what that direction actually costs.
+
+They cost plenty. The `max()` floor published a fabricated 12% under the word `authoritative`, in the one place the system claims to be certain. The 200k floor clamped agents at a fake 100% full and had the orchestrator burning quota re-briefing agents it should have kept.
+
+The rule is not "never be conservative." It is: **name what each direction of error actually costs before calling one of them safe.** In this subsystem that resolves to two hard commitments — a measurement beats an estimate, and a label describes the number actually published rather than the reading it was built from. A confidently wrong number is worse than an admitted unknown, because the unknown invites a question and the wrong number closes it.
+
 ## The model a session is actually running
 
 Hive records a model when it spawns an agent. A human is free to switch models in that session afterwards — normal, supported, and invisible to the spawn-time record. The reservation then holds capacity in the wrong meter, and every number booked for that agent describes a model it is not running.

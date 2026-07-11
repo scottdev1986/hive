@@ -7,6 +7,7 @@ import {
   type RoutingTier,
 } from "../schemas";
 import type { HiveDatabase } from "./db";
+import { modelVendor } from "../adapters/tools/models";
 
 const ReservationSchema = z.object({
   id: z.string(),
@@ -494,7 +495,36 @@ export class QuotaLedger {
       weeklyCommitted <= input.weeklyAllowance - input.weeklyFloor;
   }
 
+  /**
+   * A spend belongs to the vendor whose model produced it. Anything else is not
+   * a small error to be tolerated, it is an impossible fact.
+   *
+   * The ledger holds one such row today: agent `oscar`, `pool=codex`,
+   * `model=claude-opus-4-8` — a Claude model's usage billed against the Codex
+   * meter, written when tier routing picked `tool=codex` while the caller had
+   * pinned a Claude model. The spawner refuses that pairing now, but the ledger
+   * took it without ever asking whether the pair could exist, and a ledger that
+   * accepts an incoherent fact will accept the next one too. Cross-vendor billing
+   * corruption stays small until it doesn't.
+   *
+   * Only a *provable* contradiction is rejected. `modelVendor` returns null for a
+   * name it cannot place — `default` is a real Codex alias, and an unrecognised
+   * model may simply be new — and Hive does not get to guess which meter a spend
+   * belongs to. An unknown vendor is recorded as asked; a known-wrong one throws.
+   */
+  private requireCoherent(provider: "claude" | "codex", model: string): void {
+    const vendor = modelVendor(model);
+    if (vendor !== null && vendor !== provider) {
+      throw new Error(
+        `Refusing to bill ${vendor} model "${model}" to the ${provider} meter: ` +
+          "a spend belongs to the vendor whose model produced it, and Hive will " +
+          "not guess which pool an impossible pairing should be charged to.",
+      );
+    }
+  }
+
   private insert(input: ReserveQuotaInput, groupId: string): void {
+    this.requireCoherent(input.provider, input.model);
     this.db.database.query(`
       INSERT INTO quota_reservations (
         id, groupId, agentName, provider, account, pool, model, tier,
