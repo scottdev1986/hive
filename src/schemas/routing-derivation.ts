@@ -137,16 +137,22 @@ export const RoutingPinsSchema = z.record(z.string().min(1), RoutingPinSchema);
 export type RoutingPins = z.infer<typeof RoutingPinsSchema>;
 
 /**
- * The user's capability floors, read from `routing.toml`'s `[floors]` table
- * (standing rule B: "nothing below claude-opus-4-8 / gpt-5.6-sol builds;
- * claude-fable-5 for important/hard tasks" — the user's words, never Hive's).
- * An explicit allowlist per vendor, not a rank Hive invents: the router
- * matches ids the user wrote and never judges model quality itself
- * (no-model-judgment ruling). The binary ships this schema and its
- * enforcement only — no floor value is ever compiled in.
+ * The user's capability floors, read from `routing.toml`'s `[floors]` table.
+ * A standing structural rule (rule B), never a standing model choice: it
+ * says nothing below the user's allow-listed models may route for building
+ * work, but which models clear that bar is the user's CURRENT setting, not
+ * durable truth — it is expected to change as the model lineup does. An
+ * explicit allowlist per vendor, not a rank Hive invents: the router matches
+ * ids the user wrote and never judges model quality itself (no-model-judgment
+ * ruling). The binary ships this schema and its enforcement only — no floor
+ * value is ever compiled in, and none is pre-filled: unset by default, and it
+ * stays that way until the user writes one.
  */
 export const RoutingFloorSchema = z.strictObject({
   allow: z.array(z.string().min(1)).min(1),
+  /** The user's own note on why this floor is set — never read by the
+   * enforcement logic, purely for their future reference. */
+  note: z.string().min(1).optional(),
 });
 export type RoutingFloor = z.infer<typeof RoutingFloorSchema>;
 

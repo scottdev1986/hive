@@ -311,27 +311,31 @@ describe("config loading", () => {
 
   test("floors read back verbatim and coexist with pins in the same file", async () => {
     await resetHome();
+    // Fixture ids throughout, deliberately not real model names: the floor's
+    // membership is the user's own current setting, never a Hive-durable one.
     await writeFile(
       join(hiveHome, "routing.toml"),
       [
         "[deep.claude]",
-        'model = "claude-fable-5"',
+        'model = "fixture-pinned-model"',
         "",
         "[floors.claude]",
-        'allow = ["claude-opus-4-8", "claude-fable-5"]',
+        'allow = ["fixture-model-a", "fixture-model-b"]',
+        'note = "why this floor, for future reference"',
         "",
         "[floors.codex]",
-        'allow = ["gpt-5.6-sol"]',
+        'allow = ["fixture-model-c"]',
         "",
       ].join("\n"),
     );
     const floors = await loadRoutingFloors();
-    expect(floors.claude?.allow).toEqual(["claude-opus-4-8", "claude-fable-5"]);
-    expect(floors.codex?.allow).toEqual(["gpt-5.6-sol"]);
+    expect(floors.claude?.allow).toEqual(["fixture-model-a", "fixture-model-b"]);
+    expect(floors.claude?.note).toEqual("why this floor, for future reference");
+    expect(floors.codex?.allow).toEqual(["fixture-model-c"]);
     // `floors` is a reserved key, not a tier: it does not trip the unknown-tier
     // check, and the pin alongside it still reads back untouched.
     const pins = await loadRoutingPins();
-    expect(pins.deep?.claude?.model).toEqual("claude-fable-5");
+    expect(pins.deep?.claude?.model).toEqual("fixture-pinned-model");
     expect(pins.floors).toBeUndefined();
   });
 

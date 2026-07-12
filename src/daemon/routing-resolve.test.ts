@@ -174,40 +174,50 @@ describe("what governs may never break", () => {
     expect(governing!.cells.claude.model).toBe("claude-fable-5");
   });
 
-  test("a seeded routing.toml floor refuses a below-floor standard-tier claude resolution", async () => {
-    await pins('[floors.claude]\nallow = ["claude-opus-4-8", "claude-fable-5"]\n');
-    const sonnetDefault: CapabilityDiscoveryResult = {
-      ...CLAUDE,
-      effectiveDefault: {
-        provider: "claude",
-        model: known("claude-sonnet-5", "claude.initialize", OBSERVED),
-        effort: unknown("surface-silent", "claude.initialize", OBSERVED),
-      },
-    };
+  // Fixture ids, not real model names: a floor's membership is the user's own
+  // current, editable setting, and the suite must not enshrine a choice of
+  // his as a durable expectation.
+  const fixtureFloorDiscovery = (defaultId: string): CapabilityDiscoveryResult => ({
+    status: "ok",
+    records: [
+      record({ provider: "claude", canonicalId: "fixture-vendor-strong" }),
+      record({ provider: "claude", canonicalId: "fixture-vendor-weak" }),
+    ],
+    effectiveDefault: {
+      provider: "claude",
+      model: known(defaultId, "claude.initialize", OBSERVED),
+      effort: unknown("surface-silent", "claude.initialize", OBSERVED),
+    },
+  });
+
+  test("a fixture routing.toml floor refuses a below-floor standard-tier claude resolution", async () => {
+    await pins('[floors.claude]\nallow = ["fixture-vendor-strong"]\n');
+    const weakDefault = fixtureFloorDiscovery("fixture-vendor-weak");
     const governing = await resolveGoverningRoute("standard", {
       ...io(),
-      discover: async (provider) => provider === "claude" ? sonnetDefault : CODEX,
+      discover: async (provider) => provider === "claude" ? weakDefault : CODEX,
     });
     expect(governing!.cells.claude.model).toBeNull();
     expect(governing!.cells.claude.reason).toContain("capability floor");
-    expect(governing!.cells.claude.reason).toContain("claude-sonnet-5");
+    expect(governing!.cells.claude.reason).toContain("fixture-vendor-weak");
   });
 
-  test("the same seeded floor leaves the cheap tier untouched", async () => {
-    await pins('[floors.claude]\nallow = ["claude-opus-4-8", "claude-fable-5"]\n');
-    const sonnetDefault: CapabilityDiscoveryResult = {
-      ...CLAUDE,
-      effectiveDefault: {
-        provider: "claude",
-        model: known("claude-sonnet-5", "claude.initialize", OBSERVED),
-        effort: unknown("surface-silent", "claude.initialize", OBSERVED),
-      },
-    };
+  test("the same fixture floor leaves the cheap tier untouched", async () => {
+    await pins('[floors.claude]\nallow = ["fixture-vendor-strong"]\n');
+    const weakDefault = fixtureFloorDiscovery("fixture-vendor-weak");
     const governing = await resolveGoverningRoute("cheap", {
       ...io(),
-      discover: async (provider) => provider === "claude" ? sonnetDefault : CODEX,
+      discover: async (provider) => provider === "claude" ? weakDefault : CODEX,
     });
-    expect(governing!.cells.claude.model).toBe("claude-sonnet-5");
+    expect(governing!.cells.claude.model).toBe("fixture-vendor-weak");
+  });
+
+  test("with no routing.toml at all, floors are unset and derivation is unaffected", async () => {
+    // No `pins()` call: no routing.toml file exists on disk at all, matching
+    // the live machine's default state — floors ship unset, never pre-filled.
+    const governing = await resolveGoverningRoute("standard", io());
+    expect(governing!.cells.claude.model).toBe("claude-opus-4-8");
+    expect(governing!.cells.claude.reason).not.toContain("capability floor");
   });
 
   test("no cell offers quota a downshift chain yet", async () => {

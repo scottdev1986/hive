@@ -231,18 +231,38 @@ describe("the pin: a standing user directive, never silently obeyed", () => {
   });
 });
 
-describe("capability floors: standing user policy, never a Hive-invented rank", () => {
-  const SONNET_DEFAULT: EffectiveDefault = {
+// Fixture-only vendor ids for the floor tests below. Deliberately NOT real
+// model names: a floor's actual allow-list is the user's own current,
+// editable setting (never a durable Hive value), and the suite must not
+// enshrine any particular choice of his as an expectation.
+describe("capability floors: user-editable membership, unset by default", () => {
+  const FIXTURE_WEAK = "fixture-vendor-weak";
+  const FIXTURE_STRONG = "fixture-vendor-strong";
+  const FIXTURE_FLAGSHIP = "fixture-vendor-flagship";
+
+  const FLOOR_RECORDS = [
+    record("claude", FIXTURE_WEAK, { displayName: "Weak" }),
+    record("claude", FIXTURE_STRONG, { displayName: "Strong" }),
+    record("claude", FIXTURE_FLAGSHIP, { displayName: "Flagship" }),
+  ];
+
+  const WEAK_DEFAULT: EffectiveDefault = {
     provider: "claude",
-    model: known("claude-sonnet-5", "claude.initialize", FRESH),
+    model: known(FIXTURE_WEAK, "claude.initialize", FRESH),
     effort: unknown("surface-silent", "claude.initialize", FRESH),
   };
-  const CLAUDE_FLOOR = { claude: { allow: ["claude-opus-4-8", "claude-fable-5"] } };
+  const STRONG_DEFAULT: EffectiveDefault = {
+    provider: "claude",
+    model: known(FIXTURE_STRONG, "claude.initialize", FRESH),
+    effort: unknown("surface-silent", "claude.initialize", FRESH),
+  };
+
+  const CLAUDE_FLOOR = { claude: { allow: [FIXTURE_STRONG, FIXTURE_FLAGSHIP] } };
 
   test("a below-floor derived candidate is excluded and the cell REFUSES, naming the floor", () => {
     const derived = deriveRouting(input({
       discovery: {
-        claude: ok(CLAUDE_RECORDS, SONNET_DEFAULT),
+        claude: ok(FLOOR_RECORDS, WEAK_DEFAULT),
         codex: ok(CODEX_RECORDS, CODEX_DEFAULT),
       },
       floors: CLAUDE_FLOOR,
@@ -251,7 +271,7 @@ describe("capability floors: standing user policy, never a Hive-invented rank", 
     expect(standard.claude.model.value).toBeNull();
     expect(standard.claude.model.layer).toBe("unknown");
     expect(standard.claude.model.reason).toContain("capability floor");
-    expect(standard.claude.model.reason).toContain("claude-sonnet-5");
+    expect(standard.claude.model.reason).toContain(FIXTURE_WEAK);
     expect(derived.warnings.some((warning) => warning.includes("capability floor")))
       .toBe(true);
   });
@@ -259,7 +279,7 @@ describe("capability floors: standing user policy, never a Hive-invented rank", 
   test("the review tier is floor-bound the same as deep and standard", () => {
     const derived = deriveRouting(input({
       discovery: {
-        claude: ok(CLAUDE_RECORDS, SONNET_DEFAULT),
+        claude: ok(FLOOR_RECORDS, WEAK_DEFAULT),
         codex: ok(CODEX_RECORDS, CODEX_DEFAULT),
       },
       floors: CLAUDE_FLOOR,
@@ -272,70 +292,94 @@ describe("capability floors: standing user policy, never a Hive-invented rank", 
   test("the cheap tier is exempt from the building floor", () => {
     const derived = deriveRouting(input({
       discovery: {
-        claude: ok(CLAUDE_RECORDS, SONNET_DEFAULT),
+        claude: ok(FLOOR_RECORDS, WEAK_DEFAULT),
         codex: ok(CODEX_RECORDS, CODEX_DEFAULT),
       },
       floors: CLAUDE_FLOOR,
     }));
     const cheap = tierOf(derived, "cheap");
-    expect(cheap.claude.model.value).toBe("claude-sonnet-5");
+    expect(cheap.claude.model.value).toBe(FIXTURE_WEAK);
     expect(cheap.claude.model.layer).toBe("derived");
   });
 
   test("a floor-clearing candidate routes and the evidence basis is named", () => {
-    const derived = deriveRouting(input({ floors: CLAUDE_FLOOR }));
+    const derived = deriveRouting(input({
+      discovery: {
+        claude: ok(FLOOR_RECORDS, STRONG_DEFAULT),
+        codex: ok(CODEX_RECORDS, CODEX_DEFAULT),
+      },
+      floors: CLAUDE_FLOOR,
+    }));
     const deep = tierOf(derived, "deep");
-    expect(deep.claude.model.value).toBe("claude-opus-4-8");
+    expect(deep.claude.model.value).toBe(FIXTURE_STRONG);
     expect(deep.claude.notes.join(" ")).toContain("clears the capability floor");
   });
 
   test("a pin below the floor is not honoured; derivation falls through and the conflict is named", () => {
     const derived = deriveRouting(input({
-      pins: { standard: { claude: { model: "claude-sonnet-5" } } },
+      discovery: {
+        claude: ok(FLOOR_RECORDS, STRONG_DEFAULT),
+        codex: ok(CODEX_RECORDS, CODEX_DEFAULT),
+      },
+      pins: { standard: { claude: { model: FIXTURE_WEAK } } },
       floors: CLAUDE_FLOOR,
     }));
     const standard = tierOf(derived, "standard");
-    // The effective default (unchanged: claude-opus-4-8) clears the floor and
-    // is what actually routes — the pin never silently wins over the floor.
-    expect(standard.claude.model.value).toBe("claude-opus-4-8");
+    // The effective default (the floor-clearing fixture) is what actually
+    // routes — the pin never silently wins over the floor.
+    expect(standard.claude.model.value).toBe(FIXTURE_STRONG);
     expect(standard.claude.model.layer).toBe("derived");
     expect(standard.claude.notes.join(" ")).toContain(
       "does not clear the capability floor",
     );
   });
 
-  test("an unconfigured floor changes nothing — no floor is shipped, only the schema", () => {
+  test("an unconfigured floor changes nothing — none is shipped, only the schema", () => {
     const derived = deriveRouting(input({
       discovery: {
-        claude: ok(CLAUDE_RECORDS, SONNET_DEFAULT),
+        claude: ok(FLOOR_RECORDS, WEAK_DEFAULT),
         codex: ok(CODEX_RECORDS, CODEX_DEFAULT),
       },
     }));
     const standard = tierOf(derived, "standard");
-    expect(standard.claude.model.value).toBe("claude-sonnet-5");
+    expect(standard.claude.model.value).toBe(FIXTURE_WEAK);
     expect(standard.claude.model.layer).toBe("derived");
   });
 
   test("codex's floor is independent of claude's and excludes the same way", () => {
+    const codexStrong = "fixture-codex-strong";
+    const codexWeak = "fixture-codex-weak";
     const belowFloor: EffectiveDefault = {
       provider: "codex",
-      model: known("gpt-5-codex", "codex.config/read", FRESH),
+      model: known(codexWeak, "codex.config/read", FRESH),
       effort: unknown("surface-silent", "codex.config/read", FRESH),
     };
-    const records = [
-      record("codex", "gpt-5-codex", { displayName: "GPT-5-Codex" }),
-    ];
+    const records = [record("codex", codexWeak, { displayName: "Codex Weak" })];
     const derived = deriveRouting(input({
       discovery: {
-        claude: ok(CLAUDE_RECORDS, CLAUDE_DEFAULT),
+        claude: ok(FLOOR_RECORDS, STRONG_DEFAULT),
         codex: ok(records, belowFloor),
       },
-      floors: { codex: { allow: ["gpt-5.6-sol"] } },
+      floors: { codex: { allow: [codexStrong] } },
     }));
     const standard = tierOf(derived, "standard");
     expect(standard.codex.model.value).toBeNull();
     expect(standard.codex.model.reason).toContain("capability floor");
-    expect(standard.codex.model.reason).toContain("gpt-5-codex");
+    expect(standard.codex.model.reason).toContain(codexWeak);
+  });
+
+  test("an optional note is carried through the schema, unread by enforcement", () => {
+    const derived = deriveRouting(input({
+      discovery: {
+        claude: ok(FLOOR_RECORDS, STRONG_DEFAULT),
+        codex: ok(CODEX_RECORDS, CODEX_DEFAULT),
+      },
+      floors: {
+        claude: { allow: [FIXTURE_STRONG], note: "picked for a specific project" },
+      },
+    }));
+    const deep = tierOf(derived, "deep");
+    expect(deep.claude.model.value).toBe(FIXTURE_STRONG);
   });
 });
 
