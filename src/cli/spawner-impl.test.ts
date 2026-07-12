@@ -12,6 +12,7 @@ import { join } from "node:path";
 import type { TerminalAdapter } from "../adapters/terminal";
 import type { ShadowSpawn } from "../daemon/routing-shadow";
 import type { AccountBilling } from "../daemon/usage-credits";
+import type { Approval } from "../daemon/db";
 import { CLAUDE_CHANNELS_FLAG } from "../adapters/tools/claude";
 import {
   DEFAULT_ROUTING,
@@ -197,9 +198,20 @@ function controlMessage(id: string, epoch = 1): AgentMessage {
 class FakeStore {
   readonly agents: AgentRecord[];
   readonly reservations = new Set<string>();
+  /** The real approvals queue, in memory: the spend guard asks through it. */
+  readonly approvals = new Map<string, Approval>();
 
   constructor(agents: AgentRecord[] = []) {
     this.agents = [...agents];
+  }
+
+  getApproval(id: string): Approval | null {
+    return this.approvals.get(id) ?? null;
+  }
+
+  insertApproval(approval: Approval): Approval {
+    this.approvals.set(approval.id, approval);
+    return approval;
   }
 
   listAgents(): AgentRecord[] {
@@ -3437,5 +3449,201 @@ describe("the release valve follows the provider's metering, not a model name", 
       "claude:claude-opus-4-8",
       "codex:gpt-5.6-sol",
     ]);
+  });
+});
+
+describe("the spend guard is consulted by the LIVE spawn path", () => {
+  // The guard already governed the derived table and `hive routing`. Neither of
+  // those launches anything. These tests are about the connection, not the rule:
+  // a guard that is correct, tested, green and never consulted is
+  // indistinguishable from one that works, until the day it matters.
+  const billing = (
+    creditsOn: boolean,
+    fableUsed: number,
+  ): AccountBilling => ({
+    creditsEnabled: known(creditsOn, "claude.get_usage", timestamp),
+    disabledReason: null,
+    generalUtilization: known(20, "claude.get_usage", timestamp),
+    modelUtilization: { fable: fableUsed },
+  });
+
+  const claudeDiscovery = (): CapabilityDiscoveryResult => ({
+    status: "ok",
+    records: [
+      {
+        ...capabilityRecord("claude", "claude-fable-5", ["low", "high"]),
+        displayName: "Fable",
+      },
+      {
+        ...capabilityRecord("claude", "claude-opus-4-8", ["low", "high"]),
+        displayName: "Opus",
+      },
+    ],
+    effectiveDefault: {
+      provider: "claude",
+      model: known("claude-opus-4-8", "claude.initialize", timestamp),
+      effort: unknown("surface-silent", "claude.initialize", timestamp),
+    },
+  });
+
+  async function spawnWith(
+    root: string,
+    options: {
+      billing: AccountBilling;
+      model?: string;
+      approve?: string;
+    },
+  ) {
+    const store = new FakeStore();
+    if (options.approve !== undefined) {
+      store.insertApproval({
+        id: `cost-consent:${options.approve}`,
+        agentName: "router",
+        description: "approved in a previous turn",
+        status: "approved",
+        createdAt: timestamp,
+        resolvedAt: timestamp,
+      });
+    }
+    const spawner = new HiveSpawner({
+      db: store,
+      repoRoot: root,
+      port: 4317,
+      config: { terminal: "auto", headless: true },
+      // The deep tier's Claude column, with no quota configured at all — so the
+      // ONLY thing that can stop a charge here is the guard itself.
+      routing: async () => ({
+        ...DEFAULT_ROUTING.deep,
+        tool: "claude",
+      }),
+      tmux: new FakeTmux(),
+      terminal: new FakeTerminal(),
+      createWorktree: async (_repoRoot, name, slug) => {
+        const path = join(root, name);
+        await mkdir(path, { recursive: true });
+        return { path, branch: `hive/${name}-${slug}` };
+      },
+      sleep: signalReadiness(store),
+      resolveModel: async () => "claude-fable-5",
+      discoverCapabilities: async () => claudeDiscovery(),
+      readBilling: async () => options.billing,
+    });
+    const record = await spawner.spawn({
+      task: "does the launch path consult the guard",
+      tier: "deep",
+      ...(options.model === undefined ? {} : { model: options.model }),
+    });
+    return { record, store };
+  }
+
+  test("credits OFF: it does NOT fire, and the agent launches — today's state", async () => {
+    // If it nags him today it is broken: he cannot be charged, and he would learn
+    // to click through the prompt long before the day it counts.
+    const root = await mkdtemp(join(tmpdir(), "hive-guard-off-"));
+    tempRoots.push(root);
+    // Every pool exhausted, and it STILL must not fire: with credits off a
+    // request past the plan is refused, not billed.
+    const { record, store } = await spawnWith(root, {
+      billing: billing(false, 100),
+    });
+    expect(record.model).toBe("claude-fable-5");
+    expect(record.status).toBe("working");
+    expect([...store.approvals.values()]).toEqual([]);
+  });
+
+  test("credits ON + pool spent: the LIVE spawn is refused and he is asked", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-guard-on-"));
+    tempRoots.push(root);
+    let failure = "";
+    const store = new FakeStore();
+    try {
+      await spawnWith(root, { billing: billing(true, 100) });
+    } catch (error) {
+      failure = error instanceof Error ? error.message : String(error);
+    }
+    expect(failure).toContain("would spend your money");
+    expect(failure).toContain("approvals queue");
+  });
+
+  test("credits ON + pool spent: the request lands in the approvals queue", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-guard-queue-"));
+    tempRoots.push(root);
+    const store = new FakeStore();
+    const spawner = new HiveSpawner({
+      db: store,
+      repoRoot: root,
+      port: 4317,
+      config: { terminal: "auto", headless: true },
+      routing: async () => ({ ...DEFAULT_ROUTING.deep, tool: "claude" }),
+      tmux: new FakeTmux(),
+      terminal: new FakeTerminal(),
+      createWorktree: async (_repoRoot, name, slug) => {
+        const path = join(root, name);
+        await mkdir(path, { recursive: true });
+        return { path, branch: `hive/${name}-${slug}` };
+      },
+      sleep: signalReadiness(store),
+      resolveModel: async () => "claude-fable-5",
+      discoverCapabilities: async () => claudeDiscovery(),
+      readBilling: async () => billing(true, 100),
+    });
+    await spawner.spawn({ task: "ask me first", tier: "deep" }).catch(() => {});
+    const asked = [...store.approvals.values()];
+    expect(asked).toHaveLength(1);
+    expect(asked[0]!.id).toBe("cost-consent:claude-fable-5");
+    expect(asked[0]!.status).toBe("pending");
+    expect(asked[0]!.description).toContain("SPEND REAL MONEY");
+  });
+
+  test("an approved request lets the live spawn through", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-guard-approved-"));
+    tempRoots.push(root);
+    const { record } = await spawnWith(root, {
+      billing: billing(true, 100),
+      approve: "claude-fable-5",
+    });
+    expect(record.model).toBe("claude-fable-5");
+    expect(record.status).toBe("working");
+  });
+
+  test("an EXPLICIT model is his own instruction and is never gated", async () => {
+    // The guard governs Hive's choices, not his. He asked for this model by name.
+    const root = await mkdtemp(join(tmpdir(), "hive-guard-pinned-"));
+    tempRoots.push(root);
+    const { record, store } = await spawnWith(root, {
+      billing: billing(true, 100),
+      model: "claude-fable-5",
+    });
+    expect(record.model).toBe("claude-fable-5");
+    expect(record.status).toBe("working");
+    expect([...store.approvals.values()]).toEqual([]);
+  });
+
+  test("an unreadable bill does not hold every spawn hostage", async () => {
+    // A probe that failed is not evidence of a charge. The guard stands down and
+    // says nothing rather than refusing the world on a hunch.
+    const root = await mkdtemp(join(tmpdir(), "hive-guard-blind-"));
+    tempRoots.push(root);
+    const store = new FakeStore();
+    const spawner = new HiveSpawner({
+      db: store,
+      repoRoot: root,
+      port: 4317,
+      config: { terminal: "auto", headless: true },
+      routing: async () => ({ ...DEFAULT_ROUTING.deep, tool: "claude" }),
+      tmux: new FakeTmux(),
+      terminal: new FakeTerminal(),
+      createWorktree: async (_repoRoot, name, slug) => {
+        const path = join(root, name);
+        await mkdir(path, { recursive: true });
+        return { path, branch: `hive/${name}-${slug}` };
+      },
+      sleep: signalReadiness(store),
+      resolveModel: async () => "claude-fable-5",
+      discoverCapabilities: async () => claudeDiscovery(),
+      readBilling: async () => null,
+    });
+    const record = await spawner.spawn({ task: "blind", tier: "deep" });
+    expect(record.status).toBe("working");
   });
 });

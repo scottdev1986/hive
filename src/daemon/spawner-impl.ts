@@ -67,7 +67,8 @@ import { agentTmuxSession } from "./tmux-sessions";
 import { validateEffort } from "./effort";
 import type { CapabilityDiscoveryResult } from "./capability-discovery";
 import type { ShadowSpawn } from "./routing-shadow";
-import type { AccountBilling } from "./usage-credits";
+import { spendRisk, type AccountBilling } from "./usage-credits";
+import { readCostConsent, requestCostConsent } from "./cost-consent";
 
 /**
  * Names an agent can be given. Human first names, because the user's interface
@@ -192,6 +193,10 @@ type AgentStore = Pick<
   | "listAgents"
   | "releaseAgentName"
   | "reserveAgentName"
+  // The spend guard asks through the approvals queue Hive already has, rather
+  // than inventing a second way to ask the user for permission.
+  | "getApproval"
+  | "insertApproval"
 >;
 type RouteResolver = (tier: RoutingTier) => Promise<Route>;
 type WorktreeCreator = (
@@ -763,6 +768,75 @@ export class HiveSpawner implements Spawner {
     if (fallbackModel.state !== "known") return null;
     // A valve that offers the model it is relieving is not a valve.
     return fallbackModel.value === base ? null : fallbackModel.value;
+  }
+
+  /**
+   * Would this AUTOMATIC route spend the user's real money? Returns the refusal,
+   * or `null` to proceed.
+   *
+   * This is the live spawn path's copy of the rule — and the point of it being
+   * here at all. The guard already governed the derived table and `hive routing`,
+   * and neither of those launches anything: a guard that is correct, tested,
+   * green and never consulted is indistinguishable from one that works, right up
+   * until the day it matters. The launch path consults it now.
+   *
+   *   plan headroom            -> go; the plan already covers it
+   *   pool spent + credits ON  -> ASK, through the approvals queue
+   *   pool spent + credits OFF -> nothing can pay for it
+   *   not measurable           -> do not AUTO-route; a pin still works
+   *
+   * Scope, declared rather than assumed: this guards CLAUDE. `get_usage` is a
+   * Claude surface, and no surface Hive has found reports a paid-overflow
+   * mechanism for Codex at all — so a Codex spawn is not judged by Claude's pools,
+   * which would be nonsense, and it is not blocked on a measurement that does not
+   * exist. If Codex ever exposes one, this is where it plugs in.
+   *
+   * With credits OFF — today's state — `spendRisk` returns `no-spend` before it
+   * ever looks at a pool, so this cannot fire. A guard that nags a user who cannot
+   * be charged is one he learns to click through, and it would be gone by the day
+   * it counts.
+   */
+  private async spendRefusal(
+    tool: "claude" | "codex",
+    model: string,
+  ): Promise<string | null> {
+    if (tool !== "claude") return null;
+    const billing = await this.dependencies.readBilling?.();
+    // A bill Hive could not read is not a bill it may invent. It also may not
+    // hold every spawn hostage to a probe that failed, so the guard stands down
+    // and says nothing rather than refusing the world on a hunch.
+    if (billing === undefined || billing === null) return null;
+
+    const discovery = await this.discoverOnce("claude");
+    const base = splitVariant(model).base;
+    const record = discovery?.status === "ok"
+      ? discovery.records.find((candidate) =>
+        candidate.canonicalId === base || candidate.launchToken === base ||
+        candidate.aliases.includes(model)
+      )
+      : undefined;
+
+    // The billing surface names a model only by its display name, so without one
+    // the spawn cannot be joined to a pool: unknown, and unknown never authorises
+    // a charge.
+    const risk = record?.displayName == null
+      ? {
+        state: "unknown" as const,
+        detail: `Hive cannot join ${model} to a plan pool, so it cannot rule out ` +
+          "a charge",
+      }
+      : spendRisk(billing, record.displayName);
+    if (risk.state === "no-spend") return null;
+
+    const canonicalId = record?.canonicalId ?? base;
+    if (readCostConsent(this.dependencies.db, canonicalId) === "approved") {
+      return null;
+    }
+    // Ask once, through the queue he already answers. Pending is not a yes.
+    requestCostConsent(this.dependencies.db, canonicalId, risk.detail);
+    return `${model} would spend your money: ${risk.detail}. Hive will not ` +
+      "auto-route into a charge — approve the request in the approvals queue " +
+      `(hive_approvals), or spawn ${model} explicitly to run it anyway`;
   }
 
   private async resolveSpawnEffort(
@@ -1384,6 +1458,17 @@ export class HiveSpawner implements Spawner {
         const excluded: string[] = [];
         for (const candidate of candidates) {
           try {
+            // Money is an eligibility filter, like capability: it runs BEFORE
+            // quota, so an affordable candidate can still win the spawn rather
+            // than the whole launch dying on the priciest one.
+            const refusal = await this.spendRefusal(
+              candidate.tool,
+              candidate.model,
+            );
+            if (refusal !== null) {
+              excluded.push(refusal);
+              continue;
+            }
             const candidateEffort = await resolveEffort(
               candidate.tool,
               candidate.model,
@@ -1402,7 +1487,7 @@ export class HiveSpawner implements Spawner {
         }
         if (eligible.length === 0) {
           throw new Error(
-            `No capability-eligible route remains for ${request.tier}: ${excluded.join("; ")}`,
+            `No eligible route remains for ${request.tier}: ${excluded.join("; ")}`,
           );
         }
         candidates = eligible;
@@ -1424,6 +1509,21 @@ export class HiveSpawner implements Spawner {
       effort = decision.effort;
       effortResolved = true;
       quotaReservationId = decision.reservation.id;
+    }
+    // The gate every AUTOMATIC launch passes through, whatever route it took to
+    // get here — quota enabled or not, valve or no valve. The filter above lets an
+    // affordable candidate win the spawn; this makes sure nothing that would
+    // charge him reaches a CLI even if it somehow survived. An EXPLICIT model is
+    // his own instruction and is never gated: the guard governs Hive's choices,
+    // not his.
+    if (request.model === undefined) {
+      const refusal = await this.spendRefusal(tool, model);
+      if (refusal !== null) {
+        if (quotaReservationId !== undefined) {
+          await this.dependencies.quota?.cancel(quotaReservationId);
+        }
+        throw new Error(`Cannot spawn ${name}: ${refusal}`);
+      }
     }
     if (!effortResolved) {
       try {
