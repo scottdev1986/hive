@@ -11,6 +11,7 @@ final class PaneView: NSView {
 
     private let backgroundView = NSVisualEffectView()
     private let headerView = NSView()
+    private let headerStack = NSStackView()
     private let statusIcon = NSImageView()
     private let titleLabel = NSTextField(labelWithString: "")
     private let detailLabel = NSTextField(labelWithString: "")
@@ -56,7 +57,9 @@ final class PaneView: NSView {
         titleLabel.stringValue = title
         titleLabel.font = Theme.headerFont
         titleLabel.textColor = .labelColor
-        titleLabel.lineBreakMode = .byTruncatingTail
+        // Middle truncation keeps names tellable-apart under extreme squeeze:
+        // "ab…l"/"ab…y" instead of both collapsing to "ab…".
+        titleLabel.lineBreakMode = .byTruncatingMiddle
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
 
         detailLabel.font = Theme.captionFont
@@ -76,13 +79,42 @@ final class PaneView: NSView {
         let closeButton = headerButton(symbol: "xmark", tooltip: "Close Pane",
                                        action: #selector(closeAction))
 
+        // Explicit truncation priority for a narrowing header. The user finds
+        // a pane by NAME and DOT, so those are the last things standing:
+        //   1. status dot — fixed size, never yields
+        //   2. agent name — compresses (middle-truncated) only when nothing
+        //      else is left to give
+        //   3. failure badge, then close, then promote — detached whole,
+        //      never clipped; both buttons have keyboard/menu equivalents
+        //   4. detail text — yields first; its status word already rides the
+        //      dot, so it is the least costly loss
+        let spacer = NSView()
+        spacer.setContentHuggingPriority(NSLayoutConstraint.Priority(1), for: .horizontal)
+        spacer.setContentCompressionResistancePriority(NSLayoutConstraint.Priority(1), for: .horizontal)
+        titleLabel.setContentCompressionResistancePriority(NSLayoutConstraint.Priority(999), for: .horizontal)
+        detailLabel.setContentCompressionResistancePriority(NSLayoutConstraint.Priority(200), for: .horizontal)
+
+        headerStack.orientation = .horizontal
+        headerStack.alignment = .centerY
+        headerStack.spacing = 6
+        headerStack.detachesHiddenViews = true
+        headerStack.setClippingResistancePriority(.required, for: .horizontal)
+        headerStack.translatesAutoresizingMaskIntoConstraints = false
+        for view in [statusIcon, titleLabel, detailLabel, spacer, failureBadge, promoteButton, closeButton] {
+            headerStack.addArrangedSubview(view)
+        }
+        headerStack.setVisibilityPriority(.mustHold, for: statusIcon)
+        headerStack.setVisibilityPriority(.mustHold, for: titleLabel)
+        // The detail label shrinks to nothing (truncating tail) rather than
+        // detaching, so mild squeezes lose characters, not whole fields.
+        headerStack.setVisibilityPriority(.mustHold, for: detailLabel)
+        headerStack.setVisibilityPriority(.mustHold, for: spacer)
+        headerStack.setVisibilityPriority(NSStackView.VisibilityPriority(500), for: failureBadge)
+        headerStack.setVisibilityPriority(NSStackView.VisibilityPriority(400), for: closeButton)
+        headerStack.setVisibilityPriority(NSStackView.VisibilityPriority(300), for: promoteButton)
+
         headerView.translatesAutoresizingMaskIntoConstraints = false
-        headerView.addSubview(statusIcon)
-        headerView.addSubview(titleLabel)
-        headerView.addSubview(detailLabel)
-        headerView.addSubview(failureBadge)
-        headerView.addSubview(promoteButton)
-        headerView.addSubview(closeButton)
+        headerView.addSubview(headerStack)
         backgroundView.addSubview(headerView)
 
         contentView.translatesAutoresizingMaskIntoConstraints = false
@@ -104,25 +136,12 @@ final class PaneView: NSView {
             headerView.trailingAnchor.constraint(equalTo: backgroundView.trailingAnchor),
             headerView.heightAnchor.constraint(equalToConstant: 30),
 
-            statusIcon.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 10),
-            statusIcon.centerYAnchor.constraint(equalTo: headerView.centerYAnchor),
+            headerStack.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 10),
+            headerStack.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -8),
+            headerStack.topAnchor.constraint(equalTo: headerView.topAnchor),
+            headerStack.bottomAnchor.constraint(equalTo: headerView.bottomAnchor),
             statusIcon.widthAnchor.constraint(equalToConstant: 14),
             statusIcon.heightAnchor.constraint(equalToConstant: 14),
-
-            titleLabel.leadingAnchor.constraint(equalTo: statusIcon.trailingAnchor, constant: 6),
-            titleLabel.centerYAnchor.constraint(equalTo: headerView.centerYAnchor),
-
-            detailLabel.leadingAnchor.constraint(equalTo: titleLabel.trailingAnchor, constant: 8),
-            detailLabel.centerYAnchor.constraint(equalTo: headerView.centerYAnchor),
-            detailLabel.trailingAnchor.constraint(lessThanOrEqualTo: failureBadge.leadingAnchor, constant: -6),
-
-            failureBadge.trailingAnchor.constraint(equalTo: promoteButton.leadingAnchor, constant: -6),
-            failureBadge.centerYAnchor.constraint(equalTo: headerView.centerYAnchor),
-
-            promoteButton.trailingAnchor.constraint(equalTo: closeButton.leadingAnchor, constant: -4),
-            promoteButton.centerYAnchor.constraint(equalTo: headerView.centerYAnchor),
-            closeButton.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -8),
-            closeButton.centerYAnchor.constraint(equalTo: headerView.centerYAnchor),
 
             headerSeparator.topAnchor.constraint(equalTo: headerView.bottomAnchor),
             headerSeparator.leadingAnchor.constraint(equalTo: backgroundView.leadingAnchor),
