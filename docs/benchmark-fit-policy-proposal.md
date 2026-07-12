@@ -61,8 +61,11 @@ and the floor already bounded everything quota can see.
 ## The mapping, concretely
 
 - **Match rule.** A candidate matches a benchmark row only on exact
-  (source, model, effort). No cross-effort inference, no alias guessing
-  beyond the discovery record's own alias list, no cross-source averaging.
+  (source, model, effort). No alias guessing beyond the discovery record's
+  own alias list, no cross-source averaging, no cross-model inference.
+  Within one model, unmeasured effort levels take an *ordinal* position from
+  measured ones — user-ruled, spelled out under "Effort semantics" below —
+  and an exact-match score always beats an inferred rank where both exist.
 - **Score column per task kind.** User-visible policy, not compiled:
   coding/review kinds read the source's coding column (LiveBench:
   `code_generation`); if a kind has no mapped column, the overlay is inert
@@ -77,10 +80,12 @@ and the floor already bounded everything quota can see.
   For `cheap`/easy tiers, fit inverts the preference: the *cheapest candidate
   within B of the best matched score* leads — that is "fit beats rank" made
   mechanical.
-- **Unknowns hold position.** A candidate with no matched row keeps its
+- **Unknowns hold position.** A candidate with no matched row — and no
+  within-model measured effort to take an ordinal position from — keeps its
   policy-derived position. It never sinks below a measured-low candidate by
-  default and never rises on a guess; only measured candidates move relative
-  to each other. The inventory keeps showing its coverage as "unknown".
+  default and never rises on a guess; only measured (or, within one model,
+  ordinally inferred) candidates move relative to each other. The inventory
+  keeps showing its coverage as "unknown".
 - **Staleness.** Only rows from a source whose status is `current` or
   `last-good` participate. An `unavailable` source contributes nothing and
   the overlay quietly degrades to inert — the route always still resolves.
@@ -89,6 +94,31 @@ and the floor already bounded everything quota can see.
   sources that cover both candidates to *agree on direction* for the pair.
   Disagreement means tie — shown, not averaged.
 
+## Effort semantics — two user-ruled rules
+
+Both are rulings, not knobs: they hold in this proposal and in the
+implementation when approved.
+
+1. **Monotone-effort ordinal inference.** Within a single model, an
+   unmeasured lower effort level ranks below that model's measured
+   higher-effort variants: if high/xhigh/max are placed, that model's medium
+   and low sit below them — and they are still used. The inference is
+   **ordinal only**: it produces a position in the ordering overlay, never a
+   synthesized numeric score (the accurate-numbers rule holds; no invented
+   numbers). Every inferred rank is marked as inferred with its basis —
+   e.g. "below claude-fable-5 high, LiveBench 2026-06-25" — in the shadow
+   log and the inventory, so inference is visible and never dressed as
+   measurement. An exact-match score beats an inferred rank where both
+   exist. Cross-model inference stays forbidden: this is within-model
+   ordering only, justified by the vendor's own effort semantics.
+2. **Effort economy.** Among candidates that clear the capability floor and
+   fit the task's classified needs, prefer the **lowest sufficient effort**
+   — unneeded high effort is waste (tokens, resources, quota). This
+   generalizes "fit beats rank" to the effort axis: cheap/standard tiers
+   should land on lower efforts of capable models rather than idling
+   flagship efforts on easy work. Tier→effort policy defaults remain the
+   starting point; the benchmark overlay and this rule refine within them.
+
 ## What this does today, honestly
 
 LiveBench publishes rows only at xhigh/max-like efforts and covers a subset
@@ -96,9 +126,11 @@ of the discovered catalog (at the last live probe: 12/12 models discovered,
 LiveBench release 2026-06-25 current, uncovered canonical ids haiku,
 auto-review, spark). So on this machine the overlay's real effect at
 activation is narrow: it can reorder deep-tier candidates where both sides
-have a current matched row at the routed effort, and it is inert everywhere
-else. That is the intended shape — sparse data influencing exactly as far as
-it reaches and not one candidate further.
+have a current matched row at the routed effort, and — via monotone-effort
+inference — place a measured model's unmeasured lower efforts below its
+measured ones. Everywhere else it is inert. That is the intended shape —
+sparse data influencing exactly as far as it and the vendor's own effort
+semantics reach, and not one candidate further.
 
 ## Why LiveBench is alone (source survey rationale, not code)
 
@@ -141,6 +173,8 @@ that clears it registers the same way LiveBench did.
 | cheap-tier fit rule | cheapest within B of best leads | policy |
 | staleness | `current` and `last-good` rows only | policy |
 | multi-source rule | agreement-in-direction or tie | policy (dormant today) |
+| effort inference | within-model ordinal only, labeled inferred with basis | user ruling (decided) |
+| effort economy | lowest sufficient effort among floor-clearing candidates | user ruling (decided) |
 | activation | stage 3 only on explicit approval | standing rule |
 
 ## What is explicitly not proposed
@@ -148,4 +182,6 @@ that clears it registers the same way LiveBench did.
 - No gating: benchmarks never enter candidate *eligibility*, only order.
 - No averaging or single blended score across sources.
 - No effort invention: no level a model does not advertise, ever.
+- No synthesized scores: an unmeasured effort gets a labeled ordinal
+  position within its own model, never a number.
 - No self-benchmarking: Hive consumes published rows; it never produces them.
