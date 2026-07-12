@@ -894,15 +894,23 @@ describe("HiveDaemon HTTP server", () => {
           tool: "claude",
         },
       }));
-      expect(spawned).toEqual(agent({
+      // hive_spawn echoes identity/state, not the task brief the caller just
+      // wrote: taskDescription comes back truncated with its full length
+      // alongside it, and the rest of the full record is dropped entirely —
+      // hive_status is where that full record still lives.
+      expect(spawned).toEqual({
         id: "agent-sam",
         name: "sam",
+        tool: "codex",
+        model: "gpt-5-codex",
         tier: "review",
-        taskDescription: "Review auth",
-        tmuxSession: "hive-sam",
-        worktreePath: "/tmp/hive-sam",
+        status: "working",
         branch: "hive/sam-task",
-      }));
+        worktreePath: "/tmp/hive-sam",
+        contextPct: 14,
+        taskDescription: "Review auth",
+        taskDescriptionLength: 11,
+      });
       expect(spawner.requests).toEqual([
         {
           task: "Review auth",
@@ -916,7 +924,15 @@ describe("HiveDaemon HTTP server", () => {
         name: "hive_status",
         arguments: {},
       }));
-      expect(status).toEqual([spawned]);
+      expect(status).toEqual([agent({
+        id: "agent-sam",
+        name: "sam",
+        tier: "review",
+        taskDescription: "Review auth",
+        tmuxSession: "hive-sam",
+        worktreePath: "/tmp/hive-sam",
+        branch: "hive/sam-task",
+      })]);
 
       const inventory = textValue(await client.callTool({
         name: "hive_models",
@@ -1137,6 +1153,100 @@ describe("HiveDaemon HTTP server", () => {
       expect(db.getAgentByName("sam")?.status).toEqual("dead");
     } finally {
       await client.close();
+      await daemon.stop();
+      db.close();
+    }
+  });
+
+  test("hive_spawn, hive_send, and hive_approvals trim large echoes while the full data stays reachable elsewhere", async () => {
+    const db = new HiveDatabase(join(home, "compact-results.db"));
+    const spawner = new StubSpawner();
+    const daemon = new HiveDaemon({
+      db,
+      spawner,
+      tmux: new FakeDaemonTmux(),
+    });
+    const transport = new StreamableHTTPClientTransport(
+      new URL("http://hive/mcp"),
+      { fetch: actingAs(daemon, "operator") },
+    );
+    const client = new Client({ name: "hive-test", version: "1.0.0" });
+    try {
+      await client.connect(transport);
+
+      const longTask = "Investigate the auth regression. ".repeat(20);
+      const spawned = textValue(await client.callTool({
+        name: "hive_spawn",
+        arguments: {
+          task: longTask,
+          tier: "standard",
+          name: "nia",
+          tool: "claude",
+        },
+      })) as {
+        taskDescription: string;
+        taskDescriptionLength: number;
+        tmuxSession?: string;
+        createdAt?: string;
+      };
+      expect(spawned.taskDescription.length).toBeLessThan(longTask.length);
+      expect(spawned.taskDescriptionLength).toEqual(longTask.length);
+      expect(spawned.tmuxSession).toBeUndefined();
+      expect(spawned.createdAt).toBeUndefined();
+
+      // The full brief the caller just wrote is not gone — hive_status still
+      // carries the untouched record.
+      const status = textValue(await client.callTool({
+        name: "hive_status",
+        arguments: {},
+      })) as Array<{ name: string; taskDescription: string }>;
+      expect(status.find((row) => row.name === "nia")?.taskDescription)
+        .toEqual(longTask);
+
+      const longBody = "The auth regression traces to a stale token cache. "
+        .repeat(10);
+      const sent = textValue(await client.callTool({
+        name: "hive_send",
+        arguments: { from: "maya", to: "nia", body: longBody },
+      })) as { body: string; truncated: boolean; deliveredAt: string | null };
+      expect(sent.body.length).toBeLessThan(longBody.length);
+      expect(sent.truncated).toEqual(true);
+
+      // The recipient's own inbox is the read path for the full body.
+      const inbox = textValue(await client.callTool({
+        name: "hive_inbox",
+        arguments: { agent: "nia" },
+      })) as Array<{ body: string }>;
+      expect(inbox[0]?.body).toEqual(longBody);
+
+      const longDescription =
+        "SPEND REAL MONEY on this model? Approve to bill your usage credits. "
+          .repeat(5);
+      const approvalResponse = await actingAs(daemon, "operator")(
+        "http://hive/event",
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            kind: "approval-request",
+            agentName: "nia",
+            timestamp: "2026-07-09T12:05:00.000Z",
+            description: longDescription,
+          }),
+        },
+      );
+      expect(approvalResponse.status).toEqual(200);
+
+      const approvals = textValue(await client.callTool({
+        name: "hive_approvals",
+        arguments: {},
+      })) as Array<{ description: string; truncated: boolean }>;
+      expect(approvals[0]?.description.length).toBeLessThan(
+        longDescription.length,
+      );
+      expect(approvals[0]?.truncated).toEqual(true);
+    } finally {
+      await client.close().catch(() => undefined);
       await daemon.stop();
       db.close();
     }

@@ -7,12 +7,14 @@ import {
   AgentRecordSchema,
   MemoryFactSchema,
   MemorySearchResultSchema,
+  MemoryWriteResultSchema,
   QuotaObservationSchema,
   type AgentRecord,
   type MemoryFact,
   type MemoryScope,
   type MemorySearchResult,
   type MemoryWriteInput,
+  type MemoryWriteResult,
   type QuotaObservation,
   type QuotaObservationInput,
   type QuotaStatus,
@@ -128,8 +130,8 @@ export async function writeMemory(
   port: number,
   input: MemoryWriteInput,
   fetcher?: McpFetcher,
-): Promise<MemoryFact> {
-  return MemoryFactSchema.parse(
+): Promise<MemoryWriteResult> {
+  return MemoryWriteResultSchema.parse(
     await callHiveTool(port, "memory_write", input, "fact", fetcher),
   );
 }

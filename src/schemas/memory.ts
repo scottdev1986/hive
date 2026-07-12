@@ -62,6 +62,31 @@ export const MemoryWriteInputSchema = z.object({
 });
 export type MemoryWriteInput = z.infer<typeof MemoryWriteInputSchema>;
 
+// What memory_write echoes back. The caller just wrote `body` itself, so
+// echoing it back doubles the token cost of every write for no new
+// information — memory_read (or the file at `path`) is the full-fidelity
+// read path when the fact needs to be seen again.
+export const MemoryWriteResultSchema = z.object({
+  id: z.string().min(1),
+  scope: MemoryScopeSchema,
+  title: z.string().min(1),
+  path: z.string().min(1),
+  source: MemorySourceSchema.optional(),
+  verified: IsoDateSchema.optional(),
+});
+export type MemoryWriteResult = z.infer<typeof MemoryWriteResultSchema>;
+
+export function compactMemoryWriteResult(fact: MemoryFact): MemoryWriteResult {
+  return {
+    id: fact.id,
+    scope: fact.scope,
+    title: fact.title,
+    path: fact.path,
+    ...(fact.source !== undefined ? { source: fact.source } : {}),
+    ...(fact.verified !== undefined ? { verified: fact.verified } : {}),
+  };
+}
+
 export const MemorySearchResultSchema = z.object({
   id: z.string().min(1),
   scope: MemoryScopeSchema,

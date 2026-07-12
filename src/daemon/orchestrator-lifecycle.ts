@@ -109,3 +109,102 @@ export function compactActiveTeam(
       lastEventAt: agent.lastEventAt,
     }));
 }
+
+const MAX_SPAWN_TASK_CODE_POINTS = 120;
+const MAX_SEND_BODY_CODE_POINTS = 120;
+const MAX_APPROVAL_DESCRIPTION_CODE_POINTS = 200;
+
+export interface SpawnResultSummary {
+  id: string;
+  name: string;
+  tool: AgentRecord["tool"];
+  model: string;
+  tier: AgentRecord["tier"];
+  effort?: string;
+  status: AgentRecord["status"];
+  branch: string | null;
+  worktreePath: string | null;
+  contextPct: number | null;
+  quotaReservationId?: string;
+  taskDescription: string;
+  taskDescriptionLength: number;
+}
+
+// hive_spawn's caller just wrote taskDescription itself — echoing the whole
+// multi-kilobyte brief back doubles the cost of every spawn for no new
+// information. hive_status still carries the full record for whoever needs
+// to re-read it.
+export function compactSpawnResult(agent: AgentRecord): SpawnResultSummary {
+  return {
+    id: agent.id,
+    name: agent.name,
+    tool: agent.tool,
+    model: agent.model,
+    tier: agent.tier,
+    ...(agent.executionIdentity?.effort !== undefined
+      ? { effort: agent.executionIdentity.effort }
+      : {}),
+    status: agent.status,
+    branch: agent.branch,
+    worktreePath: agent.worktreePath,
+    contextPct: agent.contextPct,
+    ...(agent.quotaReservationId !== undefined
+      ? { quotaReservationId: agent.quotaReservationId }
+      : {}),
+    taskDescription: truncateCodePoints(
+      agent.taskDescription,
+      MAX_SPAWN_TASK_CODE_POINTS,
+    ),
+    taskDescriptionLength: codePoints(agent.taskDescription).length,
+  };
+}
+
+export interface SendResultSummary {
+  id: string;
+  from: string;
+  to: string;
+  state: AgentMessage["state"];
+  priority: AgentMessage["priority"];
+  sequence: number;
+  createdAt: string;
+  deliveredAt: string | null;
+  body: string;
+  truncated: boolean;
+}
+
+// hive_send's caller just wrote body itself; echoing it back in full doubles
+// the cost of every send. The recipient reads the full body through
+// hive_inbox/hive_read_message, which is where a body is meant to be read.
+export function compactSendResult(message: AgentMessage): SendResultSummary {
+  return {
+    id: message.id,
+    from: message.from,
+    to: message.to,
+    state: message.state,
+    priority: message.priority,
+    sequence: message.sequence,
+    createdAt: message.createdAt,
+    deliveredAt: message.deliveredAt,
+    body: truncateCodePoints(message.body, MAX_SEND_BODY_CODE_POINTS),
+    truncated: codePoints(message.body).length > MAX_SEND_BODY_CODE_POINTS,
+  };
+}
+
+// hive_approvals is polled repeatedly while a request sits pending, and a
+// long cost-consent or tool-permission paragraph does not change between
+// polls — only the first ~200 characters are needed to recognize which
+// request this is; the fuller decision-critical wording lives at the front of
+// that description by convention (see cost-consent.ts, receiveChannelPermissionRequest).
+export function compactApprovalDescription<T extends { description: string }>(
+  approval: T,
+): T & { truncated: boolean } {
+  const points = codePoints(approval.description);
+  return {
+    ...approval,
+    description: truncateCodePoints(
+      approval.description,
+      MAX_APPROVAL_DESCRIPTION_CODE_POINTS,
+    ),
+    truncated: points.length > MAX_APPROVAL_DESCRIPTION_CODE_POINTS,
+  };
+}

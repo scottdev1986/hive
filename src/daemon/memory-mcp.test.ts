@@ -159,6 +159,53 @@ describe("memory MCP tools", () => {
     }
   });
 
+  test("memory_write echoes id/scope/title/path/verified, not the body just written", async () => {
+    await makeHome();
+    const repoRoot = await mkdtemp(join(tmpdir(), "hive-memory-mcp-repo-"));
+    tempRoots.push(repoRoot);
+    const daemon = new HiveDaemon({
+      spawner: new UnusedSpawner(),
+      db: new HiveDatabase(":memory:"),
+      tmux: new NoopTmux(),
+      repoRoot,
+    });
+    const client = await connectedClient(daemon);
+    try {
+      const longBody = "Root cause: an unawaited promise in session setup. "
+        .repeat(20);
+      const written = textValue(await client.callTool({
+        name: "memory_write",
+        arguments: {
+          scope: "repo",
+          title: "The login test is flaky",
+          body: longBody,
+          source: "agent",
+          verified: "2026-07-10",
+        },
+      })) as Record<string, unknown>;
+      expect(written).toEqual({
+        id: "the-login-test-is-flaky",
+        scope: "repo",
+        title: "The login test is flaky",
+        path: expect.any(String),
+        source: "agent",
+        verified: "2026-07-10",
+      });
+      expect(written.body).toBeUndefined();
+
+      // The full body the caller just wrote is still reachable through
+      // memory_read (and the Markdown file at `path`), just not echoed back.
+      const read = textValue(await client.callTool({
+        name: "memory_read",
+        arguments: { scope: "repo", id: "the-login-test-is-flaky" },
+      })) as { body: string };
+      expect(read.body.trim()).toEqual(longBody.trim());
+    } finally {
+      await client.close().catch(() => undefined);
+      await daemon.stop();
+    }
+  });
+
   test("path-shaped memory ids are rejected at the daemon boundary", async () => {
     await makeHome();
     const repoRoot = await mkdtemp(join(tmpdir(), "hive-memory-mcp-repo-"));

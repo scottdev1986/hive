@@ -39,6 +39,7 @@ import {
 import {
   HookEventSchema,
   ControlIntentSchema,
+  compactMemoryWriteResult,
   HandoffSchema,
   MemoryScopeSchema,
   MemoryWriteInputSchema,
@@ -94,6 +95,9 @@ import {
 import { expectedDaemonHandshake } from "./handshake";
 import {
   compactActiveTeam,
+  compactApprovalDescription,
+  compactSendResult,
+  compactSpawnResult,
   orchestratorTmuxSession,
 } from "./orchestrator-lifecycle";
 import {
@@ -2691,7 +2695,7 @@ export class HiveDaemon {
     server.registerTool("hive_send", {
       title: "Send agent message",
       description:
-        'Send a durable message and return its real lifecycle state. normal waits for an ordinary boundary — use it for ordinary guidance. urgent and critical CANCEL the recipient\'s in-flight turn, which is never resumed: its reasoning so far is discarded, so this is preemption, not a fast lane. critical additionally revokes write/landing authority and restarts the target read-only. The returned state is the truth: "queued"/"injected" means SENT, which is not RECEIVED and not STOPPED — there is no preemption inside a running tool call, so an agent inside a long command holds even a critical until that call returns. Never report a target as stopped or informed until it has acknowledged. Recipient "orchestrator" wakes the root.',
+        'Send a durable message and return its real lifecycle state. normal waits for an ordinary boundary — use it for ordinary guidance. urgent and critical CANCEL the recipient\'s in-flight turn, which is never resumed: its reasoning so far is discarded, so this is preemption, not a fast lane. critical additionally revokes write/landing authority and restarts the target read-only. The returned state is the truth: "queued"/"injected" means SENT, which is not RECEIVED and not STOPPED — there is no preemption inside a running tool call, so an agent inside a long command holds even a critical until that call returns. Never report a target as stopped or informed until it has acknowledged. Recipient "orchestrator" wakes the root. The returned body is a short preview (truncated is true when it was cut) of the message you just wrote, not an echo of the whole thing — the recipient reads it in full via hive_inbox/hive_read_message.',
       inputSchema: SendRequestSchema,
     }, async ({ from, to, body, ...requested }) => {
       // `from` is a claim about identity, so it is checked against the bound
@@ -2701,10 +2705,11 @@ export class HiveDaemon {
           requested.intent === undefined
         ? inferLegacyControl(body)
         : null;
-      return toolResult(await this.delivery.send(from, to, body, {
+      const message = await this.delivery.send(from, to, body, {
         ...requested,
         ...(inferred ?? {}),
-      }), "message");
+      });
+      return toolResult(compactSendResult(message), "message");
     });
 
     server.registerTool("hive_escalate", {
@@ -2828,7 +2833,11 @@ export class HiveDaemon {
 
     server.registerTool("hive_spawn", {
       title: "Spawn Hive agent",
-      description: "Start a new Hive agent for a delegated task.",
+      description:
+        "Start a new Hive agent for a delegated task. Returns identity and " +
+        "state, not the task brief you just wrote — taskDescription comes " +
+        "back truncated (taskDescriptionLength carries the full count); read " +
+        "it in full via hive_status if ever needed.",
       inputSchema: SpawnRequestSchema,
     }, async (request: SpawnRequest) => {
       this.authorizeTool(capability, "hive_spawn", "agent:spawn");
@@ -2852,16 +2861,23 @@ export class HiveDaemon {
           }`,
         );
       }
-      return toolResult(persisted, "agent");
+      return toolResult(compactSpawnResult(persisted), "agent");
     });
 
     server.registerTool("hive_approvals", {
       title: "List pending approvals",
-      description: "List approval requests currently waiting for a decision.",
+      description:
+        "List approval requests currently waiting for a decision. " +
+        "description is truncated to ~200 characters (truncated is true when " +
+        "it was cut) since the same pending requests are re-listed on every " +
+        "poll; the decision-relevant wording is at the front.",
       inputSchema: z.object({}),
     }, async () => {
       this.authorizeTool(capability, "hive_approvals", "approval:read", undefined, false);
-      return toolResult(this.db.listApprovals("pending"), "approvals");
+      return toolResult(
+        this.db.listApprovals("pending").map(compactApprovalDescription),
+        "approvals",
+      );
     });
 
     server.registerTool("hive_approve", {
@@ -3001,11 +3017,12 @@ export class HiveDaemon {
     server.registerTool("memory_write", {
       title: "Write a Hive memory fact",
       description:
-        "Create or update one durable narrative memory fact. WRITE POLICY (SPEC decision 5): a lesson earns a fact only if it is durable (true past this run), non-derivable (not recoverable from the code, git, or the profile), and load-bearing (it would change what a future agent does) — chit-chat, restatements, and anything a grep or the repo profile already answers do not qualify, and structured truth (commands, layout, entry points) belongs in the profile, never here. DEDUP-BEFORE-WRITE: memory_search first and pass that fact's scope+id to update it in place rather than adding a near-duplicate. CORRECTION-NOT-APPEND: to fix a wrong fact, overwrite it (same id) or memory_delete it — never append a contradiction; git history is the changelog. Set `source` to who is writing (agent at landing, orchestrator for its decisions, init for seeded facts, human for hand-authored) and `verified` to today when you have confirmed the fact against the repo. Omit id to create (slug derived from title); repo scope is committed and travels with the clone, global accumulates lessons across projects. Writes are serialized and immediately reflected in search.",
+        "Create or update one durable narrative memory fact. WRITE POLICY (SPEC decision 5): a lesson earns a fact only if it is durable (true past this run), non-derivable (not recoverable from the code, git, or the profile), and load-bearing (it would change what a future agent does) — chit-chat, restatements, and anything a grep or the repo profile already answers do not qualify, and structured truth (commands, layout, entry points) belongs in the profile, never here. DEDUP-BEFORE-WRITE: memory_search first and pass that fact's scope+id to update it in place rather than adding a near-duplicate. CORRECTION-NOT-APPEND: to fix a wrong fact, overwrite it (same id) or memory_delete it — never append a contradiction; git history is the changelog. Set `source` to who is writing (agent at landing, orchestrator for its decisions, init for seeded facts, human for hand-authored) and `verified` to today when you have confirmed the fact against the repo. Omit id to create (slug derived from title); repo scope is committed and travels with the clone, global accumulates lessons across projects. Writes are serialized and immediately reflected in search. Returns id/scope/title/path/source/verified, not the body you just wrote — read it back with memory_read.",
       inputSchema: MemoryWriteRequestSchema,
     }, async (input) => {
       this.authorizeTool(capability, "memory_write", "memory:write");
-      return toolResult(await this.writeMemoryFact(input), "fact");
+      const fact = await this.writeMemoryFact(input);
+      return toolResult(compactMemoryWriteResult(fact), "fact");
     });
 
     server.registerTool("memory_read", {
