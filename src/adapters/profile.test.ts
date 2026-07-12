@@ -230,6 +230,64 @@ describe("bootstrapProfile — docs-rich repo", () => {
   });
 });
 
+// --- docs are discovered on disk, not through git ----------------------------
+
+describe("a doc is briefable because it is there, not because git tracks it", () => {
+  test("a gitignored, untracked docs/ is still discovered and still ranks primary", async () => {
+    const root = await tempRepo();
+    try {
+      git(root, ["init"]);
+      await write(root, ".gitignore", "docs/\nresearch/\n");
+      await write(root, "CLAUDE.md", "# conventions\n");
+      await write(root, "README.md", "See SPEC.md for the design.");
+      await write(root, "SPEC.md", "# Spec\n");
+      await write(root, "docs/design.md", "the design, per SPEC.md");
+      await write(root, "research/notes.md", "background reading on SPEC.md");
+      commitAll(root, "init");
+
+      // Positive control: prove the fixture really is untracked, or the rest of
+      // this test asserts nothing. An empty `ls-files` here is the whole point.
+      const tracked = Bun.spawnSync(["git", "-C", root, "ls-files"])
+        .stdout.toString();
+      expect(tracked).not.toContain("docs/");
+      expect(tracked).not.toContain("research/");
+
+      const profile = await bootstrapProfile(root);
+      expect(profile.docs.briefable).toContain("docs/design.md");
+      expect(profile.docs.briefable).toContain("research/notes.md");
+      expect(profile.docs.briefableDirectories).toContain("docs/");
+      expect(profile.docs.briefableDirectories).toContain("research/");
+      // The ignored docs are what cite SPEC.md, so losing them would silently
+      // hand `primary` to whatever is left. This is the regression that
+      // untracking docs/ caused, and this line is what catches it coming back.
+      expect(profile.docs.primary).toBe("SPEC.md");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("the walk is scoped to the doc directories — an agent worktree cannot duplicate the corpus", async () => {
+    const root = await tempRepo();
+    try {
+      git(root, ["init"]);
+      await write(root, "SPEC.md", "# Spec\n");
+      await write(root, "docs/design.md", "cites SPEC.md");
+      // A Hive agent worktree is a full checkout of the repo, docs and all. A
+      // walk from the repo root would find this copy and every other agent's,
+      // growing the corpus once per live agent. node_modules is the same trap.
+      await write(root, ".hive/worktrees/agent/docs/design.md", "a copy");
+      await write(root, ".hive/worktrees/agent/SPEC.md", "a copy");
+      await write(root, "node_modules/pkg/docs/readme.md", "vendor noise");
+      commitAll(root, "init");
+
+      const profile = await bootstrapProfile(root);
+      expect(profile.docs.briefable).toEqual(["SPEC.md", "docs/design.md"]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
 // --- the fingerprint: what "stale" is allowed to mean -----------------------
 
 describe("ensureProfile — regenerates when wrong, and only when wrong", () => {

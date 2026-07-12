@@ -203,6 +203,11 @@ describe("loadBriefConfig", () => {
     expect(config.briefableDocs).toContain("SPEC.md");
     expect(config.primaryDoc).toBe("SPEC.md");
     expect(config.briefableDirectories).toContain("docs/");
+    // docs/ is gitignored here, so it is found by walking disk. This repo also
+    // has live agent worktrees under .hive/worktrees/, each a full checkout
+    // with its own docs/ — an unscoped walk would find all of them and the
+    // corpus would run to hundreds. It is a couple of dozen docs.
+    expect(config.briefableDocs.length).toBeLessThan(100);
   });
 
   test("a repo with no profile briefs nothing rather than assuming doc names", async () => {

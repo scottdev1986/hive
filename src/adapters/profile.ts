@@ -29,7 +29,14 @@
  * written here; they are rebuilt at runtime.
  */
 import { createHash } from "node:crypto";
-import { readFile, stat, writeFile, mkdir, rename } from "node:fs/promises";
+import {
+  readFile,
+  readdir,
+  stat,
+  writeFile,
+  mkdir,
+  rename,
+} from "node:fs/promises";
 import { dirname, join } from "node:path";
 import {
   PROFILE_SCHEMA_VERSION,
@@ -572,12 +579,46 @@ async function listRootMarkdown(root: string): Promise<string[]> {
   }
 }
 
+// Walk depth and file caps. Doc discovery sits on the spawn path, so a
+// pathological directory must not be able to hang a spawn.
+const DOC_WALK_MAX_DEPTH = 8;
+const DOC_WALK_MAX_FILES = 500;
+
+/** The `.md` files under one doc directory, read from disk rather than from
+ * `git ls-files`: a doc is briefable because it is *there*, not because it is
+ * tracked. `docs/` may be gitignored local working state and still be exactly
+ * what an agent needs briefing on.
+ *
+ * The walk is scoped to `<root>/<dir>` and recurses only within it. That scope
+ * is load-bearing: it is why dropping `ls-files`' ignore-filtering costs
+ * nothing. A walk from the repo root would descend into `node_modules/`,
+ * `dist/`, and — worst — `.hive/worktrees/<agent>/`, which holds a full
+ * checkout of the repo, its own `docs/` included, and would duplicate the
+ * corpus once per live agent. Keep it scoped. */
 async function listMarkdownUnder(root: string, dir: string): Promise<string[]> {
-  const out = git(root, ["ls-files", `${dir}*.md`]);
-  if (out !== null) {
-    return out.split("\n").filter((f) => f.length > 0);
-  }
-  return [];
+  const found: string[] = [];
+
+  const walk = async (relative: string, depth: number): Promise<void> => {
+    if (depth > DOC_WALK_MAX_DEPTH) return;
+    let entries;
+    try {
+      entries = await readdir(join(root, relative), { withFileTypes: true });
+    } catch {
+      return; // Absent or unreadable: no docs, which is not an error.
+    }
+    for (const entry of entries) {
+      if (found.length >= DOC_WALK_MAX_FILES) return;
+      // Symlinks are skipped outright rather than resolved: a doc directory has
+      // no business leaving the repo, and following one could.
+      if (entry.isSymbolicLink()) continue;
+      const path = `${relative}${entry.name}`;
+      if (entry.isDirectory()) await walk(`${path}/`, depth + 1);
+      else if (entry.isFile() && entry.name.endsWith(".md")) found.push(path);
+    }
+  };
+
+  await walk(dir, 1);
+  return found.sort();
 }
 
 /** The doc inventory, by path only. Split out from `inventoryDocs` because the
