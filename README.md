@@ -14,7 +14,7 @@ Hive is a macOS command-line tool that turns the AI coding CLIs you already have
 
 ## What it looks like
 
-Running `hive` opens the Workspace: one window, the orchestrator front and center, and every agent as a live terminal pane running the real Claude Code or Codex interface. In the orchestrator pane:
+Running `hive` opens the Workspace: one window, the orchestrator front and center, and every agent as a live terminal pane running the real Claude Code, Codex, or Grok interface. In the orchestrator pane:
 
 ```
 you  > add rate limiting to the public API, and have the docs updated too
@@ -22,7 +22,7 @@ you  > add rate limiting to the public API, and have the docs updated too
 hive > Splitting this into 3 tasks:
        • maya  (Claude, deep tier)  — rate-limit middleware      [pane opened]
        • david (Codex)              — apply it to the routes     [pane opened]
-       • sam   (cheap tier)         — update the API docs        [pane opened]
+       • sam   (Grok, cheap tier)   — update the API docs        [pane opened]
 
 you  > what's david doing?
 
@@ -52,10 +52,10 @@ Red is measured, never guessed: it appears only when the daemon records a pendin
 
 - **One conversation, many agents.** You talk to a single orchestrator; it manages the team.
 - **The right model for the job.** Tasks are tiered — cheap, standard, deep, review — and each tier maps to a tool and model, so a changelog update doesn't burn the same budget as a refactor.
-- **Mixed vendors on one team.** Claude Code and Codex agents work side by side, and one vendor's model can review the other's code.
-- **Quota-aware.** Hive reads your real usage limits from the providers themselves and routes around whichever pool is running low. There is nothing to configure, and it never invents a number: a window it hasn't measured prints `unknown`.
+- **Mixed vendors on one team.** Claude Code, Codex, and Grok agents work side by side, and one vendor's model can review another's code. Grok is eligible across the routing table but preferred nowhere by default; a user pin sets the preference.
+- **Quota-aware.** Hive reads real usage limits from providers when they publish them and routes around whichever measurable pool is running low. There is nothing to configure, and it never invents a number: a window it cannot measure prints `unknown`.
 - **Isolated working copies.** Each agent works in its own git worktree on its own branch, and finished work reaches your main branch only through Hive's merge gate, one fast-forward at a time — main is never edited by two agents at once.
-- **Sandboxed by default, full autonomy one click away.** Out of the box, agents run inside their vendor sandboxes and anything risky — installs, pushes, writes outside their working copy — queues for your approval. When you'd rather walk away and let them run without prompts, flip the switch in the Workspace's Agents menu (or run `hive autonomy dangerous`); it persists until you flip it back.
+- **Permission-gated by default, full autonomy one click away.** Out of the box, agents use their vendor's permission controls and anything risky — installs, pushes, writes outside their working copy — queues for your approval. When you'd rather walk away and let them run without prompts, flip the switch in the Workspace's Agents menu (or run `hive autonomy dangerous`); it persists until you flip it back.
 - **Remembers your repo.** Facts agents learn about the codebase persist as durable memory, ride into every future agent's brief, and are yours to inspect with `hive memory`.
 - **An optional code map for agents.** `hive graphify enable` builds a local, code-only knowledge graph of your repo ([graphify](https://github.com/Graphify-Labs/graphify)) that agents query over MCP instead of grep-sweeping, plus a task-scoped digest injected into every agent's brief. Strictly opt-in and repo-local: installed hash-verified into Hive's own tools directory, parsed entirely on your machine with zero LLM calls, kept out of git, gone with `hive graphify disable --purge`. Graph answers are treated as hints, never authority, and nothing in Hive ever waits on the graph.
 - **Steerable mid-flight.** Redirect an agent, or pause and stop it, while it works. A stopped agent's work is preserved, never half-merged.
@@ -66,10 +66,10 @@ Red is measured, never guessed: it appears only when the daemon records a pendin
 - macOS (Apple Silicon or Intel)
 - tmux (`brew install tmux`) and git
 - iTerm2 or the built-in Terminal app (for `hive watch` viewer windows)
-- At least one AI coding CLI, installed and signed in: [Claude Code](https://code.claude.com/docs) and/or [Codex](https://developers.openai.com/codex)
+- At least one AI coding CLI, installed and signed in: [Claude Code](https://code.claude.com/docs), [Codex](https://developers.openai.com/codex), and/or [Grok](https://docs.x.ai/build/overview) (`curl -fsSL https://x.ai/cli/install.sh | bash`)
 - [uv](https://docs.astral.sh/uv/) — only if you opt into `hive graphify`; everything else works without it
 
-Hive uses your existing Claude / OpenAI subscriptions or API keys and adds no fees of its own.
+Hive uses your existing Claude, OpenAI, or SuperGrok subscriptions or API keys and adds no fees of its own. Grok ships breaking CLI changes frequently, so Hive checks its version and refuses to trust unverified catalog shapes rather than guessing.
 
 ## Installation
 
@@ -90,8 +90,11 @@ To update later, run `hive update` — it repeats those checks and additionally 
    ```
    $ hive init
    Profiled the repo: 1 briefable doc.
-   Claude Code: installed hive-claude, karpathy-guidelines into .claude/skills/ (created)
-   Codex: installed hive-codex, karpathy-guidelines into .agents/skills/ (created)
+   Claude Code: installed hive-claude, hive-memory, karpathy-guidelines into .claude/skills/ (created)
+   Codex: installed hive-memory, karpathy-guidelines into .agents/skills/ (created)
+   Codex: left hive-codex out of .agents/skills/ — another installed CLI reads that directory too, and this skill is not addressed to it. Agents still get it in their own worktree.
+   Grok: hive-memory, karpathy-guidelines already up to date; left alone.
+   Grok: left hive-grok out of .agents/skills/ — another installed CLI reads that directory too, and this skill is not addressed to it. Agents still get it in their own worktree.
    ready — /Users/you/my-project (daemon port 4483)
    `hive` opens the Workspace; `hive claude` starts an orchestrator
    ```
@@ -100,7 +103,7 @@ To update later, run `hive update` — it repeats those checks and additionally 
 
 4. Tell the orchestrator what you want done, in plain English. Watch the agent panes; type into any pane to talk to that agent directly. From any other terminal, `hive status` shows the team and `hive stop` winds it down.
 
-`hive claude` and `hive codex` do the same as `hive`, but choose which vendor's CLI runs the orchestrator.
+`hive claude`, `hive codex`, and `hive grok` do the same as `hive`, but choose which vendor's CLI runs the orchestrator.
 
 ## Commands
 
@@ -108,7 +111,7 @@ To update later, run `hive update` — it repeats those checks and additionally 
 |---|---|
 | `hive` | Bring up the project's daemon and open the Workspace |
 | `hive init` | Profile the repo, install agent skills, seed memory, and bring up the daemon — no window (`--refresh` re-profiles only) |
-| `hive claude` / `hive codex` | Open the Workspace with that vendor's CLI as the orchestrator |
+| `hive claude` / `hive codex` / `hive grok` | Open the Workspace with that vendor's CLI as the orchestrator |
 | `hive status` | Show all agents, their model, status, context use, and task |
 | `hive autonomy [mode]` | Show or set writer autonomy: `sandboxed` (default) or `dangerous` |
 | `hive quota` | Show remaining capacity per provider, with reservations and reset times |
@@ -119,7 +122,7 @@ To update later, run `hive update` — it repeats those checks and additionally 
 | `hive stop` | Stop live agents and the daemon |
 | `hive update` | Install the latest release (`check`, `status`, `rollback`, `skip`) |
 
-`hive quota` shows what routing sees — how much of each provider's five-hour and weekly window is left, read from the providers directly, plus what's already reserved for running agents:
+`hive quota` shows what routing sees — the provider windows Hive can read, plus what's already reserved for running agents. A provider that does not publish a remaining level is shown as unknown:
 
 ```
 $ hive quota
@@ -129,7 +132,11 @@ claude/default/subscription (max) [discovered, fresh]
 codex/default/codex (prolite) [discovered, fresh]
   5h: 44.0% of 100.0% remaining, 0.0% reserved (est), reset 2026-07-11T23:59:20.000Z [estimated from provider]
   week: 88.3% of 100.0% remaining, 0.0% reserved (est), reset 2026-07-18T13:59:08.000Z [estimated from provider]
+grok/default/*: LIMITS UNKNOWN — Hive has not read live limits from grok yet; usage is unknown and routing is unconstrained
+  hive-local estimate only: 0.0 reserved, 0.0 spent by hive in 5h, 0.0 spent by hive in week (not the account's usage)
 ```
+
+Grok's remaining weekly quota is unmeasurable: its reachable billing surface exposes pay-as-you-go rails, not subscription usage, and those rails do not move when the subscription is used. Hive therefore never shows a Grok percentage. The same surface reports `onDemandCap=0`, so this unknown is safe from surprise charges: reaching the weekly limit blocks the next Grok turn instead of billing it. Hive discovers the models available to the signed-in account live with the free, non-billable `grok models` command rather than keeping a model list in the binary.
 
 ## Configuration
 
@@ -142,13 +149,13 @@ None required. If you want to change the defaults, Hive reads three optional fil
 ## FAQ
 
 **Is it safe to let agents run on my machine?**
-By default, yes, in the same sense your own Claude Code or Codex session is: each agent runs inside its vendor's sandbox, works in its own git worktree on its own branch, and anything beyond that — installs, pushes, publishing — waits in an approval queue until you say yes. Nothing reaches your main branch except a fast-forward merge through Hive's gate. If the prompts get in your way, the Agents menu (or `hive autonomy dangerous`) turns them off — that is the same trust as `claude --dangerously-skip-permissions`, so flip it knowingly.
+By default, yes, in the same sense as running the vendor CLIs yourself: each agent works in its own git worktree on its own branch, and anything beyond that — installs, pushes, publishing — waits in an approval queue until you say yes. Nothing reaches your main branch except a fast-forward merge through Hive's gate. If the prompts get in your way, the Agents menu (or `hive autonomy dangerous`) turns them off — that is the same trust as `claude --dangerously-skip-permissions`, so flip it knowingly.
 
 **What does it cost?**
-Whatever your Claude / OpenAI plans already cost. Hive routes easy tasks to cheaper models specifically to keep your usage down.
+Whatever your Claude, OpenAI, or SuperGrok plans already cost. Hive routes easy tasks to cheaper models specifically to keep your usage down.
 
-**Do I need both Claude Code and Codex?**
-No, one is enough. With both installed, Hive can mix them on one team and route each task to whichever fits best.
+**Do I need Claude Code, Codex, and Grok?**
+No, one is enough. With more than one installed, Hive can mix them on one team and route each task to whichever fits best.
 
 **What happens to my code?**
 Agents work on isolated branches and the work is merged step by step, so your main branch is never edited by multiple agents at once. Everything stays on your machine except the AI API calls your CLIs already make.
