@@ -25,15 +25,31 @@ export type ConsentState = "approved" | "denied" | "pending" | "none";
 
 const PREFIX = "cost-consent:";
 
-/** Stable per model, so the same question is never asked twice. */
-export const consentId = (canonicalId: string): string =>
-  `${PREFIX}${canonicalId}`;
+/**
+ * What the user is being asked about — and it is not always a model.
+ *
+ * When Hive cannot read a vendor's billing AT ALL, it cannot distinguish one
+ * model's cost from another's, so it cannot honestly ask a per-model question:
+ * the only truthful question left is "may Hive spend money on this vendor?".
+ * That subject is the PROVIDER. When billing IS readable, the charge is a fact
+ * about a specific model, and the subject is that model's canonical id.
+ *
+ * Keying the unreadable-billing question on a model id was a livelock: the
+ * vendor's default model can move between the ask and the spawn (grok's did,
+ * silently, on 2026-07-12), which orphans the answer the user already gave and
+ * refuses the spawn against a question nobody can answer.
+ */
+export type ConsentSubject = string;
+
+/** Stable per subject, so the same question is never asked twice. */
+export const consentId = (subject: ConsentSubject): string =>
+  `${PREFIX}${subject}`;
 
 export function readCostConsent(
   db: Pick<HiveDatabase, "getApproval">,
-  canonicalId: string,
+  subject: ConsentSubject,
 ): ConsentState {
-  const approval: Approval | null = db.getApproval(consentId(canonicalId));
+  const approval: Approval | null = db.getApproval(consentId(subject));
   if (approval === null) return "none";
   return approval.status;
 }
@@ -45,21 +61,21 @@ export function readCostConsent(
  */
 export function requestCostConsent(
   db: Pick<HiveDatabase, "getApproval" | "insertApproval">,
-  canonicalId: string,
+  subject: ConsentSubject,
   detail: string,
   now: string = new Date().toISOString(),
 ): ConsentState {
-  const existing = readCostConsent(db, canonicalId);
+  const existing = readCostConsent(db, subject);
   if (existing !== "none") return existing;
   db.insertApproval({
-    id: consentId(canonicalId),
+    id: consentId(subject),
     // Not an agent's request: it is the router asking the account's owner.
     agentName: "router",
-    // Boilerplate around the model id the caller already has: safe to trim on
+    // Boilerplate around the subject the caller already has: safe to trim on
     // the polled MCP surface.
     kind: "cost-consent",
     description:
-      `SPEND REAL MONEY on ${canonicalId}? ${detail} ` +
+      `SPEND REAL MONEY on ${subject}? ${detail} ` +
       "Approve to let Hive run it and bill your usage credits; deny to keep it " +
       "out until your plan resets. This asks about the CHARGE, not the model — " +
       "Hive will not spend your money without your say-so, and it will not ask " +

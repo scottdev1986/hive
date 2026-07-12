@@ -329,8 +329,14 @@ export interface DerivationInput {
    * Hive could not read it; that provider is not auto-routable on a guess.
    */
   billing: AccountBillings | null;
-  /** The user's standing answer for a model that would spend real money. */
-  costConsent?: (canonicalId: string) => "approved" | "denied" | "pending" | "none";
+  /**
+   * The user's standing answer to a charge he was asked about. The SUBJECT is
+   * the vendor when its billing is unreadable (Hive cannot then ask a per-model
+   * question honestly, and a model id is not a stable thing to have answered —
+   * the vendor's default can move underneath it); otherwise it is the model's
+   * canonical id. See `ConsentSubject` in daemon/cost-consent.
+   */
+  costConsent?: (subject: string) => "approved" | "denied" | "pending" | "none";
   now: Date;
   ttlMinutes?: number;
 }
@@ -375,7 +381,7 @@ export interface DerivedRouting {
    * spend the user's real money. The caller asks him — through the approvals
    * queue — and never on Hive's own authority.
    */
-  consentRequired: { canonicalId: string; detail: string }[];
+  consentRequired: { subject: string; detail: string }[];
 }
 
 // --------------------------------------------------------------------------
@@ -398,10 +404,10 @@ export function deriveRouting(input: DerivationInput): DerivedRouting {
   const warn = (message: string): void => {
     if (!warnings.includes(message)) warnings.push(message);
   };
-  const consentRequired: { canonicalId: string; detail: string }[] = [];
-  const needConsent = (canonicalId: string, detail: string): void => {
-    if (!consentRequired.some((entry) => entry.canonicalId === canonicalId)) {
-      consentRequired.push({ canonicalId, detail });
+  const consentRequired: { subject: string; detail: string }[] = [];
+  const needConsent = (subject: string, detail: string): void => {
+    if (!consentRequired.some((entry) => entry.subject === subject)) {
+      consentRequired.push({ subject, detail });
     }
   };
   const tiers = ROUTING_TIERS.map((tier) =>
@@ -416,7 +422,7 @@ export function deriveRouting(input: DerivationInput): DerivedRouting {
   };
 }
 
-type ConsentSink = (canonicalId: string, detail: string) => void;
+type ConsentSink = (subject: string, detail: string) => void;
 
 function deriveTier(
   tier: RoutingTier,
@@ -621,6 +627,11 @@ function resolveModel(
   // clear it, the cell refuses on THIS, not on the generic discovery message
   // below — the user's own policy is the reason, and it is named as such.
   const floorExcluded: string[] = [];
+  // The spend guard's refusal, if it is what emptied this cell. A guard that
+  // refuses for reason X must SAY X: refusing an answerable consent question
+  // with the generic "install or sign in to the CLI" names a remedy the user
+  // has already satisfied and hides the only one that works.
+  let consentBlocked: string | null = null;
   const passesFloor = (
     candidateId: string,
     record: CapabilityRecord | undefined,
@@ -694,6 +705,7 @@ function resolveModel(
         const refusal = spendGuard(input, record, needConsent);
         if (refusal !== null) {
           notes.push(refusal);
+          consentBlocked = refusal;
         } else if (!passesFloor(record.launchToken, record)) {
           notes.push(
             `${record.launchToken} does not clear the capability floor for ` +
@@ -768,6 +780,22 @@ function resolveModel(
     return { value: null, layer: "unknown", reason };
   }
 
+  // THE CELL IS EMPTY BECAUSE HE HAS NOT ANSWERED, AND THAT IS WHAT IT SAYS.
+  // Discovery worked, a default was found, and the only thing standing between
+  // him and a route is a question sitting in his own queue. Refusing this with
+  // the discovery message below would be a lie — it claims the vendor told Hive
+  // nothing usable when in fact it did, and it sends him to reinstall a CLI that
+  // is already installed and signed in. A guard refuses for the reason it
+  // refused, and it names the remedy that actually works.
+  if (consentBlocked !== null) {
+    const reason = `${consentBlocked}. Approve it in the approvals queue ` +
+      `(hive_approvals / hive_approve) and Hive will route ${tier}.${provider} ` +
+      `without asking again; pinning routing.toml [${tier}.${provider}] also ` +
+      `counts as your consent`;
+    warn(`${tier}.${provider}: NO ROUTE — ${reason}`);
+    return { value: null, layer: "unknown", reason };
+  }
+
   // Nothing can author this cell, and nothing is invented: the refusal names
   // what Hive needs. This reaches the user twice — as a warning on every
   // derivation surface, and as the refusal reason when a spawn needs this cell.
@@ -830,11 +858,18 @@ function spendGuard(
 ): string | null {
   const billing = input.billing?.[record.provider];
   if (billing === undefined) {
+    // THE SUBJECT IS THE VENDOR, NOT THE MODEL. With no billing surface at all,
+    // Hive cannot tell one model's cost from another's, so a per-model question
+    // is one it has no standing to ask — and worse, one the user cannot durably
+    // answer: the vendor's default model can move between the ask and the spawn
+    // (grok's did, silently, on 2026-07-12), orphaning the answer he gave and
+    // refusing the spawn against a question that no longer exists. Asking about
+    // the vendor is both the honest question and the answerable one.
     const detail = `Hive could not read ${record.provider} plan or billing ` +
-      "state, so it cannot rule out a charge";
-    if (input.costConsent?.(record.canonicalId) === "approved") return null;
-    needConsent(record.canonicalId, detail);
-    return `${record.launchToken}: ${detail}; not auto-routed until you say so`;
+      "state, so it cannot rule out a charge on any of its models";
+    if (input.costConsent?.(record.provider) === "approved") return null;
+    needConsent(record.provider, detail);
+    return `${record.provider}: ${detail}; not auto-routed until you say so`;
   }
   // Without a display name the model cannot be joined to a pool, so whether it
   // would be billed is unknown — and unknown resolves to ask, never to spend.

@@ -313,3 +313,73 @@ describe("outage and refusal", () => {
     expect(governing!.cells.codex.reason).toContain("codex CLI");
   });
 });
+
+/**
+ * THE SPAWN PATH IS WHERE CONSENT HAS TO WORK.
+ *
+ * `hive routing` wired the consent ledger; this function — the one every spawn
+ * actually calls — did not, and so the guard could neither see an answer the user
+ * had given nor file the question he was supposed to answer. It refused grok
+ * forever, silently, against a request that was never made. Both halves are
+ * asserted here, on the DERIVED path (no pin, no explicit model), because that is
+ * the path that was broken: an explicitly-named model takes a different route
+ * through the spawner and would have proved nothing.
+ */
+describe("consent reaches the path that actually spawns", () => {
+  const GROK: CapabilityDiscoveryResult = {
+    status: "ok",
+    records: [
+      record({ provider: "grok", canonicalId: "grok-4.5", cliVersion: "0.2.93" }),
+    ],
+    effectiveDefault: {
+      provider: "grok",
+      model: known("grok-4.5", "grok.models", OBSERVED),
+      effort: unknown("surface-silent", "grok.models", OBSERVED),
+    },
+  };
+
+  // Grok publishes no billing surface at all: `readBilling` returns null, which
+  // is what puts the spend guard on its unreadable-billing branch.
+  const grokIo = (
+    ledger: Map<string, string>,
+    asked: string[],
+  ): RoutingIo => ({
+    discover: async (provider) =>
+      provider === "grok" ? GROK : provider === "claude" ? CLAUDE : CODEX,
+    readBilling: async (provider) => (provider === "grok" ? null : FREE),
+    readConsent: (subject) => (ledger.get(subject) ?? "none") as never,
+    requestConsent: (subject) => void asked.push(subject),
+    now: () => NOW,
+  });
+
+  test("an unanswered cell FILES the question, keyed on the vendor", async () => {
+    const asked: string[] = [];
+    const governing = await resolveGoverningRoute(
+      "standard",
+      grokIo(new Map(), asked),
+    );
+    // Refused — unknown billing still resolves to ask, never to spend.
+    expect(governing!.cells.grok.model).toBeNull();
+    // ...but it ASKED. A guard that refuses without asking is unanswerable.
+    expect(asked).toContain("grok");
+    expect(governing!.cells.grok.reason).toContain("approvals queue");
+  });
+
+  test("an approval he has already given takes effect on the spawn path", async () => {
+    const governing = await resolveGoverningRoute(
+      "standard",
+      grokIo(new Map([["grok", "approved"]]), []),
+    );
+    expect(governing!.cells.grok.model).toBe("grok-4.5");
+  });
+
+  test("a caller with no consent ledger still cannot spend his money", async () => {
+    const governing = await resolveGoverningRoute("standard", {
+      discover: async (provider) =>
+        provider === "grok" ? GROK : provider === "claude" ? CLAUDE : CODEX,
+      readBilling: async (provider) => (provider === "grok" ? null : FREE),
+      now: () => NOW,
+    });
+    expect(governing!.cells.grok.model).toBeNull();
+  });
+});

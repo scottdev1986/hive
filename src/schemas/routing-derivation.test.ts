@@ -431,7 +431,7 @@ describe("availability and money gate the automatic choice", () => {
     const deep = tierOf(derived, "deep");
     expect(deep.claude.model.value).toBeNull();
     expect(deep.claude.notes.join(" ")).toContain("WOULD SPEND YOUR MONEY");
-    expect(derived.consentRequired.map((entry) => entry.canonicalId))
+    expect(derived.consentRequired.map((entry) => entry.subject))
       .toContain("claude-opus-4-8");
   });
 
@@ -460,8 +460,108 @@ describe("availability and money gate the automatic choice", () => {
     const deep = tierOf(derived, "deep");
     expect(deep.claude.model.value).toBe("claude-opus-4-8");
     expect(deep.claude.model.layer).toBe("pinned");
-    expect(derived.consentRequired.map((entry) => entry.canonicalId))
+    expect(derived.consentRequired.map((entry) => entry.subject))
       .toContain("claude-opus-4-8");
+  });
+});
+
+/**
+ * The grok livelock, 2026-07-12. Grok exposes no billing surface at all, so the
+ * spend guard asked before routing it — correctly. But it asked about a MODEL,
+ * and a vendor's default model is not a stable thing to have answered: x.ai moved
+ * grok's default from composer to grok-4.5 mid-session, with no local action. The
+ * user's approval was orphaned against a question the router no longer asked, and
+ * the cell refused forever — while telling him to sign in to a CLI he was already
+ * signed in to.
+ */
+describe("unreadable vendor billing: the consent must be answerable", () => {
+  const grokRecord = (canonicalId: string): CapabilityRecord => ({
+    provider: "grok",
+    accountFingerprint: "acct",
+    cliVersion: "0.2.93",
+    canonicalId,
+    variant: null,
+    launchToken: canonicalId,
+    displayName: canonicalId,
+    aliases: [],
+    entitled: known(true, "grok.models", FRESH),
+    hidden: known(false, "grok.models_cache", FRESH),
+    supportsEffort: known(false, "grok.models_cache", FRESH),
+    supportedEffortLevels: known([], "grok.models_cache", FRESH),
+    defaultEffort: unknown("field-absent", "grok.models_cache", FRESH),
+    observedAt: FRESH,
+  });
+
+  /** Grok discovery is HEALTHY and names a default — only the money is unknown. */
+  const grokDiscovery = (defaultModel: string): ProviderDiscovery => ({
+    status: "ok",
+    records: [grokRecord("grok-4.5"), grokRecord("grok-composer-2.5-fast")],
+    effectiveDefault: {
+      provider: "grok",
+      model: known(defaultModel, "grok.models", FRESH),
+      effort: unknown("surface-silent", "grok.models", FRESH),
+    },
+  });
+
+  // HEADROOM_BILLING carries no grok key: billing.grok is undefined, exactly as
+  // the live daemon sees it, because grok publishes no billing surface to read.
+  const grokInput = (
+    defaultModel: string,
+    overrides: Partial<DerivationInput> = {},
+  ): DerivationInput =>
+    input({ discovery: {
+      claude: ok(CLAUDE_RECORDS, CLAUDE_DEFAULT),
+      codex: ok(CODEX_RECORDS, CODEX_DEFAULT),
+      grok: grokDiscovery(defaultModel),
+    }, ...overrides });
+
+  test("the consent it asks for is keyed on the VENDOR, not on a model id", () => {
+    const derived = deriveRouting(grokInput("grok-4.5"));
+    expect(derived.consentRequired.map((entry) => entry.subject))
+      .toContain("grok");
+    // The model id must not be the subject: it is the thing that moves.
+    expect(derived.consentRequired.map((entry) => entry.subject))
+      .not.toContain("grok-4.5");
+  });
+
+  test("vendor consent survives the vendor moving its own default", () => {
+    // He answered "yes, spend money on grok" once. x.ai then swapped the default
+    // out from under him. His answer must still hold: it was never about a model.
+    // The reader is the real one's shape — it answers about the subject it was
+    // ASKED about, so a guard that asks for a model id gets "none" and refuses,
+    // which is precisely the livelock this test exists to keep out.
+    const consented = {
+      costConsent: (subject: string) =>
+        subject === "grok" ? "approved" as const : "none" as const,
+    };
+    for (const movedDefault of ["grok-composer-2.5-fast", "grok-4.5"]) {
+      const derived = deriveRouting(grokInput(movedDefault, consented));
+      const standard = tierOf(derived, "standard");
+      expect(standard.grok.model.value).toBe(movedDefault);
+      expect(standard.grok.model.layer).toBe("derived");
+      expect(derived.consentRequired).toEqual([]);
+    }
+  });
+
+  test("the refusal names the consent, and never a CLI he has already installed", () => {
+    const derived = deriveRouting(grokInput("grok-4.5"));
+    const standard = tierOf(derived, "standard");
+    expect(standard.grok.model.value).toBeNull();
+    // It refuses for the reason it actually refused, and points at the remedy
+    // that works. The old message sent him to reinstall a working CLI.
+    expect(standard.grok.model.reason).toContain("billing");
+    expect(standard.grok.model.reason).toContain("approvals queue");
+    expect(standard.grok.model.reason).not.toContain("declared no usable default");
+    expect(standard.grok.model.reason).not.toContain("sign in");
+  });
+
+  test("silence is still not consent: unanswered leaves the cell refused", () => {
+    for (const state of ["none", "pending", "denied"] as const) {
+      const derived = deriveRouting(
+        grokInput("grok-4.5", { costConsent: () => state }),
+      );
+      expect(tierOf(derived, "standard").grok.model.value).toBeNull();
+    }
   });
 });
 

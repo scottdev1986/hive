@@ -209,11 +209,11 @@ export async function printRouting(): Promise<void> {
   // Ask — once — about every model the router wanted but may not pay for. The
   // question goes to the approvals queue, where the user answers it; Hive never
   // answers it for him, and never asks twice.
-  for (const { canonicalId, detail } of derived.consentRequired) {
-    const state = requestCostConsent(db, canonicalId, detail);
+  for (const { subject, detail } of derived.consentRequired) {
+    const state = requestCostConsent(db, subject, detail);
     console.log(
       `\nSPEND CONSENT ${state === "pending" ? "REQUESTED" : state.toUpperCase()}: ` +
-        `a spawn on ${canonicalId} would cost you real money. ${detail} ` +
+        `a spawn on ${subject} would cost you real money. ${detail} ` +
         "Answer it in the approvals queue (hive_approvals / hive_approve).",
     );
   }

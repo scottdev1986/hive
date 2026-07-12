@@ -904,7 +904,7 @@ export class HiveSpawner implements Spawner {
       ? {
         state: "unknown" as const,
         detail: `Hive could not read ${tool} plan or billing state, so it cannot ` +
-          "rule out a charge",
+          "rule out a charge on any of its models",
       }
       : record?.displayName == null
       ? {
@@ -915,12 +915,19 @@ export class HiveSpawner implements Spawner {
       : spendRisk(billing, record.displayName);
     if (risk.state === "no-spend") return null;
 
-    const canonicalId = record?.canonicalId ?? base;
-    if (readCostConsent(this.dependencies.db, canonicalId) === "approved") {
+    // The same subject rule the derivation engine uses, because it is the same
+    // question: with NO billing surface, the charge is a fact about the vendor
+    // and consent is asked (and answered) per vendor. Keying it per model here
+    // while the router keys it per vendor would re-ask him something he has
+    // already answered — the fastest way to teach him to rubber-stamp the queue.
+    const subject = billing === null
+      ? tool
+      : record?.canonicalId ?? base;
+    if (readCostConsent(this.dependencies.db, subject) === "approved") {
       return null;
     }
     // Ask once, through the queue he already answers. Pending is not a yes.
-    requestCostConsent(this.dependencies.db, canonicalId, risk.detail);
+    requestCostConsent(this.dependencies.db, subject, risk.detail);
     return `${model} would spend your money: ${risk.detail}. Choosing this model ` +
       "is not the same as agreeing to be charged for it, so Hive asks once and " +
       "remembers — approve the request in the approvals queue (hive_approvals) " +
@@ -1586,6 +1593,12 @@ export class HiveSpawner implements Spawner {
       discover: (provider) => this.discoverOnce(provider),
       readBilling: async (provider) =>
         (await this.dependencies.readBilling?.(provider)) ?? null,
+      // The consent the guard needs, on the path that actually spawns. Reading it
+      // is what lets an answer he already gave take effect; requesting it is what
+      // gives him something to answer at all.
+      readConsent: (subject) => readCostConsent(this.dependencies.db, subject),
+      requestConsent: (subject, detail) =>
+        void requestCostConsent(this.dependencies.db, subject, detail),
     })) ?? null;
     // A conflict the router resolved silently is a lie: a pin it could not vouch
     // for, a model it refused to pay for. Said out loud, on the launch it governs.

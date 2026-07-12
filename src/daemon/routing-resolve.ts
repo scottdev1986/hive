@@ -13,6 +13,7 @@ import {
 } from "../schemas";
 import type { CapabilityDiscoveryResult } from "./capability-discovery";
 import type { BenchmarkCatalog } from "./benchmarks";
+import type { ConsentState } from "./cost-consent";
 import { knownBillings, type AccountBilling } from "./usage-credits";
 
 /**
@@ -69,6 +70,21 @@ export interface RoutingIo {
   readBenchmarks?: (
     discovery: Record<CapabilityProvider, ProviderDiscovery>,
   ) => Promise<BenchmarkCatalog>;
+  /**
+   * The user's standing answer about a charge, and the way to ASK him one.
+   *
+   * Both halves are load-bearing, and the spawn path had NEITHER (fixed here).
+   * Without the read, an approval he has already given is invisible to spawns and
+   * the guard refuses him forever. Without the write, the guard refuses a cell
+   * without ever filing the question — so there is nothing in his queue to answer,
+   * and no answer he could give would help. That is a livelock, and it is exactly
+   * what grok hit: refused for want of a consent that was never requested.
+   *
+   * Absent (a caller with no db) means the derivation runs unconsented: the guard
+   * still refuses, because unknown billing resolves to ask, never to spend.
+   */
+  readConsent?: (subject: string) => ConsentState;
+  requestConsent?: (subject: string, detail: string) => void;
   now?: () => Date;
 }
 
@@ -120,8 +136,20 @@ export async function resolveGoverningRoute(
     snapshot,
     ...(benchmarks === undefined ? {} : { benchmarks: benchmarks.models }),
     billing: knownBillings(billings),
+    ...(io.readConsent === undefined ? {} : { costConsent: io.readConsent }),
     now,
   });
+
+  // ASK HIM. The guard names what it would have spent money on; this is what
+  // puts that question in the queue he actually answers. A guard that refuses
+  // without asking is unanswerable — the user cannot approve a request nobody
+  // filed — so the ask and the refusal have to happen on the SAME path, and
+  // that path is this one, the one every spawn takes.
+  if (io.requestConsent !== undefined) {
+    for (const { subject, detail } of derived.consentRequired) {
+      io.requestConsent(subject, detail);
+    }
+  }
 
   const cell = derived.tiers.find((entry) => entry.tier === tier);
   if (cell === undefined) return null;
