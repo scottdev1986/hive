@@ -136,6 +136,34 @@ export const RoutingPinSchema = z.looseObject({
 export const RoutingPinsSchema = z.record(z.string().min(1), RoutingPinSchema);
 export type RoutingPins = z.infer<typeof RoutingPinsSchema>;
 
+/**
+ * The user's capability floors, read from `routing.toml`'s `[floors]` table
+ * (standing rule B: "nothing below claude-opus-4-8 / gpt-5.6-sol builds;
+ * claude-fable-5 for important/hard tasks" — the user's words, never Hive's).
+ * An explicit allowlist per vendor, not a rank Hive invents: the router
+ * matches ids the user wrote and never judges model quality itself
+ * (no-model-judgment ruling). The binary ships this schema and its
+ * enforcement only — no floor value is ever compiled in.
+ */
+export const RoutingFloorSchema = z.strictObject({
+  allow: z.array(z.string().min(1)).min(1),
+});
+export type RoutingFloor = z.infer<typeof RoutingFloorSchema>;
+
+export const RoutingFloorsSchema = z.strictObject({
+  claude: RoutingFloorSchema.optional(),
+  codex: RoutingFloorSchema.optional(),
+});
+export type RoutingFloors = z.infer<typeof RoutingFloorsSchema>;
+
+/**
+ * The one tier the building floor does not bind. The user's rule is that the
+ * simplest work goes to haiku-class models, so `cheap` is exempt by design.
+ */
+export function tierIsFloorBound(tier: RoutingTier): boolean {
+  return tier !== "cheap";
+}
+
 /** The provenance stamp on a snapshot cell. `manifestRevision` predates the
  * manifest's removal; the field name survives so snapshots already on disk
  * keep parsing, and new writes stamp the deriving source (`"discovery"`). */
@@ -200,6 +228,13 @@ export type ProviderDiscovery =
 export interface DerivationInput {
   discovery: Record<CapabilityProvider, ProviderDiscovery>;
   pins: RoutingPins;
+  /**
+   * The user's capability floors (`routing.toml` `[floors]`). Missing means no
+   * floor is configured for that vendor — the derivation runs exactly as it
+   * did before floors existed. Applied after pins, per the ruled order (pins
+   * → capability floors → user policy → benchmark ordering → quota).
+   */
+  floors?: RoutingFloors;
   snapshot: RoutingSnapshot | null;
   /**
    * Published benchmark rows keyed `${provider}\0${canonicalId}`, from the
@@ -463,6 +498,33 @@ function benchmarkFit(
   };
 }
 
+/**
+ * Does `candidateId` (or its live record, if one exists) appear in the user's
+ * floor allowlist? Matched by id only — canonicalId, launchToken, or any
+ * alias — never by a rank Hive infers about the model.
+ */
+function clearsFloor(
+  candidateId: string,
+  record: CapabilityRecord | undefined,
+  allow: readonly string[],
+): boolean {
+  if (allow.includes(candidateId)) return true;
+  if (record === undefined) return false;
+  return allow.includes(record.canonicalId) || allow.includes(record.launchToken) ||
+    record.aliases.some((alias) => allow.includes(alias));
+}
+
+/** The floor bound to this cell, or `null` when none applies: the tier is
+ * exempt (`cheap`), or the user has not configured one for this vendor. */
+function floorFor(
+  provider: CapabilityProvider,
+  tier: RoutingTier,
+  input: DerivationInput,
+): readonly string[] | null {
+  if (!tierIsFloorBound(tier)) return null;
+  return input.floors?.[provider]?.allow ?? null;
+}
+
 function resolveModel(
   provider: CapabilityProvider,
   tier: RoutingTier,
@@ -473,17 +535,48 @@ function resolveModel(
   warn: (message: string) => void,
   needConsent: ConsentSink,
 ): Resolved<string> {
-  // Layer 1: the pin. A standing user directive about the user's own account.
+  const allow = floorFor(provider, tier, input);
+  // Every candidate the floor excluded, across every rung: if none of them
+  // clear it, the cell refuses on THIS, not on the generic discovery message
+  // below — the user's own policy is the reason, and it is named as such.
+  const floorExcluded: string[] = [];
+  const passesFloor = (
+    candidateId: string,
+    record: CapabilityRecord | undefined,
+  ): boolean => {
+    if (allow === null) return true;
+    if (clearsFloor(candidateId, record, allow)) return true;
+    floorExcluded.push(candidateId);
+    return false;
+  };
+
+  // Layer 1: the pin. A standing user directive about the user's own account
+  // — but the capability floor is rule A's "nothing pushes a route below it",
+  // unconditional, so it is checked even against a pin (ruled order: pins →
+  // capability floors → user policy → benchmark ordering → quota). A pin the
+  // floor blocks is not silently obeyed; it falls through to the next rung.
   const pinned = input.pins[tier]?.[provider]?.model;
   if (pinned !== undefined) {
     notePinConflicts(provider, pinned, input, records, notes);
-    // A pin is the user's direct instruction and therefore their consent to run
-    // this route. The spend guard governs Hive's automatic choices only.
-    return {
-      value: pinned,
-      layer: "pinned",
-      reason: `routing.toml [${tier}.${provider}].model`,
-    };
+    const pinnedRecord = records.find((entry) =>
+      entry.canonicalId === pinned || entry.launchToken === pinned ||
+      entry.aliases.includes(pinned)
+    );
+    if (passesFloor(pinned, pinnedRecord)) {
+      // A pin is the user's direct instruction and therefore their consent to run
+      // this route. The spend guard governs Hive's automatic choices only.
+      return {
+        value: pinned,
+        layer: "pinned",
+        reason: `routing.toml [${tier}.${provider}].model`,
+      };
+    }
+    notes.push(
+      `pinned model ${pinned} does not clear the capability floor for ` +
+        `${provider} (routing.toml [floors.${provider}].allow: ${
+          allow!.join(", ")
+        }); the pin is not honoured for ${tier}`,
+    );
   }
 
   // Layer 2: the derived route — the account's own effective default, the one
@@ -520,16 +613,28 @@ function resolveModel(
         const refusal = spendGuard(input, record, needConsent);
         if (refusal !== null) {
           notes.push(refusal);
+        } else if (!passesFloor(record.launchToken, record)) {
+          notes.push(
+            `${record.launchToken} does not clear the capability floor for ` +
+              `${provider} (routing.toml [floors.${provider}].allow: ${
+                allow!.join(", ")
+              }); not derived for ${tier}`,
+          );
         } else {
           // The capability floor has no declarer yet: the manifest that vouched
           // codingCapable is gone, and neither the benchmark surface nor user
           // policy has replaced it. Saying so per cell is what keeps the floor's
-          // absence a visible fact instead of a silent regression.
+          // absence a visible fact instead of a silent regression. Once the
+          // user HAS configured a floor for this vendor, this candidate cleared
+          // it above, and that is what's said instead.
           if (kindRequiresCodingCapability(kind)) {
             notes.push(
-              `no capability evidence for ${record.launchToken} (kind=${kind}): ` +
-                "no benchmark data or user policy vouches for it yet; the " +
-                "vendor's own default is passed through",
+              allow === null
+                ? `no capability evidence for ${record.launchToken} (kind=${kind}): ` +
+                  "no benchmark data or user policy vouches for it yet; the " +
+                  "vendor's own default is passed through"
+                : `${record.launchToken} clears the capability floor for ` +
+                  `${provider} (routing.toml [floors.${provider}].allow)`,
             );
           }
           return {
@@ -547,16 +652,39 @@ function resolveModel(
   // Layer 3: the last-known-good derivation — the guard for discovery outages.
   const snapshotCell = input.snapshot?.tiers[tier]?.[provider];
   if (snapshotCell != null) {
-    warn(
-      `${tier}.${provider}: derivation is riding the last-known-good snapshot ` +
-        `(${describeAge(snapshotCell.derivedAt, input.now)}); ${provider} ` +
-        "discovery is not currently supplying a route",
+    const snapshotRecord = records.find((entry) =>
+      entry.canonicalId === snapshotCell.model ||
+      entry.launchToken === snapshotCell.model ||
+      entry.aliases.includes(snapshotCell.model)
     );
-    return {
-      value: snapshotCell.model,
-      layer: "ladder:last-known-good",
-      reason: staleReason(snapshotCell, input),
-    };
+    if (passesFloor(snapshotCell.model, snapshotRecord)) {
+      warn(
+        `${tier}.${provider}: derivation is riding the last-known-good snapshot ` +
+          `(${describeAge(snapshotCell.derivedAt, input.now)}); ${provider} ` +
+          "discovery is not currently supplying a route",
+      );
+      return {
+        value: snapshotCell.model,
+        layer: "ladder:last-known-good",
+        reason: staleReason(snapshotCell, input),
+      };
+    }
+    notes.push(
+      `last-known-good model ${snapshotCell.model} does not clear the ` +
+        `capability floor for ${provider} (routing.toml [floors.${provider}` +
+        `].allow: ${allow!.join(", ")}); not replayed for ${tier}`,
+    );
+  }
+
+  // The floor blocked every candidate this cell had. Refuse on THAT, never on
+  // the generic discovery message below — the reason is the user's own
+  // policy, not a vendor outage, and it is named as such.
+  if (floorExcluded.length > 0) {
+    const reason = `capability floor blocks ${tier}.${provider}: ${
+      floorExcluded.join(", ")
+    } excluded (routing.toml [floors.${provider}].allow: ${allow!.join(", ")})`;
+    warn(`${tier}.${provider}: NO ROUTE — ${reason}`);
+    return { value: null, layer: "unknown", reason };
   }
 
   // Nothing can author this cell, and nothing is invented: the refusal names

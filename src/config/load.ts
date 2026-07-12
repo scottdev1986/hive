@@ -5,9 +5,11 @@ import {
   HiveConfigSchema,
   QuotaConfigSchema,
   ROUTING_TIERS,
+  RoutingFloorsSchema,
   RoutingPinsSchema,
   type HiveConfig,
   type QuotaConfig,
+  type RoutingFloors,
   type RoutingPins,
 } from "../schemas";
 
@@ -82,8 +84,10 @@ export async function loadRoutingPins(): Promise<RoutingPins> {
   if (!isRecord(raw)) {
     throw new Error(`Invalid routing table at ${path}: expected a TOML table`);
   }
+  // `floors` is a reserved top-level key, not a tier — `loadRoutingFloors`
+  // reads it from the same file.
   const unknown = Object.keys(raw).filter((key) =>
-    !(ROUTING_TIERS as readonly string[]).includes(key)
+    key !== "floors" && !(ROUTING_TIERS as readonly string[]).includes(key)
   );
   if (unknown.length > 0) {
     throw new Error(
@@ -92,9 +96,30 @@ export async function loadRoutingPins(): Promise<RoutingPins> {
       } (tiers are ${ROUTING_TIERS.join(", ")})`,
     );
   }
+  const { floors: _floors, ...pins } = raw;
   try {
-    return RoutingPinsSchema.parse(raw);
+    return RoutingPinsSchema.parse(pins);
   } catch (error) {
     throw new Error(`Invalid routing table at ${path}: ${errorMessage(error)}`);
+  }
+}
+
+/**
+ * The user's capability floors: the one place a floor value is ever named.
+ * Read from the same `routing.toml`, under the reserved `[floors]` table.
+ * Missing means no floor is configured — the derivation runs exactly as it
+ * did before floors existed, which is the point: the binary ships the schema
+ * and the enforcement, never a value.
+ */
+export async function loadRoutingFloors(): Promise<RoutingFloors> {
+  const path = join(hiveHome(), "routing.toml");
+  const raw = await readToml(path);
+  if (raw === undefined || !isRecord(raw) || raw.floors === undefined) {
+    return {};
+  }
+  try {
+    return RoutingFloorsSchema.parse(raw.floors);
+  } catch (error) {
+    throw new Error(`Invalid capability floors at ${path}: ${errorMessage(error)}`);
   }
 }

@@ -1,6 +1,6 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { loadRoutingPins } from "../config/load";
+import { loadRoutingFloors, loadRoutingPins } from "../config/load";
 import {
   deriveRouting,
   RoutingSnapshotSchema,
@@ -93,9 +93,10 @@ export async function resolveGoverningRoute(
   io: RoutingIo,
 ): Promise<GoverningRoute | null> {
   const now = io.now?.() ?? new Date();
-  const [pins, snapshot, claude, codex, claudeBilling, codexBilling] =
+  const [pins, floors, snapshot, claude, codex, claudeBilling, codexBilling] =
     await Promise.all([
       loadRoutingPins(),
+      loadRoutingFloors(),
       readSnapshot(),
       io.discover("claude"),
       io.discover("codex"),
@@ -115,6 +116,7 @@ export async function resolveGoverningRoute(
   const derived = deriveRouting({
     discovery,
     pins,
+    floors,
     snapshot,
     ...(benchmarks === undefined ? {} : { benchmarks: benchmarks.models }),
     billing: {

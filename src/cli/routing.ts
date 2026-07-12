@@ -1,6 +1,6 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { loadHiveConfig, loadRoutingPins } from "../config/load";
+import { loadHiveConfig, loadRoutingFloors, loadRoutingPins } from "../config/load";
 import {
   ClaudeCapabilityProbe,
   CodexCapabilityProbe,
@@ -165,8 +165,9 @@ export function formatDerivedRouting(
 export async function printRouting(): Promise<void> {
   const now = new Date();
   const config = await loadHiveConfig();
-  const [pins, claude, codex, snapshot, billing] = await Promise.all([
+  const [pins, floors, claude, codex, snapshot, billing] = await Promise.all([
     loadRoutingPins(),
+    loadRoutingFloors(),
     new ClaudeCapabilityProbe().read(),
     new CodexCapabilityProbe().read(),
     readSnapshot(),
@@ -192,6 +193,7 @@ export async function printRouting(): Promise<void> {
     costConsent: (model) => readCostConsent(db, model),
     discovery: { claude, codex },
     pins,
+    floors,
     snapshot,
     benchmarks: benchmarkCatalog.models,
     billing,

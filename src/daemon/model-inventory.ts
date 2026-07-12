@@ -2,6 +2,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import {
   loadHiveConfig,
+  loadRoutingFloors,
   loadRoutingPins,
 } from "../config/load";
 import type {
@@ -133,9 +134,10 @@ export async function readModelInventory(
       : await new CodexCapabilityProbe().read());
   const readBilling = options.readBilling ?? readBillingWithMemory;
   const config = await loadHiveConfig();
-  const [pins, snapshot, claude, codex, claudeBilling, codexBilling] =
+  const [pins, floors, snapshot, claude, codex, claudeBilling, codexBilling] =
     await Promise.all([
       loadRoutingPins(),
+      loadRoutingFloors(),
       readSnapshot(),
       discover("claude"),
       discover("codex"),
@@ -158,6 +160,7 @@ export async function readModelInventory(
   const routing = deriveRouting({
     discovery,
     pins,
+    floors,
     snapshot,
     // The same evidence the live spawn path uses, so the inventory's roles and
     // efforts are the ones a spawn would actually launch with.

@@ -174,6 +174,42 @@ describe("what governs may never break", () => {
     expect(governing!.cells.claude.model).toBe("claude-fable-5");
   });
 
+  test("a seeded routing.toml floor refuses a below-floor standard-tier claude resolution", async () => {
+    await pins('[floors.claude]\nallow = ["claude-opus-4-8", "claude-fable-5"]\n');
+    const sonnetDefault: CapabilityDiscoveryResult = {
+      ...CLAUDE,
+      effectiveDefault: {
+        provider: "claude",
+        model: known("claude-sonnet-5", "claude.initialize", OBSERVED),
+        effort: unknown("surface-silent", "claude.initialize", OBSERVED),
+      },
+    };
+    const governing = await resolveGoverningRoute("standard", {
+      ...io(),
+      discover: async (provider) => provider === "claude" ? sonnetDefault : CODEX,
+    });
+    expect(governing!.cells.claude.model).toBeNull();
+    expect(governing!.cells.claude.reason).toContain("capability floor");
+    expect(governing!.cells.claude.reason).toContain("claude-sonnet-5");
+  });
+
+  test("the same seeded floor leaves the cheap tier untouched", async () => {
+    await pins('[floors.claude]\nallow = ["claude-opus-4-8", "claude-fable-5"]\n');
+    const sonnetDefault: CapabilityDiscoveryResult = {
+      ...CLAUDE,
+      effectiveDefault: {
+        provider: "claude",
+        model: known("claude-sonnet-5", "claude.initialize", OBSERVED),
+        effort: unknown("surface-silent", "claude.initialize", OBSERVED),
+      },
+    };
+    const governing = await resolveGoverningRoute("cheap", {
+      ...io(),
+      discover: async (provider) => provider === "claude" ? sonnetDefault : CODEX,
+    });
+    expect(governing!.cells.claude.model).toBe("claude-sonnet-5");
+  });
+
   test("no cell offers quota a downshift chain yet", async () => {
     // The manifest's ordered candidate lists are gone; until the benchmark
     // surface or user policy supplies one, there is nothing vetted to

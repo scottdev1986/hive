@@ -15,6 +15,18 @@ Routine selection: the orchestrator classifies (`deep`/`standard`/`cheap`/`revie
 3. **The last-known-good derivation**, loudly: a per-cell snapshot of what the engine last derived, replayed at its true age when discovery is down. A provider outage must not erase what the last healthy run learned.
 4. **Refusal.** Where none of those can author a cell, the spawn FAILS with a reason naming what Hive needs ("install or sign in to the claude CLI, or pin routing.toml [deep.claude]"). There is no baked-in list to fall to — on a fresh install with no vendor CLIs, Hive refuses and says which CLIs it needs, and on the first healthy discovery you can watch the catalog populate from nothing (`hive_models`, `hive routing`).
 
+**Capability floors** (`~/.hive/routing.toml`, table `[floors]`) are a second kind of user policy, checked against the candidate every one of the three rungs above produces — applied in the ruled order pin → capability floor → user policy → benchmark ordering → quota. A floor is an explicit per-vendor allowlist naming the models that clear the bar for building work (the `deep`, `standard`, and `review` tiers; `cheap` is exempt by design — the user's own rule is that the simplest work goes to haiku-class models). Hive never invents a quality ranking to enforce it (no-model-judgment ruling): it only matches ids the user wrote against what a rung resolved. A candidate the floor excludes is dropped — the pin included, because standing rule A ("nothing pushes a route below it") is unconditional — and derivation falls through to the next rung; when every rung's candidate fails the floor, the cell REFUSES, naming the floor and the excluded id(s), never a silent downshift to whatever a vendor happened to default to. This landed 2026-07-12 after a building task was twice routed to `claude-sonnet-5` with no floor anywhere the router could read. The seeded file on this machine:
+
+```toml
+[floors.claude]
+allow = ["claude-opus-4-8", "claude-fable-5"]
+
+[floors.codex]
+allow = ["gpt-5.6-sol"]
+```
+
+— expresses the standing directive ("nothing below `claude-opus-4-8` / `gpt-5.6-sol` builds; `claude-fable-5` for important/hard tasks") as membership, never a rank. The binary ships the schema (`RoutingFloorsSchema`, `src/schemas/routing-derivation.ts`) and the enforcement only — with no `[floors]` table the derivation runs exactly as it did before floors existed, and every value above is the user's, never compiled in.
+
 What DOES ship is **policy that names no model**: which vendor a tier prefers (deep/review→claude, standard/cheap→codex) and what effort a tier reasons at — both compiled as `TIER_PREFERRED_TOOL` / `TIER_EFFORT_POLICY` in `src/schemas/routing-derivation.ts`, both overridable per cell in `routing.toml`. The old escape hatches (`router = "shipped"`, `routingManifest = "off"`) still parse but revert to nothing; the escape from a bad derivation is a pin.
 
 **Effort is chosen, not defaulted.** The tier policy names the choice — deep=`high`, standard/review=`medium`, cheap=`low` — and the engine passes it only when the resolved model's live record advertises that exact level. A level the record doesn't advertise (or a record that publishes no levels, like Haiku's) is refused with a named note and no flag is passed; the vendor's own per-model default informs a human editing the policy but never silently governs a derived cell. Pinned efforts are honoured and conflicts reported; a pinned model with no pinned effort takes its own advertised default; last-known-good replays keep the effort that was derived *with* their model.

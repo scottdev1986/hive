@@ -5,6 +5,7 @@ import { join } from "node:path";
 import {
   loadHiveConfig,
   loadQuotaConfig,
+  loadRoutingFloors,
   loadRoutingPins,
 } from "./load";
 
@@ -301,5 +302,51 @@ describe("config loading", () => {
     );
     const pins = await loadRoutingPins();
     expect(pins.deep?.claude?.model).toEqual("claude-fable-5");
+  });
+
+  test("no routing.toml means no floors — the binary ships none", async () => {
+    await resetHome();
+    expect(await loadRoutingFloors()).toEqual({});
+  });
+
+  test("floors read back verbatim and coexist with pins in the same file", async () => {
+    await resetHome();
+    await writeFile(
+      join(hiveHome, "routing.toml"),
+      [
+        "[deep.claude]",
+        'model = "claude-fable-5"',
+        "",
+        "[floors.claude]",
+        'allow = ["claude-opus-4-8", "claude-fable-5"]',
+        "",
+        "[floors.codex]",
+        'allow = ["gpt-5.6-sol"]',
+        "",
+      ].join("\n"),
+    );
+    const floors = await loadRoutingFloors();
+    expect(floors.claude?.allow).toEqual(["claude-opus-4-8", "claude-fable-5"]);
+    expect(floors.codex?.allow).toEqual(["gpt-5.6-sol"]);
+    // `floors` is a reserved key, not a tier: it does not trip the unknown-tier
+    // check, and the pin alongside it still reads back untouched.
+    const pins = await loadRoutingPins();
+    expect(pins.deep?.claude?.model).toEqual("claude-fable-5");
+    expect(pins.floors).toBeUndefined();
+  });
+
+  test("an empty allow-list is rejected — a floor with no members admits nothing", async () => {
+    await resetHome();
+    await writeFile(
+      join(hiveHome, "routing.toml"),
+      "[floors.claude]\nallow = []\n",
+    );
+    let message = "";
+    try {
+      await loadRoutingFloors();
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+    expect(message.includes(join(hiveHome, "routing.toml"))).toEqual(true);
   });
 });
