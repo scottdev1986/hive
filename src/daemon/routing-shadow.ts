@@ -2,19 +2,22 @@ import { appendFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
-import { loadHiveConfig, loadRoutingPins } from "../config/load";
+import { loadHiveConfig, loadRoutingPins, resolveRoute } from "../config/load";
 import { loadTrustedRoutingManifest } from "../config/routing-manifest";
+import { resolveConcreteModel } from "../adapters/tools/models";
 import {
   defaultRoutingTable,
   deriveRouting,
   kindRequiresCodingCapability,
   RoutingSnapshotSchema,
+  splitVariant,
   type CapabilityProvider,
   type DerivedTier,
   type ProviderDiscovery,
   type ResolutionLayer,
   type RoutingTier,
 } from "../schemas";
+import { whatGoverns } from "./routing-resolve";
 import type { CapabilityDiscoveryResult } from "./capability-discovery";
 import {
   readAccountBilling,
@@ -55,10 +58,30 @@ export const ShadowObservationSchema = z.strictObject({
   agent: z.string().min(1),
   tier: z.string().min(1),
   kind: z.string().min(1),
-  /** What actually launched. The static table's choice, after quota. */
+  /** What actually launched, after quota. Whose choice that was: `governedBy`. */
   actual: RouteSchema,
-  /** What the derivation engine would have chosen for the same spawn. */
+  /** What the derivation engine would have chosen — or did. */
   derived: RouteSchema,
+  /**
+   * What the OLD STATIC TABLE would have chosen for this spawn. Before the flip
+   * this is what actually launched; after it, it is the counterfactual — and it is
+   * the whole reason shadow mode survives the flip. Pre-flip, shadow compared what
+   * we WOULD do against what we DID. Post-flip, the comparison inverts and keeps
+   * doing exactly that job, which is the moment it starts mattering: it is the
+   * only thing that can show the derived router quietly drifting away from the
+   * table everyone's work used to run on.
+   *
+   * `null` on lines written before this field existed — a counterfactual nobody
+   * recorded, never an empty one.
+   */
+  shipped: RouteSchema.nullable().default(null),
+  /**
+   * Which layer actually decided this spawn. Defaulting an absent value to
+   * "shipped" is not a guess about a silent field: the field is introduced BY the
+   * flip, so a line that lacks it was written by a build in which nothing but the
+   * shipped table could have decided.
+   */
+  governedBy: z.enum(["derived", "shipped"]).default("shipped"),
   /** Which layer authored each derived field: the audit trail for a divergence. */
   layers: z.strictObject({
     tool: z.string().min(1),
@@ -180,7 +203,14 @@ export async function recordShadowObservation(
     const tier = derivation.tiers.find((entry) => entry.tier === spawn.tier);
     if (tier === undefined) return null;
 
-    const observation = compare(spawn, tier, trusted.manifest?.revision ?? null, now);
+    const observation = compare(
+      spawn,
+      tier,
+      trusted.manifest?.revision ?? null,
+      now,
+      whatGoverns(config, trusted.origin),
+      await shippedChoice(spawn.tier, { claude, codex }),
+    );
     const line = `${JSON.stringify(observation)}\n`;
     if (dependencies.append !== undefined) {
       await dependencies.append(line);
@@ -195,11 +225,47 @@ export async function recordShadowObservation(
   }
 }
 
+/**
+ * What the old static table would have chosen for this spawn, reconstructed from
+ * the pre-flip path itself: `resolveRoute()` (shipped table + routing.toml, the
+ * resolver the flip replaces) and `resolveConcreteModel()` (the alias resolution
+ * every spawn used to do). The effort ladder below mirrors `spawner-impl.ts`'s
+ * `resolveSpawnEffort` for an unpinned spawn — discovered default, then the tier's
+ * shipped column, then medium — because a counterfactual computed from the RAW
+ * table would be a comparison against a route no spawn has ever launched.
+ *
+ * What it cannot reconstruct is quota: whether the old table's choice would have
+ * been downshifted under pressure is a counterfactual no log can answer, and this
+ * does not pretend to.
+ */
+async function shippedChoice(
+  tier: RoutingTier,
+  discovery: Record<CapabilityProvider, CapabilityDiscoveryResult>,
+): Promise<{ tool: CapabilityProvider; model: string; effort: string | null }> {
+  const route = await resolveRoute(tier);
+  const tool = route.tool;
+  const model = await resolveConcreteModel(tool, route);
+  const provider = discovery[tool];
+  const records = provider.status === "ok" ? provider.records : [];
+  const base = splitVariant(model).base;
+  const record = records.find((entry) =>
+    entry.launchToken === base || entry.canonicalId === base ||
+    entry.aliases.includes(model) || entry.aliases.includes(base)
+  );
+  if (tool === "claude") return { tool, model, effort: null };
+  const discovered = record?.defaultEffort.state === "known"
+    ? record.defaultEffort.value
+    : undefined;
+  return { tool, model, effort: discovered ?? route.codex.effort ?? "medium" };
+}
+
 function compare(
   spawn: ShadowSpawn,
   tier: DerivedTier,
   manifestRevision: string | null,
   now: Date,
+  governedBy: "derived" | "shipped",
+  shipped: { tool: CapabilityProvider; model: string; effort: string | null },
 ): ShadowObservation {
   // The derived route is read from the tool the derivation itself chose, not from
   // the tool that actually launched: comparing the derived model of one vendor
@@ -226,6 +292,8 @@ function compare(
       model: cell.model.value,
       effort: cell.effort.value,
     },
+    shipped,
+    governedBy,
     layers: {
       tool: tier.tool.layer,
       model: cell.model.layer,
@@ -302,6 +370,26 @@ export interface Divergence {
   count: number;
 }
 
+/**
+ * The same comparison, inverted: what the OLD STATIC TABLE would have chosen,
+ * against what the derived router actually did. Post-flip this is the whole of
+ * shadow mode's value, and losing it at the moment it starts mattering would be
+ * perverse — before the flip, shadow compared what we WOULD do against what we
+ * DID; after it, that is still exactly the question, and only the sign changes.
+ */
+export interface InvertedDivergence {
+  tier: string;
+  field: "tool" | "model" | "effort";
+  /** What the derived router launched. */
+  actual: string;
+  /** What the shipped table would have launched instead. */
+  shipped: string;
+  /** The layer that authored the value the router actually used. */
+  layer: string;
+  reason: string;
+  count: number;
+}
+
 export interface ShadowSummary {
   spawns: number;
   /** Spawns the router actually chose. A user-pinned model is not its judgment. */
@@ -311,44 +399,104 @@ export interface ShadowSummary {
   criteria: Criterion[];
   rollback: Criterion[];
   flipReady: boolean;
+  /** How many observed spawns each layer actually decided. */
+  governed: { derived: number; shipped: number };
+  /** Post-flip: the derived router's launches against the old table's choice. */
+  postFlip: {
+    judged: number;
+    agreement: { tool: number; model: number; effort: number };
+    divergences: InvertedDivergence[];
+  };
 }
 
-export function summarizeShadow(
-  observations: readonly ShadowObservation[],
-): ShadowSummary {
-  const judged = observations.filter((entry) => !entry.userPinned);
-  const n = judged.length;
-  const rate = (count: number) => n === 0 ? "—" : `${((count / n) * 100).toFixed(1)}%`;
+type Side = { tool: string; model: string | null; effort: string | null };
 
+const AGREEMENT_FIELDS = ["tool", "model", "effort"] as const;
+
+const agrees = (actual: Side, other: Side, field: "tool" | "model" | "effort") =>
+  (actual[field] ?? null) === (other[field] ?? null);
+
+/** Agreement counts and grouped divergences between what launched and a
+ * counterfactual, whichever direction the flip is pointing. */
+function compareAgainst(
+  judged: readonly ShadowObservation[],
+  other: (entry: ShadowObservation) => Side | null,
+) {
+  const comparable = judged.filter((entry) => other(entry) !== null);
   const agreement = {
-    tool: judged.filter((entry) => entry.agrees.tool).length,
-    model: judged.filter((entry) => entry.agrees.model).length,
-    effort: judged.filter((entry) => entry.agrees.effort).length,
+    tool: 0,
+    model: 0,
+    effort: 0,
   };
-
-  const divergences = new Map<string, Divergence>();
-  for (const entry of judged) {
-    for (const field of ["tool", "model", "effort"] as const) {
-      if (entry.agrees[field]) continue;
-      const actual = entry.actual[field] ?? "—";
-      const derived = entry.derived[field] ?? "—";
-      const key = `${entry.tier}\0${field}\0${actual}\0${derived}`;
-      const existing = divergences.get(key);
+  const grouped = new Map<
+    string,
+    { tier: string; field: typeof AGREEMENT_FIELDS[number]; actual: string; other: string; layer: string; reason: string; count: number }
+  >();
+  for (const entry of comparable) {
+    const counterfactual = other(entry)!;
+    for (const field of AGREEMENT_FIELDS) {
+      if (agrees(entry.actual, counterfactual, field)) {
+        agreement[field] += 1;
+        continue;
+      }
+      const actual = String(entry.actual[field] ?? "—");
+      const value = String(counterfactual[field] ?? "—");
+      const key = `${entry.tier}\0${field}\0${actual}\0${value}`;
+      const existing = grouped.get(key);
       if (existing !== undefined) {
         existing.count += 1;
         continue;
       }
-      divergences.set(key, {
+      grouped.set(key, {
         tier: entry.tier,
         field,
-        actual: String(actual),
-        derived: String(derived),
+        actual,
+        other: value,
         layer: entry.layers[field],
         reason: entry.reason,
         count: 1,
       });
     }
   }
+  return {
+    comparable: comparable.length,
+    agreement,
+    grouped: [...grouped.values()].sort((a, b) => b.count - a.count),
+  };
+}
+
+export function summarizeShadow(
+  observations: readonly ShadowObservation[],
+): ShadowSummary {
+  // Each regime is judged against its own counterfactual. Mixing them would
+  // average a pre-flip question ("would the router have agreed?") with a post-flip
+  // one ("does the router still agree?") into a number that answers neither.
+  const preFlip = observations.filter((entry) => entry.governedBy === "shipped");
+  const postFlipAll = observations.filter((entry) => entry.governedBy === "derived");
+  const judged = preFlip.filter((entry) => !entry.userPinned);
+  const postJudged = postFlipAll.filter((entry) => !entry.userPinned);
+  const n = judged.length;
+  const rate = (count: number) => n === 0 ? "—" : `${((count / n) * 100).toFixed(1)}%`;
+
+  const pre = compareAgainst(judged, (entry) => entry.derived);
+  const agreement = pre.agreement;
+  const divergences = new Map<string, Divergence>();
+  for (const entry of pre.grouped) {
+    divergences.set(`${entry.tier}\0${entry.field}\0${entry.actual}\0${entry.other}`, {
+      tier: entry.tier,
+      field: entry.field,
+      actual: entry.actual,
+      derived: entry.other,
+      layer: entry.layer,
+      reason: entry.reason,
+      count: entry.count,
+    });
+  }
+
+  // The inversion. Post-flip the router decides, so the counterfactual is the
+  // shipped table — the only thing that can still show us the router drifting away
+  // from what everyone's work used to run on.
+  const post = compareAgainst(postJudged, (entry) => entry.shipped);
 
   const floorViolations = judged.filter((entry) => entry.floorViolation).length;
   const ladder = judged.filter((entry) => entry.ladderFallback).length;
@@ -429,17 +577,46 @@ export function summarizeShadow(
   ];
 
   const failures = judged.filter((entry) => entry.outcome === "failed").length;
+  const postFailures = postJudged.filter((entry) => entry.outcome === "failed").length;
+  const postRate = postJudged.length === 0
+    ? null
+    : postFailures / postJudged.length;
+  const baselineRate = n === 0 ? null : failures / n;
   const rollback: Criterion[] = [
     {
       id: "launch-failure-baseline",
       question: "pre-flip launch-failure rate of the SHIPPED routes (the revert trigger)",
       verdict: n === 0 ? "unknown" : "pass",
       detail: n === 0
-        ? "no judged spawns yet — with no baseline, a post-flip regression is " +
-          "undetectable and the rollback trigger is decorative"
-        : `${failures} of ${n} actual launches failed past the transport ` +
+        ? "UNMEASURED. No spawn was ever observed under the shipped table, so there " +
+          "is no pre-flip baseline to compare a post-flip rate against. The design " +
+          "assumes one exists; on this machine it does not, and the trigger is " +
+          "therefore WEAKER than the design assumes. No number is invented here: an " +
+          "invented threshold would look like a safety net and catch nothing"
+        : `${failures} of ${n} shipped-governed launches failed past the transport ` +
           `(${rate(failures)}). This is the measured baseline a post-flip rate ` +
           "is compared against",
+    },
+    {
+      id: "launch-failure-regression",
+      question: "post-flip launch-failure rate no higher than the pre-flip baseline",
+      // Three ways this is not a pass, and it says which: no baseline to compare
+      // against, nothing yet to compare, or a real regression. Only the third is a
+      // FAIL — the first two are unknowns, and an unknown is never a pass.
+      verdict: baselineRate === null || postRate === null
+        ? "unknown"
+        : postRate > baselineRate
+        ? "fail"
+        : "pass",
+      detail: baselineRate === null
+        ? "no pre-flip baseline exists (above), so a post-flip regression cannot be " +
+          "detected by comparison. REVERT ON JUDGMENT, not on this number: " +
+          `config.toml router = "shipped"`
+        : postRate === null
+        ? "no router-governed spawns observed yet — nothing to compare"
+        : `${postFailures} of ${postJudged.length} derived-governed launches failed ` +
+          `(${(postRate * 100).toFixed(1)}%) against a baseline of ${rate(failures)}` +
+          `${postRate > baselineRate ? " — REGRESSION: revert first, investigate second" : ""}`,
     },
     {
       id: "escalation-baseline",
@@ -463,5 +640,19 @@ export function summarizeShadow(
     // pass: it is a criterion nobody checked, and the whole point of the gate is
     // that it cannot be cleared by not looking.
     flipReady: criteria.every((entry) => entry.verdict === "pass"),
+    governed: { derived: postFlipAll.length, shipped: preFlip.length },
+    postFlip: {
+      judged: postJudged.length,
+      agreement: post.agreement,
+      divergences: post.grouped.map((entry) => ({
+        tier: entry.tier,
+        field: entry.field,
+        actual: entry.actual,
+        shipped: entry.other,
+        layer: entry.layer,
+        reason: entry.reason,
+        count: entry.count,
+      })),
+    },
   };
 }

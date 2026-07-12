@@ -27,6 +27,7 @@ import {
   ClaudeCapabilityProbe,
   CodexCapabilityProbe,
 } from "../daemon/capability-discovery";
+import { resolveGoverningRoute } from "../daemon/routing-resolve";
 import { recordShadowObservation } from "../daemon/routing-shadow";
 import { readAccountBilling } from "../daemon/usage-credits";
 import { persistAutonomy } from "../config/autonomy";
@@ -87,6 +88,11 @@ export async function runDaemon(): Promise<void> {
       daemon.issueCredential(name, role, epoch),
     config,
     routing: resolveRoute,
+    // The flip. Derived routes govern live spawns; `routing` above remains the
+    // fallback this returns to whenever config says the shipped table governs
+    // instead — re-read from config.toml on every spawn, so the escape hatch
+    // needs neither a rebuild nor a restart of this daemon.
+    governingRoute: (tier, io) => resolveGoverningRoute(tier, io),
     routingPins: loadRoutingPins,
     discoverCapabilities: async (provider) =>
       provider === "claude"

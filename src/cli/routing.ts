@@ -1,6 +1,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { loadHiveConfig, loadRoutingPins } from "../config/load";
+import { whatGoverns } from "../daemon/routing-resolve";
 import {
   loadTrustedRoutingManifest,
   type ManifestOrigin,
@@ -139,13 +140,27 @@ export function formatDerivedRouting(
   now: Date,
   trusted: TrustedRoutingManifest,
   billing: AccountBillings | null = null,
+  governs: "derived" | "shipped" = "shipped",
 ): string {
-  const lines: string[] = [
-    "Derived routing — INERT. Live spawns still resolve through the shipped " +
-    "table + routing.toml;",
-    "this is what the engine would pick, and where every value came from.",
-    "",
-  ];
+  const lines: string[] = governs === "derived"
+    ? [
+      "Derived routing — GOVERNING. This is what live spawns launch: every " +
+      "unpinned route below",
+      "is the one an agent gets. Turn it off live, with no rebuild and no daemon " +
+      "restart, by setting",
+      "  routingManifest = \"off\"   (disown the manifest: kill switch, reverts every " +
+      "cell to the shipped table)",
+      "  router = \"shipped\"        (keep the manifest, stop it governing: `hive " +
+      "routing` and shadow keep working)",
+      "in ~/.hive/config.toml. Either takes effect on the NEXT SPAWN.",
+      "",
+    ]
+    : [
+      "Derived routing — NOT GOVERNING. Live spawns resolve through the shipped " +
+      "table + routing.toml;",
+      "this is what the engine would pick, and where every value came from.",
+      "",
+    ];
 
   // The manifest's *trust* is the first thing printed, because every derived
   // cell below is only as trustworthy as the document that proposed it.
@@ -177,6 +192,17 @@ export function formatDerivedRouting(
     lines.push(...formatCell(tier.claude), ...formatCell(tier.codex), "");
   }
 
+  if (governs === "shipped") {
+    lines.push(
+      trusted.origin === "kill-switch"
+        ? "  governs    NO — the kill switch (routingManifest = \"off\") is engaged; " +
+          "the shipped table decides"
+        : "  governs    NO — router = \"shipped\" in config.toml; the shipped table " +
+          "decides",
+      "",
+    );
+  }
+
   // The trust warnings lead: a rejected manifest is the reason the rest of the
   // table looks the way it does.
   const warnings = [...trusted.warnings, ...derived.warnings];
@@ -192,6 +218,9 @@ export async function printRouting(): Promise<void> {
   const config = await loadHiveConfig();
   const trusted = await loadTrustedRoutingManifest(config);
   const killed = trusted.origin === "kill-switch";
+  // Asked of the same function the spawner asks, so this surface cannot claim to
+  // govern a spawn it does not, or disclaim one it does.
+  const governs = whatGoverns(config, trusted.origin);
 
   // Under the kill switch nothing manifest-derived is consulted — and that
   // includes the last-known-good snapshot, which was itself derived *from* a
@@ -250,7 +279,7 @@ export async function printRouting(): Promise<void> {
   }
   db.close();
 
-  console.log(formatDerivedRouting(derived, now, trusted, billing));
+  console.log(formatDerivedRouting(derived, now, trusted, billing, governs));
 
   // Feed the next run's first ladder rung. Only cells this run actually derived
   // are recorded, and cells it could not derive keep what the last healthy run
@@ -312,6 +341,35 @@ export function formatShadowSummary(summary: ShadowSummary): string {
       );
     }
     lines.push("");
+  }
+
+  // Post-flip, this is the section that matters: the derived router is deciding,
+  // and this is the only thing still comparing what it DOES against what the old
+  // table WOULD have done.
+  if (summary.governed.derived > 0) {
+    const post = summary.postFlip;
+    lines.push(
+      `GOVERNED BY THE DERIVED ROUTER — ${summary.governed.derived} spawns ` +
+        `(${post.judged} router-chosen), against ${summary.governed.shipped} on the shipped table`,
+      "  what the OLD STATIC TABLE would have launched instead:",
+    );
+    if (post.divergences.length === 0) {
+      lines.push(
+        `  nothing. On every one of the ${post.judged} judged spawns the router ` +
+          "launched exactly what the shipped table would have.",
+        "",
+      );
+    } else {
+      for (const divergence of post.divergences) {
+        lines.push(
+          `  ${divergence.tier}.${divergence.field} ×${divergence.count}: ` +
+            `shipped would launch ${divergence.shipped} → router launched ` +
+            `${divergence.actual} [${divergence.layer}]`,
+          `      ${divergence.reason}`,
+        );
+      }
+      lines.push("");
+    }
   }
 
   lines.push("FLIP CRITERIA (every one must PASS; an unknown is not a pass)");

@@ -55,6 +55,27 @@ export const HiveConfigSchema = z.strictObject({
   // patience for editing pins tier by tier, and it is one flag rather than a
   // per-tier retreat for exactly that reason.
   routingManifest: z.enum(["auto", "off"]).default("auto"),
+  // The flip itself (design step 5): does the derived router GOVERN live spawns?
+  // "derived" (the default) routes every unpinned spawn through manifest ∩
+  // discovery, with the fallback ladder beneath it. "shipped" reverts every cell
+  // to the compiled-in table, live.
+  //
+  // This is a SETTING and not a constant on purpose, and the purpose is recent.
+  // Tonight we deleted FABLE_AUTO_ROUTING_CUTOFF: a belief frozen into code that
+  // could not be changed without a rebuild and went wrong silently. A flip frozen
+  // the same way would repeat the mistake with higher stakes — the escape from a
+  // misbehaving router must not require the user to rebuild the thing that is
+  // misbehaving. Both this switch and `routingManifest` are re-read from
+  // config.toml on EVERY spawn (see daemon/routing-resolve.ts), so either one
+  // takes effect on the next spawn, with no rebuild and no daemon restart.
+  //
+  // The two are not redundant. `routingManifest = "off"` disowns the manifest and
+  // everything derived from it (including the last-known-good snapshot), which is
+  // the hammer for "the manifest is wrong". `router = "shipped"` keeps the
+  // manifest — `hive routing` still derives, shadow mode still records — and only
+  // stops it governing, which is the hammer for "the ROUTER is wrong". Escaping a
+  // bad router should not also blind the instrument that would show why.
+  router: z.enum(["derived", "shipped"]).default("derived"),
   resources: ResourceLimitsSchema.prefault({}),
   lifecycle: LifecycleConfigSchema.prefault({}),
 });

@@ -49,9 +49,8 @@ const BUILT_IN: TrustedRoutingManifest = {
 };
 
 describe("the routing surface prints only what it derived", () => {
-  const rendered = (discovery: Record<"claude" | "codex", ProviderDiscovery>) =>
-    formatDerivedRouting(
-      deriveRouting({
+  const derive = (discovery: Record<"claude" | "codex", ProviderDiscovery>) =>
+    deriveRouting({
         manifest: FIRST_ROUTING_MANIFEST,
         discovery,
         pins: {},
@@ -74,10 +73,10 @@ describe("the routing surface prints only what it derived", () => {
           },
         },
         now: NOW,
-      }),
-      NOW,
-      BUILT_IN,
-    );
+      });
+
+  const rendered = (discovery: Record<"claude" | "codex", ProviderDiscovery>) =>
+    formatDerivedRouting(derive(discovery), NOW, BUILT_IN);
 
   test("a value no layer could author prints as unknown, never as a guess", () => {
     const output = rendered({ claude: down("claude is not signed in"), codex: CODEX_UP });
@@ -92,9 +91,28 @@ describe("the routing surface prints only what it derived", () => {
     expect(output).toContain("—");
   });
 
-  test("the header states that deriving is not routing", () => {
-    const output = rendered({ claude: down("down"), codex: CODEX_UP });
-    expect(output).toContain("INERT");
+  test("the header says who governs, and never claims to govern when it does not", () => {
+    // The surface used to say INERT, and that was true. It is now true only when
+    // config says so, and a header that says the wrong one of these is worse than
+    // no header: it describes a machine the reader does not have.
+    const notGoverning = rendered({ claude: down("down"), codex: CODEX_UP });
+    expect(notGoverning).toContain("NOT GOVERNING");
+    expect(notGoverning).not.toContain("GOVERNING. This is what live spawns launch");
+
+    const governing = formatDerivedRouting(
+      derive({ claude: down("down"), codex: CODEX_UP }),
+      NOW,
+      BUILT_IN,
+      null,
+      "derived",
+    );
+    expect(governing).toContain("GOVERNING");
+    expect(governing).toContain("This is what live spawns launch");
+    // And it names both live escape hatches, because a user reading this at the
+    // moment the router misbehaves needs the way out on the same screen.
+    expect(governing).toContain('router = "shipped"');
+    expect(governing).toContain('routingManifest = "off"');
+    expect(governing).toContain("NEXT SPAWN");
   });
 
   test("every fallback to the compiled-in table is named in the warnings", () => {

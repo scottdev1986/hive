@@ -156,10 +156,51 @@ describe("the rollback trigger's baselines are measured, or declared missing", (
     expect(baseline.detail).toContain("20.0%");
   });
 
-  test("with no spawns, the baseline is unknown and the trigger is decorative", () => {
+  test("with no spawns, the baseline is UNMEASURED and no number is invented", () => {
     const baseline = rollback(summarizeShadow([]), "launch-failure-baseline");
     expect(baseline.verdict).toBe("unknown");
-    expect(baseline.detail).toContain("decorative");
+    expect(baseline.detail).toContain("UNMEASURED");
+    // The gap is stated, not papered over. An invented threshold would look like
+    // a safety net and catch nothing, which is worse than an admitted gap.
+    expect(baseline.detail).toContain("WEAKER than the design assumes");
+    expect(baseline.detail).not.toMatch(/\d+(\.\d+)?%/);
+  });
+
+  test("with no baseline, the regression check is unknown — never a pass", () => {
+    // The flip can be made with no baseline (it was), but the trigger must not
+    // then pretend it can fire. A green regression check on an empty baseline is
+    // exactly the safety theatre this gate exists to prevent.
+    const summary = summarizeShadow(
+      many(4, { governedBy: "derived", outcome: "failed", failureReason: "boom" }),
+    );
+    const regression = rollback(summary, "launch-failure-regression");
+    expect(regression.verdict).toBe("unknown");
+    expect(regression.detail).toContain("no pre-flip baseline exists");
+    expect(regression.detail).toContain('router = "shipped"');
+  });
+
+  test("with a baseline, a post-flip regression FAILS and says revert first", () => {
+    const summary = summarizeShadow([
+      // Pre-flip: 10 shipped-governed launches, 1 failure → a 10% baseline.
+      ...many(9),
+      ...many(1, { outcome: "failed", failureReason: "pane died" }),
+      // Post-flip: 4 router-governed launches, 2 failures → 50%. A regression.
+      ...many(2, { governedBy: "derived" }),
+      ...many(2, {
+        governedBy: "derived",
+        outcome: "failed",
+        failureReason: "entitlement",
+      }),
+    ]);
+    const regression = rollback(summary, "launch-failure-regression");
+    expect(regression.verdict).toBe("fail");
+    expect(regression.detail).toContain("50.0%");
+    expect(regression.detail).toContain("10.0%");
+    expect(regression.detail).toContain("revert first, investigate second");
+    // And the baseline itself is computed from the SHIPPED-governed spawns only:
+    // folding the post-flip failures into it would raise the bar the router must
+    // clear by exactly the amount the router is failing.
+    expect(rollback(summary, "launch-failure-baseline").detail).toContain("1 of 10");
   });
 
   test("the escalation baseline says plainly that nothing measures it", () => {
@@ -168,5 +209,82 @@ describe("the rollback trigger's baselines are measured, or declared missing", (
     const escalation = rollback(summarizeShadow(many(80)), "escalation-baseline");
     expect(escalation.verdict).toBe("unknown");
     expect(escalation.detail).toContain("NOT MEASURED ANYWHERE IN HIVE");
+  });
+});
+
+describe("after the flip, shadow mode inverts rather than retiring", () => {
+  test("it records what the OLD STATIC TABLE would have launched instead", () => {
+    const summary = summarizeShadow([
+      ...many(2, {
+        governedBy: "derived",
+        actual: { tool: "claude", model: "claude-sonnet-5", effort: null },
+        shipped: { tool: "claude", model: "sonnet", effort: null },
+        layers: { tool: "derived", model: "derived", effort: "unknown" },
+        reason: "manifest initial ∩ claude discovery",
+      }),
+    ]);
+    expect(summary.governed).toEqual({ derived: 2, shipped: 0 });
+    expect(summary.postFlip.divergences).toEqual([{
+      tier: "deep",
+      field: "model",
+      actual: "claude-sonnet-5",
+      shipped: "sonnet",
+      layer: "derived",
+      reason: "manifest initial ∩ claude discovery",
+      count: 2,
+    }]);
+  });
+
+  test("a router that launches what the table would have shows no divergence", () => {
+    const summary = summarizeShadow(
+      many(3, {
+        governedBy: "derived",
+        actual: { tool: "claude", model: "claude-fable-5", effort: null },
+        shipped: { tool: "claude", model: "claude-fable-5", effort: null },
+      }),
+    );
+    expect(summary.postFlip.judged).toBe(3);
+    expect(summary.postFlip.agreement.model).toBe(3);
+    expect(summary.postFlip.divergences).toEqual([]);
+  });
+
+  test("the two regimes are never averaged together", () => {
+    // A pre-flip spawn answers "would the router have agreed?"; a post-flip one
+    // answers "does it still?". Folding them into one rate answers neither.
+    const summary = summarizeShadow([
+      ...many(2),
+      ...many(3, {
+        governedBy: "derived",
+        shipped: { tool: "claude", model: "claude-fable-5", effort: null },
+      }),
+    ]);
+    expect(summary.judged).toBe(2);
+    expect(summary.postFlip.judged).toBe(3);
+    expect(summary.governed).toEqual({ derived: 3, shipped: 2 });
+  });
+
+  test("a line written before the flip existed is read as shipped-governed", () => {
+    // Not a guess about a silent field: `governedBy` was introduced BY the flip,
+    // so a line without it comes from a build where nothing else could decide.
+    const legacy = ShadowObservationSchema.parse({
+      at: "2026-07-11T12:00:00.000Z",
+      agent: "maya",
+      tier: "deep",
+      kind: "coding",
+      actual: { tool: "claude", model: "claude-fable-5", effort: null },
+      derived: { tool: "claude", model: "claude-fable-5", effort: null },
+      layers: { tool: "derived", model: "derived", effort: "unknown" },
+      reason: "manifest initial ∩ claude discovery",
+      agrees: { tool: true, model: true, effort: true },
+      ladderFallback: false,
+      floorViolation: false,
+      userPinned: false,
+      manifestRevision: "initial",
+      outcome: "launched",
+      failureReason: null,
+    });
+    expect(legacy.governedBy).toBe("shipped");
+    // And its counterfactual is null — unrecorded, never an empty route.
+    expect(legacy.shipped).toBeNull();
   });
 });

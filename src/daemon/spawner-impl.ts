@@ -66,6 +66,7 @@ import type { QuotaRouteCandidate, QuotaService } from "./quota";
 import { agentTmuxSession } from "./tmux-sessions";
 import { validateEffort } from "./effort";
 import type { CapabilityDiscoveryResult } from "./capability-discovery";
+import type { GoverningRoute, RoutingIo } from "./routing-resolve";
 import type { ShadowSpawn } from "./routing-shadow";
 import { spendRisk, type AccountBilling } from "./usage-credits";
 import { readCostConsent, requestCostConsent } from "./cost-consent";
@@ -248,6 +249,17 @@ export interface HiveSpawnerDependencies {
     autonomy?: HiveConfig["autonomy"];
   };
   routing: RouteResolver;
+  /**
+   * The flip. Returns the derived route that GOVERNS this spawn, or `null` when
+   * the shipped table still does — which is what an unwired embedder (and every
+   * test that does not opt in) gets, so spawning is bit-identical without it.
+   * `routing` above stays exactly where it was and is still the fallback: a
+   * reverted spawn takes the pre-flip code path rather than a derived imitation.
+   */
+  governingRoute?: (
+    tier: RoutingTier,
+    io: RoutingIo,
+  ) => Promise<GoverningRoute | null>;
   tmux: TmuxSessionManager;
   terminal: TerminalAdapter;
   createWorktree?: WorktreeCreator;
@@ -850,6 +862,9 @@ export class HiveSpawner implements Spawner {
     observed?: {
       pins: RoutingPins;
       discovery: CapabilityDiscoveryResult | undefined;
+      /** The derived router governs, so the route's effort is the engine's own
+       * ladder result rather than a compiled-in column. */
+      routeAuthoritative?: boolean;
     },
   ): Promise<string | undefined> {
     const pins = observed?.pins ?? await this.dependencies.routingPins?.() ?? {};
@@ -871,6 +886,24 @@ export class HiveSpawner implements Spawner {
       }
       return validated.effort;
     }
+    // Under the derived router the ROUTE's effort is authoritative. The engine
+    // already walked the effort ladder for the model it resolved (tier default →
+    // that model's own advertised default → the shipped constant, Codex only) and
+    // its answer arrived in the route. Re-deriving it here from the raw catalog
+    // would let `hive routing` print one effort while the argv carried another —
+    // and it is the only reason a Claude cell can carry an effort at all, since
+    // the shipped table has no Claude effort column to have carried one.
+    // Validation still runs: the router proposes, the model's own record disposes.
+    if (observed?.routeAuthoritative === true) {
+      const routed = route[tool].effort;
+      if (routed === undefined) return undefined;
+      const validated = validateEffort(record, model, routed);
+      if (discoveryConfigured && validated.warning !== undefined) {
+        console.warn(validated.warning);
+      }
+      return validated.effort;
+    }
+
     if (tool === "claude") return undefined;
 
     const discoveredDefault = record?.defaultEffort.state === "known"
@@ -1363,7 +1396,24 @@ export class HiveSpawner implements Spawner {
     request: SpawnRequest,
     name: string,
   ): Promise<AgentRecord> {
-    const configuredRoute = await this.dependencies.routing(request.tier);
+    // THE FLIP. What governs this spawn: the derived router, or the shipped
+    // table? Both switches that revert it (`router`, `routingManifest`) are
+    // re-read from config.toml inside this call, on every spawn — so turning a
+    // misbehaving router off needs no rebuild and no daemon restart, and a
+    // reverted spawn goes back through `routing()`, the untouched pre-flip path,
+    // rather than a derived imitation of it.
+    const governing = (await this.dependencies.governingRoute?.(request.tier, {
+      discover: (provider) => this.discoverOnce(provider),
+      readBilling: async (provider) =>
+        (await this.dependencies.readBilling?.(provider)) ?? null,
+    })) ?? null;
+    // A conflict the router resolved silently is a lie: a pin it could not vouch
+    // for, a model it refused to pay for. Said out loud, on the launch it governs.
+    for (const note of governing?.notes ?? []) {
+      console.warn(`Routing ${request.tier}: ${note}`);
+    }
+    const configuredRoute = governing?.route ??
+      await this.dependencies.routing(request.tier);
     let tool = request.tool ?? configuredRoute.tool;
     // An explicit model is bound to its vendor before anything launches: the
     // tier route must never carry a user-named model onto the other vendor's
@@ -1416,7 +1466,11 @@ export class HiveSpawner implements Spawner {
         configuredRoute,
         candidateTool,
         candidateModel,
-        { pins: effortPins, discovery: await discovery },
+        {
+          pins: effortPins,
+          discovery: await discovery,
+          routeAuthoritative: governing !== null,
+        },
       );
     };
     // An explicit model is the sole candidate, so its capability eligibility is
@@ -1443,19 +1497,44 @@ export class HiveSpawner implements Spawner {
           this.modelResolver("claude", configuredRoute),
           this.modelResolver("codex", configuredRoute),
         ]);
-        candidates = [
-          { tool: "claude", model: claudeModel },
-          { tool: "codex", model: codexModel },
-        ];
-        // The same-vendor release valve, derived from the pools the provider
-        // actually meters rather than from a model's name. When the primary
-        // Claude candidate is one the vendor caps separately, offer the account's
-        // own default alongside it — listed *after* the primary, so ties (and the
-        // no-quota-configured case) still prefer the primary, while real pressure
-        // on its pool lets quota pick the alternative on headroom.
-        const alternative = await this.releaseValveAlternative(claudeModel);
-        if (alternative !== null) {
-          candidates.splice(1, 0, { tool: "claude", model: alternative });
+        if (governing !== null) {
+          // The manifest's list remainders replace the hardcoded valve (design
+          // step 5). The SHAPE is unchanged — same-vendor alternatives listed
+          // *after* their primary, so ties and the no-quota case still prefer the
+          // primary, while real pressure on its pool lets quota pick on headroom.
+          // What changes is where they come from: every alternative has now passed
+          // the capability floor and the spend guard inside the engine. The
+          // valve's alternative had passed neither — it was whatever the account's
+          // discovered default happened to be, so quota could downshift a coding
+          // task onto a model nobody had vetted for coding. A floor that guards
+          // only the primary is not a floor.
+          candidates = [
+            { tool: "claude", model: claudeModel },
+            ...governing.chain.claude.map((model) => ({
+              tool: "claude" as const,
+              model,
+            })),
+            { tool: "codex", model: codexModel },
+            ...governing.chain.codex.map((model) => ({
+              tool: "codex" as const,
+              model,
+            })),
+          ];
+        } else {
+          candidates = [
+            { tool: "claude", model: claudeModel },
+            { tool: "codex", model: codexModel },
+          ];
+          // The same-vendor release valve, derived from the pools the provider
+          // actually meters rather than from a model's name. When the primary
+          // Claude candidate is one the vendor caps separately, offer the account's
+          // own default alongside it — listed *after* the primary, so ties (and the
+          // no-quota-configured case) still prefer the primary, while real pressure
+          // on its pool lets quota pick the alternative on headroom.
+          const alternative = await this.releaseValveAlternative(claudeModel);
+          if (alternative !== null) {
+            candidates.splice(1, 0, { tool: "claude", model: alternative });
+          }
         }
         const eligible: QuotaRouteCandidate[] = [];
         const excluded: string[] = [];

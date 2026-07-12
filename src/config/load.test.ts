@@ -50,6 +50,7 @@ describe("config loading", () => {
       channels: "auto",
       autonomy: "sandboxed",
       routingManifest: "auto",
+      router: "derived",
       resources: {
         enabled: true,
         perProcessMemoryMb: 12_288,
@@ -164,6 +165,7 @@ describe("config loading", () => {
       channels: "auto",
       autonomy: "sandboxed",
       routingManifest: "auto",
+      router: "derived",
       resources: {
         enabled: true,
         perProcessMemoryMb: 12_288,
