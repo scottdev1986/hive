@@ -245,11 +245,11 @@ final class ModelControlTests: XCTestCase {
         }
     }
 
-    // MARK: Model rows — provider-off dominates
+    // MARK: Model rows — provider-off dominates; three off-reasons never collapse
 
     func testProviderOffOverridesModelOn() {
         let state = ModelRowState.derive(
-            providerEnabled: false, modelSelfEnabled: true, modelAvailable: true)
+            providerEnabled: false, enablement: .enabled, modelAvailable: true)
         XCTAssertEqual(state, .disabledByProvider(preferenceOn: true))
         XCTAssertFalse(state.isEffectivelyEnabled,
                        "a model under a disabled provider is never effective")
@@ -257,30 +257,122 @@ final class ModelControlTests: XCTestCase {
 
     func testProviderOffPreservesStoredPreferenceForDisplay() {
         let offPreference = ModelRowState.derive(
-            providerEnabled: false, modelSelfEnabled: false, modelAvailable: true)
+            providerEnabled: false, enablement: .disabledByUser, modelAvailable: true)
         XCTAssertEqual(offPreference, .disabledByProvider(preferenceOn: false))
     }
 
-    func testSelfDisabledDiffersFromProviderDisabled() {
+    func testThreeOffReasonsAreThreeDistinctStates() {
+        let seeded = ModelRowState.derive(
+            providerEnabled: true, enablement: .seededOff, modelAvailable: true)
         let bySelf = ModelRowState.derive(
-            providerEnabled: true, modelSelfEnabled: false, modelAvailable: true)
+            providerEnabled: true, enablement: .disabledByUser, modelAvailable: true)
         let byProvider = ModelRowState.derive(
-            providerEnabled: false, modelSelfEnabled: false, modelAvailable: true)
+            providerEnabled: false, enablement: .disabledByUser, modelAvailable: true)
+        XCTAssertEqual(seeded, .seededOff)
         XCTAssertEqual(bySelf, .disabledBySelf)
-        XCTAssertNotEqual(bySelf, byProvider, "the two disabled causes get two looks")
+        XCTAssertEqual(byProvider, .disabledByProvider(preferenceOn: false))
+        XCTAssertNotEqual(seeded, bySelf, "awaiting-consent and user-off never merge")
+        XCTAssertFalse(seeded.isEffectivelyEnabled,
+                       "a seeded-off model cannot spawn — that is the consent guarantee")
+    }
+
+    func testProviderOffDominatesSeededOff() {
+        let state = ModelRowState.derive(
+            providerEnabled: false, enablement: .seededOff, modelAvailable: true)
+        XCTAssertEqual(state, .disabledByProvider(preferenceOn: false))
     }
 
     func testUnavailableDominatesEverything() {
         let state = ModelRowState.derive(
-            providerEnabled: true, modelSelfEnabled: true, modelAvailable: false)
+            providerEnabled: true, enablement: .enabled, modelAvailable: false)
         XCTAssertEqual(state, .unavailable)
     }
 
     func testBothOnIsEnabled() {
         let state = ModelRowState.derive(
-            providerEnabled: true, modelSelfEnabled: true, modelAvailable: true)
+            providerEnabled: true, enablement: .enabled, modelAvailable: true)
         XCTAssertEqual(state, .enabled)
         XCTAssertTrue(state.isEffectivelyEnabled)
+    }
+
+    // MARK: Consent is enablement
+
+    private var grokAvailableSnapshot: ModelControlSnapshot {
+        let composer = model(
+            supportsEffort: .known(false, surface: "grok.models_cache", observedAt: ""),
+            levels: .unknown(reason: "field-absent", surface: "grok.models_cache", observedAt: ""))
+        let effectiveDefault = EffectiveDefault(
+            model: .known("grok-4.5", surface: "grok.models", observedAt: ""),
+            effort: .unknown(reason: "surface-silent", surface: "grok.models", observedAt: ""))
+        var snapshot = fixtureSnapshot
+        snapshot.providers["grok"] = .available(
+            models: [composer], effectiveDefault: effectiveDefault)
+        snapshot.billing = [
+            "claude": BillingSnapshot(
+                creditsEnabled: .known(false, surface: "claude.get_usage", observedAt: ""),
+                generalUtilization: .known(44, surface: "claude.get_usage", observedAt: "")),
+            "grok": nil,
+        ]
+        return snapshot
+    }
+
+    func testUnreadableBillingSeedsModelsOffAwaitingConsent() {
+        let policy = ProvisionalPolicyStore.seed(from: grokAvailableSnapshot)
+        // Grok's billing is unreadable → its models ship OFF, visible,
+        // awaiting consent. Claude's billing is verified covered → enabled.
+        XCTAssertEqual(
+            policy.rowState(provider: .grok, modelId: "m", available: true),
+            .seededOff)
+        XCTAssertEqual(
+            policy.rowState(provider: .claude, modelId: "claude-opus-4-8", available: true),
+            .enabled)
+    }
+
+    func testNewlyDiscoveredModelUnderUnverifiedVendorArrivesSeededOff() {
+        // A model that appears AFTER seeding (no explicit policy entry)
+        // inherits seededOff — it must never arrive silently consented.
+        let policy = ProvisionalPolicyStore.seed(from: grokAvailableSnapshot)
+        XCTAssertEqual(
+            policy.rowState(provider: .grok, modelId: "grok-5-new", available: true),
+            .seededOff)
+    }
+
+    func testFlippingSeededOffOnIsConsentAndOffAgainIsUserOffNotSeeded() {
+        var policy = ProvisionalPolicyStore.seed(from: grokAvailableSnapshot)
+        policy.setModelEnabled(provider: .grok, modelId: "m", true)
+        XCTAssertEqual(
+            policy.rowState(provider: .grok, modelId: "m", available: true),
+            .enabled, "flipping on is the consent")
+        policy.setModelEnabled(provider: .grok, modelId: "m", false)
+        XCTAssertEqual(
+            policy.rowState(provider: .grok, modelId: "m", available: true),
+            .disabledBySelf,
+            "a user off is a user off — only seeding writes seededOff")
+    }
+
+    func testSeededOffProviderIsExcludedFromTheSeededDefaultChain() {
+        let policy = ProvisionalPolicyStore.seed(from: grokAvailableSnapshot)
+        XCTAssertEqual(policy.defaultChain.map(\.provider), ["claude"],
+                       "an unconsented vendor must not be pre-wired into the fallback")
+    }
+
+    func testSpendCaveatStates() {
+        // Verified covered: credits known OFF — a plan wall, not a bill.
+        XCTAssertNil(SpendCaveat.derive(from: BillingSnapshot(
+            creditsEnabled: .known(false, surface: "t", observedAt: ""),
+            generalUtilization: .known(44, surface: "t", observedAt: ""))))
+        // Credits known ON: enabling may genuinely spend.
+        XCTAssertNotNil(SpendCaveat.derive(from: BillingSnapshot(
+            creditsEnabled: .known(true, surface: "t", observedAt: ""),
+            generalUtilization: .unknown(reason: "field-absent", surface: "t", observedAt: ""))))
+        // Overflow switch unreadable (Codex auto-top-up): caveat with reason.
+        let codex = SpendCaveat.derive(from: BillingSnapshot(
+            creditsEnabled: .unknown(reason: "field-absent", surface: "t", observedAt: ""),
+            generalUtilization: .known(10, surface: "t", observedAt: ""),
+            overflowUncertainty: "Codex may auto-purchase credits; the setting is not exposed"))
+        XCTAssertEqual(codex, "Codex may auto-purchase credits; the setting is not exposed")
+        // Billing unreadable end-to-end (Grok): caveat.
+        XCTAssertNotNil(SpendCaveat.derive(from: nil))
     }
 
     // MARK: Policy mutations and chains
@@ -303,7 +395,12 @@ final class ModelControlTests: XCTestCase {
                 "claude": .available(models: [opus], effectiveDefault: effectiveDefault),
                 "grok": .unavailable(reason: "grok CLI not signed in"),
             ],
-            billing: [:],
+            billing: [
+                "claude": BillingSnapshot(
+                    creditsEnabled: .known(false, surface: "claude.get_usage", observedAt: ""),
+                    generalUtilization: .known(44, surface: "claude.get_usage", observedAt: "")),
+                "grok": nil,
+            ],
             usageSurfaces: ["claude": .metered, "grok": UsageSurface.none],
             quota: nil,
             quotaError: "daemon not running")

@@ -26,7 +26,11 @@ let package = Package(
             dependencies: [
                 "WorkspaceCore",
                 .product(name: "SwiftTerm", package: "SwiftTerm"),
-            ]
+            ],
+            // Official vendor marks for the Model Control Center. The release
+            // build copies the generated resource bundle into the .app
+            // (src/release/build.ts), so keep the directory `.copy`-stable.
+            resources: [.copy("Resources/VendorMarks")]
         ),
         .testTarget(
             name: "WorkspaceCoreTests",

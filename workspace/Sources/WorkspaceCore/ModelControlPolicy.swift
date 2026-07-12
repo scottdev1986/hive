@@ -98,14 +98,34 @@ public struct CategoryPolicy: Equatable, Codable, Sendable {
 
 // MARK: - Policy
 
+/// Why a model is on or off. CONSENT IS ENABLEMENT: flipping a model on in
+/// the UI is the user's authorisation to spend money on it — there is no
+/// later approval prompt. The three off-states are three different facts and
+/// are never collapsed:
+/// - `seededOff` — Hive shipped it off because billing coverage could not be
+///   verified; it awaits the user's consent. Inviting, actionable.
+/// - `disabledByUser` — the user turned it off. Neutral.
+/// - (provider-off is not stored here — it is an override computed in
+///   `ModelRowState`, so the model's own setting is shown, not rewritten.)
+public enum ModelEnablement: String, Equatable, Codable, Sendable {
+    case enabled
+    case seededOff = "seeded_off"
+    case disabledByUser = "disabled_by_user"
+}
+
 public struct ModelPolicy: Equatable, Codable, Sendable {
-    public var enabled: Bool
+    public var enablement: ModelEnablement
     public var effort: EffortTarget
 
-    public init(enabled: Bool = true, effort: EffortTarget = .providerControlled) {
-        self.enabled = enabled
+    public init(
+        enablement: ModelEnablement = .enabled,
+        effort: EffortTarget = .providerControlled
+    ) {
+        self.enablement = enablement
         self.effort = effort
     }
+
+    public var isEnabled: Bool { enablement == .enabled }
 }
 
 public struct ProviderPolicy: Equatable, Codable, Sendable {
@@ -113,12 +133,22 @@ public struct ProviderPolicy: Equatable, Codable, Sendable {
     /// every model row beneath it is overridden (§7.4).
     public var enabled: Bool
     /// Keyed by display id (canonical id + variant). A model with no entry
-    /// inherits the provider state — newly discovered models are reachable.
+    /// inherits `absentModelEnablement` — newly discovered models are
+    /// reachable, and under an unverified-billing vendor they arrive
+    /// seeded-off rather than silently consented.
     public var models: [String: ModelPolicy]
+    /// What a model with no explicit policy entry gets. `.enabled` for a
+    /// vendor whose billing is verified covered; `.seededOff` otherwise.
+    public var absentModelEnablement: ModelEnablement
 
-    public init(enabled: Bool = true, models: [String: ModelPolicy] = [:]) {
+    public init(
+        enabled: Bool = true,
+        models: [String: ModelPolicy] = [:],
+        absentModelEnablement: ModelEnablement = .enabled
+    ) {
         self.enabled = enabled
         self.models = models
+        self.absentModelEnablement = absentModelEnablement
     }
 }
 
@@ -150,7 +180,9 @@ public struct ModelControlPolicy: Equatable, Codable, Sendable {
     }
 
     public func modelPolicy(provider: ProviderID, modelId: String) -> ModelPolicy {
-        providers[provider.rawValue]?.models[modelId] ?? ModelPolicy()
+        let providerPolicy = providers[provider.rawValue]
+        return providerPolicy?.models[modelId] ?? ModelPolicy(
+            enablement: providerPolicy?.absentModelEnablement ?? .enabled)
     }
 
     /// The non-negotiable override rule:
@@ -160,7 +192,7 @@ public struct ModelControlPolicy: Equatable, Codable, Sendable {
     ) -> ModelRowState {
         ModelRowState.derive(
             providerEnabled: providerEnabled(provider),
-            modelSelfEnabled: modelPolicy(provider: provider, modelId: modelId).enabled,
+            enablement: modelPolicy(provider: provider, modelId: modelId).enablement,
             modelAvailable: available)
     }
 
@@ -177,20 +209,24 @@ public struct ModelControlPolicy: Equatable, Codable, Sendable {
         provisional = false
     }
 
+    /// A user flip is consent (on) or a deliberate user off — never a return
+    /// to `seededOff`, which only the seeding process writes.
     public mutating func setModelEnabled(provider: ProviderID, modelId: String, _ enabled: Bool) {
         var providerPolicy = providers[provider.rawValue] ?? ProviderPolicy()
-        var modelPolicy = providerPolicy.models[modelId] ?? ModelPolicy()
-        modelPolicy.enabled = enabled
-        providerPolicy.models[modelId] = modelPolicy
+        var policy = providerPolicy.models[modelId] ?? ModelPolicy(
+            enablement: providerPolicy.absentModelEnablement)
+        policy.enablement = enabled ? .enabled : .disabledByUser
+        providerPolicy.models[modelId] = policy
         providers[provider.rawValue] = providerPolicy
         provisional = false
     }
 
     public mutating func setModelEffort(provider: ProviderID, modelId: String, _ effort: EffortTarget) {
         var providerPolicy = providers[provider.rawValue] ?? ProviderPolicy()
-        var modelPolicy = providerPolicy.models[modelId] ?? ModelPolicy()
-        modelPolicy.effort = effort
-        providerPolicy.models[modelId] = modelPolicy
+        var policy = providerPolicy.models[modelId] ?? ModelPolicy(
+            enablement: providerPolicy.absentModelEnablement)
+        policy.effort = effort
+        providerPolicy.models[modelId] = policy
         providers[provider.rawValue] = providerPolicy
         provisional = false
     }
@@ -255,7 +291,7 @@ public enum ChainLinkStatus: Equatable, Sendable {
                 return .unresolvable
             }
             let displayId = record.displayId
-            if !policy.modelPolicy(provider: provider, modelId: displayId).enabled {
+            if !policy.modelPolicy(provider: provider, modelId: displayId).isEnabled {
                 return .modelDisabled
             }
             return .effective
@@ -292,22 +328,35 @@ public enum PolicyWarning: Equatable, Sendable {
 /// PLACEHOLDER POLICY SOURCE — NOT the durable store.
 ///
 /// The daemon-side SQLite policy store (governing doc §2.3, PR4) does not
-/// exist yet. This seeds an in-memory policy from the LIVE discovery catalog:
-/// every discovered provider and model enabled, efforts provider-controlled,
-/// categories empty (they use the Default chain), and a Default chain of
-/// labeled vendor-default links — one per available provider — so the screen
-/// is honest about what it is: user-editable policy with provisional Hive
-/// suggestions, no outcome data, nothing persisted across launches.
+/// exist yet; when it lands, enablement and its seeded-off reason come from
+/// the daemon's contract and this seam is replaced with a read. Until then
+/// this seeds an in-memory policy from the LIVE discovery catalog and the
+/// same billing facts the daemon will use:
 ///
-/// It never invents a measurement. Swapping it for the daemon store is a
-/// one-call replacement at the data-source seam.
+/// - Providers whose billing is VERIFIED COVERED (credits known off — a plan
+///   wall, not a bill) seed their models enabled.
+/// - Providers whose billing Hive could not read at all seed their models
+///   `seededOff`: fully visible, deliberately off, awaiting the user's
+///   consent. "Ready to use" must never mean "already spending money on
+///   something the user never touched".
+/// - Categories start empty (they use the Default chain); the Default chain
+///   gets a labeled vendor-default link per provider that is both available
+///   and not seeded off.
+///
+/// It never invents a measurement, and nothing persists across launches.
 public enum ProvisionalPolicyStore {
     public static func seed(from snapshot: ModelControlSnapshot) -> ModelControlPolicy {
         var providers: [String: ProviderPolicy] = [:]
         var defaultChain: [ChainEntry] = []
         for id in snapshot.providerIDs {
-            providers[id.rawValue] = ProviderPolicy(enabled: true)
-            if case .available = snapshot.providers[id.rawValue] {
+            let billing = snapshot.billing[id.rawValue] ?? nil
+            // Billing unreadable end-to-end → every model ships off until the
+            // user consents. A readable surface with an unknown overflow
+            // switch stays enabled but carries the may-spend caveat instead.
+            let enablement: ModelEnablement = billing == nil ? .seededOff : .enabled
+            providers[id.rawValue] = ProviderPolicy(
+                enabled: true, absentModelEnablement: enablement)
+            if case .available = snapshot.providers[id.rawValue], enablement == .enabled {
                 defaultChain.append(ChainEntry(
                     target: .vendorDefault(provider: id.rawValue),
                     effort: .providerControlled))

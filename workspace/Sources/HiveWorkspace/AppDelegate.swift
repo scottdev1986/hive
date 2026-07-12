@@ -267,6 +267,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         }
     }
 
+    // MARK: Settings (Model Control Center)
+
+    private var settingsController: SettingsWindowController?
+
+    @objc func showSettings(_ sender: Any?) {
+        if settingsController == nil {
+            // Works in both launch modes: with `--hive` the screen reads live
+            // data; a bare Dock launch has no binary path and the screen says
+            // so instead of guessing.
+            settingsController = SettingsWindowController(hivePath: config.hivePath)
+        }
+        settingsController?.show()
+    }
+
     @objc func showAttentionPanel(_ sender: Any?) {
         attentionCenter.showPanel()
     }

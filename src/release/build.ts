@@ -203,6 +203,13 @@ async function compileWorkspace(options: Options): Promise<string> {
   await writeFile(join(bundle, "Contents", "Info.plist"), INFO_PLIST(options.version));
   await copyFile(join(workspace, "Resources", "AppIcon.icns"), join(resources, "AppIcon.icns"));
   await copyFile(join(workspace, "Resources", "Assets.car"), join(resources, "Assets.car"));
+  // SPM target resources (vendor marks for the Model Control Center).
+  // Bundle.module resolves against Bundle.main.resourceURL in a bundled app,
+  // so the generated bundle must ship inside Contents/Resources.
+  await sh(
+    ["cp", "-R", join(binPath, "HiveWorkspace_HiveWorkspace.bundle"), resources],
+    options.repoRoot,
+  );
   await sh(["cp", join(binPath, "HiveWorkspace"), join(macos, "HiveWorkspace")], options.repoRoot);
   return bundle;
 }

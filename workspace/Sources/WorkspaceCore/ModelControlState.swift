@@ -230,11 +230,17 @@ public enum EffortAxis: Equatable, Sendable {
 
 // MARK: - Model rows
 
-/// The four visually distinct model-row states (§7.4). The override rule is
-/// non-negotiable: effectiveEnabled = providerEnabled && selfEnabled &&
-/// available, and when effective and preference differ the UI shows both.
+/// The visually distinct model-row states (§7.4, consent-is-enablement).
+/// The override rule is non-negotiable: effectiveEnabled = providerEnabled &&
+/// modelEnabled && available, and when effective and preference differ the UI
+/// shows both. The three OFF reasons never collapse: shipped-off-awaiting-
+/// consent is inviting, user-off is neutral, provider-off is an override.
 public enum ModelRowState: Equatable, Sendable {
     case enabled
+    /// Shipped off because billing coverage could not be verified; flipping
+    /// it on is the user's consent to spend. Deliberate and inviting — never
+    /// broken-looking, never second-class.
+    case seededOff
     case disabledBySelf
     /// The provider master is off. The stored preference is carried so the UI
     /// can say "your preference: on (not effective)" — never a green toggle
@@ -249,12 +255,41 @@ public enum ModelRowState: Equatable, Sendable {
 
     public static func derive(
         providerEnabled: Bool,
-        modelSelfEnabled: Bool,
+        enablement: ModelEnablement,
         modelAvailable: Bool
     ) -> ModelRowState {
         if !modelAvailable { return .unavailable }
-        if !providerEnabled { return .disabledByProvider(preferenceOn: modelSelfEnabled) }
-        return modelSelfEnabled ? .enabled : .disabledBySelf
+        if !providerEnabled {
+            return .disabledByProvider(preferenceOn: enablement == .enabled)
+        }
+        switch enablement {
+        case .enabled: return .enabled
+        case .seededOff: return .seededOff
+        case .disabledByUser: return .disabledBySelf
+        }
+    }
+}
+
+/// The calm, persistent may-spend affordance (consent-is-enablement). Since
+/// flipping a model on IS the authorisation to spend, a row whose billing
+/// cannot be verified as covered must say so inline — honestly, without a
+/// scare dialog and without a confirmation step.
+///
+/// Returns nil when spend is verified impossible (credits known OFF: a plan
+/// limit is a wall, not a bill — no nag). Otherwise returns the measured
+/// reason the coverage could not be verified.
+public enum SpendCaveat {
+    public static func derive(from billing: BillingSnapshot?) -> String? {
+        guard let billing else {
+            return "Hive cannot read this vendor's billing"
+        }
+        switch billing.creditsEnabled {
+        case .known(let enabled, _, _):
+            return enabled ? "usage credits are enabled on this account" : nil
+        case .unknown:
+            return billing.overflowUncertainty
+                ?? "the vendor's paid-overflow switch is unreadable"
+        }
     }
 }
 
