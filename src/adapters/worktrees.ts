@@ -155,6 +155,30 @@ async function branchExists(repoRoot: string, branch: string): Promise<boolean> 
   return result.exitCode === 0;
 }
 
+/**
+ * Files Hive itself writes into an agent's worktree. They are wiring, never
+ * work: Hive generates them at spawn and strips them at cleanup, and no agent
+ * authors them.
+ *
+ * This exists because dirty files mean "this agent still holds work", so Hive
+ * refuses to reap an agent that has any. `.grok/config.toml` is Hive's own
+ * Grok MCP wiring (writeGrokAgentConfig), written into every Grok worktree at
+ * spawn — which made every Grok agent permanently dirty, permanently
+ * "unfinished", and impossible to auto-reap. They piled up forever.
+ *
+ * A repo's own .gitignore cannot fix this, because Hive runs in repos that
+ * have never heard of it. The exclusion belongs here, in the check that
+ * decides whether work exists at all.
+ *
+ * Named exactly, never by directory: excluding a path here means Hive may
+ * delete the worktree holding it, so this must not be able to swallow a file
+ * someone actually wrote. The Grok CLI itself writes nothing into its cwd
+ * (measured — its session artifacts live in ~/.grok/sessions), so if anything
+ * else ever appears under `.grok/` it shows up as dirty and blocks the reap.
+ * That is the safe direction to fail.
+ */
+const HIVE_WORKTREE_WIRING: readonly string[] = [".grok/config.toml"];
+
 export async function assessStrandedWork(
   repoRoot: string,
   worktreePath: string | null,
@@ -166,12 +190,18 @@ export async function assessStrandedWork(
     const statusResult = await runGit(worktreePath, [
       "status",
       "--porcelain",
+      // Untracked directories are collapsed by default -- git prints
+      // "?? .grok/" and never the files inside it -- so a path-level exclusion
+      // would never match, and a caller counting entries cannot see what it is
+      // actually holding. -uall names every file.
+      "-uall",
     ]);
     if (statusResult.exitCode === 0) {
       dirtyFiles = statusResult.stdout
         .split("\n")
         .filter((line) => line !== "")
-        .map((line) => line.slice(3));
+        .map((line) => line.slice(3))
+        .filter((path) => !HIVE_WORKTREE_WIRING.includes(path));
     }
     // A missing or already-pruned worktree has no dirty files by definition;
     // any commits it made still show up in the unmerged count below.

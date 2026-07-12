@@ -2014,11 +2014,21 @@ export class HiveSpawner implements Spawner {
     );
     const channels = await this.useChannels(tool);
     const timestamp = new Date().toISOString();
+    // Grok's session id is named by Hive, not discovered afterwards. Claude and
+    // Codex report theirs on hook traffic; Grok has no hook channel at all, so
+    // its readers used to resolve "the newest session recorded against this
+    // cwd" — and a respawn into a reused worktree reads its dead predecessor's
+    // session and reports the corpse's numbers as the live agent's. Naming the
+    // session at launch (--session-id) makes the row's id authoritative from
+    // the first moment. This is the same defect that already bit the liveModel
+    // reader, fixed there the same way.
+    const grokSessionId = tool === "grok" ? crypto.randomUUID() : undefined;
     const record = this.dependencies.db.insertAgent({
       // A fresh AgentUUID, always. Reusing a closed holder's id would overwrite
       // its row — erasing the very closure record that lets history tell the
       // two agents apart.
       id: crypto.randomUUID(),
+      ...(grokSessionId === undefined ? {} : { toolSessionId: grokSessionId }),
       name,
       tool,
       model,
@@ -2128,6 +2138,7 @@ export class HiveSpawner implements Spawner {
           ...(effort === undefined ? {} : { effort }),
           worktreePath: worktree.path,
           readOnly: false,
+          ...(grokSessionId === undefined ? {} : { sessionId: grokSessionId }),
         });
         break;
         }

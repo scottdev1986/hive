@@ -9,6 +9,11 @@ export interface GrokSpawnOptions {
   worktreePath: string;
   readOnly: boolean;
   executable?: string;
+  /** The session UUID Hive names for a NEW session. Grok drives no hook
+   * channel, so it never reports its session id back; without naming it up
+   * front, every reader has to guess which session on disk belongs to this
+   * agent, and a reused worktree still holds its dead predecessor's. */
+  sessionId?: string;
 }
 
 export interface GrokAgentConfigOptions {
@@ -115,8 +120,18 @@ function grokLaunchArgs(options: GrokSpawnOptions): string[] {
   return argv;
 }
 
+/**
+ * `--session-id` names a NEW session and is rejected on resume (measured: the
+ * CLI accepts a v4 `crypto.randomUUID()` and creates the session directory
+ * under exactly that id). It lives here rather than in `grokLaunchArgs`
+ * because the resume path below must never carry it.
+ */
 export function buildGrokSpawnCommand(options: GrokSpawnOptions): string[] {
-  return grokLaunchArgs(options);
+  const argv = grokLaunchArgs(options);
+  if (options.sessionId !== undefined) {
+    argv.push("--session-id", options.sessionId);
+  }
+  return argv;
 }
 
 /** Resume the exact durable session. `--session-id` creates and is forbidden. */

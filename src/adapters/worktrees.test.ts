@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { writeGrokAgentConfig } from "./tools/grok";
 import {
   assessStrandedWork,
   createWorktree,
@@ -151,6 +152,38 @@ describe("git worktree manager", () => {
       .toEqual({ dirtyFiles: [], unmergedCommits: 0 });
 
     await removeWorktree(repoRoot, created.path, { deleteBranch: true });
+  });
+
+  // Measured on the real agent bridget: `dirtyFiles: [".grok/"]`,
+  // `unmergedCommits: 0`. Dirty files mean "this agent still holds work", so
+  // Hive refused to reap her -- and since Hive writes that file into EVERY
+  // grok worktree at spawn, every grok agent was born permanently unfinished
+  // and could never be auto-reaped. They pile up forever.
+  test("hive's own grok wiring is not the agent's work, and never blocks a reap", async () => {
+    const created = await createWorktree(repoRoot, "agent-grok", "grok-wiring");
+    await writeGrokAgentConfig(created.path, { daemonPort: 4711 });
+
+    const stranded = await assessStrandedWork(
+      repoRoot,
+      created.path,
+      created.branch,
+    );
+    expect(stranded).toEqual({ dirtyFiles: [], unmergedCommits: 0 });
+
+    // And the exclusion is exactly that one file -- it does not blind the
+    // check to anything else under .grok/, which would be a way to lose work.
+    await writeFile(join(created.path, ".grok", "notes.md"), "real work\n");
+    const withWork = await assessStrandedWork(
+      repoRoot,
+      created.path,
+      created.branch,
+    );
+    expect(withWork.dirtyFiles).toEqual([".grok/notes.md"]);
+
+    await removeWorktree(repoRoot, created.path, {
+      deleteBranch: true,
+      discardTracked: true,
+    });
   });
 
   test("counts unmerged commits and lists dirty files as stranded work", async () => {

@@ -38,6 +38,24 @@ describe("Grok adapter", () => {
     ]);
   });
 
+  // Hive names the session at launch because Grok never reports one: it drives
+  // no hook channel, so every reader otherwise has to guess which session on
+  // disk belongs to this agent, and a respawn into a reused worktree reads its
+  // dead predecessor's. Measured against the real CLI: --session-id accepts a
+  // v4 crypto.randomUUID() and creates the session directory under that id.
+  test("names a new session on argv, and never on a resume", () => {
+    const sessionId = "3f8b2c1a-9d4e-4f6b-8a2c-1e5d7b9c3a0f";
+    expect(buildGrokSpawnCommand({ ...writer, sessionId })).toEqual([
+      "grok", "-m", "catalog-model", "--always-approve",
+      "--session-id", sessionId,
+    ]);
+    // The CLI rejects --session-id on resume (it names a NEW conversation), so
+    // the resume path carries -r and nothing else.
+    expect(buildGrokResumeCommand({ ...writer, sessionId }, sessionId)).toEqual([
+      "grok", "-r", sessionId, "-m", "catalog-model", "--always-approve",
+    ]);
+  });
+
   test("uses the cross-model measured reader barrier", () => {
     expect(buildGrokSpawnCommand({ ...writer, readOnly: true })).toEqual([
       "grok", "-m", "catalog-model",

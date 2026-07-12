@@ -59,6 +59,11 @@ yarn-error.log*
 #Coding Agents
 .claude/
 .codex/
+# hive writes the grok MCP wiring here at spawn (see writeGrokAgentConfig), the
+# same way it writes .mcp.json for claude. Nothing is tracked under .grok/, so
+# the bare-directory form is safe here — unlike .hive/, which needed .hive/*
+# because a bare rule would have deleted its committed skills from every clone.
+.grok/
 # hive writes per-worktree MCP wiring at spawn (see writeClaudeAgentConfig)
 .mcp.json
 # hive symlinks shared skills into each worktree at spawn (see
