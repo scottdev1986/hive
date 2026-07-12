@@ -249,7 +249,10 @@ export function countGraphifyCallLines(
         if (
           isRecord(item) && item.type === "tool_use" &&
           typeof item.name === "string" &&
-          item.name.startsWith("mcp__graphify__")
+          // graph_locate is graph usage that rides Hive's own server, so the
+          // adoption count must see it or the rollout metric undercounts.
+          (item.name.startsWith("mcp__graphify__") ||
+            item.name === "mcp__hive__graph_locate")
         ) count++;
       }
     } else {
@@ -257,7 +260,10 @@ export function countGraphifyCallLines(
       const payload = entry.payload;
       if (payload.type !== "mcp_tool_call_end") continue;
       if (
-        isRecord(payload.invocation) && payload.invocation.server === "graphify"
+        isRecord(payload.invocation) &&
+        (payload.invocation.server === "graphify" ||
+          (payload.invocation.server === "hive" &&
+            payload.invocation.tool === "graph_locate"))
       ) count++;
     }
   }

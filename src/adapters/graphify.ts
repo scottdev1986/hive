@@ -706,6 +706,80 @@ export function buildTargetedGraphBrief(
   return parts.join("\n\n");
 }
 
+export interface GraphLocateResult {
+  /** False only when there is no usable graph; a graph with no matches is
+   * available:true with an honest no-leads answer, because "the graph has
+   * nothing for this wording" is an answer, not an outage. */
+  available: boolean;
+  answer: string;
+}
+
+/** One parsed graph per (path, mtime, size): interactive calls repeat, the
+ * graph changes only on rebuild, and re-parsing megabytes of JSON per
+ * question would stall the daemon's event loop for nothing. */
+let locateCache: { key: string; graph: unknown } | null = null;
+
+const LOCATE_NO_LEADS =
+  "No strong leads: nothing in the graph's file or symbol names matches this " +
+  "question's vocabulary. That is locate's known limit (it matches names, not " +
+  "file contents) — search content with grep/rg instead, or re-ask using words " +
+  "from the code's own naming.";
+
+const LOCATE_VERIFY_FOOTER =
+  "\n\nLeads, not authority: verify in source before building on any of this.";
+
+/** Mid-task locate over the same mechanisms and output grammar as the spawn
+ * brief — exposed so the graph-first mandate stays true after spawn, not only
+ * at it. Reads the serving snapshot first (the file rebuilds never mutate;
+ * the live graph.json is rewritten in place by every post-landing rebuild)
+ * and degrades every failure — absent, oversized, corrupt — to an honest
+ * unavailable answer. Never throws, never blocks on a subprocess. */
+export async function graphLocate(
+  root: string,
+  question: string,
+): Promise<GraphLocateResult> {
+  const state = await readGraphifyState(root);
+  if (!state.enabled) {
+    return {
+      available: false,
+      answer: "Graphify is not enabled for this repo; use grep/rg/Glob.",
+    };
+  }
+  const candidates = [servingGraphPath(root), graphJsonPath(root)];
+  const path = candidates.find((p) => existsSync(p));
+  if (path === undefined) {
+    return {
+      available: false,
+      answer: "Graph not built yet; proceeding without it — use grep/rg/Glob.",
+    };
+  }
+  let graph: unknown;
+  try {
+    const stats = await stat(path);
+    if (stats.size > TARGETED_BRIEF_MAX_GRAPH_BYTES) {
+      return {
+        available: false,
+        answer: "Graph too large for interactive locate; use grep/rg/Glob.",
+      };
+    }
+    const key = `${path} ${stats.mtimeMs} ${stats.size}`;
+    if (locateCache?.key === key) {
+      graph = locateCache.graph;
+    } else {
+      graph = JSON.parse(await readFile(path, "utf8"));
+      locateCache = { key, graph };
+    }
+  } catch {
+    return {
+      available: false,
+      answer: "Graph unreadable (corrupt or mid-write); use grep/rg/Glob.",
+    };
+  }
+  const brief = buildTargetedGraphBrief(graph, question);
+  if (brief === null) return { available: true, answer: LOCATE_NO_LEADS };
+  return { available: true, answer: `${brief}${LOCATE_VERIFY_FOOTER}` };
+}
+
 /** Select — never head-slice — the digest out of a `graphify query` dump.
  * The output shape is: header, all NODE lines (name + file:line citation),
  * then all EDGE lines (the provenance-tagged relations). A head slice keeps

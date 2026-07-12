@@ -583,11 +583,14 @@ const GRAPHIFY_DIRECTIVE =
   "tools — get_neighbors for what calls, imports, or contains a symbol; " +
   "shortest_path for how two files connect; query_graph with token_budget: 16000 " +
   "for broad sweeps (its default of 2000 cuts the output off before the cited " +
-  "EDGE lines). Fall back to grep/rg/Glob only when the graph genuinely cannot " +
-  "answer: hunting an exact string or error message, files the graph does not " +
-  "index (docs, config, generated code), or a graph lead that turned out empty " +
-  "when you verified it. Every graph answer is a lead — confirm it in source " +
-  "before building on it.";
+  "EDGE lines). For a new locate-question mid-task (\"where does X happen\"), " +
+  "call the hive tool graph_locate with the question before reaching for search — " +
+  "it runs the same locate that built your brief, and it says so honestly when it " +
+  "has no strong leads. Fall back to grep/rg/Glob only when the graph genuinely " +
+  "cannot answer: hunting an exact string or error message, files the graph does " +
+  "not index (docs, config, generated code), a graph_locate answer that reported " +
+  "no strong leads, or a graph lead that turned out empty when you verified it. " +
+  "Every graph answer is a lead — confirm it in source before building on it.";
 
 export function buildAgentPrompt(
   name: string,

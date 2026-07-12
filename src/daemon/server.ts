@@ -24,7 +24,7 @@ import {
   writeMemoryFact as writeMemoryFactFile,
 } from "../adapters/memory";
 import { ensureProfile } from "../adapters/profile";
-import { readGraphifyState } from "../adapters/graphify";
+import { graphLocate, readGraphifyState } from "../adapters/graphify";
 import { GraphifyService } from "./graphify-service";
 import { landBranch, type LandBranch } from "./landing";
 import { readLiveClaudeModel } from "./live-model";
@@ -3113,6 +3113,25 @@ export class HiveDaemon {
     }, async () => {
       this.authorizeTool(capability, "memory_reindex", "memory:write");
       return toolResult(await this.rebuildMemoryIndex(), "result");
+    });
+
+    // The mid-task half of the graph-first mandate: the same locate the spawn
+    // brief runs (Hive-side seeding + expansion over graph.json), callable
+    // with a natural-language question. Lives on Hive's server, not
+    // graphify's — that surface is pre-1.0 and not ours — and never blocks:
+    // every failure is an honest "use grep" answer, not an error.
+    server.registerTool("graph_locate", {
+      title: "Locate files for a question via the code knowledge graph",
+      description:
+        "Find where something lives or happens in this repo: returns the files, symbols (with file:line citations), and import edges (with EXTRACTED/INFERRED provenance tags) that best match a natural-language question, using the repo's local knowledge graph. Use it for locate- and structure-questions before grep; it matches names and structure, not file contents, so exact-string hunts and vocabulary the code does not use still belong to grep/rg. Answers are leads to verify, never authority.",
+      inputSchema: z.object({
+        question: z.string().min(3).describe(
+          "What you are trying to find, in plain words — e.g. \"where does the daemon attach the MCP server to a spawning agent\"",
+        ),
+      }),
+    }, async ({ question }) => {
+      this.authorizeTool(capability, "graph_locate", "status:read", undefined, false);
+      return toolResult(await graphLocate(this.repoRoot, question), "locate");
     });
 
     return server;

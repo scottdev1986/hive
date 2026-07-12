@@ -43,7 +43,7 @@ export async function writeGraphifyHook(
     "esac",
     `response="$(/usr/bin/curl --silent --show-error --connect-timeout 0.02 --max-time 0.03 --header 'Accept: application/json, text/event-stream' ${shellToken(serverUrl)} 2>/dev/null)" || exit 0`,
     'case "$response" in *\"Missing session ID\"*) ;; *) exit 0 ;; esac',
-    'message="Graphify is on: work graph-first. Your brief\'s Graph locate section and the graphify MCP tools (get_neighbors for callers/imports, shortest_path between files, query_graph with token_budget: 16000 — the 2000 default drops every cited edge) answer structure questions. Keep raw search for exact strings, unindexed files, or a graph lead that came up empty — and verify graph answers in source."',
+    'message="Graphify is on: work graph-first. For where-does-X-happen questions call the hive MCP tool graph_locate; for structure walking use the graphify tools (get_neighbors for callers/imports, shortest_path between files, query_graph with token_budget: 16000 — the 2000 default drops every cited edge). Keep raw search for exact strings, unindexed files, or when graph_locate reports no strong leads — and verify graph answers in source."',
     'printf \'{"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"%s"}}\\n\' "$message"',
     "exit 0",
     "",
