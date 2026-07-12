@@ -19,6 +19,7 @@ import {
   MAX_AUTO_RESUME_ATTEMPTS,
   type CrashRecoveryDependencies,
 } from "./recovery";
+import { authorizeForQuotaTest } from "./authorized-launch.test-support";
 
 const timestamp = "2026-07-10T09:00:00.000Z";
 
@@ -28,6 +29,11 @@ function agent(overrides: Partial<AgentRecord> = {}): AgentRecord {
     name: "maya",
     tool: "claude",
     model: "claude-fable-5",
+    executionIdentity: {
+      tool: "claude",
+      model: "claude-fable-5",
+      effort: "high",
+    },
     tier: "standard",
     status: "working",
     taskDescription: "Build the server",
@@ -145,6 +151,8 @@ function harness(
   const recovery = new CrashRecovery({
     db,
     tmux,
+    authorizeLaunch: async (identity) =>
+      (await authorizeForQuotaTest([identity]))[0]!,
     port: 4483,
     closeTerminal: async (handle) => {
       closedViewers.push(handle);

@@ -6,6 +6,7 @@ import { QuotaConfigSchema, type QuotaLimit, type QuotaPoolStatus } from "../sch
 import { HiveDatabase } from "./db";
 import { QuotaLedger } from "./quota-ledger";
 import { QuotaService, type CodexRateLimitsResponse } from "./quota";
+import { authorizeForQuotaTest } from "./authorized-launch.test-support";
 import {
   ClaudeQuotaProbe,
   CodexQuotaProbe,
@@ -223,7 +224,7 @@ describe("startup quota discovery", () => {
         tier: "deep",
         preferredTool: "codex",
         explicitCandidate: true,
-        candidates: [{ tool: "codex", model: "gpt-5.3-codex" }],
+        candidates: await authorizeForQuotaTest([{ tool: "codex", model: "gpt-5.3-codex" }]),
       });
       expect(decision.tool).toBe("codex");
       expect(decision.reservation.pool).toBe("codex");
@@ -258,7 +259,7 @@ describe("startup quota discovery", () => {
         agentName: "sam",
         tier: "deep",
         preferredTool: "codex",
-        candidates: [{ tool: "codex", model: "gpt-5.3-codex" }],
+        candidates: await authorizeForQuotaTest([{ tool: "codex", model: "gpt-5.3-codex" }]),
       })).rejects.toThrow(/Quota pressure/);
     } finally {
       db.close();
@@ -365,7 +366,7 @@ describe("per-window accounting", () => {
         tier: "standard",
         preferredTool: "codex",
         explicitCandidate: true,
-        candidates: [{ tool: "codex", model: "gpt-5.3-codex" }],
+        candidates: await authorizeForQuotaTest([{ tool: "codex", model: "gpt-5.3-codex" }]),
       });
       const spentAt = new Date(now.getTime() + 60_000);
       quota.markStarted(decision.reservation.id, spentAt.toISOString());
@@ -406,7 +407,7 @@ describe("per-window accounting", () => {
         tier: "standard",
         preferredTool: "codex",
         explicitCandidate: true,
-        candidates: [{ tool: "codex", model: "gpt-5.3-codex" }],
+        candidates: await authorizeForQuotaTest([{ tool: "codex", model: "gpt-5.3-codex" }]),
       });
       const at = new Date(now.getTime() + 60_000);
       await quota.reconcile(decision.reservation.id, undefined, "estimated", at.toISOString());
@@ -433,7 +434,7 @@ describe("per-window accounting", () => {
         tier: "standard",
         preferredTool: "codex",
         explicitCandidate: true,
-        candidates: [{ tool: "codex", model: "gpt-5.3-codex" }],
+        candidates: await authorizeForQuotaTest([{ tool: "codex", model: "gpt-5.3-codex" }]),
       });
       const at = new Date(now.getTime() + 60_000);
       // The provider says the run really cost 2% of the five-hour window.
@@ -617,7 +618,7 @@ describe("provider unavailable", () => {
         agentName: "sam",
         tier: "deep",
         preferredTool: "codex",
-        candidates: [{ tool: "codex", model: "gpt-5.3-codex" }],
+        candidates: await authorizeForQuotaTest([{ tool: "codex", model: "gpt-5.3-codex" }]),
       });
       expect(decision.status).toMatchObject({
         configured: false,
@@ -862,10 +863,10 @@ describe("pools gate the models they actually meter", () => {
     const warnings: string[] = [];
     quota.setAlertSink(async (body) => void warnings.push(body));
     await quota.refreshFromProviders(now, { force: true });
-    const candidates = [
+    const candidates = await authorizeForQuotaTest([
       { tool: "claude" as const, model: "claude-opus-4-8", effort: "high" },
       { tool: "codex" as const, model: "gpt-5.6-sol", effort: "high" },
-    ];
+    ]);
     const automatic = await quota.routeAndReserve({
       agentName: "auto",
       tier: "deep",
@@ -880,7 +881,7 @@ describe("pools gate the models they actually meter", () => {
       preferredTool: "claude",
       explicitTool: "claude",
       explicitCandidate: true,
-      candidates: [candidates[0]!],
+      candidates: await authorizeForQuotaTest([candidates[0]!]),
     });
     expect(explicit.tool).toBe("claude");
     expect(explicit.warnings.join(" ")).toContain("weekly:Renamed");
@@ -911,7 +912,7 @@ describe("pools gate the models they actually meter", () => {
       tier: "deep",
       preferredTool: "claude",
       explicitTool: "claude",
-      candidates: [{ tool: "claude", model: "claude-fable-5" }],
+      candidates: await authorizeForQuotaTest([{ tool: "claude", model: "claude-fable-5" }]),
     });
     // This is the whole point: the general pool has 39% of its week left, so the
     // old code admitted the spawn happily. The model's own pool has 1%.
@@ -927,10 +928,10 @@ describe("pools gate the models they actually meter", () => {
       tier: "deep",
       preferredTool: "claude",
       explicitTool: "claude",
-      candidates: [
+      candidates: await authorizeForQuotaTest([
         { tool: "claude", model: "claude-fable-5" },
         { tool: "claude", model: "claude-opus-4-8" },
-      ],
+      ]),
     });
     expect(decision.model).toBe("claude-opus-4-8");
     const status = decision.status;
@@ -1002,7 +1003,7 @@ describe("pools gate the models they actually meter", () => {
       tier: "deep",
       preferredTool: "claude",
       explicitTool: "claude",
-      candidates: [{ tool: "claude", model: "claude-opus-4-8" }],
+      candidates: await authorizeForQuotaTest([{ tool: "claude", model: "claude-opus-4-8" }]),
     });
     // A human switches the session to Fable. The agent is already running, so the
     // booking must follow it onto the Fable cap even though that cap is full —
@@ -1028,11 +1029,13 @@ describe("pools gate the models they actually meter", () => {
  * refuses an exhausted model only to hand the work to a dead route has
  * protected nothing.
  */
+const BOTH_ROUTES = await authorizeForQuotaTest([
+  { tool: "claude" as const, model: "claude-opus-4-8" },
+  { tool: "codex" as const, model: "gpt-5.6-sol" },
+]);
+
 describe("a route that cannot start is not a route", () => {
-  const both = [
-    { tool: "claude" as const, model: "claude-opus-4-8" },
-    { tool: "codex" as const, model: "gpt-5.6-sol" },
-  ];
+  const both = BOTH_ROUTES;
 
   const generalPool = (
     provider: "claude" | "codex",
@@ -1119,7 +1122,7 @@ describe("a route that cannot start is not a route", () => {
       agentName: "xhigh-run",
       tier: "deep",
       preferredTool: "codex",
-      candidates: [xhigh],
+      candidates: await authorizeForQuotaTest([xhigh]),
     });
     expect(failed.reservation).toMatchObject({
       provider: "codex",
@@ -1132,7 +1135,7 @@ describe("a route that cannot start is not a route", () => {
       agentName: "low-run",
       tier: "deep",
       preferredTool: "codex",
-      candidates: [xhigh, low],
+      candidates: await authorizeForQuotaTest([xhigh, low]),
     });
     expect(next.effort).toBe("low");
     expect(next.reservation.effort).toBe("low");
@@ -1166,7 +1169,7 @@ describe("a route that cannot start is not a route", () => {
       tier: "deep",
       preferredTool: "codex",
       explicitTool: "codex",
-      candidates: [both[1]!],
+      candidates: await authorizeForQuotaTest([both[1]!]),
     });
     quota.markStarted(pinned.reservation.id, now.toISOString());
 
@@ -1187,7 +1190,7 @@ describe("a route that cannot start is not a route", () => {
       tier: "deep",
       preferredTool: "codex",
       explicitTool: "codex",
-      candidates: [both[1]!],
+      candidates: await authorizeForQuotaTest([both[1]!]),
     });
     await quota.cancel(failed.reservation.id, now.toISOString(), "never started");
 
@@ -1199,7 +1202,7 @@ describe("a route that cannot start is not a route", () => {
       tier: "deep",
       preferredTool: "codex",
       explicitTool: "codex",
-      candidates: [both[1]!],
+      candidates: await authorizeForQuotaTest([both[1]!]),
     });
     expect(pinned.tool).toBe("codex");
     expect(pinned.warnings.join(" ")).toContain("no alternative");
@@ -1236,7 +1239,7 @@ describe("a refusal names the way out, and never takes it", () => {
       tier: "deep",
       preferredTool: "codex",
       explicitTool: "codex",
-      candidates: [{ tool: "codex", model: "gpt-5.6-sol" }],
+      candidates: await authorizeForQuotaTest([{ tool: "codex", model: "gpt-5.6-sol" }]),
     });
     // The human is told the door exists. Hive does not open it: burning a finite
     // credit to admit a spawn is the human's call, and an agent that can quietly

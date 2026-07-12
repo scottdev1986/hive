@@ -12,6 +12,7 @@ import { QuotaConfigSchema, type QuotaLimit } from "../schemas";
 import { HiveDatabase } from "./db";
 import { QuotaLedger } from "./quota-ledger";
 import { QuotaService } from "./quota";
+import { authorizeForQuotaTest } from "./authorized-launch.test-support";
 import { CrashRecovery } from "./recovery";
 import { countGraphifyCallLines, readGraphifyCalls } from "./tool-telemetry";
 import { knownBillings } from "./usage-credits";
@@ -86,6 +87,8 @@ test("crash recovery refuses to resolve an unknown vendor's session with the cod
   const tmux = new FakeTmux();
   let codexResolves = 0;
   const recovery = new CrashRecovery({
+    authorizeLaunch: async (identity) =>
+      (await authorizeForQuotaTest([identity]))[0]!,
     ...deps(db, tmux),
     resolveClaudeSessionId: async () => "claude-session",
     resolveCodexSessionId: async () => {
@@ -112,6 +115,8 @@ test("crash recovery refuses to resume an unknown vendor with codex's config and
   const tmux = new FakeTmux();
   let codexConfigs = 0;
   const recovery = new CrashRecovery({
+    authorizeLaunch: async (identity) =>
+      (await authorizeForQuotaTest([identity]))[0]!,
     ...deps(db, tmux),
     writeCodexConfig: async () => {
       codexConfigs += 1;
@@ -178,10 +183,10 @@ test("a review of an unknown vendor is not silently handed to claude", async () 
     }),
     () => new Date("2026-07-09T12:00:00.000Z"),
   );
-  const candidates = [
+  const candidates = await authorizeForQuotaTest([
     { tool: "claude" as const, model: "claude-model" },
     { tool: "codex" as const, model: "codex-model" },
-  ];
+  ]);
 
   // Today's pairing is unambiguous, and must not change.
   const reviewOfClaude = await service.routeAndReserve({

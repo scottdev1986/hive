@@ -14,6 +14,7 @@ import { HiveDatabase } from "./db";
 import type { TmuxSender } from "./delivery";
 import { QuotaLedger } from "./quota-ledger";
 import { QuotaService } from "./quota";
+import { authorizeForQuotaTest } from "./authorized-launch.test-support";
 import { HIVE_VERSION, HiveDaemon, inferLegacyControl } from "./server";
 import { readLiveClaudeModel } from "./live-model";
 import { formatStatusTable } from "../cli/status";
@@ -128,6 +129,11 @@ class StubSpawner implements Spawner {
       worktreePath: `/tmp/hive-${request.name ?? "sam"}`,
       branch: `hive/${request.name ?? "sam"}-task`,
     });
+  }
+
+  async authorizeLaunch(identity: AgentRecord["executionIdentity"]) {
+    if (identity === undefined) throw new Error("identity required");
+    return (await authorizeForQuotaTest([identity]))[0]!;
   }
 }
 
@@ -266,10 +272,10 @@ describe("HiveDaemon HTTP server", () => {
       tier: "standard",
       preferredTool: "codex",
       explicitTool: "codex",
-      candidates: [
+      candidates: await authorizeForQuotaTest([
         { tool: "claude", model: "claude-model" },
         { tool: "codex", model: "gpt-5-codex" },
-      ],
+      ]),
     });
     quota.markStarted(decision.reservation.id);
     const tmux = new FakeDaemonTmux();
@@ -1521,6 +1527,11 @@ describe("HiveDaemon HTTP server", () => {
     db.insertAgent(agent({
       status: "dead",
       toolSessionId: "0189-session",
+      executionIdentity: {
+        tool: "codex",
+        model: "gpt-5-codex",
+        effort: "medium",
+      },
       failureReason: "tmux session missing (reconciled)",
     }));
     const transport = new StreamableHTTPClientTransport(
@@ -1810,10 +1821,10 @@ describe("HiveDaemon HTTP server", () => {
       tier: "standard",
       preferredTool: "codex",
       explicitTool: "codex",
-      candidates: [
+      candidates: await authorizeForQuotaTest([
         { tool: "claude", model: "claude-model" },
         { tool: "codex", model: "gpt-5-codex" },
-      ],
+      ]),
     });
     quota.markStarted(decision.reservation.id);
     const closedTerminals: AgentRecord["terminalHandle"][] = [];
@@ -2540,7 +2551,7 @@ describe("the model an agent is actually running", () => {
         agentName: "probe",
         tier: "standard",
         preferredTool: "claude",
-        candidates: [{ tool: "claude", model: "sonnet" }],
+        candidates: await authorizeForQuotaTest([{ tool: "claude", model: "sonnet" }]),
       });
       quota.markStarted(decision.reservation.id);
       db.insertAgent(agent({

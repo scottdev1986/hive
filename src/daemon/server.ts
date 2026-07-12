@@ -728,6 +728,8 @@ export class HiveDaemon {
       send: (from, to, body, sendOptions) =>
         this.delivery.send(from, to, body, sendOptions),
       settleQuota: (agent) => this.settleAgentQuota(agent),
+      authorizeLaunch: async (identity, tier) =>
+        await this.spawner.authorizeLaunch?.(identity, tier) ?? null,
       flushQueued: (agentName) => this.delivery.flushQueued(agentName),
       terminal: options.terminal,
       onTerminalsChanged: () => this.layout?.requestLayout(),

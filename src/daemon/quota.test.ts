@@ -16,6 +16,7 @@ import {
   QuotaExhaustedError,
   QuotaService,
 } from "./quota";
+import { authorizeForQuotaTest } from "./authorized-launch.test-support";
 
 const roots: string[] = [];
 
@@ -71,11 +72,13 @@ async function fileDatabase(name: string): Promise<{
   return { root, path, db: new HiveDatabase(path) };
 }
 
-function candidates() {
-  return [
+const AUTHORIZED_CANDIDATES = await authorizeForQuotaTest([
     { tool: "claude" as const, model: "claude-model" },
     { tool: "codex" as const, model: "codex-model" },
-  ];
+]);
+
+function candidates() {
+  return [...AUTHORIZED_CANDIDATES];
 }
 
 describe("quota windows", () => {
@@ -147,6 +150,28 @@ describe("quota windows", () => {
 });
 
 describe("quota persistence and reservations", () => {
+  test("final launch revalidation refuses a released reservation", async () => {
+    const { db } = await fileDatabase("adapter-revalidation");
+    const service = new QuotaService(
+      new QuotaLedger(db),
+      config([limit("codex")]),
+      () => new Date("2026-07-09T12:00:00.000Z"),
+    );
+    const decision = await service.routeAndReserve({
+      agentName: "maya",
+      tier: "standard",
+      preferredTool: "codex",
+      explicitTool: "codex",
+      candidates: candidates(),
+    });
+    expect(() => service.requireActiveReservation(decision.reservation.id))
+      .not.toThrow();
+    await service.cancel(decision.reservation.id);
+    expect(() => service.requireActiveReservation(decision.reservation.id))
+      .toThrow("no longer active at launch");
+    db.close();
+  });
+
   test("migrates legacy reservation ledgers without control-run columns", async () => {
     const { db } = await fileDatabase("legacy-control-columns");
     db.database.exec(`
@@ -451,7 +476,7 @@ describe("quota-aware routing", () => {
       error = caught;
     }
     expect(error).toBeInstanceOf(QuotaExhaustedError);
-    expect((error as QuotaExhaustedError).fallback).toEqual({
+    expect((error as QuotaExhaustedError).fallback).toMatchObject({
       tool: "codex",
       model: "codex-model",
     });

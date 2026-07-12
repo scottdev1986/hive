@@ -42,6 +42,7 @@ import {
 } from "../adapters/worktrees";
 import {
   ORCHESTRATOR_NAME,
+  CapabilityProviderSchema,
   forEachProvider,
   identifyModelVendor,
   isLiveAgent,
@@ -56,7 +57,9 @@ import {
   type RoutingPins,
   type RoutingTier,
   splitVariant,
+  tierIsFloorBound,
 } from "../schemas";
+import { loadRoutingFloors } from "../config/load";
 import type { HiveDatabase } from "./db";
 import { readCodexTelemetry } from "./tool-telemetry";
 import { readinessFailureLayer } from "./launch-failure";
@@ -71,17 +74,22 @@ import {
   type CommandOutput,
 } from "./resources";
 import type { SpawnRequest, Spawner } from "./spawner";
-import type { QuotaRouteCandidate, QuotaService } from "./quota";
+import type { QuotaService } from "./quota";
+import {
+  AuthorizedLaunch,
+  type LaunchGateChecks,
+  type LaunchGateResult,
+  type RawLaunchCandidate,
+  requireAuthorizedLaunch,
+} from "./authorized-launch";
 import { agentTmuxSession } from "./tmux-sessions";
 import { validateEffort } from "./effort";
 import type { CapabilityDiscoveryResult } from "./capability-discovery";
 import type { GoverningRoute, RoutingIo } from "./routing-resolve";
 import {
   poolAvailability,
-  spendRisk,
   type AccountBilling,
 } from "./usage-credits";
-import { consentId, readCostConsent, requestCostConsent } from "./cost-consent";
 
 /**
  * Names an agent can be given. Human first names, because the user's interface
@@ -206,10 +214,6 @@ type AgentStore = Pick<
   | "listAgents"
   | "releaseAgentName"
   | "reserveAgentName"
-  // The spend guard asks through the approvals queue Hive already has, rather
-  // than inventing a second way to ask the user for permission.
-  | "getApproval"
-  | "insertApproval"
 >;
 type RouteResolver = (tier: RoutingTier) => Promise<Route>;
 type WorktreeCreator = (
@@ -303,6 +307,11 @@ export interface HiveSpawnerDependencies {
   readBilling?: (
     provider: CapabilityProvider,
   ) => Promise<AccountBilling | null>;
+  /** Policy-store consent. False is disabled; null is unreadable/missing. */
+  isModelEnabled?: (
+    provider: CapabilityProvider,
+    model: string,
+  ) => Promise<boolean | null>;
   /**
    * The per-repo graphify MCP server's URL, or null when there is nothing
    * healthy to attach (docs/architecture/graphify-integration.md). Read
@@ -771,112 +780,14 @@ export class HiveSpawner implements Spawner {
     return result;
   }
 
-  /**
-   * The same-vendor model to offer beside a heavy primary, or `null` for none.
-   *
-   * This used to be `if (claudeModel === CLAUDE_BEST_MODEL)` — a model NAME
-   * standing in for a claim about capacity, in the same comment as (and written
-   * on the same non-evidence as) the billing claim that turned out to be false and
-   * quietly misrouted the deep tier for forty minutes. The claim itself is TRUE;
-   * what was wrong was that nobody had checked it, and a constant cannot notice
-   * when the vendor changes the arrangement underneath it.
-   *
-   * MEASURED 2026-07-12 against claude 2.1.207, surface `get_usage`
-   * (`rate_limits`), with the user's own Fable agents plus a controlled burst:
-   *
-   *   baseline                 five_hour 20%   seven_day 11%   Fable pool 15%
-   *   after 8 Fable prompts    five_hour 22%   seven_day 11%   Fable pool 15%
-   *   after 8 Opus prompts     five_hour 23%   seven_day 11%   Fable pool 15%
-   *
-   * No Opus generation ran during the Fable window, so the +2% on the SHARED
-   * five-hour pool is Fable's. Fable therefore draws on shared capacity AND is
-   * capped separately (`model_scoped`) — both, not either, exactly as the user
-   * said. The valve's rationale is real. (Its own weekly pool did not move at the
-   * surface's 1% resolution in a 90-second window; across the night's real work it
-   * climbed 12% → 15%. The RELATIVE size of the two draws is therefore not
-   * measurable from this surface, and nothing here pretends it is.)
-   *
-   * So the trigger is now the vendor's own metering: a model the provider gives a
-   * dedicated pool is a model the provider itself considers heavy. Read live, it
-   * follows the vendor automatically — if Fable's cap disappears tomorrow the
-   * valve stops firing for it, and if some future model gains one, the valve
-   * applies to that model without anyone editing a constant. The alternative is
-   * the account's *discovered* default rather than a hardcoded Opus, for the same
-   * reason.
-   */
-  private async releaseValveAlternative(
-    claudeModel: string,
-  ): Promise<string | null> {
-    const [discovery, billing] = await Promise.all([
-      this.discoverOnce("claude"),
-      this.dependencies.readBilling?.("claude"),
-    ]);
-
-    // Without a live reading there is no valve: the compiled-in name pair that
-    // used to answer here was predetermined model knowledge, and it is gone.
-    // Degrading to "no alternative offered" costs one downshift opportunity;
-    // inventing one from a constant costs the design.
-    if (
-      discovery === undefined || discovery.status !== "ok" ||
-      billing === undefined || billing === null
-    ) {
-      return null;
-    }
-
-    const base = splitVariant(claudeModel).base;
-    const record = discovery.records.find((candidate) =>
-      candidate.canonicalId === base || candidate.launchToken === base ||
-      candidate.aliases.includes(claudeModel)
-    );
-    // The billing surface names a model only by its display name. Without one we
-    // cannot ask whether it is separately metered — unknown, and unknown offers
-    // no valve rather than a name Hive was never told.
-    if (record?.displayName == null) {
-      return null;
-    }
-
-    const separatelyMetered =
-      billing.modelUtilization[record.displayName.toLowerCase()] !== undefined;
-    if (!separatelyMetered) return null;
-
-    const fallbackModel = discovery.effectiveDefault.model;
-    if (fallbackModel.state !== "known") return null;
-    // A valve that offers the model it is relieving is not a valve.
-    return fallbackModel.value === base ? null : fallbackModel.value;
-  }
-
-  /**
-   * Would this AUTOMATIC route spend the user's real money? Returns the refusal,
-   * or `null` to proceed.
-   *
-   * This is the live spawn path's copy of the rule — and the point of it being
-   * here at all. The guard already governed the derived table and `hive routing`,
-   * and neither of those launches anything: a guard that is correct, tested,
-   * green and never consulted is indistinguishable from one that works, right up
-   * until the day it matters. The launch path consults it now.
-   *
-   *   plan headroom            -> go; the plan already covers it
-   *   pool spent + credits ON  -> ASK, through the approvals queue
-   *   pool spent + credits OFF -> nothing can pay for it
-   *   not measurable           -> do not AUTO-route; a pin still works
-   *
-   * Claude proves when credits are off. Codex does not: its credits snapshot says
-   * whether a balance exists now, while the server-side auto-top-up switch is not
-   * exposed. The shared rule therefore remains unchanged — headroom goes, an
-   * exhausted pool that might be paid asks — while the Codex reader reports that
-   * unobservable switch honestly instead of turning `balance: "0"` into false
-   * confidence that nothing can pay.
-   */
-  private async spendRefusal(
+  private async availabilityRefusal(
     tool: CapabilityProvider,
     model: string,
   ): Promise<string | null> {
     const readBilling = this.dependencies.readBilling;
-    // Older embedders that do not install a billing reader retain their previous
-    // behavior. The real daemon always installs one for both providers.
     if (readBilling === undefined) return null;
     const billing = await readBilling(tool);
-
+    if (billing === null) return null;
     const discovery = await this.discoverOnce(tool);
     const base = splitVariant(model).base;
     const record = discovery?.status === "ok"
@@ -885,56 +796,11 @@ export class HiveSpawner implements Spawner {
         candidate.aliases.includes(model)
       )
       : undefined;
-
-    // AVAILABILITY FIRST, and it is not a money question. A model whose own pool
-    // is spent when nothing can pay for the overflow is refused by the vendor, not
-    // billed — so it cannot run, and it must not win a spawn just because it is
-    // free. No consent is requested: there is nothing to consent to.
-    if (billing !== null && record?.displayName != null) {
-      const availability = poolAvailability(billing, record.displayName);
-      if (availability.state === "exhausted") {
-        return `${model} cannot run: ${availability.detail}`;
-      }
-    }
-
-    // The billing surface names a model only by its display name, so without one
-    // the spawn cannot be joined to a pool: unknown, and unknown never authorises
-    // a charge.
-    const risk = billing === null
-      ? {
-        state: "unknown" as const,
-        detail: `Hive could not read ${tool} plan or billing state, so it cannot ` +
-          "rule out a charge on any of its models",
-      }
-      : record?.displayName == null
-      ? {
-        state: "unknown" as const,
-        detail: `Hive cannot join ${model} to a plan pool, so it cannot rule out ` +
-          "a charge",
-      }
-      : spendRisk(billing, record.displayName);
-    if (risk.state === "no-spend") return null;
-
-    // The same subject rule the derivation engine uses, because it is the same
-    // question: with NO billing surface, the charge is a fact about the vendor
-    // and consent is asked (and answered) per vendor. Keying it per model here
-    // while the router keys it per vendor would re-ask him something he has
-    // already answered — the fastest way to teach him to rubber-stamp the queue.
-    const subject = billing === null
-      ? tool
-      : record?.canonicalId ?? base;
-    if (readCostConsent(this.dependencies.db, subject) === "approved") {
-      return null;
-    }
-    // Ask once, through the queue he already answers. Pending is not a yes.
-    requestCostConsent(this.dependencies.db, subject, risk.detail);
-    // Name the approval ID. A refusal the reader cannot act on sends him looking
-    // for a broken route instead of the question sitting in his own queue.
-    return `${model} would spend your money: ${risk.detail}. Choosing this model ` +
-      "is not the same as agreeing to be charged for it, so Hive asks once and " +
-      `remembers — this is SPEND CONSENT, not routing: approve ${consentId(subject)} ` +
-      "in the approvals queue (hive_approvals to see it, hive_approve to answer) " +
-      "and it will not ask again";
+    if (record?.displayName == null) return null;
+    const availability = poolAvailability(billing, record.displayName);
+    return availability.state === "exhausted"
+      ? `${model} cannot run: ${availability.detail}`
+      : null;
   }
 
   private async resolveSpawnEffort(
@@ -1046,6 +912,89 @@ export class HiveSpawner implements Spawner {
     return false;
   }
 
+  async authorizeLaunch(
+    identity: ExecutionIdentity,
+    tier: RoutingTier,
+  ): Promise<AuthorizedLaunch> {
+    let record: CapabilityRecord | undefined;
+    const floors = await loadRoutingFloors();
+    const result = await AuthorizedLaunch.gate(identity, {
+      resolution: async (candidate) => {
+        if (this.dependencies.discoverCapabilities === undefined) return null;
+        const discovery = await this.discoverOnce(candidate.tool);
+        if (discovery === undefined || discovery.status !== "ok") {
+          return `${candidate.tool}'s model catalog is unreadable`;
+        }
+        record = discovery.records.find((entry) =>
+          entry.launchToken === candidate.model ||
+          entry.canonicalId === candidate.model ||
+          entry.aliases.includes(candidate.model)
+        );
+        return record === undefined
+          ? `${candidate.tool}'s readable catalog has no record for ${candidate.model}`
+          : null;
+      },
+      enablement: async (candidate) => {
+        let enabled: boolean | null;
+        try {
+          enabled = await this.dependencies.isModelEnabled?.(
+            candidate.tool,
+            candidate.model,
+          ) ?? null;
+        } catch (error) {
+          return `${candidate.model} enablement policy is unreadable (${
+            error instanceof Error ? error.message : String(error)
+          }); open the Model Control Center and enable it before launching`;
+        }
+        if (enabled !== true) {
+          return `${candidate.model} is not enabled; open the Model Control Center ` +
+            "and enable it before launching";
+        }
+        if (!CapabilityProviderSchema.safeParse(candidate.tool).success) {
+          return `provider ${JSON.stringify(candidate.tool)} is not enabled`;
+        }
+        if (record?.entitled.state === "known" && !record.entitled.value) {
+          return `${candidate.model} is not entitled`;
+        }
+        return record?.hidden.state === "known" && record.hidden.value
+          ? `${candidate.model} is disabled by the vendor`
+          : null;
+      },
+      availability: (candidate) =>
+        this.availabilityRefusal(candidate.tool, candidate.model),
+      capabilityFloor: (candidate) => {
+        const allow = tierIsFloorBound(tier) ? floors[candidate.tool]?.allow : undefined;
+        if (allow === undefined) return null;
+        return allow.includes(candidate.model) ||
+            (record !== undefined && (
+              allow.includes(record.canonicalId) ||
+              allow.includes(record.launchToken) ||
+              record.aliases.some((alias) => allow.includes(alias))
+            ))
+          ? null
+          : `${candidate.model} does not clear the capability floor for ${candidate.tool}`;
+      },
+      effort: (candidate) => {
+        if (candidate.effort === undefined) return { refusal: null };
+        try {
+          return {
+            effort: validateEffort(record, candidate.model, candidate.effort).effort,
+            refusal: null,
+          };
+        } catch (error) {
+          return { refusal: error instanceof Error ? error.message : String(error) };
+        }
+      },
+    });
+    if (result.refusal !== undefined) {
+      throw new Error(
+        `${result.refusal.reason} refused ${identity.tool}/${identity.model}: ` +
+          result.refusal.detail,
+      );
+    }
+    return result.authorized;
+  }
+
   async restartForControl(
     agent: AgentRecord,
     message: AgentMessage,
@@ -1079,6 +1028,7 @@ export class HiveSpawner implements Spawner {
         `Cannot restart ${agent.name} for critical control: quota accounting is unavailable; capability remains revoked`,
       );
     }
+    let authorized = await this.authorizeLaunch(identity, agent.tier);
 
     let reservationId: string;
     try {
@@ -1240,6 +1190,9 @@ export class HiveSpawner implements Spawner {
       // if the app-server handshake fails and the TUI takes over the session,
       // because readiness looks for *this* process and nothing else.
       let launchedCommand = launchedCommandName(argv);
+      authorized = await this.authorizeLaunch(identity, agent.tier);
+      requireAuthorizedLaunch(authorized);
+      this.dependencies.quota.requireActiveReservation(reservationId);
       await this.dependencies.tmux.newSession(
         agent.tmuxSession,
         agent.worktreePath,
@@ -1247,6 +1200,9 @@ export class HiveSpawner implements Spawner {
       );
       if (nativeCodex) {
         try {
+          authorized = await this.authorizeLaunch(identity, agent.tier);
+          requireAuthorizedLaunch(authorized);
+          this.dependencies.quota.requireActiveReservation(reservationId);
           await this.dependencies.codexAppServer!.startAgent(
             prepared.record,
             controlPrompt,
@@ -1285,6 +1241,9 @@ export class HiveSpawner implements Spawner {
               agent.worktreePath,
             )
             : fallbackCommand;
+          authorized = await this.authorizeLaunch(identity, agent.tier);
+          requireAuthorizedLaunch(authorized);
+          this.dependencies.quota.requireActiveReservation(reservationId);
           await this.dependencies.tmux.newSession(
             agent.tmuxSession,
             agent.worktreePath,
@@ -1596,12 +1555,6 @@ export class HiveSpawner implements Spawner {
       discover: (provider) => this.discoverOnce(provider),
       readBilling: async (provider) =>
         (await this.dependencies.readBilling?.(provider)) ?? null,
-      // The consent the guard needs, on the path that actually spawns. Reading it
-      // is what lets an answer he already gave take effect; requesting it is what
-      // gives him something to answer at all.
-      readConsent: (subject) => readCostConsent(this.dependencies.db, subject),
-      requestConsent: (subject, detail) =>
-        void requestCostConsent(this.dependencies.db, subject, detail),
     })) ?? null;
     // A conflict the router resolved silently is a lie: a pin it could not vouch
     // for, a model it refused to pay for. Said out loud, on the launch it governs.
@@ -1716,7 +1669,6 @@ export class HiveSpawner implements Spawner {
     let executionIdentity: ExecutionIdentity | undefined;
     let quotaReservationId: string | undefined;
     let effort: string | undefined;
-    let effortResolved = false;
     const effortPins = await this.dependencies.routingPins?.() ?? {};
     const discoveries = new Map<
       CapabilityProvider,
@@ -1747,24 +1699,112 @@ export class HiveSpawner implements Spawner {
         },
       );
     };
-    // An explicit model is the sole candidate, so its capability eligibility is
-    // knowable before quota. Reject it before reserving any capacity.
-    if (request.model !== undefined) {
-      effort = await resolveEffort(tool, model);
-      effortResolved = true;
-    }
+    const floors = await loadRoutingFloors();
+    const authorizeCandidate = async (
+      raw: RawLaunchCandidate,
+    ): Promise<LaunchGateResult> => {
+      let record: CapabilityRecord | undefined;
+      const checks: LaunchGateChecks = {
+        resolution: async (candidate) => {
+          if (candidate.model.trim().length === 0) return "model is empty";
+          if (this.dependencies.discoverCapabilities === undefined) return null;
+          const discovery = await this.discoverOnce(candidate.tool);
+          if (discovery === undefined || discovery.status !== "ok") {
+            return `${candidate.tool}'s model catalog is unreadable`;
+          }
+          record = discovery?.status === "ok"
+            ? discovery.records.find((entry) =>
+              entry.launchToken === candidate.model ||
+              entry.canonicalId === candidate.model ||
+              entry.aliases.includes(candidate.model)
+            )
+            : undefined;
+          return record === undefined
+            ? `${candidate.tool}'s readable catalog has no record for ${candidate.model}`
+            : null;
+        },
+        enablement: async (candidate) => {
+          let enabled: boolean | null;
+          try {
+            enabled = await this.dependencies.isModelEnabled?.(
+              candidate.tool,
+              candidate.model,
+            ) ?? null;
+          } catch (error) {
+            return `${candidate.model} enablement policy is unreadable (${
+              error instanceof Error ? error.message : String(error)
+            }); open the Model Control Center and enable it before launching`;
+          }
+          if (enabled !== true) {
+            return `${candidate.model} is not enabled; open the Model Control Center ` +
+              "and enable it before launching";
+          }
+          if (!CapabilityProviderSchema.safeParse(candidate.tool).success) {
+            return `provider ${JSON.stringify(candidate.tool)} is not enabled`;
+          }
+          if (record === undefined) return null;
+          if (record.entitled.state === "known" && !record.entitled.value) {
+            return `${candidate.model} is not entitled`;
+          }
+          return record.hidden.state === "known" && record.hidden.value
+            ? `${candidate.model} is disabled by the vendor`
+            : null;
+        },
+        availability: (candidate) =>
+          this.availabilityRefusal(candidate.tool, candidate.model),
+        capabilityFloor: (candidate) => {
+          const allow = tierIsFloorBound(request.tier)
+            ? floors[candidate.tool]?.allow
+            : undefined;
+          if (allow === undefined) return null;
+          const clears = allow.includes(candidate.model) ||
+            (record !== undefined && (
+              allow.includes(record.canonicalId) ||
+              allow.includes(record.launchToken) ||
+              record.aliases.some((alias) => allow.includes(alias))
+            ));
+          return clears
+            ? null
+            : `${candidate.model} does not clear the capability floor for ${candidate.tool}`;
+        },
+        effort: async (candidate) => {
+          try {
+            return {
+              effort: await resolveEffort(candidate.tool, candidate.model),
+              refusal: null,
+            };
+          } catch (error) {
+            return {
+              refusal: error instanceof Error ? error.message : String(error),
+            };
+          }
+        },
+      };
+      return await AuthorizedLaunch.gate(raw, checks);
+    };
+    const requireGate = async (raw: RawLaunchCandidate): Promise<AuthorizedLaunch> => {
+      const result = await authorizeCandidate(raw);
+      if (result.refusal !== undefined) {
+        throw new Error(
+          `Cannot spawn ${name}: ${result.refusal.reason} refused ` +
+            `${raw.tool}/${raw.model}: ${result.refusal.detail}`,
+        );
+      }
+      return result.authorized;
+    };
+    let authorized: AuthorizedLaunch;
     if (this.dependencies.quota?.config.enabled === true) {
-      let candidates: QuotaRouteCandidate[];
+      let rawCandidates: RawLaunchCandidate[];
+      let candidates: AuthorizedLaunch[] | undefined;
       if (request.model !== undefined) {
         // The pinned model is the only candidate, and the spawn is bound to
         // its vendor: switching vendors away from a user-named model would
         // launch something other than what was asked for, and the Fable→Opus
         // release valve is equally a substitution, so neither applies here.
         // Unsafe quota still fails the spawn with the capacity report.
-        candidates = [{
+        rawCandidates = [{
           tool,
           model: request.model,
-          ...(effort === undefined ? {} : { effort }),
         }];
       } else {
         const [claudeModel, codexModel, grokModel] = await Promise.all([
@@ -1774,35 +1814,19 @@ export class HiveSpawner implements Spawner {
         ]);
         if (governing !== null) {
           // A refused column contributes NO candidate — quota must never rank a
-          // cell whose own engine said "nothing vouches for this". The chain
-          // remainders ride after their primary, same shape as ever, so ties
-          // and the no-quota case still prefer the primary while real pressure
-          // lets quota pick on headroom. (The chain is empty until user
-          // policy supplies an ordered list.)
-          candidates = [
+          // cell whose own engine said "nothing vouches for this".
+          rawCandidates = [
             ...(claudeModel === null ? [] : [
               { tool: "claude" as const, model: claudeModel },
-              ...governing.chain.claude.map((model) => ({
-                tool: "claude" as const,
-                model,
-              })),
             ]),
             ...(codexModel === null ? [] : [
               { tool: "codex" as const, model: codexModel },
-              ...governing.chain.codex.map((model) => ({
-                tool: "codex" as const,
-                model,
-              })),
             ]),
             ...(grokModel === null ? [] : [
               { tool: "grok" as const, model: grokModel },
-              ...governing.chain.grok.map((model) => ({
-                tool: "grok" as const,
-                model,
-              })),
             ]),
           ];
-          if (candidates.length === 0) {
+          if (rawCandidates.length === 0) {
             throw new Error(
               `Cannot spawn ${name}: no route for ${request.tier} — ` +
                 `claude: ${governing.cells.claude.reason}; ` +
@@ -1812,54 +1836,25 @@ export class HiveSpawner implements Spawner {
           }
         } else {
           // The legacy static-table path: both columns always resolve.
-          candidates = [
+          rawCandidates = [
             { tool: "claude", model: claudeModel! },
             { tool: "codex", model: codexModel! },
             ...(grokModel === null
               ? []
               : [{ tool: "grok" as const, model: grokModel }]),
           ];
-          // The same-vendor release valve, derived from the pools the provider
-          // actually meters rather than from a model's name. When the primary
-          // Claude candidate is one the vendor caps separately, offer the account's
-          // own default alongside it — listed *after* the primary, so ties (and the
-          // no-quota-configured case) still prefer the primary, while real pressure
-          // on its pool lets quota pick the alternative on headroom.
-          const alternative = await this.releaseValveAlternative(claudeModel!);
-          if (alternative !== null) {
-            candidates.splice(1, 0, { tool: "claude", model: alternative });
-          }
         }
-        const eligible: QuotaRouteCandidate[] = [];
+        const eligible: AuthorizedLaunch[] = [];
         const excluded: { tool: CapabilityProvider; reason: string }[] = [];
-        for (const candidate of candidates) {
-          try {
-            // Money is an eligibility filter, like capability: it runs BEFORE
-            // quota, so an affordable candidate can still win the spawn rather
-            // than the whole launch dying on the priciest one.
-            const refusal = await this.spendRefusal(
-              candidate.tool,
-              candidate.model,
-            );
-            if (refusal !== null) {
-              excluded.push({ tool: candidate.tool, reason: refusal });
-              continue;
-            }
-            const candidateEffort = await resolveEffort(
-              candidate.tool,
-              candidate.model,
-            );
-            eligible.push({
-              ...candidate,
-              ...(candidateEffort === undefined
-                ? {}
-                : { effort: candidateEffort }),
-            });
-          } catch (error) {
+        for (const candidate of rawCandidates) {
+          const result = await authorizeCandidate(candidate);
+          if (result.refusal !== undefined) {
             excluded.push({
               tool: candidate.tool,
-              reason: error instanceof Error ? error.message : String(error),
+              reason: `${result.refusal.reason}: ${result.refusal.detail}`,
             });
+          } else {
+            eligible.push(result.authorized);
           }
         }
         if (eligible.length === 0) {
@@ -1877,8 +1872,8 @@ export class HiveSpawner implements Spawner {
         // eligible, so the throw above never fired, `excluded` was dropped on the
         // floor, and quota — which filters candidates down to the requested tool
         // and finds nothing left — reported `no route for <tier>`. The route was
-        // never missing. The refusal was a pending cost-consent, and the message
-        // sent the reader hunting for a routing bug that did not exist.
+        // never missing. The refusal was an eligibility policy decision, and
+        // the message sent the reader hunting for a routing bug that did not exist.
         if (request.tool !== undefined) {
           const why = excluded.filter((entry) => entry.tool === request.tool);
           if (
@@ -1894,6 +1889,7 @@ export class HiveSpawner implements Spawner {
         }
         candidates = eligible;
       }
+      candidates ??= await Promise.all(rawCandidates.map(requireGate));
       const explicitTool = request.model !== undefined ? tool : request.tool;
       const decision = await this.dependencies.quota.routeAndReserve({
         agentName: name,
@@ -1906,37 +1902,14 @@ export class HiveSpawner implements Spawner {
           : { reviewOfTool: request.reviewOfTool }),
         candidates,
       });
-      tool = decision.tool;
-      model = decision.model;
-      effort = decision.effort;
-      effortResolved = true;
+      authorized = decision.authorized;
       quotaReservationId = decision.reservation.id;
+    } else {
+      authorized = await requireGate({ tool, model });
     }
-    // The gate EVERY launch passes through, whatever route it took to get here —
-    // automatic, tier-pinned, or explicitly named; quota enabled or not.
-    //
-    // CONSENT TO ROUTE IS NOT CONSENT TO SPEND. This used to exempt an explicit
-    // model on the grounds that naming a model is an instruction — and it is, but
-    // it is an instruction about WHICH MODEL, not an agreement to be charged for
-    // it. Choosing the model and agreeing to pay for it are different permissions,
-    // and Hive had been conflating them in one direction (an explicit model was
-    // never asked about) while the derivation engine conflated them in the other
-    // (a routing.toml pin skipped the guard, so `hive routing` could show a pinned
-    // model as fine while a real spawn on it refused).
-    //
-    // So the route and the money are now settled separately: the pin or the
-    // explicit name WINS THE ROUTE, always, and the guard asks about the MONEY —
-    // once, remembering the answer. When nothing can be charged (credits off, or
-    // the pool has headroom) it asks nobody, which is every spawn today.
-    {
-      const refusal = await this.spendRefusal(tool, model);
-      if (refusal !== null) {
-        throw new Error(`Cannot spawn ${name}: ${refusal}`);
-      }
-    }
-    if (!effortResolved) {
-      effort = await resolveEffort(tool, model);
-    }
+    tool = authorized.tool;
+    model = authorized.model;
+    effort = authorized.effort;
     if (model !== "default") {
       switch (tool) {
         case "claude":
@@ -2190,23 +2163,51 @@ export class HiveSpawner implements Spawner {
           ? wrapCodexSpawnWithCapabilityEnv(command, worktree.path)
           : command;
       };
+      const revalidateAtAdapter = async (): Promise<AuthorizedLaunch> => {
+        if (quotaReservationId !== undefined) {
+          this.dependencies.quota?.requireActiveReservation?.(quotaReservationId);
+        }
+        const revalidated = await requireGate({
+          tool: authorized.tool,
+          model: authorized.model,
+          ...(authorized.effort === undefined ? {} : { effort: authorized.effort }),
+        });
+        if (
+          revalidated.tool !== authorized.tool ||
+          revalidated.model !== authorized.model ||
+          revalidated.effort !== authorized.effort
+        ) {
+          throw new Error(
+            `Cannot spawn ${name}: launch identity changed during final revalidation`,
+          );
+        }
+        authorized = revalidated;
+        return requireAuthorizedLaunch(authorized);
+      };
+      const launchTmux = async (
+        candidate: AuthorizedLaunch,
+        command: string,
+      ): Promise<void> => {
+        requireAuthorizedLaunch(candidate);
+        await this.dependencies.tmux.newSession(
+          record.tmuxSession,
+          worktree.path,
+          command,
+        );
+      };
 
       // See the control-restart path: readiness looks for the process hive
       // actually launched, so this must follow the session that wins.
       let launchedCommand = launchedCommandName(argv);
-      await this.dependencies.tmux.newSession(
-        record.tmuxSession,
-        worktree.path,
+      await launchTmux(
+        await revalidateAtAdapter(),
         withCapabilityEnv(shellJoin(argv) + (nativeCodex ? "" : promptSuffix)),
       );
       if (nativeCodex) {
         try {
-          await this.dependencies.codexAppServer!.startAgent(
-            record,
-            prompt,
-            false,
-            effort ?? "medium",
-          );
+          const candidate = await revalidateAtAdapter();
+          requireAuthorizedLaunch(candidate);
+          await this.dependencies.codexAppServer!.startAgent(record, prompt, false, effort ?? "medium");
         } catch (error) {
           // The binary advertised app-server support but the control process
           // could not complete its handshake. Replace it immediately with the
@@ -2244,9 +2245,8 @@ export class HiveSpawner implements Spawner {
               worktree.path,
             )
             : fallbackCommand;
-          await this.dependencies.tmux.newSession(
-            record.tmuxSession,
-            worktree.path,
+          await launchTmux(
+            await revalidateAtAdapter(),
             fallbackShell,
           );
         }

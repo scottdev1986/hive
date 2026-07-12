@@ -4,7 +4,10 @@ import {
   RoutingTierSchema,
   type AgentRecord,
   type AgentMessage,
+  type ExecutionIdentity,
+  type RoutingTier,
 } from "../schemas";
+import type { AuthorizedLaunch } from "./authorized-launch";
 
 export const SpawnRequestSchema = z.object({
   task: z.string().min(1),
@@ -26,6 +29,10 @@ export type SpawnRequest = z.infer<typeof SpawnRequestSchema>;
 
 export interface Spawner {
   spawn(req: SpawnRequest): Promise<AgentRecord>;
+  authorizeLaunch?(
+    identity: ExecutionIdentity,
+    tier: RoutingTier,
+  ): Promise<AuthorizedLaunch>;
   restartForControl?(
     agent: AgentRecord,
     message: AgentMessage,

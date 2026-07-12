@@ -45,12 +45,6 @@ export interface GoverningCell {
 export interface GoverningRoute {
   tool: CapabilityProvider;
   cells: Record<CapabilityProvider, GoverningCell>;
-  /**
-   * Eligible candidates after the primary, per column — the downshift chain
-   * quota ranks under pressure. Empty until user policy supplies an ordered
-   * candidate list.
-   */
-  chain: Record<CapabilityProvider, string[]>;
   /** Conflicts and refusals named out loud, verbatim. */
   notes: string[];
 }
@@ -138,12 +132,6 @@ export async function resolveGoverningRoute(
   const cell = derived.tiers.find((entry) => entry.tier === tier);
   if (cell === undefined) return null;
 
-  // A PINNED cell offers no alternatives. The user's explicit choice outranks the
-  // router, always — and a downshift chain underneath a pin is the router quietly
-  // reserving the right to overrule it the moment a pool gets tight.
-  const chainOf = (column: DerivedCell): string[] =>
-    column.model.layer === "pinned" ? [] : column.chain;
-
   const governingCell = (column: DerivedCell): GoverningCell => ({
     model: column.model.value,
     ...(column.effort.value === null ? {} : { effort: column.effort.value }),
@@ -157,11 +145,6 @@ export async function resolveGoverningRoute(
       claude: governingCell(cell.claude),
       codex: governingCell(cell.codex),
       grok: governingCell(cell.grok),
-    },
-    chain: {
-      claude: chainOf(cell.claude),
-      codex: chainOf(cell.codex),
-      grok: chainOf(cell.grok),
     },
     notes: [...cell.claude.notes, ...cell.codex.notes, ...cell.grok.notes],
   };

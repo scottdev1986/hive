@@ -5,7 +5,7 @@
 | Status | **GOVERNING** — this is the architecture the router rebuild follows |
 | Landed on main | 2026-07-12 (clifford) |
 | Authority | Supersedes any earlier routing design. Where another document disagrees with this one, this one wins and the other document is wrong. |
-| Implementation | Not started when written. Nothing below is shipped code. |
+| Implementation | PR1–PR3 implemented; policy storage and chains remain later work. |
 
 Downstream docs that must obey this one: `docs/architecture/model-control-center-settings-ui.md`
 (the settings UI for the policy this document defines).
@@ -14,13 +14,10 @@ Downstream docs that must obey this one: `docs/architecture/model-control-center
 reconciled text were wrong on the facts. They are corrected in place rather than
 laundered onto main; chiara's *design rulings* are unaltered.
 
-1. **The "pin path skips spendGuard" defect is FALSE and has been struck**
-   (§2.5, §4.2.1, §4.3, §7). The guard runs one frame up, the skip is deliberate
-   and documented in the source, and the consent *is* raised on a pinned model.
-   Disproved by cindy with mutation testing; independently re-verified in source
-   before landing. **§4.2.2 now carries what is actually load-bearing:** the
-   spawner is the sole unconditional net, and PR3 must replace it before
-   removing it.
+1. **A pin settles routing, never enablement.** The launch gate reads the exact
+   pinned model's policy row independently; false, missing, or unreadable policy
+   refuses. **§4.2.2 carries what is load-bearing:** the spawner is the sole
+   unconditional net, and PR3 replaces it before removing the legacy guard.
 2. **§6 says "SwiftUI settings scene."** The Workspace is 3,331 lines of
    **AppKit** with **zero** SwiftUI imports (`workspace/Sources/HiveWorkspace/`,
    verified): `NSView` + Auto Layout, `NSAppearance` theming, `Theme.swift`
@@ -46,7 +43,7 @@ It also says what survives and what dies in the landed UI artifact
 
 **Governing acceptance test (user):** every model a vendor advertises, at every
 effort it advertises, must be *reachable*. Unreachability may come only from
-user policy (disabled) or an honest gate (unconsented spend, exhausted quota,
+user policy (disabled or unreadable) or an honest gate (exhausted quota,
 capability floor) — never from a hardcode, an omission, or a default that
 quietly wins. The old system is gone. Hive should use more models across more
 tasks rather than defaulting to one.
@@ -57,8 +54,9 @@ tasks rather than defaulting to one.
    preference are deleted.
 2. Multiple models per category = ordered fallback chain (primary, then
    secondary). Never parallel, never ensemble.
-3. Empty category → fall back, but only within consent (enabled + spend guard +
-   availability + capability floor).
+3. Empty category → fall back only through enabled models that pass
+   availability and the capability floor. Enablement is consent; spawning never
+   opens a spend-approval prompt.
 4. A settings UI makes the user the router.
 
 ---
@@ -184,7 +182,8 @@ substitution; headroom becomes evidence, not ranking.
 - Refresh: daemon start, Control Center open, manual refresh, CLI version /
   account fingerprint change, pre-spawn when stale, periodic jitter. Atomic
   per-provider snapshot; silent/failed probes do not wipe last-good catalog;
-  billing silence → unknown (spendGuard ASK), never free/exhausted.
+  billing silence → unknown availability, never free/exhausted. Spend consent is
+  model enablement policy, not a spawn-time question.
 - **Context size:** not currently a first-class catalog field across vendors
   (runtime statusline/context telemetry exists; Claude's `[1m]` variant is an
   entitlement tag). Chandra's `minContextTokens` modifier is correct in design
@@ -342,30 +341,19 @@ For ordinary spawn (`category` + optional requirements):
 3. For each RawCandidate in user order, independently:
    G1 Identity   — catalog claims model; no name-shape blessing
    G2 Policy     — provider+model enabled; provider-off wins
-   G3 Effort     — exact advertised | none | provider-controlled; never invent
-   G4 Availability — exhausted → skip; UNKNOWN is not exhausted
-   G5 Capability — requirements + floors; binds pins and exact overrides too
-   G6 Spend      — spendGuard verbatim; unknown billing → vendor-keyed ASK;
-                   model pin / chain entry NEVER satisfies vendor-keyed consent
+   G3 Availability — exhausted → skip; UNKNOWN is not exhausted
+   G4 Capability — requirements + floors; binds pins and exact overrides too
+   G5 Effort     — exact advertised | none | provider-controlled; never invent
+   G6 Mint AuthorizedLaunch (or skip with reason)
    G7 Quota reserve — veto only, never reorder
-   G8 Mint AuthorizedLaunch (or skip with reason)
 4. First surviving AuthorizedLaunch → final revalidation at adapter → launch
 5. None → throw model:null-shaped error listing every link and gate reason
 ```
 
 Explicit `model=` / provider override: single candidate, same gates, **no
-substitution** on failure. Interactive request still does not satisfy
-vendor-keyed unknown-billing consent (hard truth); chandra's "floors and spend
-bind exact overrides" is the correct rule and the gate pipeline above enforces
-it.
-
-**Correction (clifford, 2026-07-12).** This section originally called the pin
-path a *live defect*: `resolveModel` (~657–664) returns a pinned model without
-calling `spendGuard`, and its comment says "the spend guard governs Hive's
-automatic choices only." **That claim was wrong and has been struck.** See §4.2.1
-for what is actually true. The design ruling above is unchanged — the gate
-pipeline is still what we build — but it is a *restructuring*, not a repair of a
-live money leak.
+substitution** on failure. Naming or pinning a model does not enable it. A false,
+missing, unreadable, or throwing policy query refuses with the model name and a
+Model Control Center remedy; there is no approval-queue escape hatch.
 
 Recovery/restart: reauthorize the stored exact execution identity through the
 same gatekeeper; never raw-launch from a stored model string.
@@ -404,11 +392,11 @@ which is exactly why their routing.toml already pins grok-4.5.
 
 **Steelman of chandra's "global fallback must itself be user-confirmed":**
 
-Consent answers "may this vendor charge me?" It does not answer "which of six
+Enablement answers "may this model run, including paid execution?" It does not answer "which of six
 enabled free models should do architecture review?" Any "fall back within
 consent" still needs an ordering. Registry order, lexical id, vendor order,
-cheapest-first, strongest-first are all hidden routers. A one-time spend
-approval for Grok does not rank every Grok model above Claude for every empty
+cheapest-first, strongest-first are all hidden routers. Enabling a Grok model
+does not rank it above Claude for every empty
 category. Therefore a **user-authored ordered global fallback** is the only
 honest implementation of the user's own rule. Requiring that chain to exist
 and be deliberate is not belt-and-braces theatre; it is the definition of
@@ -429,7 +417,6 @@ floors; empty category does not mean "random free model."
 2. It is **user-authored policy**, not "any consented model."
 3. It **ships provisional-and-active** with researched exact targets (§2.8),
    labeled provisional in the UI, fully editable. No per-spawn confirmation.
-   No second spend prompt beyond spendGuard.
 4. **Do not** refuse all empty-category spawns until a separate confirmation
    dialog (chandra's draft-only activation fails "ship ready to use").
 5. **Do** take chandra's distinction for *exhaustion*: a nonempty category
@@ -440,9 +427,8 @@ floors; empty category does not mean "random free model."
    matrix; dismissing settings after edit-or-accept is enough. No extra
    "confirm fallback" modal if the chain is visible policy.
 
-This is what I will take to the user as decision-grade: **consent-only is the
-gate filter; the default chain is the order; both are required; confirmation
-is "the chain exists as your policy," not a second approval per spawn.**
+The enabled set is the consent filter; the default chain is the order. Both are
+required, and neither creates a spawn-time approval flow.
 
 ### 2.8 Baseline table — honest and ready
 
@@ -490,7 +476,7 @@ catalog — do not freeze these strings in the binary):
 Take both: `route_outcomes` (chad name) with chandra's richer fields.
 
 Per decision: category, requirements, policy revision, registry snapshot ids,
-full ordered raw chain, every gate result/reason, consent subject/state,
+full ordered raw chain, every gate result/reason, enablement state,
 selected index, quota observations, source
 (category | global_fallback | exact_override).
 
@@ -598,38 +584,15 @@ confidence; never auto-reroutes.
 
 ### 4.2 Neither design fully called out (verified in source)
 
-1. ~~**Pin path skips spend exclusion today.**~~ **STRUCK — THIS WAS FALSE.**
-   *(Corrected by clifford 2026-07-12 after cindy adversarially disproved it with
-   mutation testing. It is preserved here, struck, because it was briefly the
-   governing text and someone will remember reading it.)*
+1. **Pins settle the route; enablement settles consent.**
 
-   The original finding claimed the pin path is **live-broken**: that a pinned
-   model with pending vendor consent would route and spend without asking.
-   **It does not. The consent is raised.**
-
-   What is true, verified in source:
-
-   - `resolveModel`'s pin return (`routing-derivation.ts:657–664`) genuinely does
-     **not** call `spendGuard`. Chiara read that line correctly.
-   - **The guard runs one frame up, in the same file.** `deriveCell:514–517`
-     calls `spendGuard` on the resolved pin explicitly:
-     `if (model.layer === "pinned" && resolvedRecord !== undefined) { spendGuard(...) }`
-   - **The skip is deliberate and documented** at `routing-derivation.ts:508–513`:
-     *"CONSENT TO ROUTE IS NOT CONSENT TO SPEND. A pin settles the ROUTE and the
-     engine never overrules it… but naming a model is not agreeing to be charged
-     for it, so a pinned model that would really cost money still raises the
-     consent request."* **Route and money are settled separately, on purpose.**
-     Excluding the pin would be the router overruling the user — the one thing a
-     pin exists to prevent.
-   - **Proven, not reasoned:** driving the real pin path against the live
-     `routing.toml` (grok-4.5 pinned on all four tiers, `cost-consent:grok`
-     pending) yields `model=grok-4.5`, `layer="pinned"`, **and**
-     `consentRequired=[{subject:"grok"}]`. Approving the vendor empties
-     `consentRequired`.
-
-   Chiara found the design and called it a bug. The lesson is general: a guard
-   that is absent from the line you are reading may be present in the caller.
-   Read the frame above before you name a money leak.
+   A pin remains the user's exact routing directive, so the router does not
+   substitute another model. It is not permission to bypass policy: the launch
+   gate independently reads enablement for that exact provider/model. Enabled is
+   the user's standing consent, while false, missing, unreadable, or throwing
+   policy reads refuse and point to the Model Control Center. No case files a
+   spend approval during a spawn. This keeps route and money separate without a
+   vendor-keyed consent side channel.
 
 2. **THE SOLE NET IS THE SPAWNER, AND IT IS UNCONDITIONAL — a hard build
    constraint for PR3.**
@@ -638,16 +601,15 @@ confidence; never auto-reroutes.
    decides a launch. **Derivation never blocks a launch, by design** — it settles
    the route and raises questions; the spawner is what refuses.
 
-   Mutation-tested: nulling **both** spawner guards while leaving derivation
-   fully intact caused a pinned, pending-consent Grok spawn to **launch** (the
-   existing consent-blocked test went red). Restoring them turned it green.
-   Derivation caught nothing, because catching is not its job.
+   Mutation-tested at PR3: forcing the enablement refusal off caused a disabled
+   Grok model to reach `tmux.newSession` with a concrete `grok -m grok-4.5`
+   command. Restoring the refusal stopped the process before any session existed.
 
    > **Therefore: in PR3, the spawner net must be REPLACED BEFORE IT IS REMOVED.**
    > Anyone restructuring that path who deletes the spawner guards expecting
    > derivation to catch the fall **will ship a live money leak.** `AuthorizedLaunch`
-   > must be load-bearing at the spawn boundary *before* `spendRefusal` comes out
-   > of it, not after. There is no moment where neither is holding.
+   > must be load-bearing at the spawn boundary before the legacy spend-approval
+   > guard comes out. There is no moment where neither is holding.
 
    This is the single most dangerous step in §5, and it is dangerous precisely
    because the code it replaces looks redundant from inside derivation.
@@ -696,11 +658,11 @@ confidence; never auto-reroutes.
 | Invariant | Satisfied by recommended design? |
 | --- | --- |
 | model:null → throw | yes — empty AuthorizedLaunch list |
-| spendGuard unknown-billing → ASK never spend | yes — G6 every candidate |
+| missing/unreadable/false enablement → REFUSE never spend | yes — G2 every candidate |
 | availabilityRefusal on exhausted; UNKNOWN ≠ exhausted | yes — G4 |
 | capability floor blocks even a pin | yes — chandra rule, not chad fold |
 | identifyModelVendor unclaimed ≠ unreadable | yes — explicit path unchanged |
-| vendor-keyed consent ≠ model pin | yes — and this already holds today (§4.2.1); the redesign must not lose it |
+| model pin ≠ model enablement | yes — exact route, independent policy gate (§4.2.1) |
 | no absolute allowance invention | meters stay percent + reset; unknown ≠ zero |
 | effort three-valued | yes at registry + inventory + policy |
 | Grok-class omission structurally impossible | yes — enumerator + 4th-provider test |
@@ -723,18 +685,17 @@ Nothing half-migrated may spend ungated. Each step independently green.
 3. **Gatekeeper + `AuthorizedLaunch` (closes the chain money hazard BEFORE chains exist).**  
    Rewire quota candidate build and all launch/resume entrypoints. Shadow mode
    optional for comparison logs; **no path may launch without authorization**.
-   Delete release-valve silent substitution. Bind floors and spend to pins and
+   Delete release-valve silent substitution. Bind floors and enablement to pins and
    exact overrides.
 
-   > **THE SPAWNER NET MUST BE REPLACED BEFORE IT IS REMOVED.** `spendRefusal` at
-   > `spawner-impl.ts:1932` (and the eligibility pass at `:1840`) is the **only**
-   > unconditional thing standing between a pending-consent model and a launch.
+   > **THE SPAWNER NET MUST BE REPLACED BEFORE IT IS REMOVED.** The adapter-boundary
+   > authorization check is the unconditional thing standing between a disabled
+   > model and a launch.
    > Derivation does not block launches and never did (§4.2.1, §4.2.2). Deleting
    > those guards on the assumption that derivation catches the fall is a **live
-   > money leak** — mutation-proven: null both, and a pinned, unconsented Grok
-   > spawn launches. `AuthorizedLaunch` must be load-bearing at that boundary
-   > *before* `spendRefusal` comes out of it. There is no frame in which neither
-   > is holding.
+   > money leak** — mutation-proven: disable the policy refusal and a disabled
+   > Grok spawn reaches tmux. `AuthorizedLaunch` must remain load-bearing at that
+   > boundary. There is no frame in which neither net is holding.
 
 4. **Policy store (SQLite) + CLI read/write + export + routing.toml import.**  
    Draft/provisional matrix active under flag `policy.mode =
@@ -830,7 +791,7 @@ on main. That ordering is the load-bearing safety decision.
 | Per-link effort | **chad** |
 | Final revalidation + recovery reauth | **chandra** |
 | route_outcomes / no auto-reorder | both |
-| Pin must not satisfy vendor-keyed consent | hard ground truth — **already upheld today** (`deriveCell:514–517` + `spawner-impl.ts:1932`); the redesign preserves it, it does not repair it (§4.2.1) |
+| Pin must not satisfy model enablement | user decision; exact route still passes the policy gate (§4.2.1) |
 | Spawner is the sole unconditional net; replace before removing | **cindy** (mutation-tested); neither architect saw it (§4.2.2) |
 
 ---
@@ -843,7 +804,7 @@ version of that kernel is the one that is actually airtight. Around it, keep
 your task categories (with long-context demoted to a constraint), put policy in
 SQLite with export, make empty categories walk a user-owned default chain that
 ships ready-to-use and provisional, never invent "any free model," keep the rule
-that a pin buys the route but never the spend (it already holds — see §4.2.1),
+that a pin buys the route but does not enable the model (see §4.2.1),
 and never let inventory omit a vendor again.
 
 The old tier ladder and the empty-chain quota footgun go away in that order:

@@ -224,15 +224,6 @@ describe("what governs may never break", () => {
     expect(governing!.cells.claude.reason).not.toContain("capability floor");
   });
 
-  test("no cell offers quota a downshift chain yet", async () => {
-    // The manifest's ordered candidate lists are gone; until user policy
-    // supplies one, there is nothing vetted to downshift onto — an empty
-    // chain, not a guessed one.
-    const governing = await resolveGoverningRoute("deep", io());
-    expect(governing!.chain.claude).toEqual([]);
-    expect(governing!.chain.codex).toEqual([]);
-  });
-
   test("the spend guard still refuses to auto-route into a charge", async () => {
     const governing = await resolveGoverningRoute(
       "deep",

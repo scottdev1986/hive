@@ -487,6 +487,7 @@ describe("HiveSpawner name pool", () => {
       const store = new FakeStore([controlled]);
       const tmux = new FakeTmux();
       const spawner = new HiveSpawner({
+        isModelEnabled: async () => true,
         db: store,
         repoRoot: root,
         port: 4317,
@@ -568,6 +569,7 @@ describe("HiveSpawner name pool", () => {
     let layoutRequests = 0;
     const controlQuota = makeControlQuota(root);
     const spawner = new HiveSpawner({
+      isModelEnabled: async () => true,
       db: store,
       repoRoot: root,
       port: 4317,
@@ -637,6 +639,7 @@ describe("HiveSpawner name pool", () => {
     const controlQuota = makeControlQuota(root);
     let layouts = 0;
     const spawner = new HiveSpawner({
+      isModelEnabled: async () => true,
       db: store,
       repoRoot: root,
       port: 4317,
@@ -687,6 +690,7 @@ describe("HiveSpawner name pool", () => {
     const terminal = new FakeTerminal();
     let routeReads = 0;
     const spawner = new HiveSpawner({
+      isModelEnabled: async () => true,
       db: store,
       repoRoot: root,
       port: 4317,
@@ -750,6 +754,7 @@ describe("HiveSpawner name pool", () => {
     const tmux = new FakeTmux();
     const terminal = new FakeTerminal();
     const spawner = new HiveSpawner({
+      isModelEnabled: async () => true,
       db: store,
       repoRoot: root,
       port: 4317,
@@ -889,6 +894,7 @@ describe("HiveSpawner name pool", () => {
       releaseRouting = resolve;
     });
     const spawner = new HiveSpawner({
+      isModelEnabled: async () => true,
       db: store,
       repoRoot: "/tmp/hive-concurrent-names",
       port: 4317,
@@ -929,6 +935,7 @@ describe("HiveSpawner name pool", () => {
       continueRouting = resolve;
     });
     const spawner = new HiveSpawner({
+      isModelEnabled: async () => true,
       db: store,
       repoRoot: "/tmp/hive-reservation-race",
       port: 4317,
@@ -972,6 +979,7 @@ describe("HiveSpawner name pool", () => {
     const store = new FakeStore(NAME_POOL.map((name) => agent(name)));
     let attemptedWorktree = false;
     const spawner = new HiveSpawner({
+      isModelEnabled: async () => true,
       db: store,
       repoRoot: "/tmp/hive-exhausted",
       port: 4317,
@@ -994,6 +1002,7 @@ describe("HiveSpawner name pool", () => {
   test("rejects an invalid requested name before creating a worktree", async () => {
     let attemptedWorktree = false;
     const spawner = new HiveSpawner({
+      isModelEnabled: async () => true,
       db: new FakeStore(),
       repoRoot: "/tmp/hive-invalid-name",
       port: 4317,
@@ -1018,6 +1027,7 @@ describe("HiveSpawner name pool", () => {
 
   test("rejects a requested name held by a live agent", async () => {
     const spawner = new HiveSpawner({
+      isModelEnabled: async () => true,
       db: new FakeStore([agent("maya")]),
       repoRoot: "/tmp/hive-collision",
       port: 4317,
@@ -1041,6 +1051,7 @@ describe("HiveSpawner name pool", () => {
   test("rejects the reserved orchestrator name before creating a worktree", async () => {
     let attemptedWorktree = false;
     const spawner = new HiveSpawner({
+      isModelEnabled: async () => true,
       db: new FakeStore(),
       repoRoot: "/tmp/hive-reserved-name",
       port: 4317,
@@ -1072,6 +1083,7 @@ describe("HiveSpawner wiring", () => {
     const store = new FakeStore();
     let probedAppServer = false;
     const spawner = new HiveSpawner({
+      isModelEnabled: async () => true,
       db: store,
       repoRoot: root,
       port: 4317,
@@ -1120,6 +1132,7 @@ describe("HiveSpawner wiring", () => {
     const tmux = new FakeTmux();
     const starts: Array<{ name: string; prompt: string; effort: string }> = [];
     const spawner = new HiveSpawner({
+      isModelEnabled: async () => true,
       db: store,
       repoRoot: root,
       port: 4317,
@@ -1177,6 +1190,7 @@ describe("HiveSpawner wiring", () => {
     const tmux = new FakeTmux();
     const disconnected: string[] = [];
     const spawner = new HiveSpawner({
+      isModelEnabled: async () => true,
       db: store,
       repoRoot: root,
       port: 4317,
@@ -1257,6 +1271,7 @@ describe("HiveSpawner wiring", () => {
     const store = new FakeStore();
     const tmux = new FakeTmux();
     const spawner = new HiveSpawner({
+      isModelEnabled: async () => true,
       db: store,
       repoRoot: root,
       port: 4317,
@@ -1353,6 +1368,7 @@ describe("HiveSpawner wiring", () => {
     const { db: quotaDb, quota } = strandingQuota(root);
     const store = new FakeStore();
     const spawner = new HiveSpawner({
+      isModelEnabled: async () => true,
       db: store,
       repoRoot: root,
       port: 4317,
@@ -1382,6 +1398,7 @@ describe("HiveSpawner wiring", () => {
     const { db: quotaDb, quota } = strandingQuota(root);
     const store = new FakeStore();
     const spawner = new HiveSpawner({
+      isModelEnabled: async () => true,
       db: store,
       repoRoot: root,
       port: 4317,
@@ -1426,6 +1443,7 @@ describe("HiveSpawner wiring", () => {
     }
     const store = new RefusingStore();
     const spawner = new HiveSpawner({
+      isModelEnabled: async () => true,
       db: store,
       repoRoot: root,
       port: 4317,
@@ -1469,6 +1487,7 @@ describe("HiveSpawner wiring", () => {
     const store = new FakeStore();
     const tmux = new FakeTmux();
     const spawner = new HiveSpawner({
+      isModelEnabled: async () => true,
       db: store,
       repoRoot: root,
       port: 4317,
@@ -1538,6 +1557,7 @@ describe("HiveSpawner wiring", () => {
     const tmux = new FakeTmux();
     const probes: Array<"claude" | "codex" | "grok"> = [];
     const spawner = new HiveSpawner({
+      isModelEnabled: async () => true,
       db: store,
       repoRoot: root,
       port: 4317,
@@ -1588,124 +1608,13 @@ describe("HiveSpawner wiring", () => {
     quotaDb.close();
   });
 
-  test("routes a deep-tier Claude spawn to Opus 4.8 when Fable's pool is under quota pressure", async () => {
-    const root = await mkdtemp(join(tmpdir(), "hive-spawner-quota-opus-"));
-    tempRoots.push(root);
-    const quotaDb = new HiveDatabase(join(root, "quota.db"));
-    const quota = new QuotaService(
-      new QuotaLedger(quotaDb),
-      QuotaConfigSchema.parse({
-        reserveFiveHourPct: 0,
-        reserveWeeklyPct: 0,
-        limits: [
-          {
-            // Deliberately under the deep-tier estimate (20): every
-            // reservation attempt against Fable's pool must fail.
-            provider: "claude",
-            account: "default",
-            pool: "claude-fable",
-            models: ["claude-fable-5"],
-            fiveHourAllowance: 10,
-            weeklyAllowance: 10,
-          },
-          {
-            provider: "claude",
-            account: "default",
-            pool: "claude-opus",
-            models: ["claude-opus-4-8"],
-            fiveHourAllowance: 100,
-            weeklyAllowance: 100,
-          },
-          {
-            provider: "codex",
-            account: "default",
-            pool: "codex",
-            models: ["gpt-5.6-sol"],
-            fiveHourAllowance: 100,
-            weeklyAllowance: 100,
-          },
-        ],
-      }),
-      () => new Date(timestamp),
-    );
-    const store = new FakeStore();
-    const tmux = new FakeTmux();
-    const spawner = new HiveSpawner({
-      db: store,
-      repoRoot: root,
-      port: 4317,
-      config: { terminal: "auto", headless: true },
-      routing: async () => DEFAULT_ROUTING.deep,
-      tmux,
-      terminal: new FakeTerminal(),
-      createWorktree: async (_repoRoot, name, slug) => {
-        const path = join(root, name);
-        await mkdir(path, { recursive: true });
-        return { path, branch: `hive/${name}-${slug}` };
-      },
-      sleep: signalReadiness(store),
-      resolveModel: fakeResolveModel,
-      // The valve is measurement-driven and ONLY measurement-driven now: it
-      // fires because the provider's own reading shows Fable metered
-      // separately, and its alternative is the account's own discovered
-      // default — no compiled-in name pair remains to fall back on.
-      discoverCapabilities: async (provider) =>
-        provider === "claude"
-          ? {
-            status: "ok" as const,
-            records: [
-              {
-                ...capabilityRecord("claude", "claude-fable-5", ["low", "high"]),
-                displayName: "Fable",
-              },
-              {
-                ...capabilityRecord("claude", "claude-opus-4-8", ["low", "high"]),
-                displayName: "Opus",
-              },
-            ],
-            effectiveDefault: {
-              provider: "claude" as const,
-              model: known("claude-opus-4-8", "claude.initialize", timestamp),
-              effort: unknown("surface-silent", "claude.initialize", timestamp),
-            },
-          }
-          : {
-            status: "ok" as const,
-            records: [{
-              ...capabilityRecord("codex", "gpt-5.6-sol", ["medium", "high"]),
-              displayName: "GPT-5.6-Sol",
-            }],
-            effectiveDefault: {
-              provider: "codex" as const,
-              model: known("gpt-5.6-sol", "codex.config/read", timestamp),
-              effort: known("medium", "codex.config/read", timestamp),
-            },
-          },
-      readBilling: async () => ({
-        creditsEnabled: known(false, "claude.get_usage", timestamp),
-        disabledReason: null,
-        generalUtilization: known(20, "claude.get_usage", timestamp),
-        modelUtilization: { fable: 40 },
-      }),
-      quota,
-    });
-
-    const spawned = await spawner.spawn({ task: "Deep task", tier: "deep" });
-    expect(spawned.tool).toEqual("claude");
-    expect(spawned.model).toEqual("claude-opus-4-8");
-    expect(spawned.quotaReservationId).toBeString();
-    expect(
-      quota.ledger.getReservation(spawned.quotaReservationId!)?.pool,
-    ).toEqual("claude-opus");
-    quotaDb.close();
-  });
-
   test("launches an explicit request model verbatim on the route's preferred tool", async () => {
     const root = await mkdtemp(join(tmpdir(), "hive-spawner-explicit-model-"));
     tempRoots.push(root);
     const store = new FakeStore();
     const tmux = new FakeTmux();
     const spawner = new HiveSpawner({
+      isModelEnabled: async () => true,
       db: store,
       repoRoot: root,
       port: 4317,
@@ -1744,6 +1653,7 @@ describe("HiveSpawner wiring", () => {
       ["low", "medium", "high"],
     );
     const spawner = new HiveSpawner({
+      isModelEnabled: async () => true,
       db: new FakeStore(),
       repoRoot: "/tmp/hive-effort-reject",
       port: 4317,
@@ -1781,6 +1691,7 @@ describe("HiveSpawner wiring", () => {
       ["low", "medium", "high"],
     );
     const spawner = new HiveSpawner({
+      isModelEnabled: async () => true,
       db: store,
       repoRoot: root,
       port: 4317,
@@ -1824,6 +1735,7 @@ describe("HiveSpawner wiring", () => {
       ["low", "medium", "high", "ultra"],
     );
     const spawner = new HiveSpawner({
+      isModelEnabled: async () => true,
       db: store,
       repoRoot: root,
       port: 4317,
@@ -1868,6 +1780,7 @@ describe("HiveSpawner wiring", () => {
       ["low", "medium", "high"],
     );
     const spawner = new HiveSpawner({
+      isModelEnabled: async () => true,
       db: store,
       repoRoot: root,
       port: 4317,
@@ -1931,6 +1844,7 @@ describe("HiveSpawner wiring", () => {
     const store = new FakeStore();
     const tmux = new FakeTmux();
     const spawner = new HiveSpawner({
+      isModelEnabled: async () => true,
       db: store,
       repoRoot: root,
       port: 4317,
@@ -1966,6 +1880,7 @@ describe("HiveSpawner wiring", () => {
     tempRoots.push(root);
     const store = new FakeStore();
     const spawner = new HiveSpawner({
+      isModelEnabled: async () => true,
       db: store,
       repoRoot: root,
       port: 4317,
@@ -2030,6 +1945,7 @@ describe("HiveSpawner wiring", () => {
     const store = new FakeStore();
     const tmux = new FakeTmux();
     const spawner = new HiveSpawner({
+      isModelEnabled: async () => true,
       db: store,
       repoRoot: root,
       port: 4317,
@@ -2090,6 +2006,7 @@ describe("HiveSpawner wiring", () => {
       return { path, branch: `hive/${name}-${slug}` };
     };
     const spawner = new HiveSpawner({
+      isModelEnabled: async () => true,
       db: store,
       repoRoot: root,
       port: 4317,
@@ -2222,6 +2139,7 @@ describe("HiveSpawner wiring", () => {
       const store = new FakeStore();
       const tmux = new FakeTmux();
       const spawner = new HiveSpawner({
+        isModelEnabled: async () => true,
         db: store,
         repoRoot: root,
         port: 4317,
@@ -2265,6 +2183,7 @@ describe("HiveSpawner wiring", () => {
     const tmux = new FakeTmux();
     let polls = 0;
     const spawner = new HiveSpawner({
+      isModelEnabled: async () => true,
       db: store,
       repoRoot: root,
       port: 4317,
@@ -2313,6 +2232,7 @@ describe("HiveSpawner wiring", () => {
       return { path, branch: `hive/${name}-${slug}` };
     };
     const spawner = new HiveSpawner({
+      isModelEnabled: async () => true,
       db: store,
       repoRoot: root,
       port: 4317,
@@ -2361,6 +2281,7 @@ describe("HiveSpawner wiring", () => {
     const tmux = new FakeTmux();
     const store = new FakeStore();
     const spawner = new HiveSpawner({
+      isModelEnabled: async () => true,
       db: store,
       repoRoot: root,
       port: 4317,
@@ -2393,6 +2314,7 @@ describe("HiveSpawner wiring", () => {
     const tmux = new FakeTmux();
     const store = new FakeStore();
     const spawner = new HiveSpawner({
+      isModelEnabled: async () => true,
       db: store,
       repoRoot: root,
       port: 4317,
@@ -2432,6 +2354,7 @@ describe("HiveSpawner wiring", () => {
     const terminal = new FakeTerminal();
     const removals: Array<[string, string]> = [];
     const spawner = new HiveSpawner({
+      isModelEnabled: async () => true,
       db: store,
       repoRoot: root,
       port: 4317,
@@ -2476,6 +2399,7 @@ describe("HiveSpawner wiring", () => {
       "[hive] process exited with status 1",
     ].join("\n"));
     const spawner = new HiveSpawner({
+      isModelEnabled: async () => true,
       db: store,
       repoRoot: root,
       port: 4317,
@@ -2513,6 +2437,7 @@ describe("HiveSpawner wiring", () => {
       "typecheck complete: 2 errors found",
     ].join("\n"));
     const spawner = new HiveSpawner({
+      isModelEnabled: async () => true,
       db: store,
       repoRoot: root,
       port: 4317,
@@ -2559,6 +2484,7 @@ describe("HiveSpawner wiring", () => {
     const tmux = new FlakyCaptureTmux();
     const store = new FakeStore();
     const spawner = new HiveSpawner({
+      isModelEnabled: async () => true,
       db: store,
       repoRoot: root,
       port: 4317,
@@ -2605,6 +2531,7 @@ describe("HiveSpawner wiring", () => {
     const tmux = new FakeTmux();
     const probed: string[] = [];
     const spawner = new HiveSpawner({
+      isModelEnabled: async () => true,
       db: store,
       repoRoot: root,
       port: 4317,
@@ -2647,6 +2574,7 @@ describe("HiveSpawner wiring", () => {
     const store = new FakeStore();
     const tmux = new FakeTmux();
     const spawner = new HiveSpawner({
+      isModelEnabled: async () => true,
       db: store,
       repoRoot: root,
       port: 4317,
@@ -2693,6 +2621,7 @@ describe("HiveSpawner wiring", () => {
     const tmux = new FakeTmux();
     let removed = 0;
     const spawner = new HiveSpawner({
+      isModelEnabled: async () => true,
       db: store,
       repoRoot: root,
       port: 4317,
@@ -2733,6 +2662,7 @@ describe("HiveSpawner wiring", () => {
     const store = new FakeStore();
     let removed = 0;
     const spawner = new HiveSpawner({
+      isModelEnabled: async () => true,
       db: store,
       repoRoot: root,
       port: 4317,
@@ -2767,6 +2697,7 @@ describe("HiveSpawner wiring", () => {
     const store = new FakeStore();
     let removed = 0;
     const spawner = new HiveSpawner({
+      isModelEnabled: async () => true,
       db: store,
       repoRoot: root,
       port: 4317,
@@ -2809,6 +2740,7 @@ describe("HiveSpawner wiring", () => {
     let present = true;
     let layouts = 0;
     const spawner = new HiveSpawner({
+      isModelEnabled: async () => true,
       db: store,
       repoRoot: root,
       port: 4317,
@@ -2869,6 +2801,7 @@ describe("HiveSpawner wiring", () => {
     const terminal = new FakeTerminal();
     const controlQuota = makeControlQuota(root);
     const spawner = new HiveSpawner({
+      isModelEnabled: async () => true,
       db: store,
       repoRoot: root,
       port: 4317,
@@ -2906,6 +2839,7 @@ describe("HiveSpawner wiring", () => {
       }
     });
     const spawner = new HiveSpawner({
+      isModelEnabled: async () => true,
       db: store,
       repoRoot: root,
       port: 4317,
@@ -2947,6 +2881,7 @@ describe("HiveSpawner wiring", () => {
       store: FakeStore,
     ): HiveSpawner =>
       new HiveSpawner({
+        isModelEnabled: async () => true,
         db: store,
         repoRoot: root,
         port: 4317,
@@ -3273,6 +3208,7 @@ describe("coding guidelines are guaranteed in context at spawn", () => {
     const store = new FakeStore();
     const tmux = new FakeTmux();
     const spawner = new HiveSpawner({
+      isModelEnabled: async () => true,
       db: store,
       repoRoot: root,
       port: 4317,
@@ -3305,6 +3241,7 @@ describe("coding guidelines are guaranteed in context at spawn", () => {
     const starts: string[] = [];
     const codexSpawner = (driver: "tui" | "app-server", tmux: FakeTmux) =>
       new HiveSpawner({
+        isModelEnabled: async () => true,
         db: new FakeStore(),
         repoRoot: root,
         port: 4317,
@@ -3439,6 +3376,7 @@ describe("HiveSpawner launch prompt transport", () => {
     sleep: () => Promise<void>,
   ): HiveSpawner {
     return new HiveSpawner({
+      isModelEnabled: async () => true,
       db: store,
       repoRoot: root,
       port: 4317,
@@ -3571,584 +3509,7 @@ describe("HiveSpawner launch prompt transport", () => {
   });
 });
 
-describe("the release valve follows the provider's metering, not a model name", () => {
-  // MEASURED 2026-07-12 (get_usage): Fable draws the SHARED five-hour pool (+2%
-  // under a Fable-only burst) AND is capped separately in `model_scoped`. Both.
-  // The valve's rationale is real — but the vendor can rearrange it without
-  // telling us, so the trigger reads the metering rather than the name.
-  const billing = (metered: Record<string, number>): AccountBilling => ({
-    creditsEnabled: known(false, "claude.get_usage", timestamp),
-    disabledReason: null,
-    generalUtilization: known(20, "claude.get_usage", timestamp),
-    modelUtilization: metered,
-  });
-
-  const discovery = (): CapabilityDiscoveryResult => ({
-    status: "ok",
-    records: [
-      {
-        ...capabilityRecord("claude", "claude-fable-5", ["low", "high"]),
-        displayName: "Fable",
-      },
-      {
-        ...capabilityRecord("claude", "claude-opus-4-8", ["low", "high"]),
-        displayName: "Opus",
-      },
-    ],
-    effectiveDefault: {
-      provider: "claude",
-      model: known("claude-opus-4-8", "claude.initialize", timestamp),
-      effort: unknown("surface-silent", "claude.initialize", timestamp),
-    },
-  });
-
-  async function candidatesFor(
-    root: string,
-    options: {
-      claudeModel: string;
-      metered: Record<string, number>;
-      withMeasurement: boolean;
-    },
-  ): Promise<string[]> {
-    const seen: string[] = [];
-    const store = new FakeStore();
-    const spawner = new HiveSpawner({
-      db: store,
-      repoRoot: root,
-      port: 4317,
-      config: { terminal: "auto", headless: true },
-      routing: async () => DEFAULT_ROUTING.deep,
-      tmux: new FakeTmux(),
-      terminal: new FakeTerminal(),
-      createWorktree: async (_repoRoot, name, slug) => {
-        const path = join(root, name);
-        await mkdir(path, { recursive: true });
-        return { path, branch: `hive/${name}-${slug}` };
-      },
-      sleep: signalReadiness(store),
-      resolveModel: async (tool) =>
-        tool === "claude" ? options.claudeModel : "gpt-5.6-sol",
-      ...(options.withMeasurement
-        ? {
-          discoverCapabilities: async (provider: "claude" | "codex" | "grok") =>
-            provider === "grok"
-              ? { status: "unavailable" as const, reason: "not in fixture" }
-              : provider === "claude"
-              ? discovery()
-              : {
-                status: "ok" as const,
-                records: [{
-                  ...capabilityRecord("codex", "gpt-5.6-sol", ["medium"]),
-                  displayName: "GPT-5.6-Sol",
-                }],
-                effectiveDefault: {
-                  provider: "codex" as const,
-                  model: known(
-                    "gpt-5.6-sol",
-                    "codex.config/read",
-                    timestamp,
-                  ),
-                  effort: known("medium", "codex.config/read", timestamp),
-                },
-              },
-          readBilling: async (provider: "claude" | "codex" | "grok") =>
-            provider === "grok"
-              ? null
-              : provider === "claude"
-              ? billing(options.metered)
-              : accountBillingFromCodexRateLimits({
-                rateLimits: {
-                  primary: { usedPercent: 20 },
-                  secondary: { usedPercent: 10 },
-                  credits: {
-                    hasCredits: false,
-                    unlimited: false,
-                    balance: "0",
-                  },
-                },
-              }, timestamp),
-        }
-        : {}),
-      quota: {
-        config: { enabled: true },
-        routeAndReserve: async (request: { candidates: { tool: string; model: string }[] }) => {
-          seen.push(...request.candidates.map((c) => `${c.tool}:${c.model}`));
-          const first = request.candidates[0]!;
-          return {
-            tool: first.tool,
-            model: first.model,
-            reservation: { id: "r1" },
-          };
-        },
-        markStarted: () => {},
-        cancel: async () => {},
-        recordRouteFailure: () => {},
-      } as never,
-    });
-    await spawner.spawn({ task: "valve", tier: "deep" });
-    return seen;
-  }
-
-  test("a separately-metered primary gets the account's default as a valve", async () => {
-    const root = await mkdtemp(join(tmpdir(), "hive-valve-metered-"));
-    tempRoots.push(root);
-    const candidates = await candidatesFor(root, {
-      claudeModel: "claude-fable-5",
-      metered: { fable: 15 },
-      withMeasurement: true,
-    });
-    // Opus is offered AFTER Fable: ties keep the primary, and only real pressure
-    // on Fable's pool lets quota pick the alternative on headroom.
-    expect(candidates).toEqual([
-      "claude:claude-fable-5",
-      "claude:claude-opus-4-8",
-      "codex:gpt-5.6-sol",
-    ]);
-  });
-
-  test("the SAME model gets NO valve once the vendor stops metering it separately", async () => {
-    // This is the whole point. The old `=== CLAUDE_BEST_MODEL` check could never
-    // notice this change; it would have gone on diverting deep work away from a
-    // model the provider no longer treats as heavy, forever, and silently.
-    const root = await mkdtemp(join(tmpdir(), "hive-valve-unmetered-"));
-    tempRoots.push(root);
-    const candidates = await candidatesFor(root, {
-      claudeModel: "claude-fable-5",
-      metered: {},
-      withMeasurement: true,
-    });
-    expect(candidates).toEqual([
-      "claude:claude-fable-5",
-      "codex:gpt-5.6-sol",
-    ]);
-  });
-
-  test("a model the vendor DOES meter separately gets the valve, whatever it is called", async () => {
-    // No name is privileged. If the provider gives some future model a dedicated
-    // pool, the valve applies to it without anyone editing a constant.
-    const root = await mkdtemp(join(tmpdir(), "hive-valve-other-"));
-    tempRoots.push(root);
-    const candidates = await candidatesFor(root, {
-      claudeModel: "claude-opus-4-8",
-      metered: { opus: 40 },
-      withMeasurement: true,
-    });
-    expect(candidates[0]).toBe("claude:claude-opus-4-8");
-    // Opus IS the account's default here, so there is no other model to offer:
-    // a valve that offers the model it is relieving is not a valve.
-    expect(candidates).not.toContain("claude:claude-opus-4-8_alt");
-  });
-
-  test("with no live reading there is no valve: nothing is invented", async () => {
-    // The blind fallback used to be a compiled-in Fable→Opus pair — a stale
-    // cache of a real measurement, but still predetermined model knowledge,
-    // and it is gone. Without a live reading the valve simply does not fire.
-    const root = await mkdtemp(join(tmpdir(), "hive-valve-blind-"));
-    tempRoots.push(root);
-    const candidates = await candidatesFor(root, {
-      claudeModel: "claude-fable-5",
-      metered: {},
-      withMeasurement: false,
-    });
-    expect(candidates).toEqual([
-      "claude:claude-fable-5",
-      "codex:gpt-5.6-sol",
-    ]);
-  });
-});
-
-describe("the spend guard is consulted by the LIVE spawn path", () => {
-  // The guard already governed the derived table and `hive routing`. Neither of
-  // those launches anything. These tests are about the connection, not the rule:
-  // a guard that is correct, tested, green and never consulted is
-  // indistinguishable from one that works, until the day it matters.
-  const billing = (
-    creditsOn: boolean,
-    fableUsed: number,
-  ): AccountBilling => ({
-    creditsEnabled: known(creditsOn, "claude.get_usage", timestamp),
-    disabledReason: null,
-    generalUtilization: known(20, "claude.get_usage", timestamp),
-    modelUtilization: { fable: fableUsed },
-  });
-
-  const claudeDiscovery = (): CapabilityDiscoveryResult => ({
-    status: "ok",
-    records: [
-      {
-        ...capabilityRecord("claude", "claude-fable-5", ["low", "high"]),
-        displayName: "Fable",
-      },
-      {
-        ...capabilityRecord("claude", "claude-opus-4-8", ["low", "high"]),
-        displayName: "Opus",
-      },
-    ],
-    effectiveDefault: {
-      provider: "claude",
-      model: known("claude-opus-4-8", "claude.initialize", timestamp),
-      effort: unknown("surface-silent", "claude.initialize", timestamp),
-    },
-  });
-
-  async function spawnWith(
-    root: string,
-    options: {
-      billing: AccountBilling;
-      model?: string;
-      approve?: string;
-      /** Supplied when the caller needs to read the approvals a REFUSED spawn
-       * filed — a throw never returns the store it wrote to. */
-      store?: FakeStore;
-    },
-  ) {
-    const store = options.store ?? new FakeStore();
-    if (options.approve !== undefined) {
-      store.insertApproval({
-        id: `cost-consent:${options.approve}`,
-        agentName: "router",
-        kind: "cost-consent",
-        description: "approved in a previous turn",
-        status: "approved",
-        createdAt: timestamp,
-        resolvedAt: timestamp,
-      });
-    }
-    const spawner = new HiveSpawner({
-      db: store,
-      repoRoot: root,
-      port: 4317,
-      config: { terminal: "auto", headless: true },
-      // The deep tier's Claude column, with no quota configured at all — so the
-      // ONLY thing that can stop a charge here is the guard itself.
-      routing: async () => ({
-        ...DEFAULT_ROUTING.deep,
-        tool: "claude",
-      }),
-      tmux: new FakeTmux(),
-      terminal: new FakeTerminal(),
-      createWorktree: async (_repoRoot, name, slug) => {
-        const path = join(root, name);
-        await mkdir(path, { recursive: true });
-        return { path, branch: `hive/${name}-${slug}` };
-      },
-      sleep: signalReadiness(store),
-      resolveModel: async () => "claude-fable-5",
-      discoverCapabilities: async () => claudeDiscovery(),
-      readBilling: async () => options.billing,
-    });
-    const record = await spawner.spawn({
-      task: "does the launch path consult the guard",
-      tier: "deep",
-      ...(options.model === undefined ? {} : { model: options.model }),
-    });
-    return { record, store };
-  }
-
-  test("credits OFF + pool spent: it does not ASK, and it does not LAUNCH there", async () => {
-    // Reversed deliberately, and this is the misroute the user predicted: "since we
-    // do not have credits, any time we want deep it should automatically go to 4.8".
-    //
-    // The old expectation launched the exhausted model because nothing could be
-    // charged for it. But with credits off, a request past the plan limit is
-    // REFUSED, not billed — so that spawn was landing a deep agent on a model the
-    // vendor was never going to run, and calling it thrift.
-    //
-    // Availability and money are now separate questions. No consent is requested
-    // (nothing can charge him, so there is nothing to ask), and the unrunnable
-    // model does not take the spawn. This harness has no derived router wired, so
-    // there is no chain to fall through to and the launch is refused with the
-    // reason; the real daemon derives a chain and lands on Opus silently, which
-    // `routing-resolve.test.ts` proves.
-    const root = await mkdtemp(join(tmpdir(), "hive-guard-off-"));
-    tempRoots.push(root);
-    const store = new FakeStore();
-    let failure = "";
-    try {
-      await spawnWith(root, { billing: billing(false, 100), store });
-    } catch (error) {
-      failure = error instanceof Error ? error.message : String(error);
-    }
-    expect(failure).toContain("cannot run");
-    expect(failure).toContain("usage credits are OFF");
-    // Not a money question, so he is never asked about it.
-    expect([...store.approvals.values()]).toEqual([]);
-  });
-
-  test("credits ON + pool spent: the LIVE spawn is refused and he is asked", async () => {
-    const root = await mkdtemp(join(tmpdir(), "hive-guard-on-"));
-    tempRoots.push(root);
-    let failure = "";
-    const store = new FakeStore();
-    try {
-      await spawnWith(root, { billing: billing(true, 100) });
-    } catch (error) {
-      failure = error instanceof Error ? error.message : String(error);
-    }
-    expect(failure).toContain("would spend your money");
-    expect(failure).toContain("approvals queue");
-  });
-
-  test("credits ON + pool spent: the request lands in the approvals queue", async () => {
-    const root = await mkdtemp(join(tmpdir(), "hive-guard-queue-"));
-    tempRoots.push(root);
-    const store = new FakeStore();
-    const spawner = new HiveSpawner({
-      db: store,
-      repoRoot: root,
-      port: 4317,
-      config: { terminal: "auto", headless: true },
-      routing: async () => ({ ...DEFAULT_ROUTING.deep, tool: "claude" }),
-      tmux: new FakeTmux(),
-      terminal: new FakeTerminal(),
-      createWorktree: async (_repoRoot, name, slug) => {
-        const path = join(root, name);
-        await mkdir(path, { recursive: true });
-        return { path, branch: `hive/${name}-${slug}` };
-      },
-      sleep: signalReadiness(store),
-      resolveModel: async () => "claude-fable-5",
-      discoverCapabilities: async () => claudeDiscovery(),
-      readBilling: async () => billing(true, 100),
-    });
-    await spawner.spawn({ task: "ask me first", tier: "deep" }).catch(() => {});
-    const asked = [...store.approvals.values()];
-    expect(asked).toHaveLength(1);
-    expect(asked[0]!.id).toBe("cost-consent:claude-fable-5");
-    expect(asked[0]!.status).toBe("pending");
-    expect(asked[0]!.description).toContain("SPEND REAL MONEY");
-  });
-
-  test("an approved request lets the live spawn through", async () => {
-    const root = await mkdtemp(join(tmpdir(), "hive-guard-approved-"));
-    tempRoots.push(root);
-    const { record } = await spawnWith(root, {
-      billing: billing(true, 100),
-      approve: "claude-fable-5",
-    });
-    expect(record.model).toBe("claude-fable-5");
-    expect(record.status).toBe("working");
-  });
-
-  test("an EXPLICIT model settles the ROUTE, but not the MONEY: it asks once", async () => {
-    // Reversed deliberately. Naming a model was being read as agreeing to be
-    // charged for it. Those are different permissions: CONSENT TO ROUTE IS NOT
-    // CONSENT TO SPEND. He chose the model — the router never substitutes another —
-    // but a spawn that would really be billed asks him once and remembers.
-    const root = await mkdtemp(join(tmpdir(), "hive-guard-pinned-"));
-    tempRoots.push(root);
-    const store = new FakeStore();
-    let failure = "";
-    try {
-      await spawnWith(root, {
-        billing: billing(true, 100),
-        model: "claude-fable-5",
-        store,
-      });
-    } catch (error) {
-      failure = error instanceof Error ? error.message : String(error);
-    }
-    expect(failure).toContain("would spend your money");
-    expect(failure).toContain("asks once and remembers");
-    expect([...store.approvals.values()]).toHaveLength(1);
-  });
-
-  test("...and once he has approved it, the same explicit model just launches", async () => {
-    // "It will not ask you twice" is a promise the queue already makes. The point
-    // of asking is to get an answer, not to nag.
-    const root = await mkdtemp(join(tmpdir(), "hive-guard-pinned-ok-"));
-    tempRoots.push(root);
-    const { record, store } = await spawnWith(root, {
-      billing: billing(true, 100),
-      model: "claude-fable-5",
-      approve: "claude-fable-5",
-    });
-    expect(record.model).toBe("claude-fable-5");
-    expect(record.status).toBe("working");
-    expect([...store.approvals.values()]).toHaveLength(1);
-  });
-
-  test("an unreadable bill never authorizes an automatic spawn", async () => {
-    // A probe that failed is not evidence that a charge is impossible. Automatic
-    // routing stops and asks; an explicit pin remains the escape hatch.
-    const root = await mkdtemp(join(tmpdir(), "hive-guard-blind-"));
-    tempRoots.push(root);
-    const store = new FakeStore();
-    const spawner = new HiveSpawner({
-      db: store,
-      repoRoot: root,
-      port: 4317,
-      config: { terminal: "auto", headless: true },
-      routing: async () => ({ ...DEFAULT_ROUTING.deep, tool: "claude" }),
-      tmux: new FakeTmux(),
-      terminal: new FakeTerminal(),
-      createWorktree: async (_repoRoot, name, slug) => {
-        const path = join(root, name);
-        await mkdir(path, { recursive: true });
-        return { path, branch: `hive/${name}-${slug}` };
-      },
-      sleep: signalReadiness(store),
-      resolveModel: async () => "claude-fable-5",
-      discoverCapabilities: async () => claudeDiscovery(),
-      readBilling: async () => null,
-    });
-    let failure = "";
-    try {
-      await spawner.spawn({ task: "blind", tier: "deep" });
-    } catch (error) {
-      failure = error instanceof Error ? error.message : String(error);
-    }
-    expect(failure).toContain("could not read claude plan or billing state");
-    expect([...store.approvals.values()]).toHaveLength(1);
-  });
-});
-
-describe("the Codex spend reader drives the SAME live spawn guard", () => {
-  const codexDiscovery = (): CapabilityDiscoveryResult => ({
-    status: "ok",
-    records: [{
-      ...capabilityRecord("codex", "gpt-5.6-sol", ["medium", "xhigh"]),
-      displayName: "GPT-5.6-Sol",
-    }],
-    effectiveDefault: {
-      provider: "codex",
-      model: known("gpt-5.6-sol", "codex.config/read", timestamp),
-      effort: known("xhigh", "codex.config/read", timestamp),
-    },
-  });
-
-  const codexBilling = (
-    usedPercent: number,
-    credits: { hasCredits: boolean; unlimited: boolean; balance: string },
-  ): AccountBilling => accountBillingFromCodexRateLimits({
-    rateLimits: {
-      limitId: "codex",
-      limitName: null,
-      primary: { usedPercent, windowDurationMins: 300, resetsAt: 1 },
-      secondary: { usedPercent: 23, windowDurationMins: 10080, resetsAt: 2 },
-      credits,
-      individualLimit: null,
-      planType: "prolite",
-      rateLimitReachedType: null,
-    },
-    rateLimitsByLimitId: {},
-  }, timestamp);
-
-  async function spawnCodex(
-    root: string,
-    billing: AccountBilling,
-    model?: string,
-  ) {
-    const store = new FakeStore();
-    const spawner = new HiveSpawner({
-      db: store,
-      repoRoot: root,
-      port: 4317,
-      config: { terminal: "auto", headless: true },
-      routing: async () => ({ ...DEFAULT_ROUTING.deep, tool: "codex" }),
-      tmux: new FakeTmux(),
-      terminal: new FakeTerminal(),
-      createWorktree: async (_repoRoot, name, slug) => {
-        const path = join(root, name);
-        await mkdir(path, { recursive: true });
-        return { path, branch: `hive/${name}-${slug}` };
-      },
-      sleep: signalReadiness(store),
-      resolveModel: async () => "gpt-5.6-sol",
-      discoverCapabilities: async () => codexDiscovery(),
-      readBilling: async (provider) => provider === "codex" ? billing : null,
-    });
-    try {
-      const record = await spawner.spawn({
-        task: "drive the real Codex spawn gate",
-        tier: "deep",
-        ...(model === undefined ? {} : { model }),
-      });
-      return { record, store, failure: null };
-    } catch (error) {
-      return {
-        record: null,
-        store,
-        failure: error instanceof Error ? error.message : String(error),
-      };
-    }
-  }
-
-  test("A: today's 41%/23% state launches and files zero consent requests", async () => {
-    const root = await mkdtemp(join(tmpdir(), "hive-codex-guard-headroom-"));
-    tempRoots.push(root);
-    const { record, store } = await spawnCodex(
-      root,
-      codexBilling(41, { hasCredits: false, unlimited: false, balance: "0" }),
-    );
-    expect(record).toMatchObject({
-      tool: "codex",
-      model: "gpt-5.6-sol",
-      status: "working",
-    });
-    expect([...store.approvals.values()]).toEqual([]);
-  });
-
-  test("B: exhausted + credits present refuses the spawn and queues consent", async () => {
-    const root = await mkdtemp(join(tmpdir(), "hive-codex-guard-credits-"));
-    tempRoots.push(root);
-    const billing = codexBilling(100, {
-      hasCredits: true,
-      unlimited: false,
-      balance: "100",
-    });
-    const { failure, store } = await spawnCodex(root, billing);
-    expect(failure).toContain("would spend your money");
-    const asked: Approval[] = [...store.approvals.values()];
-    expect(asked).toHaveLength(1);
-    expect(asked[0]!.description).toContain("SPEND REAL MONEY");
-  });
-
-  test("C: exhausted + zero credits asks and names unobservable auto-top-up", async () => {
-    const root = await mkdtemp(join(tmpdir(), "hive-codex-guard-topup-"));
-    tempRoots.push(root);
-    const { failure, store } = await spawnCodex(
-      root,
-      codexBilling(100, {
-        hasCredits: false,
-        unlimited: false,
-        balance: "0",
-      }),
-    );
-    expect(failure).toContain("auto-top-up");
-    expect(failure).toContain("may purchase credits");
-    const asked = [...store.approvals.values()];
-    expect(asked).toHaveLength(1);
-    expect(asked[0]!.description).toContain("auto-top-up");
-    expect(asked[0]!.description).toContain("may purchase credits");
-  });
-
-  test("D: an explicit Codex model asks once when the pool is spent and credits could pay", async () => {
-    // The same reversal, on the other vendor: consent to route is not consent to
-    // spend, and the rule must not differ by vendor or he cannot reason about it.
-    const root = await mkdtemp(join(tmpdir(), "hive-codex-guard-pinned-"));
-    tempRoots.push(root);
-    const { failure, store } = await spawnCodex(
-      root,
-      codexBilling(100, { hasCredits: true, unlimited: false, balance: "100" }),
-      "gpt-5.6-sol",
-    );
-    expect(failure).toContain("would spend your money");
-    expect([...store.approvals.values()]).toHaveLength(1);
-  });
-});
-
 describe("a refusal names the reason it actually refused for", () => {
-  // Live on 0.0.20: `hive_spawn tool:"grok", tier:"standard"` (no model named) was
-  // refused with `Requested provider grok has no route for standard`. The route was
-  // there the whole time — the only thing standing in the way was an unanswered
-  // `cost-consent:grok`, and approving it launched the byte-identical spawn.
-  //
-  // The reason existed. It just never got out: grok was dropped from the candidate
-  // list WITH its refusal string, claude survived, so the "nothing is eligible"
-  // throw never fired and the reasons were discarded. Quota then filtered the
-  // survivors down to the requested vendor, found none, and reported the absence as
-  // a missing route. A GUARD THAT REFUSES FOR REASON X MUST SAY X.
   const grokDiscovery = (): CapabilityDiscoveryResult => ({
     status: "ok",
     records: [{
@@ -4175,8 +3536,6 @@ describe("a refusal names the reason it actually refused for", () => {
     },
   });
 
-  /** Credits off, pool cool: nothing can charge him here, so claude sails through
-   * the spend guard and stays eligible. That is what hides the grok reason. */
   const claudeBilling = (): AccountBilling => ({
     creditsEnabled: known(false, "claude.get_usage", timestamp),
     disabledReason: null,
@@ -4195,17 +3554,21 @@ describe("a refusal names the reason it actually refused for", () => {
         ? { model: null, reason: "grok discovery named no model for standard" }
         : { model: grokModel, reason: "derived from live discovery" },
     },
-    chain: { claude: [], codex: [], grok: [] },
     notes: [],
   });
 
   async function spawnGrok(
     root: string,
     grokModel: string | null,
-  ): Promise<{ failure: string; store: FakeStore }> {
+    enabled: boolean | null | undefined,
+  ): Promise<{ failure: string; store: FakeStore; tmux: FakeTmux }> {
     const store = new FakeStore();
     const db = new HiveDatabase(join(root, "refusal-quota.db"));
+    const tmux = new FakeTmux();
     const spawner = new HiveSpawner({
+      ...(enabled === undefined
+        ? {}
+        : { isModelEnabled: async () => enabled }),
       db: store,
       repoRoot: root,
       port: 4317,
@@ -4225,7 +3588,7 @@ describe("a refusal names the reason it actually refused for", () => {
         }),
         () => new Date(timestamp),
       ),
-      tmux: new FakeTmux(),
+      tmux,
       terminal: new FakeTerminal(),
       createWorktree: async (_repoRoot, name, slug) => {
         const path = join(root, name);
@@ -4236,11 +3599,15 @@ describe("a refusal names the reason it actually refused for", () => {
       resolveModel: fakeResolveModel,
       discoverCapabilities: async (provider) =>
         provider === "grok" ? grokDiscovery() : claudeDiscovery(),
-      // Grok's billing surface is unreadable (it has no percent on the wire), so
-      // the charge cannot be ruled out and the guard must ask. Claude's is
-      // readable and says nothing can be billed.
+      // Grok's billing surface is unreadable. Enablement is the user's standing
+      // consent now, so billing never opens an approval prompt.
       readBilling: async (provider) =>
         provider === "claude" ? claudeBilling() : null,
+      grokIdentity: () => ({
+        version: "0.1.0",
+        buildHash: "test-build",
+        channel: "stable",
+      }),
     });
     let failure = "";
     try {
@@ -4253,41 +3620,59 @@ describe("a refusal names the reason it actually refused for", () => {
       failure = error instanceof Error ? error.message : String(error);
     }
     db.close();
-    return { failure, store };
+    return { failure, store, tmux };
   }
 
-  test("consent-blocked: it says SPEND CONSENT, names cost-consent:grok, and never claims there is no route", async () => {
+  test("a disabled model refuses with the model and Model Control Center remedy", async () => {
     const root = await mkdtemp(join(tmpdir(), "hive-refusal-consent-"));
     tempRoots.push(root);
-    const { failure, store } = await spawnGrok(root, "grok-4.5");
+    const { failure, store, tmux } = await spawnGrok(root, "grok-4.5", false);
 
-    // The lie. This is the whole bug: the route is right there in the cell.
+    expect(tmux.sessions).toEqual([]);
     expect(failure).not.toContain("no route");
-    // The truth, and the three things he needs to act on it.
-    expect(failure).toContain("SPEND CONSENT");
-    expect(failure).toContain("cost-consent:grok");
-    expect(failure).toContain("hive_approvals");
-    // And the question is really in the queue he was pointed at.
-    const asked = [...store.approvals.values()];
-    expect(asked).toHaveLength(1);
-    expect(asked[0]!.id).toBe("cost-consent:grok");
-    expect(asked[0]!.status).toBe("pending");
+    expect(failure).toContain("grok-4.5 is not enabled");
+    expect(failure).toContain("Model Control Center");
+    expect([...store.approvals.values()]).toEqual([]);
+  });
+
+  test("an unreadable enablement row refuses rather than becoming permission", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-refusal-unreadable-"));
+    tempRoots.push(root);
+    const { failure, tmux } = await spawnGrok(root, "grok-4.5", null);
+    expect(failure).toContain("grok-4.5 is not enabled");
+    expect(failure).toContain("Model Control Center");
+    expect(tmux.sessions).toEqual([]);
+  });
+
+  test("a missing enablement reader refuses rather than becoming permission", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-refusal-missing-policy-"));
+    tempRoots.push(root);
+    const { failure, tmux } = await spawnGrok(root, "grok-4.5", undefined);
+    expect(failure).toContain("grok-4.5 is not enabled");
+    expect(failure).toContain("Model Control Center");
+    expect(tmux.sessions).toEqual([]);
+  });
+
+  test("an enabled model launches without filing an approval even when billing is unknown", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-enabled-unknown-billing-"));
+    tempRoots.push(root);
+    const { failure, store, tmux } = await spawnGrok(root, "grok-4.5", true);
+    expect(failure).toBe("");
+    expect([...store.approvals.values()]).toEqual([]);
+    expect(tmux.sessions).toHaveLength(1);
   });
 
   test("a route that is genuinely missing still reports a missing route", async () => {
-    // The other mask of the same bug: a guard that cries "consent" when the route
-    // really is gone is no more honest than one that cries "no route" over a
-    // pending approval. The two cases must stay distinguishable.
+    // A policy refusal when the route is genuinely gone would be no more honest
+    // than a routing refusal over a disabled model. The cases stay distinct.
     const root = await mkdtemp(join(tmpdir(), "hive-refusal-noroute-"));
     tempRoots.push(root);
-    const { failure, store } = await spawnGrok(root, null);
+    const { failure, store } = await spawnGrok(root, null, undefined);
 
     // Still a routing refusal, and it still carries the engine's own reason.
     expect(failure).toContain("no grok route for standard");
     expect(failure).toContain("grok discovery named no model for standard");
-    expect(failure).not.toContain("SPEND CONSENT");
-    expect(failure).not.toContain("cost-consent");
-    // Nothing to consent to: there is no model to be charged for.
+    expect(failure).not.toContain("not enabled");
     expect([...store.approvals.values()]).toEqual([]);
   });
 });

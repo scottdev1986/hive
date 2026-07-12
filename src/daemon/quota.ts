@@ -32,16 +32,19 @@ import {
   type DiscoveredPoolReading,
   type QuotaProbe,
 } from "./quota-sources";
+import {
+  requireAuthorizedLaunch,
+  type AuthorizedLaunch,
+} from "./authorized-launch";
 
 const HOUR_MS = 60 * 60 * 1_000;
 const DAY_MS = 24 * HOUR_MS;
 
-export interface QuotaRouteCandidate {
-  tool: CapabilityProvider;
-  model: string;
-  /** Null/absent means the provider default has not been observed yet. */
-  effort?: string;
-}
+export type QuotaRouteCandidate = AuthorizedLaunch;
+type QuotaCandidateIdentity = Pick<
+  AuthorizedLaunch,
+  "tool" | "model" | "effort"
+>;
 
 export interface QuotaRouteRequest {
   agentName: string;
@@ -54,7 +57,11 @@ export interface QuotaRouteRequest {
   candidates: QuotaRouteCandidate[];
 }
 
-export interface QuotaRouteDecision extends QuotaRouteCandidate {
+export interface QuotaRouteDecision {
+  authorized: AuthorizedLaunch;
+  tool: CapabilityProvider;
+  model: string;
+  effort?: string;
   reservation: QuotaReservation;
   status: QuotaStatus;
   reason: string;
@@ -68,7 +75,7 @@ export interface QuotaRouteDecision extends QuotaRouteCandidate {
   warnings: string[];
 }
 
-export interface ControlQuotaRequest extends QuotaRouteCandidate {
+export interface ControlQuotaRequest extends QuotaCandidateIdentity {
   agentName: string;
   tier: RoutingTier;
   controlMessageId: string;
@@ -533,7 +540,7 @@ export class QuotaService {
    * decides. A model with no cap of its own is metered by the general pool alone,
    * which is the ordinary case and is not a gap in coverage.
    */
-  private limitsFor(candidate: QuotaRouteCandidate): ResolvedQuotaLimit[] {
+  private limitsFor(candidate: QuotaCandidateIdentity): ResolvedQuotaLimit[] {
     const routable = this.resolvedLimits().filter((limit) =>
       limit.routable && limit.provider === candidate.tool
     );
@@ -558,7 +565,7 @@ export class QuotaService {
   }
 
   /** The pool a run is booked against: its own cap if it has one, else general. */
-  private limitFor(candidate: QuotaRouteCandidate): ResolvedQuotaLimit | null {
+  private limitFor(candidate: QuotaCandidateIdentity): ResolvedQuotaLimit | null {
     const limits = this.limitsFor(candidate);
     return limits.at(-1) ?? null;
   }
@@ -570,7 +577,7 @@ export class QuotaService {
    * happened to match it first.
    */
   poolsGoverning(
-    candidate: QuotaRouteCandidate,
+    candidate: QuotaCandidateIdentity,
     now = this.clock(),
   ): QuotaPoolStatus[] {
     return this.limitsFor(candidate).map((limit) =>
@@ -677,7 +684,7 @@ export class QuotaService {
   /** One reservation per pool the run spends from; the first is the primary. */
   private reservationInputs(
     agentName: string,
-    candidate: QuotaRouteCandidate,
+    candidate: QuotaCandidateIdentity,
     entries: { limit: ResolvedQuotaLimit; status: QuotaPoolStatus }[],
     tier: RoutingTier,
     now: Date,
@@ -744,7 +751,7 @@ export class QuotaService {
    * when Hive last tried, and it forgets on a schedule.
    */
   private quarantinedUntil(
-    candidate: QuotaRouteCandidate,
+    candidate: QuotaCandidateIdentity,
     now: Date,
   ): { until: string; reason: string } | null {
     const health = this.ledger.routeHealth(
@@ -773,7 +780,7 @@ export class QuotaService {
 
   /** An agent came up. Whatever we thought about this route, it works. */
   noteLaunchSucceeded(
-    candidate: QuotaRouteCandidate,
+    candidate: QuotaCandidateIdentity,
     at = iso(this.clock()),
   ): void {
     this.ledger.recordLaunchSuccess(
@@ -790,7 +797,7 @@ export class QuotaService {
    * pool is wide open, so it is never offered as a fallback.
    */
   private hasRoom(
-    candidate: QuotaRouteCandidate,
+    candidate: QuotaCandidateIdentity,
     tier: RoutingTier,
     now: Date,
   ): boolean {
@@ -837,7 +844,7 @@ export class QuotaService {
 
   /** Which pool blocked this route, how much is left, and when it comes back. */
   private describeBlock(
-    candidate: QuotaRouteCandidate,
+    candidate: QuotaCandidateIdentity,
     limit: ResolvedQuotaLimit,
     status: QuotaPoolStatus,
   ): string {
@@ -863,7 +870,7 @@ export class QuotaService {
    * cost — says so by name.
    */
   private pressureWarnings(
-    candidate: QuotaRouteCandidate,
+    candidate: QuotaCandidateIdentity,
     entries: { limit: ResolvedQuotaLimit; status: QuotaPoolStatus }[],
     tier: RoutingTier,
   ): string[] {
@@ -1425,7 +1432,10 @@ export class QuotaService {
       : { fiveRemaining, weekRemaining };
   }
 
-  async routeAndReserve(request: QuotaRouteRequest): Promise<QuotaRouteDecision> {
+  async routeAndReserve(
+    request: QuotaRouteRequest,
+  ): Promise<QuotaRouteDecision> {
+    for (const candidate of request.candidates) requireAuthorizedLaunch(candidate);
     const now = this.clock();
     if (
       request.reviewOfTool !== undefined &&
@@ -1587,6 +1597,7 @@ export class QuotaService {
         await this.alertUnknown(item.candidate, now);
         return {
           ...item.candidate,
+          authorized: item.candidate,
           reservation,
           status,
           reason: `${item.candidate.tool} selected in compatibility mode`,
@@ -1631,6 +1642,7 @@ export class QuotaService {
         for (const entry of item.entries) await this.alertPool(entry.limit, now);
         return {
           ...item.candidate,
+          authorized: item.candidate,
           reservation: primary,
           status: this.statusForLimit(governing.limit, now),
           reason: item.candidate.tool === preferred
@@ -1666,6 +1678,19 @@ export class QuotaService {
         this.describeResetCredits(blockedProviders),
       safeFallback,
     );
+  }
+
+  /** Final adapter-boundary check: a stale/released reservation launches nothing. */
+  requireActiveReservation(reservationId: string): void {
+    const reservation = this.ledger.getReservation(reservationId);
+    if (
+      reservation === null || reservation.status !== "active" ||
+      new Date(reservation.expiresAt) <= this.clock()
+    ) {
+      throw new QuotaExhaustedError(
+        `Quota reservation ${reservationId} is no longer active at launch`,
+      );
+    }
   }
 
   /**
@@ -2056,7 +2081,7 @@ export class QuotaService {
    * is what this whole subsystem exists to avoid.
    */
   private async alertUnknown(
-    candidate: QuotaRouteCandidate,
+    candidate: QuotaCandidateIdentity,
     now: Date,
   ): Promise<void> {
     const scope: QuotaScope = {

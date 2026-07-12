@@ -79,6 +79,7 @@ describe("CLI-to-daemon smoke", () => {
     const db = new HiveDatabase(":memory:");
     const tmux = new FakeTmux();
     const spawner = new HiveSpawner({
+      isModelEnabled: async () => true,
       db,
       repoRoot: root,
       port: 0,

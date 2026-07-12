@@ -7,6 +7,10 @@ import {
 import { shellJoin } from "../adapters/tmux";
 import type { TmuxAdapter } from "../adapters/tmux";
 import {
+  type AuthorizedLaunch,
+  requireAuthorizedLaunch,
+} from "./authorized-launch";
+import {
   buildClaudeResumeCommand,
   findLatestClaudeSessionId,
   resolveWorkingClaudeExecutable,
@@ -26,8 +30,10 @@ import {
 } from "../adapters/tools/grok";
 import {
   ORCHESTRATOR_NAME,
+  CapabilityProviderSchema,
   unknownVendor,
   type AgentRecord,
+  type ExecutionIdentity,
   type HiveConfig,
 } from "../schemas";
 import type { HiveDatabase } from "./db";
@@ -89,6 +95,11 @@ export interface CrashRecoveryDependencies {
     options?: { idempotencyKey?: string },
   ) => Promise<unknown>;
   settleQuota: (agent: AgentRecord) => Promise<void>;
+  /** PR5 wires the policy-backed full gate. Missing/unreadable refuses resume. */
+  authorizeLaunch?: (
+    identity: ExecutionIdentity,
+    tier: AgentRecord["tier"],
+  ) => Promise<AuthorizedLaunch | null>;
   flushQueued: (agentName: string) => Promise<unknown>;
   /** Drops a stale Claude Channels registration: the connection died with
    * the crashed process, and a resumed process re-registers on its own. */
@@ -392,6 +403,23 @@ export class CrashRecovery {
     // would silently stall on the first prompt.
     const dangerous = this.deps.autonomy?.() === "dangerous";
     try {
+      if (!CapabilityProviderSchema.safeParse(record.tool).success) {
+        return unknownVendor(record.tool as never, "crash recovery resume");
+      }
+      if (identity === undefined) {
+        throw new Error("no immutable execution identity is recorded");
+      }
+      const authorized = await this.deps.authorizeLaunch?.(
+        identity,
+        record.tier,
+      ) ?? null;
+      if (authorized === null) {
+        throw new Error(
+          `${identity.model} enablement policy is unreadable; open the Model ` +
+            "Control Center and enable it before resuming",
+        );
+      }
+      requireAuthorizedLaunch(authorized);
       // One switch decides both the config the resume writes and the argv it
       // launches: a vendor with no arm gets neither, and the throw lands in
       // the launch-failure catch below naming it. Splitting the two would let
@@ -474,6 +502,18 @@ export class CrashRecovery {
       const command = record.tool === "grok"
         ? wrapGrokSpawnWithCompatibilityEnv(shellJoin(argv))
         : shellJoin(argv);
+      const revalidated = await this.deps.authorizeLaunch?.(
+        identity,
+        record.tier,
+      ) ?? null;
+      if (
+        revalidated === null || revalidated.tool !== authorized.tool ||
+        revalidated.model !== authorized.model ||
+        revalidated.effort !== authorized.effort
+      ) {
+        throw new Error("resume authorization changed before the process adapter");
+      }
+      requireAuthorizedLaunch(revalidated);
       await this.deps.tmux.newSession(
         record.tmuxSession,
         worktreePath,
