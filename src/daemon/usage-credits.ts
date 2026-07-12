@@ -149,37 +149,65 @@ export function accountBillingFromUsage(
   };
 }
 
-export type ModelCost =
-  /** Covered by the plan the user already pays for. Costs nothing extra. */
-  | { state: "on-plan"; detail: string }
-  /** The plan pool that gates it is spent; running it now spends real money. */
-  | { state: "spends-credits"; detail: string }
-  /** Its pool is spent and nothing can pay: no credits. It genuinely cannot run. */
-  | { state: "unpayable"; detail: string }
-  /** Not measurable. Never rendered as any of the above. */
+export type SpendRisk =
+  /** Cannot cost money: either credits are off, or the plan still covers it. */
+  | { state: "no-spend"; detail: string }
+  /** Would overflow the plan into PAID credits. Ask him first. */
+  | { state: "would-spend"; detail: string }
+  /** Cannot be determined. Resolves to ASK — silence is not consent. */
   | { state: "unknown"; detail: string };
 
 /**
- * What running this model right now would cost.
+ * Would launching this model right now spend the user's real money?
  *
- * A model with its own ceiling (Fable has one; most models do not) is gated by
- * whichever pool bites first — its own or the account-wide one. **Absence from
- * `model_scoped` means the model has no extra ceiling, not that it has no plan
- * coverage**: Opus is absent from that list and is plainly plan-billed. Reading
- * absence as "no plan" would have disabled Opus, which is the same absence-is-not-
- * false trap in a costume.
+ * The guard keys on MONEY, not on a model's name. There is no special case for
+ * Fable or for anything else: the thing worth protecting is his wallet.
+ *
+ * **With usage credits OFF, nothing can silently spend money.** A request that
+ * outruns the plan simply hits the plan limit and fails — the provider refuses,
+ * no charge occurs. So the guard does not fire at all in that state, whatever the
+ * pools say. A guard that nags a user who cannot be charged is a broken guard,
+ * and one he learns to click through is worse than none.
+ *
+ * With credits ON, the vendor's own rule takes over — *"usage credits cover you
+ * when you hit your plan limits"* — so an exhausted pool means the next spawn is
+ * billed. That is the case to ask about, and it is measured, not guessed.
+ *
+ * A DECLARED GAP, stated rather than papered over: a spawn that BEGINS with plan
+ * headroom can still cross into credits mid-run, and no free surface predicts how
+ * much a spawn will consume. Hive cannot ask in advance for that case. It is a
+ * false negative it cannot close, and pretending otherwise — by asking on every
+ * spawn — would trade a real gap for a prompt nobody reads.
+ *
+ * **Absence from `model_scoped` is not evidence of anything.** Opus is absent from
+ * that list and is plainly plan-billed: the list holds models with an EXTRA
+ * ceiling, not "the models on the plan". A model with no ceiling of its own is
+ * judged by the account-wide pool.
  */
-export function modelCost(
+export function spendRisk(
   billing: AccountBilling,
   displayName: string,
-): ModelCost {
+): SpendRisk {
+  // The one fact that settles it on its own. No credits, no charge — the plan
+  // limit is a wall, not a meter.
+  if (
+    billing.creditsEnabled.state === "known" && !billing.creditsEnabled.value
+  ) {
+    return {
+      state: "no-spend",
+      detail: "usage credits are off, so nothing can be charged: a request past " +
+        "the plan limit is refused, not billed",
+    };
+  }
+
   const own = billing.modelUtilization[displayName.toLowerCase()];
   const general = billing.generalUtilization;
   if (general.state !== "known" && own === undefined) {
     return {
       state: "unknown",
-      detail: "no plan-usage reading for this account, so whether this model " +
-        "would spend money is not measurable",
+      detail: "no plan-usage reading, so Hive cannot tell whether this spawn " +
+        "would be billed to credits — and it will not spend your money on a " +
+        "guess",
     };
   }
   const worst = Math.max(
@@ -191,34 +219,20 @@ export function modelCost(
       ? `account plan pool ${worst}% used`
       : `${displayName} pool ${own}% used`;
     return {
-      state: "on-plan",
-      detail: `covered by the plan (${which}); costs no extra money`,
+      state: "no-spend",
+      detail: `the plan still covers this (${which})`,
     };
   }
 
-  // The gating pool is spent. From here on the vendor bills usage credits — its
-  // own words: "Usage credits cover you when you hit your plan limits."
-  if (billing.creditsEnabled.state !== "known") {
-    return {
-      state: "unknown",
-      detail: "the plan pool is exhausted and Hive cannot read whether usage " +
-        "credits are enabled, so it will not auto-route into a possible charge",
-    };
-  }
-  if (!billing.creditsEnabled.value) {
-    return {
-      state: "unpayable",
-      detail: `the ${displayName} plan pool is exhausted and usage credits are ` +
-        `off${
-          billing.disabledReason === null ? "" : ` (${billing.disabledReason})`
-        }, so nothing can pay for this spawn`,
-    };
-  }
+  // The pool is spent, and credits are on (or unreadable). Either way the next
+  // spawn may be billed, and that is his call to make, not Hive's.
   return {
-    state: "spends-credits",
-    detail: `the ${displayName} plan pool is exhausted, so this spawn would be ` +
-      "billed to usage credits — real money, which Hive does not spend without " +
-      "being asked",
+    state: "would-spend",
+    detail: billing.creditsEnabled.state === "known"
+      ? `the ${displayName} plan pool is exhausted and usage credits are ON, so ` +
+        "this spawn would be billed to credits — real money"
+      : `the ${displayName} plan pool is exhausted and Hive cannot read whether ` +
+        "usage credits are on, so it cannot rule out a charge",
   };
 }
 
@@ -227,10 +241,8 @@ export function modelCost(
  *
  * It rides the transport quota discovery already uses — the same free
  * `initialize` + `get_usage` frames, no second probe and no second session. A
- * failure yields `null`, which switches the cost filter OFF rather than ON: an
- * unreadable bill is not a free one, but it is not grounds to refuse every model
- * on suspicion either. The router then falls back to its other eligibility rules
- * and says, in the surface, that it could not read the bill.
+ * failure yields `null`, and the caller then treats the risk as UNKNOWN rather
+ * than as zero: an unreadable bill is not a free one.
  */
 export async function readAccountBilling(
   transport: ClaudeProbeTransport = new ClaudeStdioProbeTransport(),

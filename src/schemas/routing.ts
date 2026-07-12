@@ -61,32 +61,23 @@ export const DEFAULT_ROUTING: RoutingTable = {
   },
 };
 
-// Fable draws heavy shared capacity and moves to usage-only billing off the
-// user's plan on this date. Before this instant, default routing keeps
-// resolving the deep tier's "best" alias to Fable (see CLAUDE_BEST_MODEL in
-// adapters/tools/models.ts). On/after this instant, default routing stops
-// auto-selecting Fable — nothing is removed: explicit selection (pinning
-// "best" or "claude-fable-5" in routing.toml) keeps working forever, and
-// quota pressure can already route a deep-tier Claude spawn to Opus 4.8
-// before this date too. UTC boundary, matching this codebase's other
-// date handling defaults.
-export const FABLE_AUTO_ROUTING_CUTOFF = "2026-07-12T00:00:00Z";
-
-// Duplicated from CLAUDE_OPUS_MODEL in adapters/tools/models.ts rather than
-// imported: schemas has no dependency on the adapters layer. A models.test.ts
-// check cross-verifies the two stay equal.
-const POST_FABLE_CUTOFF_DEEP_MODEL = "claude-opus-4-8";
-
-const POST_FABLE_CUTOFF_ROUTING: RoutingTable = {
-  ...DEFAULT_ROUTING,
-  deep: {
-    ...DEFAULT_ROUTING.deep,
-    claude: { model: POST_FABLE_CUTOFF_DEEP_MODEL },
-  },
-};
-
-export function defaultRoutingTable(now: Date): RoutingTable {
-  return now.getTime() >= Date.parse(FABLE_AUTO_ROUTING_CUTOFF)
-    ? POST_FABLE_CUTOFF_ROUTING
-    : DEFAULT_ROUTING;
+/**
+ * The shipped table, with no date in it.
+ *
+ * It used to carry `FABLE_AUTO_ROUTING_CUTOFF`: on 2026-07-12, deep-tier Claude
+ * stopped auto-selecting Fable, because Fable was believed to "move to usage-only
+ * billing off the user's plan" on that date. Driving the provider AFTER that date
+ * falsified the belief — Fable still sits on a plan-scoped weekly pool with most
+ * of it unused, so it costs the user nothing extra and excluding it wasted
+ * capacity he already pays for.
+ *
+ * The constant is gone rather than corrected, because a date was never the right
+ * instrument: it is a proxy for a billing fact, and a proxy is wrong silently.
+ * What money costs is now MEASURED (`daemon/usage-credits.ts`), and the guard
+ * that protects the user's wallet keys on the money, not on a model's name.
+ * Fable is an ordinary candidate again: ranked by its own plan pool, gated by
+ * capability, downshifted by quota pressure like anything else.
+ */
+export function defaultRoutingTable(): RoutingTable {
+  return DEFAULT_ROUTING;
 }

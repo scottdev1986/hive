@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { DEFAULT_ROUTING, FABLE_AUTO_ROUTING_CUTOFF } from "../schemas";
+import { DEFAULT_ROUTING } from "../schemas";
 import {
   loadHiveConfig,
   loadQuotaConfig,
@@ -13,7 +13,6 @@ import {
 let tempRoot = "";
 let hiveHome = "";
 let previousHiveHome: string | undefined;
-const BEFORE_FABLE_CUTOFF = new Date("2026-07-11T12:00:00.000Z");
 
 beforeAll(async () => {
   tempRoot = await mkdtemp(join(tmpdir(), "hive-config-"));
@@ -61,10 +60,9 @@ describe("config loading", () => {
         idleReapMinutes: 10,
       },
     });
-    const beforeFableCutoff = new Date(
-      new Date(FABLE_AUTO_ROUTING_CUTOFF).getTime() - 1,
-    );
-    expect(await loadRoutingTable(beforeFableCutoff)).toEqual(DEFAULT_ROUTING);
+    // The routing table has no clock any more: the Fable cutoff it used to carry
+    // encoded a billing belief that measurement falsified.
+    expect(await loadRoutingTable()).toEqual(DEFAULT_ROUTING);
     expect(await loadQuotaConfig()).toMatchObject({
       enabled: true,
       limits: [],
@@ -176,7 +174,7 @@ describe("config loading", () => {
         idleReapMinutes: 10,
       },
     });
-    const routing = await loadRoutingTable(BEFORE_FABLE_CUTOFF);
+    const routing = await loadRoutingTable();
     expect(routing.deep).toEqual({
       tool: "codex",
       // The table is loaded at BEFORE_FABLE_CUTOFF, so the pre-cutoff constant is
@@ -195,7 +193,7 @@ describe("config loading", () => {
         model: "gpt-cheap-local",
       },
     });
-    expect(await resolveRoute("deep", BEFORE_FABLE_CUTOFF)).toEqual(routing.deep);
+    expect(await resolveRoute("deep")).toEqual(routing.deep);
   });
 
   test("deep-merges one tool override without changing the other tool", async () => {
@@ -205,7 +203,7 @@ describe("config loading", () => {
       '[cheap.claude]\nmodel = "haiku-local"\n',
     );
 
-    const routing = await loadRoutingTable(BEFORE_FABLE_CUTOFF);
+    const routing = await loadRoutingTable();
     expect(routing.cheap.claude).toEqual({
       ...DEFAULT_ROUTING.cheap.claude,
       model: "haiku-local",
@@ -273,32 +271,27 @@ describe("config loading", () => {
     expect(Object.hasOwn(Object.prototype, pollutionKey)).toEqual(false);
   });
 
-  describe("Fable auto-routing cutoff", () => {
-    const cutoff = new Date(FABLE_AUTO_ROUTING_CUTOFF);
-    const beforeCutoff = new Date(cutoff.getTime() - 1);
+  describe("Fable is an ordinary model again", () => {
+    // The cutoff is deleted, not corrected. It made the deep tier abandon Fable
+    // on a DATE, because Fable was believed to move to usage-only billing then.
+    // Driving the provider after that date falsified the belief: Fable is still
+    // plan-billed with most of its weekly pool unused, so excluding it wasted
+    // capacity the user already pays for.
 
-    test("deep tier stays on the best alias before the cutoff", async () => {
+    test("the deep tier auto-selects the best alias, on any day", async () => {
       await resetHome();
-      const routing = await loadRoutingTable(beforeCutoff);
+      const routing = await loadRoutingTable();
       expect(routing.deep.claude.model).toEqual("best");
-      expect(await resolveRoute("deep", beforeCutoff)).toEqual(routing.deep);
+      expect(await resolveRoute("deep")).toEqual(routing.deep);
     });
 
-    test("deep tier defaults to Opus 4.8 on/after the cutoff", async () => {
-      await resetHome();
-      const routing = await loadRoutingTable(cutoff);
-      expect(routing.deep.claude.model).toEqual("claude-opus-4-8");
-      expect(routing.deep.codex).toEqual(DEFAULT_ROUTING.deep.codex);
-      expect(await resolveRoute("deep", cutoff)).toEqual(routing.deep);
-    });
-
-    test("an explicit routing.toml pin to Fable survives the cutoff", async () => {
+    test("an explicit routing.toml pin still wins, as it always did", async () => {
       await resetHome();
       await writeFile(
         join(hiveHome, "routing.toml"),
         '[deep.claude]\nmodel = "claude-fable-5"\n',
       );
-      const routing = await loadRoutingTable(cutoff);
+      const routing = await loadRoutingTable();
       expect(routing.deep.claude.model).toEqual("claude-fable-5");
     });
   });

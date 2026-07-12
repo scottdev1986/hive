@@ -154,7 +154,7 @@ export async function recordShadowObservation(
       },
       pins,
       snapshot,
-      shipped: defaultRoutingTable(now),
+      shipped: defaultRoutingTable(),
       billing,
       now,
     });

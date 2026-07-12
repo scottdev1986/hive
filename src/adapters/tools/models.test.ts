@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Route } from "../../schemas";
-import { defaultRoutingTable, FABLE_AUTO_ROUTING_CUTOFF } from "../../schemas";
+import { defaultRoutingTable } from "../../schemas";
 import {
   CLAUDE_BEST_MODEL,
   CLAUDE_OPUS_MODEL,
@@ -138,10 +138,12 @@ describe("resolveConcreteModel", () => {
 });
 
 describe("CLAUDE_OPUS_MODEL", () => {
-  test("matches the model the post-Fable-cutoff default routing table pins", () => {
-    // Cross-check against schemas/routing.ts's own (necessarily duplicated,
-    // since schemas cannot depend on adapters) copy of this id.
-    const table = defaultRoutingTable(new Date(FABLE_AUTO_ROUTING_CUTOFF));
-    expect(table.deep.claude.model).toEqual(CLAUDE_OPUS_MODEL);
+  test("is not what the deep tier auto-selects: the date that forced it is gone", () => {
+    // This used to cross-check the post-cutoff table's hardcoded Opus id. The
+    // cutoff encoded a billing belief that measurement falsified, so the deep
+    // tier is back on the `best` alias and Opus is reached the honest way —
+    // through the manifest chain and quota pressure, not a calendar.
+    expect(defaultRoutingTable().deep.claude.model).toEqual("best");
+    expect(CLAUDE_OPUS_MODEL).toEqual("claude-opus-4-8");
   });
 });

@@ -5,7 +5,6 @@ import {
   ClaudeRouteSchema,
   DEFAULT_ROUTING,
   defaultRoutingTable,
-  FABLE_AUTO_ROUTING_CUTOFF,
   HandoffSchema,
   HiveConfigSchema,
   HookEventSchema,
@@ -134,39 +133,24 @@ describe("RoutingTableSchema", () => {
 });
 
 describe("defaultRoutingTable", () => {
-  const cutoff = new Date(FABLE_AUTO_ROUTING_CUTOFF);
-
-  test("keeps the deep tier on the best alias before the Fable cutoff", () => {
-    const justBefore = new Date(cutoff.getTime() - 1);
-    expect(defaultRoutingTable(justBefore)).toEqual(DEFAULT_ROUTING);
-    expect(defaultRoutingTable(justBefore).deep.claude.model).toEqual("best");
+  // The Fable cutoff is gone. It made the deep tier abandon Fable on a DATE,
+  // because Fable was believed to move to usage-only billing then. Driving the
+  // provider after that date falsified the belief — Fable is still plan-billed
+  // with most of its weekly pool unused — so the date, and the tests that pinned
+  // it, encoded a guess rather than a fact. The table has no clock now.
+  test("is the shipped table, with no date in it", () => {
+    expect(defaultRoutingTable()).toEqual(DEFAULT_ROUTING);
   });
 
-  test("stops auto-selecting Fable for the deep tier on/after the cutoff", () => {
-    expect(defaultRoutingTable(cutoff).deep.claude.model).toEqual(
-      "claude-opus-4-8",
-    );
-    const justAfter = new Date(cutoff.getTime() + 1);
-    expect(defaultRoutingTable(justAfter).deep.claude.model).toEqual(
-      "claude-opus-4-8",
-    );
+  test("keeps the deep tier on the best alias, which resolves to Fable", () => {
+    // Fable is an ordinary candidate again: ranked by its own plan pool and
+    // downshifted by quota pressure like any other model, not excluded by a
+    // calendar. Excluding it wasted capacity the user already pays for.
+    expect(defaultRoutingTable().deep.claude.model).toEqual("best");
   });
 
-  test("changes nothing but the deep tier's claude model across the cutoff", () => {
-    const before = defaultRoutingTable(new Date(cutoff.getTime() - 1));
-    const after = defaultRoutingTable(cutoff);
-    expect(after.deep.codex).toEqual(before.deep.codex);
-    expect(after.standard).toEqual(before.standard);
-    expect(after.cheap).toEqual(before.cheap);
-    expect(after.review).toEqual(before.review);
-  });
-
-  test("produces a schema-valid table on both sides of the cutoff", () => {
-    expect(() =>
-      RoutingTableSchema.parse(defaultRoutingTable(new Date(cutoff.getTime() - 1)))
-    ).not.toThrow();
-    expect(() => RoutingTableSchema.parse(defaultRoutingTable(cutoff)))
-      .not.toThrow();
+  test("produces a schema-valid table", () => {
+    expect(() => RoutingTableSchema.parse(defaultRoutingTable())).not.toThrow();
   });
 });
 

@@ -220,7 +220,7 @@ export async function printRouting(): Promise<void> {
     discovery: { claude, codex },
     pins,
     snapshot,
-    shipped: defaultRoutingTable(now),
+    shipped: defaultRoutingTable(),
     billing,
     now,
   });
@@ -231,9 +231,9 @@ export async function printRouting(): Promise<void> {
   for (const { canonicalId, detail } of derived.consentRequired) {
     const state = requestCostConsent(db, canonicalId, detail);
     console.log(
-      `\nCONSENT ${state === "pending" ? "REQUESTED" : state.toUpperCase()}: ${canonicalId} ` +
-        `would spend usage credits. Answer it in the approvals queue ` +
-        `(hive_approvals / hive_approve). Pinning it yourself always works.`,
+      `\nSPEND CONSENT ${state === "pending" ? "REQUESTED" : state.toUpperCase()}: ` +
+        `a spawn on ${canonicalId} would cost you real money. ${detail} ` +
+        "Answer it in the approvals queue (hive_approvals / hive_approve).",
     );
   }
   db.close();
@@ -337,9 +337,14 @@ function describeBilling(billing: AccountBilling | null): string {
     return "not read — the cost filter is OFF (an unreadable bill is not a free " +
       "one, but it is not grounds to refuse every model either)";
   }
+  // The guard's armed/disarmed state, because a guard nobody can see the state of
+  // is a guard nobody can trust. With credits off nothing can be charged, so it
+  // is disarmed by fact rather than by configuration.
   const credits = billing.creditsEnabled.state === "known"
-    ? billing.creditsEnabled.value ? "usage credits ON" : "usage credits OFF"
-    : `usage credits UNKNOWN (${billing.creditsEnabled.reason})`;
+    ? billing.creditsEnabled.value
+      ? "usage credits ON — spend guard ARMED"
+      : "usage credits OFF — nothing can be charged, spend guard cannot fire"
+    : `usage credits UNKNOWN (${billing.creditsEnabled.reason}) — guard asks rather than assumes`;
   const general = billing.generalUtilization.state === "known"
     ? `plan ${billing.generalUtilization.value}% used`
     : "plan usage unknown";

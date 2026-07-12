@@ -56,9 +56,11 @@ export function requestCostConsent(
     // Not an agent's request: it is the router asking the account's owner.
     agentName: "router",
     description:
-      `Spend usage credits on ${canonicalId}? ${detail} ` +
-      `Approve to let Hive auto-route to it; deny to keep it out of automatic ` +
-      `routing. Pinning ${canonicalId} yourself always works either way.`,
+      `SPEND REAL MONEY on ${canonicalId}? ${detail} ` +
+      "Approve to let Hive run it and bill your usage credits; deny to keep it " +
+      "out until your plan resets. This asks about the CHARGE, not the model — " +
+      "Hive will not spend your money without your say-so, and it will not ask " +
+      "you twice.",
     status: "pending",
     createdAt: now,
     resolvedAt: null,

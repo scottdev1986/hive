@@ -6,7 +6,7 @@ import {
   type EffectiveDefault,
 } from "./capability";
 import {
-  modelCost,
+  spendRisk,
   type AccountBilling,
 } from "../daemon/usage-credits";
 import {
@@ -398,22 +398,8 @@ function deriveCell(
   // money to run is not auto-routable on Hive's own say-so — it is his money, so
   // it is his call. This filter applies to AUTO-ROUTING only: a pin never reaches
   // it, because an explicit instruction already IS the consent.
-  // A model the user pinned in this cell never reaches the cost filter. He told
-  // Hive to run it, and an explicit instruction IS the consent: Hive does not ask
-  // a man to approve the thing he just asked for. He is told what it costs — the
-  // cost is his to know — but he is not blocked and he is never re-asked.
-  const pinnedModel = input.pins[tier]?.[provider]?.model;
-  const pinnedCanonical = pinnedModel === undefined
-    ? undefined
-    : canonicalise(input, provider, pinnedModel);
-
   const candidates = listed.filter((candidate) => {
-    if (candidate.record.canonicalId === pinnedCanonical) {
-      const cost = pinnedCost(input, candidate.record);
-      if (cost !== null) notes.push(cost);
-      return true;
-    }
-    const refusal = costRefusal(input, candidate.record, needConsent);
+    const refusal = spendGuard(input, candidate.record, needConsent);
     if (refusal === null) return true;
     notes.push(refusal);
     return false;
@@ -428,6 +414,7 @@ function deriveCell(
     records,
     notes,
     warn,
+    needConsent,
   );
 
   // The record for the model we actually resolved — not for the primary
@@ -467,11 +454,23 @@ function resolveModel(
   records: readonly CapabilityRecord[],
   notes: string[],
   warn: (message: string) => void,
+  needConsent: ConsentSink,
 ): Resolved<string> {
   // Layer 1: the pin. A standing user directive about the user's own account.
   const pinned = input.pins[tier]?.[provider]?.model;
   if (pinned !== undefined) {
     notePinConflicts(provider, tier, kind, pinned, input, records, notes);
+    // A pin overrides Hive's judgment about the MODEL. It is not an answer to a
+    // question about MONEY, so the spend guard still runs: he asked to be asked
+    // before any spawn that would cost him, and this is one.
+    const pinnedRecord = records.find((entry) =>
+      entry.canonicalId === canonicalise(input, provider, pinned) ||
+      entry.launchToken === pinned || entry.aliases.includes(pinned)
+    );
+    if (pinnedRecord !== undefined) {
+      const refusal = spendGuard(input, pinnedRecord, needConsent);
+      if (refusal !== null) notes.push(refusal);
+    }
     return {
       value: pinned,
       layer: "pinned",
@@ -548,71 +547,46 @@ function resolveModel(
 }
 
 /**
- * What a PINNED model costs, said plainly and without blocking anything. The user
- * asked for this model; he gets it. He is simply told what it will spend, because
- * spending his money quietly is the thing to avoid — not spending it at all.
+ * The spend guard: would this spawn cost the user real money?
+ *
+ * It keys on MONEY, not on a model. There is no Fable case, no premium list, no
+ * date — the thing being guarded is his wallet, so the rule is the same for every
+ * model. `null` means the spawn cannot cost him anything and may proceed.
+ *
+ * It applies to a PINNED model too, and that is deliberate: pinning a model says
+ * "use this model", not "spend money beyond my plan". He asked to be asked before
+ * ANY spawn that would cost real money, and a pin is not an answer to a question
+ * about money. (A pin still bypasses every other gate — capability, manifest,
+ * staleness — because those are judgments about the model, which is exactly what
+ * a pin overrides.)
+ *
+ * Today it can never fire: usage credits are OFF on this account, and with them
+ * off nothing can be charged. It arms itself the day he turns them on.
  */
-function pinnedCost(
-  input: DerivationInput,
-  record: CapabilityRecord,
-): string | null {
-  if (input.billing === null || input.billing === undefined) return null;
-  if (record.displayName === null) return null;
-  const cost = modelCost(input.billing, record.displayName);
-  if (cost.state === "spends-credits") {
-    return `you pinned ${record.displayName} and ${cost.detail} — running it as ` +
-      "instructed; this is a cost notice, not a refusal";
-  }
-  if (cost.state === "unpayable") {
-    return `you pinned ${record.displayName}, but ${cost.detail}. Hive will still ` +
-      "launch it as instructed; the provider is what will refuse";
-  }
-  return null;
-}
-
-/**
- * Why this candidate may not be auto-routed on cost grounds, or `null` if it may.
- *
- * The rule the calendar constant was a bad proxy for. Running a model is free to
- * the user while the plan pool that gates it has headroom; past that, the vendor
- * bills usage credits, which is real money. So:
- *
- *   plan headroom            → auto-route, it costs nothing extra
- *   pool spent, credits ON   → real money: ask, via the approvals queue
- *   pool spent, credits OFF  → nothing can pay for it; it genuinely cannot run
- *   not measurable           → do not auto-route; a pin still works
- *
- * No date, no model name, no shipped table. And the unknown branch never renders
- * as "yes, spend": an absent reading is the one thing that must never authorize a
- * charge.
- */
-function costRefusal(
+function spendGuard(
   input: DerivationInput,
   record: CapabilityRecord,
   needConsent: ConsentSink,
 ): string | null {
   if (input.billing === null || input.billing === undefined) return null;
-  // The billing surface names a model only by the vendor's display name, so a
-  // record without one cannot be joined to a pool. That is unknown, not free.
+  // Without a display name the model cannot be joined to a pool, so whether it
+  // would be billed is unknown — and unknown resolves to ask, never to spend.
   const name = record.displayName;
   if (name === null) {
-    return `${record.launchToken} has no vendor display name, so Hive cannot ` +
-      "join it to a plan pool and cannot tell whether it would spend money; " +
-      "not auto-routed (pin it to run it anyway)";
-  }
-  const cost = modelCost(input.billing, name);
-  if (cost.state === "on-plan") return null;
-  if (cost.state === "spends-credits") {
+    const detail = `Hive cannot join ${record.launchToken} to a plan pool, so it ` +
+      "cannot rule out a charge";
     if (input.costConsent?.(record.canonicalId) === "approved") return null;
-    needConsent(record.canonicalId, cost.detail);
-    return `${name} would spend USAGE CREDITS (${cost.detail}). Hive does not ` +
-      "spend your money to route a task it chose itself — approve it in the " +
-      `approvals queue, or pin ${record.launchToken} to run it regardless`;
+    needConsent(record.canonicalId, detail);
+    return `${record.launchToken}: ${detail}; not auto-routed until you say so`;
   }
-  if (cost.state === "unpayable") {
-    return `${name} cannot run: ${cost.detail}`;
-  }
-  return `${name}: ${cost.detail}; not auto-routed`;
+
+  const risk = spendRisk(input.billing, name);
+  if (risk.state === "no-spend") return null;
+  if (input.costConsent?.(record.canonicalId) === "approved") return null;
+
+  needConsent(record.canonicalId, risk.detail);
+  return `${name} WOULD SPEND YOUR MONEY: ${risk.detail}. Hive does not spend it ` +
+    "without being asked — answer the request in the approvals queue";
 }
 
 /**

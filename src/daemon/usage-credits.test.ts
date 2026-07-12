@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { accountBillingFromUsage, modelCost } from "./usage-credits";
+import { accountBillingFromUsage, spendRisk } from "./usage-credits";
 
 const AT = "2026-07-12T00:00:00.000Z";
 
@@ -95,41 +95,38 @@ describe("the positive control: the reader sees real values before it trusts an 
   });
 });
 
-describe("what a model costs is measured, not dated", () => {
+describe("the spend guard keys on MONEY, never on a model name", () => {
   const billing = accountBillingFromUsage(LIVE, AT);
 
-  test("Fable is ON PLAN today, after the date the constant says it is not", () => {
-    // The whole point. The shipped constant says Fable is off-plan as of
-    // 2026-07-12; the vendor says it has a plan pool that is 12% used. The
-    // measurement wins, and it is the reason the date has to go.
-    const cost = modelCost(billing, "Fable");
-    expect(cost.state).toBe("on-plan");
-    expect(cost.detail).toContain("Fable pool 12% used");
-  });
-
-  test("a model with no ceiling of its own is judged by the account pool", () => {
-    // Opus is absent from `model_scoped` and is plainly plan-billed. Reading its
-    // absence as "no plan coverage" would disable it — absence is not false, in a
-    // costume.
-    expect(modelCost(billing, "Opus").state).toBe("on-plan");
-  });
-
-  test("an exhausted pool with credits OFF is unpayable, and says why", () => {
+  test("with credits OFF, nothing can be charged — so the guard NEVER fires", () => {
+    // The load-bearing case, and the state of this account today. A request past
+    // the plan limit is REFUSED, not billed. A guard that nags a user who cannot
+    // be charged is a broken guard, and one he learns to click through is worse
+    // than none.
     const spent = accountBillingFromUsage({
       ...LIVE,
       rate_limits: {
         ...LIVE.rate_limits,
-        extra_usage: { is_enabled: false, disabled_reason: "not set up" },
+        five_hour: { utilization: 100, resets_at: null },
         model_scoped: [{ display_name: "Fable", utilization: 100 }],
       },
     }, AT);
-    const cost = modelCost(spent, "Fable");
-    expect(cost.state).toBe("unpayable");
-    expect(cost.detail).toContain("usage credits are off");
-    expect(cost.detail).toContain("not set up");
+    // Even with every pool exhausted, credits being off means no charge is
+    // possible, so there is nothing to ask about.
+    expect(spendRisk(spent, "Fable").state).toBe("no-spend");
+    expect(spendRisk(spent, "Opus").state).toBe("no-spend");
+    expect(spendRisk(spent, "Fable").detail).toContain("refused, not billed");
   });
 
-  test("an exhausted pool with credits ON spends real money — so it must be asked", () => {
+  test("Fable gets no special treatment: on plan, it is simply not a spend", () => {
+    expect(spendRisk(billing, "Fable").state).toBe("no-spend");
+    // And neither does anything else. There is no model list in this guard.
+    expect(spendRisk(billing, "Opus").state).toBe("no-spend");
+    expect(spendRisk(billing, "Some-Model-Nobody-Has-Heard-Of").state)
+      .toBe("no-spend");
+  });
+
+  test("credits ON + an exhausted pool WOULD spend money -> ask", () => {
     const spent = accountBillingFromUsage({
       ...LIVE,
       rate_limits: {
@@ -139,18 +136,39 @@ describe("what a model costs is measured, not dated", () => {
         model_scoped: [{ display_name: "Fable", utilization: 100 }],
       },
     }, AT);
-    const cost = modelCost(spent, "Fable");
-    expect(cost.state).toBe("spends-credits");
-    expect(cost.detail).toContain("real money");
+    const risk = spendRisk(spent, "Fable");
+    expect(risk.state).toBe("would-spend");
+    expect(risk.detail).toContain("real money");
   });
 
-  test("an exhausted pool with UNREADABLE credits is unknown, and is not auto-routed", () => {
-    const spent = accountBillingFromUsage({
+  test("credits ON but the plan still covers it -> no ask, no nagging", () => {
+    const on = accountBillingFromUsage({
+      ...LIVE,
+      rate_limits: {
+        ...LIVE.rate_limits,
+        extra_usage: { is_enabled: true },
+        spend: { enabled: true },
+      },
+    }, AT);
+    // A false positive here is what trains a user to click through the prompt,
+    // which destroys the guard as surely as a false negative empties his wallet.
+    expect(spendRisk(on, "Fable").state).toBe("no-spend");
+  });
+
+  test("an exhausted pool with UNREADABLE credits resolves to ASK, never to spend", () => {
+    const murky = accountBillingFromUsage({
       rate_limits: {
         five_hour: { utilization: 100 },
         model_scoped: [{ display_name: "Fable", utilization: 100 }],
       },
     }, AT);
-    expect(modelCost(spent, "Fable").state).toBe("unknown");
+    expect(spendRisk(murky, "Fable").state).toBe("would-spend");
+    expect(spendRisk(murky, "Fable").detail).toContain("cannot read");
+  });
+
+  test("no plan reading at all is unknown, and unknown asks", () => {
+    const blind = accountBillingFromUsage({ rate_limits: {} }, AT);
+    expect(spendRisk(blind, "Fable").state).toBe("unknown");
+    expect(spendRisk(blind, "Fable").detail).toContain("will not spend your money");
   });
 });

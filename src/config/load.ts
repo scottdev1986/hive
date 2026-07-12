@@ -69,9 +69,7 @@ export async function loadQuotaConfig(): Promise<QuotaConfig> {
   }
 }
 
-export async function loadRoutingTable(
-  now: Date = new Date(),
-): Promise<RoutingTable> {
+export async function loadRoutingTable(): Promise<RoutingTable> {
   const path = join(hiveHome(), "routing.toml");
   const raw = await readToml(path);
 
@@ -80,7 +78,7 @@ export async function loadRoutingTable(
   }
 
   const merged = mergeOwn();
-  for (const [tier, route] of Object.entries(defaultRoutingTable(now))) {
+  for (const [tier, route] of Object.entries(defaultRoutingTable())) {
     const mergedRoute = mergeOwn(route);
     mergedRoute.claude = mergeOwn(route.claude);
     mergedRoute.codex = mergeOwn(route.codex);
@@ -134,10 +132,7 @@ export async function loadRoutingPins(): Promise<RoutingPins> {
   }
 }
 
-export async function resolveRoute(
-  tier: RoutingTier,
-  now: Date = new Date(),
-): Promise<Route> {
-  const routing = await loadRoutingTable(now);
+export async function resolveRoute(tier: RoutingTier): Promise<Route> {
+  const routing = await loadRoutingTable();
   return routing[tier];
 }

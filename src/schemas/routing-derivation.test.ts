@@ -297,12 +297,10 @@ describe("the fallback ladder, rung by rung", () => {
   });
 });
 
-describe("cost is measured, and a date never stands in for it", () => {
-  // The manifest briefly expired Fable on FABLE_AUTO_ROUTING_CUTOFF — a date
-  // standing in for "Fable now costs extra". Driving the live surface AFTER that
-  // date falsified it: Fable still sits on a plan pool with most of it unused. So
-  // the date is gone and cost is measured. These tests pin the rule that replaced
-  // it, and the direction it fails in.
+describe("the spend guard: consent attaches to money, not to a model", () => {
+  // No date, no model list. The guard exists to protect the user's wallet, so it
+  // fires on the only thing that can empty it: a spawn that would overflow his
+  // plan into PAID usage credits.
   const billing = (
     creditsOn: boolean | null,
     fableUsed: number,
@@ -315,8 +313,6 @@ describe("cost is measured, and a date never stands in for it", () => {
     modelUtilization: { fable: fableUsed },
   });
 
-  // Records are stamped fresh relative to the clock under test: staleness is a
-  // different rule with its own tests, and it must not silently do cost's job.
   const named = (records: CapabilityRecord[], now: Date) =>
     records.map((entry) => ({
       ...entry,
@@ -324,92 +320,95 @@ describe("cost is measured, and a date never stands in for it", () => {
       observedAt: new Date(now.getTime() - 60_000).toISOString(),
     }));
 
-  const deepAt = (input_: Partial<DerivationInput>) => {
+  const derive = (input_: Partial<DerivationInput>) => {
     const now = input_.now ?? NOW;
-    return tierOf(
-      deriveRouting(
-        input({
-          discovery: {
-            claude: ok(named(CLAUDE_RECORDS, now), CLAUDE_DEFAULT),
-            codex: ok(named(CODEX_RECORDS, now), CODEX_DEFAULT),
-          },
-          ...input_,
-        }),
-      ),
-      "deep",
-    );
-  };
-
-  test("after the old cutoff date, Fable is STILL auto-routable — because it is on plan", () => {
-    // The regression the date would have caused: silently refusing a model the
-    // user is paying nothing extra for, forever, on a calendar's say-so.
-    const deep = deepAt({
-      now: new Date("2026-07-12T00:00:01Z"),
-      billing: billing(false, 12),
-    });
-    expect(deep.claude.model.value).toBe("claude-fable-5");
-    expect(deep.claude.model.layer).toBe("derived");
-  });
-
-  test("an exhausted pool with credits OFF makes it genuinely unusable, and says so", () => {
-    const deep = deepAt({ billing: billing(false, 100) });
-    expect(deep.claude.model.value).toBe("claude-opus-4-8");
-    expect(deep.claude.notes.join(" ")).toContain("cannot run");
-    expect(deep.claude.notes.join(" ")).toContain("usage credits are off");
-  });
-
-  test("an exhausted pool with credits ON needs consent, and is not auto-routed without it", () => {
-    const deep = deepAt({ billing: billing(true, 100) });
-    expect(deep.claude.model.value).toBe("claude-opus-4-8");
-    expect(deep.claude.notes.join(" ")).toContain("USAGE CREDITS");
-    expect(deep.claude.notes.join(" ")).toContain("approve");
-  });
-
-  test("consent granted lets it auto-route again", () => {
-    const deep = deepAt({
-      billing: billing(true, 100),
-      costConsent: (model) =>
-        model === "claude-fable-5" ? "approved" : "none",
-    });
-    expect(deep.claude.model.value).toBe("claude-fable-5");
-  });
-
-  test("UNREADABLE credits never authorize a charge", () => {
-    // The absent-key trap, in its most expensive form: a key Hive cannot read
-    // must not become "yes, spend his money".
-    const deep = deepAt({ billing: billing(null, 100) });
-    expect(deep.claude.model.value).toBe("claude-opus-4-8");
-    expect(deep.claude.notes.join(" ")).toContain("not auto-routed");
-  });
-
-  test("a pinned model is never QUEUED for consent — asking would be re-asking", () => {
-    // He pinned it. Filing an approval for the thing he just instructed is the
-    // rubber-stamp failure: a queue that asks about what you already decided is
-    // a queue you learn to click through without reading.
-    const derived = deriveRouting(
+    return deriveRouting(
       input({
         discovery: {
-          claude: ok(named(CLAUDE_RECORDS, NOW), CLAUDE_DEFAULT),
-          codex: ok(named(CODEX_RECORDS, NOW), CODEX_DEFAULT),
+          claude: ok(named(CLAUDE_RECORDS, now), CLAUDE_DEFAULT),
+          codex: ok(named(CODEX_RECORDS, now), CODEX_DEFAULT),
         },
-        billing: billing(true, 100),
-        pins: { deep: { claude: { model: "claude-fable-5" } } },
+        ...input_,
       }),
     );
+  };
+  const deepOf = (derived: ReturnType<typeof deriveRouting>) =>
+    derived.tiers.find((entry) => entry.tier === "deep")!;
+
+  test("credits OFF: the guard NEVER fires, even with every pool exhausted", () => {
+    // Today's state. Nothing can be charged — a request past the plan limit is
+    // refused, not billed — so there is nothing to ask about, and Fable is routed
+    // like any other model. A guard that nags a user who cannot be charged is a
+    // broken guard.
+    const derived = derive({ billing: billing(false, 100) });
     expect(derived.consentRequired).toEqual([]);
-    const deep = derived.tiers.find((entry) => entry.tier === "deep")!;
-    expect(deep.claude.notes.join(" ")).toContain("cost notice, not a refusal");
+    expect(deepOf(derived).claude.model.value).toBe("claude-fable-5");
   });
 
-  test("a pin bypasses the cost gate entirely: an explicit instruction IS consent", () => {
-    // He is running two Fable agents by name right now. Hive does not get to
-    // second-guess that, and it must never re-ask.
-    const deep = deepAt({
+  test("credits OFF and on plan: Fable is an ordinary candidate, after the old cutoff date", () => {
+    const derived = derive({
+      now: new Date("2026-07-12T00:00:01Z"),
+      billing: billing(false, 13),
+    });
+    expect(deepOf(derived).claude.model.value).toBe("claude-fable-5");
+    expect(deepOf(derived).claude.model.layer).toBe("derived");
+  });
+
+  test("credits ON + exhausted pool: it would spend real money, so it ASKS", () => {
+    const derived = derive({ billing: billing(true, 100) });
+    expect(derived.consentRequired).toEqual([
+      expect.objectContaining({ canonicalId: "claude-fable-5" }),
+    ]);
+    // And it is not auto-routed while the question is unanswered: pending is not
+    // a yes, and silence is not consent.
+    expect(deepOf(derived).claude.model.value).toBe("claude-opus-4-8");
+    expect(deepOf(derived).claude.notes.join(" ")).toContain("WOULD SPEND YOUR MONEY");
+  });
+
+  test("credits ON but the plan still covers it: no ask, because there is no spend", () => {
+    // A false positive here trains him to click through, which destroys the guard
+    // as surely as a false negative empties his wallet.
+    const derived = derive({ billing: billing(true, 13) });
+    expect(derived.consentRequired).toEqual([]);
+    expect(deepOf(derived).claude.model.value).toBe("claude-fable-5");
+  });
+
+  test("approved consent lets it route again", () => {
+    const derived = derive({
+      billing: billing(true, 100),
+      costConsent: (model) => model === "claude-fable-5" ? "approved" : "none",
+    });
+    expect(deepOf(derived).claude.model.value).toBe("claude-fable-5");
+  });
+
+  test("UNKNOWN never authorizes a charge: it asks", () => {
+    const derived = derive({ billing: billing(null, 100) });
+    expect(derived.consentRequired).toHaveLength(1);
+    expect(deepOf(derived).claude.model.value).toBe("claude-opus-4-8");
+  });
+
+  test("a PIN does not answer a question about money — it is still asked", () => {
+    // Deliberate, and a reversal of the earlier rule. Pinning a model says "use
+    // this model"; it does not say "spend beyond my plan". He asked to be asked
+    // before ANY spawn that would cost real money, and this is one. (A pin still
+    // overrides every judgment about the MODEL — capability, manifest, staleness.)
+    const derived = derive({
+      billing: billing(true, 100),
+      pins: { deep: { claude: { model: "claude-fable-5" } } },
+    });
+    expect(derived.consentRequired).toEqual([
+      expect.objectContaining({ canonicalId: "claude-fable-5" }),
+    ]);
+    expect(deepOf(derived).claude.notes.join(" ")).toContain("WOULD SPEND YOUR MONEY");
+  });
+
+  test("a pin with credits OFF is never asked about, because nothing can be charged", () => {
+    const derived = derive({
       billing: billing(false, 100),
       pins: { deep: { claude: { model: "claude-fable-5" } } },
     });
-    expect(deep.claude.model.value).toBe("claude-fable-5");
-    expect(deep.claude.model.layer).toBe("pinned");
+    expect(derived.consentRequired).toEqual([]);
+    expect(deepOf(derived).claude.model.value).toBe("claude-fable-5");
   });
 });
 
