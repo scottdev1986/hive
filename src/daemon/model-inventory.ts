@@ -1,10 +1,8 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { CLAUDE_BEST_MODEL } from "../adapters/tools/models";
 import {
   loadHiveConfig,
   loadRoutingPins,
-  loadRoutingTable,
 } from "../config/load";
 import { loadTrustedRoutingManifest } from "../config/routing-manifest";
 import type {
@@ -13,7 +11,6 @@ import type {
   DerivedRouting,
   ProviderDiscovery,
   RoutingTier,
-  RoutingTable,
 } from "../schemas";
 import {
   defaultRoutingTable,
@@ -32,11 +29,11 @@ import {
   type AccountBillings,
 } from "./usage-credits";
 import {
-  liveBenchInventoryBenchmarks,
-  readLiveBench,
-  type LiveBenchRead,
-} from "./livebench";
-import { whatGoverns } from "./routing-resolve";
+  readBenchmarkCatalog,
+  type BenchmarkCatalog,
+  type BenchmarkMode,
+  type InventoryBenchmark,
+} from "./benchmarks";
 
 const hiveHome = (): string => Bun.env.HIVE_HOME ?? join(homedir(), ".hive");
 
@@ -45,14 +42,6 @@ export type InventoryRole = {
   use: "primary" | "quota-fallback";
   preferredProvider: boolean;
   effort: string | null;
-};
-
-export type InventoryBenchmark = {
-  effort: string;
-  scores: Record<string, number>;
-  source: string;
-  releaseDate: string;
-  fetchedAt: string;
 };
 
 export type InventoryModel = {
@@ -90,11 +79,10 @@ export type ModelInventory = {
     CapabilityProvider,
     { status: "ok"; count: number } | { status: "unavailable"; reason: string }
   >;
-  benchmark: {
-    status: LiveBenchRead["status"] | "not-inspected";
+  benchmarks: {
+    status: BenchmarkCatalog["status"] | "not-inspected";
     detail: string;
-    releaseDate: string | null;
-    fetchedAt: string | null;
+    sources: BenchmarkCatalog["sources"];
   };
   models: InventoryModel[];
   warnings: string[];
@@ -105,8 +93,7 @@ export type ModelInventoryInput = {
   routing: DerivedRouting;
   billing?: AccountBillings | null;
   benchmarks?: ReadonlyMap<string, InventoryBenchmark[]>;
-  benchmark?: ModelInventory["benchmark"];
-  routes?: RoutingTable;
+  benchmarkCatalog?: BenchmarkCatalog;
   now?: Date;
 };
 
@@ -118,7 +105,10 @@ export type ModelInventoryReaderOptions = {
   readConsent?: (canonicalId: string) => "approved" | "denied" | "pending" | "none";
   now?: () => Date;
   benchmarks?: ReadonlyMap<string, InventoryBenchmark[]>;
-  readBenchmarks?: (mode: "auto" | "off") => Promise<LiveBenchRead>;
+  readBenchmarks?: (
+    mode: BenchmarkMode,
+    discovery: Record<CapabilityProvider, ProviderDiscovery>,
+  ) => Promise<BenchmarkCatalog>;
 };
 
 async function readSnapshot() {
@@ -141,19 +131,20 @@ export async function readModelInventory(
   const readBilling = options.readBilling ?? readBillingWithMemory;
   const config = await loadHiveConfig();
   const trusted = await loadTrustedRoutingManifest(config);
-  const [pins, routes, snapshot, claude, codex, claudeBilling, codexBilling, livebench] =
+  const [pins, snapshot, claude, codex, claudeBilling, codexBilling] =
     await Promise.all([
       loadRoutingPins(),
-      loadRoutingTable(),
       trusted.origin === "kill-switch" ? null : readSnapshot(),
       discover("claude"),
       discover("codex"),
       readBilling("claude"),
       readBilling("codex"),
-      options.readBenchmarks?.(config.benchmarks.livebench) ??
-        readLiveBench({ mode: config.benchmarks.livebench }),
     ]);
   const discovery = { claude, codex };
+  const benchmarkCatalog = await (
+    options.readBenchmarks?.(config.benchmarks.mode, discovery) ??
+      readBenchmarkCatalog({ mode: config.benchmarks.mode, discovery })
+  );
   const billing: AccountBillings = {
     ...(claudeBilling === null ? {} : { claude: claudeBilling }),
     ...(codexBilling === null ? {} : { codex: codexBilling }),
@@ -169,20 +160,12 @@ export async function readModelInventory(
     costConsent: options.readConsent,
     now,
   });
-  const benchmark = {
-    status: livebench.status,
-    detail: livebench.detail,
-    releaseDate: livebench.snapshot?.releaseDate ?? null,
-    fetchedAt: livebench.snapshot?.fetchedAt ?? null,
-  } satisfies ModelInventory["benchmark"];
   const inventory = buildModelInventory({
     discovery,
     routing,
     billing,
-    benchmarks: options.benchmarks ??
-      liveBenchInventoryBenchmarks(livebench.snapshot, discovery),
-    benchmark,
-    ...(whatGoverns(config, trusted.origin) === "shipped" ? { routes } : {}),
+    benchmarks: options.benchmarks ?? benchmarkCatalog.models,
+    benchmarkCatalog,
     now,
   });
   return {
@@ -190,9 +173,9 @@ export async function readModelInventory(
     warnings: [
       ...trusted.warnings,
       ...routing.warnings,
-      ...(livebench.status === "last-good" || livebench.status === "unavailable"
-        ? [livebench.detail]
-        : []),
+      ...benchmarkCatalog.sources
+        .filter((source) => source.status !== "current")
+        .map((source) => source.detail),
       ...inventory.warnings,
     ],
   };
@@ -208,7 +191,6 @@ function concreteModel(
   discovery: ProviderDiscovery,
 ): string | null {
   if (model === null) return null;
-  if (provider === "claude" && model === "best") return CLAUDE_BEST_MODEL;
   if (model !== "default") return model;
   return discovery.status === "ok" &&
       discovery.effectiveDefault.model.state === "known"
@@ -219,21 +201,6 @@ function concreteModel(
 function rolesFor(record: CapabilityRecord, input: ModelInventoryInput): InventoryRole[] {
   const roles: InventoryRole[] = [];
   const discovery = input.discovery[record.provider];
-  if (input.routes !== undefined) {
-    for (const [tierName, route] of Object.entries(input.routes)) {
-      const cell = route[record.provider];
-      const primary = concreteModel(record.provider, cell.model, discovery);
-      if (primary !== null && recordMatches(record, primary)) {
-        roles.push({
-          tier: tierName as RoutingTier,
-          use: "primary",
-          preferredProvider: route.tool === record.provider,
-          effort: cell.effort ?? null,
-        });
-      }
-    }
-    return roles;
-  }
   for (const tier of input.routing.tiers) {
     const cell = tier[record.provider];
     const primary = concreteModel(record.provider, cell.model.value, discovery);
@@ -361,15 +328,19 @@ export function buildModelInventory(input: ModelInventoryInput): ModelInventory 
   });
   return {
     observedAt: (input.now ?? new Date()).toISOString(),
-    complete: models.length === records.length,
+    complete: models.length === records.length &&
+      Object.values(input.discovery).every((provider) => provider.status === "ok"),
     discoveredCount: records.length,
     renderedCount: models.length,
     providers,
-    benchmark: input.benchmark ?? {
+    benchmarks: input.benchmarkCatalog === undefined ? {
       status: "not-inspected",
-      detail: "Benchmark source was not inspected for this inventory.",
-      releaseDate: null,
-      fetchedAt: null,
+      detail: "Benchmark sources were not inspected for this inventory.",
+      sources: [],
+    } : {
+      status: input.benchmarkCatalog.status,
+      detail: input.benchmarkCatalog.detail,
+      sources: input.benchmarkCatalog.sources,
     },
     models,
     warnings,
@@ -381,7 +352,7 @@ export function formatModelInventory(inventory: ModelInventory): string {
     `Model inventory — ALL DISCOVERED MODELS (${inventory.renderedCount}/${inventory.discoveredCount}, ${
       inventory.complete ? "complete" : "INCOMPLETE"
     })`,
-    `LiveBench — ${inventory.benchmark.status}: ${inventory.benchmark.detail}`,
+    `Benchmarks — ${inventory.benchmarks.status}: ${inventory.benchmarks.detail}`,
   ];
   for (const provider of ["claude", "codex"] as const) {
     const status = inventory.providers[provider];
@@ -413,7 +384,7 @@ export function formatModelInventory(inventory: ModelInventory): string {
             .map(([name, score]) => `${name}=${score}`)
             .join(", ");
           lines.push(
-            `    benchmark   effort=${benchmark.effort}; ${scores}; ${benchmark.source} release ${benchmark.releaseDate}, fetched ${benchmark.fetchedAt}`,
+            `    benchmark   ${benchmark.sourceId} effort=${benchmark.effort}; ${scores}; ${benchmark.source} release ${benchmark.releaseDate}, fetched ${benchmark.fetchedAt}`,
           );
         }
       }

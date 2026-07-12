@@ -23,10 +23,10 @@ export const LifecycleConfigSchema = z.strictObject({
 });
 
 export const BenchmarkConfigSchema = z.strictObject({
-  // "off" is a hard network and data-use kill switch. Cached measurements are
-  // not surfaced while it is engaged, so disabling the source means disabling
-  // its influence even in shadow and inspection output.
-  livebench: z.enum(["auto", "off"]).default("auto"),
+  // "off" is a hard network and data-use kill switch. No source is registered
+  // until the user approves its role; "shadow" permits approved adapters to
+  // populate inspection and audit output but can never affect a live route.
+  mode: z.enum(["shadow", "off"]).default("off"),
 });
 
 export const HiveConfigSchema = z.strictObject({

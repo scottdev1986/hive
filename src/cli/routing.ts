@@ -3,7 +3,6 @@ import { join } from "node:path";
 import {
   loadHiveConfig,
   loadRoutingPins,
-  loadRoutingTable,
 } from "../config/load";
 import { whatGoverns } from "../daemon/routing-resolve";
 import {
@@ -44,10 +43,7 @@ import {
   buildModelInventory,
   formatModelInventory,
 } from "../daemon/model-inventory";
-import {
-  liveBenchInventoryBenchmarks,
-  readLiveBench,
-} from "../daemon/livebench";
+import { readBenchmarkCatalog } from "../daemon/benchmarks";
 
 /**
  * `hive routing` — the derived table, with per-cell provenance.
@@ -246,9 +242,8 @@ export async function printRouting(): Promise<void> {
     status: "unavailable",
     reason: "not probed — the routing manifest kill switch is engaged",
   };
-  const [pins, routes, liveClaude, liveCodex, snapshot, liveBilling, livebench] = await Promise.all([
+  const [pins, liveClaude, liveCodex, snapshot, liveBilling] = await Promise.all([
     loadRoutingPins(),
-    loadRoutingTable(),
     new ClaudeCapabilityProbe().read(),
     new CodexCapabilityProbe().read(),
     killed ? null : readSnapshot(),
@@ -260,11 +255,14 @@ export async function printRouting(): Promise<void> {
       ...(claudeBilling === null ? {} : { claude: claudeBilling }),
       ...(codexBilling === null ? {} : { codex: codexBilling }),
     })),
-    readLiveBench({ mode: config.benchmarks.livebench }),
   ]);
   const claude = killed ? unprobed : liveClaude;
   const codex = killed ? unprobed : liveCodex;
   const billing = killed ? null : liveBilling;
+  const benchmarkCatalog = await readBenchmarkCatalog({
+    mode: config.benchmarks.mode,
+    discovery: { claude: liveClaude, codex: liveCodex },
+  });
 
   // The consent ledger is the approvals queue Hive already has. Opened read-only
   // here; the only write is filing a question nobody has been asked yet.
@@ -299,17 +297,8 @@ export async function printRouting(): Promise<void> {
     discovery: { claude: liveClaude, codex: liveCodex },
     routing: derived,
     billing: liveBilling,
-    benchmarks: liveBenchInventoryBenchmarks(livebench.snapshot, {
-      claude: liveClaude,
-      codex: liveCodex,
-    }),
-    benchmark: {
-      status: livebench.status,
-      detail: livebench.detail,
-      releaseDate: livebench.snapshot?.releaseDate ?? null,
-      fetchedAt: livebench.snapshot?.fetchedAt ?? null,
-    },
-    ...(governs === "shipped" ? { routes } : {}),
+    benchmarks: benchmarkCatalog.models,
+    benchmarkCatalog,
     now,
   })));
 

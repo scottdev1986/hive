@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
 import {
-  DEFAULT_ROUTING,
   known,
   unknown,
   type CapabilityRecord,
@@ -134,26 +133,26 @@ describe("model inventory", () => {
     expect(text).toContain("benchmark   unknown");
   });
 
-  test("reports the shipped table rather than derived counterfactuals when it governs", () => {
-    const inventory = buildModelInventory({
-      discovery,
-      routing,
-      routes: {
-        ...DEFAULT_ROUTING,
-        deep: {
-          tool: "codex",
-          claude: { model: "claude-fable-5" },
-          codex: { model: "gpt-spare", effort: "low" },
-        },
+  test("an unavailable fresh discovery is empty and explicitly incomplete", () => {
+    const empty = buildModelInventory({
+      discovery: {
+        claude: { status: "unavailable", reason: "CLI not installed" },
+        codex: { status: "unavailable", reason: "discovery has not run" },
       },
+      routing: { ...routing, discovery: {
+        claude: { status: "unavailable", reason: "CLI not installed" },
+        codex: { status: "unavailable", reason: "discovery has not run" },
+      } },
     });
-    expect(inventory.models.find((model) => model.canonicalId === "gpt-hidden"))
-      .toMatchObject({ routedCandidate: false, roles: [] });
-    expect(inventory.models.find((model) => model.canonicalId === "gpt-spare"))
-      .toMatchObject({
-        roles: expect.arrayContaining([
-          { tier: "deep", use: "primary", preferredProvider: true, effort: "low" },
-        ]),
-      });
+    expect(empty).toMatchObject({
+      complete: false,
+      discoveredCount: 0,
+      renderedCount: 0,
+      models: [],
+    });
+    const text = formatModelInventory(empty);
+    expect(text).toContain("0/0, INCOMPLETE");
+    expect(text).toContain("claude — UNAVAILABLE: CLI not installed");
+    expect(text).toContain("codex — UNAVAILABLE: discovery has not run");
   });
 });

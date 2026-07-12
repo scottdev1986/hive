@@ -51,7 +51,7 @@ describe("config loading", () => {
       autonomy: "sandboxed",
       routingManifest: "auto",
       router: "derived",
-      benchmarks: { livebench: "auto" },
+      benchmarks: { mode: "off" },
       resources: {
         enabled: true,
         perProcessMemoryMb: 12_288,
@@ -83,13 +83,13 @@ describe("config loading", () => {
     expect((await loadHiveConfig()).autonomy).toEqual("dangerous");
   });
 
-  test("the LiveBench kill switch is explicit and defaults back to auto", async () => {
+  test("benchmark inspection has an explicit shadow-only switch", async () => {
     await resetHome();
     await writeFile(
       join(hiveHome, "config.toml"),
-      '[benchmarks]\nlivebench = "off"\n',
+      '[benchmarks]\nmode = "shadow"\n',
     );
-    expect((await loadHiveConfig()).benchmarks.livebench).toBe("off");
+    expect((await loadHiveConfig()).benchmarks.mode).toBe("shadow");
   });
 
   test("parses model-specific quota pools and rejects invalid timezone configuration", async () => {
@@ -176,7 +176,7 @@ describe("config loading", () => {
       autonomy: "sandboxed",
       routingManifest: "auto",
       router: "derived",
-      benchmarks: { livebench: "auto" },
+      benchmarks: { mode: "off" },
       resources: {
         enabled: true,
         perProcessMemoryMb: 12_288,

@@ -49,18 +49,25 @@ describe("the comparison", () => {
       ...base,
       benchmark: {
         status: "current",
-        releaseDate: "2026-06-25",
-        fetchedAt: "2026-07-11T12:00:00.000Z",
-        matched: {
+        sources: [{
+          sourceId: "livebench",
+          status: "current",
+          releaseDate: "2026-06-25",
+          fetchedAt: "2026-07-11T12:00:00.000Z",
+        }],
+        matched: [{
+          sourceId: "livebench",
           model: "claude-fable-5",
           effort: "xhigh",
           scores: { code_generation: 85.5 },
           source: "https://livebench.ai/table_2026_06_25.csv",
-        },
+          releaseDate: "2026-06-25",
+          fetchedAt: "2026-07-11T12:00:00.000Z",
+        }],
       },
     });
     expect(measured.derived).toEqual(base.derived);
-    expect(measured.benchmark?.matched?.scores).toEqual({ code_generation: 85.5 });
+    expect(measured.benchmark?.matched[0]?.scores).toEqual({ code_generation: 85.5 });
   });
 
   test("agreement and divergence are counted per field, with the reason", () => {

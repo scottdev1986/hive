@@ -3,7 +3,10 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { z } from "zod";
 import type { CapabilityProvider, ProviderDiscovery } from "../schemas";
-import type { InventoryBenchmark } from "./model-inventory";
+import type {
+  BenchmarkSourceAdapter,
+  InventoryBenchmark,
+} from "./benchmarks";
 
 const LIVEBENCH_ORIGIN = "https://livebench.ai";
 const SOURCE = `${LIVEBENCH_ORIGIN}/`;
@@ -18,13 +21,17 @@ const RELEASE = /^\d{4}-\d{2}-\d{2}$/;
 
 const ScoreMapSchema = z.record(
   z.string().regex(SAFE_METRIC),
-  z.number().finite(),
+  z.number().finite().min(0).max(100),
+);
+const CostMapSchema = z.record(
+  z.string().regex(SAFE_METRIC),
+  z.number().finite().nonnegative(),
 );
 
 export const LiveBenchRowSchema = z.strictObject({
   model: z.string().regex(SAFE_MODEL_ID),
   scores: ScoreMapSchema,
-  costs: ScoreMapSchema,
+  costs: CostMapSchema,
   scoreSource: z.url(),
   costSource: z.url(),
   releaseDate: z.string().regex(RELEASE),
@@ -368,6 +375,7 @@ export function liveBenchInventoryBenchmarks(
         if (matches.length !== 1) continue;
         const row = matches[0]!;
         benchmarks.push({
+          sourceId: "livebench",
           effort,
           scores: { ...row.scores },
           source: row.scoreSource,
@@ -381,4 +389,24 @@ export function liveBenchInventoryBenchmarks(
     }
   }
   return result;
+}
+
+/** A candidate adapter. It is deliberately not registered by default. */
+export function liveBenchSource(
+  options: Omit<LiveBenchOptions, "mode"> = {},
+): BenchmarkSourceAdapter {
+  return {
+    sourceId: "livebench",
+    async read(discovery) {
+      const read = await readLiveBench({ ...options, mode: "auto" });
+      return {
+        sourceId: "livebench",
+        status: read.status === "off" ? "unavailable" : read.status,
+        detail: read.detail,
+        releaseDate: read.snapshot?.releaseDate ?? null,
+        fetchedAt: read.snapshot?.fetchedAt ?? null,
+        models: liveBenchInventoryBenchmarks(read.snapshot, discovery),
+      };
+    },
+  };
 }

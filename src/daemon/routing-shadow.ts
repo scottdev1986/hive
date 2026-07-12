@@ -25,10 +25,10 @@ import {
   type AccountBillings,
 } from "./usage-credits";
 import {
-  liveBenchInventoryBenchmarks,
-  readLiveBench,
-  type LiveBenchRead,
-} from "./livebench";
+  readBenchmarkCatalog,
+  type BenchmarkCatalog,
+  type BenchmarkMode,
+} from "./benchmarks";
 
 /**
  * Shadow mode: derive what the router *would* have chosen, record it beside what
@@ -113,15 +113,29 @@ export const ShadowObservationSchema = z.strictObject({
   manifestRevision: z.string().nullable(),
   /** Published measurements beside the route Hive derived. Shadow evidence only. */
   benchmark: z.strictObject({
-    status: z.enum(["off", "current", "last-good", "unavailable"]),
-    releaseDate: z.string().nullable(),
-    fetchedAt: z.string().nullable(),
-    matched: z.strictObject({
+    status: z.enum([
+      "off",
+      "not-configured",
+      "current",
+      "partial",
+      "last-good",
+      "unavailable",
+    ]),
+    sources: z.array(z.strictObject({
+      sourceId: z.string().min(1),
+      status: z.enum(["current", "last-good", "unavailable"]),
+      releaseDate: z.string().nullable(),
+      fetchedAt: z.string().nullable(),
+    })),
+    matched: z.array(z.strictObject({
+      sourceId: z.string().min(1),
       model: z.string().min(1),
       effort: z.string().min(1),
       scores: z.record(z.string(), z.number().finite()),
       source: z.string().url(),
-    }).nullable(),
+      releaseDate: z.string().min(1),
+      fetchedAt: z.string().min(1),
+    })),
   }).nullable().default(null),
   /** The model's answer, past the transport. */
   outcome: z.enum(["launched", "failed"]),
@@ -152,7 +166,10 @@ export interface ShadowDependencies {
   readBilling?: (
     provider: CapabilityProvider,
   ) => Promise<AccountBilling | null>;
-  readBenchmarks?: (mode: "auto" | "off") => Promise<LiveBenchRead>;
+  readBenchmarks?: (
+    mode: BenchmarkMode,
+    discovery: Record<CapabilityProvider, ProviderDiscovery>,
+  ) => Promise<BenchmarkCatalog>;
 }
 
 const ladderLayers: ReadonlySet<ResolutionLayer> = new Set([
@@ -200,18 +217,19 @@ export async function recordShadowObservation(
       dependencies.readBilling?.("codex") ?? readBillingWithMemory("codex"),
     ]);
     const trusted = await loadTrustedRoutingManifest(config);
-    const livebench = await (
-      dependencies.readBenchmarks?.(config.benchmarks.livebench) ??
-        readLiveBench({ mode: config.benchmarks.livebench })
+    const discovery = {
+      claude: claude as ProviderDiscovery,
+      codex: codex as ProviderDiscovery,
+    };
+    const benchmarks = await (
+      dependencies.readBenchmarks?.(config.benchmarks.mode, discovery) ??
+        readBenchmarkCatalog({ mode: config.benchmarks.mode, discovery })
     );
 
     const derivation = deriveRouting({
       manifest: trusted.manifest,
       manifestAbsentReason: trusted.detail,
-      discovery: {
-        claude: claude as ProviderDiscovery,
-        codex: codex as ProviderDiscovery,
-      },
+      discovery,
       pins,
       snapshot,
       shipped: defaultRoutingTable(),
@@ -232,7 +250,7 @@ export async function recordShadowObservation(
       now,
       whatGoverns(config, trusted.origin),
       await shippedChoice(spawn.tier, { claude, codex }),
-      shadowBenchmark(livebench, { claude, codex }, tier),
+      shadowBenchmark(benchmarks, { claude, codex }, tier),
     );
     const line = `${JSON.stringify(observation)}\n`;
     if (dependencies.append !== undefined) {
@@ -340,7 +358,7 @@ function compare(
 }
 
 export function shadowBenchmark(
-  read: LiveBenchRead,
+  read: BenchmarkCatalog,
   discovery: Record<CapabilityProvider, CapabilityDiscoveryResult>,
   tier: DerivedTier,
 ): NonNullable<ShadowObservation["benchmark"]> {
@@ -356,27 +374,27 @@ export function shadowBenchmark(
         candidate.aliases.includes(cell.model.value!)
       );
   const effort = cell.effort.value;
-  const benchmarks = liveBenchInventoryBenchmarks(read.snapshot, {
-    claude: discovery.claude as ProviderDiscovery,
-    codex: discovery.codex as ProviderDiscovery,
-  });
-  const match = record === undefined || effort === null
-    ? undefined
-    : benchmarks.get(`${tool}\0${record.canonicalId}`)?.find((row) =>
-        row.effort === effort
-      );
+  const matches = record === undefined || effort === null
+    ? []
+    : (read.models.get(`${tool}\0${record.canonicalId}`) ?? [])
+      .filter((row) => row.effort === effort);
   return {
     status: read.status,
-    releaseDate: read.snapshot?.releaseDate ?? null,
-    fetchedAt: read.snapshot?.fetchedAt ?? null,
-    matched: match === undefined || record === undefined
-      ? null
-      : {
+    sources: read.sources.map((source) => ({
+      sourceId: source.sourceId,
+      status: source.status,
+      releaseDate: source.releaseDate,
+      fetchedAt: source.fetchedAt,
+    })),
+    matched: record === undefined ? [] : matches.map((match) => ({
+          sourceId: match.sourceId,
           model: record.canonicalId,
           effort: match.effort,
           scores: { ...match.scores },
           source: match.source,
-        },
+          releaseDate: match.releaseDate,
+          fetchedAt: match.fetchedAt,
+        })),
   };
 }
 
