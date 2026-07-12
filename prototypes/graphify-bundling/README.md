@@ -14,6 +14,9 @@ this directory is the build recipe that produced them.
   scripts (`graphify`, `graphify-mcp` as a symlink).
 - `graphify.in` — the lock-compile input, carrying the `cryptography<49`
   constraint the darwin-x64 slice requires.
+- `linux-measure.sh` — the same measurement inside `python:3.12-slim`
+  containers (linux-arm64 native, linux-x64 under emulation); invocation in
+  its header. Hive ships no Linux binary today — this proves the future row.
 
 Not wired into Hive's runtime or CI. Verified 2026-07-12 on macOS arm64
 (Darwin 25.3.0), CPython 3.12.8, PyInstaller 6.21.0, graphifyy 0.9.12.
