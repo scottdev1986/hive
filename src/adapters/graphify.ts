@@ -21,7 +21,7 @@
  *     consults the index and cannot prove anything.
  */
 import { existsSync } from "node:fs";
-import { copyFile, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import graphifyLock from "../../graphify.lock" with { type: "text" };
 import { getHiveHome } from "../daemon/db";
@@ -395,6 +395,317 @@ const GRAPH_QUERY_BUDGET = 40_000;
 const GRAPH_BRIEF_HEADER_MAX_CHARS = 800;
 const GRAPH_BRIEF_NODE_MAX_CHARS = 2_000;
 
+// ---------------------------------------------------------------------------
+// Hive-side locate: score files against the task, expand one hop through the
+// graph's own edges, emit cited NODE/EDGE lines. Tuned against six real
+// orientation questions on this repo (all six surface their answer files);
+// the mechanisms — IDF-weighted name matching, hub-normalized structural
+// expansion, matched-symbol imports — are repo-agnostic.
+// ---------------------------------------------------------------------------
+
+const BRIEF_SEED_FILES = 5;
+const BRIEF_EXPANSION_FILES = 8;
+const BRIEF_SYMBOLS_PER_FILE = 3;
+/** A hub file touching many weakly matched symbols stops accumulating here,
+ * so `db.ts`-shaped files cannot crowd out precise leads. */
+const BRIEF_SYMBOL_BONUS_CAP = 25;
+
+interface BriefNode {
+  id: string;
+  label: string;
+  file: string;
+  location: string;
+  community: string;
+  tokens: Set<string>;
+}
+
+const BRIEF_STOPWORDS = new Set([
+  "the", "a", "an", "of", "to", "in", "on", "for", "with", "where", "does",
+  "do", "is", "are", "how", "what", "when", "why", "and", "or", "that",
+  "this", "its", "into", "new", "another", "after", "happen",
+]);
+
+function stemToken(token: string): string {
+  for (const suffix of ["ing", "ed", "es", "s"]) {
+    if (token.endsWith(suffix) && token.length - suffix.length >= 4) {
+      return token.slice(0, token.length - suffix.length);
+    }
+  }
+  return token;
+}
+
+function briefTokens(text: string): Set<string> {
+  const parts = text
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .match(/[A-Za-z]{3,}/g) ?? [];
+  const out = new Set<string>();
+  for (const part of parts) {
+    const token = stemToken(part.toLowerCase());
+    if (!BRIEF_STOPWORDS.has(token)) out.add(token);
+  }
+  return out;
+}
+
+/** Test and doc files are legitimate leads but must not outrank the code
+ * that answers; the dampening is a rank nudge, not an exclusion. */
+function briefDamp(file: string): number {
+  let damp = 1.0;
+  if (file.toLowerCase().includes("test")) damp *= 0.3;
+  if (file.endsWith(".md")) damp *= 0.7;
+  return damp;
+}
+
+/** Hive's own locate over a parsed graph.json, or null when the graph is not
+ * the expected shape or nothing matches (callers fall back to the binary's
+ * query). Three mechanisms, in order of evidence strength:
+ *
+ *   1. Seeds — files whose basename, symbol names, or path match the task's
+ *      rare terms (IDF-weighted, so "agent" in an agent orchestrator counts
+ *      for almost nothing and "graphify" counts for a lot).
+ *   2. Structural expansion — files the seeds import or are imported by,
+ *      normalized by degree so ubiquitous hubs do not win on connectivity.
+ *   3. Matched-symbol expansion — a seed touches a symbol whose NAME matches
+ *      the task; the file DEFINING that symbol is a strong relational lead.
+ *      This is what surfaces the config-writer a question about "attaching
+ *      a server to an agent" never names.
+ *
+ * Output reuses the binary's NODE/EDGE grammar (file:line citations,
+ * EXTRACTED/INFERRED provenance tags) so everything agents are told about
+ * reading graph output applies unchanged. */
+export function buildTargetedGraphBrief(
+  graph: unknown,
+  task: string,
+): string | null {
+  if (typeof graph !== "object" || graph === null) return null;
+  const raw = graph as { nodes?: unknown; links?: unknown; edges?: unknown };
+  if (!Array.isArray(raw.nodes)) return null;
+  const rawLinks = Array.isArray(raw.links)
+    ? raw.links
+    : Array.isArray(raw.edges)
+      ? raw.edges
+      : null;
+  if (rawLinks === null) return null;
+
+  const nodes = new Map<string, BriefNode>();
+  const fileLabelTokens = new Map<string, Set<string>>();
+  const fileNodes = new Map<string, BriefNode[]>();
+  for (const entry of raw.nodes as Record<string, unknown>[]) {
+    if (typeof entry?.id !== "string") continue;
+    const label = typeof entry.label === "string" ? entry.label : entry.id;
+    const file = typeof entry.source_file === "string" ? entry.source_file : "";
+    const node: BriefNode = {
+      id: entry.id,
+      label,
+      file,
+      location:
+        typeof entry.source_location === "string" ? entry.source_location : "",
+      community: typeof entry.community === "number" ? String(entry.community) : "",
+      tokens: briefTokens(label),
+    };
+    nodes.set(node.id, node);
+    if (file === "") continue;
+    const tokens = fileLabelTokens.get(file) ?? new Set<string>();
+    for (const t of node.tokens) tokens.add(t);
+    fileLabelTokens.set(file, tokens);
+    const list = fileNodes.get(file) ?? [];
+    list.push(node);
+    fileNodes.set(file, list);
+  }
+  if (fileLabelTokens.size === 0) return null;
+
+  // Document frequency over files, for IDF weighting.
+  const documentFrequency = new Map<string, number>();
+  for (const [file, labelTokens] of fileLabelTokens) {
+    const all = new Set([...labelTokens, ...briefTokens(file)]);
+    for (const t of all) {
+      documentFrequency.set(t, (documentFrequency.get(t) ?? 0) + 1);
+    }
+  }
+  const fileCount = fileLabelTokens.size;
+  const idf = (token: string): number =>
+    Math.log(1 + fileCount / (1 + (documentFrequency.get(token) ?? 0)));
+
+  interface BriefLink {
+    relation: string;
+    confidence: string;
+    context: string;
+    source: BriefNode;
+    target: BriefNode;
+  }
+  const links: BriefLink[] = [];
+  const fileLinkCounts = new Map<string, Map<string, number>>();
+  for (const entry of rawLinks as Record<string, unknown>[]) {
+    const source = typeof entry?.source === "string" ? nodes.get(entry.source) : undefined;
+    const target = typeof entry?.target === "string" ? nodes.get(entry.target) : undefined;
+    if (source === undefined || target === undefined) continue;
+    links.push({
+      relation: typeof entry.relation === "string" ? entry.relation : "related",
+      confidence: typeof entry.confidence === "string" ? entry.confidence : "UNKNOWN",
+      context: typeof entry.context === "string" ? entry.context : "",
+      source,
+      target,
+    });
+    if (source.file !== "" && target.file !== "" && source.file !== target.file) {
+      for (const [a, b] of [[source.file, target.file], [target.file, source.file]] as const) {
+        const counts = fileLinkCounts.get(a) ?? new Map<string, number>();
+        counts.set(b, (counts.get(b) ?? 0) + 1);
+        fileLinkCounts.set(a, counts);
+      }
+    }
+  }
+
+  // 1. Seeds.
+  const taskTokens = briefTokens(task);
+  const fileScore = new Map<string, number>();
+  for (const [file, labelTokens] of fileLabelTokens) {
+    const baseTokens = briefTokens(file.split("/").at(-1) ?? file);
+    const pathTokens = briefTokens(file);
+    let score = 0;
+    for (const t of taskTokens) {
+      if (baseTokens.has(t)) score += 3 * idf(t);
+      else if (labelTokens.has(t)) score += 2 * idf(t);
+      else if (pathTokens.has(t)) score += 1.5 * idf(t);
+    }
+    score *= briefDamp(file);
+    if (score > 0) fileScore.set(file, score);
+  }
+  if (fileScore.size === 0) return null;
+  const seeds = [...fileScore.keys()]
+    .sort((a, b) => (fileScore.get(b) as number) - (fileScore.get(a) as number))
+    .slice(0, BRIEF_SEED_FILES);
+  const seedSet = new Set(seeds);
+
+  // 2. Structural expansion, hub-normalized.
+  const neighborScore = new Map<string, number>();
+  for (const seed of seeds) {
+    for (const [neighbor, count] of fileLinkCounts.get(seed) ?? []) {
+      if (seedSet.has(neighbor)) continue;
+      const degree = fileLinkCounts.get(neighbor)?.size ?? 0;
+      let hitIdf = 0;
+      for (const t of taskTokens) {
+        if (fileLabelTokens.get(neighbor)?.has(t) ?? false) hitIdf += idf(t);
+      }
+      neighborScore.set(
+        neighbor,
+        (neighborScore.get(neighbor) ?? 0) +
+          ((1 + Math.log(1 + count)) / Math.log(2 + degree)) *
+            (1 + hitIdf) *
+            briefDamp(neighbor),
+      );
+    }
+  }
+  // 3. Matched-symbol expansion, deduped per (symbol, file) and capped.
+  const symbolBonus = new Map<string, number>();
+  const seenSymbol = new Set<string>();
+  for (const link of links) {
+    for (const [near, far, symbol] of [
+      [link.source.file, link.target.file, link.target],
+      [link.target.file, link.source.file, link.source],
+    ] as const) {
+      if (!seedSet.has(near) || far === "" || seedSet.has(far) || far === near) {
+        continue;
+      }
+      const key = `${symbol.id} ${far}`;
+      if (seenSymbol.has(key)) continue;
+      let matchIdf = 0;
+      for (const t of symbol.tokens) if (taskTokens.has(t)) matchIdf += idf(t);
+      if (matchIdf === 0) continue;
+      seenSymbol.add(key);
+      symbolBonus.set(
+        far,
+        (symbolBonus.get(far) ?? 0) + 2 * matchIdf * briefDamp(far),
+      );
+    }
+  }
+  for (const [file, bonus] of symbolBonus) {
+    neighborScore.set(
+      file,
+      (neighborScore.get(file) ?? 0) + Math.min(bonus, BRIEF_SYMBOL_BONUS_CAP),
+    );
+  }
+  const expansion = [...neighborScore.keys()]
+    .sort((a, b) => (neighborScore.get(b) as number) - (neighborScore.get(a) as number))
+    .slice(0, BRIEF_EXPANSION_FILES);
+  const selected = [...seeds, ...expansion];
+  const selectedSet = new Set(selected);
+
+  // Emission: per file its module node plus best-matching symbols, then the
+  // inter-file edges among the selection, matched-endpoint edges first.
+  const nodeLines: string[] = [];
+  for (const file of selected) {
+    const own = fileNodes.get(file) ?? [];
+    const moduleNode =
+      own.find((n) => n.label === (file.split("/").at(-1) ?? "")) ?? own[0];
+    const symbols = own
+      .filter((n) => n !== moduleNode)
+      .map((n) => {
+        let s = 0;
+        for (const t of n.tokens) if (taskTokens.has(t)) s += idf(t);
+        return { n, s };
+      })
+      .filter(({ s }) => s > 0)
+      .sort((a, b) => b.s - a.s)
+      .slice(0, BRIEF_SYMBOLS_PER_FILE)
+      .map(({ n }) => n);
+    for (const n of [...(moduleNode === undefined ? [] : [moduleNode]), ...symbols]) {
+      nodeLines.push(
+        `NODE ${n.label} [src=${n.file}${n.location === "" ? "" : ` loc=${n.location}`}${n.community === "" ? "" : ` community=${n.community}`}]`,
+      );
+    }
+  }
+  const edgeLines: string[] = [];
+  const seenEdges = new Set<string>();
+  const formatEdge = (link: BriefLink): string =>
+    `EDGE ${link.source.label} --${link.relation} [${link.confidence}${link.context === "" ? "" : ` context=${link.context}`}]--> ${link.target.label}`;
+  const crossFile = links.filter(
+    (l) =>
+      l.source.file !== l.target.file &&
+      selectedSet.has(l.source.file) &&
+      selectedSet.has(l.target.file),
+  );
+  const matchesTask = (n: BriefNode): boolean => {
+    for (const t of n.tokens) if (taskTokens.has(t)) return true;
+    return false;
+  };
+  // Module↔module edges first: the import skeleton BETWEEN the selected
+  // files is the relational answer ("what attaches to what"). Task-matched
+  // symbol edges next; everything else fills whatever budget remains.
+  const isModule = (n: BriefNode): boolean =>
+    n.label === (n.file.split("/").at(-1) ?? "");
+  const edgePass = (link: BriefLink): number =>
+    isModule(link.source) && isModule(link.target)
+      ? 0
+      : matchesTask(link.source) || matchesTask(link.target)
+        ? 1
+        : 2;
+  for (const pass of [0, 1, 2]) {
+    for (const link of crossFile) {
+      if (edgePass(link) !== pass) continue;
+      const key = `${link.source.id} ${link.relation} ${link.target.id}`;
+      if (seenEdges.has(key)) continue;
+      seenEdges.add(key);
+      edgeLines.push(formatEdge(link));
+    }
+  }
+
+  const header =
+    `Graph locate: ${selected.length} files matched to the task ` +
+    `(name/symbol match + import structure; strongest first)`;
+  const parts = [header, nodeLines.join("\n")];
+  let used = header.length + parts[1]!.length;
+  const keptEdges: string[] = [];
+  for (const line of edgeLines) {
+    if (used + line.length + 1 > GRAPH_BRIEF_MAX_CHARS) break;
+    keptEdges.push(line);
+    used += line.length + 1;
+  }
+  if (keptEdges.length > 0) parts.push(keptEdges.join("\n"));
+  parts.push(
+    `[graph brief: ${selected.length} files, ${nodeLines.length} nodes, ${keptEdges.length}/${edgeLines.length} edges]`,
+  );
+  return parts.join("\n\n");
+}
+
 /** Select — never head-slice — the digest out of a `graphify query` dump.
  * The output shape is: header, all NODE lines (name + file:line citation),
  * then all EDGE lines (the provenance-tagged relations). A head slice keeps
@@ -471,12 +782,23 @@ export function selectGraphBrief(output: string): string {
     .join("\n\n");
 }
 
+/** Above this, JSON-parsing the graph would stall the daemon's event loop;
+ * the subprocess query path handles the outliers. */
+const TARGETED_BRIEF_MAX_GRAPH_BYTES = 50 * 1024 * 1024;
+
 /** The task-scoped digest for a spawn brief, or null when this repo never
  * opted in (silence — a repo without graphify should not hear about it).
  * Once opted in, every failure degrades to one loud line instead: an absent
- * graph must never look like a repo with nothing to find. Bounded by the
- * query's own token budget and a hard time-box; the spawn never waits longer
- * than this on graphify, healthy or not. */
+ * graph must never look like a repo with nothing to find.
+ *
+ * The primary path reads graph.json directly and runs Hive's own locate
+ * (buildTargetedGraphBrief below): the pinned binary's `query` anchors its
+ * BFS on its own keyword matcher, which is the measured failure — on the
+ * acceptance question it anchored "spawning" on vendored Swift and never
+ * surfaced the files that actually answer. The binary accepts no explicit
+ * start nodes, so better anchoring has to happen on Hive's side. The
+ * subprocess `query` + selectGraphBrief path remains as the fallback for a
+ * malformed, oversized, or matchless graph, and stays time-boxed. */
 export async function buildGraphBrief(
   root: string,
   task: string,
@@ -486,6 +808,19 @@ export async function buildGraphBrief(
   if (!state.enabled) return null;
   if (!existsSync(graphifyBin()) || !existsSync(graphJsonPath(root))) {
     return "Graph context: unavailable (graph not built yet); proceeding without it.";
+  }
+  try {
+    const stats = await stat(graphJsonPath(root));
+    if (stats.size <= TARGETED_BRIEF_MAX_GRAPH_BYTES) {
+      const graph: unknown = JSON.parse(
+        await readFile(graphJsonPath(root), "utf8"),
+      );
+      const targeted = buildTargetedGraphBrief(graph, task);
+      if (targeted !== null) return `${GRAPH_BRIEF_PREAMBLE}\n\n${targeted}`;
+    }
+  } catch {
+    // Unreadable or unparseable graph: the subprocess path below reports
+    // through its own loud-line degradation.
   }
   const result = await run(
     [

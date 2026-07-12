@@ -3822,9 +3822,11 @@ describe("graph context in the spawn prompt", () => {
     });
     expect(prompt).toContain("Graph context (graphify, advisory)");
     // Layer 2: one directive, present only because the tools are attached.
-    expect(prompt).toContain("query_graph");
-    expect(prompt).toContain("before using grep, rg, or Glob");
-    expect(prompt).toContain("never as authority");
+    // Graph-first (product decision), with the concrete fallback criteria
+    // that keep the mandate honest.
+    expect(prompt).toContain("Work graph-first");
+    expect(prompt).toContain("get_neighbors");
+    expect(prompt).toContain("cannot answer");
     // The tool's own default budget provably returns zero edges; the
     // directive must carry the working number.
     expect(prompt).toContain("token_budget: 16000");

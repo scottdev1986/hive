@@ -6,6 +6,7 @@ import graphifyLock from "../../graphify.lock" with { type: "text" };
 import {
   buildGraph,
   buildGraphBrief,
+  buildTargetedGraphBrief,
   ensureGraphifyIgnored,
   GRAPHIFY_IGNORE_MARKER,
   graphifyPin,
@@ -417,6 +418,96 @@ describe("buildGraphBrief", () => {
     expect(brief).toContain("advisory");
     expect(brief).toContain("verify");
     expect(brief).toContain("NODE server.ts");
+    await rm(root, { recursive: true, force: true });
+  });
+});
+
+describe("buildTargetedGraphBrief", () => {
+  const node = (
+    id: string, label: string, file: string, loc = "L1",
+  ) => ({ id, label, source_file: file, source_location: loc, community: 1 });
+  const link = (source: string, target: string, relation = "imports_from") =>
+    ({ relation, confidence: "EXTRACTED", context: "import", source, target });
+  // A seed found by name; a second file whose ONLY relevance is defining a
+  // task-matched symbol the seed imports — the measured gap in the acceptance
+  // question (nothing named the config writer; its imported symbol did).
+  const graph = {
+    nodes: [
+      node("api", "api.ts", "src/api.ts"),
+      node("api_handle", "handleRequest()", "src/api.ts", "L20"),
+      node("billing", "billing.ts", "src/billing.ts"),
+      node("billing_render", "renderInvoice()", "src/billing.ts", "L7"),
+      node("api_test", "api.test.ts", "src/api.test.ts"),
+      node("api_test_sym", "invoiceFixture()", "src/api.test.ts", "L3"),
+      node("util", "util.ts", "src/util.ts"),
+      node("util_pad", "padLeft()", "src/util.ts", "L2"),
+      node("log", "log.ts", "src/log.ts"),
+      node("log_write", "writeLog()", "src/log.ts", "L4"),
+    ],
+    links: [
+      link("api", "billing"),
+      link("api", "billing_render", "imports"),
+      link("api", "util"),
+      link("api_test", "api"),
+    ],
+  };
+
+  test("surfaces the name-matched seed and the matched-symbol import target", () => {
+    const brief = buildTargetedGraphBrief(graph, "where does the api render an invoice");
+    expect(brief).not.toBeNull();
+    // Cited NODE lines for both files, including the symbol that matched.
+    expect(brief).toContain("NODE api.ts [src=src/api.ts loc=L1 community=1]");
+    expect(brief).toContain("NODE renderInvoice() [src=src/billing.ts loc=L7 community=1]");
+    // The relational skeleton rides in upstream's EDGE grammar, module↔module first.
+    const edges = (brief as string).split("\n").filter((l) => l.startsWith("EDGE "));
+    expect(edges[0]).toBe("EDGE api.ts --imports_from [EXTRACTED context=import]--> billing.ts");
+    expect(brief).toContain("[graph brief: ");
+  });
+
+  test("a test file never outranks the code it tests", () => {
+    const brief = buildTargetedGraphBrief(graph, "where does the api render an invoice") as string;
+    const apiIndex = brief.indexOf("NODE api.ts ");
+    const testIndex = brief.indexOf("src/api.test.ts");
+    expect(apiIndex).toBeGreaterThanOrEqual(0);
+    expect(testIndex === -1 || testIndex > apiIndex).toBe(true);
+  });
+
+  test("malformed graphs and matchless tasks return null, never throw", () => {
+    expect(buildTargetedGraphBrief(null, "anything")).toBeNull();
+    expect(buildTargetedGraphBrief({ nodes: "nope" }, "anything")).toBeNull();
+    expect(buildTargetedGraphBrief({ nodes: [], links: [] }, "anything")).toBeNull();
+    expect(buildTargetedGraphBrief(graph, "zzz qqq xxx")).toBeNull();
+  });
+});
+
+describe("buildGraphBrief targeted path", () => {
+  test("a parseable graph is answered by Hive's locate with no subprocess", async () => {
+    const root = await gitRepo();
+    await writeGraphifyState(root, { enabled: true, pin: graphifyPin() });
+    const { mkdir, writeFile: write } = await import("node:fs/promises");
+    const { graphifyBin, graphJsonPath } = await import("./graphify");
+    const { dirname } = await import("node:path");
+    await mkdir(dirname(graphifyBin()), { recursive: true });
+    await write(graphifyBin(), "");
+    await mkdir(dirname(graphJsonPath(root)), { recursive: true });
+    await write(graphJsonPath(root), JSON.stringify({
+      nodes: [
+        { id: "auth", label: "auth.ts", source_file: "src/auth.ts", source_location: "L1", community: 1 },
+        { id: "auth_login", label: "loginUser()", source_file: "src/auth.ts", source_location: "L9", community: 1 },
+        { id: "util", label: "util.ts", source_file: "src/util.ts", source_location: "L1", community: 2 },
+      ],
+      links: [{ relation: "imports_from", confidence: "EXTRACTED", context: "import", source: "auth", target: "util" }],
+    }));
+    const calls: string[][] = [];
+    const brief = await buildGraphBrief(root, "fix the login flow in auth", async (argv) => {
+      calls.push(argv);
+      return ok();
+    });
+    expect(brief).toContain("advisory");
+    expect(brief).toContain("Graph locate:");
+    expect(brief).toContain("NODE loginUser() [src=src/auth.ts loc=L9");
+    // The binary was never invoked: locate reads graph.json directly.
+    expect(calls).toEqual([]);
     await rm(root, { recursive: true, force: true });
   });
 });

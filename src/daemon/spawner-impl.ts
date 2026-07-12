@@ -572,15 +572,22 @@ export interface AgentPromptOptions {
 }
 
 /** Layer 2 of the integration doc's adoption strategy: exactly one directive,
- * in the spawn prompt — the channel agents demonstrably read — not a skill. */
+ * in the spawn prompt — the channel agents demonstrably read — not a skill.
+ * Graph-first is the product decision; the concrete fallback criteria are
+ * what keep it honest — a mandate agents catch being wrong is a mandate they
+ * learn to skip (measured: 22% skill adoption). */
 const GRAPHIFY_DIRECTIVE =
-  "This repo serves a graphify knowledge graph over MCP (query_graph, get_node, " +
-  "get_neighbors, graph_stats, shortest_path, …). When orienting in unfamiliar code, " +
-  "call query_graph once before using grep, rg, or Glob, and pass token_budget: 16000 — " +
-  "the tool's default of 2000 cuts the output off before the EDGE lines, which are the " +
-  "only cited, provenance-tagged part of the answer. For one symbol's connections or the " +
-  "route between two files, get_neighbors and shortest_path return the same cited output " +
-  "with no truncation cliff. Treat every answer as a lead to verify, never as authority.";
+  "This repo serves a graphify knowledge graph over MCP, and the Graph locate " +
+  "section of your brief was built from it for your task. Work graph-first: start " +
+  "from those NODE lines (each cites file:line) and walk outward with the graph " +
+  "tools — get_neighbors for what calls, imports, or contains a symbol; " +
+  "shortest_path for how two files connect; query_graph with token_budget: 16000 " +
+  "for broad sweeps (its default of 2000 cuts the output off before the cited " +
+  "EDGE lines). Fall back to grep/rg/Glob only when the graph genuinely cannot " +
+  "answer: hunting an exact string or error message, files the graph does not " +
+  "index (docs, config, generated code), or a graph lead that turned out empty " +
+  "when you verified it. Every graph answer is a lead — confirm it in source " +
+  "before building on it.";
 
 export function buildAgentPrompt(
   name: string,
