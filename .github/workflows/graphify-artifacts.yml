@@ -1,0 +1,132 @@
+name: graphify-artifacts
+
+# Builds and publishes the per-platform graphify bundles that
+# `hive graphify enable` downloads (docs/architecture/graphify-bundling.md).
+#
+# NEVER runs automatically: a graphify bump is a deliberate act
+# (graphify-integration.md, "Rollout and version policy"), so this fires only
+# by hand. Running it IS the publish decision:
+#
+#   gh workflow run graphify-artifacts.yml            # build number 1
+#   gh workflow run graphify-artifacts.yml -f build-number=2
+#
+# It builds both darwin slices from graphify.lock, signs and notarizes them
+# when the release secrets are configured (same secrets, same posture as
+# release.yml — absent secrets publish unsigned and say so), smoke-tests each
+# bundle, publishes the assets on the dedicated tag
+# `graphify-v<pin>-hive.<build-number>`, and prints the GRAPHIFY_ARTIFACTS
+# entries for src/adapters/graphify-artifacts.ts in the job summary. Landing
+# those hashes is a normal reviewed PR — this workflow never commits.
+#
+# A notarization rejection fails the run BEFORE the tag exists (the same
+# build-before-tag ordering as release.yml), so a bootloader Apple dislikes
+# costs a build, never a published version.
+on:
+  workflow_dispatch:
+    inputs:
+      build-number:
+        description: "hive build number for this pin (the N in graphify-v<pin>-hive.N); bump when republishing the same pin"
+        required: false
+        default: "1"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: graphify-artifacts
+  cancel-in-progress: false
+
+jobs:
+  build-and-publish:
+    # macOS arm64: the arm64 slice builds natively and the x64 slice under
+    # Rosetta 2 (measured working — graphify-bundling.md). PyInstaller cannot
+    # cross-compile, so unlike the Bun slices both builds run through a real
+    # interpreter of the target arch.
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install zstd and Rosetta 2
+        run: |
+          set -euo pipefail
+          brew install zstd
+          # arm64 runners need Rosetta for the x64 slice; a no-op if present.
+          softwareupdate --install-rosetta --agree-to-license || true
+          arch -x86_64 /usr/bin/true
+
+      # Same graceful degradation as release.yml: the certificate secret is
+      # the one switch. Absent → unsigned artifacts, said out loud.
+      - name: Set up signing keychain and notary key
+        id: keychain
+        env:
+          CERT_P12: ${{ secrets.MACOS_CERT_P12_BASE64 }}
+          CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+          NOTARY_P8: ${{ secrets.MACOS_NOTARY_KEY_P8_BASE64 }}
+          KEYCHAIN_PASSWORD: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CERT_P12:-}" ]; then
+            echo "identity=" >> "$GITHUB_OUTPUT"
+            echo "::warning::No MACOS_CERT_P12_BASE64 secret; publishing UNSIGNED, un-notarized bundles."
+            exit 0
+          fi
+          KEYCHAIN="$RUNNER_TEMP/graphify-signing.keychain-db"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          printf '%s' "$CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" -P "$CERT_PASSWORD" \
+            -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
+          security list-keychains -d user -s "$KEYCHAIN" \
+            $(security list-keychains -d user | sed 's/["]//g')
+          rm -f "$RUNNER_TEMP/cert.p12"
+          identity="$(
+            security find-identity -v -p codesigning "$KEYCHAIN" \
+              | awk -F'"' '/Developer ID Application/ {print $2; exit}'
+          )"
+          if [ -z "$identity" ]; then
+            echo "::error::The certificate imported but holds no valid 'Developer ID Application' identity."
+            exit 1
+          fi
+          echo "identity=$identity" >> "$GITHUB_OUTPUT"
+          printf '%s' "$NOTARY_P8" | base64 --decode > "$RUNNER_TEMP/notary.p8"
+
+      - name: Build, sign, notarize, and smoke-test the bundles
+        env:
+          MACOS_SIGN_IDENTITY: ${{ steps.keychain.outputs.identity }}
+          MACOS_NOTARY_KEY_PATH: ${{ steps.keychain.outputs.identity != '' && format('{0}/notary.p8', runner.temp) || '' }}
+          MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
+          MACOS_NOTARY_ISSUER_ID: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
+        run: scripts/graphify/build.sh --build-number "${{ inputs.build-number || '1' }}"
+
+      - name: Publish the release tag and assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SIGNED: ${{ steps.keychain.outputs.identity != '' }}
+        run: |
+          set -euo pipefail
+          pin="$(grep -m1 '^graphifyy==' graphify.lock | sed 's/graphifyy==//; s/ .*//; s/\\//')"
+          tag="graphify-v${pin}-hive.${{ inputs.build-number || '1' }}"
+          if [ "$SIGNED" = "true" ]; then
+            signed_line="Bundles are Developer ID-signed with the hardened runtime and notarized."
+          else
+            signed_line="Bundles are UNSIGNED: no signing certificate was configured for this run."
+          fi
+          gh release create "$tag" \
+            dist/graphify/*.tar.zst dist/graphify/*.sha256 \
+            --title "graphify $pin (hive build ${{ inputs.build-number || '1' }})" \
+            --notes "$(printf 'Standalone graphify bundles for `hive graphify enable` (docs/architecture/graphify-bundling.md).\n\n%s\n\nLand the hashes below in `src/adapters/graphify-artifacts.ts` via a reviewed PR:\n\n```ts\n%s```\n' "$signed_line" "$(cat dist/graphify/registry.snippet.ts)")"
+
+      - name: Registry entries for graphify-artifacts.ts
+        run: |
+          {
+            echo '### Paste into `src/adapters/graphify-artifacts.ts`'
+            echo '```ts'
+            cat dist/graphify/registry.snippet.ts
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

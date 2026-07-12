@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Entitlements for the frozen graphify bundle's main executable, and only it.
+
+  CPython 3.12 has no JIT, so unlike Hive's own binary (JavaScriptCore) the
+  bundle needs no allow-jit. What it does need under the hardened runtime is
+  ctypes/cffi: libffi writes closure trampolines into memory it then executes,
+  and cffi is in the pinned closure (via cryptography). That is exactly
+  allow-unsigned-executable-memory. Nothing else: every dylib in the bundle
+  is signed with the same identity, so library validation passes without
+  disable-library-validation, and nothing reads DYLD_* overrides.
+-->
+<plist version="1.0">
+<dict>
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+  <true/>
+</dict>
+</plist>

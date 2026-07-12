@@ -9,11 +9,11 @@
  * and refuses to unpack bytes whose sha256 does not match the constant here.
  *
  * A bump PR touches exactly this file plus `graphify.lock`: the pipeline
- * (prototypes/graphify-bundling/build.sh, run by CI) freezes the lock into
- * per-platform bundles, uploads them to the release tag, and the CI-built
- * sha256s land here. `null` means no artifact is published for that platform
- * in this build — enable reports it in one honest line and nothing degrades
- * below the integration doc's floor.
+ * (scripts/graphify/build.sh, run by .github/workflows/graphify-artifacts.yml)
+ * freezes the lock into per-platform bundles, uploads them to the release
+ * tag, and the CI-built sha256s land here. `null` means no artifact is
+ * published for that platform in this build — enable reports it in one
+ * honest line and nothing degrades below the integration doc's floor.
  */
 import { HIVE_UPDATE_REPO } from "../version";
 

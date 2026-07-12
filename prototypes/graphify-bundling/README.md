@@ -1,22 +1,18 @@
 # graphify-bundling spike
 
-Feasibility artifacts for shipping graphify as a Hive-built standalone bundle
+Feasibility record for shipping graphify as a Hive-built standalone bundle
 (no uv, no Python on the user's machine). The measured findings and the chosen
-design live in `docs/architecture/graphify-bundling.md` — read that first;
-this directory is the build recipe that produced them.
+design live in `docs/architecture/graphify-bundling.md`.
 
-- `build.sh` — one command: hash-verified install from `graphify.lock`,
-  PyInstaller freeze, smoke test (CLI extract + query, MCP `query_graph` over
-  HTTP), tar.zst + sha256, for darwin-arm64 and (via Rosetta) darwin-x64.
-- `graphify.spec` — the PyInstaller spec; collects the 26 tree-sitter grammar
-  packages that graphify loads via dynamic `importlib.import_module`.
-- `entry.py` — busybox-style dispatcher so one EXE serves both console
-  scripts (`graphify`, `graphify-mcp` as a symlink).
-- `graphify.in` — the lock-compile input, carrying the `cryptography<49`
-  constraint the darwin-x64 slice requires.
-- `linux-measure.sh` — the same measurement inside `python:3.12-slim`
+The build recipe that started here graduated to `scripts/graphify/`
+(`build.sh`, `graphify.spec`, `entry.py`, `graphify.in`, `entitlements.plist`)
+and is published by `.github/workflows/graphify-artifacts.yml`; this directory
+keeps only what remains a measurement, not a release step:
+
+- `linux-measure.sh` — the same freeze + smoke suite (CLI extract + query,
+  MCP `query_graph` over HTTP, venv hidden) inside `python:3.12-slim`
   containers (linux-arm64 native, linux-x64 under emulation); invocation in
   its header. Hive ships no Linux binary today — this proves the future row.
 
-Not wired into Hive's runtime or CI. Verified 2026-07-12 on macOS arm64
-(Darwin 25.3.0), CPython 3.12.8, PyInstaller 6.21.0, graphifyy 0.9.12.
+Verified 2026-07-12 on macOS arm64 (Darwin 25.3.0), CPython 3.12.8,
+PyInstaller 6.21.0, graphifyy 0.9.12.
