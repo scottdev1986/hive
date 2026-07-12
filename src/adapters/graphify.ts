@@ -3,16 +3,18 @@
  * Design: docs/architecture/graphify-integration.md — the hard rules live
  * there and are enforced here:
  *
- *   - Installed only through `hive graphify enable` (running it is the
- *     consent), from a Hive-shipped fully hash-pinned lock. The lock is
- *     inlined into the binary the way shipped skills are: a user's machine
- *     has no Hive checkout to read it from.
+ *   - Installed as a Hive-built frozen bundle (docs/architecture/
+ *     graphify-bundling.md): fetched from Hive's own release, sha256-verified
+ *     against a constant embedded in this binary, unpacked only after the
+ *     hash matches. No uv, no Python, no PyPI on the user's machine. The
+ *     embedded lock remains the pin's source of truth — it is what the
+ *     bundle was built from.
  *   - Every graphify invocation runs keyless from a scrubbed allowlist
  *     environment with `--code-only`, so the LLM-enrichment paths fail
  *     closed instead of sending repo content anywhere.
- *   - Invocation is by absolute path into Hive's own venv; nothing lands on
- *     PATH and upstream's `graphify install` (which writes the user's global
- *     assistant configs) is never run.
+ *   - Invocation is by absolute path into Hive's own bundle dir; nothing
+ *     lands on PATH and upstream's `graphify install` (which writes the
+ *     user's global assistant configs) is never run.
  *   - `graphify-out/` is kept out of git via `.git/info/exclude` — Hive does
  *     not edit the repo's tracked `.gitignore` — and the exclusion is
  *     verified with `check-ignore --no-index`, because plain `check-ignore`
@@ -23,6 +25,12 @@ import { copyFile, mkdir, readFile, rename, rm, writeFile } from "node:fs/promis
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import graphifyLock from "../../graphify.lock" with { type: "text" };
 import { getHiveHome } from "../daemon/db";
+import {
+  graphifyArtifact,
+  graphifyArtifactUrl,
+  graphifyPlatformKey,
+  type GraphifyArtifact,
+} from "./graphify-artifacts";
 import { projectStateDir } from "./profile";
 
 /** The exact version the embedded lock pins. The lock is the single source of
@@ -39,16 +47,18 @@ export function graphifyToolsDir(): string {
   return join(getHiveHome(), "tools", "graphify");
 }
 
-function venvDir(): string {
-  return join(graphifyToolsDir(), "venv");
+/** One immutable bundle dir per pin, so a pin bump can never layer onto a
+ * stale install: the new pin is simply a new directory. */
+function bundleDir(): string {
+  return join(graphifyToolsDir(), graphifyPin());
 }
 
 export function graphifyBin(): string {
-  return join(venvDir(), "bin", "graphify");
+  return join(bundleDir(), "graphify");
 }
 
 export function graphifyMcpBin(): string {
-  return join(venvDir(), "bin", "graphify-mcp");
+  return join(bundleDir(), "graphify-mcp");
 }
 
 export function graphOutDir(root: string): string {
@@ -129,6 +139,13 @@ export function graphifyStatePath(root: string): string {
   return join(projectStateDir(root), "graphify.toml");
 }
 
+/** Whether a human ever recorded a graphify decision for this repo (enable OR
+ * decline). Absent state reads as disabled either way; this exists so consent
+ * surfaces (the init question) ask once and then respect the answer. */
+export function graphifyDecisionRecorded(root: string): boolean {
+  return existsSync(graphifyStatePath(root));
+}
+
 /** Absent or malformed both read as disabled — but only because `enable`
  * writes a positive record first; a repo that was never enabled and one whose
  * state file was deleted degrade identically, to off. */
@@ -168,22 +185,29 @@ export async function writeGraphifyState(
 }
 
 // ---------------------------------------------------------------------------
-// Install: uv venv + hash-verified `uv pip install` from the embedded lock.
+// Install: fetch Hive's own frozen bundle, verify its sha256 against the
+// constant embedded in this binary, and unpack only after it matches.
 // ---------------------------------------------------------------------------
 
-export const UV_MISSING_MESSAGE =
-  "graphify needs uv (https://docs.astral.sh/uv/), which is not on PATH.\n" +
-  "Install it yourself — Hive will not run a vendor's installer for you:\n" +
-  "  curl -LsSf https://astral.sh/uv/install.sh | sh\n" +
-  "then re-run `hive graphify enable`. Everything else in Hive works without it.";
+export function noArtifactMessage(platformKey: string): string {
+  return (
+    `this Hive build ships no graphify bundle for ${platformKey}; ` +
+    "everything else in Hive works identically, and a future Hive release adds it."
+  );
+}
 
 export interface GraphifyInstallDeps {
-  which: (command: string) => string | null;
+  /** The artifact this binary trusts for this platform, or null. */
+  artifact: () => GraphifyArtifact | null;
+  /** Fetch the published bundle bytes. Injectable so tests never hit the network. */
+  fetchArtifact: (url: string) => Promise<Response>;
   run: CommandRunner;
 }
 
 export const defaultInstallDeps: GraphifyInstallDeps = {
-  which: (command) => Bun.which(command),
+  artifact: () => graphifyArtifact(),
+  fetchArtifact: (url) =>
+    fetch(url, { signal: AbortSignal.timeout(300_000) }),
   run: runCommand,
 };
 
@@ -191,66 +215,98 @@ export type GraphifyOutcome =
   | { ok: true; detail: string }
   | { ok: false; reason: string };
 
-/** Create Hive's own venv and install the pinned, hash-verified closure into
- * it. The install step (and only the install step) runs with the caller's
- * real environment: uv needs its cache, proxies, and PATH, and the hashes —
- * not the environment — are what make the fetch trustworthy. */
-export async function installGraphify(
-  deps: GraphifyInstallDeps = defaultInstallDeps,
-): Promise<GraphifyOutcome> {
-  const uv = deps.which("uv");
-  if (uv === null) return { ok: false, reason: UV_MISSING_MESSAGE };
-
-  const tools = graphifyToolsDir();
-  await mkdir(join(tools, "home"), { recursive: true });
-  const lockPath = join(tools, "graphify.lock");
-  await writeFile(lockPath, graphifyLock);
-
-  // A fresh venv every install: re-enable after a pin bump must never layer
-  // onto a stale environment.
-  await rm(venvDir(), { recursive: true, force: true });
-  const venv = await deps.run([uv, "venv", venvDir()], { timeoutMs: 120_000 });
-  if (venv.exitCode !== 0) {
-    return { ok: false, reason: `uv venv failed: ${venv.stderr.trim()}` };
-  }
-
-  const install = await deps.run(
-    [
-      uv,
-      "pip",
-      "install",
-      "--python",
-      join(venvDir(), "bin", "python"),
-      "--require-hashes",
-      "-r",
-      lockPath,
-    ],
-    { timeoutMs: 600_000 },
-  );
-  if (install.exitCode !== 0) {
-    return {
-      ok: false,
-      reason: install.timedOut
-        ? "uv pip install timed out"
-        : `uv pip install failed (hash or fetch error): ${install.stderr.trim().slice(-2000)}`,
-    };
-  }
-
-  const probe = await deps.run([graphifyBin(), "--help"], {
+/** Probe both entry points of an unpacked bundle; a bundle that unpacked but
+ * cannot run is a failed install, not a shrug. */
+async function probeBundle(run: CommandRunner): Promise<GraphifyOutcome> {
+  const probe = await run([graphifyBin(), "--help"], {
     env: scrubbedGraphifyEnv(),
     timeoutMs: 30_000,
   });
   if (probe.exitCode !== 0) {
     return { ok: false, reason: `installed graphify does not run: ${probe.stderr.trim()}` };
   }
-  const mcpProbe = await deps.run([graphifyMcpBin(), "--help"], {
+  const mcpProbe = await run([graphifyMcpBin(), "--help"], {
     env: scrubbedGraphifyEnv(),
     timeoutMs: 30_000,
   });
   if (mcpProbe.exitCode !== 0) {
     return { ok: false, reason: `installed graphify MCP server does not run: ${mcpProbe.stderr.trim()}` };
   }
-  return { ok: true, detail: `graphifyy==${graphifyPin()} (hash-verified) in ${tools}` };
+  return { ok: true, detail: `graphifyy==${graphifyPin()} in ${bundleDir()}` };
+}
+
+/** Download, verify, unpack, probe. Nothing is unpacked until the sha256 of
+ * the downloaded bytes matches the constant this binary shipped with, so the
+ * outcome is always "installed and working" or "cleanly absent" — there is no
+ * half-install for an uninstall to miss. A bundle already on disk that probes
+ * healthy is kept: the pin names the directory, so a pin bump reinstalls by
+ * construction. */
+export async function installGraphify(
+  deps: GraphifyInstallDeps = defaultInstallDeps,
+): Promise<GraphifyOutcome> {
+  const artifact = deps.artifact();
+  if (artifact === null) {
+    return { ok: false, reason: noArtifactMessage(graphifyPlatformKey()) };
+  }
+
+  const tools = graphifyToolsDir();
+  await mkdir(join(tools, "home"), { recursive: true });
+
+  if (existsSync(graphifyBin())) {
+    const probed = await probeBundle(deps.run);
+    if (probed.ok) return { ok: true, detail: `${probed.detail} (already installed)` };
+    // Present but broken: fall through to a fresh install over it.
+  }
+
+  const url = graphifyArtifactUrl(artifact);
+  let response: Response;
+  try {
+    response = await deps.fetchArtifact(url);
+  } catch (error) {
+    return {
+      ok: false,
+      reason: `could not download the graphify bundle (${url}): ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    };
+  }
+  if (!response.ok) {
+    return { ok: false, reason: `could not download the graphify bundle (${url}): HTTP ${response.status}` };
+  }
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  const digest = new Bun.CryptoHasher("sha256").update(bytes).digest("hex");
+  if (digest !== artifact.sha256) {
+    return {
+      ok: false,
+      reason:
+        `refusing to install: downloaded bundle hash ${digest} does not match the ` +
+        `sha256 this Hive build trusts (${artifact.sha256}) for ${artifact.asset}`,
+    };
+  }
+
+  const tarball = join(tools, `${artifact.asset}.download`);
+  await writeFile(tarball, bytes);
+  try {
+    await rm(bundleDir(), { recursive: true, force: true });
+    await mkdir(bundleDir(), { recursive: true });
+    const untar = await deps.run(
+      ["/usr/bin/tar", "-xf", tarball, "-C", bundleDir(), "--strip-components", "1"],
+      { timeoutMs: 120_000 },
+    );
+    if (untar.exitCode !== 0) {
+      await rm(bundleDir(), { recursive: true, force: true });
+      return { ok: false, reason: `could not unpack the graphify bundle: ${untar.stderr.trim()}` };
+    }
+  } finally {
+    await rm(tarball, { force: true });
+  }
+
+  const probed = await probeBundle(deps.run);
+  if (!probed.ok) {
+    await rm(bundleDir(), { recursive: true, force: true });
+    return probed;
+  }
+  return { ok: true, detail: `${probed.detail} (sha256-verified)` };
 }
 
 // ---------------------------------------------------------------------------
@@ -569,6 +625,40 @@ export async function ensureGraphifyIgnored(
     };
   }
   return { ok: true, detail: excludePath };
+}
+
+/** Remove exactly the exclude lines `ensureGraphifyIgnored` appended (the
+ * comment and the entry), leaving every other line byte-identical. Uninstall
+ * calls this; it is a no-op on a repo Hive never touched. */
+export async function removeGraphifyExcludeEntry(
+  root: string,
+  run: CommandRunner = runCommand,
+): Promise<boolean> {
+  const commonDir = await run(
+    ["git", "rev-parse", "--git-common-dir"],
+    { cwd: root, timeoutMs: 10_000 },
+  );
+  if (commonDir.exitCode !== 0) return false;
+  const gitDir = commonDir.stdout.trim();
+  const excludePath = join(
+    isAbsolute(gitDir) ? gitDir : resolve(root, gitDir),
+    "info",
+    "exclude",
+  );
+  let existing: string;
+  try {
+    existing = await readFile(excludePath, "utf8");
+  } catch {
+    return false;
+  }
+  const kept = existing
+    .split("\n")
+    .filter((line) =>
+      !EXCLUDE_ENTRIES.includes(line.trim()) && line !== EXCLUDE_COMMENT
+    );
+  if (kept.length === existing.split("\n").length) return false;
+  await writeFile(excludePath, kept.join("\n"));
+  return true;
 }
 
 // ---------------------------------------------------------------------------

@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import graphifyLock from "../../graphify.lock" with { type: "text" };
@@ -11,17 +11,19 @@ import {
   graphifyPin,
   graphifyStatePath,
   installGraphify,
+  noArtifactMessage,
   purgeGraphify,
   readGraphifyState,
+  removeGraphifyExcludeEntry,
   runCommand,
   scrubbedGraphifyEnv,
   selectGraphBrief,
-  UV_MISSING_MESSAGE,
   writeGraphifyIgnore,
   writeGraphifyState,
   type CommandRunner,
   type RunResult,
 } from "./graphify";
+import type { GraphifyArtifact } from "./graphify-artifacts";
 
 let hiveHome: string;
 const originalHiveHome = process.env.HIVE_HOME;
@@ -186,46 +188,132 @@ describe("ensureGraphifyIgnored", () => {
   });
 });
 
+describe("removeGraphifyExcludeEntry", () => {
+  test("removes exactly the lines Hive appended and keeps the user's", async () => {
+    const root = await gitRepo();
+    const excludePath = join(root, ".git", "info", "exclude");
+    await writeFile(excludePath, "mine.log\n");
+    await ensureGraphifyIgnored(root);
+    expect(await removeGraphifyExcludeEntry(root)).toBe(true);
+    const after = await readFile(excludePath, "utf8");
+    expect(after).toContain("mine.log");
+    expect(after).not.toContain("graphify-out/");
+    expect(after).not.toContain("hive graphify");
+    // A second removal finds nothing to do.
+    expect(await removeGraphifyExcludeEntry(root)).toBe(false);
+    await rm(root, { recursive: true, force: true });
+  });
+});
+
 describe("installGraphify", () => {
-  test("without uv: instructions, no state change, no commands run", async () => {
+  const bundleBytes = new TextEncoder().encode("not really a tarball");
+  const bundleSha256 = new Bun.CryptoHasher("sha256")
+    .update(bundleBytes)
+    .digest("hex");
+  const artifact: GraphifyArtifact = {
+    tag: "graphify-vtest-hive.1",
+    asset: "graphify-test-darwin-arm64.tar.zst",
+    sha256: bundleSha256,
+  };
+
+  test("no published artifact for this platform: one honest line, nothing run", async () => {
     const calls: string[][] = [];
+    let fetched = 0;
     const result = await installGraphify({
-      which: () => null,
+      artifact: () => null,
+      fetchArtifact: async () => {
+        fetched += 1;
+        return new Response(bundleBytes);
+      },
       run: async (argv) => {
         calls.push(argv);
         return ok();
       },
     });
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.reason).toBe(UV_MISSING_MESSAGE);
-    expect(UV_MISSING_MESSAGE).not.toContain("Hive will run");
+    if (!result.ok) expect(result.reason).toBe(noArtifactMessage("darwin-arm64"));
+    expect(fetched).toBe(0);
     expect(calls).toEqual([]);
   });
 
-  test("installs hash-verified from the embedded lock, then probes the binary", async () => {
+  test("a hash mismatch refuses to unpack: no tar run, bundle dir absent", async () => {
     const calls: string[][] = [];
     const result = await installGraphify({
-      which: (cmd) => (cmd === "uv" ? "/fake/uv" : null),
+      artifact: () => ({ ...artifact, sha256: "0".repeat(64) }),
+      fetchArtifact: async () => new Response(bundleBytes),
+      run: async (argv) => {
+        calls.push(argv);
+        return ok();
+      },
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.reason).toContain("refusing to install");
+      expect(result.reason).toContain(bundleSha256);
+    }
+    expect(calls).toEqual([]);
+    expect(
+      await readFile(join(hiveHome, "tools", "graphify", graphifyPin(), "graphify"), "utf8")
+        .catch(() => null),
+    ).toBeNull();
+  });
+
+  test("verifies the sha256, unpacks with tar, then probes both entry points", async () => {
+    const calls: string[][] = [];
+    const result = await installGraphify({
+      artifact: () => artifact,
+      fetchArtifact: async (url) => {
+        expect(url).toBe(
+          `https://github.com/${process.env.HIVE_UPDATE_REPO ?? "scottdev1986/hive"}/releases/download/${artifact.tag}/${artifact.asset}`,
+        );
+        return new Response(bundleBytes);
+      },
       run: async (argv) => {
         calls.push(argv);
         return ok();
       },
     });
     expect(result.ok).toBe(true);
-    expect(calls.length).toBe(4);
-    const [venv, install, probe, mcpProbe] = calls as [
-      string[], string[], string[], string[],
-    ];
-    expect(venv.slice(0, 2)).toEqual(["/fake/uv", "venv"]);
-    expect(install).toContain("--require-hashes");
-    expect(install[0]).toBe("/fake/uv");
-    const lockPath = install[install.indexOf("-r") + 1] as string;
-    expect(await readFile(lockPath, "utf8")).toBe(graphifyLock);
-    // The probe runs the venv binary by absolute path, never a PATH lookup.
-    expect(probe[0]).toContain(join("tools", "graphify", "venv", "bin", "graphify"));
+    if (result.ok) expect(result.detail).toContain("sha256-verified");
+    expect(calls.length).toBe(3);
+    const [untar, probe, mcpProbe] = calls as [string[], string[], string[]];
+    expect(untar[0]).toBe("/usr/bin/tar");
+    expect(untar).toContain("--strip-components");
+    // Probes run the bundle binaries by absolute path, never a PATH lookup.
+    expect(probe[0]).toContain(join("tools", "graphify", graphifyPin(), "graphify"));
     expect(mcpProbe[0]).toContain(
-      join("tools", "graphify", "venv", "bin", "graphify-mcp"),
+      join("tools", "graphify", graphifyPin(), "graphify-mcp"),
     );
+    // The downloaded tarball is cleaned up either way.
+    expect(untar[2]).toContain(".download");
+    expect(await readFile(untar[2] as string, "utf8").catch(() => null)).toBeNull();
+  });
+
+  test("a healthy existing bundle is kept: no download, probes only", async () => {
+    const bin = join(hiveHome, "tools", "graphify", graphifyPin());
+    await mkdir(bin, { recursive: true });
+    await writeFile(join(bin, "graphify"), "#!/bin/sh\n");
+    let fetched = 0;
+    const calls: string[][] = [];
+    try {
+      const result = await installGraphify({
+        artifact: () => artifact,
+        fetchArtifact: async () => {
+          fetched += 1;
+          return new Response(bundleBytes);
+        },
+        run: async (argv) => {
+          calls.push(argv);
+          return ok();
+        },
+      });
+      expect(result.ok).toBe(true);
+      if (result.ok) expect(result.detail).toContain("already installed");
+      expect(fetched).toBe(0);
+      expect(calls.length).toBe(2);
+    } finally {
+      await rm(bin, { recursive: true, force: true });
+    }
   });
 });
 
@@ -245,7 +333,7 @@ describe("buildGraph", () => {
       env: Record<string, string> | undefined;
     };
     expect(call.argv).toContain("--code-only");
-    expect(call.argv[0]).toContain(join("venv", "bin", "graphify"));
+    expect(call.argv[0]).toContain(join("tools", "graphify", graphifyPin(), "graphify"));
     expect(call.env).toEqual(scrubbedGraphifyEnv());
     expect(JSON.stringify(call.argv)).not.toContain("--backend");
   });

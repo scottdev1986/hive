@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   defaultInitDeps,
+  initStampPath,
+  isRepoInitialized,
   readSeedFactsFile,
   runInit,
   runInitProfile,
@@ -363,6 +365,179 @@ describe("readSeedFactsFile", () => {
 
       await writeFile(path, JSON.stringify([{ title: "no body" }]));
       await expect(readSeedFactsFile(path)).rejects.toThrow("string title and body");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("the graphify decision in init", () => {
+  interface Probe {
+    deps: typeof defaultInitDeps;
+    enabled: string[];
+    declined: boolean[];
+  }
+
+  function probe(overrides: Partial<typeof defaultInitDeps> = {}): Probe {
+    const enabled: string[] = [];
+    const declined: boolean[] = [];
+    const deps: typeof defaultInitDeps = {
+      ...testDeps(),
+      graphifyAvailable: () => true,
+      graphifyDecisionRecorded: () => false,
+      confirm: async () => null,
+      enableGraphify: async (root) => (enabled.push(root), 0),
+      writeGraphifyState: async (_root, state) => {
+        declined.push(!state.enabled);
+      },
+      ...overrides,
+    };
+    return { deps, enabled, declined };
+  }
+
+  const lastLine = async (
+    root: string,
+    options: Parameters<typeof runInit>[1],
+    deps: typeof defaultInitDeps,
+  ): Promise<string> => {
+    const result = await runInit(root, options, deps);
+    return result.messages[result.messages.length - 1] as string;
+  };
+
+  test("--graphify enables without asking, even without a TTY", async () => {
+    const root = await tsRepo();
+    try {
+      const { deps, enabled } = probe({
+        confirm: async () => {
+          throw new Error("flags never prompt");
+        },
+      });
+      const line = await lastLine(root, { graphify: true }, deps);
+      expect(enabled).toEqual([root]);
+      expect(line).toContain("Graphify: enabled");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("--no-graphify declines without asking and persists the answer", async () => {
+    const root = await tsRepo();
+    try {
+      const { deps, enabled, declined } = probe({
+        confirm: async () => {
+          throw new Error("flags never prompt");
+        },
+      });
+      const line = await lastLine(root, { graphify: false }, deps);
+      expect(enabled).toEqual([]);
+      expect(declined).toEqual([true]);
+      expect(line).toContain("Graphify: declined");
+      expect(line).toContain("hive graphify enable");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("no flag, no terminal: declines for the run, installs nothing, persists nothing", async () => {
+    const root = await tsRepo();
+    try {
+      const { deps, enabled, declined } = probe({ confirm: async () => null });
+      const line = await lastLine(root, {}, deps);
+      expect(enabled).toEqual([]);
+      expect(declined).toEqual([]);
+      expect(line).toContain("non-interactive");
+      expect(line).toContain("hive graphify enable");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("a TTY yes enables; a TTY no persists the decline", async () => {
+    const root = await tsRepo();
+    try {
+      const yes = probe({ confirm: async () => true });
+      expect(await lastLine(root, {}, yes.deps)).toContain("Graphify: enabled");
+      expect(yes.enabled).toEqual([root]);
+
+      const no = probe({ confirm: async () => false });
+      expect(await lastLine(root, {}, no.deps)).toContain("Graphify: declined");
+      expect(no.declined).toEqual([true]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("a recorded decision is respected: no re-asking", async () => {
+    const root = await tsRepo();
+    try {
+      const { deps, enabled } = probe({
+        graphifyDecisionRecorded: () => true,
+        confirm: async () => {
+          throw new Error("a recorded decision never re-prompts");
+        },
+      });
+      const line = await lastLine(root, {}, deps);
+      expect(enabled).toEqual([]);
+      expect(line).toContain("declined earlier");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("already enabled: reported, never re-asked", async () => {
+    const root = await tsRepo();
+    try {
+      const { deps } = probe({
+        readGraphifyState: async () => ({ enabled: true, pin: "0.0.0" }),
+        confirm: async () => {
+          throw new Error("enabled repos are never re-prompted");
+        },
+      });
+      expect(await lastLine(root, {}, deps)).toContain("Graphify: enabled");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("no bundle for this platform: one honest line, no question", async () => {
+    const root = await tsRepo();
+    try {
+      const { deps, enabled } = probe({
+        graphifyAvailable: () => false,
+        confirm: async () => {
+          throw new Error("nothing installable is never offered");
+        },
+      });
+      const line = await lastLine(root, {}, deps);
+      expect(enabled).toEqual([]);
+      expect(line).toContain("no bundle is published for this platform");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("an enable failure is reported and init still completes", async () => {
+    const root = await tsRepo();
+    try {
+      const { deps } = probe({ enableGraphify: async () => 1 });
+      const result = await runInit(root, { graphify: true }, deps);
+      const line = result.messages[result.messages.length - 1] as string;
+      expect(line).toContain("could not be enabled");
+      expect(result.profileWritten).toBe(true);
+      expect(isRepoInitialized(root)).toBe(true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("init leaves the stamp bare `hive` checks", async () => {
+    const root = await tsRepo();
+    try {
+      expect(isRepoInitialized(root)).toBe(false);
+      const { deps } = probe();
+      await runInit(root, {}, deps);
+      expect(isRepoInitialized(root)).toBe(true);
+      expect(await readFile(initStampPath(root), "utf8")).toContain("hive init");
     } finally {
       await rm(root, { recursive: true, force: true });
     }

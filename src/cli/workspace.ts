@@ -43,6 +43,7 @@ import {
 import { renderStartNotice } from "../update/notice";
 import { IS_RELEASE_BUILD } from "../version";
 import { orchestratorTmuxSession } from "../daemon/tmux-sessions";
+import { isRepoInitialized, runInitCli } from "./init";
 import { startSession, type StartDeps, type StartedSession } from "./start";
 import { resolveProjectRoot } from "./project-root";
 import type { OrchestratorTool } from "./orchestrator";
@@ -127,6 +128,9 @@ export interface RunWorkspaceDeps {
   readonly checkUpdate?: () => Promise<UpdateCheck>;
   readonly write?: (line: string) => void;
   readonly launch?: (deps: LaunchDeps) => Promise<number>;
+  /** Test seams for the first-run init handoff below. */
+  readonly isInitialized?: (root: string) => boolean;
+  readonly init?: (root: string) => Promise<void>;
 }
 
 /** Bare `hive`. Inside a git worktree: resolve the repo root, run the shared
@@ -135,11 +139,29 @@ export interface RunWorkspaceDeps {
  * already prints the start notice, and running both prints it twice. Outside
  * a repo: force a small release-metadata check, offer an update when one
  * exists, then launch the app standalone. A failed check is silent: app
- * launch is useful offline and network trouble is not a project warning. */
+ * launch is useful offline and network trouble is not a project warning.
+ *
+ * A repo that never completed `hive init` gets the same init flow first,
+ * announced before anything is written: bare `hive` must never leave a repo
+ * half-initialized or mutate it by surprise, and the graphify question is the
+ * same question init asks (TTY-gated; without a terminal it declines for the
+ * run with one line). Init failing does not stop the launch — the session
+ * boundary below still brings the daemon up, and init can be re-run. */
 export async function runWorkspace(deps: RunWorkspaceDeps = {}): Promise<number> {
   const cwd = deps.cwd ?? process.cwd();
   const root = (deps.resolveRoot ?? resolveProjectRoot)(cwd);
   if (root !== null) {
+    if (!(deps.isInitialized ?? isRepoInitialized)(root)) {
+      (deps.write ?? ((text: string) => process.stderr.write(`${text}\n`)))(
+        `No Hive here yet — initializing ${root} first (\`hive init\`: skills, repo profile, memory):`,
+      );
+      await (deps.init ?? ((r: string) => runInitCli({ cwd: r })))(root)
+        .catch((error: unknown) => {
+          (deps.write ?? ((text: string) => process.stderr.write(`${text}\n`)))(
+            `init did not complete (${error instanceof Error ? error.message : String(error)}); starting anyway — re-run \`hive init\` to finish.`,
+          );
+        });
+    }
     const session = await (deps.start ?? startSession)({ cwd: root });
     return (deps.launch ?? launchWorkspace)({
       session: {

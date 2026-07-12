@@ -143,6 +143,7 @@ describe("bare hive opens the project you're in", () => {
     await runWorkspace({
       cwd: "/repo/root/some/subdir",
       resolveRoot: (cwd) => (resolved.push(cwd), "/repo/root"),
+      isInitialized: () => true,
       start: async (deps) => {
         started.push(deps.cwd);
         return { port: 4483, cwd: "/repo/root" };
@@ -165,12 +166,52 @@ describe("bare hive opens the project you're in", () => {
       orchestrator: "claude",
       cwd: "/repo/root/subdir",
       resolveRoot: () => "/repo/root",
+      isInitialized: () => true,
       start: async () => ({ port: 4483, cwd: "/repo/root" }),
       launch: async (deps) => (launches.push(deps), 0),
     });
     expect(launches).toEqual([{
       session: { cwd: "/repo/root", port: 4483, orchestrator: "claude" },
     }]);
+  });
+
+  test("a repo that never ran init is announced and initialized first", async () => {
+    const lines: string[] = [];
+    const inits: string[] = [];
+    const order: string[] = [];
+    await runWorkspace({
+      cwd: "/repo/root",
+      resolveRoot: () => "/repo/root",
+      isInitialized: () => false,
+      init: async (root) => {
+        inits.push(root);
+        order.push("init");
+      },
+      start: async () => (order.push("start"), { port: 4483, cwd: "/repo/root" }),
+      write: (line) => lines.push(line),
+      launch: async () => 0,
+    });
+    expect(inits).toEqual(["/repo/root"]);
+    expect(order).toEqual(["init", "start"]);
+    expect(lines.join("\n")).toContain("No Hive here yet");
+  });
+
+  test("an init failure is reported and does not stop the launch", async () => {
+    const lines: string[] = [];
+    let launched = false;
+    await runWorkspace({
+      cwd: "/repo/root",
+      resolveRoot: () => "/repo/root",
+      isInitialized: () => false,
+      init: async () => {
+        throw new Error("disk full");
+      },
+      start: async () => ({ port: 4483, cwd: "/repo/root" }),
+      write: (line) => lines.push(line),
+      launch: async () => ((launched = true), 0),
+    });
+    expect(lines.join("\n")).toContain("disk full");
+    expect(launched).toBe(true);
   });
 
   test("outside a repo it offers an available update, then launches standalone", async () => {

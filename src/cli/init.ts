@@ -17,18 +17,22 @@
  * Running the command is the authorization, and every action it takes is
  * printed — but it never ends by asking for another command. Anything Hive can
  * finish itself, it finishes here (the memory index below is the example: seeded
- * facts are indexed on the spot, not left with a note to go reindex them). The
- * one thing it names instead of running is `hive graphify enable`: that is an
- * opt-in consent decision, so init reports where it stands and leaves it to
- * the human.
+ * facts are indexed on the spot, not left with a note to go reindex them).
+ * Graphify is the one decision that is the human's, and init is where it gets
+ * made: `--graphify`/`--no-graphify` always win and never prompt; with no flag
+ * a TTY is asked once (recommended, default yes) and a non-TTY safely declines
+ * for the run with one line naming the enable command — so `hive init` stays
+ * scriptable while a human at a terminal gets the recommended choice.
  * Model-authored narrative is supplied by the caller — hive's models are its
  * agents, not this CLI — and written through the same seeding path.
  */
-import { access, readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { existsSync } from "node:fs";
+import { access, mkdir, readFile, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import {
   ensureProfile,
   loadDerivedProfile,
+  projectStateDir,
   regenerateProfile,
 } from "../adapters/profile";
 import {
@@ -36,7 +40,14 @@ import {
   writeMemoryFact,
   type MemoryWriteFileInput,
 } from "../adapters/memory";
-import { readGraphifyState, type GraphifyState } from "../adapters/graphify";
+import {
+  graphifyDecisionRecorded,
+  graphifyPin,
+  readGraphifyState,
+  writeGraphifyState,
+  type GraphifyState,
+} from "../adapters/graphify";
+import { graphifyArtifact } from "../adapters/graphify-artifacts";
 import { readDaemonPort } from "../daemon/lifecycle";
 import { reindexMemory } from "./mcp";
 import {
@@ -45,6 +56,8 @@ import {
   type SkillTool,
 } from "../adapters/skills";
 import type { RepoProfile } from "../schemas/profile";
+import { runGraphifyEnable } from "./graphify";
+import { confirmOnTty, type ConfirmFn } from "./prompt";
 import { projectRootOrCwd } from "./project-root";
 import { repairLeakedProjectConfig } from "./project-config-cleanup";
 
@@ -79,6 +92,10 @@ export interface InitOptions {
   /** Replace a skill the user has edited with Hive's shipped version. Without
    * it, an edited skill is reported as drifted and left exactly as it is. */
   force?: boolean;
+  /** The graphify decision, from `--graphify` / `--no-graphify`. Flags always
+   * win and never prompt; undefined means undecided, which prompts on a TTY
+   * and safely declines (with one line saying how to enable) everywhere else. */
+  graphify?: boolean;
   /** Injected for tests; defaults to today. */
   today?: string;
 }
@@ -119,6 +136,19 @@ export interface InitDeps {
   ) => Promise<SkillInstallReport>;
   /** Where the opt-in graphify decision stands, so init can report it. */
   readGraphifyState: (root: string) => Promise<GraphifyState>;
+  /** Whether a decision (either way) was ever recorded, so init asks once. */
+  graphifyDecisionRecorded: (root: string) => boolean;
+  /** Whether this Hive build ships a graphify bundle for this platform. When
+   * it does not, there is nothing to ask: init prints one line instead. */
+  graphifyAvailable: () => boolean;
+  /** Ask on a TTY; null means there is no terminal to ask. */
+  confirm: ConfirmFn;
+  /** The scriptable enable everything resolves to (`hive graphify enable`). */
+  enableGraphify: (root: string) => Promise<number>;
+  /** Persist an explicit "no" so the question is not re-asked forever. */
+  writeGraphifyState: (root: string, state: GraphifyState) => Promise<void>;
+  /** Record that init completed here, so bare `hive` stops offering to init. */
+  writeInitStamp: (root: string) => Promise<void>;
   today: () => string;
 }
 
@@ -147,8 +177,31 @@ export const defaultInitDeps: InitDeps = {
   hasCli: (command) => Bun.which(command) !== null,
   installShippedSkills,
   readGraphifyState,
+  graphifyDecisionRecorded,
+  graphifyAvailable: () => graphifyArtifact() !== null,
+  confirm: confirmOnTty,
+  enableGraphify: (root) => runGraphifyEnable(root),
+  writeGraphifyState,
+  writeInitStamp: async (root) => {
+    const path = initStampPath(root);
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(path, `# Written by \`hive init\`; bare \`hive\` checks it.\n`);
+  },
   today: () => new Date().toISOString().slice(0, 10),
 };
+
+/** The marker `hive init` leaves in the project's derived-state dir. Bare
+ * `hive` reads it to know whether this repo ever completed the init flow —
+ * the profile cannot serve, because every session boundary writes one
+ * silently. Deleting it (or the state dir, as `hive uninstall --repo` does)
+ * makes bare `hive` offer init again, which is exactly right. */
+export function initStampPath(root: string): string {
+  return join(projectStateDir(root), "initialized");
+}
+
+export function isRepoInitialized(root: string): boolean {
+  return existsSync(initStampPath(root));
+}
 
 function slugify(title: string): string {
   const slug = title
@@ -349,16 +402,68 @@ export async function runInit(
     );
   }
 
-  // 5. Graphify is opt-in and the choice is the human's, so init reports
-  //    where the decision stands rather than making it.
-  const graphify = await deps.readGraphifyState(cwd);
-  messages.push(
-    graphify.enabled
-      ? "Graphify: enabled — agents get a local, code-only knowledge graph."
-      : "Graphify: not enabled. `hive graphify enable` builds a local, code-only knowledge graph agents can query (opt-in; docs/architecture/graphify-integration.md).",
-  );
+  // 5. Graphify. The choice is the human's, and init is where it gets made:
+  //    flags always win and never prompt; a TTY without a flag is asked once
+  //    (recommended, default yes); non-interactive without a flag safely
+  //    declines for this run and says how to enable. An enable failure is
+  //    reported and init continues — nothing in init ever blocks on graphify.
+  messages.push(await decideGraphify(cwd, options.graphify, deps));
+
+  await deps.writeInitStamp(cwd);
 
   return { profileWritten, agentsScaffolded, factsSeeded, skills, messages };
+}
+
+const GRAPHIFY_ENABLED_LINE =
+  "Graphify: enabled — agents get a local, code-only knowledge graph.";
+const GRAPHIFY_LATER_HINT = "`hive graphify enable` turns it on any time.";
+
+function graphifyQuestion(): string {
+  return [
+    "Graphify (recommended) gives agents a local code knowledge graph of this repo.",
+    `Yes installs Hive's graphify bundle (graphifyy==${graphifyPin()}, sha256-verified from Hive's own release) under ~/.hive/tools`,
+    "and builds graphify-out/ here. Code is parsed locally — no LLM calls, nothing leaves this machine.",
+    "Enable graphify?",
+  ].join("\n");
+}
+
+async function decideGraphify(
+  cwd: string,
+  flag: boolean | undefined,
+  deps: InitDeps,
+): Promise<string> {
+  const state = await deps.readGraphifyState(cwd);
+  if (state.enabled) return GRAPHIFY_ENABLED_LINE;
+
+  const enable = async (): Promise<string> =>
+    (await deps.enableGraphify(cwd)) === 0
+      ? GRAPHIFY_ENABLED_LINE
+      : "Graphify: could not be enabled (details above); everything else is ready. " +
+        GRAPHIFY_LATER_HINT;
+  const decline = async (): Promise<string> => {
+    await deps.writeGraphifyState(cwd, { enabled: false, pin: null });
+    return `Graphify: declined. ${GRAPHIFY_LATER_HINT}`;
+  };
+
+  if (flag === true) return enable();
+  if (flag === false) return decline();
+  if (deps.graphifyDecisionRecorded(cwd)) {
+    return `Graphify: not enabled (declined earlier). ${GRAPHIFY_LATER_HINT}`;
+  }
+  if (!deps.graphifyAvailable()) {
+    return (
+      "Graphify: no bundle is published for this platform in this Hive build; " +
+      "everything else works identically."
+    );
+  }
+  const answer = await deps.confirm(graphifyQuestion(), true);
+  if (answer === null) {
+    return (
+      "Graphify: not installed (non-interactive, no --graphify flag given). " +
+      "`hive init --graphify` or `hive graphify enable` installs it."
+    );
+  }
+  return answer ? enable() : decline();
 }
 
 /** Read a JSON array of `InitFact`s from a file, so a human or orchestrator can
@@ -398,6 +503,7 @@ export async function runInitCli(options: {
   scaffoldAgents?: boolean;
   seedFacts?: string;
   force?: boolean;
+  graphify?: boolean;
 }): Promise<void> {
   const root = options.cwd ?? projectRootOrCwd();
   const repaired = await repairLeakedProjectConfig(root);
@@ -417,6 +523,7 @@ export async function runInitProfile(
     scaffoldAgents?: boolean;
     seedFacts?: string;
     force?: boolean;
+    graphify?: boolean;
   },
 ): Promise<InitResult> {
   const facts = options.seedFacts === undefined
@@ -428,6 +535,7 @@ export async function runInitProfile(
       ? {}
       : { scaffoldAgents: options.scaffoldAgents }),
     ...(options.force === true ? { force: true } : {}),
+    ...(options.graphify === undefined ? {} : { graphify: options.graphify }),
     facts,
   });
 }

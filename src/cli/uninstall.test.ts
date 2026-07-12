@@ -1,0 +1,208 @@
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { existsSync } from "node:fs";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  ensureGraphifyIgnored,
+  GRAPHIFY_IGNORE_MARKER,
+  runCommand,
+} from "../adapters/graphify";
+import { projectStateDir } from "../adapters/profile";
+import { getHiveHome } from "../daemon/db";
+import { shippedSkillsFor } from "../skills/shipped";
+import { runUninstallMachine, runUninstallRepo, type UninstallDeps } from "./uninstall";
+
+let hiveHome: string;
+const originalHiveHome = process.env.HIVE_HOME;
+
+beforeAll(async () => {
+  hiveHome = await mkdtemp(join(tmpdir(), "hive-home-"));
+  process.env.HIVE_HOME = hiveHome;
+});
+
+afterAll(async () => {
+  if (originalHiveHome === undefined) delete process.env.HIVE_HOME;
+  else process.env.HIVE_HOME = originalHiveHome;
+  await rm(hiveHome, { recursive: true, force: true });
+});
+
+function git(root: string, args: string[]): void {
+  Bun.spawnSync(["git", "-C", root, ...args], {
+    stdout: "ignore",
+    stderr: "ignore",
+    env: {
+      ...process.env,
+      GIT_AUTHOR_NAME: "t",
+      GIT_AUTHOR_EMAIL: "t@t",
+      GIT_COMMITTER_NAME: "t",
+      GIT_COMMITTER_EMAIL: "t@t",
+    },
+  });
+}
+
+async function gitRepo(): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), "hive-uninstall-"));
+  git(root, ["init"]);
+  await writeFile(join(root, "a.ts"), "export const a = 1;\n");
+  git(root, ["add", "-A"]);
+  git(root, ["commit", "-m", "init", "--no-gpg-sign"]);
+  return root;
+}
+
+interface Probe {
+  deps: UninstallDeps;
+  lines: string[];
+  stops: number[];
+}
+
+function probe(confirm: boolean | null, overrides: Partial<UninstallDeps> = {}): Probe {
+  const lines: string[] = [];
+  const stops: number[] = [];
+  const deps: UninstallDeps = {
+    run: runCommand,
+    confirm: async () => confirm,
+    log: (line) => lines.push(line),
+    stop: async () => {
+      stops.push(1);
+    },
+    ...overrides,
+  };
+  return { deps, lines, stops };
+}
+
+describe("hive uninstall --repo", () => {
+  test("without a terminal and without --yes it refuses and removes nothing", async () => {
+    const root = await gitRepo();
+    try {
+      await mkdir(join(root, "graphify-out"), { recursive: true });
+      const { deps, lines, stops } = probe(null);
+      expect(await runUninstallRepo(root, {}, deps)).toBe(1);
+      expect(stops).toEqual([]);
+      expect(existsSync(join(root, "graphify-out"))).toBe(true);
+      expect(lines.join("\n")).toContain("--yes");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("a declined confirmation removes nothing", async () => {
+    const root = await gitRepo();
+    try {
+      await mkdir(join(root, "graphify-out"), { recursive: true });
+      const { deps } = probe(false);
+      expect(await runUninstallRepo(root, {}, deps)).toBe(1);
+      expect(existsSync(join(root, "graphify-out"))).toBe(true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("confirmed: removes everything Hive put in, keeps everything the human owns", async () => {
+    const root = await gitRepo();
+    try {
+      // Hive's full repo footprint, laid down the way Hive lays it down.
+      const shipped = shippedSkillsFor("claude");
+      expect(shipped.length).toBeGreaterThan(1);
+      const [ours, theirs] = [shipped[0]!, shipped[1]!];
+      await mkdir(join(root, ".claude", "skills", ours.name), { recursive: true });
+      await writeFile(join(root, ".claude", "skills", ours.name, "SKILL.md"), ours.content);
+      await mkdir(join(root, ".claude", "skills", theirs.name), { recursive: true });
+      await writeFile(
+        join(root, ".claude", "skills", theirs.name, "SKILL.md"),
+        `${theirs.content}\n# my edits\n`,
+      );
+      git(root, ["worktree", "add", join(root, ".hive", "worktrees", "wt"), "-b", "hive/wt-task"]);
+      await mkdir(join(root, ".hive", "skills", "mine"), { recursive: true });
+      await writeFile(join(root, ".hive", "skills", "mine", "SKILL.md"), "# mine\n");
+      await mkdir(join(root, "graphify-out"), { recursive: true });
+      await writeFile(join(root, "graphify-out", "graph.json"), "{}");
+      await writeFile(
+        join(root, ".graphifyignore"),
+        `${GRAPHIFY_IGNORE_MARKER}\nnode_modules/\n`,
+      );
+      await ensureGraphifyIgnored(root);
+      await writeFile(
+        join(root, ".mcp.json"),
+        JSON.stringify({
+          mcpServers: {
+            hive: {
+              url: "http://127.0.0.1:4483/mcp",
+              headersHelper: "hive credential --agent orchestrator",
+            },
+            keepers: { url: "https://example.com/mcp" },
+          },
+        }),
+      );
+      await mkdir(projectStateDir(root), { recursive: true });
+      await writeFile(join(projectStateDir(root), "initialized"), "stamp\n");
+
+      const { deps, lines, stops } = probe(true);
+      expect(await runUninstallRepo(root, {}, deps)).toBe(0);
+      expect(stops).toEqual([1]);
+
+      // Hive's footprint is gone…
+      expect(existsSync(join(root, ".claude", "skills", ours.name))).toBe(false);
+      expect(existsSync(join(root, ".hive", "worktrees"))).toBe(false);
+      expect(existsSync(join(root, "graphify-out"))).toBe(false);
+      expect(existsSync(projectStateDir(root))).toBe(false);
+      const branches = Bun.spawnSync(["git", "-C", root, "branch", "--list", "hive/*"]);
+      expect(branches.stdout.toString().trim()).toBe("");
+      const exclude = await readFile(join(root, ".git", "info", "exclude"), "utf8")
+        .catch(() => "");
+      expect(exclude).not.toContain("graphify-out/");
+      expect(exclude).not.toContain(".graphifyignore");
+      expect(existsSync(join(root, ".graphifyignore"))).toBe(false);
+      const mcp = JSON.parse(await readFile(join(root, ".mcp.json"), "utf8")) as {
+        mcpServers: Record<string, unknown>;
+      };
+      expect(mcp.mcpServers.hive).toBeUndefined();
+
+      // …and the human's is not.
+      expect(mcp.mcpServers.keepers).toBeDefined();
+      expect(existsSync(join(root, ".hive", "skills", "mine"))).toBe(true);
+      expect(
+        await readFile(join(root, ".claude", "skills", theirs.name, "SKILL.md"), "utf8"),
+      ).toContain("# my edits");
+      expect(lines.join("\n")).toContain("differs from what Hive ships");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("hive uninstall", () => {
+  test("confirmed: removes ~/.hive; a source build's binary is not Hive's to touch", async () => {
+    const home = await mkdtemp(join(tmpdir(), "hive-home-gone-"));
+    const previous = process.env.HIVE_HOME;
+    process.env.HIVE_HOME = home;
+    try {
+      await writeFile(join(home, "hive.db"), "");
+      const { deps, lines } = probe(true);
+      expect(await runUninstallMachine({}, deps)).toBe(0);
+      expect(existsSync(home)).toBe(false);
+      expect(lines.join("\n")).toContain(getHiveHome());
+      expect(lines.join("\n")).toContain("source");
+    } finally {
+      if (previous === undefined) delete process.env.HIVE_HOME;
+      else process.env.HIVE_HOME = previous;
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  test("a declined confirmation removes nothing", async () => {
+    const home = await mkdtemp(join(tmpdir(), "hive-home-kept-"));
+    const previous = process.env.HIVE_HOME;
+    process.env.HIVE_HOME = home;
+    try {
+      const { deps, stops } = probe(false);
+      expect(await runUninstallMachine({}, deps)).toBe(1);
+      expect(stops).toEqual([]);
+      expect(existsSync(home)).toBe(true);
+    } finally {
+      if (previous === undefined) delete process.env.HIVE_HOME;
+      else process.env.HIVE_HOME = previous;
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+});

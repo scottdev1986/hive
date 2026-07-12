@@ -36,6 +36,7 @@ import { projectRootOrCwd } from "./cli/project-root";
 import { printRouting } from "./cli/routing";
 import { runStart } from "./cli/start";
 import { runStatusline } from "./cli/statusline";
+import { runUninstall } from "./cli/uninstall";
 import {
   printUpdateStatus,
   runRollback,
@@ -236,11 +237,14 @@ export function createProgram(): Command {
       "--force",
       "replace a Hive skill you have edited with the version Hive ships",
     )
+    .option("--graphify", "enable graphify without asking (recommended default)")
+    .option("--no-graphify", "skip graphify without asking")
     .action(async (options: {
       refresh?: boolean;
       scaffoldAgents?: boolean;
       seedFacts?: string;
       force?: boolean;
+      graphify?: boolean;
     }) => {
       const root = projectRootOrCwd();
       await runInitCli({
@@ -253,8 +257,23 @@ export function createProgram(): Command {
           ? {}
           : { seedFacts: options.seedFacts }),
         ...(options.force === undefined ? {} : { force: options.force }),
+        ...(options.graphify === undefined ? {} : { graphify: options.graphify }),
       });
       if (options.refresh !== true) await runStart({ cwd: root });
+    });
+
+  program
+    .command("uninstall")
+    .description(
+      "Completely remove Hive from this machine; --repo removes it from the current repo instead",
+    )
+    .option("--repo", "remove only what Hive installed into (and derived for) this repo")
+    .option("--yes", "skip the confirmation prompt (required when not on a terminal)")
+    .action(async (options: { repo?: boolean; yes?: boolean }) => {
+      process.exitCode = await runUninstall(projectRootOrCwd(), {
+        ...(options.repo === undefined ? {} : { repo: options.repo }),
+        ...(options.yes === undefined ? {} : { yes: options.yes }),
+      });
     });
 
   const update = program

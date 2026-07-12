@@ -2,12 +2,13 @@
  * `hive graphify enable|disable|status` — the consent surface for the
  * graphify integration (docs/architecture/graphify-integration.md).
  *
- * There is no interactive prompt anywhere in Hive's CLI and this command does
- * not introduce one: running `enable` IS the consent, in the same sense that
- * running `init` is authorization for what init prints itself doing. The
- * command states exactly what it is about to do, then does it, and a machine
- * without uv gets instructions plus a clean exit — never a vendor installer
- * run on the user's behalf.
+ * This command never prompts: running `enable` IS the consent, in the same
+ * sense that running `init` is authorization for what init prints itself
+ * doing. The one interactive question about graphify lives in `hive init`
+ * (TTY-gated, flag-overridable — see runInit); this command is the scriptable
+ * spelling those flags and that prompt both resolve to. The command states
+ * exactly what it is about to do, then does it, and a platform with no
+ * published bundle gets one honest line plus a clean exit.
  */
 import { existsSync } from "node:fs";
 import { stat } from "node:fs/promises";
@@ -88,7 +89,7 @@ export async function runGraphifyEnable(
 ): Promise<number> {
   deps.log(`Enabling graphify for ${root}:`);
   deps.log(
-    `  installing graphifyy==${graphifyPin()} (hash-verified) into ${graphifyToolsDir()},`,
+    `  fetching Hive's graphify bundle (graphifyy==${graphifyPin()}, sha256-verified against this Hive build) into ${graphifyToolsDir()},`,
   );
   deps.log(
     "  then building a code-only knowledge graph in graphify-out/ — parsed locally, nothing leaves this machine.",

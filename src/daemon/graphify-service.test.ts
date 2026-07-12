@@ -3,7 +3,7 @@ import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Subprocess } from "bun";
-import { writeGraphifyState } from "../adapters/graphify";
+import { graphifyPin, writeGraphifyState } from "../adapters/graphify";
 import { GraphifyService } from "./graphify-service";
 
 // The hard rule under test everywhere here: nothing throws, nothing hangs,
@@ -34,7 +34,7 @@ async function gitRepo(): Promise<string> {
 }
 
 async function installFakeMcp(): Promise<void> {
-  const bin = join(hiveHome, "tools", "graphify", "venv", "bin");
+  const bin = join(hiveHome, "tools", "graphify", graphifyPin());
   await mkdir(bin, { recursive: true });
   const source = [
     `#!${process.execPath}`,
