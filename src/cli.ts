@@ -34,6 +34,14 @@ import {
 import { runInitCli } from "./cli/init";
 import { projectRootOrCwd } from "./cli/project-root";
 import { printRouting } from "./cli/routing";
+import {
+  exportRoutingPolicy,
+  printRoutingPolicy,
+  setCategoryChain,
+  setModelEffort,
+  setModelPolicy,
+  setProviderPolicy,
+} from "./cli/routing-policy";
 import { runStart } from "./cli/start";
 import { runStatusline } from "./cli/statusline";
 import { runUninstall } from "./cli/uninstall";
@@ -331,12 +339,86 @@ export function createProgram(): Command {
     .description("Show Hive agent status")
     .action(printStatus);
 
-  program
+  const routing = program
     .command("routing")
     .description(
       "Show the derived routing table with per-cell provenance (inert: does not route)",
     )
     .action(printRouting);
+  routing
+    .command("policy")
+    .description(
+      "Print the routing policy document (the Model Control Center's read surface). " +
+        "Absent entries mean NOT CONFIGURED, never enabled.",
+    )
+    .action(printRoutingPolicy);
+  routing
+    .command("export")
+    .description(
+      "Deterministic, diff-stable dump of the routing policy (same document, canonical order)",
+    )
+    .action(exportRoutingPolicy);
+  routing
+    .command("set-provider <provider> <state>")
+    .description(
+      "Set a provider's master switch. Enabling is consenting to spend on that vendor; " +
+        "disabled overrides every model row under it; unset returns it to unconfigured.",
+    )
+    .requiredOption(
+      "--expect-revision <revision>",
+      "the policy revision you read (compare-and-set; stale writes are rejected)",
+    )
+    .action((provider: string, state: string, options: { expectRevision: string }) =>
+      setProviderPolicy(provider, state, options.expectRevision)
+    );
+  routing
+    .command("set-model <provider> <model> <state>")
+    .description(
+      "Set one model's enablement. Enabling IS the consent to spend on it; " +
+        "unset deletes the row so the model inherits its provider's state.",
+    )
+    .requiredOption(
+      "--expect-revision <revision>",
+      "the policy revision you read (compare-and-set; stale writes are rejected)",
+    )
+    .action((
+      provider: string,
+      model: string,
+      state: string,
+      options: { expectRevision: string },
+    ) => setModelPolicy(provider, model, state, options.expectRevision));
+  routing
+    .command("set-effort <provider> <model> <effort>")
+    .description(
+      "Set a model's standing effort: exact:LEVEL, none (vendor states no effort axis), " +
+        "provider-controlled, or unset. Never changes enablement.",
+    )
+    .requiredOption(
+      "--expect-revision <revision>",
+      "the policy revision you read (compare-and-set; stale writes are rejected)",
+    )
+    .action((
+      provider: string,
+      model: string,
+      effort: string,
+      options: { expectRevision: string },
+    ) => setModelEffort(provider, model, effort, options.expectRevision));
+  routing
+    .command("set-chain <category> [entries...]")
+    .description(
+      "Replace a category's ordered fallback chain (argument order is chain order; " +
+        "zero entries clears it). Entries: provider/model[@LEVEL|@none] or " +
+        "vendor-default:provider[@LEVEL].",
+    )
+    .requiredOption(
+      "--expect-revision <revision>",
+      "the policy revision you read (compare-and-set; stale writes are rejected)",
+    )
+    .action((
+      category: string,
+      entries: string[],
+      options: { expectRevision: string },
+    ) => setCategoryChain(category, entries, options.expectRevision));
 
   program
     .command("autonomy [mode]")

@@ -43,6 +43,8 @@ export type Action =
   | "root-token:mint"
   | "autonomy:read"
   | "autonomy:write"
+  | "routing-policy:read"
+  | "routing-policy:write"
   | "graphify:write";
 
 export interface RoleGrant {
@@ -71,6 +73,10 @@ const OPERATOR_ACTIONS: readonly Action[] = [
   // own CLI and the Workspace acting for them) may write it. Agents observing
   // it is harmless; an agent raising it would be a sandbox escape.
   "autonomy:read", "autonomy:write",
+  // Routing policy is the user's standing routing preference — the Model
+  // Control Center and the user's own CLI edit it; an agent rewriting the
+  // router that governs agents would be self-authorization.
+  "routing-policy:read", "routing-policy:write",
   // Graphify is likewise the human's dial: opting a repo into a code-indexing
   // service (and the install that comes with it) is consent only the
   // operator's own CLI may express.

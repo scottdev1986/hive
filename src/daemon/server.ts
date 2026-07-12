@@ -52,6 +52,7 @@ import {
   MessagePrioritySchema,
   ORCHESTRATOR_NAME,
   QuotaObservationSchema,
+  RoutingPolicyMutationSchema,
   StatuslineReportSchema,
   TerminalHandleSchema,
   unknownVendor,
@@ -75,6 +76,10 @@ import {
 } from "./capabilities";
 import { OPERATOR_SUBJECT, removeCredential, writeCredential } from "./credentials";
 import { HiveDatabase, type Approval } from "./db";
+import {
+  RoutingPolicyConflictError,
+  RoutingPolicyStore,
+} from "./routing-policy-store";
 import type { LayoutCoordinator } from "./layout";
 import { WorkspacePresence } from "./workspace-presence";
 import { MemoryIndex } from "./memory-index";
@@ -564,6 +569,7 @@ export class HiveDaemon {
   private readonly layout: LayoutCoordinator | null;
   private readonly quota: QuotaService | undefined;
   private readonly modelInventory: HiveDaemonOptions["modelInventory"];
+  private routingPolicy: RoutingPolicyStore | null = null;
   private readonly codexControl: HiveDaemonOptions["codexControl"];
   private readonly autonomy: AutonomyControl | undefined;
   private readonly graphify: GraphifyService | undefined;
@@ -1999,6 +2005,12 @@ export class HiveDaemon {
     ) {
       return this.autonomyEndpoint(request);
     }
+    if (
+      url.pathname === "/routing/policy" &&
+      (request.method === "GET" || request.method === "POST")
+    ) {
+      return this.routingPolicyEndpoint(request);
+    }
     if (url.pathname === "/orchestrator-status" && request.method === "GET") {
       return this.orchestratorStatusEndpoint(request);
     }
@@ -2578,6 +2590,71 @@ export class HiveDaemon {
       );
     }
     return json({ autonomy: this.autonomy.get() });
+  }
+
+  /**
+   * `GET`/`POST /routing/policy` — the Model Control Center's contract, via
+   * the `hive routing …` CLI. GET returns the whole policy document; POST
+   * applies one validated mutation with compare-and-set and returns the
+   * updated document. Operator-only in BOTH directions: with the approval
+   * prompts retired, an enabled model here IS consent to spend, and an agent
+   * granting itself consent would be self-authorization.
+   */
+  private async routingPolicyEndpoint(request: Request): Promise<Response> {
+    const authenticated = this.authenticate(request, "/routing/policy");
+    if (!authenticated.ok) return this.denied(authenticated);
+    const store = this.routingPolicy ??= new RoutingPolicyStore(this.db);
+    if (request.method === "GET") {
+      const decision = this.authorize(
+        authenticated.capability,
+        "/routing/policy",
+        "routing-policy:read",
+        undefined,
+        false,
+      );
+      if (!decision.ok) return this.denied(decision);
+      try {
+        return json(store.read());
+      } catch (error) {
+        // A corrupt policy is a refusal, never an empty (permissive-looking)
+        // document — the error names the state so the user can repair it.
+        return json(
+          { error: error instanceof Error ? error.message : String(error) },
+          { status: 500 },
+        );
+      }
+    }
+    const decision = this.authorize(
+      authenticated.capability,
+      "/routing/policy",
+      "routing-policy:write",
+      undefined,
+    );
+    if (!decision.ok) return this.denied(decision);
+    let body: unknown;
+    try {
+      body = await request.json();
+    } catch {
+      return json({ error: "Invalid routing policy request" }, { status: 400 });
+    }
+    const mutation = RoutingPolicyMutationSchema.safeParse(body);
+    if (!mutation.success) {
+      return json({ error: mutation.error.message }, { status: 400 });
+    }
+    try {
+      return json(store.apply(mutation.data, authenticated.capability.subject));
+    } catch (error) {
+      if (error instanceof RoutingPolicyConflictError) {
+        return json(
+          { error: error.message, currentRevision: error.currentRevision },
+          { status: 409 },
+        );
+      }
+      return json(
+        { error: error instanceof Error ? error.message : String(error) },
+        { status: 500 },
+      );
+    }
   }
 
   /** `POST /graphify` — converge the per-repo server on the persisted opt-in

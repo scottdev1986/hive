@@ -1,3 +1,5 @@
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { TmuxAdapter } from "../adapters/tmux";
 import { CodexAppServerManager } from "../adapters/tools/codex-app-server";
 import { resolveTerminal } from "../adapters/terminal";
@@ -7,6 +9,11 @@ import {
   loadRoutingPins,
 } from "../config/load";
 import { HiveDatabase } from "../daemon/db";
+import {
+  policyModelEnablement,
+  retireLegacyRoutingToml,
+  RoutingPolicyStore,
+} from "../daemon/routing-policy-store";
 import { BunTmuxSender } from "../daemon/delivery";
 import { buildGraphBrief } from "../adapters/graphify";
 import { GraphifyService } from "../daemon/graphify-service";
@@ -40,6 +47,29 @@ export async function runDaemon(): Promise<void> {
   const config = await loadHiveConfig();
   const quotaConfig = await loadQuotaConfig();
   const db = new HiveDatabase();
+  // routing.toml is dead as a policy source (user directive 2026-07-12); the
+  // file is renamed aside, never deleted and never interpreted.
+  const retiredToml = retireLegacyRoutingToml(
+    Bun.env.HIVE_HOME ?? join(homedir(), ".hive"),
+  );
+  if (retiredToml !== null) {
+    console.log(`routing.toml is no longer read as policy; preserved at ${retiredToml}`);
+  }
+  // First boot only: seed the provisional baseline chains, enabling ONLY the
+  // models whose billing was actually READ as plan-covered. Enablement is
+  // consent now, so a failed billing read seeds chains with nothing enabled —
+  // visible in the Control Center, off until the user's own click.
+  const routingPolicy = new RoutingPolicyStore(db);
+  if (routingPolicy.isEmpty()) {
+    const covered = await readModelInventory().then(
+      (inventory) =>
+        inventory.models
+          .filter((model) => model.plan.status === "covered")
+          .map((model) => ({ provider: model.vendor, model: model.canonicalId })),
+      () => [],
+    );
+    routingPolicy.seedProvisionalBaseline(covered);
+  }
   // Live limits come from the providers themselves. Both probes are read-only
   // and start no model turn, so a startup refresh costs nothing but a subprocess.
   const quota = new QuotaService(
@@ -118,6 +148,9 @@ export async function runDaemon(): Promise<void> {
           return unknownVendor(provider, "capability discovery");
       }
     },
+    // THE JOIN: the AuthorizedLaunch gate's enablement guard reads the policy
+    // store — an enabled row is the user's consent, anything else refuses.
+    isModelEnabled: policyModelEnablement(routingPolicy),
     // The release valve reads the provider's own metering, not a model name.
     readBilling: (provider) => readBillingWithMemory(provider),
     tmux,
