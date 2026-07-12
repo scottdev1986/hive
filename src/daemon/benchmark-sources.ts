@@ -36,21 +36,7 @@ const activeSource = (
   return adapter;
 };
 
-/** LiveBench is active; Artificial Analysis is recorded but never contacted. */
+/** Every registered source must clear the eligibility gate; LiveBench is the only one today. */
 export const configuredBenchmarkSources = (): BenchmarkSourceAdapter[] => [
   activeSource(liveBenchSource(), liveBenchEligibility),
-  {
-    sourceId: "artificial-analysis",
-    async read() {
-      return {
-        sourceId: "artificial-analysis",
-        status: "blocked",
-        detail:
-          "Artificial Analysis requires API key + TOS acceptance; user policy forbids both; scores also lack evaluation dates.",
-        releaseDate: null,
-        fetchedAt: null,
-        models: new Map(),
-      };
-    },
-  },
 ];

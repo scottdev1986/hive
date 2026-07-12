@@ -121,11 +121,10 @@ export const ShadowObservationSchema = z.strictObject({
       "partial",
       "last-good",
       "unavailable",
-      "blocked",
     ]),
     sources: z.array(z.strictObject({
       sourceId: z.string().min(1),
-      status: z.enum(["current", "last-good", "unavailable", "blocked"]),
+      status: z.enum(["current", "last-good", "unavailable"]),
       releaseDate: z.string().nullable(),
       fetchedAt: z.string().nullable(),
     })),

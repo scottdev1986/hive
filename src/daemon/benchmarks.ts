@@ -13,7 +13,7 @@ export type InventoryBenchmark = {
 
 export type BenchmarkSourceStatus = {
   sourceId: string;
-  status: "current" | "last-good" | "unavailable" | "blocked";
+  status: "current" | "last-good" | "unavailable";
   detail: string;
   releaseDate: string | null;
   fetchedAt: string | null;
@@ -37,8 +37,7 @@ export type BenchmarkCatalog = {
     | "current"
     | "partial"
     | "last-good"
-    | "unavailable"
-    | "blocked";
+    | "unavailable";
   detail: string;
   sources: BenchmarkSourceStatus[];
   models: ReadonlyMap<string, InventoryBenchmark[]>;
@@ -92,21 +91,17 @@ export async function readBenchmarkCatalog(options: {
   const current = statuses.filter((source) => source.status === "current").length;
   const lastGood = statuses.filter((source) => source.status === "last-good").length;
   const unavailable = statuses.filter((source) => source.status === "unavailable").length;
-  const blocked = statuses.filter((source) => source.status === "blocked").length;
-  const active = statuses.length - blocked;
-  const status = active > 0 && current === active
+  const status = current === statuses.length
     ? "current"
-    : active > 0 && lastGood === active
+    : lastGood === statuses.length
     ? "last-good"
-    : blocked === statuses.length
-    ? "blocked"
-    : active > 0 && unavailable === active
+    : unavailable === statuses.length
     ? "unavailable"
     : "partial";
   return {
     status,
     detail:
-      `${current} current, ${lastGood} last-good, ${unavailable} unavailable, ${blocked} blocked source(s).`,
+      `${current} current, ${lastGood} last-good, ${unavailable} unavailable source(s).`,
     sources: statuses,
     models,
   };

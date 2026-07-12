@@ -163,10 +163,10 @@ describe("model inventory", () => {
       routing,
       benchmarks: new Map<string, InventoryBenchmark[]>([["claude\0claude-fable-5", [
         {
-          sourceId: "artificial-analysis",
+          sourceId: "other-bench",
           effort: "max",
           scores: { coding_index: 61 },
-          source: "https://artificialanalysis.ai/api/v2/language/models",
+          source: "https://example.com/other-bench/2026-06.json",
           releaseDate: "2026-06",
           fetchedAt: AT,
         },
