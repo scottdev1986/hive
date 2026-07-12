@@ -1,0 +1,7 @@
+# Compile input for graphify.lock. Regenerate with:
+#   uv pip compile --generate-hashes prototypes/graphify-bundling/graphify.in -o graphify.lock
+graphifyy[mcp]==0.9.12
+# cryptography 49.0.0 dropped macOS x86_64 wheels (arm64 only); 46-48 ship
+# universal2. Without this constraint the darwin-x64 slice cannot install
+# from wheels and needs a Rust + x86_64-OpenSSL sdist build. Measured 2026-07-12.
+cryptography<49
