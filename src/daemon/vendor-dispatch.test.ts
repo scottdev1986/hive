@@ -8,7 +8,10 @@ import {
   type AgentRecord,
   type CapabilityProvider,
 } from "../schemas";
+import { QuotaConfigSchema, type QuotaLimit } from "../schemas";
 import { HiveDatabase } from "./db";
+import { QuotaLedger } from "./quota-ledger";
+import { QuotaService } from "./quota";
 import { CrashRecovery } from "./recovery";
 import { countGraphifyCallLines, readGraphifyCalls } from "./tool-telemetry";
 import { knownBillings } from "./usage-credits";
@@ -162,6 +165,65 @@ test("a vendor whose billing reads null is omitted, not invented", () => {
   expect(billings.claude).toBe(billing);
   expect("codex" in billings).toBe(false);
 });
+
+test("a review of an unknown vendor is not silently handed to claude", async () => {
+  const db = new HiveDatabase(join(home, "quota.db"));
+  const service = new QuotaService(
+    new QuotaLedger(db),
+    QuotaConfigSchema.parse({
+      limits: [quotaLimit("claude"), quotaLimit("codex")],
+      reserveFiveHourPct: 0,
+      reserveWeeklyPct: 0,
+      estimates: { deep: 20, standard: 10, cheap: 4, review: 8 },
+    }),
+    () => new Date("2026-07-09T12:00:00.000Z"),
+  );
+  const candidates = [
+    { tool: "claude" as const, model: "claude-model" },
+    { tool: "codex" as const, model: "codex-model" },
+  ];
+
+  // Today's pairing is unambiguous, and must not change.
+  const reviewOfClaude = await service.routeAndReserve({
+    agentName: "maya",
+    tier: "review",
+    preferredTool: "claude",
+    reviewOfTool: "claude",
+    candidates,
+  });
+  expect(reviewOfClaude.tool).toBe("codex");
+
+  // The old ternary's `: "claude"` fallback would have picked Claude to review
+  // a vendor it had never been told how to pair with. There is no honest
+  // default here, so the pairing must be stated, not guessed.
+  await expect(
+    service.routeAndReserve({
+      agentName: "sam",
+      tier: "review",
+      preferredTool: "claude",
+      reviewOfTool: UNKNOWN,
+      candidates,
+    }),
+  ).rejects.toThrow(/unknown vendor "grok"/);
+  db.close();
+});
+
+function quotaLimit(provider: "claude" | "codex"): QuotaLimit {
+  return {
+    provider,
+    account: "personal",
+    pool: `${provider}-premium`,
+    models: [`${provider}-model`],
+    fiveHourAllowance: 100,
+    weeklyAllowance: 1000,
+    weeklyWindow: "rolling",
+    timezone: "UTC",
+    resetWeekday: 1,
+    resetHour: 0,
+    resetMinute: 0,
+    observationMaxAgeMinutes: 60,
+  };
+}
 
 /**
  * A database whose agent reads report a vendor Hive does not know. The row

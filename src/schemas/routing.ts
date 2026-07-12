@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { EffortLevelSchema } from "./capability";
+import { CapabilityProviderSchema, EffortLevelSchema } from "./capability";
 
 export const RoutingTierSchema = z.enum([
   "deep",
@@ -49,7 +49,7 @@ export const CodexRouteSchema = z.strictObject({
 export type CodexRoute = z.infer<typeof CodexRouteSchema>;
 
 export const RouteSchema = z.strictObject({
-  tool: z.enum(["claude", "codex"]),
+  tool: CapabilityProviderSchema,
   claude: ClaudeRouteSchema,
   codex: CodexRouteSchema,
 });

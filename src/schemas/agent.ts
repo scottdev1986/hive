@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { RoutingTierSchema } from "./routing";
-import { EffortLevelSchema } from "./capability";
+import { CapabilityProviderSchema, EffortLevelSchema } from "./capability";
 
 // Reserved recipient name for the root orchestrator. It is not a spawned
 // agent and has no row in the agents table; delivery routes it through the
@@ -63,7 +63,7 @@ export const AgentRecordSchema = z.object({
   // always tell them apart.
   id: z.string().min(1),
   name: z.string().min(1),
-  tool: z.enum(["claude", "codex"]),
+  tool: CapabilityProviderSchema,
   /** The model this agent was *launched* with — decision 6's immutable execution
    * identity, which a control restart replays to reproduce the launch it is
    * interrupting. It is an intention, and it never changes. */

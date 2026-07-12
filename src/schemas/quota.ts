@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { CapabilityProviderSchema } from "./capability";
 import { RoutingTierSchema } from "./routing";
 
 export const QuotaConfidenceSchema = z.enum([
@@ -31,7 +32,7 @@ export const QuotaPoolOriginSchema = z.enum(["discovered", "manual"]);
 export type QuotaPoolOrigin = z.infer<typeof QuotaPoolOriginSchema>;
 
 export const QuotaLimitSchema = z.strictObject({
-  provider: z.enum(["claude", "codex"]),
+  provider: CapabilityProviderSchema,
   account: z.string().min(1).default("default"),
   pool: z.string().min(1),
   models: z.array(z.string().min(1)).min(1).default(["*"]),
@@ -149,7 +150,7 @@ const ObservedConfidenceSchema = z.enum(["authoritative", "reported"]);
  * unknown rather than as the zero that happens to sit in the column.
  */
 export const QuotaObservationSchema = z.strictObject({
-  provider: z.enum(["claude", "codex"]),
+  provider: CapabilityProviderSchema,
   account: z.string().min(1).default("default"),
   pool: z.string().min(1),
   fiveHourUsed: z.number().nonnegative(),

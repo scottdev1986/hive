@@ -1,5 +1,6 @@
 import { z } from "zod";
 import {
+  CapabilityProviderSchema,
   QuotaObservationSchema,
   RoutingTierSchema,
   type QuotaObservation,
@@ -19,7 +20,7 @@ const ReservationSchema = z.object({
    */
   groupId: z.string().nullable().default(null),
   agentName: z.string(),
-  provider: z.enum(["claude", "codex"]),
+  provider: CapabilityProviderSchema,
   account: z.string(),
   pool: z.string(),
   model: z.string(),
@@ -52,7 +53,7 @@ export type QuotaReservation = z.infer<typeof ReservationSchema>;
  * window. Window durations are recorded as the provider reported them.
  */
 const DiscoveredPoolSchema = z.object({
-  provider: z.enum(["claude", "codex"]),
+  provider: CapabilityProviderSchema,
   account: z.string(),
   pool: z.string(),
   /** Empty means the pool is informational: it never matches a routing model. */
@@ -78,7 +79,7 @@ export type DiscoveredQuotaPool = z.infer<typeof DiscoveredPoolSchema>;
  * catalog means a usage update can never silently unbind a pool.
  */
 const ModelCatalogSchema = z.object({
-  provider: z.enum(["claude", "codex"]),
+  provider: CapabilityProviderSchema,
   modelId: z.string(),
   displayName: z.string(),
   discoveredAt: z.string(),
@@ -103,7 +104,7 @@ export type ModelCatalogRow = z.infer<typeof ModelCatalogSchema>;
  * that would clear it, and the guard would quietly become the outage.
  */
 const RouteHealthSchema = z.object({
-  provider: z.enum(["claude", "codex"]),
+  provider: CapabilityProviderSchema,
   model: z.string(),
   effort: z.string().nullable(),
   consecutiveFailures: z.number().int().nonnegative(),
@@ -468,7 +469,7 @@ export class QuotaLedger {
    */
   private backfillObservationWatermarks(): void {
     const stale = z.array(z.object({
-      provider: z.enum(["claude", "codex"]),
+      provider: CapabilityProviderSchema,
       account: z.string(),
       pool: z.string(),
       fiveHourObservedAt: z.string().nullable(),
@@ -643,7 +644,7 @@ export class QuotaLedger {
       WHERE pool LIKE 'unconfigured:%'
       ORDER BY provider, account, pool, model
     `).all().map((row) => z.object({
-      provider: z.enum(["claude", "codex"]),
+      provider: CapabilityProviderSchema,
       account: z.string(),
       pool: z.string(),
       model: z.string(),

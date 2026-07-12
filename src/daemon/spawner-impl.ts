@@ -36,8 +36,10 @@ import {
 import {
   ORCHESTRATOR_NAME,
   isLiveAgent,
+  unknownVendor,
   type AgentMessage,
   type AgentRecord,
+  type CapabilityProvider,
   type ExecutionIdentity,
   type CapabilityRecord,
   type HiveConfig,
@@ -221,7 +223,7 @@ type TmuxSessionManager = Pick<
 type Sleep = (milliseconds: number) => Promise<void>;
 type ModelResolver = typeof resolveConcreteModel;
 type CapabilityDiscoverer = (
-  provider: "claude" | "codex",
+  provider: CapabilityProvider,
 ) => Promise<CapabilityDiscoveryResult>;
 
 /** The binary a launch argv will actually run, as `ps` will report it. */
@@ -287,7 +289,7 @@ export interface HiveSpawnerDependencies {
    * from the pools the provider actually meters — rather than from a model name.
    */
   readBilling?: (
-    provider: "claude" | "codex",
+    provider: CapabilityProvider,
   ) => Promise<AccountBilling | null>;
   /**
    * The per-repo graphify MCP server's URL, or null when there is nothing
@@ -721,7 +723,7 @@ export class HiveSpawner implements Spawner {
   >();
 
   private async discoverOnce(
-    provider: "claude" | "codex",
+    provider: CapabilityProvider,
   ): Promise<CapabilityDiscoveryResult | undefined> {
     const discover = this.dependencies.discoverCapabilities;
     if (discover === undefined) return undefined;
@@ -830,7 +832,7 @@ export class HiveSpawner implements Spawner {
    * confidence that nothing can pay.
    */
   private async spendRefusal(
-    tool: "claude" | "codex",
+    tool: CapabilityProvider,
     model: string,
   ): Promise<string | null> {
     const readBilling = this.dependencies.readBilling;
@@ -892,7 +894,7 @@ export class HiveSpawner implements Spawner {
   private async resolveSpawnEffort(
     request: SpawnRequest,
     route: Route | undefined,
-    tool: "claude" | "codex",
+    tool: CapabilityProvider,
     model: string,
     observed?: {
       pins: RoutingPins;
@@ -940,7 +942,19 @@ export class HiveSpawner implements Spawner {
       return validated.effort;
     }
 
-    if (tool === "claude") return undefined;
+    switch (tool) {
+      case "claude":
+        // Claude's effort is observed from its own statusline, never chosen
+        // here; undefined is the honest answer.
+        return undefined;
+      case "codex":
+        break;
+      default:
+        // The fallback chain below is Codex's own — its discovered default,
+        // its route column, and Codex's "medium". A vendor that fell through
+        // to it would launch at an effort nobody chose for it.
+        return unknownVendor(tool, "spawn effort");
+    }
 
     const discoveredDefault = record?.defaultEffort.state === "known"
       ? record.defaultEffort.value
@@ -974,7 +988,7 @@ export class HiveSpawner implements Spawner {
    *
    * Measured against claude 2.1.206; see SPEC "Spawn wiring".
    */
-  private async useChannels(_tool: "claude" | "codex"): Promise<boolean> {
+  private async useChannels(_tool: CapabilityProvider): Promise<boolean> {
     return false;
   }
 
@@ -1064,54 +1078,64 @@ export class HiveSpawner implements Spawner {
       : [];
     try {
       await provisionSkills(agent.worktreePath, identity.tool);
-      if (identity.tool === "claude") {
-        // A revoked agent's replacement is read-only, and its deny list is a
-        // project-scoped permission rule: untrusted, the CLI drops it.
-        await seedClaudeWorktreeTrust(agent.worktreePath);
-        await writeClaudeAgentConfig(agent.worktreePath, {
-          daemonPort: this.dependencies.port,
-          name: agent.name,
-          readOnly,
-          channels,
-        });
-        argv = buildClaudeSpawnCommand({
-          daemonPort: this.dependencies.port,
-          model: identity.model,
-          effort: identity.effort,
-          name: agent.name,
-          readOnly,
-          worktreePath: agent.worktreePath,
-          channels,
-          executable: this.claudeExecutable,
-          scopedMcpConfigPath: claudeMcpConfigPath(agent.worktreePath),
-        });
-      } else {
-        await writeCodexAgentConfig(agent.worktreePath, {
-          daemonPort: this.dependencies.port,
-          name: agent.name,
-          readOnly,
-          ...(capabilityToken === undefined ? {} : { capabilityToken }),
-        });
-        const useAppServer =
-          this.dependencies.config.codex?.driver === "app-server" &&
-          (await this.dependencies.codexAppServer?.isAvailable() ?? false);
-        if (useAppServer) {
-          argv = this.dependencies.codexAppServer!.buildHostCommand(
-            prepared.record,
-            this.dependencies.port,
-          );
-        } else {
-          argv = buildCodexSpawnCommand({
+      // Aliased so the default clause still has the vendor to name: switching
+      // on `identity.tool` narrows `identity` itself to `never` there.
+      const vendor = identity.tool;
+      switch (vendor) {
+        case "claude": {
+          // A revoked agent's replacement is read-only, and its deny list is a
+          // project-scoped permission rule: untrusted, the CLI drops it.
+          await seedClaudeWorktreeTrust(agent.worktreePath);
+          await writeClaudeAgentConfig(agent.worktreePath, {
             daemonPort: this.dependencies.port,
-            effort: identity.effort,
+            name: agent.name,
+            readOnly,
+            channels,
+          });
+          argv = buildClaudeSpawnCommand({
+            daemonPort: this.dependencies.port,
             model: identity.model,
+            effort: identity.effort,
             name: agent.name,
             readOnly,
             worktreePath: agent.worktreePath,
-            excludeMcpServers,
-            withCapabilityToken: capabilityToken !== undefined,
+            channels,
+            executable: this.claudeExecutable,
+            scopedMcpConfigPath: claudeMcpConfigPath(agent.worktreePath),
           });
+          break;
         }
+        case "codex": {
+          await writeCodexAgentConfig(agent.worktreePath, {
+            daemonPort: this.dependencies.port,
+            name: agent.name,
+            readOnly,
+            ...(capabilityToken === undefined ? {} : { capabilityToken }),
+          });
+          const useAppServer =
+            this.dependencies.config.codex?.driver === "app-server" &&
+            (await this.dependencies.codexAppServer?.isAvailable() ?? false);
+          if (useAppServer) {
+            argv = this.dependencies.codexAppServer!.buildHostCommand(
+              prepared.record,
+              this.dependencies.port,
+            );
+          } else {
+            argv = buildCodexSpawnCommand({
+              daemonPort: this.dependencies.port,
+              effort: identity.effort,
+              model: identity.model,
+              name: agent.name,
+              readOnly,
+              worktreePath: agent.worktreePath,
+              excludeMcpServers,
+              withCapabilityToken: capabilityToken !== undefined,
+            });
+          }
+          break;
+        }
+        default:
+          unknownVendor(vendor, "critical-control restart");
       }
       const controlPrompt = [
         `CRITICAL HIVE CONTROL ${message.id} (capability epoch ${message.capabilityEpoch}).`,
@@ -1503,7 +1527,7 @@ export class HiveSpawner implements Spawner {
     // reads only `route[tool].model`, so the synthetic Route below is just an
     // adapter around a single concrete string.
     const columnModel = async (
-      candidateTool: "claude" | "codex",
+      candidateTool: CapabilityProvider,
     ): Promise<string | null> => {
       if (governing !== null) {
         const cell = governing.cells[candidateTool];
@@ -1565,11 +1589,11 @@ export class HiveSpawner implements Spawner {
     let effortResolved = false;
     const effortPins = await this.dependencies.routingPins?.() ?? {};
     const discoveries = new Map<
-      "claude" | "codex",
+      CapabilityProvider,
       Promise<CapabilityDiscoveryResult | undefined>
     >();
     const resolveEffort = async (
-      candidateTool: "claude" | "codex",
+      candidateTool: CapabilityProvider,
       candidateModel: string,
     ): Promise<string | undefined> => {
       let discovery = discoveries.get(candidateTool);
@@ -1877,7 +1901,8 @@ export class HiveSpawner implements Spawner {
     );
     try {
       await provisionSkills(worktree.path, tool);
-      if (tool === "claude") {
+      switch (tool) {
+        case "claude": {
         // Before the config, because an untrusted workspace makes the CLI
         // discard the hooks and permissions we are about to write.
         await seedClaudeWorktreeTrust(worktree.path);
@@ -1901,7 +1926,9 @@ export class HiveSpawner implements Spawner {
           executable: this.claudeExecutable,
           scopedMcpConfigPath: claudeMcpConfigPath(worktree.path),
         });
-      } else {
+        break;
+        }
+        case "codex": {
         await writeCodexAgentConfig(worktree.path, {
           daemonPort: this.dependencies.port,
           name,
@@ -1929,6 +1956,10 @@ export class HiveSpawner implements Spawner {
               withCapabilityToken: capabilityToken !== undefined,
               ...(graphifyUrl === null ? {} : { graphifyUrl }),
             });
+        break;
+        }
+        default:
+          unknownVendor(tool, "spawn");
       }
       const nativeCodex = tool === "codex" &&
         this.dependencies.codexAppServer !== undefined &&

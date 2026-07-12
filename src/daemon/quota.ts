@@ -1,6 +1,8 @@
 import {
   DEFAULT_PERCENT_ESTIMATES,
   QuotaObservationSchema,
+  unknownVendor,
+  type CapabilityProvider,
   type QuotaConfidence,
   type QuotaConfig,
   type QuotaLimit,
@@ -225,6 +227,24 @@ export function describeRemaining(
   return window.remaining === null
     ? "unknown"
     : `${window.remaining.toFixed(1)}${unit}`;
+}
+
+/**
+ * Who reviews an agent's work: never the vendor that produced it. With exactly
+ * two vendors "the other one" is unambiguous, and that is precisely why this
+ * was a ternary — a third vendor would have been handed to Claude by the
+ * `: "claude"` fallback, a pairing nobody chose. There is no honest default
+ * for a vendor Hive has not been told how to pair, so it says so.
+ */
+function reviewerFor(reviewOf: CapabilityProvider): CapabilityProvider {
+  switch (reviewOf) {
+    case "claude":
+      return "codex";
+    case "codex":
+      return "claude";
+    default:
+      return unknownVendor(reviewOf, "cross-vendor review pairing");
+  }
 }
 
 export class QuotaExhaustedError extends Error {
@@ -1405,7 +1425,7 @@ export class QuotaService {
     const now = this.clock();
     const preferred = request.reviewOfTool !== undefined &&
         request.tier === "review"
-      ? (request.reviewOfTool === "claude" ? "codex" : "claude")
+      ? reviewerFor(request.reviewOfTool)
       : request.preferredTool;
     let candidates = request.candidates.filter((candidate) =>
       request.explicitTool === undefined || candidate.tool === request.explicitTool

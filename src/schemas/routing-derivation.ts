@@ -6,6 +6,7 @@ import {
 } from "./fit-policy";
 import {
   capabilityFreshness,
+  CapabilityProviderSchema,
   type CapabilityProvider,
   type CapabilityRecord,
   type EffectiveDefault,
@@ -118,7 +119,7 @@ export interface Resolved<T> {
  * source, and the only one that outranks derivation.
  */
 export const RoutingPinSchema = z.looseObject({
-  tool: z.enum(["claude", "codex"]).optional(),
+  tool: CapabilityProviderSchema.optional(),
   claude: z.looseObject({
     model: z.string().min(1).optional(),
     effort: z.string().min(1).optional(),
@@ -188,7 +189,7 @@ const SnapshotCellSchema = z.strictObject({
 });
 
 const SnapshotToolSchema = z.strictObject({
-  value: z.enum(["claude", "codex"]),
+  value: CapabilityProviderSchema,
   ...SnapshotProvenanceSchema,
 });
 

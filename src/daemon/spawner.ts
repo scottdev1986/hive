@@ -1,5 +1,6 @@
 import { z } from "zod";
 import {
+  CapabilityProviderSchema,
   RoutingTierSchema,
   type AgentRecord,
   type AgentMessage,
@@ -9,8 +10,8 @@ export const SpawnRequestSchema = z.object({
   task: z.string().min(1),
   tier: RoutingTierSchema,
   name: z.string().optional(),
-  tool: z.enum(["claude", "codex"]).optional(),
-  reviewOfTool: z.enum(["claude", "codex"]).optional(),
+  tool: CapabilityProviderSchema.optional(),
+  reviewOfTool: CapabilityProviderSchema.optional(),
   // An explicit user-directed model. Launched verbatim (no alias resolution),
   // binds the spawn to its vendor for quota routing, and is never silently
   // substituted — pass it only when the user named a model. Routine spawns
