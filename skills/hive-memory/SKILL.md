@@ -1,6 +1,6 @@
 ---
 name: hive-memory
-description: Maintain Hive's durable repo knowledge by compiling immutable observations into canonical articles. Use for memory ingestion or migration, deliberate article consolidation and cascade updates, memory queries, conflict reconciliation, or linting .hive/memory and ~/.hive/memory.
+description: Maintain Hive's durable repo knowledge by compiling immutable observations into canonical articles. Use for memory ingestion, deliberate article consolidation and cascade updates, memory queries, conflict reconciliation, or linting .hive/memory and ~/.hive/memory.
 ---
 
 # Hive Memory
@@ -73,9 +73,3 @@ Then report, but do not auto-fix, heuristic findings:
 - supersedes ids that do not resolve to an article or preserved raw history.
 
 Append `## [YYYY-MM-DD] lint | <N> issues found, <M> auto-fixed` to `wiki/log.md`.
-
-## Migration
-
-Treat each legacy flat fact as source material, not as an already-correct article. Before the first corpus write, snapshot the entire scope to the sibling `memory-backups/legacy-v1-<UTC timestamp>/`. Leave every flat source byte-for-byte in place, copy it verbatim into `raw/`, then compile it. Preserve missing verification as `unverified`, preserve an older verification as `stale`, and use `source: legacy` when authorship is unknown rather than inventing provenance. Merge duplicate and correction pairs into one article. Retain the former belief and the evidence that overturned it in history or conflict prose. If a fact cannot be compiled, keep its raw observation, create a flagged article, and report it; never silently drop it. A completed migration writes its marker last; if that marker exists, do not migrate, duplicate, or back up the same corpus again.
-
-After migration, run `memory_reindex`, lint both scopes, and confirm the spawn index remains capped and contains only compiled article pointers.
