@@ -496,10 +496,14 @@ export async function writeClaudeAgentConfig(
     ...(dangerousWriter ? { skipDangerousModePermissionPrompt: true } : {}),
     hooks: {
       SessionStart: hook(eventCommand("session-start")),
-      ...(isRecord(existingSettings.hooks) &&
-          "UserPromptSubmit" in existingSettings.hooks
-        ? {}
-        : { UserPromptSubmit: hook(eventCommand("turn-start")) }),
+      // Always written, like every other hook kind. This used to be skipped
+      // when the key already existed, so a daemon port change re-pointed every
+      // hook EXCEPT turn-start: the root kept posting turn-starts to the dead
+      // port, its open turns became invisible, and the stalled-message sweep
+      // read a busy root as "idle yet never submitted" (false alarm,
+      // 2026-07-12). deepMerge unions the arrays, so a user's own
+      // UserPromptSubmit hooks survive alongside this one.
+      UserPromptSubmit: hook(eventCommand("turn-start")),
       Stop: hook(eventCommand("turn-end")),
       Notification: hook(eventCommand("notification")),
       // The mid-turn safe boundary for urgent injection (SPEC decision 1):

@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -23,6 +23,25 @@ const noExistingRoot = {
   listClientTtys: async () => [],
   killSession: async () => {},
 };
+
+// Every test runs under a disposable HIVE_HOME. launchOrchestrator writes the
+// root's runtime config into orchestratorConfigRoot(), which resolves from the
+// REAL hive home when nothing overrides it — so every full-suite run was
+// stamping the live orchestrator's settings.local.json and .mcp.json with this
+// file's fixture port (4317), re-pointing production delivery config at a dead
+// port (found 2026-07-12 while tracing the root's severed turn-start events).
+let hiveHomeSandbox: string;
+let previousHiveHome: string | undefined;
+beforeEach(async () => {
+  previousHiveHome = process.env.HIVE_HOME;
+  hiveHomeSandbox = await mkdtemp(join(tmpdir(), "hive-home-"));
+  process.env.HIVE_HOME = hiveHomeSandbox;
+});
+afterEach(async () => {
+  if (previousHiveHome === undefined) delete process.env.HIVE_HOME;
+  else process.env.HIVE_HOME = previousHiveHome;
+  await rm(hiveHomeSandbox, { recursive: true, force: true });
+});
 
 describe("orchestrator brief", () => {
   test("builds an authority-first Codex root command without enabling it yet", () => {

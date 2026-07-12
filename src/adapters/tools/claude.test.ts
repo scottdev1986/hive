@@ -545,7 +545,12 @@ describe("Claude adapter", () => {
       "Bash(bun test:*)",
       "Bash(bun run:*)",
     ]);
-    expect(settings.hooks.UserPromptSubmit).toEqual([{ hooks: [] }]);
+    expect(
+      settings.hooks.UserPromptSubmit?.map((entry) => entry.hooks[0]?.command),
+    ).toEqual([
+      undefined,
+      "hive event turn-start --agent agent-merge --port 5000",
+    ]);
     expect(settings.hooks.SessionStart).toHaveLength(2);
     expect(
       settings.hooks.SessionStart?.map((entry) =>
@@ -561,6 +566,38 @@ describe("Claude adapter", () => {
     expect(
       await readFile(join(claudeDirectory, "settings.json"), "utf8"),
     ).toEqual('{"userSetting":"untouched"}\n');
+  });
+
+  test("a daemon port change re-points the turn-start hook, not just the others", async () => {
+    // The 2026-07-12 incident: the config had been written under port 4317,
+    // the daemon came back on 4483, and the rewrite refreshed every hook
+    // except UserPromptSubmit — so the root's turn-starts posted to a dead
+    // port, its open turns were invisible, and the stalled-message sweep
+    // false-alarmed "idle yet never submitted" on a busy root.
+    await writeClaudeAgentConfig(worktreePath, {
+      name: "orchestrator",
+      daemonPort: 4317,
+      readOnly: true,
+    });
+    await writeClaudeAgentConfig(worktreePath, {
+      name: "orchestrator",
+      daemonPort: 4483,
+      readOnly: true,
+    });
+
+    const settings = JSON.parse(
+      await readFile(
+        join(worktreePath, ".claude", "settings.local.json"),
+        "utf8",
+      ),
+    ) as { hooks: Record<string, { hooks: { command?: string }[] }[]> };
+
+    const turnStartCommands = settings.hooks.UserPromptSubmit?.map((entry) =>
+      entry.hooks[0]?.command
+    );
+    expect(turnStartCommands).toContain(
+      "hive event turn-start --agent orchestrator --port 4483",
+    );
   });
 
   test("writes acceptEdits-style writer permissions", async () => {
