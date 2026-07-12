@@ -64,6 +64,7 @@ Red is measured, never guessed: it appears only when the daemon records a pendin
 - **Isolated working copies.** Each agent works in its own git worktree on its own branch, and finished work reaches your main branch only through Hive's merge gate, one fast-forward at a time — main is never edited by two agents at once.
 - **Sandboxed by default, full autonomy one click away.** Out of the box, agents run inside their vendor sandboxes and anything risky — installs, pushes, writes outside their working copy — queues for your approval. When you'd rather walk away and let them run without prompts, flip the switch in the Workspace's Agents menu (or run `hive autonomy dangerous`); it persists until you flip it back.
 - **Remembers your repo.** Facts agents learn about the codebase persist as durable memory, ride into every future agent's brief, and are yours to inspect with `hive memory`.
+- **An optional code map for agents.** `hive graphify enable` builds a local, code-only knowledge graph of your repo ([graphify](https://github.com/Graphify-Labs/graphify)) that agents query over MCP instead of grep-sweeping, plus a task-scoped digest injected into every agent's brief. Strictly opt-in and repo-local: installed hash-verified into Hive's own tools directory, parsed entirely on your machine with zero LLM calls, kept out of git, gone with `hive graphify disable --purge`. Graph answers are treated as hints, never authority, and nothing in Hive ever waits on the graph.
 - **Steerable mid-flight.** Redirect an agent, or pause and stop it, while it works. A stopped agent's work is preserved, never half-merged.
 - **No black boxes.** Every agent is a live terminal you can watch, scroll, and reopen.
 
@@ -73,6 +74,7 @@ Red is measured, never guessed: it appears only when the daemon records a pendin
 - tmux (`brew install tmux`) and git
 - iTerm2 or the built-in Terminal app (for `hive watch` viewer windows)
 - At least one AI coding CLI, installed and signed in: [Claude Code](https://code.claude.com/docs) and/or [Codex](https://developers.openai.com/codex)
+- [uv](https://docs.astral.sh/uv/) — only if you opt into `hive graphify`; everything else works without it
 
 Hive uses your existing Claude / OpenAI subscriptions or API keys and adds no fees of its own.
 
@@ -117,6 +119,7 @@ To update later, run `hive update` — it repeats those checks and additionally 
 | `hive status` | Show all agents, their model, status, context use, and task |
 | `hive autonomy [mode]` | Show or set writer autonomy: `sandboxed` (default) or `dangerous` |
 | `hive quota` | Show remaining capacity per provider, with reservations and reset times |
+| `hive graphify <enable\|disable\|status>` | Opt this repo into a local code knowledge graph agents can query (`disable --purge` removes every trace) |
 | `hive watch <name>` | Open a terminal window viewing one agent |
 | `hive recover [name]` | Resume crashed agent sessions |
 | `hive memory <search\|read\|write\|delete\|reindex>` | Inspect and edit the durable facts Hive has learned about the repo |

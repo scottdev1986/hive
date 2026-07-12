@@ -24,6 +24,7 @@ import {
   writeMemoryFact as writeMemoryFactFile,
 } from "../adapters/memory";
 import { ensureProfile } from "../adapters/profile";
+import { readGraphifyState } from "../adapters/graphify";
 import { GraphifyService } from "./graphify-service";
 import { landBranch, type LandBranch } from "./landing";
 import { readLiveClaudeModel } from "./live-model";
@@ -1730,6 +1731,9 @@ export class HiveDaemon {
     ) {
       return this.autonomyEndpoint(request);
     }
+    if (url.pathname === "/graphify" && request.method === "POST") {
+      return this.graphifyEndpoint(request);
+    }
     if (request.method === "POST" && url.pathname.startsWith("/channel/")) {
       return this.handleChannel(url.pathname, request);
     }
@@ -2243,6 +2247,40 @@ export class HiveDaemon {
       );
     }
     return json({ autonomy: this.autonomy.get() });
+  }
+
+  /** `POST /graphify` — converge the per-repo server on the persisted opt-in
+   * state (integration doc). The CLI writes the state file first and then
+   * pokes this; the body carries nothing because the file is the single
+   * source of truth and the daemon's job is to match it. Operator-only, like
+   * autonomy: enabling a code-indexing service is the human's dial. */
+  private async graphifyEndpoint(request: Request): Promise<Response> {
+    const authenticated = this.authenticate(request, "/graphify");
+    if (!authenticated.ok) return this.denied(authenticated);
+    const decision = this.authorize(
+      authenticated.capability,
+      "/graphify",
+      "graphify:write",
+      undefined,
+    );
+    if (!decision.ok) return this.denied(decision);
+    if (this.graphify === undefined) {
+      return json(
+        { error: "this daemon has no graphify service configured" },
+        { status: 503 },
+      );
+    }
+    const state = await readGraphifyState(this.repoRoot);
+    if (state.enabled) {
+      // stop() then start() so a re-enable also swaps in a fresh install or
+      // graph; both are idempotent and the window without a server only costs
+      // spawns the attach, never anything else.
+      await this.graphify.stop();
+      await this.graphify.start();
+    } else {
+      await this.graphify.stop();
+    }
+    return json({ enabled: state.enabled, ...this.graphify.status() });
   }
 
   private async setWorkspacePresenceEndpoint(

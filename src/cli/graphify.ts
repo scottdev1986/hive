@@ -11,6 +11,8 @@
  */
 import { existsSync } from "node:fs";
 import { stat } from "node:fs/promises";
+import { readDaemonPort } from "../daemon/lifecycle";
+import { operatorFetch } from "./credential";
 import {
   buildGraph,
   defaultInstallDeps,
@@ -32,12 +34,49 @@ export interface GraphifyCliDeps {
   install: GraphifyInstallDeps;
   run: CommandRunner;
   log: (line: string) => void;
+  /** Ask a running daemon to converge on the persisted state. Injectable so
+   * tests never open a socket. */
+  syncDaemon: (log: (line: string) => void) => Promise<void>;
+}
+
+/** Best-effort: the state file is the truth and the next daemon start reads
+ * it, so an unreachable daemon costs nothing but immediacy. */
+async function syncDaemon(log: (line: string) => void): Promise<void> {
+  const port = readDaemonPort();
+  if (port === null) {
+    log("No daemon is running; the next `hive` start applies this.");
+    return;
+  }
+  try {
+    const response = await operatorFetch(`http://127.0.0.1:${port}/graphify`, {
+      method: "POST",
+    });
+    const body = await response.json().catch(() => null) as
+      | { enabled?: boolean; running?: boolean; url?: string | null; lastError?: string | null; error?: string }
+      | null;
+    if (!response.ok) {
+      log(`Daemon did not apply it (${body?.error ?? `HTTP ${response.status}`}); it will on its next start.`);
+      return;
+    }
+    if (body?.running === true) {
+      log(`Daemon: graphify MCP server live at ${body.url}.`);
+    } else {
+      log(
+        body?.enabled === true
+          ? `Daemon: server not running${body?.lastError ? ` (${body.lastError})` : ""} — agents run without graph context.`
+          : "Daemon: graphify server stopped.",
+      );
+    }
+  } catch {
+    log("Could not reach the daemon; the next start applies this.");
+  }
 }
 
 export const defaultGraphifyCliDeps: GraphifyCliDeps = {
   install: defaultInstallDeps,
   run: runCommand,
   log: console.log,
+  syncDaemon,
 };
 
 /** Install (hash-verified), exclude, persist, build. Returns a process exit
@@ -80,6 +119,7 @@ export async function runGraphifyEnable(
     return 1;
   }
   deps.log(`Graph built: ${built.detail}.`);
+  await deps.syncDaemon(deps.log);
   return 0;
 }
 
@@ -90,6 +130,7 @@ export async function runGraphifyDisable(
 ): Promise<number> {
   await writeGraphifyState(root, { enabled: false, pin: null });
   deps.log("Graphify disabled: no graph context, no MCP server, no rebuilds.");
+  await deps.syncDaemon(deps.log);
   if (options.purge === true) {
     const removed = await purgeGraphify(root);
     for (const path of removed) deps.log(`Removed ${path}.`);
