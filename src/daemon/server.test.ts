@@ -2825,3 +2825,104 @@ describe("delivery reconciliation runs in maintenance", () => {
     }
   });
 });
+
+// bridget, a real grok agent, sat at "spawning" long after her turn had ended
+// with stop_reason end_turn -- and her context read null forever. Grok drives
+// no control channel, so no turn-start ever promoted her row and no turn-end
+// ever settled it: the daemon simply never observed her turn. Her session's
+// own updates.jsonl is the observable, and this sweep is what reads it.
+describe("a grok agent's turn is observed from its session artifacts", () => {
+  test("a completed turn settles the row to idle and lands the vendor's context reading", async () => {
+    const db = new HiveDatabase(join(home, "grok-turn.db"));
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new StubSpawner(),
+      tmux: new FakeDaemonTmux(),
+      telemetryReaders: {
+        claude: async () => ({ contextTokens: null, lastActivityAt: null }),
+        codex: async () => ({ contextPct: null, lastActivityAt: null }),
+        grok: async () => ({
+          contextPct: 6,
+          lastActivityAt: "2026-07-12T21:19:20.991Z",
+          turnCompleted: true,
+        }),
+        liveModel: async () => null,
+        grokLiveModel: async () => "grok-4.5",
+      },
+    });
+    db.insertAgent(agent({
+      id: "agent-bridget",
+      name: "bridget",
+      tool: "grok",
+      model: "grok-4.5",
+      status: "spawning",
+      tmuxSession: "hive-bridget",
+      worktreePath: "/tmp/hive-bridget",
+      contextPct: null,
+    }));
+    try {
+      await daemon.refreshToolTelemetry();
+      const bridget = db.getAgentByName("bridget")!;
+      // The turn ended, so the agent is idle -- not still "spawning" 40
+      // minutes after it answered.
+      expect(bridget.status).toBe("idle");
+      expect(bridget.contextPct).toBe(6);
+      expect(bridget.liveModel).toBe("grok-4.5");
+      expect(bridget.lastEventAt).toBe("2026-07-12T21:19:20.991Z");
+    } finally {
+      db.close();
+    }
+  });
+
+  test("a streaming turn is working, and an unreadable session stays unknown", async () => {
+    const db = new HiveDatabase(join(home, "grok-streaming.db"));
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new StubSpawner(),
+      tmux: new FakeDaemonTmux(),
+      telemetryReaders: {
+        claude: async () => ({ contextTokens: null, lastActivityAt: null }),
+        codex: async () => ({ contextPct: null, lastActivityAt: null }),
+        grok: async (worktreePath) =>
+          worktreePath === "/tmp/hive-bridget"
+            ? {
+              contextPct: null,
+              lastActivityAt: "2026-07-12T21:19:20.991Z",
+              turnCompleted: false,
+            }
+            // No session on disk yet: unknown. A sweep that guessed a state
+            // here would be inventing the very thing it exists to measure.
+            : { contextPct: null, lastActivityAt: null, turnCompleted: null },
+      },
+    });
+    db.insertAgent(agent({
+      id: "agent-bridget",
+      name: "bridget",
+      tool: "grok",
+      model: "grok-4.5",
+      status: "spawning",
+      tmuxSession: "hive-bridget",
+      worktreePath: "/tmp/hive-bridget",
+      contextPct: null,
+    }));
+    db.insertAgent(agent({
+      id: "agent-blake",
+      name: "blake",
+      tool: "grok",
+      model: "grok-4.5",
+      status: "spawning",
+      tmuxSession: "hive-blake",
+      worktreePath: "/tmp/hive-blake",
+      contextPct: null,
+    }));
+    try {
+      await daemon.refreshToolTelemetry();
+      expect(db.getAgentByName("bridget")?.status).toBe("working");
+      // Unknown is not idle and not working: the row is left alone.
+      expect(db.getAgentByName("blake")?.status).toBe("spawning");
+      expect(db.getAgentByName("blake")?.contextPct).toBeNull();
+    } finally {
+      db.close();
+    }
+  });
+});

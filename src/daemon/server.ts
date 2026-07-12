@@ -85,9 +85,12 @@ import {
   clampPct,
   type ClaudeTelemetryReader,
   type GraphifyCallCursor,
+  type GrokTelemetry,
+  type GrokTelemetryReader,
   readClaudeTelemetry,
   readCodexTelemetry,
   readGraphifyCalls,
+  readGrokTelemetry,
   type TelemetryReader,
   type ToolTelemetry,
 } from "./tool-telemetry";
@@ -425,6 +428,7 @@ export interface HiveDaemonOptions {
   telemetryReaders?: {
     claude?: ClaudeTelemetryReader;
     codex?: TelemetryReader;
+    grok?: GrokTelemetryReader;
     liveModel?: (
       worktreePath: string,
       toolSessionId: string | undefined,
@@ -493,6 +497,7 @@ export class HiveDaemon {
   private readonly repoRoot: string;
   private readonly readClaudeTelemetry: ClaudeTelemetryReader;
   private readonly readCodexTelemetry: TelemetryReader;
+  private readonly readGrokTelemetry: GrokTelemetryReader;
   private readonly readLiveModel: (
     worktreePath: string,
     toolSessionId: string | undefined,
@@ -651,6 +656,9 @@ export class HiveDaemon {
       readClaudeTelemetry;
     this.readCodexTelemetry = options.telemetryReaders?.codex ??
       readCodexTelemetry;
+    this.readGrokTelemetry = options.telemetryReaders?.grok ??
+      ((worktreePath, toolSessionId) =>
+        readGrokTelemetry(worktreePath, toolSessionId));
     this.readLiveModel = options.telemetryReaders?.liveModel ??
       ((worktreePath, toolSessionId) =>
         readLiveClaudeModel(worktreePath, toolSessionId));
@@ -1060,6 +1068,7 @@ export class HiveDaemon {
       if (worktree === null || worktree === undefined) continue;
       let telemetry: ToolTelemetry | null = null;
       let claudeContext: number | null = null;
+      let grokTelemetry: GrokTelemetry | null = null;
       // The vendor switch sits outside the read's catch: a failed read is
       // routine and skips the agent, but a vendor with no reader is a bug that
       // must be heard — swallowing it would report this agent's context off
@@ -1081,8 +1090,14 @@ export class HiveDaemon {
           }
           break;
         case "grok":
-          // Grok telemetry is read from its own session artifacts below; a
-          // missing parser is unknown, never permission to read a Codex rollout.
+          try {
+            grokTelemetry = await this.readGrokTelemetry(
+              worktree,
+              agent.toolSessionId,
+            );
+          } catch {
+            continue;
+          }
           break;
         default:
           unknownVendor(agent.tool, "refreshToolTelemetry");
@@ -1171,6 +1186,35 @@ export class HiveDaemon {
           break;
         }
         case "grok": {
+          // Grok's occupancy is the vendor's own reading, and like the codex
+          // arm the sweep records what it observed *including* "nothing": a
+          // null that is skipped as "no new information" leaves whatever the
+          // row was born with standing forever.
+          if (
+            grokTelemetry !== null &&
+            grokTelemetry.contextPct !== current.contextPct
+          ) {
+            updates.contextPct = grokTelemetry.contextPct;
+          }
+          // The turn boundary nothing else reports. Grok drives no control
+          // channel, so no turn-start ever promoted these rows off "spawning"
+          // and no turn-end ever settled them to "idle" — bridget sat at
+          // "spawning" long after her turn had ended with end_turn. The
+          // session's own updates.jsonl is the observable: its last record
+          // says whether a turn is streaming or finished. Unknown
+          // (turnCompleted null) writes nothing rather than guessing a state.
+          if (
+            !current.writeRevoked && current.status !== "control-paused" &&
+            current.status !== "awaiting-approval" &&
+            grokTelemetry !== null && grokTelemetry.lastActivityAt !== null &&
+            grokTelemetry.lastActivityAt > current.lastEventAt
+          ) {
+            updates.lastEventAt = grokTelemetry.lastActivityAt;
+            if (grokTelemetry.turnCompleted === true) updates.status = "idle";
+            else if (grokTelemetry.turnCompleted === false) {
+              updates.status = "working";
+            }
+          }
           if (current.worktreePath !== null) {
             const live = await this
               .readGrokLiveModel(current.worktreePath, current.toolSessionId)

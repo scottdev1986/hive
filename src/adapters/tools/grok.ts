@@ -257,6 +257,9 @@ interface GrokSummaryLocation {
   id: string;
   model: string | null;
   mtimeMs: number;
+  /** The session directory itself — `updates.jsonl` and `signals.json` are
+   * this session's telemetry, and they are only findable from here. */
+  directory: string;
 }
 
 async function findLatestGrokSummary(
@@ -309,7 +312,12 @@ async function findLatestGrokSummary(
           : null;
         const mtimeMs = (await stat(summaryPath)).mtimeMs;
         if (newest === null || mtimeMs > newest.mtimeMs) {
-          newest = { id: info.id, model, mtimeMs };
+          newest = {
+            id: info.id,
+            model,
+            mtimeMs,
+            directory: join(projectPath, session.name),
+          };
         }
       } catch {
         // A partial or concurrently deleted summary is not a candidate.
@@ -325,6 +333,22 @@ export async function findLatestGrokSessionId(
   home?: string,
 ): Promise<string | null> {
   return (await findLatestGrokSummary(worktreePath, home))?.id ?? null;
+}
+
+/**
+ * The session directory whose summary records this exact worktree cwd — where
+ * `updates.jsonl` (the turn and tool-call stream) and `signals.json` (the
+ * context reading) live. Pass `sessionId` whenever the row has one: without it
+ * this resolves the newest session for the cwd, and a reused worktree still
+ * holds every dead predecessor's session.
+ */
+export async function findLatestGrokSessionDirectory(
+  worktreePath: string,
+  sessionId?: string,
+  home?: string,
+): Promise<string | null> {
+  return (await findLatestGrokSummary(worktreePath, home, sessionId))
+    ?.directory ?? null;
 }
 
 export async function readLiveGrokModel(

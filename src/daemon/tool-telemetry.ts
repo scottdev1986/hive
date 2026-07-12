@@ -1,7 +1,8 @@
-import { open, stat } from "node:fs/promises";
+import { open, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { claudeProjectDirectory } from "../adapters/tools/claude";
 import { findLatestCodexRollout } from "../adapters/tools/codex";
+import { findLatestGrokSessionDirectory } from "../adapters/tools/grok";
 import { type CapabilityProvider, unknownVendor } from "../schemas/capability";
 
 /**
@@ -210,6 +211,91 @@ export async function readCodexTelemetry(
   return { contextPct, lastActivityAt };
 }
 
+/**
+ * Grok telemetry, read from the session's own artifacts. Grok drives no
+ * control channel — no statusline, no app-server — so nothing ever reported a
+ * turn boundary for it and its rows froze at "spawning" for their whole life.
+ * These two files are the only observation there is: `signals.json` states the
+ * context reading the vendor itself computed, and `updates.jsonl` records the
+ * turn.
+ */
+export interface GrokTelemetry extends ToolTelemetry {
+  /** True when the session's last update is `turn_completed` — the turn ended
+   * and the agent is idle. False while a turn is still streaming. Null when no
+   * update is readable: unknown, which is not idle and not working. */
+  turnCompleted: boolean | null;
+}
+
+export type GrokTelemetryReader = (
+  worktreePath: string,
+  toolSessionId: string | undefined,
+) => Promise<GrokTelemetry>;
+
+const NO_GROK_TELEMETRY: GrokTelemetry = {
+  contextPct: null,
+  lastActivityAt: null,
+  turnCompleted: null,
+};
+
+/** The last update in `tail`, or null when none parses. `turn_completed` is
+ * genuinely the final record a turn writes, so the last record's kind is the
+ * turn's state — no need to reconstruct turn boundaries. */
+function lastGrokTurnCompleted(tail: string): boolean | null {
+  const entries = parseJsonLines(tail);
+  for (let index = entries.length - 1; index >= 0; index--) {
+    const entry = entries[index];
+    if (!isRecord(entry) || !isRecord(entry.params)) continue;
+    const update = entry.params.update;
+    if (!isRecord(update) || typeof update.sessionUpdate !== "string") continue;
+    return update.sessionUpdate === "turn_completed";
+  }
+  return null;
+}
+
+export async function readGrokTelemetry(
+  worktreePath: string,
+  toolSessionId?: string,
+  home?: string,
+): Promise<GrokTelemetry> {
+  const directory = await findLatestGrokSessionDirectory(
+    worktreePath,
+    toolSessionId,
+    home,
+  );
+  if (directory === null) return NO_GROK_TELEMETRY;
+
+  // The vendor computes the occupancy against the window it actually served,
+  // so this reads its number rather than dividing by a window of our own
+  // choosing — the mistake the Claude reader's comment above is a monument to.
+  let contextPct: number | null = null;
+  try {
+    const signals: unknown = JSON.parse(
+      await readFile(join(directory, "signals.json"), "utf8"),
+    );
+    if (isRecord(signals) && typeof signals.contextWindowUsage === "number") {
+      contextPct = clampPct(signals.contextWindowUsage);
+    }
+  } catch {
+    // No signals.json is the shape of a cancelled turn, and of a turn that has
+    // not finished one yet. Either way the occupancy is unknown, never zero.
+  }
+
+  const updates = join(directory, "updates.jsonl");
+  let mtimeMs: number;
+  try {
+    mtimeMs = (await stat(updates)).mtimeMs;
+  } catch {
+    return { contextPct, lastActivityAt: null, turnCompleted: null };
+  }
+  const lastActivityAt = new Date(mtimeMs).toISOString();
+  const tail = await readFileTail(updates);
+  return {
+    contextPct,
+    lastActivityAt,
+    turnCompleted: tail === null ? null : lastGrokTurnCompleted(tail),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Graphify adoption telemetry (docs/architecture/graphify-integration.md,
 // layer 3): count the graphify MCP calls each agent actually made, from the
@@ -246,9 +332,7 @@ export function countGraphifyCallLines(
     case "codex":
       return countCodexGraphifyCalls(slice);
     case "grok":
-      throw new Error(
-        "Grok Graphify counting is unavailable until its updates.jsonl parser is installed",
-      );
+      return countGrokGraphifyCalls(slice);
     default:
       return unknownVendor(tool, "countGraphifyCallLines");
   }
@@ -294,6 +378,30 @@ function countCodexGraphifyCalls(slice: string): number {
 }
 
 /**
+ * Grok wraps every MCP call in one native tool, so the call's own name is NOT
+ * the record's name. Measured against a real session: each call records as
+ * `{"sessionUpdate":"tool_call","title":"use_tool","rawInput":{"tool_name":
+ * "graphify__query_graph",...}}` — `title` is the literal string `use_tool`
+ * for all of them. A counter keyed on the record's name therefore reads zero
+ * forever, which is why this reads `rawInput.tool_name` and nothing else.
+ */
+function countGrokGraphifyCalls(slice: string): number {
+  let count = 0;
+  for (const entry of parseJsonLines(slice)) {
+    if (!isRecord(entry) || !isRecord(entry.params)) continue;
+    const update = entry.params.update;
+    if (!isRecord(update) || update.sessionUpdate !== "tool_call") continue;
+    if (!isRecord(update.rawInput)) continue;
+    const name = update.rawInput.tool_name;
+    if (typeof name !== "string") continue;
+    // graph_locate rides Hive's own server, so the adoption count must see it
+    // or the rollout metric undercounts — same rule as the other two vendors.
+    if (name.startsWith("graphify__") || name === "hive__graph_locate") count++;
+  }
+  return count;
+}
+
+/**
  * Advance a call-count cursor against the agent's own artifact. Claude reads
  * are keyed by `toolSessionId` — never "newest file in the directory", which
  * inherits a dead predecessor's transcript across respawns. The Codex rollout
@@ -327,10 +435,18 @@ export async function readGraphifyCalls(
       path = rollout.path;
       break;
     }
-    case "grok":
-      // Unknown, never zero: Grok's measured source is updates.jsonl and it
-      // must not be read through either transcript parser.
-      return null;
+    case "grok": {
+      // updates.jsonl is Grok's measured source — never a transcript parser
+      // from another vendor. No session directory yet is unknown, not zero.
+      const directory = await findLatestGrokSessionDirectory(
+        worktreePath,
+        toolSessionId,
+        home,
+      );
+      if (directory === null) return cursor ?? null;
+      path = join(directory, "updates.jsonl");
+      break;
+    }
     default:
       return unknownVendor(tool, "readGraphifyCalls");
   }
