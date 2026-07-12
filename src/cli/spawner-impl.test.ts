@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { TerminalAdapter } from "../adapters/terminal";
 import type { ShadowSpawn } from "../daemon/routing-shadow";
+import type { AccountBilling } from "../daemon/usage-credits";
 import { CLAUDE_CHANNELS_FLAG } from "../adapters/tools/claude";
 import {
   DEFAULT_ROUTING,
@@ -3287,5 +3288,154 @@ describe("shadow mode observes and cannot alter", () => {
       model: "claude-opus-4-8",
       userPinned: true,
     });
+  });
+});
+
+describe("the release valve follows the provider's metering, not a model name", () => {
+  // MEASURED 2026-07-12 (get_usage): Fable draws the SHARED five-hour pool (+2%
+  // under a Fable-only burst) AND is capped separately in `model_scoped`. Both.
+  // The valve's rationale is real — but the vendor can rearrange it without
+  // telling us, so the trigger reads the metering rather than the name.
+  const billing = (metered: Record<string, number>): AccountBilling => ({
+    creditsEnabled: known(false, "claude.get_usage", timestamp),
+    disabledReason: null,
+    generalUtilization: known(20, "claude.get_usage", timestamp),
+    modelUtilization: metered,
+  });
+
+  const discovery = (): CapabilityDiscoveryResult => ({
+    status: "ok",
+    records: [
+      {
+        ...capabilityRecord("claude", "claude-fable-5", ["low", "high"]),
+        displayName: "Fable",
+      },
+      {
+        ...capabilityRecord("claude", "claude-opus-4-8", ["low", "high"]),
+        displayName: "Opus",
+      },
+    ],
+    effectiveDefault: {
+      provider: "claude",
+      model: known("claude-opus-4-8", "claude.initialize", timestamp),
+      effort: unknown("surface-silent", "claude.initialize", timestamp),
+    },
+  });
+
+  async function candidatesFor(
+    root: string,
+    options: {
+      claudeModel: string;
+      metered: Record<string, number>;
+      withMeasurement: boolean;
+    },
+  ): Promise<string[]> {
+    const seen: string[] = [];
+    const store = new FakeStore();
+    const spawner = new HiveSpawner({
+      db: store,
+      repoRoot: root,
+      port: 4317,
+      config: { terminal: "auto", headless: true },
+      routing: async () => DEFAULT_ROUTING.deep,
+      tmux: new FakeTmux(),
+      terminal: new FakeTerminal(),
+      createWorktree: async (_repoRoot, name, slug) => {
+        const path = join(root, name);
+        await mkdir(path, { recursive: true });
+        return { path, branch: `hive/${name}-${slug}` };
+      },
+      sleep: signalReadiness(store),
+      resolveModel: async (tool) =>
+        tool === "claude" ? options.claudeModel : "gpt-5.6-sol",
+      ...(options.withMeasurement
+        ? {
+          discoverCapabilities: async () => discovery(),
+          readBilling: async () => billing(options.metered),
+        }
+        : {}),
+      quota: {
+        config: { enabled: true },
+        routeAndReserve: async (request: { candidates: { tool: string; model: string }[] }) => {
+          seen.push(...request.candidates.map((c) => `${c.tool}:${c.model}`));
+          const first = request.candidates[0]!;
+          return {
+            tool: first.tool,
+            model: first.model,
+            reservation: { id: "r1" },
+          };
+        },
+        markStarted: () => {},
+        cancel: async () => {},
+        recordRouteFailure: () => {},
+      } as never,
+    });
+    await spawner.spawn({ task: "valve", tier: "deep" });
+    return seen;
+  }
+
+  test("a separately-metered primary gets the account's default as a valve", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-valve-metered-"));
+    tempRoots.push(root);
+    const candidates = await candidatesFor(root, {
+      claudeModel: "claude-fable-5",
+      metered: { fable: 15 },
+      withMeasurement: true,
+    });
+    // Opus is offered AFTER Fable: ties keep the primary, and only real pressure
+    // on Fable's pool lets quota pick the alternative on headroom.
+    expect(candidates).toEqual([
+      "claude:claude-fable-5",
+      "claude:claude-opus-4-8",
+      "codex:gpt-5.6-sol",
+    ]);
+  });
+
+  test("the SAME model gets NO valve once the vendor stops metering it separately", async () => {
+    // This is the whole point. The old `=== CLAUDE_BEST_MODEL` check could never
+    // notice this change; it would have gone on diverting deep work away from a
+    // model the provider no longer treats as heavy, forever, and silently.
+    const root = await mkdtemp(join(tmpdir(), "hive-valve-unmetered-"));
+    tempRoots.push(root);
+    const candidates = await candidatesFor(root, {
+      claudeModel: "claude-fable-5",
+      metered: {},
+      withMeasurement: true,
+    });
+    expect(candidates).toEqual([
+      "claude:claude-fable-5",
+      "codex:gpt-5.6-sol",
+    ]);
+  });
+
+  test("a model the vendor DOES meter separately gets the valve, whatever it is called", async () => {
+    // No name is privileged. If the provider gives some future model a dedicated
+    // pool, the valve applies to it without anyone editing a constant.
+    const root = await mkdtemp(join(tmpdir(), "hive-valve-other-"));
+    tempRoots.push(root);
+    const candidates = await candidatesFor(root, {
+      claudeModel: "claude-opus-4-8",
+      metered: { opus: 40 },
+      withMeasurement: true,
+    });
+    expect(candidates[0]).toBe("claude:claude-opus-4-8");
+    // Opus IS the account's default here, so there is no other model to offer:
+    // a valve that offers the model it is relieving is not a valve.
+    expect(candidates).not.toContain("claude:claude-opus-4-8_alt");
+  });
+
+  test("with no live reading it falls back to the one model measurement has shown", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-valve-blind-"));
+    tempRoots.push(root);
+    const candidates = await candidatesFor(root, {
+      claudeModel: "claude-fable-5",
+      metered: {},
+      withMeasurement: false,
+    });
+    expect(candidates).toEqual([
+      "claude:claude-fable-5",
+      "claude:claude-opus-4-8",
+      "codex:gpt-5.6-sol",
+    ]);
   });
 });

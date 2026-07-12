@@ -67,6 +67,7 @@ import { agentTmuxSession } from "./tmux-sessions";
 import { validateEffort } from "./effort";
 import type { CapabilityDiscoveryResult } from "./capability-discovery";
 import type { ShadowSpawn } from "./routing-shadow";
+import type { AccountBilling } from "./usage-credits";
 
 /**
  * Names an agent can be given. Human first names, because the user's interface
@@ -260,6 +261,11 @@ export interface HiveSpawnerDependencies {
   discoverCapabilities?: CapabilityDiscoverer;
   /** User pins before the shipped table is merged underneath them. */
   routingPins?: () => Promise<RoutingPins>;
+  /**
+   * The account's live pool readings. The release valve is derived from these —
+   * from the pools the provider actually meters — rather than from a model name.
+   */
+  readBilling?: () => Promise<AccountBilling | null>;
   /**
    * Shadow mode. Records what the derived router *would* have chosen beside what
    * this spawn actually launched, and returns nothing the spawn reads. It is
@@ -660,6 +666,105 @@ export class HiveSpawner implements Spawner {
     }
   }
 
+  /**
+   * Discovery, at most once per provider per minute.
+   *
+   * Both the effort resolver and the release valve need the same catalog, and a
+   * probe spawns a CLI. It is free in money but not in time, and asking the same
+   * question twice per launch is just slow.
+   */
+  private readonly capabilityCache = new Map<
+    string,
+    { at: number; result: CapabilityDiscoveryResult }
+  >();
+
+  private async discoverOnce(
+    provider: "claude" | "codex",
+  ): Promise<CapabilityDiscoveryResult | undefined> {
+    const discover = this.dependencies.discoverCapabilities;
+    if (discover === undefined) return undefined;
+    const cached = this.capabilityCache.get(provider);
+    const now = Date.now();
+    if (cached !== undefined && now - cached.at < 60_000) return cached.result;
+    const result = await discover(provider);
+    this.capabilityCache.set(provider, { at: now, result });
+    return result;
+  }
+
+  /**
+   * The same-vendor model to offer beside a heavy primary, or `null` for none.
+   *
+   * This used to be `if (claudeModel === CLAUDE_BEST_MODEL)` — a model NAME
+   * standing in for a claim about capacity, in the same comment as (and written
+   * on the same non-evidence as) the billing claim that turned out to be false and
+   * quietly misrouted the deep tier for forty minutes. The claim itself is TRUE;
+   * what was wrong was that nobody had checked it, and a constant cannot notice
+   * when the vendor changes the arrangement underneath it.
+   *
+   * MEASURED 2026-07-12 against claude 2.1.207, surface `get_usage`
+   * (`rate_limits`), with the user's own Fable agents plus a controlled burst:
+   *
+   *   baseline                 five_hour 20%   seven_day 11%   Fable pool 15%
+   *   after 8 Fable prompts    five_hour 22%   seven_day 11%   Fable pool 15%
+   *   after 8 Opus prompts     five_hour 23%   seven_day 11%   Fable pool 15%
+   *
+   * No Opus generation ran during the Fable window, so the +2% on the SHARED
+   * five-hour pool is Fable's. Fable therefore draws on shared capacity AND is
+   * capped separately (`model_scoped`) — both, not either, exactly as the user
+   * said. The valve's rationale is real. (Its own weekly pool did not move at the
+   * surface's 1% resolution in a 90-second window; across the night's real work it
+   * climbed 12% → 15%. The RELATIVE size of the two draws is therefore not
+   * measurable from this surface, and nothing here pretends it is.)
+   *
+   * So the trigger is now the vendor's own metering: a model the provider gives a
+   * dedicated pool is a model the provider itself considers heavy. Read live, it
+   * follows the vendor automatically — if Fable's cap disappears tomorrow the
+   * valve stops firing for it, and if some future model gains one, the valve
+   * applies to that model without anyone editing a constant. The alternative is
+   * the account's *discovered* default rather than a hardcoded Opus, for the same
+   * reason.
+   */
+  private async releaseValveAlternative(
+    claudeModel: string,
+  ): Promise<string | null> {
+    const [discovery, billing] = await Promise.all([
+      this.discoverOnce("claude"),
+      this.dependencies.readBilling?.(),
+    ]);
+
+    // Without a live reading, fall back to the name — the one model measurement
+    // has actually shown to have this shape. It is a stale cache of a real fact,
+    // not a guess, and it degrades to the general rule the moment the surfaces
+    // answer again.
+    if (
+      discovery === undefined || discovery.status !== "ok" ||
+      billing === undefined || billing === null
+    ) {
+      return claudeModel === CLAUDE_BEST_MODEL ? CLAUDE_OPUS_MODEL : null;
+    }
+
+    const base = splitVariant(claudeModel).base;
+    const record = discovery.records.find((candidate) =>
+      candidate.canonicalId === base || candidate.launchToken === base ||
+      candidate.aliases.includes(claudeModel)
+    );
+    // The billing surface names a model only by its display name. Without one we
+    // cannot ask whether it is separately metered — unknown, so keep the measured
+    // fallback rather than silently dropping the valve.
+    if (record?.displayName == null) {
+      return claudeModel === CLAUDE_BEST_MODEL ? CLAUDE_OPUS_MODEL : null;
+    }
+
+    const separatelyMetered =
+      billing.modelUtilization[record.displayName.toLowerCase()] !== undefined;
+    if (!separatelyMetered) return null;
+
+    const fallbackModel = discovery.effectiveDefault.model;
+    if (fallbackModel.state !== "known") return null;
+    // A valve that offers the model it is relieving is not a valve.
+    return fallbackModel.value === base ? null : fallbackModel.value;
+  }
+
   private async resolveSpawnEffort(
     request: SpawnRequest,
     route: Route,
@@ -673,8 +778,7 @@ export class HiveSpawner implements Spawner {
     const pins = observed?.pins ?? await this.dependencies.routingPins?.() ?? {};
     const pinned = pins[request.tier]?.[tool]?.effort;
     const discoveryConfigured = this.dependencies.discoverCapabilities !== undefined;
-    const discovery = observed?.discovery ??
-      await this.dependencies.discoverCapabilities?.(tool);
+    const discovery = observed?.discovery ?? await this.discoverOnce(tool);
     const records = discovery?.status === "ok" ? discovery.records : [];
     const base = splitVariant(model).base;
     const record: CapabilityRecord | undefined = records.find((candidate) =>
@@ -1225,8 +1329,9 @@ export class HiveSpawner implements Spawner {
     ): Promise<string | undefined> => {
       let discovery = discoveries.get(candidateTool);
       if (discovery === undefined) {
-        discovery = this.dependencies.discoverCapabilities?.(candidateTool) ??
-          Promise.resolve(undefined);
+        // One cache for every consumer of the catalog — the effort resolver and
+        // the release valve ask the same question, and a probe spawns a CLI.
+        discovery = this.discoverOnce(candidateTool);
         discoveries.set(candidateTool, discovery);
       }
       return await this.resolveSpawnEffort(
@@ -1265,15 +1370,15 @@ export class HiveSpawner implements Spawner {
           { tool: "claude", model: claudeModel },
           { tool: "codex", model: codexModel },
         ];
-        // Fable draws heavy shared capacity. When a route resolves to it,
-        // offer Opus 4.8 as a same-vendor release valve: listed after Fable so
-        // ties (including the no-quota-configured default) keep preferring
-        // Fable, but real quota pressure on Fable's pool can still pick Opus
-        // when it has the better headroom. This does not require the
-        // 2026-07-12 default-routing cutover — it applies whenever a route
-        // resolves to Fable, explicitly or otherwise.
-        if (claudeModel === CLAUDE_BEST_MODEL) {
-          candidates.splice(1, 0, { tool: "claude", model: CLAUDE_OPUS_MODEL });
+        // The same-vendor release valve, derived from the pools the provider
+        // actually meters rather than from a model's name. When the primary
+        // Claude candidate is one the vendor caps separately, offer the account's
+        // own default alongside it — listed *after* the primary, so ties (and the
+        // no-quota-configured case) still prefer the primary, while real pressure
+        // on its pool lets quota pick the alternative on headroom.
+        const alternative = await this.releaseValveAlternative(claudeModel);
+        if (alternative !== null) {
+          candidates.splice(1, 0, { tool: "claude", model: alternative });
         }
         const eligible: QuotaRouteCandidate[] = [];
         const excluded: string[] = [];

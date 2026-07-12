@@ -28,6 +28,7 @@ import {
   CodexCapabilityProbe,
 } from "../daemon/capability-discovery";
 import { recordShadowObservation } from "../daemon/routing-shadow";
+import { readAccountBilling } from "../daemon/usage-credits";
 import { persistAutonomy } from "../config/autonomy";
 
 export async function runDaemon(): Promise<void> {
@@ -91,6 +92,8 @@ export async function runDaemon(): Promise<void> {
       provider === "claude"
         ? await new ClaudeCapabilityProbe().read()
         : await new CodexCapabilityProbe().read(),
+    // The release valve reads the provider's own metering, not a model name.
+    readBilling: () => readAccountBilling(),
     // Shadow mode. It derives what the router would have chosen and writes it to
     // the shadow log; the spawner reads nothing back. This is the evidence that
     // earns the flip, and it is not the flip.
