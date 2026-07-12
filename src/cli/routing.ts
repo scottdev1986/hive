@@ -12,7 +12,7 @@ import {
   type AccountBilling,
   type AccountBillings,
 } from "../daemon/usage-credits";
-import { forEachProvider } from "../schemas/capability";
+import { forEachProvider, providersOf } from "../schemas/capability";
 import { readCostConsent, requestCostConsent } from "../daemon/cost-consent";
 import { HiveDatabase } from "../daemon/db";
 import {
@@ -140,7 +140,7 @@ export function formatDerivedRouting(
   // What the account is actually charged. This is what decides whether a
   // model may be auto-routed on cost grounds — measured, never a date.
   lines.push(`  billing    ${describeBilling(billing)}`);
-  for (const provider of ["claude", "codex"] as const) {
+  for (const provider of providersOf(derived.discovery)) {
     lines.push(
       `  discovery  ${formatDiscovery(provider, derived.discovery[provider], now)}`,
     );
@@ -248,7 +248,7 @@ export async function printRouting(): Promise<void> {
  */
 function describeBilling(billings: AccountBillings | null): string {
   if (billings === null) return "not read — automatic cost routing is unavailable";
-  return (["claude", "codex"] as const)
+  return providersOf(billings)
     .map((provider) => `${provider}: ${describeProviderBilling(billings[provider])}`)
     .join("; ");
 }

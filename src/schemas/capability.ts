@@ -49,6 +49,26 @@ export function unknownVendor(vendor: never, site: string): never {
   );
 }
 
+/**
+ * The vendors a provider-keyed record must render: every member of the union,
+ * in declaration order, then any key the record carries that the union does
+ * not know yet (a snapshot written by a newer build, or a test's synthetic
+ * vendor), sorted. This is the ONE legal way to enumerate such a record for
+ * display or reporting — a hand-typed list is how a vendor stops existing: it
+ * is not rejected and not marked unavailable, it silently never appears. A
+ * union member missing from the record is still returned, so the caller must
+ * render it as unreadable rather than skip it; the extras are cast to
+ * `CapabilityProvider` because dropping them would be the same erasure from
+ * the other side.
+ */
+export function providersOf<T>(
+  record: Partial<Record<CapabilityProvider, T>>,
+): CapabilityProvider[] {
+  const union = new Set<string>(CAPABILITY_PROVIDERS);
+  const extras = Object.keys(record).filter((key) => !union.has(key)).sort();
+  return [...CAPABILITY_PROVIDERS, ...(extras as CapabilityProvider[])];
+}
+
 /** Read something per vendor, for every vendor. Returns a total record, so a
  * new vendor is discovered rather than silently absent. */
 export async function forEachProvider<T>(

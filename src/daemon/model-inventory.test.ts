@@ -1,8 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import {
+  CAPABILITY_PROVIDERS,
   known,
   unknown,
   type CapabilityRecord,
+  type CapabilitySurface,
   type DerivedRouting,
 } from "../schemas";
 import { buildModelInventory, formatModelInventory } from "./model-inventory";
@@ -178,6 +180,133 @@ describe("model inventory", () => {
     expect(model.effortLevels).toEqual({
       state: "known",
       values: ["high", "xhigh"],
+    });
+  });
+});
+
+describe("provider completeness: unavailable is a legal state, absent is impossible", () => {
+  test("every vendor in the union appears even when its discovery is unavailable — grok included", () => {
+    const inventory = buildModelInventory({ discovery, routing, now: new Date(AT) });
+    expect(Object.keys(inventory.providers).sort())
+      .toEqual([...CAPABILITY_PROVIDERS].sort());
+    expect(inventory.providers.grok)
+      .toEqual({ status: "unavailable", reason: "not in fixture" });
+    expect(inventory.warnings)
+      .toContain("grok discovery unavailable: not in fixture");
+    expect(formatModelInventory(inventory))
+      .toContain("grok — UNAVAILABLE: not in fixture");
+  });
+
+  test("a fourth, fake provider appears everywhere — readable as itself, unreadable as unavailable — with no edit to any other file", () => {
+    // The governing acceptance test in miniature: a vendor Hive's inventory
+    // code was never edited for must still be IMPOSSIBLE to erase. It may be
+    // unavailable; it may never be absent.
+    const acme = {
+      ...record("codex", "acme-omega-1", { efforts: [] }),
+      provider: "acme",
+      // The vendor STATES there is no effort axis — known-none, not unknown.
+      supportsEffort: known(false, "acme.models" as CapabilitySurface, AT),
+    } as unknown as CapabilityRecord;
+    const okDiscovery = {
+      ...discovery,
+      acme: {
+        status: "ok" as const,
+        records: [acme],
+        effectiveDefault: {
+          provider: "acme",
+          model: known("acme-omega-1", "acme.models" as CapabilitySurface, AT),
+          effort: unknown<string>("surface-silent", "acme.models" as CapabilitySurface, AT),
+        },
+      },
+    } as unknown as typeof discovery;
+
+    const inventory = buildModelInventory({
+      discovery: okDiscovery,
+      routing, // the derivation knows nothing about acme; unrouted ≠ invisible
+      now: new Date(AT),
+    });
+    expect((inventory.providers as Record<string, unknown>).acme)
+      .toEqual({ status: "ok", count: 1 });
+    const model = inventory.models.find(
+      (entry) => entry.canonicalId === "acme-omega-1",
+    );
+    expect(model).toBeDefined();
+    expect(model!.roles).toEqual([]);
+    expect(model!.when).toContain("Not currently used by any automatic route");
+    expect(model!.effortLevels).toMatchObject({ state: "known-none" });
+    const text = formatModelInventory(inventory);
+    expect(text).toContain("acme — 1 discovered");
+    expect(text).toContain("acme-omega-1");
+
+    const dark = buildModelInventory({
+      discovery: {
+        ...discovery,
+        acme: { status: "unavailable" as const, reason: "no probe answered" },
+      } as unknown as typeof discovery,
+      routing,
+      now: new Date(AT),
+    });
+    expect((dark.providers as Record<string, unknown>).acme)
+      .toEqual({ status: "unavailable", reason: "no probe answered" });
+    expect(dark.warnings).toContain("acme discovery unavailable: no probe answered");
+    expect(formatModelInventory(dark)).toContain("acme — UNAVAILABLE: no probe answered");
+  });
+
+  test("a union vendor missing from the discovery record entirely is rendered unreadable, never dropped", () => {
+    // Only a cast (or decoded JSON from another build) can produce this state,
+    // which is exactly why it must fail visible instead of failing silent.
+    const { grok: _grok, ...partial } = discovery;
+    const inventory = buildModelInventory({
+      discovery: partial as unknown as typeof discovery,
+      routing,
+      now: new Date(AT),
+    });
+    expect(inventory.providers.grok.status).toBe("unavailable");
+    expect(inventory.complete).toBe(false);
+    expect(inventory.warnings.some((warning) => warning.startsWith("grok "))).toBeTrue();
+  });
+});
+
+describe("effort is three-valued at the inventory edge", () => {
+  test("a vendor-stated missing effort axis is known-none — not unknown, and not known-empty", () => {
+    const flat = {
+      ...record("codex", "gpt-flat", { efforts: [] }),
+      supportsEffort: known(false, "codex.model/list", AT),
+    };
+    const inventory = buildModelInventory({
+      discovery: {
+        ...discovery,
+        codex: { ...discovery.codex, records: [flat] },
+      },
+      routing,
+      now: new Date(AT),
+    });
+    const model = inventory.models.find((entry) => entry.canonicalId === "gpt-flat")!;
+    expect(model.effortLevels).toMatchObject({ state: "known-none" });
+    expect(formatModelInventory(inventory)).toContain("effort      none —");
+  });
+
+  test("an advertised-but-empty level list without a vendor statement stays known-empty, distinct from known-none", () => {
+    const bare = record("codex", "gpt-bare", { efforts: [] });
+    const inventory = buildModelInventory({
+      discovery: {
+        ...discovery,
+        codex: { ...discovery.codex, records: [bare] },
+      },
+      routing,
+      now: new Date(AT),
+    });
+    const model = inventory.models.find((entry) => entry.canonicalId === "gpt-bare")!;
+    expect(model.effortLevels).toEqual({ state: "known", values: [] });
+    expect(formatModelInventory(inventory)).toContain("none advertised");
+  });
+
+  test("an unreadable effort surface stays unknown with its reason", () => {
+    const inventory = buildModelInventory({ discovery, routing, now: new Date(AT) });
+    const model = inventory.models.find((entry) => entry.canonicalId === "gpt-spare")!;
+    expect(model.effortLevels).toEqual({
+      state: "unknown",
+      reason: "field-absent",
     });
   });
 });

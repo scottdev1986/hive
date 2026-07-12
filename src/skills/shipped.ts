@@ -21,6 +21,7 @@ import hiveMemory from "../../skills/hive-memory/SKILL.md" with { type: "text" }
 import karpathyGuidelines from "../../skills/karpathy-guidelines/SKILL.md" with {
   type: "text",
 };
+import { CAPABILITY_PROVIDERS } from "../schemas/capability";
 import type { SkillTool } from "../adapters/skills";
 
 export interface ShippedSkill {
@@ -38,11 +39,14 @@ export const SHIPPED_SKILLS: readonly ShippedSkill[] = [
   { name: "hive-claude", content: hiveClaude, tools: ["claude"] },
   { name: "hive-codex", content: hiveCodex, tools: ["codex"] },
   { name: "hive-grok", content: hiveGrok, tools: ["grok"] },
-  { name: "hive-memory", content: hiveMemory, tools: ["claude", "codex", "grok"] },
+  // "Every vendor" is spelled as the union, not a hand-typed list, so a new
+  // vendor's agents receive the all-vendor skills without anyone remembering
+  // this file exists.
+  { name: "hive-memory", content: hiveMemory, tools: [...CAPABILITY_PROVIDERS] },
   {
     name: "karpathy-guidelines",
     content: karpathyGuidelines,
-    tools: ["claude", "codex", "grok"],
+    tools: [...CAPABILITY_PROVIDERS],
   },
 ];
 

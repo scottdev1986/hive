@@ -4,6 +4,7 @@ import { loadRoutingFloors, loadRoutingPins } from "../config/load";
 import type {
   CapabilityProvider,
   CapabilityRecord,
+  DerivedCell,
   DerivedRouting,
   ProviderDiscovery,
   RoutingTier,
@@ -11,6 +12,7 @@ import type {
 import {
   deriveRouting,
   forEachProvider,
+  providersOf,
   RoutingSnapshotSchema,
   unknownVendor,
 } from "../schemas";
@@ -43,8 +45,16 @@ export type InventoryModel = {
   variant: string | null;
   displayName: string | null;
   aliases: string[];
+  /**
+   * Three-valued, because the vendor STATING there is no effort axis
+   * (`known-none`) and Hive failing to read one (`unknown`) are different
+   * facts, and a UI that collapses them renders a lie. `known` with an empty
+   * list is a third thing again: a surface that listed zero levels without
+   * saying whether the axis exists.
+   */
   effortLevels:
     | { state: "known"; values: string[] }
+    | { state: "known-none"; detail: string }
     | { state: "unknown"; reason: string };
   entitlement: "entitled" | "not-entitled" | "unknown";
   hidden: "hidden" | "visible" | "unknown";
@@ -171,7 +181,10 @@ function rolesFor(record: CapabilityRecord, input: ModelInventoryInput): Invento
   const roles: InventoryRole[] = [];
   const discovery = input.discovery[record.provider];
   for (const tier of input.routing.tiers) {
-    const cell = tier[record.provider];
+    // A provider the derivation has no column for yet is unrouted, not
+    // unrenderable: its models still appear, with no roles.
+    const cell = tier[record.provider] as DerivedCell | undefined;
+    if (cell === undefined) continue;
     const primary = concreteModel(record.provider, cell.model.value, discovery);
     if (primary !== null && recordMatches(record, primary)) {
       roles.push({
@@ -236,9 +249,18 @@ function planStatus(
 }
 
 export function buildModelInventory(input: ModelInventoryInput): ModelInventory {
-  const records = (["claude", "codex"] as const).flatMap((provider) => {
-    const discovery = input.discovery[provider];
-    return discovery.status === "ok" ? discovery.records : [];
+  // The one legal enumeration: the whole vendor union plus anything extra the
+  // discovery record carries. "unavailable" is a legal state below; a vendor
+  // that is simply ABSENT from the output is not, so nothing here may iterate
+  // a hand-typed list. The `undefined` arm is the completeness assertion: a
+  // union vendor missing from the record (only a cast or foreign JSON can do
+  // that) renders as unreadable instead of vanishing.
+  const inventoryProviders = providersOf(input.discovery);
+  const discoveryOf = (provider: CapabilityProvider): ProviderDiscovery | undefined =>
+    input.discovery[provider] as ProviderDiscovery | undefined;
+  const records = inventoryProviders.flatMap((provider) => {
+    const discovery = discoveryOf(provider);
+    return discovery?.status === "ok" ? discovery.records : [];
   });
   const models = records.map((record): InventoryModel => {
     const roles = rolesFor(record, input);
@@ -248,12 +270,18 @@ export function buildModelInventory(input: ModelInventoryInput): ModelInventory 
       variant: record.variant,
       displayName: record.displayName,
       aliases: [...record.aliases],
-      effortLevels: record.supportedEffortLevels.state === "known"
-        ? { state: "known", values: [...record.supportedEffortLevels.value] }
-        : {
-            state: "unknown",
-            reason: record.supportedEffortLevels.reason,
-          },
+      effortLevels:
+        record.supportsEffort.state === "known" && !record.supportsEffort.value
+          ? {
+              state: "known-none",
+              detail: "the vendor states this model has no effort axis",
+            }
+          : record.supportedEffortLevels.state === "known"
+          ? { state: "known", values: [...record.supportedEffortLevels.value] }
+          : {
+              state: "unknown",
+              reason: record.supportedEffortLevels.reason,
+            },
       entitlement: record.entitled.state === "unknown"
         ? "unknown"
         : record.entitled.value
@@ -280,15 +308,23 @@ export function buildModelInventory(input: ModelInventoryInput): ModelInventory 
     (left.variant ?? "").localeCompare(right.variant ?? "")
   );
   const providers = Object.fromEntries(
-    (["claude", "codex"] as const).map((provider) => {
-      const discovery = input.discovery[provider];
-      return [provider, discovery.status === "ok"
+    inventoryProviders.map((provider) => {
+      const discovery = discoveryOf(provider);
+      return [provider, discovery === undefined
+        ? {
+            status: "unavailable" as const,
+            reason: "never probed: absent from the discovery input",
+          }
+        : discovery.status === "ok"
         ? { status: "ok" as const, count: discovery.records.length }
         : { status: "unavailable" as const, reason: discovery.reason }];
     }),
   ) as ModelInventory["providers"];
-  const warnings = (["claude", "codex"] as const).flatMap((provider) => {
-    const discovery = input.discovery[provider];
+  const warnings = inventoryProviders.flatMap((provider) => {
+    const discovery = discoveryOf(provider);
+    if (discovery === undefined) {
+      return [`${provider} discovery is missing entirely: never probed; rendered unavailable rather than dropped`];
+    }
     return discovery.status === "unavailable"
       ? [`${provider} discovery unavailable: ${discovery.reason}`]
       : [];
@@ -296,7 +332,7 @@ export function buildModelInventory(input: ModelInventoryInput): ModelInventory 
   return {
     observedAt: (input.now ?? new Date()).toISOString(),
     complete: models.length === records.length &&
-      Object.values(input.discovery).every((provider) => provider.status === "ok"),
+      inventoryProviders.every((provider) => discoveryOf(provider)?.status === "ok"),
     discoveredCount: records.length,
     renderedCount: models.length,
     providers,
@@ -311,7 +347,7 @@ export function formatModelInventory(inventory: ModelInventory): string {
       inventory.complete ? "complete" : "INCOMPLETE"
     })`,
   ];
-  for (const provider of ["claude", "codex"] as const) {
+  for (const provider of providersOf(inventory.providers)) {
     const status = inventory.providers[provider];
     lines.push(
       "",
@@ -325,6 +361,8 @@ export function formatModelInventory(inventory: ModelInventory): string {
         : `${model.canonicalId}[${model.variant}]`;
       const efforts = model.effortLevels.state === "known"
         ? model.effortLevels.values.join(", ") || "none advertised"
+        : model.effortLevels.state === "known-none"
+        ? `none — ${model.effortLevels.detail}`
         : `unknown (${model.effortLevels.reason})`;
       lines.push(
         `  ${identity}`,
