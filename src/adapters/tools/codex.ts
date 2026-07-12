@@ -12,6 +12,7 @@ import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import type { CodexRoute } from "../../schemas";
 import { buildCodexMcpExclusionArgs, HIVE_MCP_SERVERS } from "./mcp-scope";
+import { graphifyHookPath, writeGraphifyHook } from "./graphify-hook";
 
 export interface CodexSpawnOptions {
   name: string;
@@ -45,7 +46,7 @@ export interface CodexSpawnOptions {
 
 export type CodexAgentConfigOptions = Pick<
   CodexSpawnOptions,
-  "name" | "daemonPort" | "readOnly"
+  "name" | "daemonPort" | "readOnly" | "graphifyUrl"
 > & {
   /** The agent's capability token. Codex has no connect-time headers helper,
    * so unlike Claude its token has to sit in a file: a dedicated 0600
@@ -144,9 +145,15 @@ function buildCodexConfigArgs(
     ".codex",
     CODEX_NOTIFY_SCRIPT,
   );
-  const hookOverride = (event: string, kind: string): string =>
-    `hooks.${event}=[{hooks=[{type="command",command=${
-      tomlString(`${notifyPath} ${kind}`)
+  const hookOverride = (
+    event: string,
+    command: string,
+    matcher?: string,
+  ): string =>
+    `hooks.${event}=[{${
+      matcher === undefined ? "" : `matcher=${tomlString(matcher)},`
+    }hooks=[{type="command",command=${
+      tomlString(command)
     },timeout=5}]}]`;
   args.push(
     ...buildCodexTrustArgs(options.worktreePath),
@@ -154,13 +161,23 @@ function buildCodexConfigArgs(
     "-c",
     "features.hooks=true",
     "-c",
-    hookOverride("SessionStart", "session-start"),
+    hookOverride("SessionStart", `${notifyPath} session-start`),
     "-c",
-    hookOverride("UserPromptSubmit", "turn-start"),
+    hookOverride("UserPromptSubmit", `${notifyPath} turn-start`),
     "-c",
-    hookOverride("PostToolUse", "tool-boundary"),
+    hookOverride("PostToolUse", `${notifyPath} tool-boundary`),
     "-c",
-    hookOverride("Stop", "turn-end"),
+    hookOverride("Stop", `${notifyPath} turn-end`),
+    ...(options.graphifyUrl === undefined
+      ? []
+      : [
+          "-c",
+          hookOverride(
+            "PreToolUse",
+            `${shellToken(graphifyHookPath(options.worktreePath, ".codex"))} codex`,
+            "Bash",
+          ),
+        ]),
     "-c",
     `mcp_servers.hive.url=${tomlString(`http://127.0.0.1:${options.daemonPort}/mcp`)}`,
     ...((options.withCapabilityToken ?? false)
@@ -315,6 +332,7 @@ export async function writeCodexAgentConfig(
 ): Promise<void> {
   const codexDirectory = join(worktreePath, ".codex");
   const notifyPath = join(codexDirectory, CODEX_NOTIFY_SCRIPT);
+  const graphifyPath = graphifyHookPath(worktreePath, ".codex");
   await mkdir(codexDirectory, { recursive: true });
 
   const notifyScript = [
@@ -345,6 +363,7 @@ export async function writeCodexAgentConfig(
   await Promise.all([
     writeFile(configPath, config, { mode: 0o600 }),
     writeFile(notifyPath, notifyScript, { mode: 0o755 }),
+    writeGraphifyHook(graphifyPath, options.graphifyUrl),
     options.capabilityToken === undefined
       // A leftover token from an earlier process must not outlive the spawn
       // that owned it.

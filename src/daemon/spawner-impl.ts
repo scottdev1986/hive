@@ -1857,6 +1857,7 @@ export class HiveSpawner implements Spawner {
           name,
           readOnly: false,
           ...(capabilityToken === undefined ? {} : { capabilityToken }),
+          ...(graphifyUrl === null ? {} : { graphifyUrl }),
         });
         const useAppServer =
           this.dependencies.config.codex?.driver === "app-server" &&

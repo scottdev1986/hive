@@ -31,6 +31,7 @@ import {
   CLAUDE_CHANNELS_FLAG,
   HIVE_CHANNEL_SERVER_NAME,
 } from "./claude";
+import { GRAPHIFY_HOOK_SCRIPT } from "./graphify-hook";
 
 let tempRoot = "";
 let worktreePath = "";
@@ -436,10 +437,18 @@ describe("Claude adapter", () => {
     const withGraph = JSON.parse(
       await readFile(join(worktreePath, ".mcp.json"), "utf8"),
     ) as { mcpServers: Record<string, { type: string; url: string }> };
+    const withGraphSettings = JSON.parse(
+      await readFile(join(worktreePath, ".claude", "settings.local.json"), "utf8"),
+    ) as { hooks: { PreToolUse?: Array<{ matcher: string }> } };
     expect(withGraph.mcpServers.graphify).toEqual({
       type: "http",
       url: "http://127.0.0.1:7799/mcp",
     });
+    expect(withGraphSettings.hooks.PreToolUse?.map((entry) => entry.matcher))
+      .toEqual(["Bash", "Read|Glob"]);
+    expect(
+      await readFile(join(worktreePath, ".claude", GRAPHIFY_HOOK_SCRIPT), "utf8"),
+    ).toContain("127.0.0.1:7799/mcp");
 
     // A respawn under a daemon with no healthy server must not leave the old
     // URL behind: every agent would pay a connect-timeout for a dead entry.
@@ -451,8 +460,15 @@ describe("Claude adapter", () => {
     const without = JSON.parse(
       await readFile(join(worktreePath, ".mcp.json"), "utf8"),
     ) as { mcpServers: Record<string, unknown> };
+    const withoutSettings = JSON.parse(
+      await readFile(join(worktreePath, ".claude", "settings.local.json"), "utf8"),
+    ) as { hooks: { PreToolUse?: unknown[] } };
     expect(without.mcpServers.graphify).toBeUndefined();
     expect(without.mcpServers.hive).toBeDefined();
+    expect(withoutSettings.hooks.PreToolUse).toEqual([]);
+    expect(
+      readFile(join(worktreePath, ".claude", GRAPHIFY_HOOK_SCRIPT), "utf8"),
+    ).rejects.toThrow();
   });
 
   test("deep-merges settings.local.json and .mcp.json without touching settings.json", async () => {

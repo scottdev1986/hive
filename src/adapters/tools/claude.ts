@@ -13,6 +13,11 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import type { ClaudeRoute } from "../../schemas";
+import {
+  GRAPHIFY_HOOK_SCRIPT,
+  graphifyHookPath,
+  writeGraphifyHook,
+} from "./graphify-hook";
 
 export interface ClaudeSpawnOptions {
   name: string;
@@ -490,6 +495,9 @@ export async function writeClaudeAgentConfig(
   // settings. Measured against claude 2.1.206; without this key an unattended
   // writer stalls on the dialog forever.
   const dangerousWriter = !options.readOnly && (options.dangerous ?? false);
+  const graphifyHook = graphifyHookPath(worktreePath, ".claude");
+  const graphifyCommand = (kind: "search" | "read"): string =>
+    `${shellToken(graphifyHook)} claude-${kind}`;
 
   const settings = {
     enableAllProjectMcpServers: true,
@@ -511,6 +519,20 @@ export async function writeClaudeAgentConfig(
       // a possibly hour-long turn. The daemon treats it as a delivery tick,
       // never a status change or an events-table row.
       PostToolUse: hook(eventCommand("tool-boundary")),
+      ...(options.graphifyUrl === undefined
+        ? {}
+        : {
+            PreToolUse: [
+              {
+                matcher: "Bash",
+                hooks: [{ type: "command", command: graphifyCommand("search") }],
+              },
+              {
+                matcher: "Read|Glob",
+                hooks: [{ type: "command", command: graphifyCommand("read") }],
+              },
+            ],
+          }),
     },
     // The statusLine JSON carries the subscriber's five-hour/weekly usage;
     // the command forwards it to the daemon as semi-official quota telemetry.
@@ -577,8 +599,18 @@ export async function writeClaudeAgentConfig(
   ) {
     delete mergedMcp.mcpServers.graphify;
   }
+  if (
+    options.graphifyUrl === undefined &&
+    isRecord(mergedSettings.hooks) &&
+    Array.isArray(mergedSettings.hooks.PreToolUse)
+  ) {
+    mergedSettings.hooks.PreToolUse = mergedSettings.hooks.PreToolUse.filter(
+      (entry) => !JSON.stringify(entry).includes(GRAPHIFY_HOOK_SCRIPT),
+    );
+  }
 
   await Promise.all([
+    writeGraphifyHook(graphifyHook, options.graphifyUrl),
     writeFile(
       settingsPath,
       `${JSON.stringify(mergedSettings, null, 2)}\n`,

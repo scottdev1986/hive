@@ -14,6 +14,7 @@ import {
   wrapCodexSpawnWithCapabilityEnv,
   writeCodexAgentConfig,
 } from "./codex";
+import { GRAPHIFY_HOOK_SCRIPT } from "./graphify-hook";
 
 let tempRoot = "";
 let worktreePath = "";
@@ -85,6 +86,8 @@ describe("Codex spawn-scoped MCP surface", () => {
       excludeMcpServers: ["graphify", "idea"],
     });
     expect(command).toContain('mcp_servers.graphify.url="http://127.0.0.1:7799/mcp"');
+    expect(command.join(" ")).toContain("hooks.PreToolUse=");
+    expect(command.join(" ")).toContain(`${GRAPHIFY_HOOK_SCRIPT} codex`);
     // The exclusion pass must not disable the entry whose url we just claimed.
     expect(command.join(" ")).not.toContain("mcp_servers.graphify.enabled=false");
     expect(command).toContain("mcp_servers.idea.enabled=false");
@@ -410,6 +413,24 @@ describe("Codex adapter", () => {
         'exec hive event "$1" --agent agent-4 --port 4317',
       ),
     ).toEqual(true);
+  });
+
+  test("writes and removes the worktree-local graphify hook with server health", async () => {
+    const hookPath = join(worktreePath, ".codex", GRAPHIFY_HOOK_SCRIPT);
+    await writeCodexAgentConfig(worktreePath, {
+      name: "agent-4",
+      daemonPort: 4317,
+      readOnly: false,
+      graphifyUrl: "http://127.0.0.1:7799/mcp",
+    });
+    expect(await readFile(hookPath, "utf8")).toContain("127.0.0.1:7799/mcp");
+
+    await writeCodexAgentConfig(worktreePath, {
+      name: "agent-4",
+      daemonPort: 4317,
+      readOnly: false,
+    });
+    expect(readFile(hookPath, "utf8")).rejects.toThrow();
   });
   test("carries the agent capability in a dedicated 0600 token file", async () => {
     // Codex has no connect-time headers helper and does not read the

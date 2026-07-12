@@ -420,8 +420,9 @@ export async function ensureGraphifyIgnored(
 }
 
 // ---------------------------------------------------------------------------
-// Removal: the uninstall story is `rm -rf` twice and nothing else, because
-// nothing else was ever written.
+// Removal: the durable install is `rm -rf` twice. Spawn-time hook files are
+// derived runtime config: they fail open once this removes the server and are
+// removed with their worktrees (or by the next graphless config write).
 // ---------------------------------------------------------------------------
 
 export async function purgeGraphify(root: string): Promise<string[]> {
