@@ -1003,6 +1003,9 @@ export class HiveDaemon {
     this.db.insertApproval({
       id: crypto.randomUUID(),
       agentName: subject,
+      // Fixed boilerplate around the agent name: safe to trim on the polled
+      // MCP surface.
+      kind: "land-rearm",
       description:
         `${LAND_REARM_PREFIX}: the one-shot branch:land grant for ${subject} is spent. ` +
         "Approving grants exactly one more landing for this agent.",
@@ -1661,6 +1664,10 @@ export class HiveDaemon {
       this.db.insertApproval({
         id,
         agentName,
+        // The description is the command Codex wants to run (`describeApproval`,
+        // src/adapters/tools/codex-app-server.ts) — the thing being decided.
+        // Never trimmed.
+        kind: "tool-permission",
         description,
         status: "pending",
         createdAt,
@@ -1878,6 +1885,8 @@ export class HiveDaemon {
       const created = this.db.insertApproval({
         id: crypto.randomUUID(),
         agentName: agent.name,
+        // The tool call and its input ARE the decision. Never trimmed.
+        kind: "tool-permission",
         description: [
           `${request.toolName}: ${request.description}`.trim(),
           request.inputPreview.slice(0, 500),
@@ -2496,6 +2505,9 @@ export class HiveDaemon {
         this.db.insertApproval({
           id: crypto.randomUUID(),
           agentName: value.agentName,
+          // A tool's own permission prompt, relayed by the agent's hook: the
+          // description names what the tool wants to do. Never trimmed.
+          kind: "tool-permission",
           description: value.description,
           status: "pending",
           createdAt: value.timestamp,
@@ -2867,10 +2879,12 @@ export class HiveDaemon {
     server.registerTool("hive_approvals", {
       title: "List pending approvals",
       description:
-        "List approval requests currently waiting for a decision. " +
-        "description is truncated to ~200 characters (truncated is true when " +
-        "it was cut) since the same pending requests are re-listed on every " +
-        "poll; the decision-relevant wording is at the front.",
+        "List approval requests currently waiting for a decision. Each carries " +
+        "a kind: tool-permission approvals (a command or tool call an agent " +
+        "wants to run) return their description IN FULL — that text is what you " +
+        "are deciding on. Boilerplate kinds (cost-consent, land-rearm) are " +
+        "truncated to ~200 characters, since the same pending requests are " +
+        "re-listed on every poll; truncated is true when the text was cut.",
       inputSchema: z.object({}),
     }, async () => {
       this.authorizeTool(capability, "hive_approvals", "approval:read", undefined, false);

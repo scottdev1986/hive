@@ -55,6 +55,9 @@ export function requestCostConsent(
     id: consentId(canonicalId),
     // Not an agent's request: it is the router asking the account's owner.
     agentName: "router",
+    // Boilerplate around the model id the caller already has: safe to trim on
+    // the polled MCP surface.
+    kind: "cost-consent",
     description:
       `SPEND REAL MONEY on ${canonicalId}? ${detail} ` +
       "Approve to let Hive run it and bill your usage credits; deny to keep it " +

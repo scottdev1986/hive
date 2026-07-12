@@ -575,6 +575,7 @@ describe("HiveDatabase", () => {
     const approval = {
       id: "approval-1",
       agentName: "maya",
+      kind: "tool-permission",
       description: "Run a network install",
       status: "pending",
       createdAt: timestamp,
@@ -593,6 +594,48 @@ describe("HiveDatabase", () => {
       expect(db.resolveApproval(approval.id, "denied", resolvedAt)).toEqual(null);
       expect(db.listApprovals("approved")).toEqual([resolved]);
       expect(deleteApprovalRow(db, approval.id)).toEqual(true);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("a legacy approval row with no kind column migrates to the never-truncated kind", () => {
+    // Rows written before approvals had a `kind` cannot be classified after
+    // the fact, and the failure that loses information is truncating a
+    // decision-critical description we misread as boilerplate. So the
+    // backfill lands on `tool-permission`, which is never trimmed.
+    const path = join(home, "legacy-approval-kind.db");
+    const legacy = new Database(path, { create: true });
+    legacy.exec(`
+      CREATE TABLE approvals (
+        id TEXT PRIMARY KEY,
+        agentName TEXT NOT NULL,
+        description TEXT NOT NULL,
+        status TEXT NOT NULL,
+        createdAt TEXT NOT NULL,
+        resolvedAt TEXT
+      );
+    `);
+    legacy.query(`
+      INSERT INTO approvals (id, agentName, description, status, createdAt, resolvedAt)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(
+      "legacy-approval",
+      "maya",
+      "Bash: rm -rf ./build && npm publish --access public",
+      "pending",
+      timestamp,
+      null,
+    );
+    legacy.close();
+
+    const db = new HiveDatabase(path);
+    try {
+      const approval = db.getApproval("legacy-approval");
+      expect(approval?.kind).toEqual("tool-permission");
+      expect(approval?.description).toEqual(
+        "Bash: rm -rf ./build && npm publish --access public",
+      );
     } finally {
       db.close();
     }

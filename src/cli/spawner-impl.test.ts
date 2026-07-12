@@ -3478,6 +3478,7 @@ describe("the spend guard is consulted by the LIVE spawn path", () => {
       store.insertApproval({
         id: `cost-consent:${options.approve}`,
         agentName: "router",
+        kind: "cost-consent",
         description: "approved in a previous turn",
         status: "approved",
         createdAt: timestamp,

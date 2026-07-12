@@ -49,9 +49,35 @@ export const AuditRowSchema = z.object({
 
 export type AuditRow = z.infer<typeof AuditRowSchema>;
 
+/**
+ * What an approval is ABOUT, which is what decides whether its description may
+ * be trimmed for the MCP surface.
+ *
+ * `tool-permission` — the description IS the thing being decided: the shell
+ * command Codex wants to run, the tool call and its input preview. Cutting its
+ * tail lets an approver approve content they never saw, so it is never
+ * truncated (`compactApprovalDescription`).
+ *
+ * `cost-consent` and `land-rearm` — the description is boilerplate wrapped
+ * around an identifier the caller already has (the model id, the agent name).
+ * Re-listed unchanged on every poll, so these are trimmed.
+ *
+ * An unrecognized or legacy row reads as `tool-permission`: the failure that
+ * loses information is truncating something we could not classify, never
+ * printing a boilerplate line in full.
+ */
+export const ApprovalKindSchema = z.enum([
+  "tool-permission",
+  "cost-consent",
+  "land-rearm",
+]);
+
+export type ApprovalKind = z.infer<typeof ApprovalKindSchema>;
+
 export const ApprovalSchema = z.object({
   id: z.string().min(1),
   agentName: z.string().min(1),
+  kind: ApprovalKindSchema.catch("tool-permission").default("tool-permission"),
   description: z.string(),
   status: z.enum(["pending", "approved", "denied"]),
   createdAt: z.iso.datetime({ offset: true }),
@@ -305,6 +331,7 @@ export class HiveDatabase {
       CREATE TABLE IF NOT EXISTS approvals (
         id TEXT PRIMARY KEY,
         agentName TEXT NOT NULL,
+        kind TEXT NOT NULL DEFAULT 'tool-permission',
         description TEXT NOT NULL,
         status TEXT NOT NULL,
         createdAt TEXT NOT NULL,
@@ -409,6 +436,17 @@ export class HiveDatabase {
     }
     if (!eventColumnNames.has("usageSource")) {
       this.database.exec("ALTER TABLE events ADD COLUMN usageSource TEXT");
+    }
+    // Approvals predating the kind column are backfilled as `tool-permission`,
+    // the never-truncated kind: a row Hive cannot classify must not have its
+    // decision-critical tail cut off on the strength of a guess.
+    const approvalColumns = z.array(z.object({ name: z.string() })).parse(
+      this.database.query("PRAGMA table_info(approvals)").all(),
+    );
+    if (!approvalColumns.some((column) => column.name === "kind")) {
+      this.database.exec(
+        "ALTER TABLE approvals ADD COLUMN kind TEXT NOT NULL DEFAULT 'tool-permission'",
+      );
     }
     if (!agentColumnNames.has("capabilityEpoch")) {
       this.database.exec(
@@ -1302,15 +1340,16 @@ export class HiveDatabase {
     );
   }
 
-  insertApproval(approval: Approval): Approval {
+  insertApproval(approval: z.input<typeof ApprovalSchema>): Approval {
     const value = ApprovalSchema.parse(approval);
     this.database.query(`
       INSERT INTO approvals (
-        id, agentName, description, status, createdAt, resolvedAt
-      ) VALUES (?, ?, ?, ?, ?, ?)
+        id, agentName, kind, description, status, createdAt, resolvedAt
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
     `).run(
       value.id,
       value.agentName,
+      value.kind,
       value.description,
       value.status,
       value.createdAt,

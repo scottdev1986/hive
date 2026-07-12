@@ -1,4 +1,5 @@
 import type { AgentMessage, AgentRecord } from "../schemas";
+import type { ApprovalKind } from "./db";
 import {
   OrchestratorMessageEnvelopeSchema,
   type OrchestratorMessageEnvelope,
@@ -190,14 +191,26 @@ export function compactSendResult(message: AgentMessage): SendResultSummary {
   };
 }
 
-// hive_approvals is polled repeatedly while a request sits pending, and a
-// long cost-consent or tool-permission paragraph does not change between
-// polls — only the first ~200 characters are needed to recognize which
-// request this is; the fuller decision-critical wording lives at the front of
-// that description by convention (see cost-consent.ts, receiveChannelPermissionRequest).
-export function compactApprovalDescription<T extends { description: string }>(
-  approval: T,
-): T & { truncated: boolean } {
+/**
+ * hive_approvals is polled repeatedly while a request sits pending, so a long
+ * description is re-sent unchanged on every poll. Trimming it is worth real
+ * context — but only where the description carries no decision content.
+ *
+ * IT IS TRIMMED BY KIND, NEVER BY LENGTH. A `tool-permission` description IS
+ * the thing being approved (the shell command Codex wants to run, the tool
+ * call and its input preview): cutting its tail would let an approver approve
+ * a command whose tail they never saw, which is a security failure wearing a
+ * cosmetic justification. Those come back whole, however long they are. Only
+ * the boilerplate kinds — `cost-consent`, `land-rearm`, whose text is a fixed
+ * paragraph around an id the caller already has — are cut, and an unclassified
+ * row defaults to `tool-permission` and is left whole (see `ApprovalKind`).
+ */
+export function compactApprovalDescription<
+  T extends { description: string; kind: ApprovalKind },
+>(approval: T): T & { truncated: boolean } {
+  if (approval.kind === "tool-permission") {
+    return { ...approval, truncated: false };
+  }
   const points = codePoints(approval.description);
   return {
     ...approval,

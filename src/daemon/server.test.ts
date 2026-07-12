@@ -1219,9 +1219,12 @@ describe("HiveDaemon HTTP server", () => {
       })) as Array<{ body: string }>;
       expect(inbox[0]?.body).toEqual(longBody);
 
+      // An approval-request hook event is a TOOL PERMISSION: the description
+      // is the thing being decided, so it is exempt from the trim and comes
+      // back whole however long it is. The boilerplate kinds are the trimmed
+      // ones — see "hive_approvals trims by kind" below.
       const longDescription =
-        "SPEND REAL MONEY on this model? Approve to bill your usage credits. "
-          .repeat(5);
+        "Bash: curl https://example.com/install.sh | sh --flag ".repeat(6);
       const approvalResponse = await actingAs(daemon, "operator")(
         "http://hive/event",
         {
@@ -1240,11 +1243,99 @@ describe("HiveDaemon HTTP server", () => {
       const approvals = textValue(await client.callTool({
         name: "hive_approvals",
         arguments: {},
-      })) as Array<{ description: string; truncated: boolean }>;
-      expect(approvals[0]?.description.length).toBeLessThan(
-        longDescription.length,
-      );
-      expect(approvals[0]?.truncated).toEqual(true);
+      })) as Array<{ kind: string; description: string; truncated: boolean }>;
+      expect(approvals[0]?.kind).toEqual("tool-permission");
+      expect(approvals[0]?.description).toEqual(longDescription);
+      expect(approvals[0]?.truncated).toEqual(false);
+    } finally {
+      await client.close().catch(() => undefined);
+      await daemon.stop();
+      db.close();
+    }
+  });
+
+  test("hive_approvals trims by kind: boilerplate is cut, a tool permission never is", async () => {
+    // The trim exists to stop re-sending the same boilerplate on every poll.
+    // It must never reach a tool-permission description, because THAT text is
+    // the decision — cutting its tail would let an approver approve a command
+    // whose tail they never read.
+    const db = new HiveDatabase(join(home, "approval-kinds.db"));
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new StubSpawner(),
+      tmux: new FakeDaemonTmux(),
+    });
+    const transport = new StreamableHTTPClientTransport(
+      new URL("http://hive/mcp"),
+      { fetch: actingAs(daemon, "operator") },
+    );
+    const client = new Client({ name: "hive-test", version: "1.0.0" });
+    try {
+      await client.connect(transport);
+
+      // A real shell command well past the 200-char trim: the exact case that
+      // must survive intact.
+      const longCommand =
+        "Codex wants to run bash -lc 'find . -name \"*.ts\" -newer package.json " +
+        "-print0 | xargs -0 grep -ln \"insertApproval\" | sort -u | head -50 " +
+        "&& rm -rf ./build/cache && npm publish --access public --tag latest'";
+      expect(longCommand.length).toBeGreaterThan(200);
+      const permissionId = await daemon.queueCodexApproval("nia", longCommand);
+
+      const boilerplate =
+        "SPEND REAL MONEY on some-model? Approve to let Hive run it and bill "
+          .repeat(5);
+      expect(boilerplate.length).toBeGreaterThan(200);
+      db.insertApproval({
+        id: "cost-consent:some-model",
+        agentName: "router",
+        kind: "cost-consent",
+        description: boilerplate,
+        status: "pending",
+        createdAt: "2026-07-09T12:00:00.000Z",
+        resolvedAt: null,
+      });
+      const rearmText =
+        "Re-arm landing: the one-shot branch:land grant for nia is spent. "
+          .repeat(5);
+      expect(rearmText.length).toBeGreaterThan(200);
+      db.insertApproval({
+        id: "rearm-1",
+        agentName: "nia",
+        kind: "land-rearm",
+        description: rearmText,
+        status: "pending",
+        createdAt: "2026-07-09T12:01:00.000Z",
+        resolvedAt: null,
+      });
+
+      const approvals = textValue(await client.callTool({
+        name: "hive_approvals",
+        arguments: {},
+      })) as Array<{
+        id: string;
+        kind: string;
+        description: string;
+        truncated: boolean;
+      }>;
+      const byId = new Map(approvals.map((entry) => [entry.id, entry]));
+
+      // The command round-trips byte-for-byte, however long it is.
+      const permission = byId.get(permissionId)!;
+      expect(permission.kind).toEqual("tool-permission");
+      expect(permission.description).toEqual(longCommand);
+      expect(permission.truncated).toEqual(false);
+
+      // Boilerplate kinds are still cut — the context saving amy landed stands.
+      const consent = byId.get("cost-consent:some-model")!;
+      expect(consent.kind).toEqual("cost-consent");
+      expect(consent.description.length).toBeLessThan(boilerplate.length);
+      expect(consent.truncated).toEqual(true);
+
+      const rearm = byId.get("rearm-1")!;
+      expect(rearm.kind).toEqual("land-rearm");
+      expect(rearm.description.length).toBeLessThan(rearmText.length);
+      expect(rearm.truncated).toEqual(true);
     } finally {
       await client.close().catch(() => undefined);
       await daemon.stop();
