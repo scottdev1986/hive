@@ -23,6 +23,7 @@ const ReservationSchema = z.object({
   account: z.string(),
   pool: z.string(),
   model: z.string(),
+  effort: z.string().nullable(),
   tier: RoutingTierSchema,
   estimatedUnits: z.number(),
   // A percent-denominated (discovered) pool debits a different fraction of the
@@ -104,6 +105,7 @@ export type ModelCatalogRow = z.infer<typeof ModelCatalogSchema>;
 const RouteHealthSchema = z.object({
   provider: z.enum(["claude", "codex"]),
   model: z.string(),
+  effort: z.string().nullable(),
   consecutiveFailures: z.number().int().nonnegative(),
   lastFailureAt: z.string().nullable(),
   lastFailureReason: z.string().nullable(),
@@ -155,6 +157,7 @@ export interface ReserveQuotaInput extends QuotaScope {
   id: string;
   agentName: string;
   model: string;
+  effort?: string | null;
   tier: RoutingTier;
   estimatedUnits: number;
   estimatedWeeklyUnits?: number;
@@ -260,6 +263,7 @@ export class QuotaLedger {
         account TEXT NOT NULL,
         pool TEXT NOT NULL,
         model TEXT NOT NULL,
+        effort TEXT,
         tier TEXT NOT NULL,
         estimatedUnits REAL NOT NULL CHECK(estimatedUnits >= 0),
         status TEXT NOT NULL,
@@ -321,11 +325,12 @@ export class QuotaLedger {
       CREATE TABLE IF NOT EXISTS quota_route_health (
         provider TEXT NOT NULL,
         model TEXT NOT NULL,
+        effort TEXT NOT NULL DEFAULT '',
         consecutiveFailures INTEGER NOT NULL DEFAULT 0,
         lastFailureAt TEXT,
         lastFailureReason TEXT,
         lastSuccessAt TEXT,
-        PRIMARY KEY(provider, model)
+        PRIMARY KEY(provider, model, effort)
       );
     `);
     const observationColumns = z.array(z.object({ name: z.string() })).parse(
@@ -374,6 +379,37 @@ export class QuotaLedger {
       this.db.database.exec(
         "ALTER TABLE quota_reservations ADD COLUMN estimatedWeeklyUnits REAL",
       );
+    }
+    if (!reservationColumnNames.has("effort")) {
+      this.db.database.exec(
+        "ALTER TABLE quota_reservations ADD COLUMN effort TEXT",
+      );
+    }
+    const healthColumns = z.array(z.object({ name: z.string() })).parse(
+      this.db.database.query("PRAGMA table_info(quota_route_health)").all(),
+    );
+    if (!healthColumns.some((column) => column.name === "effort")) {
+      this.db.database.exec(`
+        ALTER TABLE quota_route_health RENAME TO quota_route_health_legacy;
+        CREATE TABLE quota_route_health (
+          provider TEXT NOT NULL,
+          model TEXT NOT NULL,
+          effort TEXT NOT NULL DEFAULT '',
+          consecutiveFailures INTEGER NOT NULL DEFAULT 0,
+          lastFailureAt TEXT,
+          lastFailureReason TEXT,
+          lastSuccessAt TEXT,
+          PRIMARY KEY(provider, model, effort)
+        );
+        INSERT INTO quota_route_health (
+          provider, model, effort, consecutiveFailures, lastFailureAt,
+          lastFailureReason, lastSuccessAt
+        )
+        SELECT provider, model, '', consecutiveFailures, lastFailureAt,
+               lastFailureReason, lastSuccessAt
+        FROM quota_route_health_legacy;
+        DROP TABLE quota_route_health_legacy;
+      `);
     }
     // A run that spends from two pools at once — the account-wide one and the
     // model's own cap — holds a reservation in each, and they must settle
@@ -667,11 +703,11 @@ export class QuotaLedger {
     this.requireCoherent(input.provider, input.model);
     this.db.database.query(`
       INSERT INTO quota_reservations (
-        id, groupId, agentName, provider, account, pool, model, tier,
+        id, groupId, agentName, provider, account, pool, model, effort, tier,
         estimatedUnits, estimatedWeeklyUnits, status, createdAt, expiresAt,
         startedAt, reconciledAt, actualUnits, source, purpose,
         controlMessageId
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, NULL, NULL, NULL, NULL, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, NULL, NULL, NULL, NULL, ?, ?)
     `).run(
       input.id,
       groupId,
@@ -680,6 +716,7 @@ export class QuotaLedger {
       input.account,
       input.pool,
       input.model,
+      input.effort ?? null,
       input.tier,
       input.estimatedUnits,
       input.estimatedWeeklyUnits ?? null,
@@ -764,16 +801,22 @@ export class QuotaLedger {
     });
   }
 
-  /**
-   * Record what the provider says its own models are called. Idempotent: a model
-   * keeps every display name it has answered to, so re-probing refreshes the
-   * catalog without unbinding a pool that a transient empty read would drop.
-   */
-  upsertModelCatalog(entries: ModelCatalogRow[]): void {
-    if (entries.length === 0) return;
+  /** Replace one provider's catalog as one snapshot, never a mix of two reads. */
+  replaceModelCatalog(
+    provider: "claude" | "codex",
+    entries: ModelCatalogRow[],
+  ): void {
     this.immediate(() => {
+      this.db.database.query(
+        "DELETE FROM quota_model_catalog WHERE provider = ?",
+      ).run(provider);
       for (const entry of entries) {
         const value = ModelCatalogSchema.parse(entry);
+        if (value.provider !== provider) {
+          throw new Error(
+            `Cannot store ${value.provider} catalog row in ${provider} snapshot`,
+          );
+        }
         this.db.database.query(`
           INSERT INTO quota_model_catalog (
             provider, modelId, displayName, discoveredAt
@@ -794,19 +837,20 @@ export class QuotaLedger {
   recordLaunchFailure(
     provider: "claude" | "codex",
     model: string,
+    effort: string | null,
     reason: string,
     at: string,
   ): void {
     this.db.database.query(`
       INSERT INTO quota_route_health (
-        provider, model, consecutiveFailures, lastFailureAt, lastFailureReason,
+        provider, model, effort, consecutiveFailures, lastFailureAt, lastFailureReason,
         lastSuccessAt
-      ) VALUES (?, ?, 1, ?, ?, NULL)
-      ON CONFLICT(provider, model) DO UPDATE SET
+      ) VALUES (?, ?, ?, 1, ?, ?, NULL)
+      ON CONFLICT(provider, model, effort) DO UPDATE SET
         consecutiveFailures = quota_route_health.consecutiveFailures + 1,
         lastFailureAt = excluded.lastFailureAt,
         lastFailureReason = excluded.lastFailureReason
-    `).run(provider, model, at, reason);
+    `).run(provider, model, effort ?? "", at, reason);
   }
 
   /**
@@ -817,25 +861,30 @@ export class QuotaLedger {
   recordLaunchSuccess(
     provider: "claude" | "codex",
     model: string,
+    effort: string | null,
     at: string,
   ): void {
     this.db.database.query(`
       INSERT INTO quota_route_health (
-        provider, model, consecutiveFailures, lastFailureAt, lastFailureReason,
+        provider, model, effort, consecutiveFailures, lastFailureAt, lastFailureReason,
         lastSuccessAt
-      ) VALUES (?, ?, 0, NULL, NULL, ?)
-      ON CONFLICT(provider, model) DO UPDATE SET
+      ) VALUES (?, ?, ?, 0, NULL, NULL, ?)
+      ON CONFLICT(provider, model, effort) DO UPDATE SET
         consecutiveFailures = 0,
         lastFailureAt = NULL,
         lastFailureReason = NULL,
         lastSuccessAt = excluded.lastSuccessAt
-    `).run(provider, model, at);
+    `).run(provider, model, effort ?? "", at);
   }
 
-  routeHealth(provider: "claude" | "codex", model: string): RouteHealth | null {
+  routeHealth(
+    provider: "claude" | "codex",
+    model: string,
+    effort: string | null = null,
+  ): RouteHealth | null {
     const row = this.db.database.query(
-      "SELECT * FROM quota_route_health WHERE provider = ? AND model = ?",
-    ).get(provider, model);
+      "SELECT provider, model, NULLIF(effort, '') AS effort, consecutiveFailures, lastFailureAt, lastFailureReason, lastSuccessAt FROM quota_route_health WHERE provider = ? AND model = ? AND effort = ?",
+    ).get(provider, model, effort ?? "");
     return row === null ? null : RouteHealthSchema.parse(row);
   }
 

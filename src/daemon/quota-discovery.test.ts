@@ -222,6 +222,7 @@ describe("startup quota discovery", () => {
         agentName: "sam",
         tier: "deep",
         preferredTool: "codex",
+        explicitCandidate: true,
         candidates: [{ tool: "codex", model: "gpt-5.3-codex" }],
       });
       expect(decision.tool).toBe("codex");
@@ -363,6 +364,7 @@ describe("per-window accounting", () => {
         agentName: "sam",
         tier: "standard",
         preferredTool: "codex",
+        explicitCandidate: true,
         candidates: [{ tool: "codex", model: "gpt-5.3-codex" }],
       });
       const spentAt = new Date(now.getTime() + 60_000);
@@ -403,6 +405,7 @@ describe("per-window accounting", () => {
         agentName: "sam",
         tier: "standard",
         preferredTool: "codex",
+        explicitCandidate: true,
         candidates: [{ tool: "codex", model: "gpt-5.3-codex" }],
       });
       const at = new Date(now.getTime() + 60_000);
@@ -429,6 +432,7 @@ describe("per-window accounting", () => {
         agentName: "sam",
         tier: "standard",
         preferredTool: "codex",
+        explicitCandidate: true,
         candidates: [{ tool: "codex", model: "gpt-5.3-codex" }],
       });
       const at = new Date(now.getTime() + 60_000);
@@ -806,6 +810,81 @@ describe("pools gate the models they actually meter", () => {
     expect(fable?.routable).toBe(true);
   });
 
+  test("an unbound model pool quarantines only its own provider", async () => {
+    const { quota } = await service([
+      new StubProbe("claude", {
+        status: "ok",
+        pools: [
+          {
+            provider: "claude",
+            account: "default",
+            pool: "subscription",
+            label: null,
+            models: ["*"],
+            fiveHour: { usedPct: 1, windowMinutes: 300, resetsAt: null },
+            weekly: { usedPct: 1, windowMinutes: 10_080, resetsAt: null },
+            observedAt: now.toISOString(),
+            source: "provider",
+            confidence: "authoritative",
+          },
+          {
+            provider: "claude",
+            account: "default",
+            pool: "weekly:Renamed",
+            label: "Renamed",
+            models: [],
+            fiveHour: null,
+            weekly: { usedPct: 2, windowMinutes: 10_080, resetsAt: null },
+            observedAt: now.toISOString(),
+            source: "provider",
+            confidence: "authoritative",
+          },
+        ],
+        catalog: [],
+      }),
+      new StubProbe("codex", {
+        status: "ok",
+        pools: [{
+          provider: "codex",
+          account: "default",
+          pool: "codex",
+          label: null,
+          models: ["*"],
+          fiveHour: { usedPct: 50, windowMinutes: 300, resetsAt: null },
+          weekly: { usedPct: 50, windowMinutes: 10_080, resetsAt: null },
+          observedAt: now.toISOString(),
+          source: "provider",
+          confidence: "authoritative",
+        }],
+        catalog: [],
+      }),
+    ]);
+    await quota.refreshFromProviders(now, { force: true });
+    const candidates = [
+      { tool: "claude" as const, model: "claude-opus-4-8", effort: "high" },
+      { tool: "codex" as const, model: "gpt-5.6-sol", effort: "high" },
+    ];
+    const automatic = await quota.routeAndReserve({
+      agentName: "auto",
+      tier: "deep",
+      preferredTool: "claude",
+      candidates,
+    });
+    expect(automatic.tool).toBe("codex");
+
+    const explicit = await quota.routeAndReserve({
+      agentName: "pinned",
+      tier: "deep",
+      preferredTool: "claude",
+      explicitTool: "claude",
+      explicitCandidate: true,
+      candidates: [candidates[0]!],
+    });
+    expect(explicit.tool).toBe("claude");
+    expect(explicit.warnings.join(" ")).toContain("weekly:Renamed");
+    expect(explicit.warnings.join(" ")).toContain("explicit-pin only");
+  });
+
   test("every id form of a model is bound to the same meter", () => {
     const catalog = catalogFromClaudeModels(claudeModels);
     const namesOf = (modelId: string) =>
@@ -1026,6 +1105,35 @@ describe("a route that cannot start is not a route", () => {
     expect(second.tool).toBe("claude");
     expect(second.warnings.join(" ")).toContain("failed to start");
     expect(second.warnings.join(" ")).toContain("no readiness signal");
+  });
+
+  test("reservation and launch quarantine are keyed by tool, model, and effort", async () => {
+    const { quota } = await healthy();
+    const xhigh = { tool: "codex" as const, model: "gpt-5.6-sol", effort: "xhigh" };
+    const low = { tool: "codex" as const, model: "gpt-5.6-sol", effort: "low" };
+    const failed = await quota.routeAndReserve({
+      agentName: "xhigh-run",
+      tier: "deep",
+      preferredTool: "codex",
+      candidates: [xhigh],
+    });
+    expect(failed.reservation).toMatchObject({
+      provider: "codex",
+      model: "gpt-5.6-sol",
+      effort: "xhigh",
+    });
+    await quota.cancel(failed.reservation.id, now.toISOString(), "model refused launch");
+
+    const next = await quota.routeAndReserve({
+      agentName: "low-run",
+      tier: "deep",
+      preferredTool: "codex",
+      candidates: [xhigh, low],
+    });
+    expect(next.effort).toBe("low");
+    expect(next.reservation.effort).toBe("low");
+    expect(quota.ledger.routeHealth("codex", "gpt-5.6-sol", "xhigh")?.consecutiveFailures).toBe(1);
+    expect(quota.ledger.routeHealth("codex", "gpt-5.6-sol", "low")).toBeNull();
   });
 
   test("the guard stops guarding the moment the route works again", async () => {

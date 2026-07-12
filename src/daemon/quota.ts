@@ -34,6 +34,8 @@ const DAY_MS = 24 * HOUR_MS;
 export interface QuotaRouteCandidate {
   tool: "claude" | "codex";
   model: string;
+  /** Null/absent means the provider default has not been observed yet. */
+  effort?: string;
 }
 
 export interface QuotaRouteRequest {
@@ -41,6 +43,8 @@ export interface QuotaRouteRequest {
   tier: RoutingTier;
   preferredTool: "claude" | "codex";
   explicitTool?: "claude" | "codex";
+  /** A human named this exact model; catalog quarantine warns but does not veto. */
+  explicitCandidate?: boolean;
   reviewOfTool?: "claude" | "codex";
   candidates: QuotaRouteCandidate[];
 }
@@ -516,6 +520,19 @@ export class QuotaService {
     return [...general, ...specific];
   }
 
+  /**
+   * A model-scoped meter whose provider name no longer joins the provider's
+   * catalog may be this model's cap under an old or new name. Until the next
+   * shared snapshot heals the join, automatic adoption on that provider is
+   * unsafe; another provider remains entirely unaffected.
+   */
+  private unboundModelPools(provider: "claude" | "codex"): ResolvedQuotaLimit[] {
+    return this.resolvedLimits().filter((limit) =>
+      limit.provider === provider && limit.origin === "discovered" &&
+      !limit.routable && limit.label !== null
+    );
+  }
+
   /** The pool a run is booked against: its own cap if it has one, else general. */
   private limitFor(candidate: QuotaRouteCandidate): ResolvedQuotaLimit | null {
     const limits = this.limitsFor(candidate);
@@ -578,7 +595,11 @@ export class QuotaService {
     const held = this.ledger.getActiveReservationForAgent(agentName);
     if (held === null || held.model === liveModel) return null;
     const now = new Date(at);
-    const candidate = { tool: held.provider, model: liveModel };
+    const candidate = {
+      tool: held.provider,
+      model: liveModel,
+      ...(held.effort === null ? {} : { effort: held.effort }),
+    };
     const entries = this.limitsFor(candidate).map((limit) => ({
       limit,
       status: this.statusForLimit(limit, now),
@@ -661,6 +682,7 @@ export class QuotaService {
         account: entry.limit.account,
         pool: entry.limit.pool,
         model: candidate.model,
+        effort: candidate.effort ?? null,
         tier,
         estimatedUnits: estimate.fiveHour,
         estimatedWeeklyUnits: estimate.weekly,
@@ -701,7 +723,11 @@ export class QuotaService {
     candidate: QuotaRouteCandidate,
     now: Date,
   ): { until: string; reason: string } | null {
-    const health = this.ledger.routeHealth(candidate.tool, candidate.model);
+    const health = this.ledger.routeHealth(
+      candidate.tool,
+      candidate.model,
+      candidate.effort ?? null,
+    );
     if (
       health === null || health.consecutiveFailures === 0 ||
       health.lastFailureAt === null
@@ -726,7 +752,12 @@ export class QuotaService {
     candidate: QuotaRouteCandidate,
     at = iso(this.clock()),
   ): void {
-    this.ledger.recordLaunchSuccess(candidate.tool, candidate.model, at);
+    this.ledger.recordLaunchSuccess(
+      candidate.tool,
+      candidate.model,
+      candidate.effort ?? null,
+      at,
+    );
   }
 
   /**
@@ -900,7 +931,7 @@ export class QuotaService {
       });
       // The catalog is what binds a metered sub-pool to the models it gates, so
       // it is stored before the pools that depend on it are resolved.
-      this.ledger.upsertModelCatalog(result.catalog.map((entry) => ({
+      this.ledger.replaceModelCatalog(probe.provider, result.catalog.map((entry) => ({
         ...entry,
         discoveredAt: iso(now),
       })));
@@ -1385,6 +1416,36 @@ export class QuotaService {
       );
     }
 
+    const catalogQuarantine = new Map<QuotaRouteCandidate, string>();
+    for (const candidate of candidates) {
+      const pools = this.unboundModelPools(candidate.tool);
+      if (pools.length === 0) continue;
+      const hasOwnBoundMeter = this.resolvedLimits().some((limit) =>
+        limit.provider === candidate.tool && limit.routable &&
+        !limit.models.includes("*") && limit.models.includes(candidate.model)
+      );
+      if (!hasOwnBoundMeter) {
+        catalogQuarantine.set(
+          candidate,
+          `${candidate.tool} has unbound model-scoped quota ${pools.map((pool) => pool.pool).join(", ")}; ` +
+            `${candidate.model} is explicit-pin only until the provider catalog join heals`,
+        );
+      }
+    }
+    if (request.explicitCandidate !== true) {
+      const eligible = candidates.filter((candidate) =>
+        !catalogQuarantine.has(candidate)
+      );
+      if (eligible.length === 0 && catalogQuarantine.size > 0) {
+        throw new QuotaExhaustedError(
+          `Provider catalog quarantine leaves no auto-routable candidate. ${
+            [...catalogQuarantine.values()].join("; ")
+          }`,
+        );
+      }
+      candidates = eligible;
+    }
+
     const evaluated = candidates.map((candidate) => {
       const entries = this.limitsFor(candidate).map((limit) => ({
         limit,
@@ -1450,6 +1511,9 @@ export class QuotaService {
         `${item.candidate.tool}/${item.candidate.model} was passed over: it ` +
         `failed to start (${held.reason}) and is retried after ${held.until}.`
       );
+    if (request.explicitCandidate === true) {
+      quarantineWarnings.push(...catalogQuarantine.values());
+    }
 
     const failures: string[] = [];
     let safeFallback: QuotaRouteCandidate | undefined;
@@ -1463,6 +1527,7 @@ export class QuotaService {
           account: "default",
           pool: `unconfigured:${item.candidate.model}`,
           model: item.candidate.model,
+          effort: item.candidate.effort ?? null,
           tier: request.tier,
           estimatedUnits: fallbackEstimate,
           now: iso(now),
@@ -1608,6 +1673,7 @@ export class QuotaService {
         account: "default",
         pool: `unconfigured:${request.model}`,
         model: request.model,
+        effort: request.effort ?? null,
         tier: request.tier,
         estimatedUnits: this.config.estimates[request.tier]!,
         now: iso(now),
@@ -1670,6 +1736,7 @@ export class QuotaService {
     this.ledger.recordLaunchSuccess(
       reservation.provider,
       reservation.model,
+      reservation.effort,
       at,
     );
   }
@@ -1732,6 +1799,7 @@ export class QuotaService {
       this.ledger.recordLaunchFailure(
         reservation.provider,
         reservation.model,
+        reservation.effort,
         launchFailure,
         at,
       );
