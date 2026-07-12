@@ -5,6 +5,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  AgentMessageSchema,
   ORCHESTRATOR_NAME,
   type AgentRecord,
 } from "../schemas";
@@ -340,6 +341,70 @@ describe("event-driven orchestrator lifecycle", () => {
     } finally {
       db.close();
     }
+  });
+
+  /**
+   * A preview that drops the finding is not a preview, it is a summons.
+   *
+   * The cap cut a prefix, and a report is written the other way round: it opens
+   * with what the agent was asked to do and closes with what it found. So the
+   * cut landed on the punchline — four times in one session, once on the very
+   * line "THREE FINDINGS THAT CHANGE DESIGN:", losing all three — and the
+   * orchestrator had to spend a hive_read_message on the whole body anyway,
+   * which is the cost the cap existed to avoid.
+   */
+  test("a long report keeps its findings: the middle is cut, never the punchline", () => {
+    const findings = [
+      "FINDING 1: the matcher can never fire.",
+      "FINDING 2: the guard is keyed on an absent field.",
+      "FINDING 3: landed is not live.",
+    ];
+    const body = [
+      "Task: audit the routing table.",
+      `Method: ${"I read every call site and reproduced each path. ".repeat(120)}`,
+      "THREE FINDINGS THAT CHANGE DESIGN:",
+      ...findings,
+      "Merged as 9f1c2ab.",
+    ].join("\n");
+    const message = AgentMessageSchema.parse({
+      id: "report-1",
+      from: "maya",
+      to: ORCHESTRATOR_NAME,
+      body,
+      createdAt: "2026-07-12T12:00:00.000Z",
+      deliveredAt: null,
+    });
+
+    const envelope = createOrchestratorEnvelope(message);
+
+    // Still bounded, still honest, still retrievable in full by id.
+    expect(new TextEncoder().encode(formatOrchestratorWake(envelope)).byteLength)
+      .toBeLessThanOrEqual(ORCHESTRATOR_ENVELOPE_MAX_BYTES);
+    expect(envelope.truncated).toEqual(true);
+    expect(envelope.ref).toContain("hive_read_message");
+
+    // What the orchestrator actually needed, and never got.
+    expect(envelope.body).toContain("Task: audit the routing table.");
+    for (const finding of findings) {
+      expect(envelope.body).toContain(finding);
+    }
+    expect(envelope.body).toContain("Merged as 9f1c2ab.");
+    // And it says what it dropped rather than trailing off mid-sentence.
+    expect(envelope.body).toContain("characters elided");
+  });
+
+  test("a message that fits is not touched", () => {
+    const message = AgentMessageSchema.parse({
+      id: "short-1",
+      from: "maya",
+      to: ORCHESTRATOR_NAME,
+      body: "Landed as 4b2e1c9. No blockers.",
+      createdAt: "2026-07-12T12:00:00.000Z",
+      deliveredAt: null,
+    });
+    const envelope = createOrchestratorEnvelope(message);
+    expect(envelope.body).toEqual("Landed as 4b2e1c9. No blockers.");
+    expect(envelope.truncated).toEqual(false);
   });
 
   test("fetches compact active status only when explicitly requested", async () => {

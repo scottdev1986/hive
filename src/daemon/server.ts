@@ -1046,6 +1046,20 @@ export class HiveDaemon {
           }`,
         );
       });
+      // An idle agent makes no tool calls and reaches no turn boundaries, and
+      // those are the only things that ever triggered a redelivery — so mail
+      // queued at a busy agent stayed queued once it went quiet. The daemon
+      // knows the agent is idle and knows the message is waiting; it wakes it
+      // rather than waiting for an event that is not coming. Runs after the
+      // telemetry sweep, because for a vendor with no hook stream that sweep is
+      // what makes the row say "idle" in the first place.
+      await this.delivery.wakeIdleRecipients().catch((error) => {
+        console.error(
+          `Hive idle wake failed: ${
+            error instanceof Error ? error.message : "unknown error"
+          }`,
+        );
+      });
       await this.sweepResources();
       await this.reapIdleAgents().catch((error) => {
         console.error(

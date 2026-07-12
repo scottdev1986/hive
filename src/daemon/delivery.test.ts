@@ -1277,3 +1277,216 @@ describe("queuedDeliveryNote", () => {
     expect(queuedDeliveryNote(queuedMessage(), null)).toBeUndefined();
   });
 });
+
+/**
+ * The agent an orchestrator most needs to redirect is the one with free
+ * capacity — and that was the one agent Hive could not reach.
+ *
+ * Every redelivery trigger hung off the recipient's own activity: flushQueued
+ * on its turn-end hook, flushUrgent at a tool boundary. An agent that has
+ * finished its work does neither, ever again, so mail queued while it was busy
+ * was retried by nothing once it went quiet. Grok made it absolute: it drives
+ * no hook channel at all, so it fires none of those triggers whatever it is
+ * doing. Live, idle, addressable, deaf (cesar, 2026-07-12: two controls queued,
+ * a five-minute "unable to hear" alert, and a kill to stop him).
+ *
+ * These tests drive the daemon's real maintenance tick, not the wake function
+ * directly: a test that calls the sweep itself passes just as happily when
+ * nothing in the daemon ever calls it, which is the shape of the bug.
+ */
+describe("a live idle agent hears", () => {
+  function grok(status: AgentRecord["status"]): AgentRecord {
+    return {
+      ...agent(status),
+      id: "agent-cesar",
+      name: "cesar",
+      tool: "grok",
+      model: "grok-4.5",
+      tmuxSession: "hive-cesar",
+      branch: "hive/cesar-work",
+      // Null keeps the telemetry sweep off the filesystem; what this test is
+      // about is what the daemon does once the row already says "idle".
+      worktreePath: null,
+    };
+  }
+
+  class FakeTmux {
+    readonly sessions = new Set<string>();
+    async hasSession(session: string): Promise<boolean> {
+      return this.sessions.has(session);
+    }
+    async capturePane(): Promise<string> {
+      return "";
+    }
+    async killSession(session: string): Promise<void> {
+      this.sessions.delete(session);
+    }
+    async newSession(name: string): Promise<void> {
+      this.sessions.add(name);
+    }
+  }
+
+  test("a grok agent that went idle is woken, and its own work is what proves receipt", async () => {
+    const db = new HiveDatabase(join(home, "wake-grok.db"));
+    // A grok pane: it takes the paste and posts no hook event, because grok has
+    // no hooks to post with. A fake that emitted a turn-start here would be
+    // testing a vendor that does not exist.
+    const tmux = new RecordingTmuxSender();
+    const sessions = new FakeTmux();
+    sessions.sessions.add("hive-cesar");
+    const daemon = new HiveDaemon({
+      db,
+      spawner: unusedSpawner,
+      tmux: sessions,
+      tmuxSender: tmux,
+    });
+    try {
+      db.insertAgent(grok("working"));
+      const stop = await daemon.delivery.send(
+        "orchestrator",
+        "cesar",
+        "Stop what you are doing and report.",
+      );
+      // Mid-turn, no channel: queued, exactly as it was in the field.
+      expect(stop.state).toEqual("queued");
+      expect(tmux.calls).toEqual([]);
+
+      // He finishes. Grok emits no turn-end — the telemetry sweep reading his
+      // session transcript is the only thing that ever settles the row, and it
+      // settles it to idle. This is the state the orchestrator saw: ALIVE, IDLE
+      // and, until now, unreachable.
+      db.upsertAgent({ ...db.getAgentByName("cesar")!, status: "idle" });
+
+      await daemon.runMaintenance();
+
+      expect(tmux.calls).toEqual([
+        [
+          "hive-cesar",
+          "📨 message from orchestrator: Stop what you are doing and report.",
+        ],
+      ]);
+
+      // Handed over is not heard. Receipt is his own work: grok's transcript
+      // shows new activity after the injection, which the telemetry sweep
+      // carries into lastEventAt — and that, not an exit code, is what turns
+      // the message applied.
+      const injected = db.getMessage(stop.id)!;
+      expect(injected.state).toEqual("injected");
+      db.upsertAgent({
+        ...db.getAgentByName("cesar")!,
+        lastEventAt: new Date(Date.parse(injected.injectedAt!) + 5_000)
+          .toISOString(),
+      });
+
+      await daemon.runMaintenance();
+
+      expect(db.getMessage(stop.id)?.state).toEqual("applied");
+    } finally {
+      db.close();
+    }
+  });
+
+  test("a grok agent that never stirs after the paste is not called applied", async () => {
+    // The other half of the same measurement: without activity of his own,
+    // nothing promotes the message. "Injected" stays "injected".
+    const db = new HiveDatabase(join(home, "wake-grok-silent.db"));
+    const tmux = new RecordingTmuxSender();
+    const sessions = new FakeTmux();
+    sessions.sessions.add("hive-cesar");
+    const daemon = new HiveDaemon({
+      db,
+      spawner: unusedSpawner,
+      tmux: sessions,
+      tmuxSender: tmux,
+    });
+    try {
+      db.insertAgent(grok("idle"));
+      const sent = await daemon.delivery.send("orchestrator", "cesar", "Rebase.");
+      await daemon.runMaintenance();
+      expect(db.getMessage(sent.id)?.state).toEqual("injected");
+    } finally {
+      db.close();
+    }
+  });
+
+  test("an idle Codex agent is woken through its app-server session", async () => {
+    const db = new HiveDatabase(join(home, "wake-codex.db"));
+    const tmux = new RecordingTmuxSender();
+    const native = new RecordingNativeControl();
+    const delivery = new MessageDelivery(db, tmux, undefined, native);
+    try {
+      // Queued while busy: a native session takes it immediately, so the case
+      // that strands a message is the one where the app-server was not attached
+      // when the send happened.
+      db.insertAgent(agent("working"));
+      const message = db.insertMessage(AgentMessageSchema.parse({
+        id: crypto.randomUUID(),
+        from: "orchestrator",
+        to: "maya",
+        body: "Land what you have.",
+        createdAt: timestamp,
+        deliveredAt: null,
+        sequence: 0,
+      }));
+      db.upsertAgent({ ...db.getAgentByName("maya")!, status: "idle" });
+
+      await delivery.wakeIdleRecipients();
+
+      expect(native.calls).toEqual([
+        {
+          agent: "maya",
+          text: "📨 message from orchestrator: Land what you have.",
+          interrupt: false,
+        },
+      ]);
+      expect(db.getMessage(message.id)?.state).toEqual("injected");
+    } finally {
+      db.close();
+    }
+  });
+
+  test("an idle Claude agent is woken through its channel", async () => {
+    const db = new HiveDatabase(join(home, "wake-claude.db"));
+    const delivered: Array<{ agent: string; content: string }> = [];
+    const channels = {
+      isLive: (name: string) => name === "maya",
+      async deliverMessage(name: string, content: string): Promise<boolean> {
+        delivered.push({ agent: name, content });
+        return true;
+      },
+    };
+    const tmux = new RecordingTmuxSender();
+    const delivery = new MessageDelivery(
+      db,
+      tmux,
+      undefined,
+      undefined,
+      channels,
+    );
+    try {
+      db.insertAgent({ ...agent("working"), tool: "claude", channelsEnabled: true });
+      const message = db.insertMessage(AgentMessageSchema.parse({
+        id: crypto.randomUUID(),
+        from: "orchestrator",
+        to: "maya",
+        body: "Land what you have.",
+        createdAt: timestamp,
+        deliveredAt: null,
+        sequence: 0,
+      }));
+      // A channel-live agent takes mid-turn traffic, so this one only strands
+      // if the channel was not live at send time (a bridge that reconnects
+      // after the send, which is what `retryable` registration exists for).
+      db.upsertAgent({ ...db.getAgentByName("maya")!, status: "idle" });
+
+      await delivery.wakeIdleRecipients();
+
+      expect(delivered).toEqual([
+        { agent: "maya", content: "Land what you have." },
+      ]);
+      expect(db.getMessage(message.id)?.state).toEqual("injected");
+    } finally {
+      db.close();
+    }
+  });
+});

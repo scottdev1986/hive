@@ -6,7 +6,21 @@ import {
 } from "../schemas";
 export { orchestratorTmuxSession } from "./tmux-sessions";
 
-export const ORCHESTRATOR_ENVELOPE_MAX_BYTES = 2_048;
+/**
+ * How much of an agent's message rides into the orchestrator's context.
+ *
+ * 2KB was a prefix budget, and a prefix is the worst possible thing to keep: a
+ * report opens with preamble and closes with the finding, so the cut landed on
+ * the punchline — four times in one session, once literally on the line "THREE
+ * FINDINGS THAT CHANGE DESIGN:", losing all three. Every one of those cost a
+ * follow-up hive_read_message that pulled the WHOLE body into the root anyway,
+ * so the small cap did not save the context it was protecting; it spent 2KB and
+ * then spent the rest a turn later. Doubling it is what makes the common report
+ * arrive whole and the follow-up read unnecessary. Combined with the head-and-
+ * tail policy below, a message that still does not fit loses its middle rather
+ * than its conclusion.
+ */
+export const ORCHESTRATOR_ENVELOPE_MAX_BYTES = 4_096;
 const MAX_METADATA_CODE_POINTS = 128;
 const MAX_TASK_CODE_POINTS = 160;
 const encoder = new TextEncoder();
@@ -50,23 +64,55 @@ function envelopeWithBody(
   });
 }
 
+/** Of what survives the cut, how much is head. The rest is tail. A report's
+ * opening carries what it was about; its close carries what it found, the
+ * merge hash, the blocker, the ask. Neither can be dropped, so both are kept
+ * and the middle — the working-out — is what goes. */
+const ENVELOPE_HEAD_SHARE = 0.6;
+
+/** The body with its middle removed, keeping `keep` code points in total. The
+ * marker is inside the measured budget, and it says how much is missing so the
+ * reader can size the gap rather than guess at it. */
+function elideMiddle(points: string[], keep: number): string {
+  const head = Math.ceil(keep * ENVELOPE_HEAD_SHARE);
+  const tail = keep - head;
+  const marker = `\n…[${points.length - keep} characters elided; read the full body with ref]…\n`;
+  return points.slice(0, head).join("") + marker +
+    (tail > 0 ? points.slice(points.length - tail).join("") : "");
+}
+
+/**
+ * The message as the orchestrator first sees it: bounded, honestly flagged, and
+ * cut in the one place that costs least.
+ *
+ * The bound is real — an unbounded wake would let one agent's essay evict the
+ * root's working context — but WHERE it cuts is a choice, and cutting the tail
+ * off was the wrong one. So the binary search now sizes a head-and-tail body:
+ * the largest head+tail that still fits the byte budget, with the middle
+ * replaced by a marker naming what is missing. `truncated` stays exactly what
+ * it always was (true iff something was dropped) and the full body stays
+ * retrievable by id through `ref` — the preview is just no longer blind to the
+ * end of the message it is previewing.
+ */
 export function createOrchestratorEnvelope(
   message: AgentMessage,
 ): OrchestratorMessageEnvelope {
   const points = codePoints(message.body);
+  const whole = envelopeWithBody(message, message.body, false);
+  if (fits(whole)) return whole;
+
   let low = 0;
-  let high = points.length;
+  let high = points.length - 1;
   let best = envelopeWithBody(message, "", points.length > 0);
 
   while (low <= high) {
     const middle = Math.floor((low + high) / 2);
     const candidate = envelopeWithBody(
       message,
-      points.slice(0, middle).join(""),
-      middle < points.length,
+      elideMiddle(points, middle),
+      true,
     );
-    const serialized = `📨 ${JSON.stringify(candidate)}`;
-    if (encoder.encode(serialized).byteLength <= ORCHESTRATOR_ENVELOPE_MAX_BYTES) {
+    if (fits(candidate)) {
       best = candidate;
       low = middle + 1;
     } else {
@@ -75,6 +121,12 @@ export function createOrchestratorEnvelope(
   }
 
   return best;
+}
+
+function fits(envelope: OrchestratorMessageEnvelope): boolean {
+  const serialized = `📨 ${JSON.stringify(envelope)}`;
+  return encoder.encode(serialized).byteLength <=
+    ORCHESTRATOR_ENVELOPE_MAX_BYTES;
 }
 
 export function formatOrchestratorWake(

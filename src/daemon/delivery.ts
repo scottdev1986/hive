@@ -1,6 +1,7 @@
 import {
   AgentMessageSchema,
   ORCHESTRATOR_NAME,
+  unknownVendor,
   type AgentMessage,
   type AgentRecord,
   type ControlIntent,
@@ -111,7 +112,8 @@ export function queuedDeliveryNote(
       return `NOT received yet: ${name} is still spawning; the message is delivered when its session starts.`;
     case "idle":
       return `NOT received: the paste into ${name}'s pane was never submitted (no turn started), ` +
-        `so the message stays queued and is retried at ${name}'s turn boundaries. ` +
+        `so the message stays queued and the daemon retries it on its next maintenance tick ` +
+        `(the idle wake), as well as at any turn boundary ${name} reaches. ` +
         "Treat it as unheard until a turn confirms it.";
     case "awaiting-approval":
       return `NOT received yet: ${name} is blocked on a pending approval and hears nothing until it resolves; ` +
@@ -192,6 +194,33 @@ const OPEN_TURN_SILENCE_CAP_MS = 30 * 60_000;
  */
 const SUBMIT_CONFIRM_MS = 5_000;
 const SUBMIT_POLL_MS = 100;
+
+/**
+ * Does this vendor tell Hive when its turns begin and end?
+ *
+ * Every redelivery trigger Hive has hangs off that hook stream: flushQueued
+ * fires on session-start and turn-end, flushUrgent on a tool boundary. Claude
+ * and Codex post those events. GROK POSTS NOTHING — its CLI drives no hook
+ * channel at all (adapters/tools/grok.ts), so it emits no session-start, no
+ * turn boundary and no tool boundary, ever. Reading a grok agent through the
+ * events table therefore answers "no turn events at all" for a healthy agent
+ * and for a dead one alike, and waiting for one is waiting forever.
+ *
+ * Grok's turns are still observable — just on another surface: its own session
+ * transcript, which refreshToolTelemetry folds into the agent row's
+ * lastEventAt and status. That is the surface to read for grok.
+ */
+export function reportsTurnEvents(tool: AgentRecord["tool"]): boolean {
+  switch (tool) {
+    case "claude":
+    case "codex":
+      return true;
+    case "grok":
+      return false;
+    default:
+      return unknownVendor(tool, "reportsTurnEvents");
+  }
+}
 
 
 export class BunTmuxSender implements TmuxSender {
@@ -509,6 +538,37 @@ export class MessageDelivery {
     });
   }
 
+  /**
+   * Wake every live idle agent that still has mail waiting.
+   *
+   * Redelivery used to hang entirely off the recipient's own activity:
+   * flushQueued on its session-start/turn-end hook, flushUrgent at a tool
+   * boundary. Both are things a WORKING agent does. An agent that has finished
+   * its task makes no more tool calls and reaches no more turn boundaries — so
+   * a message enqueued while it was busy was retried by nothing once it went
+   * quiet, and the agent an orchestrator most needs to redirect (the one with
+   * free capacity) was the one it could not reach. Grok made it total: driving
+   * no hook channel, it never fires ANY of those triggers, so its mail sat
+   * queued forever (cesar, 2026-07-12: two controls queued, alive, idle, deaf,
+   * killed to be stopped).
+   *
+   * The daemon already knows both halves — this agent is idle, this message is
+   * queued — so it stops waiting to be told and does the waking itself, on the
+   * maintenance tick. Each vendor is woken by the path that actually starts a
+   * turn for it, which is the one flushQueued already picks: the app-server
+   * turn for a native Codex session, the vendor channel for Claude, a
+   * paste-and-submit into the pane for a TUI with neither.
+   */
+  async wakeIdleRecipients(): Promise<AgentMessage[]> {
+    const woken: AgentMessage[] = [];
+    for (const agent of this.db.listAgents()) {
+      if (agent.status !== "idle") continue;
+      if (this.db.getUndeliveredMessages(agent.name).length === 0) continue;
+      woken.push(...await this.flushQueued(agent.name));
+    }
+    return woken;
+  }
+
   async inbox(agentName: string): Promise<AgentMessage[]> {
     // The pull path must hold the same per-session lane as every push path
     // (send/flushQueued/deliver): a push that has read a row as undelivered
@@ -657,6 +717,14 @@ export class MessageDelivery {
     // is not checked here — it holds the paste in its composer until its next
     // tool call, so there is no new turn to wait for and "injected" is already
     // the honest maximum.
+    //
+    // A vendor that reports no turn events is the third case, and polling the
+    // events table for it would be the mirror-image lie: the boundary can never
+    // appear, so every grok paste would be called unsubmitted and left queued —
+    // which makes the wake sweep re-paste the same message on every tick.
+    // "Injected" is the honest maximum there too; reconcileInjected confirms it
+    // against grok's own transcript activity (turnBoundaryAt) or says it never
+    // arrived.
     // Re-read rather than trusting the caller's record: a flush loop pastes
     // several messages under one lock, and the first one to submit takes the
     // agent from idle to working. The stale record would have us wait five
@@ -664,7 +732,7 @@ export class MessageDelivery {
     // message queued that is sitting correctly in the composer.
     const live = this.db.getAgentByName(message.to) ?? recipient;
     if (
-      live.status === "idle" &&
+      live.status === "idle" && reportsTurnEvents(live.tool) &&
       !(await this.turnStarted(message.to, boundaryBefore))
     ) {
       console.error(
@@ -926,7 +994,19 @@ export class MessageDelivery {
     // Was `lastEventAt`, which is the newest event of any kind. An idle agent
     // emits `notification` events while doing nothing, so an unsubmitted paste
     // got "confirmed" by the recipient sitting still. Only a real turn counts.
-    return this.db.latestTurnBoundaryAt(recipient);
+    const boundary = this.db.latestTurnBoundaryAt(recipient);
+    if (boundary !== null) return boundary;
+    // Third surface, for the vendor that writes to neither of the first two: a
+    // grok agent posts no hook events, so its events table is empty however
+    // hard it is working. What it does write is its session transcript, and the
+    // telemetry sweep advances lastEventAt only when that transcript shows new
+    // activity — model output the agent produced after we handed the message
+    // over. That is receipt measured from the agent's own work, which is the
+    // only thing this function was ever asking for.
+    const agent = this.db.getAgentByName(recipient);
+    return agent !== null && !reportsTurnEvents(agent.tool)
+      ? agent.lastEventAt
+      : null;
   }
 
   /**
@@ -958,6 +1038,20 @@ export class MessageDelivery {
     }
     const boundary = this.db.latestTurnBoundary(recipient);
     if (boundary === null) {
+      // "No turn events at all" is a diagnosis about a vendor that HAS a hook
+      // stream and has gone silent on it. Said about grok, which has none, it
+      // is true of every grok agent that ever lived and means nothing — and it
+      // was said, about a healthy one (cesar, 2026-07-12). Judge that vendor on
+      // the surface it does write: the transcript activity the telemetry sweep
+      // carries into lastEventAt. Quiet past the open-turn cap is the same
+      // finding this alert exists for; anything fresher is an agent working or
+      // waiting, not a deaf one.
+      if (agent !== null && !reportsTurnEvents(agent.tool)) {
+        const silentMs = Date.parse(now) - Date.parse(agent.lastEventAt);
+        return silentMs < OPEN_TURN_SILENCE_CAP_MS ? null : `${recipient} (${agent.tool}) has shown no session activity for ${
+          Math.round(silentMs / 60_000)
+        }m — it may be unable to hear`;
+      }
       return `${recipient} has emitted no turn events at all — it may be unable to hear`;
     }
     if (boundary.kind === "turn-end") {
