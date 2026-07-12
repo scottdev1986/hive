@@ -20,7 +20,7 @@ import {
 import { whatGoverns } from "./routing-resolve";
 import type { CapabilityDiscoveryResult } from "./capability-discovery";
 import {
-  readAccountBilling,
+  readBillingWithMemory,
   type AccountBilling,
   type AccountBillings,
 } from "./usage-credits";
@@ -178,8 +178,8 @@ export async function recordShadowObservation(
       readSnapshot(),
       dependencies.discoverCapabilities("claude"),
       dependencies.discoverCapabilities("codex"),
-      dependencies.readBilling?.("claude") ?? readAccountBilling("claude"),
-      dependencies.readBilling?.("codex") ?? readAccountBilling("codex"),
+      dependencies.readBilling?.("claude") ?? readBillingWithMemory("claude"),
+      dependencies.readBilling?.("codex") ?? readBillingWithMemory("codex"),
     ]);
     const trusted = await loadTrustedRoutingManifest(config);
 

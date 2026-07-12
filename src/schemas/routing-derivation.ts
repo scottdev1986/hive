@@ -6,6 +6,7 @@ import {
   type EffectiveDefault,
 } from "./capability";
 import {
+  poolAvailability,
   spendRisk,
   type AccountBillings,
 } from "../daemon/usage-credits";
@@ -396,15 +397,29 @@ function deriveCell(
   // money to run is not auto-routable on Hive's own say-so — it is his money, so
   // it is his call. This filter applies to AUTO-ROUTING only: a pin never reaches
   // it, because an explicit instruction already IS the consent.
+  // AVAILABILITY IS FILTERED BEFORE MONEY, AND IT IS NOT A MONEY QUESTION.
+  // A model whose own metered pool is spent, with credits off, is not cheap — it
+  // is REFUSED by the vendor. It must stop being a candidate so the next capable
+  // model in the manifest's order takes the spawn, silently and with no consent
+  // request, because there is nothing to consent to: no money is involved. This
+  // applies to a pinned cell's LIST as well (it never touches the pin itself),
+  // since a chain of models that cannot run is not a chain.
+  const runnable = listed.filter((candidate) => {
+    const gone = availabilityRefusal(input, candidate.record);
+    if (gone === null) return true;
+    notes.push(gone);
+    return false;
+  });
+
   const pinned = input.pins[tier]?.[provider]?.model;
   const candidates = pinned === undefined
-    ? listed.filter((candidate) => {
+    ? runnable.filter((candidate) => {
       const refusal = spendGuard(input, candidate.record, needConsent);
       if (refusal === null) return true;
       notes.push(refusal);
       return false;
     })
-    : listed;
+    : runnable;
 
   const model = resolveModel(
     provider,
@@ -427,6 +442,17 @@ function deriveCell(
       record.launchToken === model.value || record.canonicalId === model.value ||
       record.aliases.includes(model.value!)
     );
+
+  // CONSENT TO ROUTE IS NOT CONSENT TO SPEND. A pin settles the ROUTE and the
+  // engine never overrules it — the model below stays exactly what he pinned. But
+  // naming a model is not agreeing to be charged for it, so a pinned model that
+  // would really cost money still raises the consent request, and the spawn path
+  // asks him once. It is NOT excluded: excluding it would be the router overruling
+  // the user, which is the one thing a pin exists to prevent.
+  if (model.layer === "pinned" && resolvedRecord !== undefined) {
+    const refusal = spendGuard(input, resolvedRecord, needConsent);
+    if (refusal !== null) notes.push(refusal);
+  }
 
   const effort = resolveEffort(
     provider,
@@ -539,14 +565,38 @@ function resolveModel(
 }
 
 /**
+ * The availability filter: can this model actually run, for free, right now?
+ *
+ * Distinct from the spend guard on purpose. The spend guard protects his WALLET
+ * and asks him when money is at stake. This protects his WORK and never asks him
+ * anything — an exhausted, unpayable model is not a choice he needs to make, it is
+ * a model the vendor will refuse. Routing to it anyway would hand him a dead deep
+ * agent and call it thrift.
+ */
+function availabilityRefusal(
+  input: DerivationInput,
+  record: CapabilityRecord,
+): string | null {
+  const billing = input.billing?.[record.provider];
+  // No billing reading is the spend guard's problem (it asks), not this filter's:
+  // an unknown pool must never be turned into a confident "unavailable" either.
+  if (billing === undefined || record.displayName === null) return null;
+  const availability = poolAvailability(billing, record.displayName);
+  return availability.state === "exhausted"
+    ? `${record.launchToken} is not routable: ${availability.detail}`
+    : null;
+}
+
+/**
  * The spend guard: would this spawn cost the user real money?
  *
  * It keys on MONEY, not on a model. There is no Fable case, no premium list, no
  * date — the thing being guarded is his wallet, so the rule is the same for every
  * model. `null` means the spawn cannot cost him anything and may proceed.
  *
- * A pinned model never reaches this function. A pin is the user's direct
- * instruction; the guard governs Hive's automatic choices, not his.
+ * A pinned model reaches this function too, but only to RAISE the question — it is
+ * never excluded by the answer. The route is his; the money is still his to be
+ * asked about.
  */
 function spendGuard(
   input: DerivationInput,

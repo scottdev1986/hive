@@ -211,6 +211,58 @@ describe("what the flip may never break", () => {
     expect(governing!.notes.join(" ")).toContain("cannot rule out a charge");
   });
 
+  test("an exhausted, unpayable model falls through to the next capable one", async () => {
+    // The user's question, verbatim: "fable switches to usage credits only
+    // tonight, and since we do not have credits, any time we want deep it should
+    // automatically go to 4.8 WITHOUT USER NOTICE — correct?"  Now: correct.
+    const creditOnly: AccountBilling = {
+      creditsEnabled: known(false, "claude.get_usage", OBSERVED),
+      disabledReason: null,
+      generalUtilization: known(30, "claude.get_usage", OBSERVED),
+      modelUtilization: { "claude-fable-5": 100 },
+    };
+    const governing = await resolveGoverningRoute(
+      "deep",
+      io({ claude: creditOnly, codex: FREE }),
+    );
+    expect(governing!.route.claude.model).toBe("claude-opus-4-8");
+    // WITHOUT USER NOTICE: an unrunnable model is not a decision he has to make.
+    // No consent is requested, because no money is involved — the vendor would
+    // simply refuse the request.
+    expect(governing!.notes.join(" ")).not.toContain("WOULD SPEND YOUR MONEY");
+    expect(governing!.notes.join(" ")).toContain("is not routable");
+  });
+
+  test("and the model he still pays for is NOT abandoned early", async () => {
+    // The negative control, and it matters as much as the fallthrough: today Fable
+    // still draws plan capacity he has already bought (pool 17%). Excluding it "to
+    // be safe" is the exact harm the deleted cutoff was doing.
+    const today: AccountBilling = {
+      creditsEnabled: known(false, "claude.get_usage", OBSERVED),
+      disabledReason: null,
+      generalUtilization: known(30, "claude.get_usage", OBSERVED),
+      modelUtilization: { "claude-fable-5": 17 },
+    };
+    const governing = await resolveGoverningRoute(
+      "deep",
+      io({ claude: today, codex: FREE }),
+    );
+    expect(governing!.route.claude.model).toBe("claude-fable-5");
+  });
+
+  test("a pin settles the ROUTE; it never settles the MONEY", async () => {
+    // Consent to route is not consent to spend. The pinned model still wins the
+    // route — the router never overrules him — but a spawn that would really be
+    // billed raises the consent request rather than quietly charging him.
+    await pins('[deep.claude]\nmodel = "claude-fable-5"\n');
+    const governing = await resolveGoverningRoute(
+      "deep",
+      io({ claude: BILLED, codex: FREE }),
+    );
+    expect(governing!.route.claude.model).toBe("claude-fable-5");
+    expect(governing!.notes.join(" ")).toContain("WOULD SPEND YOUR MONEY");
+  });
+
   test("the downshift chain is capability-floored, not just the primary", async () => {
     // Every model quota may downshift onto came through the manifest's declared
     // coding-capable list. The valve this replaces offered the account's discovered

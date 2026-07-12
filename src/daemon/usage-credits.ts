@@ -1,5 +1,8 @@
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { z } from "zod";
 import {
+  discovered,
   known,
   unknown,
   type CapabilityProvider,
@@ -350,6 +353,57 @@ export function spendRisk(
   };
 }
 
+export type PoolAvailability =
+  | { state: "available" }
+  | { state: "exhausted"; detail: string };
+
+/**
+ * Can this model actually RUN — a question nobody was asking, and a different
+ * question from whether it would cost anything.
+ *
+ * `spendRisk` answers the MONEY question, and for an exhausted pool with credits
+ * off it correctly answers "no charge: a request past the plan limit is REFUSED,
+ * not billed". It says the word *refused* and then throws the fact away. Refused
+ * is not free — it is UNAVAILABLE, and routing to it hands the user a dead agent
+ * on a model the vendor was never going to run.
+ *
+ * That is exactly the state the user expects Fable to enter ("fable switches to
+ * usage credits only tonight, and since we do not have credits, any time we want
+ * deep it should automatically go to 4.8"). Without this, an exhausted-and-
+ * unpayable model stays the router's first choice forever, because it is free.
+ *
+ * The rule keys on MONEY and METERING, never on a model's name: a model the vendor
+ * meters separately, whose own pool is spent, with nothing that can pay the
+ * overflow, cannot run. Any model, any vendor, no date, no list. When the pool has
+ * headroom it is available; when it is spent but credits could pay, it is not an
+ * availability question at all — it is a spend question, and `spendRisk` asks him.
+ */
+export function poolAvailability(
+  billing: AccountBilling,
+  displayName: string,
+): PoolAvailability {
+  const own = billing.modelUtilization[displayName.toLowerCase()];
+  // No dedicated pool is the NORMAL case (it is how Opus, Sonnet and Haiku all
+  // read today): the model simply draws on the plan pool. It is not "unknown", and
+  // treating it as unknown-and-excluded would exclude every model on the account.
+  if (own === undefined || own < 100) return { state: "available" };
+  // The pool is spent. Whether that is fatal depends on whether anything can pay.
+  if (
+    billing.creditsEnabled.state === "known" && !billing.creditsEnabled.value
+  ) {
+    return {
+      state: "exhausted",
+      detail: `its own ${displayName} pool is spent (${own}%) and usage credits ` +
+        "are OFF, so nothing can pay for the overflow — the vendor refuses the " +
+        "request rather than billing it. The model cannot run, so it is not a " +
+        "candidate; a capable model that can run is chosen instead",
+    };
+  }
+  // Credits are on, or unreadable. Money might pay for this, so it is the spend
+  // guard's question and his call — not an availability fact.
+  return { state: "available" };
+}
+
 /**
  * Read this account's billing facts from the live CLI.
  *
@@ -359,6 +413,126 @@ export function spendRisk(
  * `null`, and the caller treats the risk as UNKNOWN rather than as zero: an
  * unreadable bill is not a free one.
  */
+/**
+ * How stale a remembered billing reading may be and still answer the spend
+ * question. Judgment, not a measurement, so it is printed beside every use of it
+ * rather than buried here.
+ *
+ * The bound protects exactly one thing. A remembered reading is dangerous only if
+ * BOTH the pool has since crossed 100% AND usage credits have since been turned
+ * ON — below 100% there is nothing to bill, and with credits off nothing can pay.
+ * Credits are a setting the USER changes deliberately; he is not toggling them
+ * while a spawn is in flight. So the window only has to be short enough that his
+ * own pools cannot silently have gone from headroom to exhausted-and-billing
+ * without him knowing, and 30 minutes is comfortably inside that.
+ *
+ * Past it, the memory expires and the honest answer returns: unknown, so ask.
+ */
+export const BILLING_MEMORY_TTL_MINUTES = 30;
+
+/** The persisted shape of a remembered reading. A file we cannot parse is NO
+ * memory, never a partially-trusted one. */
+const AccountBillingSchema = z.strictObject({
+  creditsEnabled: discovered(z.boolean()),
+  disabledReason: z.string().nullable(),
+  generalUtilization: discovered(z.number()),
+  modelUtilization: z.record(z.string(), z.number()),
+  overflowUncertainty: z.string().nullable().optional(),
+});
+
+const billingMemoryPath = (provider: CapabilityProvider): string =>
+  join(
+    Bun.env.HIVE_HOME ?? join(homedir(), ".hive"),
+    `billing-${provider}.json`,
+  );
+
+/** A reading is USABLE when the surface actually answered something. A response
+ * in which every field is unknown is a surface that went quiet, not a bill. */
+const usable = (billing: AccountBilling): boolean =>
+  billing.creditsEnabled.state === "known" ||
+  billing.generalUtilization.state === "known" ||
+  Object.keys(billing.modelUtilization).length > 0;
+
+const warnedStale = new Set<string>();
+
+/**
+ * The billing reader that heals itself.
+ *
+ * `readAccountBilling` returns `null` — or a response in which every field is
+ * unknown — whenever the vendor's telemetry endpoint goes quiet. That is a
+ * TRANSIENT condition (Claude's `get_usage` fell silent at 01:40 on 2026-07-12 and
+ * was answering again by 02:00, with the CLI healthy throughout), and treating it
+ * as "Hive cannot rule out a charge" turned a hiccup in a telemetry endpoint into
+ * an outage of every automatic Claude spawn. Refusing to launch protects the user
+ * from a charge that, with credits off, is not merely unlikely but IMPOSSIBLE.
+ *
+ * So: retry, then fall back to the last reading that actually said something —
+ * carried at its TRUE AGE, because the `Discovered<T>` fields keep their own
+ * `observedAt` and every surface that prints them prints the age. A remembered
+ * pool percentage is not a guess; it is a measurement with a timestamp, which is
+ * exactly what the routing ladder's last-known-good rung already is. What it is
+ * never allowed to do is turn an unknown into a confident answer: past the TTL the
+ * memory expires and the caller gets the honest unknown back.
+ *
+ * Heal quietly, fail loudly: serving a stale reading warns ONCE per provider, not
+ * on every spawn.
+ */
+export async function readBillingWithMemory(
+  provider: CapabilityProvider,
+  options: {
+    read?: (provider: CapabilityProvider) => Promise<AccountBilling | null>;
+    now?: () => Date;
+    warn?: (message: string) => void;
+    path?: string;
+  } = {},
+): Promise<AccountBilling | null> {
+  const read = options.read ?? ((p: CapabilityProvider) => readAccountBilling(p));
+  const now = options.now?.() ?? new Date();
+  const warn = options.warn ?? ((message: string) => console.warn(message));
+  const path = options.path ?? billingMemoryPath(provider);
+
+  // Two attempts. A telemetry endpoint that dropped one request usually answers
+  // the next; one retry buys most of the recovery for one round trip.
+  let live = await read(provider);
+  if (live === null || !usable(live)) {
+    live = await read(provider);
+  }
+
+  if (live !== null && usable(live)) {
+    warnedStale.delete(provider);
+    await Bun.write(path, `${JSON.stringify(live, null, 2)}\n`).catch(() => {});
+    return live;
+  }
+
+  const file = Bun.file(path);
+  if (!(await file.exists())) return live;
+  const remembered = AccountBillingSchema.safeParse(
+    await file.json().catch(() => null),
+  );
+  if (!remembered.success) return live;
+
+  const observedAt = remembered.data.creditsEnabled.observedAt ??
+    remembered.data.generalUtilization.observedAt;
+  const ageMinutes = (now.getTime() - Date.parse(observedAt)) / 60_000;
+  if (!Number.isFinite(ageMinutes) || ageMinutes > BILLING_MEMORY_TTL_MINUTES) {
+    // Expired. The honest unknown comes back, and the guard asks — which is the
+    // right answer once the memory is too old to stand behind.
+    return live;
+  }
+
+  if (!warnedStale.has(provider)) {
+    warnedStale.add(provider);
+    warn(
+      `Hive cannot read ${provider} billing right now (the vendor's usage surface ` +
+        `is quiet). Falling back to the last reading, ${Math.round(ageMinutes)}m ` +
+        "old, rather than refusing to launch: with usage credits off nothing can " +
+        "be charged, so refusing would protect you from a charge that cannot " +
+        "happen. Spawns continue; this heals itself when the surface answers.",
+    );
+  }
+  return remembered.data;
+}
+
 export async function readAccountBilling(
   provider: CapabilityProvider = "claude",
   observedAt: string = new Date().toISOString(),

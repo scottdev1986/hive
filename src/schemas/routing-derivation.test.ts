@@ -366,14 +366,19 @@ describe("the spend guard: consent attaches to money, not to a model", () => {
     claude,
   });
 
-  test("credits OFF: the guard NEVER fires, even with every pool exhausted", () => {
-    // Today's state. Nothing can be charged — a request past the plan limit is
-    // refused, not billed — so there is nothing to ask about, and Fable is routed
-    // like any other model. A guard that nags a user who cannot be charged is a
-    // broken guard.
+  test("credits OFF + pool spent: nothing is ASKED, and nothing is ROUTED there", () => {
+    // This test used to assert the model was routed anyway, on the grounds that
+    // nothing can be charged. Half right, and the half it got wrong was the
+    // expensive half: "a request past the plan limit is REFUSED, not billed" — so
+    // there is indeed no charge to ask about, AND the vendor will not run it. The
+    // old expectation launched a deep agent onto a model that cannot answer.
+    //
+    // Both halves now hold. The spend guard stays silent (a guard that nags a user
+    // who cannot be charged is a broken guard), and the router falls through to the
+    // next capable model that CAN run. No prompt, no approval, no dead agent.
     const derived = derive({ billing: measured(billing(false, 100)) });
     expect(derived.consentRequired).toEqual([]);
-    expect(deepOf(derived).claude.model.value).toBe("claude-fable-5");
+    expect(deepOf(derived).claude.model.value).toBe("claude-opus-4-8");
   });
 
   test("credits OFF and on plan: Fable is an ordinary candidate, after the old cutoff date", () => {
@@ -418,13 +423,23 @@ describe("the spend guard: consent attaches to money, not to a model", () => {
     expect(deepOf(derived).claude.model.value).toBe("claude-opus-4-8");
   });
 
-  test("a PIN is direct consent and never enters the automatic spend guard", () => {
+  test("a PIN settles the ROUTE; it does not settle the MONEY", () => {
+    // Reversed deliberately. A pin used to be read as consent to be charged, on
+    // the grounds that naming a model is an instruction — and it is, but it is an
+    // instruction about WHICH MODEL, not an agreement to pay for it. Choosing a
+    // model and agreeing to be billed for it are different permissions.
+    //
+    // So the pin still WINS THE ROUTE — the router never overrules him, and the
+    // model below is exactly the one he pinned — but a spawn that would really be
+    // billed raises the consent request, and the spawn path asks him once and
+    // remembers. He is never silently charged for a choice he made about routing.
     const derived = derive({
       billing: measured(billing(true, 100)),
       pins: { deep: { claude: { model: "claude-fable-5" } } },
     });
-    expect(derived.consentRequired).toEqual([]);
     expect(deepOf(derived).claude.model.value).toBe("claude-fable-5");
+    expect(derived.consentRequired.map((entry) => entry.canonicalId))
+      .toEqual(["claude-fable-5"]);
   });
 
   test("a pin with credits OFF is never asked about, because nothing can be charged", () => {

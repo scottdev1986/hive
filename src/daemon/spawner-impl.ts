@@ -68,7 +68,11 @@ import { validateEffort } from "./effort";
 import type { CapabilityDiscoveryResult } from "./capability-discovery";
 import type { GoverningRoute, RoutingIo } from "./routing-resolve";
 import type { ShadowSpawn } from "./routing-shadow";
-import { spendRisk, type AccountBilling } from "./usage-credits";
+import {
+  poolAvailability,
+  spendRisk,
+  type AccountBilling,
+} from "./usage-credits";
 import { readCostConsent, requestCostConsent } from "./cost-consent";
 
 /**
@@ -825,6 +829,17 @@ export class HiveSpawner implements Spawner {
       )
       : undefined;
 
+    // AVAILABILITY FIRST, and it is not a money question. A model whose own pool
+    // is spent when nothing can pay for the overflow is refused by the vendor, not
+    // billed — so it cannot run, and it must not win a spawn just because it is
+    // free. No consent is requested: there is nothing to consent to.
+    if (billing !== null && record?.displayName != null) {
+      const availability = poolAvailability(billing, record.displayName);
+      if (availability.state === "exhausted") {
+        return `${model} cannot run: ${availability.detail}`;
+      }
+    }
+
     // The billing surface names a model only by its display name, so without one
     // the spawn cannot be joined to a pool: unknown, and unknown never authorises
     // a charge.
@@ -849,9 +864,10 @@ export class HiveSpawner implements Spawner {
     }
     // Ask once, through the queue he already answers. Pending is not a yes.
     requestCostConsent(this.dependencies.db, canonicalId, risk.detail);
-    return `${model} would spend your money: ${risk.detail}. Hive will not ` +
-      "auto-route into a charge — approve the request in the approvals queue " +
-      `(hive_approvals), or spawn ${model} explicitly to run it anyway`;
+    return `${model} would spend your money: ${risk.detail}. Choosing this model ` +
+      "is not the same as agreeing to be charged for it, so Hive asks once and " +
+      "remembers — approve the request in the approvals queue (hive_approvals) " +
+      "and it will not ask again";
   }
 
   private async resolveSpawnEffort(
@@ -1592,13 +1608,23 @@ export class HiveSpawner implements Spawner {
       effortResolved = true;
       quotaReservationId = decision.reservation.id;
     }
-    // The gate every AUTOMATIC launch passes through, whatever route it took to
-    // get here — quota enabled or not, valve or no valve. The filter above lets an
-    // affordable candidate win the spawn; this makes sure nothing that would
-    // charge him reaches a CLI even if it somehow survived. An EXPLICIT model is
-    // his own instruction and is never gated: the guard governs Hive's choices,
-    // not his.
-    if (request.model === undefined) {
+    // The gate EVERY launch passes through, whatever route it took to get here —
+    // automatic, tier-pinned, or explicitly named; quota enabled or not.
+    //
+    // CONSENT TO ROUTE IS NOT CONSENT TO SPEND. This used to exempt an explicit
+    // model on the grounds that naming a model is an instruction — and it is, but
+    // it is an instruction about WHICH MODEL, not an agreement to be charged for
+    // it. Choosing the model and agreeing to pay for it are different permissions,
+    // and Hive had been conflating them in one direction (an explicit model was
+    // never asked about) while the derivation engine conflated them in the other
+    // (a routing.toml pin skipped the guard, so `hive routing` could show a pinned
+    // model as fine while a real spawn on it refused).
+    //
+    // So the route and the money are now settled separately: the pin or the
+    // explicit name WINS THE ROUTE, always, and the guard asks about the MONEY —
+    // once, remembering the answer. When nothing can be charged (credits off, or
+    // the pool has headroom) it asks nobody, which is every spawn today.
+    {
       const refusal = await this.spendRefusal(tool, model);
       if (refusal !== null) {
         if (quotaReservationId !== undefined) {

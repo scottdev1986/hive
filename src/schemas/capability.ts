@@ -108,7 +108,7 @@ export type Discovered<T> =
     observedAt: string;
   };
 
-const discovered = <T extends z.ZodType>(value: T) =>
+export const discovered = <T extends z.ZodType>(value: T) =>
   z.discriminatedUnion("state", [
     z.strictObject({
       state: z.literal("known"),

@@ -3526,9 +3526,12 @@ describe("the spend guard is consulted by the LIVE spawn path", () => {
       billing: AccountBilling;
       model?: string;
       approve?: string;
+      /** Supplied when the caller needs to read the approvals a REFUSED spawn
+       * filed — a throw never returns the store it wrote to. */
+      store?: FakeStore;
     },
   ) {
-    const store = new FakeStore();
+    const store = options.store ?? new FakeStore();
     if (options.approve !== undefined) {
       store.insertApproval({
         id: `cost-consent:${options.approve}`,
@@ -3570,18 +3573,33 @@ describe("the spend guard is consulted by the LIVE spawn path", () => {
     return { record, store };
   }
 
-  test("credits OFF: it does NOT fire, and the agent launches — today's state", async () => {
-    // If it nags him today it is broken: he cannot be charged, and he would learn
-    // to click through the prompt long before the day it counts.
+  test("credits OFF + pool spent: it does not ASK, and it does not LAUNCH there", async () => {
+    // Reversed deliberately, and this is the misroute the user predicted: "since we
+    // do not have credits, any time we want deep it should automatically go to 4.8".
+    //
+    // The old expectation launched the exhausted model because nothing could be
+    // charged for it. But with credits off, a request past the plan limit is
+    // REFUSED, not billed — so that spawn was landing a deep agent on a model the
+    // vendor was never going to run, and calling it thrift.
+    //
+    // Availability and money are now separate questions. No consent is requested
+    // (nothing can charge him, so there is nothing to ask), and the unrunnable
+    // model does not take the spawn. This harness has no derived router wired, so
+    // there is no chain to fall through to and the launch is refused with the
+    // reason; the real daemon derives a chain and lands on Opus silently, which
+    // `routing-resolve.test.ts` proves.
     const root = await mkdtemp(join(tmpdir(), "hive-guard-off-"));
     tempRoots.push(root);
-    // Every pool exhausted, and it STILL must not fire: with credits off a
-    // request past the plan is refused, not billed.
-    const { record, store } = await spawnWith(root, {
-      billing: billing(false, 100),
-    });
-    expect(record.model).toBe("claude-fable-5");
-    expect(record.status).toBe("working");
+    const store = new FakeStore();
+    let failure = "";
+    try {
+      await spawnWith(root, { billing: billing(false, 100), store });
+    } catch (error) {
+      failure = error instanceof Error ? error.message : String(error);
+    }
+    expect(failure).toContain("cannot run");
+    expect(failure).toContain("usage credits are OFF");
+    // Not a money question, so he is never asked about it.
     expect([...store.approvals.values()]).toEqual([]);
   });
 
@@ -3640,17 +3658,42 @@ describe("the spend guard is consulted by the LIVE spawn path", () => {
     expect(record.status).toBe("working");
   });
 
-  test("an EXPLICIT model is his own instruction and is never gated", async () => {
-    // The guard governs Hive's choices, not his. He asked for this model by name.
+  test("an EXPLICIT model settles the ROUTE, but not the MONEY: it asks once", async () => {
+    // Reversed deliberately. Naming a model was being read as agreeing to be
+    // charged for it. Those are different permissions: CONSENT TO ROUTE IS NOT
+    // CONSENT TO SPEND. He chose the model — the router never substitutes another —
+    // but a spawn that would really be billed asks him once and remembers.
     const root = await mkdtemp(join(tmpdir(), "hive-guard-pinned-"));
+    tempRoots.push(root);
+    const store = new FakeStore();
+    let failure = "";
+    try {
+      await spawnWith(root, {
+        billing: billing(true, 100),
+        model: "claude-fable-5",
+        store,
+      });
+    } catch (error) {
+      failure = error instanceof Error ? error.message : String(error);
+    }
+    expect(failure).toContain("would spend your money");
+    expect(failure).toContain("asks once and remembers");
+    expect([...store.approvals.values()]).toHaveLength(1);
+  });
+
+  test("...and once he has approved it, the same explicit model just launches", async () => {
+    // "It will not ask you twice" is a promise the queue already makes. The point
+    // of asking is to get an answer, not to nag.
+    const root = await mkdtemp(join(tmpdir(), "hive-guard-pinned-ok-"));
     tempRoots.push(root);
     const { record, store } = await spawnWith(root, {
       billing: billing(true, 100),
       model: "claude-fable-5",
+      approve: "claude-fable-5",
     });
     expect(record.model).toBe("claude-fable-5");
     expect(record.status).toBe("working");
-    expect([...store.approvals.values()]).toEqual([]);
+    expect([...store.approvals.values()]).toHaveLength(1);
   });
 
   test("an unreadable bill never authorizes an automatic spawn", async () => {
@@ -3808,15 +3851,17 @@ describe("the Codex spend reader drives the SAME live spawn guard", () => {
     expect(asked[0]!.description).toContain("may purchase credits");
   });
 
-  test("D: an explicit Codex model pin launches even when the pool is spent", async () => {
+  test("D: an explicit Codex model asks once when the pool is spent and credits could pay", async () => {
+    // The same reversal, on the other vendor: consent to route is not consent to
+    // spend, and the rule must not differ by vendor or he cannot reason about it.
     const root = await mkdtemp(join(tmpdir(), "hive-codex-guard-pinned-"));
     tempRoots.push(root);
-    const { record, store } = await spawnCodex(
+    const { failure, store } = await spawnCodex(
       root,
       codexBilling(100, { hasCredits: true, unlimited: false, balance: "100" }),
       "gpt-5.6-sol",
     );
-    expect(record?.status).toBe("working");
-    expect([...store.approvals.values()]).toEqual([]);
+    expect(failure).toContain("would spend your money");
+    expect([...store.approvals.values()]).toHaveLength(1);
   });
 });

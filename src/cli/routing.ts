@@ -12,7 +12,7 @@ import {
   CodexCapabilityProbe,
 } from "../daemon/capability-discovery";
 import {
-  readAccountBilling,
+  readBillingWithMemory,
   type AccountBilling,
   type AccountBillings,
 } from "../daemon/usage-credits";
@@ -243,8 +243,8 @@ export async function printRouting(): Promise<void> {
     killed
       ? null
       : Promise.all([
-        readAccountBilling("claude"),
-        readAccountBilling("codex"),
+        readBillingWithMemory("claude"),
+        readBillingWithMemory("codex"),
       ]).then(([claudeBilling, codexBilling]): AccountBillings => ({
         ...(claudeBilling === null ? {} : { claude: claudeBilling }),
         ...(codexBilling === null ? {} : { codex: codexBilling }),
