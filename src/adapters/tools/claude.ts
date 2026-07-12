@@ -17,6 +17,7 @@ import {
   GRAPHIFY_HOOK_SCRIPT,
   graphifyHookPath,
   writeGraphifyHook,
+  type GraphifyHookKind,
 } from "./graphify-hook";
 
 export interface ClaudeSpawnOptions {
@@ -496,8 +497,11 @@ export async function writeClaudeAgentConfig(
   // writer stalls on the dialog forever.
   const dangerousWriter = !options.readOnly && (options.dangerous ?? false);
   const graphifyHook = graphifyHookPath(worktreePath, ".claude");
-  const graphifyCommand = (kind: "search" | "read"): string =>
-    `${shellToken(graphifyHook)} claude-${kind}`;
+  // The kind is typed, not a free string: it is the token the generated hook
+  // dispatches on, and a spelling the script has no arm for silently never
+  // nudges.
+  const graphifyCommand = (kind: GraphifyHookKind): string =>
+    `${shellToken(graphifyHook)} ${kind}`;
 
   const settings = {
     enableAllProjectMcpServers: true,
@@ -525,7 +529,9 @@ export async function writeClaudeAgentConfig(
             PreToolUse: [
               {
                 matcher: "Bash",
-                hooks: [{ type: "command", command: graphifyCommand("search") }],
+                hooks: [
+                  { type: "command", command: graphifyCommand("claude-search") },
+                ],
               },
               // Grep belongs HERE, not on the Bash matcher. The `search` branch
               // filters shell commands with case-sensitive lowercase patterns
@@ -540,7 +546,9 @@ export async function writeClaudeAgentConfig(
               // already grepping inside graphify-out/ needs no nudge.
               {
                 matcher: "Read|Glob|Grep",
-                hooks: [{ type: "command", command: graphifyCommand("read") }],
+                hooks: [
+                  { type: "command", command: graphifyCommand("claude-read") },
+                ],
               },
             ],
           }),

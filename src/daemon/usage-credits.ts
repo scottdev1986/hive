@@ -4,6 +4,7 @@ import { z } from "zod";
 import {
   CAPABILITY_PROVIDERS,
   discovered,
+  unknownVendor,
   known,
   unknown,
   type CapabilityProvider,
@@ -558,16 +559,41 @@ export async function readAccountBilling(
     codex?: CodexProbeTransport;
   },
 ): Promise<AccountBilling | null> {
+  // The switch sits OUTSIDE the catch, and that placement is the whole point.
+  // Inside it, an unknown vendor's throw would be swallowed into the same
+  // `null` a quiet vendor surface produces — and null here means "billing
+  // unknown", which the money guard is built to tolerate. The one branch that
+  // must never be silent would have been the quietest of all.
+  const read = billingReader(provider, timeoutMs, transports);
   try {
-    if (provider === "codex") {
-      const payload = await (transports?.codex ?? new CodexStdioProbeTransport())
-        .readRateLimits(timeoutMs);
-      return accountBillingFromCodexRateLimits(payload.limits, observedAt);
-    }
-    const payload = await (transports?.claude ?? new ClaudeStdioProbeTransport())
-      .readUsage(timeoutMs);
-    return accountBillingFromUsage(payload.usage, observedAt);
+    return await read(observedAt);
   } catch {
     return null;
+  }
+}
+
+function billingReader(
+  provider: CapabilityProvider,
+  timeoutMs: number,
+  transports?: {
+    claude?: ClaudeProbeTransport;
+    codex?: CodexProbeTransport;
+  },
+): (observedAt: string) => Promise<AccountBilling | null> {
+  switch (provider) {
+    case "codex":
+      return async (observedAt) => {
+        const payload = await (transports?.codex ??
+          new CodexStdioProbeTransport()).readRateLimits(timeoutMs);
+        return accountBillingFromCodexRateLimits(payload.limits, observedAt);
+      };
+    case "claude":
+      return async (observedAt) => {
+        const payload = await (transports?.claude ??
+          new ClaudeStdioProbeTransport()).readUsage(timeoutMs);
+        return accountBillingFromUsage(payload.usage, observedAt);
+      };
+    default:
+      return unknownVendor(provider, "readAccountBilling");
   }
 }

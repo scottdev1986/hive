@@ -12,7 +12,15 @@ import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import type { CodexRoute } from "../../schemas";
 import { buildCodexMcpExclusionArgs, HIVE_MCP_SERVERS } from "./mcp-scope";
-import { graphifyHookPath, writeGraphifyHook } from "./graphify-hook";
+import {
+  graphifyHookPath,
+  writeGraphifyHook,
+  type GraphifyHookKind,
+} from "./graphify-hook";
+
+/** Typed, not a bare string in a template: the token the generated hook
+ * dispatches on. A kind the script has no arm for silently never nudges. */
+const CODEX_GRAPHIFY_HOOK_KIND: GraphifyHookKind = "codex";
 
 export interface CodexSpawnOptions {
   name: string;
@@ -174,7 +182,9 @@ function buildCodexConfigArgs(
           "-c",
           hookOverride(
             "PreToolUse",
-            `${shellToken(graphifyHookPath(options.worktreePath, ".codex"))} codex`,
+            `${shellToken(graphifyHookPath(options.worktreePath, ".codex"))} ${
+              CODEX_GRAPHIFY_HOOK_KIND
+            }`,
             "Bash",
           ),
         ]),

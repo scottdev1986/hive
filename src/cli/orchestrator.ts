@@ -16,7 +16,7 @@ import { getHiveHome } from "../daemon/db";
 import { operatorHeaders } from "./credential";
 import { orchestratorTmuxSession } from "../daemon/orchestrator-lifecycle";
 import { hiveInstanceSuffix } from "../daemon/tmux-sessions";
-import type { TerminalHandle } from "../schemas";
+import { unknownVendor, type TerminalHandle } from "../schemas";
 import { ORCHESTRATOR_BRIEF, orchestratorDocGuidance } from "./orchestrator-brief";
 import { ensureProfile } from "../adapters/profile";
 
@@ -152,13 +152,23 @@ export async function prepareOrchestratorConfig(
   port: number,
   _cwd: string,
 ): Promise<void> {
-  if (tool === "claude") {
-    await writeClaudeAgentConfig(orchestratorConfigRoot(), {
-      daemonPort: port,
-      name: "orchestrator",
-      readOnly: true,
-      channels: true,
-    });
+  switch (tool) {
+    case "claude":
+      await writeClaudeAgentConfig(orchestratorConfigRoot(), {
+        daemonPort: port,
+        name: "orchestrator",
+        readOnly: true,
+        channels: true,
+      });
+      return;
+    case "codex":
+      // Nothing on disk, and that is the whole configuration: the Codex
+      // orchestrator carries its hive server and sandbox on the `-c` flags
+      // `buildOrchestratorCommand` builds. An empty arm is a decision, not an
+      // omission — which is exactly what the old `if (claude)` could not say.
+      return;
+    default:
+      unknownVendor(tool, "orchestrator config");
   }
 }
 
@@ -185,38 +195,44 @@ export function buildOrchestratorCommand(
   const brief = [ORCHESTRATOR_BRIEF, docGuidance, memoryIndex]
     .filter((part) => part !== "")
     .join("\n\n");
-  if (tool === "claude") {
-    const configRoot = orchestratorConfigRoot();
-    return [
-      ...buildClaudeSpawnCommand({
-        name: "orchestrator",
-        model: "default",
-        worktreePath: process.cwd(),
-        daemonPort: port,
-        readOnly: true,
-        channels: true,
-        executable,
-        scopedSettingsPath: join(configRoot, ".claude", "settings.local.json"),
-        scopedMcpConfigPath: join(configRoot, ".mcp.json"),
-        appendSystemPrompt: brief,
-      }),
-    ];
+  switch (tool) {
+    case "claude": {
+      const configRoot = orchestratorConfigRoot();
+      return [
+        ...buildClaudeSpawnCommand({
+          name: "orchestrator",
+          model: "default",
+          worktreePath: process.cwd(),
+          daemonPort: port,
+          readOnly: true,
+          channels: true,
+          executable,
+          scopedSettingsPath: join(configRoot, ".claude", "settings.local.json"),
+          scopedMcpConfigPath: join(configRoot, ".mcp.json"),
+          appendSystemPrompt: brief,
+        }),
+      ];
+    }
+    case "codex":
+      return [
+        "codex",
+        "-c",
+        `mcp_servers.hive.url="http://127.0.0.1:${port}/mcp"`,
+        // The token FILE PATH, never the token: paths are not secrets, so argv
+        // and ps can see this. Codex ignores the unknown key (verified against
+        // codex-cli 0.144.1); the daemon reads it during the root-socket
+        // exchange.
+        ...(codexTokenFile === "" ? [] : [
+          "-c",
+          `mcp_servers.hive.capability_token_file=${JSON.stringify(codexTokenFile)}`,
+        ]),
+        "--sandbox",
+        "read-only",
+        brief,
+      ];
+    default:
+      unknownVendor(tool, "orchestrator command");
   }
-  return [
-    "codex",
-    "-c",
-    `mcp_servers.hive.url="http://127.0.0.1:${port}/mcp"`,
-    // The token FILE PATH, never the token: paths are not secrets, so argv and
-    // ps can see this. Codex ignores the unknown key (verified against
-    // codex-cli 0.144.1); the daemon reads it during the root-socket exchange.
-    ...(codexTokenFile === "" ? [] : [
-      "-c",
-      `mcp_servers.hive.capability_token_file=${JSON.stringify(codexTokenFile)}`,
-    ]),
-    "--sandbox",
-    "read-only",
-    brief,
-  ];
 }
 
 export type OrchestratorTerminalCapture = () => Promise<TerminalHandle | null>;
@@ -320,36 +336,47 @@ export function buildOrchestratorLaunchCommand(
   executable = "claude",
   codexTokenFile = "",
 ): string[] {
-  if (tool === "codex") {
-    // `codex --help` defines the initial brief as positional [PROMPT]. The
-    // app-server has no prompt option, so it belongs on the remote TUI command
-    // that creates the thread, after the ordinary config/sandbox flags.
-    const codexCommand = buildOrchestratorCommand(
-      tool,
-      port,
-      memoryIndex,
-      docGuidance,
-      "claude",
-      codexTokenFile,
-    );
-    return ["tmux", "new-session", "-s", orchestratorTmuxSession(), "-c", cwd,
-      ...buildCodexRootAuthorityCommand(undefined, codexCommand.slice(1)),
-      ";", "set-option", "-g", "mouse", "on"];
+  switch (tool) {
+    case "codex": {
+      // `codex --help` defines the initial brief as positional [PROMPT]. The
+      // app-server has no prompt option, so it belongs on the remote TUI command
+      // that creates the thread, after the ordinary config/sandbox flags.
+      const codexCommand = buildOrchestratorCommand(
+        tool,
+        port,
+        memoryIndex,
+        docGuidance,
+        "claude",
+        codexTokenFile,
+      );
+      return ["tmux", "new-session", "-s", orchestratorTmuxSession(), "-c", cwd,
+        ...buildCodexRootAuthorityCommand(undefined, codexCommand.slice(1)),
+        ";", "set-option", "-g", "mouse", "on"];
+    }
+    case "claude":
+      return [
+        "tmux",
+        "new-session",
+        "-s",
+        orchestratorTmuxSession(),
+        "-c",
+        cwd,
+        ...buildOrchestratorCommand(
+          tool,
+          port,
+          memoryIndex,
+          docGuidance,
+          executable,
+        ),
+        ";",
+        "set-option",
+        "-g",
+        "mouse",
+        "on",
+      ];
+    default:
+      unknownVendor(tool, "orchestrator launch command");
   }
-  return [
-    "tmux",
-    "new-session",
-    "-s",
-    orchestratorTmuxSession(),
-    "-c",
-    cwd,
-    ...buildOrchestratorCommand(tool, port, memoryIndex, docGuidance, executable),
-    ";",
-    "set-option",
-    "-g",
-    "mouse",
-    "on",
-  ];
 }
 
 export async function launchOrchestrator(
@@ -367,16 +394,27 @@ export async function launchOrchestrator(
   // Resolve and gate Claude only for the Claude path. A Codex orchestrator
   // must not require an unrelated Claude installation.
   let claudePath = "claude";
-  if (tool === "claude") {
-    const claude = resolveExecutable();
-    claudePath = claude.path;
-    const version = await (detectVersion ?? (async () => claude.version))();
-    if (version === null || !versionAtLeast(version, CHANNELS_MIN_VERSION)) {
-      throw new Error(
-        `the orchestrator needs Claude ${CHANNELS_MIN_VERSION} or newer (for Channels)\n` +
-          "Fix: update Claude Code, then retry",
-      );
+  switch (tool) {
+    case "claude": {
+      const claude = resolveExecutable();
+      claudePath = claude.path;
+      const version = await (detectVersion ?? (async () => claude.version))();
+      if (version === null || !versionAtLeast(version, CHANNELS_MIN_VERSION)) {
+        throw new Error(
+          `the orchestrator needs Claude ${CHANNELS_MIN_VERSION} or newer (for Channels)\n` +
+            "Fix: update Claude Code, then retry",
+        );
+      }
+      break;
     }
+    case "codex":
+      // No gate: Codex's own binary is what launches, and Channels is a Claude
+      // feature. A future vendor must state its own minimum here rather than
+      // inherit Codex's silence — an ungated launch of a CLI too old for the
+      // hive MCP server stalls instead of failing.
+      break;
+    default:
+      unknownVendor(tool, "orchestrator launch");
   }
   let registeredTerminal = false;
   try {
@@ -405,22 +443,31 @@ export async function launchOrchestrator(
     await prepareFreshOrchestratorSession(tmux);
     await prepareOrchestratorConfig(tool, port, cwd);
     let codexTokenFile = "";
-    if (tool === "codex") {
-      const provisioned = await provisionCodexRootToken(port).catch(() => null);
-      if (provisioned === null) {
-        // A daemon predating the mint endpoint; degrade to the old
-        // unauthenticated root rather than refuse to launch.
-        //
-        // Deliberately not printed. "No single-use Codex root token available
-        // from the daemon" names our own plumbing, and there is nothing the
-        // user can do with it — no command, no setting, no decision. A message
-        // that cannot be acted on is not a warning, it is noise, and it trains
-        // people to ignore the messages that do matter. The condition is real,
-        // so it goes where a real diagnostic goes: the daemon's log, on the
-        // side that knows it happened.
-      } else {
-        codexTokenFile = provisioned;
+    switch (tool) {
+      case "codex": {
+        const provisioned = await provisionCodexRootToken(port).catch(() => null);
+        if (provisioned === null) {
+          // A daemon predating the mint endpoint; degrade to the old
+          // unauthenticated root rather than refuse to launch.
+          //
+          // Deliberately not printed. "No single-use Codex root token available
+          // from the daemon" names our own plumbing, and there is nothing the
+          // user can do with it — no command, no setting, no decision. A message
+          // that cannot be acted on is not a warning, it is noise, and it trains
+          // people to ignore the messages that do matter. The condition is real,
+          // so it goes where a real diagnostic goes: the daemon's log, on the
+          // side that knows it happened.
+        } else {
+          codexTokenFile = provisioned;
+        }
+        break;
       }
+      case "claude":
+        // Claude's orchestrator authenticates over the same operator
+        // credential every Claude agent uses; there is no root token to mint.
+        break;
+      default:
+        unknownVendor(tool, "orchestrator root token");
     }
     const [memoryIndex, docGuidance] = await Promise.all([
       buildMemoryIndex(cwd).catch(() => ""),

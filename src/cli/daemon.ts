@@ -23,7 +23,7 @@ import {
   CodexQuotaProbe,
   CodexStdioProbeTransport,
 } from "../daemon/quota-sources";
-import { ORCHESTRATOR_NAME } from "../schemas";
+import { ORCHESTRATOR_NAME, unknownVendor } from "../schemas";
 import {
   ClaudeCapabilityProbe,
   CodexCapabilityProbe,
@@ -118,10 +118,16 @@ export async function runDaemon(): Promise<void> {
           }),
       }),
     routingPins: loadRoutingPins,
-    discoverCapabilities: async (provider) =>
-      provider === "claude"
-        ? await new ClaudeCapabilityProbe().read()
-        : await new CodexCapabilityProbe().read(),
+    discoverCapabilities: async (provider) => {
+      switch (provider) {
+        case "claude":
+          return await new ClaudeCapabilityProbe().read();
+        case "codex":
+          return await new CodexCapabilityProbe().read();
+        default:
+          return unknownVendor(provider, "capability discovery");
+      }
+    },
     // The release valve reads the provider's own metering, not a model name.
     readBilling: (provider) => readBillingWithMemory(provider),
     tmux,

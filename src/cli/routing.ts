@@ -6,10 +6,12 @@ import {
   CodexCapabilityProbe,
 } from "../daemon/capability-discovery";
 import {
+  knownBillings,
   readBillingWithMemory,
   type AccountBilling,
   type AccountBillings,
 } from "../daemon/usage-credits";
+import { forEachProvider } from "../schemas/capability";
 import { readCostConsent, requestCostConsent } from "../daemon/cost-consent";
 import { HiveDatabase } from "../daemon/db";
 import {
@@ -171,14 +173,11 @@ export async function printRouting(): Promise<void> {
     new ClaudeCapabilityProbe().read(),
     new CodexCapabilityProbe().read(),
     readSnapshot(),
-    // What the account is actually charged. Measured, not dated.
-    Promise.all([
-      readBillingWithMemory("claude"),
-      readBillingWithMemory("codex"),
-    ]).then(([claudeBilling, codexBilling]): AccountBillings => ({
-      ...(claudeBilling === null ? {} : { claude: claudeBilling }),
-      ...(codexBilling === null ? {} : { codex: codexBilling }),
-    })),
+    // What the account is actually charged. Measured, not dated — and read for
+    // every vendor in the union, not for a hardcoded pair: `AccountBillings` is
+    // partial, so a vendor nobody remembered to ask reads back exactly like a
+    // vendor that charges nothing.
+    forEachProvider(readBillingWithMemory).then(knownBillings),
   ]);
   const benchmarkCatalog = await readBenchmarkCatalog({
     mode: config.benchmarks.mode,

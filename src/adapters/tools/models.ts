@@ -1,6 +1,6 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { Route } from "../../schemas";
+import { unknownVendor, type Route } from "../../schemas";
 
 // CLAUDE_BEST_MODEL and CLAUDE_OPUS_MODEL used to live here: compiled-in
 // model ids, i.e. predetermined model knowledge, removed as route sources by
@@ -78,8 +78,23 @@ export async function resolveConcreteModel(
   if (configured !== "default") {
     return configured;
   }
-  const resolved = tool === "claude"
-    ? await readConfiguredModel(claudeSettingsPath(), JSON.parse)
-    : await readConfiguredModel(codexConfigPath(), Bun.TOML.parse);
+  // Exhaustive: a vendor with no config file of its own must say so here. The
+  // old ternary would have read a third vendor's "default" out of
+  // ~/.codex/config.toml and launched it with Codex's pinned model — a model
+  // that vendor may not even have.
+  const resolved = await readVendorConfiguredModel(tool);
   return resolved ?? configured;
+}
+
+function readVendorConfiguredModel(
+  tool: Route["tool"],
+): Promise<string | undefined> {
+  switch (tool) {
+    case "claude":
+      return readConfiguredModel(claudeSettingsPath(), JSON.parse);
+    case "codex":
+      return readConfiguredModel(codexConfigPath(), Bun.TOML.parse);
+    default:
+      return unknownVendor(tool, "resolveConcreteModel");
+  }
 }

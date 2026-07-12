@@ -1082,53 +1082,72 @@ export class HiveDaemon {
         current.status === "done" || current.status === "failed"
       ) continue;
       const updates: Partial<AgentRecord> = {};
-      // The sweep writes what it *observed*, including "nothing" — a null used
-      // to be skipped as "no new information", which quietly meant the last
-      // number stood forever, and for an agent whose telemetry can never be
-      // read, the number that stood forever was the 0 it was born with. Unknown
-      // is a finding, not the absence of one, so it is recorded like any other.
-      if (
-        current.tool !== "claude" && telemetry !== null &&
-        telemetry.contextPct !== current.contextPct
-      ) {
-        updates.contextPct = telemetry.contextPct;
-      }
-      // Claude occupancy: the transcript's measured token count over a
-      // measured window — never a guessed denominator. The window is the one
-      // the statusline payload carried (contextWindow on the row); when no
-      // report has ever carried it, a token count that exceeds 200k is itself
-      // proof of the 1M window, because the API served a request no 200k
-      // window could hold. With neither, occupancy is unknown and the sweep
-      // writes nothing: unlike the codex branch above it never records null
-      // over a number, because the statusline handler's direct reading may be
-      // the only observation there is, and a null contextPct marks an agent
-      // ineligible for reuse, so the flicker would not be cosmetic.
-      if (current.tool === "claude" && claudeContext !== null) {
-        const window = current.contextWindow ??
-          (claudeContext > 200_000 ? 1_000_000 : undefined);
-        if (window !== undefined) {
-          const pct = clampPct((100 * claudeContext) / window);
-          if (pct !== current.contextPct) updates.contextPct = pct;
+      // What each vendor's read *means* for the row, dispatched once. The two
+      // arms are not symmetric and must not be written as claude-or-else: what
+      // Claude's transcript yields is a token count that still needs a window,
+      // and what Codex's rollout yields is a percentage and an mtime. A third
+      // vendor has neither until someone measures it, so it gets an arm of its
+      // own or it gets a compile error — never Codex's arm by default, which
+      // would write a percentage nothing computed.
+      switch (current.tool) {
+        case "claude": {
+          // Claude occupancy: the transcript's measured token count over a
+          // measured window — never a guessed denominator. The window is the one
+          // the statusline payload carried (contextWindow on the row); when no
+          // report has ever carried it, a token count that exceeds 200k is itself
+          // proof of the 1M window, because the API served a request no 200k
+          // window could hold. With neither, occupancy is unknown and the sweep
+          // writes nothing: unlike the codex arm it never records null over a
+          // number, because the statusline handler's direct reading may be the
+          // only observation there is, and a null contextPct marks an agent
+          // ineligible for reuse, so the flicker would not be cosmetic.
+          if (claudeContext !== null) {
+            const window = current.contextWindow ??
+              (claudeContext > 200_000 ? 1_000_000 : undefined);
+            if (window !== undefined) {
+              const pct = clampPct((100 * claudeContext) / window);
+              if (pct !== current.contextPct) updates.contextPct = pct;
+            }
+          }
+          // The model the agent is *running*. The statusline handler observes
+          // this too, but only for agents whose statusline reports actually
+          // arrive — which is a subscriber-only path — so the sweep is what
+          // makes it true for everyone. A row nobody corrects is a row
+          // `hive status` lies from.
+          if (current.worktreePath !== null) {
+            const live = await this
+              .readLiveModel(current.worktreePath, current.toolSessionId)
+              .catch(() => null);
+            if (live !== null && live !== current.liveModel) {
+              updates.liveModel = live;
+            }
+          }
+          break;
         }
-      }
-      // The model the agent is *running*. The statusline handler observes this
-      // too, but only for agents whose statusline reports actually arrive — which
-      // is a subscriber-only path — so the sweep is what makes it true for
-      // everyone. A row nobody corrects is a row `hive status` lies from.
-      if (current.tool === "claude" && current.worktreePath !== null) {
-        const live = await this
-          .readLiveModel(current.worktreePath, current.toolSessionId)
-          .catch(() => null);
-        if (live !== null && live !== current.liveModel) updates.liveModel = live;
-      }
-      if (
-        current.tool === "codex" && !current.writeRevoked &&
-        current.status !== "control-paused" &&
-        telemetry !== null && telemetry.lastActivityAt !== null &&
-        telemetry.lastActivityAt > current.lastEventAt
-      ) {
-        updates.lastEventAt = telemetry.lastActivityAt;
-        if (current.status === "spawning") updates.status = "working";
+        case "codex": {
+          // The sweep writes what it *observed*, including "nothing" — a null
+          // used to be skipped as "no new information", which quietly meant the
+          // last number stood forever, and for an agent whose telemetry can
+          // never be read, the number that stood forever was the 0 it was born
+          // with. Unknown is a finding, not the absence of one, so it is
+          // recorded like any other.
+          if (
+            telemetry !== null && telemetry.contextPct !== current.contextPct
+          ) {
+            updates.contextPct = telemetry.contextPct;
+          }
+          if (
+            !current.writeRevoked && current.status !== "control-paused" &&
+            telemetry !== null && telemetry.lastActivityAt !== null &&
+            telemetry.lastActivityAt > current.lastEventAt
+          ) {
+            updates.lastEventAt = telemetry.lastActivityAt;
+            if (current.status === "spawning") updates.status = "working";
+          }
+          break;
+        }
+        default:
+          unknownVendor(current.tool, "refreshToolTelemetry");
       }
       if (Object.keys(updates).length > 0) {
         this.db.upsertAgent({ ...current, ...updates });
