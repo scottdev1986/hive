@@ -2,7 +2,11 @@ import { mkdir, rename, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { z } from "zod";
-import type { CapabilityProvider, ProviderDiscovery } from "../schemas";
+import {
+  CAPABILITY_PROVIDERS,
+  type CapabilityProvider,
+  type ProviderDiscovery,
+} from "../schemas";
 import type {
   BenchmarkSourceAdapter,
   InventoryBenchmark,
@@ -362,7 +366,10 @@ export function liveBenchInventoryBenchmarks(
   const result = new Map<string, InventoryBenchmark[]>();
   if (snapshot === null) return result;
   const byName = new Map(snapshot.rows.map((row) => [row.model, row]));
-  for (const provider of ["claude", "codex"] as const) {
+  // Every vendor in the union, not a hardcoded pair: a vendor nobody iterated
+  // has no benchmark evidence, and a model with no evidence is not ranked —
+  // which reads exactly like a model that ranked last.
+  for (const provider of CAPABILITY_PROVIDERS) {
     const found = discovery[provider];
     if (found.status !== "ok") continue;
     for (const record of found.records) {
