@@ -43,10 +43,18 @@ yarn-error.log*
 !.env.example
 
 # --- hive runtime (repo-local state that must not be committed) ---
-# All of .hive/ is local working state now — agent worktrees, runtime state,
-# and the memory/skills that earlier Hives committed. It stays on disk; git
-# just stops tracking it.
-.hive/
+# Ignore what is *inside* .hive/, not .hive/ itself: git cannot re-include a
+# file whose parent directory is excluded, so a bare `.hive/` would make the
+# negation below dead on arrival. The `/*` form keeps the directory walkable.
+.hive/*
+# The dev-only skills are committed by design (SPEC.md): they are instructions
+# for working on Hive's own source, and packaging.test.ts scans them to prove
+# none of them reach a user's binary. Ignored, they vanished from every clone
+# and worktree and took that guard down with them.
+!.hive/skills/
+# .hive/memory/ stays out on purpose — this repo is public and the facts in it
+# are internal. packaging.test.ts synthesizes a stand-in corpus when they are
+# absent, which is everywhere but this machine.
 
 #Coding Agents
 .claude/

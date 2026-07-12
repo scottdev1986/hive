@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, relative, sep } from "node:path";
 import { SHIPPED_SKILLS } from "./shipped";
@@ -34,8 +35,38 @@ const EXPECTED_SHIPPED_SKILLS = [
 
 let workspace: string;
 let binary: Buffer;
+/** Set only when the memory corpus below is ours to delete again. */
+let synthesizedMemory: string | undefined;
+
+/**
+ * The memory arm of the guard below hunts for the text of `.hive/memory/` inside
+ * the binary — and a corpus that is not on disk cannot be hunted for. That
+ * corpus is missing from every clone and every worktree, and permanently so:
+ * `.hive/memory/` is deliberately ignored, because this repo is public and the
+ * facts in it are internal. Only the machine Hive is developed on has the real
+ * ones.
+ *
+ * So where the real facts exist we scan those, and where they do not we write a
+ * stand-in corpus instead — before the compile, so it is on disk for the build
+ * to sweep up if the build is ever going to. Either way the guard runs against
+ * real bytes and would still fail on a build that swept the directory into the
+ * artifact. What it must never do is run against an empty directory and pass.
+ */
+async function ensureMemoryCorpus(): Promise<void> {
+  const root = join(repoRoot, ".hive", "memory");
+  if (existsSync(root)) return;
+  await mkdir(root, { recursive: true });
+  synthesizedMemory = root;
+  for (let index = 1; index <= 6; index += 1) {
+    await writeFile(
+      join(root, `stand-in-memory-fact-${index}.md`),
+      `Synthesized stand-in for Hive memory fact number ${index}, on disk only while the packaging guard runs.\n`,
+    );
+  }
+}
 
 beforeAll(async () => {
+  await ensureMemoryCorpus();
   workspace = await mkdtemp(join(tmpdir(), "hive-packaging-"));
   const outfile = join(workspace, "hive");
   const build = Bun.spawnSync(
@@ -50,6 +81,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await rm(workspace, { recursive: true, force: true });
+  if (synthesizedMemory) await rm(synthesizedMemory, { recursive: true, force: true });
 });
 
 /** Is this text inside the shipped binary, byte for byte? */
