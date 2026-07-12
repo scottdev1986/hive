@@ -859,6 +859,8 @@ describe("pools gate the models they actually meter", () => {
         catalog: [],
       }),
     ]);
+    const warnings: string[] = [];
+    quota.setAlertSink(async (body) => void warnings.push(body));
     await quota.refreshFromProviders(now, { force: true });
     const candidates = [
       { tool: "claude" as const, model: "claude-opus-4-8", effort: "high" },
@@ -883,6 +885,8 @@ describe("pools gate the models they actually meter", () => {
     expect(explicit.tool).toBe("claude");
     expect(explicit.warnings.join(" ")).toContain("weekly:Renamed");
     expect(explicit.warnings.join(" ")).toContain("explicit-pin only");
+    expect(warnings.join(" ")).toContain("Quota routing for pinned");
+    expect(warnings.join(" ")).toContain("weekly:Renamed");
   });
 
   test("every id form of a model is bound to the same meter", () => {

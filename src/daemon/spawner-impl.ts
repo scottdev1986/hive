@@ -665,11 +665,16 @@ export class HiveSpawner implements Spawner {
     route: Route,
     tool: "claude" | "codex",
     model: string,
+    observed?: {
+      pins: RoutingPins;
+      discovery: CapabilityDiscoveryResult | undefined;
+    },
   ): Promise<string | undefined> {
-    const pins = await this.dependencies.routingPins?.() ?? {};
+    const pins = observed?.pins ?? await this.dependencies.routingPins?.() ?? {};
     const pinned = pins[request.tier]?.[tool]?.effort;
     const discoveryConfigured = this.dependencies.discoverCapabilities !== undefined;
-    const discovery = await this.dependencies.discoverCapabilities?.(tool);
+    const discovery = observed?.discovery ??
+      await this.dependencies.discoverCapabilities?.(tool);
     const records = discovery?.status === "ok" ? discovery.records : [];
     const base = splitVariant(model).base;
     const record: CapabilityRecord | undefined = records.find((candidate) =>
@@ -1209,10 +1214,33 @@ export class HiveSpawner implements Spawner {
     let quotaReservationId: string | undefined;
     let effort: string | undefined;
     let effortResolved = false;
+    const effortPins = await this.dependencies.routingPins?.() ?? {};
+    const discoveries = new Map<
+      "claude" | "codex",
+      Promise<CapabilityDiscoveryResult | undefined>
+    >();
+    const resolveEffort = async (
+      candidateTool: "claude" | "codex",
+      candidateModel: string,
+    ): Promise<string | undefined> => {
+      let discovery = discoveries.get(candidateTool);
+      if (discovery === undefined) {
+        discovery = this.dependencies.discoverCapabilities?.(candidateTool) ??
+          Promise.resolve(undefined);
+        discoveries.set(candidateTool, discovery);
+      }
+      return await this.resolveSpawnEffort(
+        request,
+        configuredRoute,
+        candidateTool,
+        candidateModel,
+        { pins: effortPins, discovery: await discovery },
+      );
+    };
     // An explicit model is the sole candidate, so its capability eligibility is
     // knowable before quota. Reject it before reserving any capacity.
     if (request.model !== undefined) {
-      effort = await this.resolveSpawnEffort(request, configuredRoute, tool, model);
+      effort = await resolveEffort(tool, model);
       effortResolved = true;
     }
     if (this.dependencies.quota?.config.enabled === true) {
@@ -1223,7 +1251,11 @@ export class HiveSpawner implements Spawner {
         // launch something other than what was asked for, and the Fable→Opus
         // release valve is equally a substitution, so neither applies here.
         // Unsafe quota still fails the spawn with the capacity report.
-        candidates = [{ tool, model: request.model }];
+        candidates = [{
+          tool,
+          model: request.model,
+          ...(effort === undefined ? {} : { effort }),
+        }];
       } else {
         const [claudeModel, codexModel] = await Promise.all([
           this.modelResolver("claude", configuredRoute),
@@ -1243,6 +1275,32 @@ export class HiveSpawner implements Spawner {
         if (claudeModel === CLAUDE_BEST_MODEL) {
           candidates.splice(1, 0, { tool: "claude", model: CLAUDE_OPUS_MODEL });
         }
+        const eligible: QuotaRouteCandidate[] = [];
+        const excluded: string[] = [];
+        for (const candidate of candidates) {
+          try {
+            const candidateEffort = await resolveEffort(
+              candidate.tool,
+              candidate.model,
+            );
+            eligible.push({
+              ...candidate,
+              ...(candidateEffort === undefined
+                ? {}
+                : { effort: candidateEffort }),
+            });
+          } catch (error) {
+            excluded.push(
+              error instanceof Error ? error.message : String(error),
+            );
+          }
+        }
+        if (eligible.length === 0) {
+          throw new Error(
+            `No capability-eligible route remains for ${request.tier}: ${excluded.join("; ")}`,
+          );
+        }
+        candidates = eligible;
       }
       const explicitTool = request.model !== undefined ? tool : request.tool;
       const decision = await this.dependencies.quota.routeAndReserve({
@@ -1250,6 +1308,7 @@ export class HiveSpawner implements Spawner {
         tier: request.tier,
         preferredTool: configuredRoute.tool,
         ...(explicitTool === undefined ? {} : { explicitTool }),
+        ...(request.model === undefined ? {} : { explicitCandidate: true }),
         ...(request.reviewOfTool === undefined
           ? {}
           : { reviewOfTool: request.reviewOfTool }),
@@ -1257,16 +1316,13 @@ export class HiveSpawner implements Spawner {
       });
       tool = decision.tool;
       model = decision.model;
+      effort = decision.effort;
+      effortResolved = true;
       quotaReservationId = decision.reservation.id;
     }
     if (!effortResolved) {
       try {
-        effort = await this.resolveSpawnEffort(
-          request,
-          configuredRoute,
-          tool,
-          model,
-        );
+        effort = await resolveEffort(tool, model);
       } catch (error) {
         if (quotaReservationId !== undefined) {
           await this.dependencies.quota?.cancel(quotaReservationId);

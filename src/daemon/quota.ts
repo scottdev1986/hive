@@ -1512,7 +1512,15 @@ export class QuotaService {
         `failed to start (${held.reason}) and is retried after ${held.until}.`
       );
     if (request.explicitCandidate === true) {
-      quarantineWarnings.push(...catalogQuarantine.values());
+      const warnings = [...catalogQuarantine.values()];
+      quarantineWarnings.push(...warnings);
+      if (this.alertSink !== null) {
+        for (const warning of warnings) {
+          await this.alertSink(
+            `Quota routing for ${request.agentName}: ${warning}`,
+          );
+        }
+      }
     }
 
     const failures: string[] = [];

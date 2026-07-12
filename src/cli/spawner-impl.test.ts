@@ -1233,6 +1233,67 @@ describe("HiveSpawner wiring", () => {
     quotaDb.close();
   });
 
+  test("filters capability before quota and reserves the selected effort triple", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-spawner-quota-effort-"));
+    tempRoots.push(root);
+    const quotaDb = new HiveDatabase(join(root, "quota.db"));
+    const quota = new QuotaService(
+      new QuotaLedger(quotaDb),
+      QuotaConfigSchema.parse({}),
+      () => new Date(timestamp),
+    );
+    const store = new FakeStore();
+    const tmux = new FakeTmux();
+    const probes: Array<"claude" | "codex"> = [];
+    const spawner = new HiveSpawner({
+      db: store,
+      repoRoot: root,
+      port: 4317,
+      config: { terminal: "auto", headless: true },
+      routing: async () => DEFAULT_ROUTING.deep,
+      routingPins: async () => ({}),
+      discoverCapabilities: async (provider) => {
+        probes.push(provider);
+        return discovery(
+          provider === "claude"
+            ? capabilityRecord("claude", "claude-opus-4-8", ["low", "high"])
+            : capabilityRecord("codex", "gpt-5.6-sol", ["low", "ultra"]),
+        );
+      },
+      tmux,
+      terminal: new FakeTerminal(),
+      createWorktree: async (_repoRoot, name, slug) => {
+        const path = join(root, name);
+        await mkdir(path, { recursive: true });
+        return { path, branch: `hive/${name}-${slug}` };
+      },
+      sleep: signalReadiness(store),
+      resolveModel: async (tool) =>
+        tool === "claude" ? "claude-opus-4-8" : "gpt-5.6-sol",
+      quota,
+    });
+
+    const spawned = await spawner.spawn({
+      task: "Route only among effort-eligible candidates",
+      tier: "deep",
+      effort: "ultra",
+    });
+    expect(probes.sort()).toEqual(["claude", "codex"]);
+    expect(spawned.executionIdentity).toEqual({
+      tool: "codex",
+      model: "gpt-5.6-sol",
+      effort: "ultra",
+    });
+    expect(quota.ledger.getReservation(spawned.quotaReservationId!))
+      .toMatchObject({
+        provider: "codex",
+        model: "gpt-5.6-sol",
+        effort: "ultra",
+      });
+    expect(tmux.sessions[0]?.[2]).toContain("model_reasoning_effort=ultra");
+    quotaDb.close();
+  });
+
   test("routes a deep-tier Claude spawn to Opus 4.8 when Fable's pool is under quota pressure", async () => {
     const root = await mkdtemp(join(tmpdir(), "hive-spawner-quota-opus-"));
     tempRoots.push(root);
