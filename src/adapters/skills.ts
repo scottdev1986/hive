@@ -283,10 +283,53 @@ export async function provisionSkills(
  * per detected vendor against the SAME root, so a prune there would have each
  * vendor delete the previous vendor's skills as it installed its own. This runs
  * only at spawn, where one worktree belongs to exactly one agent on exactly one
- * vendor. (In the primary checkout both vendors' skills legitimately coexist —
- * Hive cannot hide one from the other without uninstalling it for the vendor
- * that wants it. There, a skill's description naming its vendor is the only
- * available mitigation, and a label is not a mechanism.)
+ * vendor.
+ *
+ * ---
+ *
+ * ACCEPTED RESIDUAL — the primary checkout. Read this before "finishing the job".
+ *
+ * In the repo root, after `hive init` with two CLIs that share a directory
+ * installed, both vendors' contracts coexist in `.agents/skills` and each CLI
+ * sees the other's. That is NOT fixed, and it is not an oversight:
+ *
+ * - It is a property of the vendors, not of Hive. Two CLIs genuinely read one
+ *   directory. Hive cannot hide a skill from one of them without uninstalling it
+ *   for the vendor that wants it.
+ * - It does not touch Hive's agents. They live one-vendor-per-worktree, and the
+ *   prune above is what guarantees that. The readers in the primary checkout are
+ *   the human's own CLI sessions and the orchestrator — whose real instructions
+ *   ride its spawn prompt, not a skill file.
+ *
+ * Two fixes were measured and REJECTED; do not re-propose them without new
+ * evidence:
+ *
+ * 1. Install the Grok contract into Grok's private user scope (`~/.grok/skills`,
+ *    which Codex cannot read) instead of the shared project directory. It fixes
+ *    ONE DIRECTION of a symmetric leak: Grok reads its user scope AND the shared
+ *    project dir, so Codex stops seeing the Grok contract while Grok goes on
+ *    reading Codex's out of `.agents/skills`. A half-fix that looks complete is
+ *    worse than none, because nobody re-examines a closed bug.
+ * 2. The symmetric version — each vendor's contract into its own user scope.
+ *    Measured to work (Grok does not read `~/.codex/skills`), and rejected
+ *    anyway: it mutates user-global vendor state, which grok-integration-spec
+ *    §15 names an explicit non-goal, and it would load a Hive contract into every
+ *    session the user runs in every repo — including repos with no Hive, telling
+ *    an agent to land through `hive_land` and report to an orchestrator that does
+ *    not exist. Fixing a wrong-VENDOR contract in one repo by shipping a
+ *    wrong-CONTEXT contract into all of them is not a trade worth making, and
+ *    `hive uninstall` is per-repo, so nothing would cleanly own the file.
+ *
+ * The mitigation that remains is each skill's `description` naming its vendor in
+ * the first clause ("Operating contract for a GROK CLI agent…"). That is a label:
+ * it asks the model to notice and cooperate. It is defence in depth and it is not
+ * the fix — which is exactly why the prune above exists.
+ *
+ * Measured 2026-07-12, codex-cli 0.144.1 / grok 0.2.93 (f00f96316d4b), by
+ * planting uniquely-named probe skills and asking each CLI what its MODEL sees
+ * (`codex debug prompt-input`; a Grok turn with every tool denied, so the skill
+ * catalog was the only path to the probe token). A directory listing is not
+ * evidence that the model reads it.
  */
 async function removeForeignShippedSkills(
   root: string,
