@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { accountBillingFromUsage, spendRisk } from "./usage-credits";
+import {
+  accountBillingFromCodexRateLimits,
+  accountBillingFromUsage,
+  spendRisk,
+} from "./usage-credits";
 
 const AT = "2026-07-12T00:00:00.000Z";
 
@@ -30,6 +34,28 @@ const LIVE = {
     model_scoped: [
       { display_name: "Fable", utilization: 12, resets_at: "2026-07-18T19:00:00Z" },
     ],
+  },
+};
+
+const LIVE_CODEX = {
+  rateLimits: {
+    limitId: "codex",
+    limitName: null,
+    primary: { usedPercent: 41, windowDurationMins: 300, resetsAt: 1 },
+    secondary: { usedPercent: 23, windowDurationMins: 10080, resetsAt: 2 },
+    credits: { hasCredits: false, unlimited: false, balance: "0" },
+    individualLimit: null,
+    planType: "prolite",
+    rateLimitReachedType: null,
+  },
+  rateLimitsByLimitId: {
+    codex_bengalfox: {
+      limitId: "codex_bengalfox",
+      limitName: "GPT-5.3-Codex-Spark",
+      primary: { usedPercent: 7, windowDurationMins: 300, resetsAt: 1 },
+      secondary: { usedPercent: 3, windowDurationMins: 10080, resetsAt: 2 },
+      credits: null,
+    },
   },
 };
 
@@ -92,6 +118,63 @@ describe("the positive control: the reader sees real values before it trusts an 
       state: "unknown",
       reason: "malformed",
     });
+  });
+});
+
+describe("Codex paid overflow uses the same guard without inventing auto-top-up state", () => {
+  test("the live keys produce populated plan controls and an UNKNOWN overflow switch", () => {
+    const billing = accountBillingFromCodexRateLimits(LIVE_CODEX, AT);
+    expect(billing.generalUtilization).toEqual({
+      state: "known",
+      value: 41,
+      surface: "codex.account/rateLimits/read",
+      observedAt: AT,
+    });
+    expect(billing.modelUtilization).toEqual({
+      "gpt-5.3-codex-spark": 7,
+    });
+    // false/zero says there is no balance now. It cannot say auto-top-up is off.
+    expect(billing.creditsEnabled).toMatchObject({
+      state: "unknown",
+      reason: "surface-silent",
+    });
+  });
+
+  test("today's 41%/23% headroom never asks, despite unobservable auto-top-up", () => {
+    const risk = spendRisk(
+      accountBillingFromCodexRateLimits(LIVE_CODEX, AT),
+      "GPT-5.6-Sol",
+    );
+    expect(risk.state).toBe("no-spend");
+    expect(risk.detail).toContain("41% used");
+  });
+
+  test("credits present + exhausted plan asks about real money", () => {
+    const billing = accountBillingFromCodexRateLimits({
+      ...LIVE_CODEX,
+      rateLimits: {
+        ...LIVE_CODEX.rateLimits,
+        primary: { ...LIVE_CODEX.rateLimits.primary, usedPercent: 100 },
+        credits: { hasCredits: true, unlimited: false, balance: "100" },
+      },
+    }, AT);
+    const risk = spendRisk(billing, "GPT-5.6-Sol");
+    expect(risk.state).toBe("would-spend");
+    expect(risk.detail).toContain("real money");
+  });
+
+  test("zero balance + exhausted plan asks and names auto-top-up uncertainty", () => {
+    const billing = accountBillingFromCodexRateLimits({
+      ...LIVE_CODEX,
+      rateLimits: {
+        ...LIVE_CODEX.rateLimits,
+        primary: { ...LIVE_CODEX.rateLimits.primary, usedPercent: 100 },
+      },
+    }, AT);
+    const risk = spendRisk(billing, "GPT-5.6-Sol");
+    expect(risk.state).toBe("would-spend");
+    expect(risk.detail).toContain("auto-top-up");
+    expect(risk.detail).toContain("may purchase credits");
   });
 });
 

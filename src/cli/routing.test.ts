@@ -25,7 +25,7 @@ const CODEX_UP: ProviderDiscovery = {
     canonicalId: "gpt-5.6-sol",
     variant: null,
     launchToken: "gpt-5.6-sol",
-    displayName: null,
+    displayName: "GPT-5.6-Sol",
     aliases: [],
     entitled: known(true, "codex.model/list", "2026-07-11T11:59:00Z"),
     hidden: known(false, "codex.model/list", "2026-07-11T11:59:00Z"),
@@ -57,7 +57,22 @@ describe("the routing surface prints only what it derived", () => {
         pins: {},
         snapshot: null,
         shipped: DEFAULT_ROUTING,
-        billing: null,
+        billing: {
+          codex: {
+            creditsEnabled: unknown(
+              "surface-silent",
+              "codex.account/rateLimits/read",
+              "2026-07-11T11:59:00Z",
+            ),
+            disabledReason: null,
+            generalUtilization: known(
+              10,
+              "codex.account/rateLimits/read",
+              "2026-07-11T11:59:00Z",
+            ),
+            modelUtilization: {},
+          },
+        },
         now: NOW,
       }),
       NOW,

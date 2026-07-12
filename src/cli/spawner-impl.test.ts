@@ -11,7 +11,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { TerminalAdapter } from "../adapters/terminal";
 import type { ShadowSpawn } from "../daemon/routing-shadow";
-import type { AccountBilling } from "../daemon/usage-credits";
+import {
+  accountBillingFromCodexRateLimits,
+  type AccountBilling,
+} from "../daemon/usage-credits";
 import type { Approval } from "../daemon/db";
 import { CLAUDE_CHANNELS_FLAG } from "../adapters/tools/claude";
 import {
@@ -3362,8 +3365,39 @@ describe("the release valve follows the provider's metering, not a model name", 
         tool === "claude" ? options.claudeModel : "gpt-5.6-sol",
       ...(options.withMeasurement
         ? {
-          discoverCapabilities: async () => discovery(),
-          readBilling: async () => billing(options.metered),
+          discoverCapabilities: async (provider: "claude" | "codex") =>
+            provider === "claude"
+              ? discovery()
+              : {
+                status: "ok" as const,
+                records: [{
+                  ...capabilityRecord("codex", "gpt-5.6-sol", ["medium"]),
+                  displayName: "GPT-5.6-Sol",
+                }],
+                effectiveDefault: {
+                  provider: "codex" as const,
+                  model: known(
+                    "gpt-5.6-sol",
+                    "codex.config/read",
+                    timestamp,
+                  ),
+                  effort: known("medium", "codex.config/read", timestamp),
+                },
+              },
+          readBilling: async (provider: "claude" | "codex") =>
+            provider === "claude"
+              ? billing(options.metered)
+              : accountBillingFromCodexRateLimits({
+                rateLimits: {
+                  primary: { usedPercent: 20 },
+                  secondary: { usedPercent: 10 },
+                  credits: {
+                    hasCredits: false,
+                    unlimited: false,
+                    balance: "0",
+                  },
+                },
+              }, timestamp),
         }
         : {}),
       quota: {
@@ -3619,9 +3653,9 @@ describe("the spend guard is consulted by the LIVE spawn path", () => {
     expect([...store.approvals.values()]).toEqual([]);
   });
 
-  test("an unreadable bill does not hold every spawn hostage", async () => {
-    // A probe that failed is not evidence of a charge. The guard stands down and
-    // says nothing rather than refusing the world on a hunch.
+  test("an unreadable bill never authorizes an automatic spawn", async () => {
+    // A probe that failed is not evidence that a charge is impossible. Automatic
+    // routing stops and asks; an explicit pin remains the escape hatch.
     const root = await mkdtemp(join(tmpdir(), "hive-guard-blind-"));
     tempRoots.push(root);
     const store = new FakeStore();
@@ -3643,7 +3677,146 @@ describe("the spend guard is consulted by the LIVE spawn path", () => {
       discoverCapabilities: async () => claudeDiscovery(),
       readBilling: async () => null,
     });
-    const record = await spawner.spawn({ task: "blind", tier: "deep" });
-    expect(record.status).toBe("working");
+    let failure = "";
+    try {
+      await spawner.spawn({ task: "blind", tier: "deep" });
+    } catch (error) {
+      failure = error instanceof Error ? error.message : String(error);
+    }
+    expect(failure).toContain("could not read claude plan or billing state");
+    expect([...store.approvals.values()]).toHaveLength(1);
+  });
+});
+
+describe("the Codex spend reader drives the SAME live spawn guard", () => {
+  const codexDiscovery = (): CapabilityDiscoveryResult => ({
+    status: "ok",
+    records: [{
+      ...capabilityRecord("codex", "gpt-5.6-sol", ["medium", "xhigh"]),
+      displayName: "GPT-5.6-Sol",
+    }],
+    effectiveDefault: {
+      provider: "codex",
+      model: known("gpt-5.6-sol", "codex.config/read", timestamp),
+      effort: known("xhigh", "codex.config/read", timestamp),
+    },
+  });
+
+  const codexBilling = (
+    usedPercent: number,
+    credits: { hasCredits: boolean; unlimited: boolean; balance: string },
+  ): AccountBilling => accountBillingFromCodexRateLimits({
+    rateLimits: {
+      limitId: "codex",
+      limitName: null,
+      primary: { usedPercent, windowDurationMins: 300, resetsAt: 1 },
+      secondary: { usedPercent: 23, windowDurationMins: 10080, resetsAt: 2 },
+      credits,
+      individualLimit: null,
+      planType: "prolite",
+      rateLimitReachedType: null,
+    },
+    rateLimitsByLimitId: {},
+  }, timestamp);
+
+  async function spawnCodex(
+    root: string,
+    billing: AccountBilling,
+    model?: string,
+  ) {
+    const store = new FakeStore();
+    const spawner = new HiveSpawner({
+      db: store,
+      repoRoot: root,
+      port: 4317,
+      config: { terminal: "auto", headless: true },
+      routing: async () => ({ ...DEFAULT_ROUTING.deep, tool: "codex" }),
+      tmux: new FakeTmux(),
+      terminal: new FakeTerminal(),
+      createWorktree: async (_repoRoot, name, slug) => {
+        const path = join(root, name);
+        await mkdir(path, { recursive: true });
+        return { path, branch: `hive/${name}-${slug}` };
+      },
+      sleep: signalReadiness(store),
+      resolveModel: async () => "gpt-5.6-sol",
+      discoverCapabilities: async () => codexDiscovery(),
+      readBilling: async (provider) => provider === "codex" ? billing : null,
+    });
+    try {
+      const record = await spawner.spawn({
+        task: "drive the real Codex spawn gate",
+        tier: "deep",
+        ...(model === undefined ? {} : { model }),
+      });
+      return { record, store, failure: null };
+    } catch (error) {
+      return {
+        record: null,
+        store,
+        failure: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  test("A: today's 41%/23% state launches and files zero consent requests", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-codex-guard-headroom-"));
+    tempRoots.push(root);
+    const { record, store } = await spawnCodex(
+      root,
+      codexBilling(41, { hasCredits: false, unlimited: false, balance: "0" }),
+    );
+    expect(record).toMatchObject({
+      tool: "codex",
+      model: "gpt-5.6-sol",
+      status: "working",
+    });
+    expect([...store.approvals.values()]).toEqual([]);
+  });
+
+  test("B: exhausted + credits present refuses the spawn and queues consent", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-codex-guard-credits-"));
+    tempRoots.push(root);
+    const billing = codexBilling(100, {
+      hasCredits: true,
+      unlimited: false,
+      balance: "100",
+    });
+    const { failure, store } = await spawnCodex(root, billing);
+    expect(failure).toContain("would spend your money");
+    const asked: Approval[] = [...store.approvals.values()];
+    expect(asked).toHaveLength(1);
+    expect(asked[0]!.description).toContain("SPEND REAL MONEY");
+  });
+
+  test("C: exhausted + zero credits asks and names unobservable auto-top-up", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-codex-guard-topup-"));
+    tempRoots.push(root);
+    const { failure, store } = await spawnCodex(
+      root,
+      codexBilling(100, {
+        hasCredits: false,
+        unlimited: false,
+        balance: "0",
+      }),
+    );
+    expect(failure).toContain("auto-top-up");
+    expect(failure).toContain("may purchase credits");
+    const asked = [...store.approvals.values()];
+    expect(asked).toHaveLength(1);
+    expect(asked[0]!.description).toContain("auto-top-up");
+    expect(asked[0]!.description).toContain("may purchase credits");
+  });
+
+  test("D: an explicit Codex model pin launches even when the pool is spent", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-codex-guard-pinned-"));
+    tempRoots.push(root);
+    const { record, store } = await spawnCodex(
+      root,
+      codexBilling(100, { hasCredits: true, unlimited: false, balance: "100" }),
+      "gpt-5.6-sol",
+    );
+    expect(record?.status).toBe("working");
+    expect([...store.approvals.values()]).toEqual([]);
   });
 });

@@ -57,6 +57,11 @@ export const CapabilitySurfaceSchema = z.enum([
    * spawn cost real money" a measurement instead of a guess about a date.
    */
   "claude.get_usage",
+  /**
+   * Codex app-server `account/rateLimits/read`. It carries both plan windows
+   * and the credits snapshot that may pay after those windows are exhausted.
+   */
+  "codex.account/rateLimits/read",
 ]);
 export type CapabilitySurface = z.infer<typeof CapabilitySurfaceSchema>;
 

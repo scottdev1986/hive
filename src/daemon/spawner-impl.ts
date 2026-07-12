@@ -270,7 +270,9 @@ export interface HiveSpawnerDependencies {
    * The account's live pool readings. The release valve is derived from these —
    * from the pools the provider actually meters — rather than from a model name.
    */
-  readBilling?: () => Promise<AccountBilling | null>;
+  readBilling?: (
+    provider: "claude" | "codex",
+  ) => Promise<AccountBilling | null>;
   /**
    * Shadow mode. Records what the derived router *would* have chosen beside what
    * this spawn actually launched, and returns nothing the spawn reads. It is
@@ -734,7 +736,7 @@ export class HiveSpawner implements Spawner {
   ): Promise<string | null> {
     const [discovery, billing] = await Promise.all([
       this.discoverOnce("claude"),
-      this.dependencies.readBilling?.(),
+      this.dependencies.readBilling?.("claude"),
     ]);
 
     // Without a live reading, fall back to the name — the one model measurement
@@ -785,29 +787,24 @@ export class HiveSpawner implements Spawner {
    *   pool spent + credits OFF -> nothing can pay for it
    *   not measurable           -> do not AUTO-route; a pin still works
    *
-   * Scope, declared rather than assumed: this guards CLAUDE. `get_usage` is a
-   * Claude surface, and no surface Hive has found reports a paid-overflow
-   * mechanism for Codex at all — so a Codex spawn is not judged by Claude's pools,
-   * which would be nonsense, and it is not blocked on a measurement that does not
-   * exist. If Codex ever exposes one, this is where it plugs in.
-   *
-   * With credits OFF — today's state — `spendRisk` returns `no-spend` before it
-   * ever looks at a pool, so this cannot fire. A guard that nags a user who cannot
-   * be charged is one he learns to click through, and it would be gone by the day
-   * it counts.
+   * Claude proves when credits are off. Codex does not: its credits snapshot says
+   * whether a balance exists now, while the server-side auto-top-up switch is not
+   * exposed. The shared rule therefore remains unchanged — headroom goes, an
+   * exhausted pool that might be paid asks — while the Codex reader reports that
+   * unobservable switch honestly instead of turning `balance: "0"` into false
+   * confidence that nothing can pay.
    */
   private async spendRefusal(
     tool: "claude" | "codex",
     model: string,
   ): Promise<string | null> {
-    if (tool !== "claude") return null;
-    const billing = await this.dependencies.readBilling?.();
-    // A bill Hive could not read is not a bill it may invent. It also may not
-    // hold every spawn hostage to a probe that failed, so the guard stands down
-    // and says nothing rather than refusing the world on a hunch.
-    if (billing === undefined || billing === null) return null;
+    const readBilling = this.dependencies.readBilling;
+    // Older embedders that do not install a billing reader retain their previous
+    // behavior. The real daemon always installs one for both providers.
+    if (readBilling === undefined) return null;
+    const billing = await readBilling(tool);
 
-    const discovery = await this.discoverOnce("claude");
+    const discovery = await this.discoverOnce(tool);
     const base = splitVariant(model).base;
     const record = discovery?.status === "ok"
       ? discovery.records.find((candidate) =>
@@ -819,7 +816,13 @@ export class HiveSpawner implements Spawner {
     // The billing surface names a model only by its display name, so without one
     // the spawn cannot be joined to a pool: unknown, and unknown never authorises
     // a charge.
-    const risk = record?.displayName == null
+    const risk = billing === null
+      ? {
+        state: "unknown" as const,
+        detail: `Hive could not read ${tool} plan or billing state, so it cannot ` +
+          "rule out a charge",
+      }
+      : record?.displayName == null
       ? {
         state: "unknown" as const,
         detail: `Hive cannot join ${model} to a plan pool, so it cannot rule out ` +

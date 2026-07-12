@@ -10,7 +10,11 @@ import {
   ClaudeCapabilityProbe,
   CodexCapabilityProbe,
 } from "../daemon/capability-discovery";
-import { readAccountBilling, type AccountBilling } from "../daemon/usage-credits";
+import {
+  readAccountBilling,
+  type AccountBilling,
+  type AccountBillings,
+} from "../daemon/usage-credits";
 import { readCostConsent, requestCostConsent } from "../daemon/cost-consent";
 import { HiveDatabase } from "../daemon/db";
 import {
@@ -134,7 +138,7 @@ export function formatDerivedRouting(
   derived: DerivedRouting,
   now: Date,
   trusted: TrustedRoutingManifest,
-  billing: AccountBilling | null = null,
+  billing: AccountBillings | null = null,
 ): string {
   const lines: string[] = [
     "Derived routing — INERT. Live spawns still resolve through the shipped " +
@@ -207,7 +211,15 @@ export async function printRouting(): Promise<void> {
     killed ? unprobed : new CodexCapabilityProbe().read(),
     killed ? null : readSnapshot(),
     // What the account is actually charged. Measured, not dated.
-    killed ? null : readAccountBilling(),
+    killed
+      ? null
+      : Promise.all([
+        readAccountBilling("claude"),
+        readAccountBilling("codex"),
+      ]).then(([claudeBilling, codexBilling]): AccountBillings => ({
+        ...(claudeBilling === null ? {} : { claude: claudeBilling }),
+        ...(codexBilling === null ? {} : { codex: codexBilling }),
+      })),
   ]);
 
   // The consent ledger is the approvals queue Hive already has. Opened read-only
@@ -332,11 +344,15 @@ export async function printShadowRouting(): Promise<void> {
  * flag Hive could not read is never rendered as "off", because "off" reads as
  * "this model cannot run" and would silently disable a model the user is using.
  */
-function describeBilling(billing: AccountBilling | null): string {
-  if (billing === null) {
-    return "not read — the cost filter is OFF (an unreadable bill is not a free " +
-      "one, but it is not grounds to refuse every model either)";
-  }
+function describeBilling(billings: AccountBillings | null): string {
+  if (billings === null) return "not read — automatic cost routing is unavailable";
+  return (["claude", "codex"] as const)
+    .map((provider) => `${provider}: ${describeProviderBilling(billings[provider])}`)
+    .join("; ");
+}
+
+function describeProviderBilling(billing: AccountBilling | undefined): string {
+  if (billing === undefined) return "not measurable — not auto-routable";
   // The guard's armed/disarmed state, because a guard nobody can see the state of
   // is a guard nobody can trust. With credits off nothing can be charged, so it
   // is disarmed by fact rather than by configuration.
@@ -351,6 +367,7 @@ function describeBilling(billing: AccountBilling | null): string {
   const scoped = Object.entries(billing.modelUtilization)
     .map(([name, used]) => `${name} ${used}%`)
     .join(", ");
+  const surface = billing.creditsEnabled.surface;
   return `${credits}; ${general}${scoped === "" ? "" : `; caps: ${scoped}`} ` +
-    `[${billing.creditsEnabled.state === "known" ? billing.creditsEnabled.surface : "claude.get_usage"}]`;
+    `[${surface}]`;
 }

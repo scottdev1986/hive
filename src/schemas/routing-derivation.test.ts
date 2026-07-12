@@ -46,14 +46,18 @@ function record(
 }
 
 const CLAUDE_RECORDS = [
-  record("claude", "claude-fable-5"),
-  record("claude", "claude-opus-4-8", { aliases: ["default"] }),
-  record("claude", "claude-sonnet-5"),
-  record("claude", "claude-haiku-4-5-20251001"),
+  record("claude", "claude-fable-5", { displayName: "Fable" }),
+  record("claude", "claude-opus-4-8", {
+    aliases: ["default"],
+    displayName: "Opus",
+  }),
+  record("claude", "claude-sonnet-5", { displayName: "Sonnet" }),
+  record("claude", "claude-haiku-4-5-20251001", { displayName: "Haiku" }),
 ];
 
 const CODEX_RECORDS = [
   record("codex", "gpt-5.6-sol", {
+    displayName: "GPT-5.6-Sol",
     supportedEffortLevels: known(
       ["low", "medium", "high", "xhigh", "max", "ultra"],
       "codex.model/list",
@@ -85,6 +89,29 @@ const down = (reason: string): ProviderDiscovery => ({
   reason,
 });
 
+const HEADROOM_BILLING = {
+  claude: {
+    creditsEnabled: known(false, "claude.get_usage", FRESH),
+    disabledReason: null,
+    generalUtilization: known(10, "claude.get_usage", FRESH),
+    modelUtilization: {},
+  },
+  codex: {
+    creditsEnabled: unknown(
+      "surface-silent",
+      "codex.account/rateLimits/read",
+      FRESH,
+    ),
+    disabledReason: null,
+    generalUtilization: known(
+      10,
+      "codex.account/rateLimits/read",
+      FRESH,
+    ),
+    modelUtilization: {},
+  },
+} satisfies NonNullable<DerivationInput["billing"]>;
+
 function input(overrides: Partial<DerivationInput> = {}): DerivationInput {
   return {
     manifest: FIRST_ROUTING_MANIFEST,
@@ -95,7 +122,7 @@ function input(overrides: Partial<DerivationInput> = {}): DerivationInput {
     pins: {},
     snapshot: null,
     shipped: DEFAULT_ROUTING,
-    billing: null,
+    billing: HEADROOM_BILLING,
     now: NOW,
     ...overrides,
   };
@@ -334,13 +361,17 @@ describe("the spend guard: consent attaches to money, not to a model", () => {
   };
   const deepOf = (derived: ReturnType<typeof deriveRouting>) =>
     derived.tiers.find((entry) => entry.tier === "deep")!;
+  const measured = (claude: AccountBilling) => ({
+    ...HEADROOM_BILLING,
+    claude,
+  });
 
   test("credits OFF: the guard NEVER fires, even with every pool exhausted", () => {
     // Today's state. Nothing can be charged — a request past the plan limit is
     // refused, not billed — so there is nothing to ask about, and Fable is routed
     // like any other model. A guard that nags a user who cannot be charged is a
     // broken guard.
-    const derived = derive({ billing: billing(false, 100) });
+    const derived = derive({ billing: measured(billing(false, 100)) });
     expect(derived.consentRequired).toEqual([]);
     expect(deepOf(derived).claude.model.value).toBe("claude-fable-5");
   });
@@ -348,14 +379,14 @@ describe("the spend guard: consent attaches to money, not to a model", () => {
   test("credits OFF and on plan: Fable is an ordinary candidate, after the old cutoff date", () => {
     const derived = derive({
       now: new Date("2026-07-12T00:00:01Z"),
-      billing: billing(false, 13),
+      billing: measured(billing(false, 13)),
     });
     expect(deepOf(derived).claude.model.value).toBe("claude-fable-5");
     expect(deepOf(derived).claude.model.layer).toBe("derived");
   });
 
   test("credits ON + exhausted pool: it would spend real money, so it ASKS", () => {
-    const derived = derive({ billing: billing(true, 100) });
+    const derived = derive({ billing: measured(billing(true, 100)) });
     expect(derived.consentRequired).toEqual([
       expect.objectContaining({ canonicalId: "claude-fable-5" }),
     ]);
@@ -368,43 +399,37 @@ describe("the spend guard: consent attaches to money, not to a model", () => {
   test("credits ON but the plan still covers it: no ask, because there is no spend", () => {
     // A false positive here trains him to click through, which destroys the guard
     // as surely as a false negative empties his wallet.
-    const derived = derive({ billing: billing(true, 13) });
+    const derived = derive({ billing: measured(billing(true, 13)) });
     expect(derived.consentRequired).toEqual([]);
     expect(deepOf(derived).claude.model.value).toBe("claude-fable-5");
   });
 
   test("approved consent lets it route again", () => {
     const derived = derive({
-      billing: billing(true, 100),
+      billing: measured(billing(true, 100)),
       costConsent: (model) => model === "claude-fable-5" ? "approved" : "none",
     });
     expect(deepOf(derived).claude.model.value).toBe("claude-fable-5");
   });
 
   test("UNKNOWN never authorizes a charge: it asks", () => {
-    const derived = derive({ billing: billing(null, 100) });
+    const derived = derive({ billing: measured(billing(null, 100)) });
     expect(derived.consentRequired).toHaveLength(1);
     expect(deepOf(derived).claude.model.value).toBe("claude-opus-4-8");
   });
 
-  test("a PIN does not answer a question about money — it is still asked", () => {
-    // Deliberate, and a reversal of the earlier rule. Pinning a model says "use
-    // this model"; it does not say "spend beyond my plan". He asked to be asked
-    // before ANY spawn that would cost real money, and this is one. (A pin still
-    // overrides every judgment about the MODEL — capability, manifest, staleness.)
+  test("a PIN is direct consent and never enters the automatic spend guard", () => {
     const derived = derive({
-      billing: billing(true, 100),
+      billing: measured(billing(true, 100)),
       pins: { deep: { claude: { model: "claude-fable-5" } } },
     });
-    expect(derived.consentRequired).toEqual([
-      expect.objectContaining({ canonicalId: "claude-fable-5" }),
-    ]);
-    expect(deepOf(derived).claude.notes.join(" ")).toContain("WOULD SPEND YOUR MONEY");
+    expect(derived.consentRequired).toEqual([]);
+    expect(deepOf(derived).claude.model.value).toBe("claude-fable-5");
   });
 
   test("a pin with credits OFF is never asked about, because nothing can be charged", () => {
     const derived = derive({
-      billing: billing(false, 100),
+      billing: measured(billing(false, 100)),
       pins: { deep: { claude: { model: "claude-fable-5" } } },
     });
     expect(derived.consentRequired).toEqual([]);

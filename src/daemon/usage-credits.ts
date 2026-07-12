@@ -1,8 +1,15 @@
 import { z } from "zod";
-import { known, unknown, type Discovered } from "../schemas/capability";
+import {
+  known,
+  unknown,
+  type CapabilityProvider,
+  type Discovered,
+} from "../schemas/capability";
 import {
   ClaudeStdioProbeTransport,
+  CodexStdioProbeTransport,
   type ClaudeProbeTransport,
+  type CodexProbeTransport,
 } from "./quota-sources";
 
 /**
@@ -30,11 +37,13 @@ import {
  *
  *   **Would running this model right now spend real money?**
  *
- * That is fully measurable. A model spends money only once a plan pool that gates
- * it is exhausted; until then it is covered by the plan already paid for. Hence
- * `modelCost()` below: plan headroom → free; exhausted + credits on → real money,
- * ask first; exhausted + credits off → nothing can pay for it, so it genuinely
- * cannot run.
+ * The plan side is measurable. A model can spend money only once a plan pool
+ * that gates it is exhausted; until then it is covered by the plan already paid
+ * for. Whether overflow is disabled is provider-specific: Claude says so
+ * directly, while Codex exposes a current balance but not its auto-top-up switch.
+ * Hence `spendRisk()` below: plan headroom → free; exhausted + paid capacity →
+ * ask; exhausted + proven-off overflow → nothing can pay; exhausted + an
+ * unobservable overflow switch → ask rather than guess.
  *
  * Every field is `Discovered`. **An absent key is unknown, never `false`** — and
  * here that rule has teeth: a misspelled key would read back as "credits are
@@ -44,6 +53,7 @@ import {
 
 /** The surface these facts come from: the same free `get_usage` frame quota reads. */
 const USAGE = "claude.get_usage" as const;
+const CODEX_LIMITS = "codex.account/rateLimits/read" as const;
 
 /**
  * `get_usage`'s billing blocks, as claude 2.1.207 sends them. The key names are
@@ -76,7 +86,7 @@ const CreditBlockSchema = z.object({
 }).passthrough();
 
 export interface AccountBilling {
-  /** Whether usage credits — the overflow that pays past the plan — are on. */
+  /** Whether paid overflow is known available or known disabled. */
   creditsEnabled: Discovered<boolean>;
   /** The vendor's own reason, when it gives one. Printed, never paraphrased. */
   disabledReason: string | null;
@@ -84,7 +94,13 @@ export interface AccountBilling {
   generalUtilization: Discovered<number>;
   /** Percent used of each model's own extra ceiling, by the vendor's display name. */
   modelUtilization: Record<string, number>;
+  /** Provider-specific uncertainty that must be named in a consent request. */
+  overflowUncertainty?: string | null;
 }
+
+export type AccountBillings = Partial<
+  Record<CapabilityProvider, AccountBilling>
+>;
 
 /**
  * Read the billing facts out of one `get_usage` response.
@@ -105,6 +121,7 @@ export function accountBillingFromUsage(
       disabledReason: null,
       generalUtilization: unknown("malformed", USAGE, observedAt),
       modelUtilization: {},
+      overflowUncertainty: null,
     };
   }
   const limits = parsed.data.rate_limits;
@@ -146,6 +163,101 @@ export function accountBillingFromUsage(
       ? unknown("field-absent", USAGE, observedAt)
       : known(Math.max(...general), USAGE, observedAt),
     modelUtilization,
+    overflowUncertainty: null,
+  };
+}
+
+const CodexCreditSnapshotSchema = z.object({
+  hasCredits: z.boolean().optional(),
+  unlimited: z.boolean().optional(),
+  balance: z.string().nullable().optional(),
+}).passthrough();
+
+const CodexWindowSchema = z.object({
+  usedPercent: z.number(),
+}).passthrough().nullable().optional();
+
+const CodexLimitSnapshotSchema = z.object({
+  limitName: z.string().nullable().optional(),
+  primary: CodexWindowSchema,
+  secondary: CodexWindowSchema,
+  credits: CodexCreditSnapshotSchema.nullable().optional(),
+}).passthrough();
+
+const CodexBillingSchema = z.object({
+  rateLimits: CodexLimitSnapshotSchema,
+  rateLimitsByLimitId: z.record(z.string(), CodexLimitSnapshotSchema)
+    .nullable().optional(),
+}).passthrough();
+
+/**
+ * Read Codex's billing facts from `account/rateLimits/read`.
+ *
+ * Positive controls from the live 0.144.1 payload are the populated plan type
+ * and windows beside `credits = { hasCredits: false, unlimited: false,
+ * balance: "0" }`. The two false booleans prove only that no credits are
+ * sitting in the account. They do NOT prove auto-top-up is off: Codex exposes
+ * no such setting, and OpenAI documents that an eligible account may purchase
+ * credits automatically. Therefore false/zero is deliberately UNKNOWN as an
+ * overflow switch. Headroom still resolves to no-spend; exhaustion resolves to
+ * ASK with the unobservable auto-top-up state named.
+ */
+export function accountBillingFromCodexRateLimits(
+  response: unknown,
+  observedAt: string,
+): AccountBilling {
+  const parsed = CodexBillingSchema.safeParse(response);
+  if (!parsed.success) {
+    return {
+      creditsEnabled: unknown("malformed", CODEX_LIMITS, observedAt),
+      disabledReason: null,
+      generalUtilization: unknown("malformed", CODEX_LIMITS, observedAt),
+      modelUtilization: {},
+      overflowUncertainty: "Codex billing data was malformed",
+    };
+  }
+
+  const root = parsed.data.rateLimits;
+  const used = (snapshot: z.infer<typeof CodexLimitSnapshotSchema>): number[] =>
+    [snapshot.primary?.usedPercent, snapshot.secondary?.usedPercent]
+      .filter((value): value is number =>
+        typeof value === "number" && Number.isFinite(value)
+      );
+  const general = used(root);
+  const modelUtilization: Record<string, number> = {};
+  for (const snapshot of Object.values(parsed.data.rateLimitsByLimitId ?? {})) {
+    const values = used(snapshot);
+    if (
+      snapshot.limitName !== null && snapshot.limitName !== undefined &&
+      values.length > 0
+    ) {
+      modelUtilization[snapshot.limitName.toLowerCase()] = Math.max(...values);
+    }
+  }
+
+  const credits = root.credits;
+  const hasPaidCapacity = credits?.hasCredits === true ||
+    credits?.unlimited === true;
+  const creditsEnabled: Discovered<boolean> = hasPaidCapacity
+    ? known<boolean>(true, CODEX_LIMITS, observedAt)
+    : unknown(
+      credits === null || credits === undefined ? "field-absent" : "surface-silent",
+      CODEX_LIMITS,
+      observedAt,
+    );
+
+  return {
+    creditsEnabled,
+    disabledReason: null,
+    generalUtilization: general.length === 0
+      ? unknown("field-absent", CODEX_LIMITS, observedAt)
+      : known(Math.max(...general), CODEX_LIMITS, observedAt),
+    modelUtilization,
+    overflowUncertainty: hasPaidCapacity
+      ? null
+      : "Codex reports no current credit balance, but its CLI does not expose " +
+        "whether auto-top-up is enabled; proceeding after the plan is exhausted " +
+        "may purchase credits",
   };
 }
 
@@ -163,7 +275,7 @@ export type SpendRisk =
  * The guard keys on MONEY, not on a model's name. There is no special case for
  * Fable or for anything else: the thing worth protecting is his wallet.
  *
- * **With usage credits OFF, nothing can silently spend money.** A request that
+ * **With usage credits proven OFF, nothing can silently spend money.** A request that
  * outruns the plan simply hits the plan limit and fails — the provider refuses,
  * no charge occurs. So the guard does not fire at all in that state, whatever the
  * pools say. A guard that nags a user who cannot be charged is a broken guard,
@@ -231,26 +343,39 @@ export function spendRisk(
     detail: billing.creditsEnabled.state === "known"
       ? `the ${displayName} plan pool is exhausted and usage credits are ON, so ` +
         "this spawn would be billed to credits — real money"
-      : `the ${displayName} plan pool is exhausted and Hive cannot read whether ` +
-        "usage credits are on, so it cannot rule out a charge",
+      : billing.overflowUncertainty == null
+      ? `the ${displayName} plan pool is exhausted and Hive cannot read whether ` +
+        "usage credits are on, so it cannot rule out a charge"
+      : `the ${displayName} plan pool is exhausted. ${billing.overflowUncertainty}`,
   };
 }
 
 /**
  * Read this account's billing facts from the live CLI.
  *
- * It rides the transport quota discovery already uses — the same free
- * `initialize` + `get_usage` frames, no second probe and no second session. A
- * failure yields `null`, and the caller then treats the risk as UNKNOWN rather
- * than as zero: an unreadable bill is not a free one.
+ * It rides the transports quota discovery already uses: Claude's free
+ * `initialize` + `get_usage` exchange or Codex's free app-server handshake plus
+ * `account/rateLimits/read`. Neither starts a thread or turn. A failure yields
+ * `null`, and the caller treats the risk as UNKNOWN rather than as zero: an
+ * unreadable bill is not a free one.
  */
 export async function readAccountBilling(
-  transport: ClaudeProbeTransport = new ClaudeStdioProbeTransport(),
+  provider: CapabilityProvider = "claude",
   observedAt: string = new Date().toISOString(),
   timeoutMs = 10_000,
+  transports?: {
+    claude?: ClaudeProbeTransport;
+    codex?: CodexProbeTransport;
+  },
 ): Promise<AccountBilling | null> {
   try {
-    const payload = await transport.readUsage(timeoutMs);
+    if (provider === "codex") {
+      const payload = await (transports?.codex ?? new CodexStdioProbeTransport())
+        .readRateLimits(timeoutMs);
+      return accountBillingFromCodexRateLimits(payload.limits, observedAt);
+    }
+    const payload = await (transports?.claude ?? new ClaudeStdioProbeTransport())
+      .readUsage(timeoutMs);
     return accountBillingFromUsage(payload.usage, observedAt);
   } catch {
     return null;

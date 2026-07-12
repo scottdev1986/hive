@@ -93,7 +93,7 @@ export async function runDaemon(): Promise<void> {
         ? await new ClaudeCapabilityProbe().read()
         : await new CodexCapabilityProbe().read(),
     // The release valve reads the provider's own metering, not a model name.
-    readBilling: () => readAccountBilling(),
+    readBilling: (provider) => readAccountBilling(provider),
     // Shadow mode. It derives what the router would have chosen and writes it to
     // the shadow log; the spawner reads nothing back. This is the evidence that
     // earns the flip, and it is not the flip.
