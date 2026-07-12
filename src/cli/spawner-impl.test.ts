@@ -4138,6 +4138,160 @@ describe("the Codex spend reader drives the SAME live spawn guard", () => {
   });
 });
 
+describe("a refusal names the reason it actually refused for", () => {
+  // Live on 0.0.20: `hive_spawn tool:"grok", tier:"standard"` (no model named) was
+  // refused with `Requested provider grok has no route for standard`. The route was
+  // there the whole time — the only thing standing in the way was an unanswered
+  // `cost-consent:grok`, and approving it launched the byte-identical spawn.
+  //
+  // The reason existed. It just never got out: grok was dropped from the candidate
+  // list WITH its refusal string, claude survived, so the "nothing is eligible"
+  // throw never fired and the reasons were discarded. Quota then filtered the
+  // survivors down to the requested vendor, found none, and reported the absence as
+  // a missing route. A GUARD THAT REFUSES FOR REASON X MUST SAY X.
+  const grokDiscovery = (): CapabilityDiscoveryResult => ({
+    status: "ok",
+    records: [{
+      ...capabilityRecord("grok", "grok-4.5", ["low", "high"]),
+      displayName: "Grok 4.5",
+    }],
+    effectiveDefault: {
+      provider: "grok",
+      model: known("grok-4.5", "grok.models", timestamp),
+      effort: unknown("surface-silent", "grok.models", timestamp),
+    },
+  });
+
+  const claudeDiscovery = (): CapabilityDiscoveryResult => ({
+    status: "ok",
+    records: [{
+      ...capabilityRecord("claude", "claude-opus-4-8", ["low", "high"]),
+      displayName: "Opus",
+    }],
+    effectiveDefault: {
+      provider: "claude",
+      model: known("claude-opus-4-8", "claude.initialize", timestamp),
+      effort: unknown("surface-silent", "claude.initialize", timestamp),
+    },
+  });
+
+  /** Credits off, pool cool: nothing can charge him here, so claude sails through
+   * the spend guard and stays eligible. That is what hides the grok reason. */
+  const claudeBilling = (): AccountBilling => ({
+    creditsEnabled: known(false, "claude.get_usage", timestamp),
+    disabledReason: null,
+    generalUtilization: known(20, "claude.get_usage", timestamp),
+    modelUtilization: {},
+  });
+
+  /** The derived route, with grok's cell under the caller's control. Both cells
+   * carry a real reason, so nothing here is a stand-in for the engine's answer. */
+  const governed = (grokModel: string | null) => ({
+    tool: "claude" as const,
+    cells: {
+      claude: { model: "claude-opus-4-8", reason: "derived from live discovery" },
+      codex: { model: null, reason: "the codex CLI is not installed" },
+      grok: grokModel === null
+        ? { model: null, reason: "grok discovery named no model for standard" }
+        : { model: grokModel, reason: "derived from live discovery" },
+    },
+    chain: { claude: [], codex: [], grok: [] },
+    notes: [],
+  });
+
+  async function spawnGrok(
+    root: string,
+    grokModel: string | null,
+  ): Promise<{ failure: string; store: FakeStore }> {
+    const store = new FakeStore();
+    const db = new HiveDatabase(join(root, "refusal-quota.db"));
+    const spawner = new HiveSpawner({
+      db: store,
+      repoRoot: root,
+      port: 4317,
+      config: { terminal: "auto", headless: true },
+      governingRoute: async () => governed(grokModel),
+      quota: new QuotaService(
+        new QuotaLedger(db),
+        QuotaConfigSchema.parse({
+          discovery: false,
+          limits: [{
+            provider: "claude",
+            pool: "claude",
+            models: ["claude-opus-4-8"],
+            fiveHourAllowance: 500,
+            weeklyAllowance: 500,
+          }],
+        }),
+        () => new Date(timestamp),
+      ),
+      tmux: new FakeTmux(),
+      terminal: new FakeTerminal(),
+      createWorktree: async (_repoRoot, name, slug) => {
+        const path = join(root, name);
+        await mkdir(path, { recursive: true });
+        return { path, branch: `hive/${name}-${slug}` };
+      },
+      sleep: signalReadiness(store),
+      resolveModel: fakeResolveModel,
+      discoverCapabilities: async (provider) =>
+        provider === "grok" ? grokDiscovery() : claudeDiscovery(),
+      // Grok's billing surface is unreadable (it has no percent on the wire), so
+      // the charge cannot be ruled out and the guard must ask. Claude's is
+      // readable and says nothing can be billed.
+      readBilling: async (provider) =>
+        provider === "claude" ? claudeBilling() : null,
+    });
+    let failure = "";
+    try {
+      await spawner.spawn({
+        task: "the spawn that was refused for a route that existed",
+        tier: "standard",
+        tool: "grok",
+      });
+    } catch (error) {
+      failure = error instanceof Error ? error.message : String(error);
+    }
+    db.close();
+    return { failure, store };
+  }
+
+  test("consent-blocked: it says SPEND CONSENT, names cost-consent:grok, and never claims there is no route", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-refusal-consent-"));
+    tempRoots.push(root);
+    const { failure, store } = await spawnGrok(root, "grok-4.5");
+
+    // The lie. This is the whole bug: the route is right there in the cell.
+    expect(failure).not.toContain("no route");
+    // The truth, and the three things he needs to act on it.
+    expect(failure).toContain("SPEND CONSENT");
+    expect(failure).toContain("cost-consent:grok");
+    expect(failure).toContain("hive_approvals");
+    // And the question is really in the queue he was pointed at.
+    const asked = [...store.approvals.values()];
+    expect(asked).toHaveLength(1);
+    expect(asked[0]!.id).toBe("cost-consent:grok");
+    expect(asked[0]!.status).toBe("pending");
+  });
+
+  test("a route that is genuinely missing still reports a missing route", async () => {
+    // The other mask of the same bug: a guard that cries "consent" when the route
+    // really is gone is no more honest than one that cries "no route" over a
+    // pending approval. The two cases must stay distinguishable.
+    const root = await mkdtemp(join(tmpdir(), "hive-refusal-noroute-"));
+    tempRoots.push(root);
+    const { failure, store } = await spawnGrok(root, null);
+
+    // Still a routing refusal, and it still carries the engine's own reason.
+    expect(failure).toContain("no grok route for standard");
+    expect(failure).toContain("grok discovery named no model for standard");
+    expect(failure).not.toContain("SPEND CONSENT");
+    expect(failure).not.toContain("cost-consent");
+    // Nothing to consent to: there is no model to be charged for.
+    expect([...store.approvals.values()]).toEqual([]);
+  });
+});
+
 describe("graph context in the spawn prompt", () => {
   const worktree = {
     path: "/repo/.hive/worktrees/maya",

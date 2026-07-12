@@ -81,7 +81,7 @@ import {
   spendRisk,
   type AccountBilling,
 } from "./usage-credits";
-import { readCostConsent, requestCostConsent } from "./cost-consent";
+import { consentId, readCostConsent, requestCostConsent } from "./cost-consent";
 
 /**
  * Names an agent can be given. Human first names, because the user's interface
@@ -928,9 +928,12 @@ export class HiveSpawner implements Spawner {
     }
     // Ask once, through the queue he already answers. Pending is not a yes.
     requestCostConsent(this.dependencies.db, subject, risk.detail);
+    // Name the approval ID. A refusal the reader cannot act on sends him looking
+    // for a broken route instead of the question sitting in his own queue.
     return `${model} would spend your money: ${risk.detail}. Choosing this model ` +
       "is not the same as agreeing to be charged for it, so Hive asks once and " +
-      "remembers — approve the request in the approvals queue (hive_approvals) " +
+      `remembers — this is SPEND CONSENT, not routing: approve ${consentId(subject)} ` +
+      "in the approvals queue (hive_approvals to see it, hive_approve to answer) " +
       "and it will not ask again";
   }
 
@@ -1828,7 +1831,7 @@ export class HiveSpawner implements Spawner {
           }
         }
         const eligible: QuotaRouteCandidate[] = [];
-        const excluded: string[] = [];
+        const excluded: { tool: CapabilityProvider; reason: string }[] = [];
         for (const candidate of candidates) {
           try {
             // Money is an eligibility filter, like capability: it runs BEFORE
@@ -1839,7 +1842,7 @@ export class HiveSpawner implements Spawner {
               candidate.model,
             );
             if (refusal !== null) {
-              excluded.push(refusal);
+              excluded.push({ tool: candidate.tool, reason: refusal });
               continue;
             }
             const candidateEffort = await resolveEffort(
@@ -1853,15 +1856,41 @@ export class HiveSpawner implements Spawner {
                 : { effort: candidateEffort }),
             });
           } catch (error) {
-            excluded.push(
-              error instanceof Error ? error.message : String(error),
-            );
+            excluded.push({
+              tool: candidate.tool,
+              reason: error instanceof Error ? error.message : String(error),
+            });
           }
         }
         if (eligible.length === 0) {
           throw new Error(
-            `No eligible route remains for ${request.tier}: ${excluded.join("; ")}`,
+            `No eligible route remains for ${request.tier}: ${
+              excluded.map((entry) => entry.reason).join("; ")
+            }`,
           );
+        }
+        // A GUARD THAT REFUSES FOR REASON X MUST SAY X.
+        //
+        // When the spawn names its vendor, that vendor's own exclusion reason is
+        // the whole answer, and it dies here rather than downstream. It used to
+        // survive only as long as the OTHER vendors did: claude and codex stayed
+        // eligible, so the throw above never fired, `excluded` was dropped on the
+        // floor, and quota — which filters candidates down to the requested tool
+        // and finds nothing left — reported `no route for <tier>`. The route was
+        // never missing. The refusal was a pending cost-consent, and the message
+        // sent the reader hunting for a routing bug that did not exist.
+        if (request.tool !== undefined) {
+          const why = excluded.filter((entry) => entry.tool === request.tool);
+          if (
+            why.length > 0 &&
+            !eligible.some((candidate) => candidate.tool === request.tool)
+          ) {
+            throw new Error(
+              `Cannot spawn ${name} on ${request.tool}: ${
+                why.map((entry) => entry.reason).join("; ")
+              }`,
+            );
+          }
         }
         candidates = eligible;
       }
