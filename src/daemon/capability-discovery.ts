@@ -1,6 +1,6 @@
 import { tmpdir } from "node:os";
 import { homedir } from "node:os";
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 import {
@@ -663,7 +663,7 @@ const GrokModelInfoSchema = z.object({
   name: z.string().nullable().optional(),
   hidden: z.boolean(),
   supports_reasoning_effort: z.boolean(),
-  reasoning_efforts: z.array(GrokReasoningEffortSchema).nullable(),
+  reasoning_efforts: z.array(GrokReasoningEffortSchema).nullish(),
 }).passthrough();
 
 const GrokModelsCacheSchema = z.object({
@@ -682,7 +682,6 @@ export interface GrokCapabilityPayload {
   stdout: string;
   cache: unknown;
   cliVersion: string;
-  invokedAt: string;
 }
 
 export interface GrokCapabilityTransport {
@@ -691,22 +690,6 @@ export interface GrokCapabilityTransport {
 
 export class GrokCliCapabilityTransport implements GrokCapabilityTransport {
   async readCatalog(timeoutMs: number): Promise<GrokCapabilityPayload> {
-    const invokedAt = new Date().toISOString();
-    const models = Bun.spawn(["grok", "models"], {
-      stdin: "ignore",
-      stdout: "pipe",
-      stderr: "pipe",
-      timeout: timeoutMs,
-      killSignal: "SIGKILL",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      new Response(models.stdout).text(),
-      new Response(models.stderr).text(),
-      models.exited,
-    ]);
-    if (exitCode !== 0) {
-      throw new Error(`grok models failed: ${stderr.trim() || `exit ${exitCode}`}`);
-    }
     const version = Bun.spawnSync(["grok", "--version"], {
       stdin: "ignore",
       stdout: "pipe",
@@ -718,10 +701,64 @@ export class GrokCliCapabilityTransport implements GrokCapabilityTransport {
       ? parseGrokCliVersion(version.stdout.toString())
       : null;
     if (identity === null) throw new Error("grok --version was unrecognized");
-    const home = Bun.env.GROK_HOME ?? join(homedir(), ".grok");
-    const cache = JSON.parse(await readFile(join(home, "models_cache.json"), "utf8"));
-    return { stdout, cache, cliVersion: identity.version, invokedAt };
+    if (!isMeasuredGrokCatalogIdentity(identity)) {
+      throw new Error(
+        `grok catalog liveness is unverified for ${identity.version} ` +
+          `(${identity.buildHash}); measured only on 0.2.93 (f00f96316d4b)`,
+      );
+    }
+    const debugRoot = await mkdtemp(join(tmpdir(), "hive-grok-models-"));
+    const debugFile = join(debugRoot, "debug.log");
+    try {
+      const models = Bun.spawn([
+        "grok",
+        "models",
+        "--debug",
+        "--debug-file",
+        debugFile,
+      ], {
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+        timeout: timeoutMs,
+        killSignal: "SIGKILL",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([
+        new Response(models.stdout).text(),
+        new Response(models.stderr).text(),
+        models.exited,
+      ]);
+      if (exitCode !== 0) {
+        throw new Error(`grok models failed: ${stderr.trim() || `exit ${exitCode}`}`);
+      }
+      const debug = await readFile(debugFile, "utf8");
+      if (!grokModelsProvedLive(debug)) {
+        throw new Error(
+          "grok models did not emit the measured live settings-fetch success signal",
+        );
+      }
+      const home = Bun.env.GROK_HOME ?? join(homedir(), ".grok");
+      const cache = JSON.parse(
+        await readFile(join(home, "models_cache.json"), "utf8"),
+      );
+      return { stdout, cache, cliVersion: identity.version };
+    } finally {
+      await rm(debugRoot, { recursive: true, force: true });
+    }
   }
+}
+
+/** Positive liveness evidence measured on grok 0.2.93 / f00f96316d4b. The same
+ * command offline returns cached stdout and exit 0 but never emits this event. */
+export function grokModelsProvedLive(stderr: string): boolean {
+  return /Fetched remote settings from cli-chat-proxy/.test(stderr);
+}
+
+export function isMeasuredGrokCatalogIdentity(identity: {
+  version: string;
+  buildHash: string;
+}): boolean {
+  return identity.version === "0.2.93" && identity.buildHash === "f00f96316d4b";
 }
 
 function grokDefaultFromStdout(stdout: string): string | null {
@@ -740,9 +777,10 @@ export function recordsFromGrokModels(
   if (!parsed.success) return [];
   const fetchedAt = Date.parse(parsed.data.fetched_at);
   if (
-    !Number.isFinite(fetchedAt) || fetchedAt < Date.parse(payload.invokedAt) ||
+    !Number.isFinite(fetchedAt) ||
     parsed.data.grok_version !== payload.cliVersion
   ) return [];
+  const cacheObservedAt = new Date(fetchedAt).toISOString();
   const accountFingerprint = fingerprintAccount("grok", [
     parsed.data.auth_method,
     parsed.data.origin,
@@ -765,17 +803,17 @@ export function recordsFromGrokModels(
       displayName: info.name ?? null,
       aliases: [],
       entitled: known(true, GROK_MODELS, observedAt),
-      hidden: known(info.hidden, GROK_MODELS_CACHE, observedAt),
+      hidden: known(info.hidden, GROK_MODELS_CACHE, cacheObservedAt),
       supportsEffort: known(
         info.supports_reasoning_effort,
         GROK_MODELS_CACHE,
-        observedAt,
+        cacheObservedAt,
       ),
-      supportedEffortLevels: known(efforts, GROK_MODELS_CACHE, observedAt),
+      supportedEffortLevels: known(efforts, GROK_MODELS_CACHE, cacheObservedAt),
       defaultEffort: advertisedDefault === undefined
-        ? unknown("field-absent", GROK_MODELS_CACHE, observedAt)
-        : known(advertisedDefault, GROK_MODELS_CACHE, observedAt),
-      observedAt,
+        ? unknown("field-absent", GROK_MODELS_CACHE, cacheObservedAt)
+        : known(advertisedDefault, GROK_MODELS_CACHE, cacheObservedAt),
+      observedAt: cacheObservedAt,
     }];
   });
 }

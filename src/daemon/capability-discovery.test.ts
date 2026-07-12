@@ -3,6 +3,8 @@ import {
   ClaudeCapabilityProbe,
   CodexCapabilityProbe,
   GrokCapabilityProbe,
+  grokModelsProvedLive,
+  isMeasuredGrokCatalogIdentity,
   recordsFromClaudeInitialize,
   recordsFromCodexModelList,
   recordsFromGrokModels,
@@ -28,7 +30,6 @@ const GROK_PAYLOAD = {
     "  * fixture-fast-model (default)",
   ].join("\n"),
   cliVersion: "fixture-version",
-  invokedAt: "2026-07-12T11:59:59.000Z",
   cache: {
     fetched_at: "2026-07-12T12:00:00.000Z",
     etag: "fixture-etag",
@@ -54,7 +55,6 @@ const GROK_PAYLOAD = {
           name: "Fixture Fast",
           hidden: false,
           supports_reasoning_effort: false,
-          reasoning_efforts: [],
         },
       },
     },
@@ -330,15 +330,35 @@ describe("Grok models catalog", () => {
     }
   });
 
-  test("rejects a cache older than the command that was meant to refresh it", async () => {
+  test("accepts an unchanged cache after a live command and preserves its age", async () => {
     const stale = {
       ...GROK_PAYLOAD,
       cache: { ...GROK_PAYLOAD.cache, fetched_at: "2026-07-12T11:00:00.000Z" },
     };
-    expect(recordsFromGrokModels(stale, OBSERVED_AT)).toEqual([]);
+    const records = recordsFromGrokModels(stale, OBSERVED_AT);
+    expect(records).toHaveLength(2);
+    expect(records[0]?.observedAt).toBe("2026-07-12T11:00:00.000Z");
     const result = await new GrokCapabilityProbe({ readCatalog: async () => stale })
       .read();
-    expect(result).toMatchObject({ status: "unavailable" });
+    expect(result).toMatchObject({ status: "ok" });
+  });
+
+  test("requires positive live-fetch evidence and the exact measured build", () => {
+    expect(grokModelsProvedLive(
+      "Fetched remote settings from cli-chat-proxy\n",
+    )).toBe(true);
+    expect(grokModelsProvedLive(
+      "Settings fetch failed after 3 attempts\n",
+    )).toBe(false);
+    expect(grokModelsProvedLive("")).toBe(false);
+    expect(isMeasuredGrokCatalogIdentity({
+      version: "0.2.93",
+      buildHash: "f00f96316d4b",
+    })).toBe(true);
+    expect(isMeasuredGrokCatalogIdentity({
+      version: "0.2.94",
+      buildHash: "different",
+    })).toBe(false);
   });
 });
 
