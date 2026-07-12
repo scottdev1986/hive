@@ -11,6 +11,7 @@ import {
   type RoutingTier,
 } from "../schemas";
 import type { CapabilityDiscoveryResult } from "./capability-discovery";
+import type { BenchmarkCatalog } from "./benchmarks";
 import type { AccountBilling } from "./usage-credits";
 
 /**
@@ -58,6 +59,15 @@ export interface RoutingIo {
     provider: CapabilityProvider,
   ) => Promise<CapabilityDiscoveryResult | undefined>;
   readBilling: (provider: CapabilityProvider) => Promise<AccountBilling | null>;
+  /**
+   * The approved benchmark catalog, for the live fit policy's ordering
+   * evidence. Absent means the derivation runs without benchmark influence —
+   * the composition root wires the real reader; a caller that cannot supply
+   * one still gets a route, because absence of data never gates.
+   */
+  readBenchmarks?: (
+    discovery: Record<CapabilityProvider, ProviderDiscovery>,
+  ) => Promise<BenchmarkCatalog>;
   now?: () => Date;
 }
 
@@ -93,13 +103,20 @@ export async function resolveGoverningRoute(
       io.readBilling("codex"),
     ]);
 
+  const discovery = {
+    claude: (claude ?? unprobed("no discoverer is installed")) as ProviderDiscovery,
+    codex: (codex ?? unprobed("no discoverer is installed")) as ProviderDiscovery,
+  };
+  // The catalog read never blocks a route: a source failure surfaces as an
+  // unavailable catalog with no rows, and the fit policy is simply inert.
+  const benchmarks = io.readBenchmarks === undefined
+    ? undefined
+    : await io.readBenchmarks(discovery).catch(() => undefined);
   const derived = deriveRouting({
-    discovery: {
-      claude: (claude ?? unprobed("no discoverer is installed")) as ProviderDiscovery,
-      codex: (codex ?? unprobed("no discoverer is installed")) as ProviderDiscovery,
-    },
+    discovery,
     pins,
     snapshot,
+    ...(benchmarks === undefined ? {} : { benchmarks: benchmarks.models }),
     billing: {
       ...(claudeBilling === null ? {} : { claude: claudeBilling }),
       ...(codexBilling === null ? {} : { codex: codexBilling }),

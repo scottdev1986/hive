@@ -30,8 +30,8 @@ describe("benchmark catalog", () => {
     expect(catalog).toMatchObject({ status: "off", sources: [] });
   });
 
-  test("shadow mode without an approved source says so", async () => {
-    const catalog = await readBenchmarkCatalog({ mode: "shadow", discovery });
+  test("live mode without an approved source says so", async () => {
+    const catalog = await readBenchmarkCatalog({ mode: "live", discovery });
     expect(catalog).toMatchObject({
       status: "not-configured",
       sources: [],
@@ -65,7 +65,7 @@ describe("benchmark catalog", () => {
       },
     });
     const catalog = await readBenchmarkCatalog({
-      mode: "shadow",
+      mode: "live",
       discovery,
       sources: [source("one", "current", 80), source("two", "last-good", 70)],
     });

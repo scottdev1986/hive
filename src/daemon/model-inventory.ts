@@ -159,6 +159,9 @@ export async function readModelInventory(
     discovery,
     pins,
     snapshot,
+    // The same evidence the live spawn path uses, so the inventory's roles and
+    // efforts are the ones a spawn would actually launch with.
+    benchmarks: benchmarkCatalog.models,
     billing,
     costConsent: options.readConsent,
     now,

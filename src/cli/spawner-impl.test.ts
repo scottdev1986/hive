@@ -10,7 +10,6 @@ import { mkdtemp, mkdir, readFile, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { TerminalAdapter } from "../adapters/terminal";
-import type { ShadowSpawn } from "../daemon/routing-shadow";
 import {
   accountBillingFromCodexRateLimits,
   type AccountBilling,
@@ -3244,128 +3243,6 @@ describe("HiveSpawner launch prompt transport", () => {
     expect(health?.consecutiveFailures).toEqual(1);
     expect(health?.lastFailureReason).toContain("model not supported");
     db.close();
-  });
-});
-
-describe("shadow mode observes and cannot alter", () => {
-  /** One spawn, with shadow either wired or absent. Everything else identical. */
-  async function spawnOnce(
-    root: string,
-    recordShadowRoute?: (spawn: ShadowSpawn) => Promise<unknown>,
-  ) {
-    const tmux = new FakeTmux();
-    const store = new FakeStore();
-    const spawner = new HiveSpawner({
-      db: store,
-      repoRoot: root,
-      port: 4317,
-      config: { terminal: "auto", headless: true },
-      routing: async () => DEFAULT_ROUTING.deep,
-      tmux,
-      terminal: new FakeTerminal(),
-      createWorktree: async (_repoRoot, name, slug) => {
-        const path = join(root, name);
-        await mkdir(path, { recursive: true });
-        return { path, branch: `hive/${name}-${slug}` };
-      },
-      sleep: signalReadiness(store),
-      resolveModel: fakeResolveModel,
-      ...(recordShadowRoute === undefined ? {} : { recordShadowRoute }),
-    });
-    const record = await spawner.spawn({
-      task: "A task that must launch identically",
-      tier: "deep",
-    });
-    return { tmux, record };
-  }
-
-  test("a shadowed spawn launches byte-for-byte identically to an unshadowed one", async () => {
-    const plain = await mkdtemp(join(tmpdir(), "hive-shadow-off-"));
-    const shadowed = await mkdtemp(join(tmpdir(), "hive-shadow-on-"));
-    tempRoots.push(plain, shadowed);
-
-    const observed: ShadowSpawn[] = [];
-    const off = await spawnOnce(plain);
-    const on = await spawnOnce(shadowed, async (spawn) => {
-      observed.push(spawn);
-    });
-
-    // The launch command is what actually reaches the machine. It must not differ
-    // by a single byte -- the agent name and worktree root are the only things
-    // that legitimately vary between two spawns, so they are normalized away.
-    const launch = (
-      sessions: Array<[string, string, string]>,
-      name: string,
-      root: string,
-    ) =>
-      sessions.map(([session, cwd, command]) =>
-        [session, cwd, command]
-          .join(" ")
-          .replaceAll(name, "AGENT")
-          .replaceAll(root, "ROOT")
-      );
-
-    expect(launch(on.tmux.sessions, on.record.name, shadowed))
-      .toEqual(launch(off.tmux.sessions, off.record.name, plain));
-    // Same identity, same model, same tool. Shadow changed nothing.
-    expect(on.record.executionIdentity).toEqual(off.record.executionIdentity!);
-    expect(on.record.model).toBe(off.record.model);
-    // And it observed the launch it did not touch.
-    expect(observed).toHaveLength(1);
-    expect(observed[0]).toMatchObject({
-      tier: "deep",
-      tool: "claude",
-      model: "claude-fable-5",
-      userPinned: false,
-      outcome: "launched",
-      failureReason: null,
-    });
-  });
-
-  test("a shadow recorder that throws does not fail the spawn", async () => {
-    // An observer that can kill the thing it observes is not an observer.
-    const root = await mkdtemp(join(tmpdir(), "hive-shadow-throws-"));
-    tempRoots.push(root);
-    const { record } = await spawnOnce(root, async () => {
-      throw new Error("shadow log is on fire");
-    });
-    expect(record.status).toBe("working");
-    expect(record.model).toBe("claude-fable-5");
-  });
-
-  test("a user-pinned spawn model is recorded AS pinned", async () => {
-    const root = await mkdtemp(join(tmpdir(), "hive-shadow-pinned-"));
-    tempRoots.push(root);
-    const store = new FakeStore();
-    const observed: ShadowSpawn[] = [];
-    const spawner = new HiveSpawner({
-      db: store,
-      repoRoot: root,
-      port: 4317,
-      config: { terminal: "auto", headless: true },
-      routing: async () => DEFAULT_ROUTING.deep,
-      tmux: new FakeTmux(),
-      terminal: new FakeTerminal(),
-      createWorktree: async (_repoRoot, name, slug) => {
-        const path = join(root, name);
-        await mkdir(path, { recursive: true });
-        return { path, branch: `hive/${name}-${slug}` };
-      },
-      sleep: signalReadiness(store),
-      resolveModel: fakeResolveModel,
-      recordShadowRoute: async (spawn) => {
-        observed.push(spawn);
-      },
-    });
-    await spawner.spawn({
-      task: "Pinned",
-      tier: "deep",
-      model: "claude-opus-4-8",
-    });
-    expect(observed[0]).toMatchObject({
-      model: "claude-opus-4-8",
-      userPinned: true,
-    });
   });
 });
 

@@ -33,7 +33,7 @@ import {
 } from "./cli/graphify";
 import { runInitCli } from "./cli/init";
 import { projectRootOrCwd } from "./cli/project-root";
-import { printRouting, printShadowRouting } from "./cli/routing";
+import { printRouting } from "./cli/routing";
 import { runStart } from "./cli/start";
 import { runStatusline } from "./cli/statusline";
 import {
@@ -284,18 +284,12 @@ export function createProgram(): Command {
     .description("Show Hive agent status")
     .action(printStatus);
 
-  const routing = program
+  program
     .command("routing")
     .description(
       "Show the derived routing table with per-cell provenance (inert: does not route)",
     )
     .action(printRouting);
-
-  routing.command("shadow")
-    .description(
-      "Compare what the derived router would have chosen against what actually spawned",
-    )
-    .action(printShadowRouting);
 
   program
     .command("autonomy [mode]")

@@ -63,7 +63,6 @@ const discovery = {
 
 const routing: DerivedRouting = {
   derivedAt: AT,
-
   discovery,
   warnings: [],
   consentRequired: [],

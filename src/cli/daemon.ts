@@ -29,7 +29,8 @@ import {
   CodexCapabilityProbe,
 } from "../daemon/capability-discovery";
 import { resolveGoverningRoute } from "../daemon/routing-resolve";
-import { recordShadowObservation } from "../daemon/routing-shadow";
+import { readBenchmarkCatalog } from "../daemon/benchmarks";
+import { configuredBenchmarkSources } from "../daemon/benchmark-sources";
 import { readBillingWithMemory } from "../daemon/usage-credits";
 import { persistAutonomy } from "../config/autonomy";
 import { readCostConsent } from "../daemon/cost-consent";
@@ -103,8 +104,19 @@ export async function runDaemon(): Promise<void> {
     // Every live spawn is governed by the derivation engine: live discovery +
     // the user's pins + the last-known-good derivation. No static `routing`
     // table is wired — the binary ships no model knowledge, and a cell nothing
-    // can author refuses the spawn with its reason.
-    governingRoute: (tier, io) => resolveGoverningRoute(tier, io),
+    // can author refuses the spawn with its reason. The benchmark catalog
+    // rides in as the live fit policy's ordering evidence; a read failure
+    // leaves the policy inert and the route still resolves.
+    governingRoute: (tier, io) =>
+      resolveGoverningRoute(tier, {
+        ...io,
+        readBenchmarks: async (discovery) =>
+          readBenchmarkCatalog({
+            mode: (await loadHiveConfig()).benchmarks.mode,
+            discovery,
+            sources: configuredBenchmarkSources(),
+          }),
+      }),
     routingPins: loadRoutingPins,
     discoverCapabilities: async (provider) =>
       provider === "claude"
@@ -112,16 +124,6 @@ export async function runDaemon(): Promise<void> {
         : await new CodexCapabilityProbe().read(),
     // The release valve reads the provider's own metering, not a model name.
     readBilling: (provider) => readBillingWithMemory(provider),
-    // Shadow mode. It derives what the router would have chosen and writes it to
-    // the shadow log; the spawner reads nothing back. This is the evidence that
-    // earns the flip, and it is not the flip.
-    recordShadowRoute: async (spawn) =>
-      await recordShadowObservation(spawn, {
-        discoverCapabilities: async (provider) =>
-          provider === "claude"
-            ? await new ClaudeCapabilityProbe().read()
-            : await new CodexCapabilityProbe().read(),
-      }),
     tmux,
     terminal,
     workspacePresent: () => workspacePresence.isPresent(),

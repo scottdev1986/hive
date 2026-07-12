@@ -13,12 +13,6 @@ import {
 import { readCostConsent, requestCostConsent } from "../daemon/cost-consent";
 import { HiveDatabase } from "../daemon/db";
 import {
-  readShadowObservations,
-  summarizeShadow,
-  type ShadowSummary,
-  type Verdict,
-} from "../daemon/routing-shadow";
-import {
   deriveRouting,
   describeAge,
   RoutingSnapshotSchema,
@@ -199,6 +193,7 @@ export async function printRouting(): Promise<void> {
     discovery: { claude, codex },
     pins,
     snapshot,
+    benchmarks: benchmarkCatalog.models,
     billing,
     now,
   });
@@ -214,9 +209,23 @@ export async function printRouting(): Promise<void> {
         "Answer it in the approvals queue (hive_approvals / hive_approve).",
     );
   }
+  // The wrong-model escalation count (hive_escalate rows), measured per
+  // model × tier. This lived on the shadow surface; the routes it audits are
+  // real, so it reports here now that the parallel path is gone.
+  const escalations = db.listEscalations();
   db.close();
 
   console.log(formatDerivedRouting(derived, now, billing));
+  console.log(
+    escalations.length === 0
+      ? "\nEscalations — MEASURED: 0 wrong-model claims recorded."
+      : `\nEscalations — MEASURED: ${escalations.length} wrong-model claim(s): ` +
+        [...escalations.reduce((counts, entry) => {
+          const key = `${entry.tier} on ${entry.model}`;
+          return counts.set(key, (counts.get(key) ?? 0) + 1);
+        }, new Map<string, number>())].map(([key, count]) => `${count}× ${key}`)
+          .join(", ") + ".",
+  );
   console.log("\n" + formatModelInventory(buildModelInventory({
     discovery: { claude, codex },
     routing: derived,
@@ -233,121 +242,6 @@ export async function printRouting(): Promise<void> {
   const next = snapshotOf(derived, snapshot);
   if (next !== null) {
     await Bun.write(snapshotPath(), `${JSON.stringify(next, null, 2)}\n`);
-  }
-}
-
-// --------------------------------------------------------------------------
-// `hive routing shadow` — derived vs. actual, and the flip criteria.
-// --------------------------------------------------------------------------
-
-const VERDICT_MARK: Record<Verdict, string> = {
-  pass: "PASS",
-  fail: "FAIL",
-  unknown: "????",
-};
-
-export function formatShadowSummary(summary: ShadowSummary): string {
-  if (summary.spawns === 0) {
-    return "No shadow observations yet. Spawn an agent: every spawn records what " +
-      "the derived router would have chosen beside what actually launched.";
-  }
-
-  const pct = (count: number) =>
-    summary.judged === 0
-      ? "—"
-      : `${((count / summary.judged) * 100).toFixed(1)}%`;
-
-  const lines = [
-    `Shadow routing — ${summary.spawns} spawns observed, ${summary.judged} of them ` +
-    "router-chosen (user-pinned models are the user's judgment, not the router's,",
-    "and are excluded from every criterion below).",
-    "",
-    "AGREEMENT between the derived route and the table that actually decided",
-    `  tool    ${summary.agreement.tool}/${summary.judged} (${pct(summary.agreement.tool)})`,
-    `  model   ${summary.agreement.model}/${summary.judged} (${pct(summary.agreement.model)})`,
-    `  effort  ${summary.agreement.effort}/${summary.judged} (${pct(summary.agreement.effort)})`,
-    "",
-  ];
-
-  if (summary.divergences.length === 0) {
-    lines.push(
-      "DIVERGENCES: none. Derived and actual agree on every observed spawn.",
-      "",
-    );
-  } else {
-    lines.push("DIVERGENCES — what the router would have done differently, and why");
-    for (const divergence of summary.divergences) {
-      lines.push(
-        `  ${divergence.tier}.${divergence.field} ×${divergence.count}: ` +
-          `actual ${divergence.actual} → derived ${divergence.derived} ` +
-          `[${divergence.layer}]`,
-        `      ${divergence.reason}`,
-      );
-    }
-    lines.push("");
-  }
-
-  // Post-flip, this is the section that matters: the derived router is deciding,
-  // and this is the only thing still comparing what it DOES against what the old
-  // table WOULD have done.
-  if (summary.governed.derived > 0) {
-    const post = summary.postFlip;
-    lines.push(
-      `GOVERNED BY THE DERIVED ROUTER — ${summary.governed.derived} spawns ` +
-        `(${post.judged} router-chosen), against ${summary.governed.shipped} on the shipped table`,
-      "  what the OLD STATIC TABLE would have launched instead:",
-    );
-    if (post.divergences.length === 0) {
-      lines.push(
-        `  nothing. On every one of the ${post.judged} judged spawns the router ` +
-          "launched exactly what the shipped table would have.",
-        "",
-      );
-    } else {
-      for (const divergence of post.divergences) {
-        lines.push(
-          `  ${divergence.tier}.${divergence.field} ×${divergence.count}: ` +
-            `shipped would launch ${divergence.shipped} → router launched ` +
-            `${divergence.actual} [${divergence.layer}]`,
-          `      ${divergence.reason}`,
-        );
-      }
-      lines.push("");
-    }
-  }
-
-  lines.push("FLIP CRITERIA (every one must PASS; an unknown is not a pass)");
-  for (const criterion of summary.criteria) {
-    lines.push(`  [${VERDICT_MARK[criterion.verdict]}] ${criterion.question}`);
-    lines.push(`         ${criterion.detail}`);
-  }
-  lines.push("");
-  lines.push("ROLLBACK TRIGGER — the baselines a post-flip regression is measured against");
-  for (const criterion of summary.rollback) {
-    lines.push(`  [${VERDICT_MARK[criterion.verdict]}] ${criterion.question}`);
-    lines.push(`         ${criterion.detail}`);
-  }
-  lines.push("");
-  lines.push(
-    summary.flipReady
-      ? "FLIP: every criterion passes. The flip is defensible on this evidence."
-      : "FLIP: NOT READY. Routing stays on the shipped table.",
-  );
-  return lines.join("\n");
-}
-
-export async function printShadowRouting(): Promise<void> {
-  const observations = await readShadowObservations();
-  // Escalation rows live in the daemon's database, not the shadow log: read
-  // them here so the escalation criterion reports a measured count instead of
-  // "not read".
-  const db = new HiveDatabase();
-  try {
-    console.log(
-      formatShadowSummary(summarizeShadow(observations, db.listEscalations())),
-    );
-  } finally {
-    db.close();
   }
 }
 

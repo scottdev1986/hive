@@ -1,5 +1,10 @@
 import { z } from "zod";
 import {
+  applyFitPolicy,
+  CODING_SCORE_COLUMN,
+  type FitBenchmarkRow,
+} from "./fit-policy";
+import {
   capabilityFreshness,
   type CapabilityProvider,
   type CapabilityRecord,
@@ -197,6 +202,15 @@ export interface DerivationInput {
   pins: RoutingPins;
   snapshot: RoutingSnapshot | null;
   /**
+   * Published benchmark rows keyed `${provider}\0${canonicalId}`, from the
+   * approved source catalog. Ordering evidence ONLY (the adopted fit policy,
+   * docs/benchmark-fit-policy-proposal.md): it can reorder eligible candidates
+   * and pick a lower sufficient effort, and has no code path by which to add,
+   * remove, or veto a candidate. Missing means no benchmark influence at all —
+   * absence of data never gates a route.
+   */
+  benchmarks?: ReadonlyMap<string, FitBenchmarkRow[]>;
+  /**
    * What this account is actually charged, measured per provider. Missing means
    * Hive could not read it; that provider is not auto-routable on a guess.
    */
@@ -389,7 +403,64 @@ function deriveCell(
     notes,
   );
 
-  return { provider, model, effort, chain: [], notes };
+  return {
+    provider,
+    model,
+    effort: benchmarkFit(provider, kind, model, effort, resolvedRecord, input, notes),
+    chain: [],
+    notes,
+  };
+}
+
+/**
+ * The adopted fit policy, live in the real derivation (user order 2026-07-12):
+ * ordering evidence applied after pins, floors, and policy have resolved the
+ * cell, and before quota ranks candidates at spawn. With the candidate list a
+ * single model today (`chain` is empty until policy supplies alternatives),
+ * its live effect is effort economy — a lower advertised effort measured
+ * within the band of the routed one routes instead — plus the evidence basis
+ * named in the cell's notes. A pinned effort is the user's and is never moved.
+ */
+function benchmarkFit(
+  provider: CapabilityProvider,
+  kind: TaskKind,
+  model: Resolved<string>,
+  effort: Resolved<string>,
+  record: CapabilityRecord | undefined,
+  input: DerivationInput,
+  notes: string[],
+): Resolved<string> {
+  if (
+    input.benchmarks === undefined || model.value === null ||
+    !kindRequiresCodingCapability(kind)
+  ) {
+    return effort;
+  }
+  const canonicalId = record?.canonicalId ?? model.value;
+  const decision = applyFitPolicy({
+    candidates: [{
+      token: model.value,
+      canonicalId,
+      advertisedEfforts:
+        record !== undefined && record.supportedEffortLevels.state === "known"
+          ? [...record.supportedEffortLevels.value]
+          : null,
+      rows: input.benchmarks.get(`${provider}\0${canonicalId}`) ?? [],
+    }],
+    routedEffort: effort.value,
+    column: CODING_SCORE_COLUMN,
+  });
+  notes.push(
+    effort.layer === "pinned" && decision.effort !== null
+      ? `${decision.detail} — effort is pinned and stays ${effort.value}`
+      : decision.detail,
+  );
+  if (decision.effort === null || effort.layer === "pinned") return effort;
+  return {
+    value: decision.effort.value,
+    layer: "derived",
+    reason: decision.effort.basis,
+  };
 }
 
 function resolveModel(

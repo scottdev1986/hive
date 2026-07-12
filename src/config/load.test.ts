@@ -49,7 +49,7 @@ describe("config loading", () => {
       autonomy: "sandboxed",
       routingManifest: "auto",
       router: "derived",
-      benchmarks: { mode: "shadow" },
+      benchmarks: { mode: "live" },
       resources: {
         enabled: true,
         perProcessMemoryMb: 12_288,
@@ -88,6 +88,15 @@ describe("config loading", () => {
       '[benchmarks]\nmode = "off"\n',
     );
     expect((await loadHiveConfig()).benchmarks.mode).toBe("off");
+  });
+
+  test("a legacy 'shadow' benchmarks mode parses as live — the parallel path it named is gone", async () => {
+    await resetHome();
+    await writeFile(
+      join(hiveHome, "config.toml"),
+      '[benchmarks]\nmode = "shadow"\n',
+    );
+    expect((await loadHiveConfig()).benchmarks.mode).toBe("live");
   });
 
   test("parses model-specific quota pools and rejects invalid timezone configuration", async () => {
@@ -174,7 +183,7 @@ describe("config loading", () => {
       autonomy: "sandboxed",
       routingManifest: "auto",
       router: "derived",
-      benchmarks: { mode: "shadow" },
+      benchmarks: { mode: "live" },
       resources: {
         enabled: true,
         perProcessMemoryMb: 12_288,

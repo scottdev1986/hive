@@ -23,10 +23,13 @@ export const LifecycleConfigSchema = z.strictObject({
 });
 
 export const BenchmarkConfigSchema = z.strictObject({
-  // "off" is a hard network and data-use kill switch. No source is registered
-  // until the user approves its role; "shadow" permits approved adapters to
-  // populate inspection and audit output but can never affect a live route.
-  mode: z.enum(["shadow", "off"]).default("shadow"),
+  // "off" is a hard network and data-use kill switch. "live" lets approved
+  // sources order real candidate selection (user order 2026-07-12: no shadow,
+  // the real thing live). "shadow" is accepted from older config files and
+  // means "live" — the parallel path it named was removed by that ruling.
+  mode: z.enum(["live", "shadow", "off"]).default("live").transform((
+    mode,
+  ): "live" | "off" => mode === "shadow" ? "live" : mode),
 });
 
 export const HiveConfigSchema = z.strictObject({

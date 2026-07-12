@@ -65,7 +65,6 @@ import { agentTmuxSession } from "./tmux-sessions";
 import { validateEffort } from "./effort";
 import type { CapabilityDiscoveryResult } from "./capability-discovery";
 import type { GoverningRoute, RoutingIo } from "./routing-resolve";
-import type { ShadowSpawn } from "./routing-shadow";
 import {
   poolAvailability,
   spendRisk,
@@ -290,15 +289,6 @@ export interface HiveSpawnerDependencies {
   readBilling?: (
     provider: "claude" | "codex",
   ) => Promise<AccountBilling | null>;
-  /**
-   * Shadow mode. Records what the derived router *would* have chosen beside what
-   * this spawn actually launched, and returns nothing the spawn reads. It is
-   * invoked only once the launch is past the transport — a throw before that is
-   * this machine's failure, never evidence about a route — and it cannot fail a
-   * spawn: an observer that can kill the thing it observes is not an observer.
-   * Absent, spawning is bit-identical; nothing below branches on it.
-   */
-  recordShadowRoute?: (spawn: ShadowSpawn) => Promise<unknown>;
   /**
    * The per-repo graphify MCP server's URL, or null when there is nothing
    * healthy to attach (docs/architecture/graphify-integration.md). Read
@@ -686,45 +676,6 @@ export class HiveSpawner implements Spawner {
         }`,
       );
       return [];
-    }
-  }
-
-  /**
-   * Record what the derived router would have chosen for a spawn that has already
-   * launched. Observation only, and structurally so: it takes the launch as an
-   * argument rather than producing one, it returns nothing, and it swallows its
-   * own failures — a spawn that dies because its observer died is a spawn the
-   * observer altered, which is the one thing shadow mode may never do.
-   */
-  private async observeShadowRoute(
-    request: SpawnRequest,
-    name: string,
-    tool: "claude" | "codex",
-    model: string,
-    effort: string | undefined,
-    failureReason: string | null,
-  ): Promise<void> {
-    if (this.dependencies.recordShadowRoute === undefined) return;
-    try {
-      await this.dependencies.recordShadowRoute({
-        agent: name,
-        tier: request.tier,
-        tool,
-        model,
-        effort,
-        // A user-named model is the user's judgment, not the router's, so it is
-        // recorded and excluded from the flip criteria rather than counted as a
-        // divergence the derivation is answerable for.
-        userPinned: request.model !== undefined,
-        outcome: failureReason === null ? "launched" : "failed",
-        failureReason,
-      });
-    } catch (error) {
-      console.error(
-        `Shadow routing observation failed for ${name} (the spawn is unaffected): ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
     }
   }
 
@@ -2004,11 +1955,6 @@ export class HiveSpawner implements Spawner {
         }
       }
       const failureReason = await this.monitorReadiness(record, launchedCommand);
-      // Shadow mode observes here and nowhere else: the launch is past the
-      // transport, so its outcome is the model's answer and is real evidence
-      // about the route. Everything below this line is unchanged by it — the
-      // route already launched, and nothing reads what the shadow derived.
-      await this.observeShadowRoute(request, name, tool, model, effort, failureReason);
       if (failureReason !== null) {
         // The command ran, so this is the model's answer — unless the pane shows
         // the binary never executed at all.

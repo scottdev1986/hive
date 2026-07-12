@@ -1,6 +1,6 @@
 import type { CapabilityProvider, ProviderDiscovery } from "../schemas";
 
-export type BenchmarkMode = "shadow" | "off";
+export type BenchmarkMode = "live" | "off";
 
 export type InventoryBenchmark = {
   sourceId: string;

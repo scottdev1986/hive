@@ -56,7 +56,7 @@ describe("HiveConfigSchema", () => {
       autonomy: "sandboxed",
       routingManifest: "auto",
       router: "derived",
-      benchmarks: { mode: "shadow" },
+      benchmarks: { mode: "live" },
       resources: {
         enabled: true,
         perProcessMemoryMb: 12_288,

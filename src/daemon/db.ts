@@ -62,8 +62,8 @@ export type Approval = z.infer<typeof ApprovalSchema>;
 
 /**
  * One tier escalation: an agent's typed claim that its task exceeds its model.
- * Recorded so the rate is MEASURED per model × tier — the routing-shadow flip
- * criteria and the user's placement judgment read this; nothing re-routes on it.
+ * Recorded so the rate is MEASURED per model × tier — the routing inspection
+ * surface and the user's placement judgment read this; nothing re-routes on it.
  */
 export const EscalationSchema = z.object({
   id: z.string().min(1),
