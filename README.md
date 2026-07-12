@@ -39,6 +39,22 @@ hive > david finished the routes and is waiting; maya is mid-way
 
 Panes tile in as agents spawn and leave as they finish. Typing into a pane talks directly to that agent's own interface. The agents themselves live in background tmux sessions, so closing the window never stops one — running `hive` again reattaches the Workspace, and `hive watch <name>` opens a plain terminal window on a single agent.
 
+### Status dot
+
+Each agent pane's header shows a dot coloured by what that agent is actually doing right now, as reported by the daemon:
+
+| Colour | Meaning |
+| --- | --- |
+| 🟢 Green | Working — actively running its task. |
+| 🟡 Yellow | Idle — between turns; nothing needed from you. |
+| 🔴 Red | **Needs you** — a pending approval, or paused/stuck waiting on your input. |
+| 🔵 Blue | Spawning — still starting up. |
+| 🟣 Purple | Done — finished its task (dims once you acknowledge it). |
+| 🟠 Orange | Failed — the run ended in an error. |
+| ⚪ Gray | Unknown — the agent is dead, the status feed is down, or the status isn't one this app recognizes. Also shown on the orchestrator pane, whose activity Hive doesn't track. |
+
+Red is measured, never guessed: it appears only when the daemon records a pending approval or a genuine block on human input — an agent that is merely idle or quiet stays yellow. If a status can't be trusted, the dot goes gray rather than pretending.
+
 ## Features
 
 - **One conversation, many agents.** You talk to a single orchestrator; it manages the team.

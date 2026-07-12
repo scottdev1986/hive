@@ -19,6 +19,23 @@ enum Theme {
         }
     }
 
+    /// Header dot legend (documented in README "Status dot"): green working,
+    /// yellow idle, red needs-you, blue spawning, purple done, orange failed,
+    /// gray unknown/unreachable. Red only ever comes from a measured blocked
+    /// state — see `FeedStatusMap.activity(for:)`.
+    static func dotColor(for activity: AgentActivity, acknowledged: Bool = false) -> NSColor {
+        switch activity {
+        case .working: return .systemGreen
+        case .idle: return .systemYellow
+        case .needsUser: return .systemRed
+        case .spawning: return .systemBlue
+        case .done:
+            return acknowledged ? NSColor.systemPurple.withAlphaComponent(0.35) : .systemPurple
+        case .failed: return .systemOrange
+        case .unknown: return .systemGray
+        }
+    }
+
     static func statusIsDashed(_ status: PaneStatus) -> Bool {
         if case .disconnected = status { return true }
         return false

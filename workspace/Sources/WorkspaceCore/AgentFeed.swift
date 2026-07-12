@@ -104,6 +104,43 @@ public enum FeedStatusMap {
     }
 }
 
+/// What an agent is actually doing, as measured by the daemon — this drives
+/// the header dot's colour (the status border keeps its own coarser mapping).
+/// `needsUser` is only ever a measured condition: the daemon sets
+/// awaiting-approval when a pending approval record exists, and
+/// control-paused/stuck when the agent is genuinely blocked on a human. It is
+/// never inferred from idleness or elapsed time — an agent that finished and
+/// an agent stuck waiting on you are different states.
+/// An unrecognized or absent status word is `unknown`, never one of the
+/// working/idle/needsUser states.
+public enum AgentActivity: Equatable {
+    case working
+    case idle
+    case needsUser
+    case spawning
+    case done
+    case failed
+    case unknown
+}
+
+extension FeedStatusMap {
+    /// Dot colour source: raw daemon status word → measured activity.
+    public static func activity(for raw: String) -> AgentActivity {
+        switch raw {
+        case "working": return .working
+        case "idle": return .idle
+        case "awaiting-approval", "control-paused", "stuck": return .needsUser
+        case "spawning": return .spawning
+        case "done": return .done
+        case "failed": return .failed
+        // "dead", the feed-lost sentinel "unknown", and any word this app
+        // does not recognize: the dot must say "no signal", not impersonate
+        // a real state.
+        default: return .unknown
+        }
+    }
+}
+
 /// How long a closed agent's pane lingers (showing its final status border)
 /// before the UI closes it. Gives "done"/"failed" a visible beat instead of
 /// vanishing the terminal mid-glance.

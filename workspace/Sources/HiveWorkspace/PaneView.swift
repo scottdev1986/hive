@@ -193,7 +193,13 @@ final class PaneView: NSView {
         let color = Theme.statusColor(for: state.status)
         statusIcon.image = NSImage(systemSymbolName: Theme.statusSymbol(for: state.status),
                                    accessibilityDescription: state.statusDescription)
-        statusIcon.contentTintColor = color
+        // The dot reports measured activity (finer than the border's semantic
+        // state): working and idle must read differently at a glance.
+        var doneAcknowledged = false
+        if case .completed(let acknowledged) = state.status { doneAcknowledged = acknowledged }
+        statusIcon.contentTintColor = Theme.dotColor(
+            for: FeedStatusMap.activity(for: state.feedStatus),
+            acknowledged: doneAcknowledged)
         statusBorderLayer.strokeColor = color.cgColor
         statusBorderLayer.lineDashPattern = Theme.statusIsDashed(state.status) ? [6, 4] : nil
 
