@@ -250,7 +250,6 @@ export async function installGraphify(
   }
 
   const tools = graphifyToolsDir();
-  await mkdir(join(tools, "home"), { recursive: true });
 
   if (existsSync(graphifyBin())) {
     const probed = await probeBundle(deps.run);
@@ -284,6 +283,7 @@ export async function installGraphify(
     };
   }
 
+  await mkdir(join(tools, "home"), { recursive: true });
   const tarball = join(tools, `${artifact.asset}.download`);
   await writeFile(tarball, bytes);
   try {

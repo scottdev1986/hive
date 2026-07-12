@@ -26,12 +26,18 @@ export interface GraphifyArtifact {
   sha256: string;
 }
 
-/** Platforms follow Hive's own release slices (src/release/build.ts). No
- * artifact has been published yet: the first artifact release fills these in
- * the same PR that uploads the assets. */
+/** Platforms follow Hive's own release slices (src/release/build.ts). */
 export const GRAPHIFY_ARTIFACTS: Record<string, GraphifyArtifact | null> = {
-  "darwin-arm64": null,
-  "darwin-x64": null,
+  "darwin-arm64": {
+    tag: "graphify-v0.9.12-hive.1",
+    asset: "graphify-0.9.12-darwin-arm64.tar.zst",
+    sha256: "d629ae7732be0452ea0f7774be310f40ed0bfa1f1f502e22494a03f1a1c1e763",
+  },
+  "darwin-x64": {
+    tag: "graphify-v0.9.12-hive.1",
+    asset: "graphify-0.9.12-darwin-x64.tar.zst",
+    sha256: "c2abc5762a5aa2983c5bb957cdaf051be0f1aa55e7d2e074eeceeae999fb107c",
+  },
 };
 
 export function graphifyPlatformKey(

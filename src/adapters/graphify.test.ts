@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import graphifyLock from "../../graphify.lock" with { type: "text" };
@@ -237,7 +237,7 @@ describe("installGraphify", () => {
     expect(calls).toEqual([]);
   });
 
-  test("a hash mismatch refuses to unpack: no tar run, bundle dir absent", async () => {
+  test("a hash mismatch refuses to unpack with zero residue", async () => {
     const calls: string[][] = [];
     const result = await installGraphify({
       artifact: () => ({ ...artifact, sha256: "0".repeat(64) }),
@@ -254,9 +254,33 @@ describe("installGraphify", () => {
     }
     expect(calls).toEqual([]);
     expect(
-      await readFile(join(hiveHome, "tools", "graphify", graphifyPin(), "graphify"), "utf8")
+      await stat(join(hiveHome, "tools", "graphify"))
         .catch(() => null),
     ).toBeNull();
+  });
+
+  test("a hash mismatch preserves a previously installed pin", async () => {
+    const previousDir = join(hiveHome, "tools", "graphify", "previous-pin");
+    const previous = join(previousDir, "graphify");
+    await mkdir(previousDir, { recursive: true });
+    await writeFile(previous, "working install\n");
+    try {
+      const result = await installGraphify({
+        artifact: () => ({ ...artifact, sha256: "0".repeat(64) }),
+        fetchArtifact: async () => new Response(bundleBytes),
+        run: async () => {
+          throw new Error("a hash mismatch must not run anything");
+        },
+      });
+      expect(result.ok).toBe(false);
+      expect(await readFile(previous, "utf8")).toBe("working install\n");
+      expect(
+        await stat(join(hiveHome, "tools", "graphify", graphifyPin()))
+          .catch(() => null),
+      ).toBeNull();
+    } finally {
+      await rm(previousDir, { recursive: true, force: true });
+    }
   });
 
   test("verifies the sha256, unpacks with tar, then probes both entry points", async () => {
