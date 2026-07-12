@@ -13,39 +13,41 @@ import {
 import {
   defaultTaskKind,
   kindRequiresCodingCapability,
-  manifestAlias,
-  manifestCandidates,
-  type RoutingManifest,
-  type TaskKind,
-} from "./routing-manifest";
-import {
   RoutingTierSchema,
-  type RoutingTable,
   type RoutingTier,
+  type TaskKind,
 } from "./routing";
 
 /**
- * The derivation engine: tier → concrete route, through the three-layer
- * resolution order.
+ * The derivation engine: tier → concrete route, from sources that exist at
+ * runtime and nowhere else.
  *
  *   user pin (routing.toml, format unchanged, always wins)
- *     → derived route (manifest list ∩ discovery)
- *       → the fallback ladder (last-known-good → provider's effective default →
- *         the shipped table, loudly)
+ *     → derived route (the vendor's own effective default, vouched by a fresh
+ *       live capability record)
+ *       → last-known-good derivation (replayed past its TTL, loudly)
+ *         → REFUSAL, naming the vendor CLI Hive needs
  *
- * **This does not govern live spawns.** `resolveRoute()` in `config/load.ts` is
- * untouched and still returns the shipped table merged with `routing.toml`;
- * nothing in the spawn path imports this file. The engine is fully derivable and
- * inspectable — `hive routing` is its only caller — because the design forbids
- * flipping the middle layer before the signed manifest pipeline and the concrete
- * shadow criteria exist. Deriving is a claim about what Hive *would* pick; making
- * it pick is a later, separately-gated step.
+ * **The binary names no model.** The compiled manifest, the shipped alias
+ * table, and the model-name constants were removed as route sources by the
+ * user's directive (2026-07-12): routes derive from live discovery, the user's
+ * own policy, and the benchmark surface once he activates it — nothing else.
+ * The one vendor-declared rank Hive may pass through is the account's own
+ * effective default (what an unflagged launch runs, read from `config/read` /
+ * the menu's `default` entry): that is the vendor's judgment about the
+ * account, reported rather than formed. Where no source can author a route,
+ * the cell is a refusal with the reason, and the spawn path refuses with it —
+ * never a fall to a baked-in list, because there is no baked-in list to fall
+ * to.
  *
- * Every value carries the layer that authored it, per field rather than per cell,
- * because `routing.toml` merges per field: one cell's tool, model, and effort
- * routinely have three different authors. A field nobody could author is `null`
- * with the reason it is unknown. Nothing here has a default to fall back on that
- * is not itself one of the rungs above, and no rung is silent.
+ * What DOES ship is policy that names no model: which vendor a tier prefers,
+ * and what effort a tier reasons at. Task classification is Hive's to default
+ * and the user's to override; model knowledge is neither.
+ *
+ * Every value carries the layer that authored it, per field rather than per
+ * cell, because `routing.toml` merges per field: one cell's tool, model, and
+ * effort routinely have three different authors. A field nobody could author
+ * is `null` with the reason it is unknown. No rung is silent.
  */
 
 export const ROUTING_TIERS = RoutingTierSchema.options;
@@ -58,18 +60,40 @@ export const ROUTING_TIERS = RoutingTierSchema.options;
  */
 export const DERIVATION_TTL_MINUTES = 60;
 
+/**
+ * The tier policies Hive ships: which vendor a tier prefers, and the effort it
+ * reasons at. POLICY, not model knowledge — no model is named, and both are
+ * user-overridable per cell in `routing.toml`. The effort is passed only when
+ * the resolved model's live record advertises that exact level (the gate in
+ * `resolveEffort`); the vendor's own per-model default may inform a human
+ * editing this policy but never silently governs a derived cell.
+ */
+export const TIER_PREFERRED_TOOL: Record<RoutingTier, CapabilityProvider> = {
+  deep: "claude",
+  standard: "codex",
+  cheap: "codex",
+  review: "claude",
+};
+
+export const TIER_EFFORT_POLICY: Record<RoutingTier, string> = {
+  deep: "high",
+  standard: "medium",
+  cheap: "low",
+  review: "medium",
+};
+
 export type ResolutionLayer =
   /** A `routing.toml` entry. A standing user directive: it wins, always. */
   | "pinned"
-  /** The manifest's ordered list, intersected with fresh discovery. */
+  /** Derived at runtime: the vendor's effective default vouched by a fresh
+   * record, or a shipped POLICY value (tool, effort) that names no model. */
   | "derived"
-  /** Ladder rung 1: the last non-empty intersection, replayed past its TTL. */
+  /** The last non-empty derivation, replayed past its TTL. Guards discovery
+   * outages: a provider being down must not erase what the last healthy run
+   * learned. */
   | "ladder:last-known-good"
-  /** Ladder rung 2: what an unflagged launch on this account actually runs. */
-  | "ladder:provider-default"
-  /** Ladder rung 3: the compiled-in table. A loud compatibility exception. */
-  | "ladder:shipped-table"
-  /** No layer could author this field. The value is `null` and stays `null`. */
+  /** No source could author this field. The value is `null` and stays `null`,
+   * and the spawn path REFUSES rather than guessing. */
   | "unknown";
 
 export interface Resolved<T> {
@@ -85,10 +109,8 @@ export interface Resolved<T> {
 // --------------------------------------------------------------------------
 
 /**
- * The user's pins, read from `routing.toml` *before* the shipped table is merged
- * under them. `loadRoutingTable` merges the two and cannot tell them apart
- * afterwards, so a surface built on the merged table would report every shipped
- * default as a user pin.
+ * The user's pins, read from `routing.toml`. The one hand-authored route
+ * source, and the only one that outranks derivation.
  */
 export const RoutingPinSchema = z.looseObject({
   tool: z.enum(["claude", "codex"]).optional(),
@@ -103,29 +125,22 @@ export const RoutingPinSchema = z.looseObject({
 });
 
 // Keyed by a plain string, not by the tier enum: a `z.record` over an enum
-// demands every key, and pinning one tier is the normal case. An unknown tier
-// name is rejected by `loadRoutingTable`, which parses the same file against the
-// strict table schema.
+// demands every key, and pinning one tier is the normal case. Unknown tier
+// names are rejected by `loadRoutingPins`, which checks the keys explicitly —
+// a misspelled tier must not silently pin nothing.
 export const RoutingPinsSchema = z.record(z.string().min(1), RoutingPinSchema);
 export type RoutingPins = z.infer<typeof RoutingPinsSchema>;
 
-/**
- * Ladder rung 1: the last non-empty intersection, per cell.
- *
- * Two properties this shape exists to guarantee. **Only genuinely derived cells
- * are recorded** — replaying a pin as "last-known-good derived" would credit the
- * user's choice to the engine, and replaying the shipped table that way would
- * launder a compiled-in guess into a measurement. And **each cell carries its own
- * age**, because a run where one provider was down must not erase what the last
- * healthy run learned about it: the surviving cells are carried forward, and a
- * carried-forward cell reports the age it actually has. A memory a single bad run
- * can wipe is not a memory, and a ladder whose first rung silently vanishes falls
- * straight to the compiled-in guesses this design exists to end.
- */
+/** The provenance stamp on a snapshot cell. `manifestRevision` predates the
+ * manifest's removal; the field name survives so snapshots already on disk
+ * keep parsing, and new writes stamp the deriving source (`"discovery"`). */
 const SnapshotProvenanceSchema = {
   derivedAt: z.iso.datetime({ offset: true }),
   manifestRevision: z.string().min(1),
 };
+
+/** What a fresh derivation stamps into `manifestRevision` today. */
+export const DERIVED_FROM_DISCOVERY = "discovery";
 
 const SnapshotCellSchema = z.strictObject({
   model: z.string().min(1),
@@ -138,6 +153,18 @@ const SnapshotToolSchema = z.strictObject({
   ...SnapshotProvenanceSchema,
 });
 
+/**
+ * Rung 1: the last non-empty derivation, per cell.
+ *
+ * Two properties this shape exists to guarantee. **Only genuinely derived cells
+ * are recorded** — replaying a pin as "last-known-good derived" would credit the
+ * user's choice to the engine. And **each cell carries its own age**, because a
+ * run where one provider was down must not erase what the last healthy run
+ * learned about it: the surviving cells are carried forward, and a
+ * carried-forward cell reports the age it actually has. A memory a single bad
+ * run can wipe is not a memory, and without this rung a discovery outage would
+ * fall straight through to refusal.
+ */
 export const RoutingSnapshotSchema = z.strictObject({
   // Partial by construction: a tier whose cells were all pinned or laddered has
   // nothing derived to remember, and gets no entry.
@@ -166,19 +193,9 @@ export type ProviderDiscovery =
   | { status: "unavailable"; reason: string };
 
 export interface DerivationInput {
-  /** No manifest at all is a real state: every cell then falls to the ladder. */
-  manifest: RoutingManifest | null;
-  /**
-   * Why there is no manifest, in the words the warnings print. A manifest that
-   * was *rejected* and one that was *killed* are different facts, and a warning
-   * that says "none is installed" when one is installed and disabled describes a
-   * machine the reader does not have.
-   */
-  manifestAbsentReason?: string;
   discovery: Record<CapabilityProvider, ProviderDiscovery>;
   pins: RoutingPins;
   snapshot: RoutingSnapshot | null;
-  shipped: RoutingTable;
   /**
    * What this account is actually charged, measured per provider. Missing means
    * Hive could not read it; that provider is not auto-routable on a guess.
@@ -199,10 +216,11 @@ export interface DerivedCell {
   model: Resolved<string>;
   effort: Resolved<string>;
   /**
-   * The eligible candidates after the primary, in manifest order: the downshift
-   * chain quota ranks under pressure at spawn time. Capability filters this list
-   * before quota ever sees it, so no headroom number can downshift a coding task
-   * below the floor — a floor that can be outbid is not a floor.
+   * Eligible candidates after the primary: the downshift chain quota ranks
+   * under pressure at spawn time. Empty today — with the manifest gone there
+   * is no ordered candidate list until the benchmark surface or user policy
+   * supplies one — and kept in the shape so that list has somewhere vetted to
+   * arrive.
    */
   chain: string[];
   /** Conflicts named out loud. A disagreement Hive resolved silently is a lie. */
@@ -219,9 +237,6 @@ export interface DerivedTier {
 
 export interface DerivedRouting {
   derivedAt: string;
-  manifest:
-    | { revision: string; publishedAt: string; validUntil: string; expired: boolean }
-    | null;
   discovery: Record<CapabilityProvider, ProviderDiscovery>;
   tiers: DerivedTier[];
   /** Deduplicated, and loud: which rung failed, and why. */
@@ -260,32 +275,11 @@ export function deriveRouting(input: DerivationInput): DerivedRouting {
       consentRequired.push({ canonicalId, detail });
     }
   };
-  const manifest = input.manifest;
-  // Expiry is loud the moment it happens, not just when a cell finally hits the
-  // compiled-in table. An expired manifest supplies no candidates, so every cell
-  // is already living on the ladder — the user should hear that once, plainly,
-  // rather than discover it tier by tier as snapshots age out.
-  if (manifest !== null && manifestExpired(input)) {
-    warn(
-      `manifest ${manifest.revision} EXPIRED at ${manifest.validUntil}: it ` +
-        "supplies no candidates. Cells continue on last-known-good derivations " +
-        "where a snapshot exists and fall to the provider default or the " +
-        "compiled-in table where none does. Update hive to install a current " +
-        "manifest — expiry degrades loudly, it never quietly becomes the " +
-        "shipped table.",
-    );
-  }
   const tiers = ROUTING_TIERS.map((tier) =>
     deriveTier(tier, input, warn, needConsent)
   );
   return {
     derivedAt: input.now.toISOString(),
-    manifest: manifest === null ? null : {
-      revision: manifest.revision,
-      publishedAt: manifest.publishedAt,
-      validUntil: manifest.validUntil,
-      expired: input.now.getTime() >= Date.parse(manifest.validUntil),
-    },
     discovery: input.discovery,
     tiers,
     warnings,
@@ -305,7 +299,7 @@ function deriveTier(
   return {
     tier,
     kind,
-    tool: resolveTool(tier, input, warn),
+    tool: resolveTool(tier, input),
     claude: deriveCell("claude", tier, kind, input, warn, needConsent),
     codex: deriveCell("codex", tier, kind, input, warn, needConsent),
   };
@@ -314,7 +308,6 @@ function deriveTier(
 function resolveTool(
   tier: RoutingTier,
   input: DerivationInput,
-  warn: (message: string) => void,
 ): Resolved<CapabilityProvider> {
   const pinned = input.pins[tier]?.tool;
   if (pinned !== undefined) {
@@ -324,61 +317,22 @@ function resolveTool(
       reason: `routing.toml [${tier}].tool`,
     };
   }
-  const manifest = input.manifest;
-  if (manifest !== undefined && manifest !== null && !manifestExpired(input)) {
-    return {
-      value: manifest.tiers[tier]?.preferredProvider ?? null,
-      layer: "derived",
-      reason: `manifest ${manifest.revision} preferredProvider`,
-    };
-  }
-  const snapshotTool = input.snapshot?.tiers[tier]?.tool;
-  if (snapshotTool != null) {
-    return {
-      value: snapshotTool.value,
-      layer: "ladder:last-known-good",
-      reason: staleReason(snapshotTool, input),
-    };
-  }
-  const shipped = input.shipped[tier]?.tool;
-  if (shipped !== undefined) {
-    warn(shippedWarning(tier, "tool", input));
-    return {
-      value: shipped,
-      layer: "ladder:shipped-table",
-      reason: "compiled-in table",
-    };
-  }
-  return { value: null, layer: "unknown", reason: `no layer names a tool for ${tier}` };
+  // Vendor preference is shipped POLICY: it names no model, and a pin
+  // overrides it per tier. It never falls to unknown — preferring a vendor
+  // requires no evidence about any model.
+  return {
+    value: TIER_PREFERRED_TOOL[tier],
+    layer: "derived",
+    reason: `tier tool policy (override with routing.toml [${tier}].tool)`,
+  };
 }
 
 const staleReason = (
   entry: { derivedAt: string; manifestRevision: string },
   input: DerivationInput,
 ): string =>
-  `last derived ${describeAge(entry.derivedAt, input.now)} from manifest ` +
-  `${entry.manifestRevision}; stale`;
-
-const manifestExpired = (input: DerivationInput): boolean =>
-  input.manifest !== null &&
-  input.now.getTime() >= Date.parse(input.manifest.validUntil);
-
-function shippedWarning(
-  tier: RoutingTier,
-  field: string,
-  input: DerivationInput,
-): string {
-  const why = input.manifest === null
-    ? input.manifestAbsentReason ?? "no manifest is installed"
-    : manifestExpired(input)
-    ? `manifest ${input.manifest.revision} expired at ${input.manifest.validUntil}`
-    : "the manifest ∩ discovery intersection is empty";
-  return `${tier}.${field}: fell through every rung to the compiled-in table ` +
-    `(${why}, no last-known-good snapshot, no provider default). ` +
-    "The shipped table names models no record vouches for — this is the " +
-    "status quo the router exists to end, and it is a compatibility floor, " +
-    "not a derivation.";
-}
+  `last derived ${describeAge(entry.derivedAt, input.now)} ` +
+  `(source: ${entry.manifestRevision}); stale`;
 
 function deriveCell(
   provider: CapabilityProvider,
@@ -389,66 +343,24 @@ function deriveCell(
   needConsent: ConsentSink,
 ): DerivedCell {
   const notes: string[] = [];
-  const ttl = input.ttlMinutes ?? DERIVATION_TTL_MINUTES;
   const discovery = input.discovery[provider];
   const records = discovery.status === "ok" ? discovery.records : [];
   if (discovery.status === "unavailable") {
     notes.push(`${provider} discovery unavailable: ${discovery.reason}`);
   }
-  const listed = input.manifest === null ? [] : manifestCandidates(
-    input.manifest,
-    tier,
-    provider,
-    kind,
-    records,
-    input.now,
-    ttl,
-  );
-
-  // Cost is an eligibility filter, and it belongs beside capability rather than
-  // inside quota for the same reason capability does: the user's money is not a
-  // price that enough headroom can outbid. A model Hive would have to spend real
-  // money to run is not auto-routable on Hive's own say-so — it is his money, so
-  // it is his call. This filter applies to AUTO-ROUTING only: a pin never reaches
-  // it, because an explicit instruction already IS the consent.
-  // AVAILABILITY IS FILTERED BEFORE MONEY, AND IT IS NOT A MONEY QUESTION.
-  // A model whose own metered pool is spent, with credits off, is not cheap — it
-  // is REFUSED by the vendor. It must stop being a candidate so the next capable
-  // model in the manifest's order takes the spawn, silently and with no consent
-  // request, because there is nothing to consent to: no money is involved. This
-  // applies to a pinned cell's LIST as well (it never touches the pin itself),
-  // since a chain of models that cannot run is not a chain.
-  const runnable = listed.filter((candidate) => {
-    const gone = availabilityRefusal(input, candidate.record);
-    if (gone === null) return true;
-    notes.push(gone);
-    return false;
-  });
-
-  const pinned = input.pins[tier]?.[provider]?.model;
-  const candidates = pinned === undefined
-    ? runnable.filter((candidate) => {
-      const refusal = spendGuard(input, candidate.record, needConsent);
-      if (refusal === null) return true;
-      notes.push(refusal);
-      return false;
-    })
-    : runnable;
 
   const model = resolveModel(
     provider,
     tier,
     kind,
     input,
-    candidates.map((candidate) => candidate.record),
     records,
     notes,
     warn,
     needConsent,
   );
 
-  // The record for the model we actually resolved — not for the primary
-  // candidate, and not for the cell's other column. Effort is validated against
+  // The record for the model we actually resolved. Effort is validated against
   // *this* model or it is not validated at all.
   const resolvedRecord = model.value === null
     ? undefined
@@ -471,19 +383,13 @@ function deriveCell(
   const effort = resolveEffort(
     provider,
     tier,
-    kind,
     model,
     resolvedRecord,
     input,
     notes,
-    warn,
   );
 
-  const chain = candidates
-    .map((candidate) => candidate.record.launchToken)
-    .filter((token) => token !== model.value);
-
-  return { provider, model, effort, chain, notes };
+  return { provider, model, effort, chain: [], notes };
 }
 
 function resolveModel(
@@ -491,7 +397,6 @@ function resolveModel(
   tier: RoutingTier,
   kind: TaskKind,
   input: DerivationInput,
-  eligible: readonly CapabilityRecord[],
   records: readonly CapabilityRecord[],
   notes: string[],
   warn: (message: string) => void,
@@ -500,7 +405,7 @@ function resolveModel(
   // Layer 1: the pin. A standing user directive about the user's own account.
   const pinned = input.pins[tier]?.[provider]?.model;
   if (pinned !== undefined) {
-    notePinConflicts(provider, tier, kind, pinned, input, records, notes);
+    notePinConflicts(provider, pinned, input, records, notes);
     // A pin is the user's direct instruction and therefore their consent to run
     // this route. The spend guard governs Hive's automatic choices only.
     return {
@@ -510,22 +415,72 @@ function resolveModel(
     };
   }
 
-  // Layer 2: the derived route — the manifest's ordered list intersected with
-  // fresh discovery. Capability has already filtered this list (a model the
-  // manifest does not declare coding-capable never entered it).
-  const primary = eligible[0];
-  if (primary !== undefined && input.manifest !== null) {
-    return {
-      value: primary.launchToken,
-      layer: "derived",
-      reason: `manifest ${input.manifest.revision} ∩ ${provider} discovery ` +
-        `(record ${describeAge(primary.observedAt, input.now)}, ${primary.cliVersion})`,
-    };
+  // Layer 2: the derived route — the account's own effective default, the one
+  // vendor-declared rank Hive passes through. It must be vouched by a FRESH
+  // record (a default read off a catalog that may have changed is the silent
+  // guess this design exists to prevent), and it must clear availability and
+  // the spend guard like any automatic choice.
+  const ttl = input.ttlMinutes ?? DERIVATION_TTL_MINUTES;
+  const discovery = input.discovery[provider];
+  const effective = discovery.status === "ok"
+    ? discovery.effectiveDefault
+    : undefined;
+  if (effective !== undefined && effective.model.state === "known") {
+    const value = effective.model.value;
+    const record = records.find((entry) =>
+      entry.canonicalId === value || entry.launchToken === value ||
+      entry.aliases.includes(value)
+    );
+    if (record === undefined) {
+      notes.push(
+        `${provider}'s effective default ${value} matches no record in its own ` +
+          "catalog; nothing vouches for it, so it is not derived",
+      );
+    } else if (capabilityFreshness(record, ttl, input.now) === "stale") {
+      notes.push(
+        `${provider}'s effective default ${value} has only a stale record ` +
+          `(${describeAge(record.observedAt, input.now)}); not derived`,
+      );
+    } else {
+      const gone = availabilityRefusal(input, record);
+      if (gone !== null) {
+        notes.push(gone);
+      } else {
+        const refusal = spendGuard(input, record, needConsent);
+        if (refusal !== null) {
+          notes.push(refusal);
+        } else {
+          // The capability floor has no declarer yet: the manifest that vouched
+          // codingCapable is gone, and neither the benchmark surface nor user
+          // policy has replaced it. Saying so per cell is what keeps the floor's
+          // absence a visible fact instead of a silent regression.
+          if (kindRequiresCodingCapability(kind)) {
+            notes.push(
+              `no capability evidence for ${record.launchToken} (kind=${kind}): ` +
+                "no benchmark data or user policy vouches for it yet; the " +
+                "vendor's own default is passed through",
+            );
+          }
+          return {
+            value: record.launchToken,
+            layer: "derived",
+            reason: `${provider}'s effective unflagged launch, from ` +
+              `${effective.model.surface} ` +
+              `(record ${describeAge(record.observedAt, input.now)}, ${record.cliVersion})`,
+          };
+        }
+      }
+    }
   }
 
-  // Layer 3: the ladder.
+  // Layer 3: the last-known-good derivation — the guard for discovery outages.
   const snapshotCell = input.snapshot?.tiers[tier]?.[provider];
   if (snapshotCell != null) {
+    warn(
+      `${tier}.${provider}: derivation is riding the last-known-good snapshot ` +
+        `(${describeAge(snapshotCell.derivedAt, input.now)}); ${provider} ` +
+        "discovery is not currently supplying a route",
+    );
     return {
       value: snapshotCell.model,
       layer: "ladder:last-known-good",
@@ -533,48 +488,24 @@ function resolveModel(
     };
   }
 
-  const discovery = input.discovery[provider];
-  const effective = discovery.status === "ok"
-    ? discovery.effectiveDefault
-    : undefined;
-  if (effective !== undefined && effective.model.state === "known") {
-    const value = effective.model.value;
-    // The provider default is not a vetted candidate: it is whatever this
-    // account happens to be pointed at. If the manifest has no coding-capable
-    // declaration for it, say so — an unvouched model reached by the ladder is
-    // still an unvouched model, and printing it as if the floor had been applied
-    // would be the same lie in a nicer font.
-    if (kindRequiresCodingCapability(kind) && !declaredCodingCapable(input, value)) {
-      notes.push(
-        `provider default ${value} is not declared coding-capable by the ` +
-          `manifest (kind=${kind}); the ladder reached it because no vetted ` +
-          "candidate survived, and Hive is not inferring the capability from " +
-          "the name",
-      );
-    }
-    return {
-      value,
-      layer: "ladder:provider-default",
-      reason: `effective unflagged launch, from ${effective.model.surface} ` +
-        `(${describeAge(effective.model.observedAt, input.now)}); not the ` +
-        "catalog's isDefault flag",
-    };
-  }
-
-  const shipped = input.shipped[tier]?.[provider]?.model;
-  if (shipped !== undefined) {
-    warn(shippedWarning(tier, `${provider}.model`, input));
-    return {
-      value: shipped,
-      layer: "ladder:shipped-table",
-      reason: "compiled-in table; no record vouches for this model",
-    };
-  }
-
+  // Nothing can author this cell, and nothing is invented: the refusal names
+  // what Hive needs. This reaches the user twice — as a warning on every
+  // derivation surface, and as the refusal reason when a spawn needs this cell.
+  const why = discovery.status === "unavailable"
+    ? `${provider} discovery is unavailable (${discovery.reason})`
+    : `${provider} discovery answered but declared no usable default`;
+  warn(
+    `${tier}.${provider}: NO ROUTE — ${why} and no last-known-good derivation ` +
+      `exists. Hive ships no model list to fall back on: install or sign in to ` +
+      `the ${provider} CLI so Hive can learn what this account may launch, or ` +
+      `pin a model in routing.toml [${tier}.${provider}].`,
+  );
   return {
     value: null,
     layer: "unknown",
-    reason: `no layer names a ${provider} model for ${tier}`,
+    reason: `${why}; no last-known-good derivation; Hive ships no fallback ` +
+      `list. Install or sign in to the ${provider} CLI, or pin ` +
+      `routing.toml [${tier}.${provider}].`,
   };
 }
 
@@ -604,9 +535,9 @@ function availabilityRefusal(
 /**
  * The spend guard: would this spawn cost the user real money?
  *
- * It keys on MONEY, not on a model. There is no Fable case, no premium list, no
- * date — the thing being guarded is his wallet, so the rule is the same for every
- * model. `null` means the spawn cannot cost him anything and may proceed.
+ * It keys on MONEY, not on a model. There is no premium list and no date — the
+ * thing being guarded is his wallet, so the rule is the same for every model.
+ * `null` means the spawn cannot cost him anything and may proceed.
  *
  * A pinned model reaches this function too, but only to RAISE the question — it is
  * never excluded by the answer. The route is his; the money is still his to be
@@ -647,21 +578,18 @@ function spendGuard(
 
 /**
  * A pin is never silently overridden and never silently obeyed. It is used —
- * the user's standing judgment about their own account outranks the manifest's —
- * and every way it disagrees with what Hive knows is named here.
+ * the user's standing judgment about their own account outranks anything Hive
+ * derived — and every way it disagrees with what Hive knows is named here.
  */
 function notePinConflicts(
   provider: CapabilityProvider,
-  tier: RoutingTier,
-  kind: TaskKind,
   pinned: string,
   input: DerivationInput,
   records: readonly CapabilityRecord[],
   notes: string[],
 ): void {
-  const canonical = canonicalise(input, provider, pinned);
   const record = records.find((entry) =>
-    entry.canonicalId === canonical || entry.launchToken === pinned ||
+    entry.canonicalId === pinned || entry.launchToken === pinned ||
     entry.aliases.includes(pinned)
   );
   if (record === undefined) {
@@ -681,36 +609,7 @@ function notePinConflicts(
         `(${describeAge(record.observedAt, input.now)})`,
     );
   }
-  if (kindRequiresCodingCapability(kind) && !declaredCodingCapable(input, canonical)) {
-    notes.push(
-      `pinned model ${pinned} is not declared coding-capable and this tier's ` +
-        `kind is ${kind}; the pin wins and the conflict is reported — a table ` +
-        "entry does not get to stop every coding spawn on the tier",
-    );
-  }
 }
-
-/**
- * Coding capability is a *declared* manifest value, never an inference. Absent
- * means unknown, and unknown is excluded — a model nobody vetted does not get to
- * write code because its name looked capable.
- */
-function declaredCodingCapable(
-  input: DerivationInput,
-  canonicalId: string | null,
-): boolean {
-  if (canonicalId === null || input.manifest === null) return false;
-  return input.manifest.models[canonicalId]?.codingCapable?.value === true;
-}
-
-const canonicalise = (
-  input: DerivationInput,
-  provider: CapabilityProvider,
-  name: string,
-): string =>
-  input.manifest === null
-    ? name
-    : manifestAlias(input.manifest, provider, name)?.canonicalId ?? name;
 
 /**
  * Effort resolves *against the resolved model*, never in parallel with it. A
@@ -720,14 +619,12 @@ const canonicalise = (
 function resolveEffort(
   provider: CapabilityProvider,
   tier: RoutingTier,
-  kind: TaskKind,
   model: Resolved<string>,
   record: CapabilityRecord | undefined,
   input: DerivationInput,
   notes: string[],
-  warn: (message: string) => void,
 ): Resolved<string> {
-  const resolved = effortLadder(provider, tier, model, record, input, warn);
+  const resolved = effortLadder(provider, tier, model, record, input);
   if (resolved.value === null) return resolved;
 
   // The effort gate rides the *levels list*, which both vendors send, and never
@@ -751,9 +648,9 @@ function resolveEffort(
   // A DERIVED effort is a route Hive chose, so it holds itself to a stricter
   // standard than a pin or a ladder replay: it is passed only when the model's
   // live record advertises that exact level. An unadvertised level is refused,
-  // and an *unpublished* levels list refuses too — the manifest's choice is not
-  // evidence about what this model accepts, and guessing that it is would be a
-  // Hive belief wearing the vendor's authority.
+  // and an *unpublished* levels list refuses too — the tier policy's choice is
+  // not evidence about what this model accepts, and guessing that it is would
+  // be a Hive belief wearing the vendor's authority.
   if (resolved.layer === "derived") {
     notes.push(
       levels?.state === "known"
@@ -770,8 +667,7 @@ function resolveEffort(
       reason: `no valid effort for ${model.value}; no flag is passed`,
     };
   }
-  // A ladder effort was established together with its model (a replayed
-  // derivation, or the account's own unflagged-launch config) and survives an
+  // A ladder effort was established together with its model and survives an
   // absent record — refusing it during a provider outage would strip the very
   // replay the ladder exists for. Only a positive vendor exclusion refuses it.
   if (levels?.state === "known") {
@@ -795,7 +691,6 @@ function effortLadder(
   model: Resolved<string>,
   record: CapabilityRecord | undefined,
   input: DerivationInput,
-  warn: (message: string) => void,
 ): Resolved<string> {
   // 1. The cell's pinned effort: a standing user directive on either vendor.
   const pinned = input.pins[tier]?.[provider]?.effort;
@@ -803,21 +698,21 @@ function effortLadder(
     return {
       value: pinned,
       layer: "pinned",
-      reason: `routing.toml [${tier}.codex].effort`,
+      reason: `routing.toml [${tier}.${provider}].effort`,
     };
   }
 
-  // 2. The manifest's per-tier default: the knob that makes a cheap tier reason
-  //    cheaply — but only for a model the manifest itself resolved. A pinned
+  // 2. The tier's effort policy — the knob that makes a cheap tier reason
+  //    cheaply — but only for a model the engine itself derived. A pinned
   //    model keeps its own advertised default (the engine does not layer its
   //    tier economy onto a choice the user made), and a ladder model replays
   //    the effort established with it, per the pairing rule below.
-  const tierDefault = input.manifest?.tiers[tier]?.defaultEffort;
-  if (tierDefault !== undefined && model.layer === "derived") {
+  if (model.layer === "derived") {
     return {
-      value: tierDefault,
+      value: TIER_EFFORT_POLICY[tier],
       layer: "derived",
-      reason: `manifest ${input.manifest!.revision} [${tier}].defaultEffort`,
+      reason: `tier effort policy (override with ` +
+        `routing.toml [${tier}.${provider}].effort)`,
     };
   }
 
@@ -837,23 +732,9 @@ function effortLadder(
         }; stale`,
       };
     }
-  } else if (model.layer === "ladder:provider-default") {
-    // A model the ladder reached by *not passing a model flag* takes the
-    // effective config effort — the catalog's per-model recommendation describes
-    // a launch Hive is not making.
-    const discovery = input.discovery[provider];
-    const effective = discovery.status === "ok"
-      ? discovery.effectiveDefault.effort
-      : undefined;
-    if (effective?.state === "known") {
-      return {
-        value: effective.value,
-        layer: "ladder:provider-default",
-        reason: `effective unflagged launch, from ${effective.surface} ` +
-          `(${describeAge(effective.observedAt, input.now)})`,
-      };
-    }
   } else if (record?.defaultEffort.state === "known") {
+    // A pinned model with no pinned effort takes the vendor's own word about
+    // that model — the one authored value that is actually about it.
     return {
       value: record.defaultEffort.value,
       layer: "derived",
@@ -863,59 +744,45 @@ function effortLadder(
     };
   }
 
-  // 4. The shipped constant — Codex only. Claude has no shipped effort to fall
-  //    to, and inventing one here would present a Hive guess as a vendor default.
-  if (provider === "codex") {
-    const shipped = input.shipped[tier]?.codex?.effort;
-    if (shipped !== undefined) {
-      warn(shippedWarning(tier, "codex.effort", input));
-      return {
-        value: shipped,
-        layer: "ladder:shipped-table",
-        reason: "compiled-in table; no vendor surface recommends this",
-      };
-    }
-  }
-
-  // 5. Nothing. On Claude this is the common case and it is not a failure: Hive
-  //    passes no effort flag. Discovery cannot name what the CLI will use; the
-  //    first live statusLine observation completes identity after launch. A
-  //    shipped `medium` here would still be a Hive guess wearing the vendor's
-  //    authority.
+  // 4. Nothing. Not a failure: Hive passes no effort flag and the vendor's own
+  //    default governs the launch, which is the vendor's call to make.
   return {
     value: null,
     layer: "unknown",
-    reason: provider === "claude"
-      ? "claude publishes no per-model default effort and no tier default is " +
-        "set; hive passes no flag and awaits the live statusLine observation"
-      : "no layer names an effort",
+    reason: `no source names an effort for this ${provider} cell; no flag is ` +
+      "passed",
   };
 }
 
 /**
- * The snapshot the next run's ladder rung 1 will read: this run's derived cells,
+ * The snapshot the next run's rung-1 will read: this run's derived cells,
  * merged over the previous snapshot's.
  *
  * A cell this run derived replaces the remembered one. A cell it did not derive —
  * because the provider was unreachable, or because the user pinned it — keeps
  * whatever the last healthy run learned, at that run's timestamp. Overwriting the
  * file wholesale would let a single failed probe erase the rung that exists
- * precisely for failed probes, and the ladder would drop to the compiled-in table
+ * precisely for failed probes, and derivation would drop straight to refusal
  * without anyone having decided that.
+ *
+ * Only MODEL-bearing values are remembered. Tool policy and effort policy are
+ * compiled-in and need no memory; what the snapshot preserves is the thing only
+ * discovery could have known — which concrete model this account launches.
  */
 export function snapshotOf(
   derived: DerivedRouting,
   previous: RoutingSnapshot | null = null,
 ): RoutingSnapshot | null {
-  const revision = derived.manifest?.revision;
-  const stamp = { derivedAt: derived.derivedAt, manifestRevision: revision ?? "" };
+  const stamp = {
+    derivedAt: derived.derivedAt,
+    manifestRevision: DERIVED_FROM_DISCOVERY,
+  };
 
   const tiers: RoutingSnapshot["tiers"] = { ...previous?.tiers };
   for (const tier of derived.tiers) {
     const remembered = previous?.tiers[tier.tier];
     const cell = (current: DerivedCell) =>
-      revision !== undefined && current.model.layer === "derived" &&
-        current.model.value !== null
+      current.model.layer === "derived" && current.model.value !== null
         ? {
           model: current.model.value,
           effort: current.effort.layer === "derived"
@@ -925,10 +792,10 @@ export function snapshotOf(
         }
         : remembered?.[current.provider] ?? null;
 
-    const tool = revision !== undefined && tier.tool.layer === "derived" &&
-        tier.tool.value !== null
-      ? { value: tier.tool.value, ...stamp }
-      : remembered?.tool ?? null;
+    // Tool preference is compiled-in policy now: it needs no memory, and
+    // stamping it as discovery-derived would be a lie. Old snapshots' tool
+    // entries still parse; new writes let them age out.
+    const tool = remembered?.tool ?? null;
 
     const claude = cell(tier.claude);
     const codex = cell(tier.codex);

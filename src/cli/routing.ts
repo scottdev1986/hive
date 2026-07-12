@@ -1,15 +1,6 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
-import {
-  loadHiveConfig,
-  loadRoutingPins,
-} from "../config/load";
-import { whatGoverns } from "../daemon/routing-resolve";
-import {
-  loadTrustedRoutingManifest,
-  type ManifestOrigin,
-  type TrustedRoutingManifest,
-} from "../config/routing-manifest";
+import { loadHiveConfig, loadRoutingPins } from "../config/load";
 import {
   ClaudeCapabilityProbe,
   CodexCapabilityProbe,
@@ -30,7 +21,6 @@ import {
 import {
   deriveRouting,
   describeAge,
-  defaultRoutingTable,
   RoutingSnapshotSchema,
   snapshotOf,
   type DerivedCell,
@@ -55,13 +45,13 @@ import { configuredBenchmarkSources } from "../daemon/benchmark-sources";
  *
  * The surface prints nothing it did not derive. A value no layer could author
  * prints as `—` with the reason it is unknown; a record used past its TTL prints
- * its age; a cell that fell through the manifest to the compiled-in table says
- * which rung failed and why. A number that was really measured but measures the
- * wrong thing carries authority it has not earned, which makes it worse than no
- * number at all.
+ * its age; a cell that nothing could author prints the refusal the spawn path
+ * fails with. A number that was really measured but measures the wrong thing
+ * carries authority it has not earned, which makes it worse than no number at
+ * all.
  *
- * Deriving is not routing. Live spawns still resolve through `resolveRoute()`
- * and the shipped table; nothing here governs them.
+ * This IS what live spawns launch: the spawner asks the same engine, and there
+ * is no other table for either of them to consult.
  */
 
 const hiveHome = (): string => Bun.env.HIVE_HOME ?? join(homedir(), ".hive");
@@ -88,10 +78,8 @@ const LAYER_WIDTH = 26;
 const LAYER_LABEL: Record<Resolved<string>["layer"], string> = {
   "pinned": "pinned",
   "derived": "derived",
-  "ladder:last-known-good": "ladder 1/last-known-good",
-  "ladder:provider-default": "ladder 2/provider-default",
-  "ladder:shipped-table": "ladder 3/shipped-table",
-  "unknown": "unknown",
+  "ladder:last-known-good": "last-known-good",
+  "unknown": "REFUSED/unknown",
 };
 
 function formatField(
@@ -138,53 +126,25 @@ function formatDiscovery(
     `unflagged launch → ${effective}`;
 }
 
-const ORIGIN_LABEL: Record<ManifestOrigin, string> = {
-  "installed": "installed/signed",
-  "built-in": "built-in",
-  "kill-switch": "KILL SWITCH",
-};
-
 export function formatDerivedRouting(
   derived: DerivedRouting,
   now: Date,
-  trusted: TrustedRoutingManifest,
   billing: AccountBillings | null = null,
-  governs: "derived" | "shipped" = "shipped",
 ): string {
-  const lines: string[] = governs === "derived"
-    ? [
-      "Derived routing — GOVERNING. This is what live spawns launch: every " +
-      "unpinned route below",
-      "is the one an agent gets. Turn it off live, with no rebuild and no daemon " +
-      "restart, by setting",
-      "  routingManifest = \"off\"   (disown the manifest: kill switch, reverts every " +
-      "cell to the shipped table)",
-      "  router = \"shipped\"        (keep the manifest, stop it governing: `hive " +
-      "routing` and shadow keep working)",
-      "in ~/.hive/config.toml. Either takes effect on the NEXT SPAWN.",
-      "",
-    ]
-    : [
-      "Derived routing — NOT GOVERNING. Live spawns resolve through the shipped " +
-      "table + routing.toml;",
-      "this is what the engine would pick, and where every value came from.",
-      "",
-    ];
+  const lines: string[] = [
+    "Derived routing — GOVERNING. This is what live spawns launch: every " +
+    "unpinned route below",
+    "is the one an agent gets. Hive ships no model list — every model here was " +
+    "learned from the",
+    "vendors at runtime, and a cell nothing could author REFUSES the spawn with " +
+    "its reason.",
+    "Override any cell in ~/.hive/routing.toml; a pin always wins.",
+    "",
+  ];
 
-  // The manifest's *trust* is the first thing printed, because every derived
-  // cell below is only as trustworthy as the document that proposed it.
-  lines.push(`  trust      ${ORIGIN_LABEL[trusted.origin]} — ${trusted.detail}`);
-  // And what the account is actually charged. This is what decides whether a
+  // What the account is actually charged. This is what decides whether a
   // model may be auto-routed on cost grounds — measured, never a date.
   lines.push(`  billing    ${describeBilling(billing)}`);
-  lines.push(
-    derived.manifest === null
-      ? "  manifest   none in force — every cell falls to the ladder"
-      : `  manifest   ${derived.manifest.revision} (published ${derived.manifest.publishedAt}, ` +
-        `valid until ${derived.manifest.validUntil}${
-          derived.manifest.expired ? " — EXPIRED" : ""
-        })`,
-  );
   for (const provider of ["claude", "codex"] as const) {
     lines.push(
       `  discovery  ${formatDiscovery(provider, derived.discovery[provider], now)}`,
@@ -201,23 +161,9 @@ export function formatDerivedRouting(
     lines.push(...formatCell(tier.claude), ...formatCell(tier.codex), "");
   }
 
-  if (governs === "shipped") {
-    lines.push(
-      trusted.origin === "kill-switch"
-        ? "  governs    NO — the kill switch (routingManifest = \"off\") is engaged; " +
-          "the shipped table decides"
-        : "  governs    NO — router = \"shipped\" in config.toml; the shipped table " +
-          "decides",
-      "",
-    );
-  }
-
-  // The trust warnings lead: a rejected manifest is the reason the rest of the
-  // table looks the way it does.
-  const warnings = [...trusted.warnings, ...derived.warnings];
-  if (warnings.length > 0) {
+  if (derived.warnings.length > 0) {
     lines.push("WARNINGS");
-    for (const warning of warnings) lines.push(`  ! ${warning}`);
+    for (const warning of derived.warnings) lines.push(`  ! ${warning}`);
   }
   return lines.join("\n");
 }
@@ -225,29 +171,11 @@ export function formatDerivedRouting(
 export async function printRouting(): Promise<void> {
   const now = new Date();
   const config = await loadHiveConfig();
-  const trusted = await loadTrustedRoutingManifest(config);
-  const killed = trusted.origin === "kill-switch";
-  // Asked of the same function the spawner asks, so this surface cannot claim to
-  // govern a spawn it does not, or disclaim one it does.
-  const governs = whatGoverns(config, trusted.origin);
-
-  // Under the kill switch nothing manifest-derived is consulted — and that
-  // includes the last-known-good snapshot, which was itself derived *from* a
-  // manifest. Replaying it would route on exactly the judgment the switch was
-  // thrown to disown. Discovery is not probed either: with no manifest and no
-  // snapshot, every cell falls to the shipped table, which is what the switch
-  // promises. The reason string says "not probed" rather than "unavailable",
-  // because we did not look, and reporting an act we skipped as a state we
-  // observed is the bug this repo keeps dying of.
-  const unprobed: ProviderDiscovery = {
-    status: "unavailable",
-    reason: "not probed — the routing manifest kill switch is engaged",
-  };
-  const [pins, liveClaude, liveCodex, snapshot, liveBilling] = await Promise.all([
+  const [pins, claude, codex, snapshot, billing] = await Promise.all([
     loadRoutingPins(),
     new ClaudeCapabilityProbe().read(),
     new CodexCapabilityProbe().read(),
-    killed ? null : readSnapshot(),
+    readSnapshot(),
     // What the account is actually charged. Measured, not dated.
     Promise.all([
       readBillingWithMemory("claude"),
@@ -257,12 +185,9 @@ export async function printRouting(): Promise<void> {
       ...(codexBilling === null ? {} : { codex: codexBilling }),
     })),
   ]);
-  const claude = killed ? unprobed : liveClaude;
-  const codex = killed ? unprobed : liveCodex;
-  const billing = killed ? null : liveBilling;
   const benchmarkCatalog = await readBenchmarkCatalog({
     mode: config.benchmarks.mode,
-    discovery: { claude: liveClaude, codex: liveCodex },
+    discovery: { claude, codex },
     sources: configuredBenchmarkSources(),
   });
 
@@ -270,13 +195,10 @@ export async function printRouting(): Promise<void> {
   // here; the only write is filing a question nobody has been asked yet.
   const db = new HiveDatabase();
   const derived = deriveRouting({
-    manifest: trusted.manifest,
-    manifestAbsentReason: trusted.detail,
     costConsent: (model) => readCostConsent(db, model),
     discovery: { claude, codex },
     pins,
     snapshot,
-    shipped: defaultRoutingTable(),
     billing,
     now,
   });
@@ -294,11 +216,11 @@ export async function printRouting(): Promise<void> {
   }
   db.close();
 
-  console.log(formatDerivedRouting(derived, now, trusted, billing, governs));
+  console.log(formatDerivedRouting(derived, now, billing));
   console.log("\n" + formatModelInventory(buildModelInventory({
-    discovery: { claude: liveClaude, codex: liveCodex },
+    discovery: { claude, codex },
     routing: derived,
-    billing: liveBilling,
+    billing,
     benchmarks: benchmarkCatalog.models,
     benchmarkCatalog,
     now,
@@ -308,8 +230,7 @@ export async function printRouting(): Promise<void> {
   // are recorded, and cells it could not derive keep what the last healthy run
   // learned (`snapshotOf`), so neither a pin, nor a compiled-in guess, nor a
   // provider outage can rewrite the engine's memory of what it once derived.
-  // A killed run derives nothing, so it writes nothing.
-  const next = killed ? null : snapshotOf(derived, snapshot);
+  const next = snapshotOf(derived, snapshot);
   if (next !== null) {
     await Bun.write(snapshotPath(), `${JSON.stringify(next, null, 2)}\n`);
   }

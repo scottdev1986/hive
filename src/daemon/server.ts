@@ -53,11 +53,6 @@ import {
   type MemoryWriteInput,
 } from "../schemas";
 import { isAutonomy, type AutonomyControl } from "../config/autonomy";
-import { loadHiveConfig } from "../config/load";
-import {
-  loadTrustedRoutingManifest,
-  manifestExpiryAlert,
-} from "../config/routing-manifest";
 import { ChannelRegistry } from "./channels";
 import {
   bearerToken,
@@ -979,37 +974,10 @@ export class HiveDaemon {
           }`,
         );
       });
-      await this.alertExpiredManifest().catch((error) => {
-        console.error(
-          `Hive manifest expiry check failed: ${
-            error instanceof Error ? error.message : "unknown error"
-          }`,
-        );
-      });
       this.db.pruneHistory(new Date().toISOString());
     } finally {
       this.maintenanceRunning = false;
     }
-  }
-
-  /**
-   * Tell the user, durably and once per revision, when the routing manifest
-   * expires. Expiry never silently reroutes anything — the derivation engine
-   * already degrades to last-known-good and says so per spawn — but a warning
-   * that only exists on spawns nobody makes, or in a CLI nobody runs, is not
-   * "telling the user". The idempotency key makes this one message per expired
-   * revision, however many maintenance ticks see it.
-   */
-  private async alertExpiredManifest(): Promise<void> {
-    const trusted = await loadTrustedRoutingManifest(await loadHiveConfig());
-    const body = manifestExpiryAlert(trusted.manifest, new Date());
-    if (body === null) return;
-    await this.delivery.send(
-      "hive-routing",
-      ORCHESTRATOR_NAME,
-      body,
-      { idempotencyKey: `manifest-expired:${trusted.manifest!.revision}` },
-    ).catch(logAlertDeliveryFailure);
   }
 
   /** Files (once) the approval whose grant re-arms one landing for an agent

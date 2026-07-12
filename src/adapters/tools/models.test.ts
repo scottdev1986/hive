@@ -3,12 +3,7 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Route } from "../../schemas";
-import { defaultRoutingTable } from "../../schemas";
-import {
-  CLAUDE_BEST_MODEL,
-  CLAUDE_OPUS_MODEL,
-  resolveConcreteModel,
-} from "./models";
+import { resolveConcreteModel } from "./models";
 
 const previousClaudeConfigDir = Bun.env.CLAUDE_CONFIG_DIR;
 const previousCodexHome = Bun.env.CODEX_HOME;
@@ -72,15 +67,17 @@ describe("resolveConcreteModel", () => {
     ).toEqual("gpt-5.6-sol");
   });
 
-  test("resolves the claude best alias to the verified concrete model", async () => {
+  test("the best alias passes through verbatim: the binary maps no aliases", async () => {
+    // A compiled best→model constant was predetermined model knowledge; the
+    // vendor's own alias resolution is discovery's to report, not ours to
+    // hardcode. Pins should be concrete IDs, and an alias that isn't stays
+    // exactly what the user wrote.
     await isolatedHomes();
     const resolved = await resolveConcreteModel(
       "claude",
       route({ claudeModel: "best" }),
     );
-    expect(resolved).toEqual(CLAUDE_BEST_MODEL);
-    expect(resolved).not.toEqual("best");
-    expect(resolved).not.toEqual("default");
+    expect(resolved).toEqual("best");
   });
 
   test("resolves claude default from the user's settings.json", async () => {
@@ -126,24 +123,13 @@ describe("resolveConcreteModel", () => {
     ).toEqual("default");
   });
 
-  test("passes the concrete Opus 4.8 model through untouched", async () => {
+  test("passes a concrete model id through untouched", async () => {
     await isolatedHomes();
     expect(
       await resolveConcreteModel(
         "claude",
-        route({ claudeModel: CLAUDE_OPUS_MODEL }),
+        route({ claudeModel: "claude-opus-4-8" }),
       ),
     ).toEqual("claude-opus-4-8");
-  });
-});
-
-describe("CLAUDE_OPUS_MODEL", () => {
-  test("is not what the deep tier auto-selects: the date that forced it is gone", () => {
-    // This used to cross-check the post-cutoff table's hardcoded Opus id. The
-    // cutoff encoded a billing belief that measurement falsified, so the deep
-    // tier is back on the `best` alias and Opus is reached the honest way —
-    // through the manifest chain and quota pressure, not a calendar.
-    expect(defaultRoutingTable().deep.claude.model).toEqual("best");
-    expect(CLAUDE_OPUS_MODEL).toEqual("claude-opus-4-8");
   });
 });

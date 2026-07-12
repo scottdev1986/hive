@@ -18,7 +18,6 @@ import {
 import type { Approval } from "../daemon/db";
 import { CLAUDE_CHANNELS_FLAG } from "../adapters/tools/claude";
 import {
-  DEFAULT_ROUTING,
   QuotaConfigSchema,
   isLiveAgent,
   known,
@@ -48,6 +47,31 @@ import { QuotaLedger } from "../daemon/quota-ledger";
 import { QuotaService } from "../daemon/quota";
 import { agentTmuxSession } from "../daemon/tmux-sessions";
 import type { CapabilityDiscoveryResult } from "../daemon/capability-discovery";
+
+// A LOCAL routing table for the legacy static-table path: the binary ships no
+// table any more, so tests that exercise that path bring their own.
+const DEFAULT_ROUTING = {
+  deep: {
+    tool: "claude",
+    claude: { model: "best" },
+    codex: { model: "default", effort: "high" },
+  },
+  standard: {
+    tool: "codex",
+    claude: { model: "sonnet" },
+    codex: { model: "default", effort: "medium" },
+  },
+  cheap: {
+    tool: "codex",
+    claude: { model: "haiku" },
+    codex: { model: "default", effort: "low" },
+  },
+  review: {
+    tool: "claude",
+    claude: { model: "sonnet" },
+    codex: { model: "default", effort: "medium" },
+  },
+} as const;
 
 const timestamp = "2026-07-09T12:00:00.000Z";
 const tempRoots: string[] = [];
@@ -1358,9 +1382,6 @@ describe("HiveSpawner wiring", () => {
       repoRoot: root,
       port: 4317,
       config: { terminal: "auto", headless: true },
-      // Deep tier's default route still resolves "best" to Fable before the
-      // 2026-07-12 auto-routing cutoff; the release valve to Opus 4.8 is
-      // quota-pressure-driven and applies independently of that date.
       routing: async () => DEFAULT_ROUTING.deep,
       tmux,
       terminal: new FakeTerminal(),
@@ -1371,6 +1392,48 @@ describe("HiveSpawner wiring", () => {
       },
       sleep: signalReadiness(store),
       resolveModel: fakeResolveModel,
+      // The valve is measurement-driven and ONLY measurement-driven now: it
+      // fires because the provider's own reading shows Fable metered
+      // separately, and its alternative is the account's own discovered
+      // default — no compiled-in name pair remains to fall back on.
+      discoverCapabilities: async (provider) =>
+        provider === "claude"
+          ? {
+            status: "ok" as const,
+            records: [
+              {
+                ...capabilityRecord("claude", "claude-fable-5", ["low", "high"]),
+                displayName: "Fable",
+              },
+              {
+                ...capabilityRecord("claude", "claude-opus-4-8", ["low", "high"]),
+                displayName: "Opus",
+              },
+            ],
+            effectiveDefault: {
+              provider: "claude" as const,
+              model: known("claude-opus-4-8", "claude.initialize", timestamp),
+              effort: unknown("surface-silent", "claude.initialize", timestamp),
+            },
+          }
+          : {
+            status: "ok" as const,
+            records: [{
+              ...capabilityRecord("codex", "gpt-5.6-sol", ["medium", "high"]),
+              displayName: "GPT-5.6-Sol",
+            }],
+            effectiveDefault: {
+              provider: "codex" as const,
+              model: known("gpt-5.6-sol", "codex.config/read", timestamp),
+              effort: known("medium", "codex.config/read", timestamp),
+            },
+          },
+      readBilling: async () => ({
+        creditsEnabled: known(false, "claude.get_usage", timestamp),
+        disabledReason: null,
+        generalUtilization: known(20, "claude.get_usage", timestamp),
+        modelUtilization: { fable: 40 },
+      }),
       quota,
     });
 
@@ -3470,7 +3533,10 @@ describe("the release valve follows the provider's metering, not a model name", 
     expect(candidates).not.toContain("claude:claude-opus-4-8_alt");
   });
 
-  test("with no live reading it falls back to the one model measurement has shown", async () => {
+  test("with no live reading there is no valve: nothing is invented", async () => {
+    // The blind fallback used to be a compiled-in Fable→Opus pair — a stale
+    // cache of a real measurement, but still predetermined model knowledge,
+    // and it is gone. Without a live reading the valve simply does not fire.
     const root = await mkdtemp(join(tmpdir(), "hive-valve-blind-"));
     tempRoots.push(root);
     const candidates = await candidatesFor(root, {
@@ -3480,7 +3546,6 @@ describe("the release valve follows the provider's metering, not a model name", 
     });
     expect(candidates).toEqual([
       "claude:claude-fable-5",
-      "claude:claude-opus-4-8",
       "codex:gpt-5.6-sol",
     ]);
   });

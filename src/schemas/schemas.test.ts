@@ -3,8 +3,6 @@ import {
   AgentMessageSchema,
   AgentRecordSchema,
   ClaudeRouteSchema,
-  DEFAULT_ROUTING,
-  defaultRoutingTable,
   HandoffSchema,
   HiveConfigSchema,
   HookEventSchema,
@@ -13,7 +11,33 @@ import {
   type AgentRecord,
   type AgentMessage,
   type HookEvent,
+  type RoutingTable,
 } from ".";
+
+// A LOCAL fixture: the binary ships no routing table any more, so the schema
+// tests bring their own. Tests may name models; the product may not.
+const TABLE_FIXTURE: RoutingTable = {
+  deep: {
+    tool: "claude",
+    claude: { model: "best" },
+    codex: { model: "default", effort: "high" },
+  },
+  standard: {
+    tool: "codex",
+    claude: { model: "sonnet" },
+    codex: { model: "default", effort: "medium" },
+  },
+  cheap: {
+    tool: "codex",
+    claude: { model: "haiku" },
+    codex: { model: "default", effort: "low" },
+  },
+  review: {
+    tool: "claude",
+    claude: { model: "sonnet" },
+    codex: { model: "default", effort: "medium" },
+  },
+};
 
 const timestamp = "2026-07-09T12:00:00.000Z";
 
@@ -60,18 +84,18 @@ describe("HiveConfigSchema", () => {
 
 describe("RoutingTableSchema", () => {
   test("parses a valid round-trip", () => {
-    const parsed = RoutingTableSchema.parse(DEFAULT_ROUTING);
-    expect(RoutingTableSchema.parse(roundTrip(parsed))).toEqual(DEFAULT_ROUTING);
+    const parsed = RoutingTableSchema.parse(TABLE_FIXTURE);
+    expect(RoutingTableSchema.parse(roundTrip(parsed))).toEqual(TABLE_FIXTURE);
   });
 
   test("accepts the CLI account default while preserving pinned models", () => {
     expect(
-      RoutingTableSchema.parse(DEFAULT_ROUTING).standard.codex.model,
+      RoutingTableSchema.parse(TABLE_FIXTURE).standard.codex.model,
     ).toEqual("default");
     expect(RoutingTableSchema.parse({
-      ...DEFAULT_ROUTING,
+      ...TABLE_FIXTURE,
       standard: {
-        ...DEFAULT_ROUTING.standard,
+        ...TABLE_FIXTURE.standard,
         codex: {
           model: "gpt-pinned",
           effort: "medium",
@@ -82,9 +106,9 @@ describe("RoutingTableSchema", () => {
 
   test("accepts minimal effort", () => {
     expect(RouteSchema.parse({
-      ...DEFAULT_ROUTING.standard,
+      ...TABLE_FIXTURE.standard,
       codex: {
-        ...DEFAULT_ROUTING.standard.codex,
+        ...TABLE_FIXTURE.standard.codex,
         effort: "minimal",
       },
     }).codex.effort).toEqual("minimal");
@@ -104,9 +128,9 @@ describe("RoutingTableSchema", () => {
     ).toEqual({ model: "sonnet", effort: "future-level" });
     expect(() =>
       RoutingTableSchema.parse({
-        ...DEFAULT_ROUTING,
+        ...TABLE_FIXTURE,
         cheap: {
-          ...DEFAULT_ROUTING.cheap,
+          ...TABLE_FIXTURE.cheap,
           claude: { model: "haiku", modle: "typo" },
         },
       })
@@ -120,39 +144,17 @@ describe("RoutingTableSchema", () => {
   });
 
   test("rejects a route missing the codex sub-table", () => {
-    const { codex: _codex, ...withoutCodex } = DEFAULT_ROUTING.standard;
+    const { codex: _codex, ...withoutCodex } = TABLE_FIXTURE.standard;
     expect(() => RouteSchema.parse(withoutCodex)).toThrow();
   });
 
   test("rejects an invalid routing table", () => {
     expect(() =>
       RoutingTableSchema.parse({
-        ...DEFAULT_ROUTING,
-        deep: { ...DEFAULT_ROUTING.deep, tool: "gemini" },
+        ...TABLE_FIXTURE,
+        deep: { ...TABLE_FIXTURE.deep, tool: "gemini" },
       }),
     ).toThrow();
-  });
-});
-
-describe("defaultRoutingTable", () => {
-  // The Fable cutoff is gone. It made the deep tier abandon Fable on a DATE,
-  // because Fable was believed to move to usage-only billing then. Driving the
-  // provider after that date falsified the belief — Fable is still plan-billed
-  // with most of its weekly pool unused — so the date, and the tests that pinned
-  // it, encoded a guess rather than a fact. The table has no clock now.
-  test("is the shipped table, with no date in it", () => {
-    expect(defaultRoutingTable()).toEqual(DEFAULT_ROUTING);
-  });
-
-  test("keeps the deep tier on the best alias, which resolves to Fable", () => {
-    // Fable is an ordinary candidate again: ranked by its own plan pool and
-    // downshifted by quota pressure like any other model, not excluded by a
-    // calendar. Excluding it wasted capacity the user already pays for.
-    expect(defaultRoutingTable().deep.claude.model).toEqual("best");
-  });
-
-  test("produces a schema-valid table", () => {
-    expect(() => RoutingTableSchema.parse(defaultRoutingTable())).not.toThrow();
   });
 });
 

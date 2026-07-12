@@ -10,6 +10,28 @@ export const RoutingTierSchema = z.enum([
 
 export type RoutingTier = z.infer<typeof RoutingTierSchema>;
 
+/**
+ * What kind of work a tier's spawns do. Structural, not model knowledge: it
+ * classifies the TASK, and the capability floor consults it to decide whether
+ * evidence of coding ability is required.
+ */
+export const TaskKindSchema = z.enum([
+  "coding",
+  "review",
+  "research",
+  "mechanical",
+]);
+
+export type TaskKind = z.infer<typeof TaskKindSchema>;
+
+export function kindRequiresCodingCapability(kind: TaskKind): boolean {
+  return kind === "coding" || kind === "review";
+}
+
+export function defaultTaskKind(tier: RoutingTier): TaskKind {
+  return tier === "review" ? "review" : "coding";
+}
+
 const ModelSchema = z.union([z.literal("default"), z.string().min(1)]);
 
 export const ClaudeRouteSchema = z.strictObject({
@@ -38,46 +60,17 @@ export const RoutingTableSchema = z.record(RoutingTierSchema, RouteSchema);
 
 export type RoutingTable = z.infer<typeof RoutingTableSchema>;
 
-export const DEFAULT_ROUTING: RoutingTable = {
-  deep: {
-    tool: "claude",
-    claude: { model: "best" },
-    codex: { model: "default", effort: "high" },
-  },
-  standard: {
-    tool: "codex",
-    claude: { model: "sonnet" },
-    codex: { model: "default", effort: "medium" },
-  },
-  cheap: {
-    tool: "codex",
-    claude: { model: "haiku" },
-    codex: { model: "default", effort: "low" },
-  },
-  review: {
-    tool: "claude",
-    claude: { model: "sonnet" },
-    codex: { model: "default", effort: "medium" },
-  },
-};
-
 /**
- * The shipped table, with no date in it.
+ * There is no shipped routing table, and that is the design, not an omission.
  *
- * It used to carry `FABLE_AUTO_ROUTING_CUTOFF`: on 2026-07-12, deep-tier Claude
- * stopped auto-selecting Fable, because Fable was believed to "move to usage-only
- * billing off the user's plan" on that date. Driving the provider AFTER that date
- * falsified the belief — Fable still sits on a plan-scoped weekly pool with most
- * of it unused, so it costs the user nothing extra and excluding it wasted
- * capacity he already pays for.
- *
- * The constant is gone rather than corrected, because a date was never the right
- * instrument: it is a proxy for a billing fact, and a proxy is wrong silently.
- * What money costs is now MEASURED (`daemon/usage-credits.ts`), and the guard
- * that protects the user's wallet keys on the money, not on a model's name.
- * Fable is an ordinary candidate again: ranked by its own plan pool, gated by
- * capability, downshifted by quota pressure like anything else.
+ * `DEFAULT_ROUTING` used to live here: a compiled-in table naming `best`,
+ * `sonnet`, `haiku`, `default` — predetermined model knowledge frozen at build
+ * time, exactly the thing SPEC §6 opens by distrusting. The user's directive
+ * (2026-07-12) removed it as a route source outright: the binary names no
+ * model. Routes derive from live discovery, the user's own `routing.toml`, and
+ * the benchmark surface once he activates it — and where none of those can
+ * author a route, Hive REFUSES loudly and names the vendor CLI it needs,
+ * because a baked-in guess that still parses is not a route, it is a lie with
+ * good posture. The `Route` shapes above survive for what remains honest: the
+ * user's pins, and the concrete launch decisions derived at spawn time.
  */
-export function defaultRoutingTable(): RoutingTable {
-  return DEFAULT_ROUTING;
-}

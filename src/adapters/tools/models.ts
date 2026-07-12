@@ -2,21 +2,12 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { Route } from "../../schemas";
 
-// The claude CLI resolves the "best" alias internally — no local config file
-// records the mapping, so it cannot be read at spawn time. Verified against
-// claude 2.1.206 on 2026-07-09: `claude --model best` bills usage to
-// claude-fable-5. Re-verify when the CLI's top model changes.
-export const CLAUDE_BEST_MODEL = "claude-fable-5";
-
-// A directly-launchable model id, not a CLI-resolved alias — no indirection
-// needed. Verified against the live Claude Platform docs and a local check
-// on this machine on 2026-07-10: `claude --model claude-opus-4-8` launches
-// successfully (Claude Code >= v2.1.154 required). The CLI may self-report
-// this as "claude-opus-4-8[1m]" on Max/Team/Enterprise plans, where Opus is
-// automatically upgraded to a 1 million token context window; "[1m]" names
-// that context-window variant and is appended by the CLI itself, not a
-// value Hive constructs or needs to pass on the `--model` flag.
-export const CLAUDE_OPUS_MODEL = "claude-opus-4-8";
+// CLAUDE_BEST_MODEL and CLAUDE_OPUS_MODEL used to live here: compiled-in
+// model ids, i.e. predetermined model knowledge, removed as route sources by
+// the user's directive (2026-07-12). The binary names no model; what a CLI's
+// alias resolves to is the vendor's fact, read live via capability discovery
+// (`claude`'s initialize menu maps its own aliases) — never a constant that
+// silently goes stale when the vendor's top model changes.
 
 // Which vendor's CLI can actually run a user-named model. An explicit model
 // launches verbatim (never substituted), so launching it on the other
@@ -76,14 +67,14 @@ function codexConfigPath(): string {
 // from the tool's own user config — the same file the CLI itself reads when
 // hive omits the model flag. Only when that config names no model does the
 // alias survive, because the CLI's built-in default is not knowable locally.
+// (`best` used to resolve here through a compiled constant; that mapping is
+// the vendor's fact, not Hive's to hardcode, so the alias now passes through
+// verbatim — pin concrete IDs, as the docs have always said.)
 export async function resolveConcreteModel(
   tool: Route["tool"],
   route: Route,
 ): Promise<string> {
   const configured = route[tool].model;
-  if (tool === "claude" && configured === "best") {
-    return CLAUDE_BEST_MODEL;
-  }
   if (configured !== "default") {
     return configured;
   }

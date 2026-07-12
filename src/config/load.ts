@@ -1,18 +1,14 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import {
-  defaultRoutingTable,
   DEFAULT_QUOTA_CONFIG,
   HiveConfigSchema,
   QuotaConfigSchema,
+  ROUTING_TIERS,
   RoutingPinsSchema,
-  RoutingTableSchema,
   type HiveConfig,
   type QuotaConfig,
-  type Route,
   type RoutingPins,
-  type RoutingTable,
-  type RoutingTier,
 } from "../schemas";
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -69,54 +65,15 @@ export async function loadQuotaConfig(): Promise<QuotaConfig> {
   }
 }
 
-export async function loadRoutingTable(): Promise<RoutingTable> {
-  const path = join(hiveHome(), "routing.toml");
-  const raw = await readToml(path);
-
-  if (raw !== undefined && !isRecord(raw)) {
-    throw new Error(`Invalid routing table at ${path}: expected a TOML table`);
-  }
-
-  const merged = mergeOwn();
-  for (const [tier, route] of Object.entries(defaultRoutingTable())) {
-    const mergedRoute = mergeOwn(route);
-    mergedRoute.claude = mergeOwn(route.claude);
-    mergedRoute.codex = mergeOwn(route.codex);
-    merged[tier] = mergedRoute;
-  }
-
-  for (const [tier, override] of Object.entries(raw ?? {})) {
-    const fallback = merged[tier];
-    if (!isRecord(fallback) || !isRecord(override)) {
-      merged[tier] = isRecord(override) ? mergeOwn(override) : override;
-      continue;
-    }
-
-    const mergedRoute = mergeOwn(fallback, override);
-    for (const tool of ["claude", "codex"] as const) {
-      const fallbackTool = fallback[tool];
-      const overrideTool = override[tool];
-      if (isRecord(fallbackTool) && isRecord(overrideTool)) {
-        mergedRoute[tool] = mergeOwn(fallbackTool, overrideTool);
-      }
-    }
-    merged[tier] = mergedRoute;
-  }
-
-  try {
-    return RoutingTableSchema.parse(merged);
-  } catch (error) {
-    throw new Error(`Invalid routing table at ${path}: ${errorMessage(error)}`);
-  }
-}
-
 /**
- * The user's pins alone, before the shipped table is merged under them.
+ * The user's pins: the one hand-authored route source. There is no shipped
+ * table to merge under them any more (`loadRoutingTable` and `resolveRoute`
+ * died with it) — the derivation engine layers these over live discovery.
  *
- * `loadRoutingTable` returns the merge, which is what routing needs and exactly
- * what an inspection surface must not use: after the merge, a value the user
- * pinned and a value Hive shipped are the same string in the same slot. Telling
- * them apart requires reading the file the user actually wrote.
+ * Tier names are checked explicitly. `RoutingPinsSchema` is keyed by plain
+ * strings so a single-tier file parses, which means a misspelled tier would
+ * otherwise parse too — into a pin that silently pins nothing. A key that
+ * names no tier is an error, not an ignorable extra.
  */
 export async function loadRoutingPins(): Promise<RoutingPins> {
   const path = join(hiveHome(), "routing.toml");
@@ -125,14 +82,19 @@ export async function loadRoutingPins(): Promise<RoutingPins> {
   if (!isRecord(raw)) {
     throw new Error(`Invalid routing table at ${path}: expected a TOML table`);
   }
+  const unknown = Object.keys(raw).filter((key) =>
+    !(ROUTING_TIERS as readonly string[]).includes(key)
+  );
+  if (unknown.length > 0) {
+    throw new Error(
+      `Invalid routing table at ${path}: unknown tier ${
+        unknown.map((key) => JSON.stringify(key)).join(", ")
+      } (tiers are ${ROUTING_TIERS.join(", ")})`,
+    );
+  }
   try {
     return RoutingPinsSchema.parse(raw);
   } catch (error) {
     throw new Error(`Invalid routing table at ${path}: ${errorMessage(error)}`);
   }
-}
-
-export async function resolveRoute(tier: RoutingTier): Promise<Route> {
-  const routing = await loadRoutingTable();
-  return routing[tier];
 }

@@ -5,7 +5,6 @@ import {
   loadHiveConfig,
   loadQuotaConfig,
   loadRoutingPins,
-  resolveRoute,
 } from "../config/load";
 import { HiveDatabase } from "../daemon/db";
 import { BunTmuxSender } from "../daemon/delivery";
@@ -97,11 +96,10 @@ export async function runDaemon(): Promise<void> {
     issueCredential: (name, role, epoch) =>
       daemon.issueCredential(name, role, epoch),
     config,
-    routing: resolveRoute,
-    // The flip. Derived routes govern live spawns; `routing` above remains the
-    // fallback this returns to whenever config says the shipped table governs
-    // instead — re-read from config.toml on every spawn, so the escape hatch
-    // needs neither a rebuild nor a restart of this daemon.
+    // Every live spawn is governed by the derivation engine: live discovery +
+    // the user's pins + the last-known-good derivation. No static `routing`
+    // table is wired — the binary ships no model knowledge, and a cell nothing
+    // can author refuses the spawn with its reason.
     governingRoute: (tier, io) => resolveGoverningRoute(tier, io),
     routingPins: loadRoutingPins,
     discoverCapabilities: async (provider) =>

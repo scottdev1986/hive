@@ -4,7 +4,6 @@ import {
   loadHiveConfig,
   loadRoutingPins,
 } from "../config/load";
-import { loadTrustedRoutingManifest } from "../config/routing-manifest";
 import type {
   CapabilityProvider,
   CapabilityRecord,
@@ -13,7 +12,6 @@ import type {
   RoutingTier,
 } from "../schemas";
 import {
-  defaultRoutingTable,
   deriveRouting,
   RoutingSnapshotSchema,
 } from "../schemas";
@@ -135,11 +133,10 @@ export async function readModelInventory(
       : await new CodexCapabilityProbe().read());
   const readBilling = options.readBilling ?? readBillingWithMemory;
   const config = await loadHiveConfig();
-  const trusted = await loadTrustedRoutingManifest(config);
   const [pins, snapshot, claude, codex, claudeBilling, codexBilling] =
     await Promise.all([
       loadRoutingPins(),
-      trusted.origin === "kill-switch" ? null : readSnapshot(),
+      readSnapshot(),
       discover("claude"),
       discover("codex"),
       readBilling("claude"),
@@ -159,12 +156,9 @@ export async function readModelInventory(
     ...(codexBilling === null ? {} : { codex: codexBilling }),
   };
   const routing = deriveRouting({
-    manifest: trusted.manifest,
-    manifestAbsentReason: trusted.detail,
     discovery,
     pins,
     snapshot,
-    shipped: defaultRoutingTable(),
     billing,
     costConsent: options.readConsent,
     now,
@@ -180,7 +174,6 @@ export async function readModelInventory(
   return {
     ...inventory,
     warnings: [
-      ...trusted.warnings,
       ...routing.warnings,
       ...benchmarkCatalog.sources
         .filter((source) => source.status !== "current")

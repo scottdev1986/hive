@@ -23,8 +23,6 @@ import { listInheritedCodexMcpServers } from "../adapters/tools/mcp-scope";
 import type { CodexAppServerManager } from "../adapters/tools/codex-app-server";
 import { provisionSkills } from "../adapters/skills";
 import {
-  CLAUDE_BEST_MODEL,
-  CLAUDE_OPUS_MODEL,
   modelVendor,
   resolveConcreteModel,
 } from "../adapters/tools/models";
@@ -252,13 +250,16 @@ export interface HiveSpawnerDependencies {
      * "sandboxed"; the parsed HiveConfig always supplies a value. */
     autonomy?: HiveConfig["autonomy"];
   };
-  routing: RouteResolver;
   /**
-   * The flip. Returns the derived route that GOVERNS this spawn, or `null` when
-   * the shipped table still does — which is what an unwired embedder (and every
-   * test that does not opt in) gets, so spawning is bit-identical without it.
-   * `routing` above stays exactly where it was and is still the fallback: a
-   * reverted spawn takes the pre-flip code path rather than a derived imitation.
+   * A static route table, for embedders and tests that construct their own.
+   * Production does not wire this: there is no shipped table to resolve from,
+   * so a live spawn is governed by `governingRoute` or refused.
+   */
+  routing?: RouteResolver;
+  /**
+   * The derivation engine's answer for this spawn: per-column cells whose
+   * `model: null` means REFUSE with the cell's reason. There is no table to
+   * fall back to — a cell nothing could author fails the spawn, loudly.
    */
   governingRoute?: (
     tier: RoutingTier,
@@ -765,15 +766,15 @@ export class HiveSpawner implements Spawner {
       this.dependencies.readBilling?.("claude"),
     ]);
 
-    // Without a live reading, fall back to the name — the one model measurement
-    // has actually shown to have this shape. It is a stale cache of a real fact,
-    // not a guess, and it degrades to the general rule the moment the surfaces
-    // answer again.
+    // Without a live reading there is no valve: the compiled-in name pair that
+    // used to answer here was predetermined model knowledge, and it is gone.
+    // Degrading to "no alternative offered" costs one downshift opportunity;
+    // inventing one from a constant costs the design.
     if (
       discovery === undefined || discovery.status !== "ok" ||
       billing === undefined || billing === null
     ) {
-      return claudeModel === CLAUDE_BEST_MODEL ? CLAUDE_OPUS_MODEL : null;
+      return null;
     }
 
     const base = splitVariant(claudeModel).base;
@@ -782,10 +783,10 @@ export class HiveSpawner implements Spawner {
       candidate.aliases.includes(claudeModel)
     );
     // The billing surface names a model only by its display name. Without one we
-    // cannot ask whether it is separately metered — unknown, so keep the measured
-    // fallback rather than silently dropping the valve.
+    // cannot ask whether it is separately metered — unknown, and unknown offers
+    // no valve rather than a name Hive was never told.
     if (record?.displayName == null) {
-      return claudeModel === CLAUDE_BEST_MODEL ? CLAUDE_OPUS_MODEL : null;
+      return null;
     }
 
     const separatelyMetered =
@@ -882,15 +883,17 @@ export class HiveSpawner implements Spawner {
 
   private async resolveSpawnEffort(
     request: SpawnRequest,
-    route: Route,
+    route: Route | undefined,
     tool: "claude" | "codex",
     model: string,
     observed?: {
       pins: RoutingPins;
       discovery: CapabilityDiscoveryResult | undefined;
-      /** The derived router governs, so the route's effort is the engine's own
-       * ladder result rather than a compiled-in column. */
+      /** The derivation engine governs, so the cell's effort is the engine's
+       * own ladder result rather than a table column. */
       routeAuthoritative?: boolean;
+      /** The governed cell's effort, verbatim from the engine. */
+      routedEffort?: string;
     },
   ): Promise<string | undefined> {
     const pins = observed?.pins ?? await this.dependencies.routingPins?.() ?? {};
@@ -912,16 +915,15 @@ export class HiveSpawner implements Spawner {
       }
       return validated.effort;
     }
-    // Under the derived router the ROUTE's effort is authoritative. The engine
-    // already walked the effort ladder for the model it resolved (tier default →
-    // that model's own advertised default → the shipped constant, Codex only) and
-    // its answer arrived in the route. Re-deriving it here from the raw catalog
-    // would let `hive routing` print one effort while the argv carried another —
-    // and it is the only reason a Claude cell can carry an effort at all, since
-    // the shipped table has no Claude effort column to have carried one.
-    // Validation still runs: the router proposes, the model's own record disposes.
+    // Under the derivation engine the CELL's effort is authoritative. The
+    // engine already walked the effort ladder for the model it resolved (pin →
+    // tier effort policy, grounded in the live record → the pairing rungs) and
+    // its answer arrived with the cell. Re-deriving it here from the raw
+    // catalog would let `hive routing` print one effort while the argv carried
+    // another. Validation still runs: the router proposes, the model's own
+    // record disposes.
     if (observed?.routeAuthoritative === true) {
-      const routed = route[tool].effort;
+      const routed = observed.routedEffort;
       if (routed === undefined) return undefined;
       const validated = validateEffort(record, model, routed);
       if (discoveryConfigured && validated.warning !== undefined) {
@@ -935,7 +937,7 @@ export class HiveSpawner implements Spawner {
     const discoveredDefault = record?.defaultEffort.state === "known"
       ? record.defaultEffort.value
       : undefined;
-    const fallback = discoveredDefault ?? route.codex.effort ?? "medium";
+    const fallback = discoveredDefault ?? route?.codex.effort ?? "medium";
     const validated = validateEffort(record, model, fallback);
     if (discoveryConfigured && validated.warning !== undefined) {
       console.warn(validated.warning);
@@ -1422,12 +1424,12 @@ export class HiveSpawner implements Spawner {
     request: SpawnRequest,
     name: string,
   ): Promise<AgentRecord> {
-    // THE FLIP. What governs this spawn: the derived router, or the shipped
-    // table? Both switches that revert it (`router`, `routingManifest`) are
-    // re-read from config.toml inside this call, on every spawn — so turning a
-    // misbehaving router off needs no rebuild and no daemon restart, and a
-    // reverted spawn goes back through `routing()`, the untouched pre-flip path,
-    // rather than a derived imitation of it.
+    // What governs this spawn: the derivation engine (live discovery + pins +
+    // last-known-good), and nothing else. There is no shipped table — a cell
+    // the engine could not author arrives as `model: null` with its refusal
+    // reason, and this spawn fails on it rather than launching a baked-in
+    // guess. The static `routing` dependency survives only for embedders and
+    // tests that construct their own table.
     const governing = (await this.dependencies.governingRoute?.(request.tier, {
       discover: (provider) => this.discoverOnce(provider),
       readBilling: async (provider) =>
@@ -1438,9 +1440,36 @@ export class HiveSpawner implements Spawner {
     for (const note of governing?.notes ?? []) {
       console.warn(`Routing ${request.tier}: ${note}`);
     }
-    const configuredRoute = governing?.route ??
-      await this.dependencies.routing(request.tier);
-    let tool = request.tool ?? configuredRoute.tool;
+    const configuredRoute = governing === null
+      ? await this.dependencies.routing?.(request.tier)
+      : undefined;
+    if (governing === null && configuredRoute === undefined) {
+      throw new Error(
+        `Cannot spawn ${name}: no routing source is configured (no derivation ` +
+          "engine and no static table)",
+      );
+    }
+    const preferredTool = governing?.tool ?? configuredRoute!.tool;
+    // Resolves one column's launch token. A governed cell carries the engine's
+    // value verbatim (`null` = refuse, with the cell's reason); the legacy path
+    // resolves a table entry through the tool's own config. `resolveConcreteModel`
+    // reads only `route[tool].model`, so the synthetic Route below is just an
+    // adapter around a single concrete string.
+    const columnModel = async (
+      candidateTool: "claude" | "codex",
+    ): Promise<string | null> => {
+      if (governing !== null) {
+        const cell = governing.cells[candidateTool];
+        if (cell.model === null) return null;
+        return await this.modelResolver(candidateTool, {
+          tool: candidateTool,
+          claude: { model: cell.model },
+          codex: { model: cell.model },
+        });
+      }
+      return await this.modelResolver(candidateTool, configuredRoute!);
+    };
+    let tool = request.tool ?? preferredTool;
     // An explicit model is bound to its vendor before anything launches: the
     // tier route must never carry a user-named model onto the other vendor's
     // CLI (tier=standard once routed tool=codex under an explicit
@@ -1466,7 +1495,23 @@ export class HiveSpawner implements Spawner {
     // the launch without consulting aliases or mutable tool defaults.
     // An explicit request model is a user directive: it launches verbatim
     // (no alias resolution) on the spawn's tool and is never substituted.
-    let model = request.model ?? await this.modelResolver(tool, configuredRoute);
+    let model: string;
+    if (request.model !== undefined) {
+      model = request.model;
+    } else {
+      const resolved = await columnModel(tool);
+      if (resolved === null) {
+        // THE REFUSAL. Nothing could author this cell and nothing is invented:
+        // the engine's reason names what Hive needs (a vendor CLI to discover
+        // from, or a pin), and the spawn fails with it instead of launching a
+        // model no source vouched for.
+        throw new Error(
+          `Cannot spawn ${name}: no ${tool} route for ${request.tier} — ` +
+            `${governing!.cells[tool].reason}`,
+        );
+      }
+      model = resolved;
+    }
     let executionIdentity: ExecutionIdentity | undefined;
     let quotaReservationId: string | undefined;
     let effort: string | undefined;
@@ -1487,6 +1532,7 @@ export class HiveSpawner implements Spawner {
         discovery = this.discoverOnce(candidateTool);
         discoveries.set(candidateTool, discovery);
       }
+      const routedEffort = governing?.cells[candidateTool].effort;
       return await this.resolveSpawnEffort(
         request,
         configuredRoute,
@@ -1496,6 +1542,7 @@ export class HiveSpawner implements Spawner {
           pins: effortPins,
           discovery: await discovery,
           routeAuthoritative: governing !== null,
+          ...(routedEffort === undefined ? {} : { routedEffort }),
         },
       );
     };
@@ -1520,36 +1567,44 @@ export class HiveSpawner implements Spawner {
         }];
       } else {
         const [claudeModel, codexModel] = await Promise.all([
-          this.modelResolver("claude", configuredRoute),
-          this.modelResolver("codex", configuredRoute),
+          columnModel("claude"),
+          columnModel("codex"),
         ]);
         if (governing !== null) {
-          // The manifest's list remainders replace the hardcoded valve (design
-          // step 5). The SHAPE is unchanged — same-vendor alternatives listed
-          // *after* their primary, so ties and the no-quota case still prefer the
-          // primary, while real pressure on its pool lets quota pick on headroom.
-          // What changes is where they come from: every alternative has now passed
-          // the capability floor and the spend guard inside the engine. The
-          // valve's alternative had passed neither — it was whatever the account's
-          // discovered default happened to be, so quota could downshift a coding
-          // task onto a model nobody had vetted for coding. A floor that guards
-          // only the primary is not a floor.
+          // A refused column contributes NO candidate — quota must never rank a
+          // cell whose own engine said "nothing vouches for this". The chain
+          // remainders ride after their primary, same shape as ever, so ties
+          // and the no-quota case still prefer the primary while real pressure
+          // lets quota pick on headroom. (The chain is empty until the
+          // benchmark surface or user policy supplies an ordered list.)
           candidates = [
-            { tool: "claude", model: claudeModel },
-            ...governing.chain.claude.map((model) => ({
-              tool: "claude" as const,
-              model,
-            })),
-            { tool: "codex", model: codexModel },
-            ...governing.chain.codex.map((model) => ({
-              tool: "codex" as const,
-              model,
-            })),
+            ...(claudeModel === null ? [] : [
+              { tool: "claude" as const, model: claudeModel },
+              ...governing.chain.claude.map((model) => ({
+                tool: "claude" as const,
+                model,
+              })),
+            ]),
+            ...(codexModel === null ? [] : [
+              { tool: "codex" as const, model: codexModel },
+              ...governing.chain.codex.map((model) => ({
+                tool: "codex" as const,
+                model,
+              })),
+            ]),
           ];
+          if (candidates.length === 0) {
+            throw new Error(
+              `Cannot spawn ${name}: no route for ${request.tier} — ` +
+                `claude: ${governing.cells.claude.reason}; ` +
+                `codex: ${governing.cells.codex.reason}`,
+            );
+          }
         } else {
+          // The legacy static-table path: both columns always resolve.
           candidates = [
-            { tool: "claude", model: claudeModel },
-            { tool: "codex", model: codexModel },
+            { tool: "claude", model: claudeModel! },
+            { tool: "codex", model: codexModel! },
           ];
           // The same-vendor release valve, derived from the pools the provider
           // actually meters rather than from a model's name. When the primary
@@ -1557,7 +1612,7 @@ export class HiveSpawner implements Spawner {
           // own default alongside it — listed *after* the primary, so ties (and the
           // no-quota-configured case) still prefer the primary, while real pressure
           // on its pool lets quota pick the alternative on headroom.
-          const alternative = await this.releaseValveAlternative(claudeModel);
+          const alternative = await this.releaseValveAlternative(claudeModel!);
           if (alternative !== null) {
             candidates.splice(1, 0, { tool: "claude", model: alternative });
           }
@@ -1604,7 +1659,7 @@ export class HiveSpawner implements Spawner {
       const decision = await this.dependencies.quota.routeAndReserve({
         agentName: name,
         tier: request.tier,
-        preferredTool: configuredRoute.tool,
+        preferredTool,
         ...(explicitTool === undefined ? {} : { explicitTool }),
         ...(request.model === undefined ? {} : { explicitCandidate: true }),
         ...(request.reviewOfTool === undefined

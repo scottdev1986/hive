@@ -2,22 +2,18 @@ import { appendFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
-import { loadHiveConfig, loadRoutingPins, resolveRoute } from "../config/load";
-import { loadTrustedRoutingManifest } from "../config/routing-manifest";
-import { resolveConcreteModel } from "../adapters/tools/models";
+import { loadHiveConfig, loadRoutingPins } from "../config/load";
 import {
-  defaultRoutingTable,
+  DERIVED_FROM_DISCOVERY,
   deriveRouting,
   kindRequiresCodingCapability,
   RoutingSnapshotSchema,
-  splitVariant,
   type CapabilityProvider,
   type DerivedTier,
   type ProviderDiscovery,
   type ResolutionLayer,
   type RoutingTier,
 } from "../schemas";
-import { whatGoverns } from "./routing-resolve";
 import type { CapabilityDiscoveryResult } from "./capability-discovery";
 import {
   readBillingWithMemory,
@@ -179,8 +175,6 @@ export interface ShadowDependencies {
 
 const ladderLayers: ReadonlySet<ResolutionLayer> = new Set([
   "ladder:last-known-good",
-  "ladder:provider-default",
-  "ladder:shipped-table",
 ]);
 
 async function readSnapshot() {
@@ -205,7 +199,6 @@ export async function recordShadowObservation(
   try {
     const now = dependencies.now?.() ?? new Date();
     const [
-      config,
       pins,
       snapshot,
       claude,
@@ -213,7 +206,6 @@ export async function recordShadowObservation(
       claudeBilling,
       codexBilling,
     ] = await Promise.all([
-      loadHiveConfig(),
       loadRoutingPins(),
       readSnapshot(),
       dependencies.discoverCapabilities("claude"),
@@ -221,7 +213,7 @@ export async function recordShadowObservation(
       dependencies.readBilling?.("claude") ?? readBillingWithMemory("claude"),
       dependencies.readBilling?.("codex") ?? readBillingWithMemory("codex"),
     ]);
-    const trusted = await loadTrustedRoutingManifest(config);
+    const config = await loadHiveConfig();
     const discovery = {
       claude: claude as ProviderDiscovery,
       codex: codex as ProviderDiscovery,
@@ -236,12 +228,9 @@ export async function recordShadowObservation(
     );
 
     const derivation = deriveRouting({
-      manifest: trusted.manifest,
-      manifestAbsentReason: trusted.detail,
       discovery,
       pins,
       snapshot,
-      shipped: defaultRoutingTable(),
       billing: {
         ...(claudeBilling === null ? {} : { claude: claudeBilling }),
         ...(codexBilling === null ? {} : { codex: codexBilling }),
@@ -252,13 +241,17 @@ export async function recordShadowObservation(
     const tier = derivation.tiers.find((entry) => entry.tier === spawn.tier);
     if (tier === undefined) return null;
 
+    // The shipped counterfactual died with the shipped table: there is no
+    // compiled route left to reconstruct, so post-removal lines record `null` —
+    // a counterfactual that no longer exists, never an empty one. Old lines
+    // keep theirs.
     const observation = compare(
       spawn,
       tier,
-      trusted.manifest?.revision ?? null,
+      DERIVED_FROM_DISCOVERY,
       now,
-      whatGoverns(config, trusted.origin),
-      await shippedChoice(spawn.tier, { claude, codex }),
+      "derived",
+      null,
       shadowBenchmark(benchmarks, { claude, codex }, tier),
     );
     const line = `${JSON.stringify(observation)}\n`;
@@ -275,47 +268,13 @@ export async function recordShadowObservation(
   }
 }
 
-/**
- * What the old static table would have chosen for this spawn, reconstructed from
- * the pre-flip path itself: `resolveRoute()` (shipped table + routing.toml, the
- * resolver the flip replaces) and `resolveConcreteModel()` (the alias resolution
- * every spawn used to do). The effort ladder below mirrors `spawner-impl.ts`'s
- * `resolveSpawnEffort` for an unpinned spawn — discovered default, then the tier's
- * shipped column, then medium — because a counterfactual computed from the RAW
- * table would be a comparison against a route no spawn has ever launched.
- *
- * What it cannot reconstruct is quota: whether the old table's choice would have
- * been downshifted under pressure is a counterfactual no log can answer, and this
- * does not pretend to.
- */
-async function shippedChoice(
-  tier: RoutingTier,
-  discovery: Record<CapabilityProvider, CapabilityDiscoveryResult>,
-): Promise<{ tool: CapabilityProvider; model: string; effort: string | null }> {
-  const route = await resolveRoute(tier);
-  const tool = route.tool;
-  const model = await resolveConcreteModel(tool, route);
-  const provider = discovery[tool];
-  const records = provider.status === "ok" ? provider.records : [];
-  const base = splitVariant(model).base;
-  const record = records.find((entry) =>
-    entry.launchToken === base || entry.canonicalId === base ||
-    entry.aliases.includes(model) || entry.aliases.includes(base)
-  );
-  if (tool === "claude") return { tool, model, effort: null };
-  const discovered = record?.defaultEffort.state === "known"
-    ? record.defaultEffort.value
-    : undefined;
-  return { tool, model, effort: discovered ?? route.codex.effort ?? "medium" };
-}
-
 function compare(
   spawn: ShadowSpawn,
   tier: DerivedTier,
   manifestRevision: string | null,
   now: Date,
   governedBy: "derived" | "shipped",
-  shipped: { tool: CapabilityProvider; model: string; effort: string | null },
+  shipped: { tool: CapabilityProvider; model: string; effort: string | null } | null,
   benchmark: ShadowObservation["benchmark"],
 ): ShadowObservation {
   // The derived route is read from the tool the derivation itself chose, not from
@@ -325,8 +284,16 @@ function compare(
   const derivedTool = tier.tool.value ?? spawn.tool;
   const cell = derivedTool === "claude" ? tier.claude : tier.codex;
 
+  // The capability floor currently has no declarer: the manifest that vouched
+  // codingCapable is gone, and neither benchmarks nor user policy has replaced
+  // it. The engine says so per cell ("no capability evidence"), and that IS the
+  // floor signal now — recorded truthfully, so the day a declarer lands, the
+  // rows before and after it stay comparable.
   const floorViolation = kindRequiresCodingCapability(tier.kind) &&
-    cell.notes.some((note) => note.includes("not declared coding-capable"));
+    cell.notes.some((note) =>
+      note.includes("not declared coding-capable") ||
+      note.includes("no capability evidence")
+    );
 
   return {
     at: now.toISOString(),

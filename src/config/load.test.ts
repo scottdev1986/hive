@@ -2,12 +2,10 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { DEFAULT_ROUTING } from "../schemas";
 import {
   loadHiveConfig,
   loadQuotaConfig,
-  loadRoutingTable,
-  resolveRoute,
+  loadRoutingPins,
 } from "./load";
 
 let tempRoot = "";
@@ -62,9 +60,9 @@ describe("config loading", () => {
         idleReapMinutes: 10,
       },
     });
-    // The routing table has no clock any more: the Fable cutoff it used to carry
-    // encoded a billing belief that measurement falsified.
-    expect(await loadRoutingTable()).toEqual(DEFAULT_ROUTING);
+    // No routing.toml means no pins — and no shipped table underneath them:
+    // the binary names no model, so an empty file yields an empty policy.
+    expect(await loadRoutingPins()).toEqual({});
     expect(await loadQuotaConfig()).toMatchObject({
       enabled: true,
       limits: [],
@@ -187,41 +185,25 @@ describe("config loading", () => {
         idleReapMinutes: 10,
       },
     });
-    const routing = await loadRoutingTable();
-    expect(routing.deep).toEqual({
-      tool: "codex",
-      // The table is loaded at BEFORE_FABLE_CUTOFF, so the pre-cutoff constant is
-      // what it says. Pinning the clock is the better fix — it keeps the
-      // assertion true on both sides of the cutoff rather than only until it.
-      claude: DEFAULT_ROUTING.deep.claude,
-      codex: {
-        model: "gpt-deep",
-        effort: "xhigh",
-      },
-    });
-    expect(routing.cheap).toEqual({
-      ...DEFAULT_ROUTING.cheap,
-      claude: {
-        ...DEFAULT_ROUTING.cheap.claude,
-        model: "gpt-cheap-local",
-      },
-    });
-    expect(await resolveRoute("deep")).toEqual(routing.deep);
+    // Pins are read back exactly as written — nothing is merged underneath
+    // them, because there is nothing shipped to merge.
+    const pins = await loadRoutingPins();
+    expect(pins.deep?.tool).toEqual("codex");
+    expect(pins.deep?.codex).toEqual({ model: "gpt-deep", effort: "xhigh" });
+    expect(pins.cheap?.claude).toEqual({ model: "gpt-cheap-local" });
+    expect(pins.cheap?.codex).toBeUndefined();
   });
 
-  test("deep-merges one tool override without changing the other tool", async () => {
+  test("a single-cell pin parses alone, touching nothing else", async () => {
     await resetHome();
     await writeFile(
       join(hiveHome, "routing.toml"),
       '[cheap.claude]\nmodel = "haiku-local"\n',
     );
 
-    const routing = await loadRoutingTable();
-    expect(routing.cheap.claude).toEqual({
-      ...DEFAULT_ROUTING.cheap.claude,
-      model: "haiku-local",
-    });
-    expect(routing.cheap.codex).toEqual(DEFAULT_ROUTING.cheap.codex);
+    const pins = await loadRoutingPins();
+    expect(pins.cheap?.claude).toEqual({ model: "haiku-local" });
+    expect(pins.deep).toBeUndefined();
   });
 
   test("reports invalid config with its path and schema details", async () => {
@@ -244,19 +226,37 @@ describe("config loading", () => {
     await resetHome();
     await writeFile(
       join(hiveHome, "routing.toml"),
-      '[review]\ntool = "gemini"\nmodel = "pro"\n',
+      '[review]\ntool = "gemini"\n',
     );
 
     let message = "";
     try {
-      await loadRoutingTable();
+      await loadRoutingPins();
     } catch (error) {
       message = error instanceof Error ? error.message : String(error);
     }
 
     expect(message.includes(join(hiveHome, "routing.toml"))).toEqual(true);
-    expect(message.includes("review")).toEqual(true);
     expect(message.includes("codex")).toEqual(true);
+  });
+
+  test("rejects a misspelled tier instead of silently pinning nothing", async () => {
+    await resetHome();
+    await writeFile(
+      join(hiveHome, "routing.toml"),
+      '[deeep.claude]\nmodel = "claude-fable-5"\n',
+    );
+
+    let message = "";
+    try {
+      await loadRoutingPins();
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+
+    expect(message.includes("unknown tier")).toEqual(true);
+    expect(message.includes("deeep")).toEqual(true);
+    expect(message.includes("deep, standard, cheap, review")).toEqual(true);
   });
 
   test("rejects a __proto__ route without polluting Object.prototype", async () => {
@@ -272,7 +272,7 @@ describe("config loading", () => {
 
     let message = "";
     try {
-      await loadRoutingTable();
+      await loadRoutingPins();
     } catch (error) {
       message = error instanceof Error ? error.message : String(error);
     }
@@ -284,28 +284,13 @@ describe("config loading", () => {
     expect(Object.hasOwn(Object.prototype, pollutionKey)).toEqual(false);
   });
 
-  describe("Fable is an ordinary model again", () => {
-    // The cutoff is deleted, not corrected. It made the deep tier abandon Fable
-    // on a DATE, because Fable was believed to move to usage-only billing then.
-    // Driving the provider after that date falsified the belief: Fable is still
-    // plan-billed with most of its weekly pool unused, so excluding it wasted
-    // capacity the user already pays for.
-
-    test("the deep tier auto-selects the best alias, on any day", async () => {
-      await resetHome();
-      const routing = await loadRoutingTable();
-      expect(routing.deep.claude.model).toEqual("best");
-      expect(await resolveRoute("deep")).toEqual(routing.deep);
-    });
-
-    test("an explicit routing.toml pin still wins, as it always did", async () => {
-      await resetHome();
-      await writeFile(
-        join(hiveHome, "routing.toml"),
-        '[deep.claude]\nmodel = "claude-fable-5"\n',
-      );
-      const routing = await loadRoutingTable();
-      expect(routing.deep.claude.model).toEqual("claude-fable-5");
-    });
+  test("an explicit routing.toml pin reads back verbatim", async () => {
+    await resetHome();
+    await writeFile(
+      join(hiveHome, "routing.toml"),
+      '[deep.claude]\nmodel = "claude-fable-5"\n',
+    );
+    const pins = await loadRoutingPins();
+    expect(pins.deep?.claude?.model).toEqual("claude-fable-5");
   });
 });
