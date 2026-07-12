@@ -64,8 +64,9 @@ and the floor already bounded everything quota can see.
   (source, model, effort). No alias guessing beyond the discovery record's
   own alias list, no cross-source averaging, no cross-model inference.
   Within one model, unmeasured effort levels take an *ordinal* position from
-  measured ones — user-ruled, spelled out under "Effort semantics" below —
-  and an exact-match score always beats an inferred rank where both exist.
+  measured ones — user-ruled, spelled out under "Effort and placement
+  semantics" below — and an exact-match score always beats an inferred rank
+  where both exist.
 - **Score column per task kind.** User-visible policy, not compiled:
   coding/review kinds read the source's coding column (LiveBench:
   `code_generation`); if a kind has no mapped column, the overlay is inert
@@ -80,23 +81,27 @@ and the floor already bounded everything quota can see.
   For `cheap`/easy tiers, fit inverts the preference: the *cheapest candidate
   within B of the best matched score* leads — that is "fit beats rank" made
   mechanical.
-- **Unknowns hold position.** A candidate with no matched row — and no
-  within-model measured effort to take an ordinal position from — keeps its
-  policy-derived position. It never sinks below a measured-low candidate by
-  default and never rises on a guess; only measured (or, within one model,
-  ordinally inferred) candidates move relative to each other. The inventory
-  keeps showing its coverage as "unknown".
+- **Unknowns hold position — as the last rung.** A candidate with no
+  matched row is first offered the weaker evidence ladder of rule 3 below
+  (stale measurement, vendor tiering, user pin, in that order); only a
+  candidate with none of those keeps its policy-derived position
+  unmoved. It never rises on a guess, and every non-measured placement is
+  labeled with its basis. The inventory keeps showing benchmark coverage as
+  "unknown" either way — placement evidence is not measurement.
 - **Staleness.** Only rows from a source whose status is `current` or
-  `last-good` participate. An `unavailable` source contributes nothing and
-  the overlay quietly degrades to inert — the route always still resolves.
+  `last-good` participate in score-vs-score reordering. An `unavailable`
+  source contributes nothing and the overlay quietly degrades to inert —
+  the route always still resolves. Older releases of a qualifying source
+  are not discarded, though: they remain admissible, marked stale, for the
+  coarse placement of otherwise-uncovered models (rule 3 below).
 - **Multiple sources (future).** Today LiveBench is alone. When a second
   eligible source registers, rows stay per-source; a reorder requires the
   sources that cover both candidates to *agree on direction* for the pair.
   Disagreement means tie — shown, not averaged.
 
-## Effort semantics — two user-ruled rules
+## Effort and placement semantics — three user-ruled rules
 
-Both are rulings, not knobs: they hold in this proposal and in the
+All three are rulings, not knobs: they hold in this proposal and in the
 implementation when approved.
 
 1. **Monotone-effort ordinal inference.** Within a single model, an
@@ -118,6 +123,30 @@ implementation when approved.
    should land on lower efforts of capable models rather than idling
    flagship efforts on easy work. Tier→effort policy defaults remain the
    starting point; the benchmark overlay and this rule refine within them.
+3. **Uncovered-model placement.** A benchmark-absent model that clears the
+   capability floor still routes — coverage-never-gates stands — but its
+   position in the ordering comes from **admissible non-benchmark evidence
+   of its class**, and a lower-class model gets only the simplest work,
+   never hard tasks. Admissible evidence, in priority order (the
+   no-judgment line holds: every input is vendor-published or measured,
+   never Hive's opinion or training memory):
+   1. **Stale measurements** — older releases of qualifying sources (e.g.
+      an earlier LiveBench release that did score a haiku variant): real
+      dated numbers, marked stale, usable for coarse placement.
+   2. **Vendor's own tiering** — the vendor's published positioning,
+      pricing, and release data as they appear in discovery and source cost
+      files. The vendor calling a model its small/fast/cheap tier is the
+      vendor's claim, not ours.
+   3. **User policy** — an explicit placement pin the user can set.
+
+   The overall evidence hierarchy for any placement:
+   **current measurement > stale measurement (dated) > within-model effort
+   inference > vendor-tier placement > unknown-holds-policy-position.**
+   Every non-measured placement is labeled with its basis in the inventory
+   and the shadow log — the same visibility discipline as effort inference.
+   Net effect: haiku-class models live at the bottom of the ordering doing
+   the simplest tasks, frontier models never waste effort on trivial work,
+   and nothing capable sits unusable.
 
 ## What this does today, honestly
 
@@ -126,11 +155,14 @@ of the discovered catalog (at the last live probe: 12/12 models discovered,
 LiveBench release 2026-06-25 current, uncovered canonical ids haiku,
 auto-review, spark). So on this machine the overlay's real effect at
 activation is narrow: it can reorder deep-tier candidates where both sides
-have a current matched row at the routed effort, and — via monotone-effort
-inference — place a measured model's unmeasured lower efforts below its
-measured ones. Everywhere else it is inert. That is the intended shape —
-sparse data influencing exactly as far as it and the vendor's own effort
-semantics reach, and not one candidate further.
+have a current matched row at the routed effort; via monotone-effort
+inference, place a measured model's unmeasured lower efforts below its
+measured ones; and via uncovered-model placement, put the three uncovered
+ids where stale LiveBench rows or vendor tiering say their class sits —
+haiku at the bottom taking the simplest work. Everywhere else it is inert.
+That is the intended shape — sparse data influencing exactly as far as it,
+the vendor's own effort semantics, and vendor-published class claims reach,
+and not one candidate further.
 
 ## Why LiveBench is alone (source survey rationale, not code)
 
@@ -175,6 +207,7 @@ that clears it registers the same way LiveBench did.
 | multi-source rule | agreement-in-direction or tie | policy (dormant today) |
 | effort inference | within-model ordinal only, labeled inferred with basis | user ruling (decided) |
 | effort economy | lowest sufficient effort among floor-clearing candidates | user ruling (decided) |
+| uncovered-model placement | stale measurement > vendor tiering > user pin, labeled; lower-class models get only the simplest work | user ruling (decided) |
 | activation | stage 3 only on explicit approval | standing rule |
 
 ## What is explicitly not proposed
@@ -184,4 +217,6 @@ that clears it registers the same way LiveBench did.
 - No effort invention: no level a model does not advertise, ever.
 - No synthesized scores: an unmeasured effort gets a labeled ordinal
   position within its own model, never a number.
+- No training-memory placement: every placement input is vendor-published
+  or measured; Hive's own opinion of a model is never evidence.
 - No self-benchmarking: Hive consumes published rows; it never produces them.
