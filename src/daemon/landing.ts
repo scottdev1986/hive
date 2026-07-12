@@ -161,6 +161,61 @@ export async function untrackedCollisions(
   return collisions;
 }
 
+/**
+ * What the primary checkout can prove about a branch before anyone is asked to
+ * approve anything. Both fields are three-valued on purpose: `null` is "we
+ * could not read it", which is evidence of nothing and must never be read as a
+ * yes (see the `unknown-read-as-permission` memory — a classifier's null
+ * disarmed both guards that existed to refuse).
+ *
+ * Committed history only: `rev-list` and `merge-base` see the branch's commits,
+ * never the working tree, so this reader cannot repeat the `git status`
+ * untracked-directory trap that `untrackedCollisions` above exists to dodge.
+ */
+export interface LandReadiness {
+  /** Commits on the branch that the primary's HEAD does not have — `main..branch`.
+   * 0 means there is nothing to merge; null means we could not tell. */
+  pending: number | null;
+  /** True when HEAD is an ancestor of the branch: the branch is rebased on
+   * current main and a fast-forward is possible. Null when we could not tell. */
+  rebased: boolean | null;
+}
+
+export type ReadLandReadiness = (
+  repoRoot: string,
+  branch: string,
+) => Promise<LandReadiness>;
+
+export const readLandReadiness: ReadLandReadiness = async (repoRoot, branch) => {
+  const pendingResult = await runGit(repoRoot, [
+    "rev-list",
+    "--count",
+    `HEAD..${branch}`,
+  ]);
+  const raw = trimmed(pendingResult);
+  const count = Number(raw);
+  const pending = pendingResult.exitCode === 0 && raw !== "" &&
+      Number.isSafeInteger(count) && count >= 0
+    ? count
+    : null;
+
+  // `--is-ancestor` answers with its exit code: 0 yes, 1 no, anything else
+  // (a missing branch, a broken repo) is an error, not a "no".
+  const ancestor = await runGit(repoRoot, [
+    "merge-base",
+    "--is-ancestor",
+    "HEAD",
+    branch,
+  ]);
+  const rebased = ancestor.exitCode === 0
+    ? true
+    : ancestor.exitCode === 1
+    ? false
+    : null;
+
+  return { pending, rebased };
+};
+
 export interface LandBlocker {
   /** What is wrong, in one sentence, naming the specific thing. */
   reason: string;

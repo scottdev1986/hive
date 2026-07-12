@@ -2,7 +2,12 @@ import { describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { diagnoseLand, landBranch, runGit } from "./landing";
+import {
+  diagnoseLand,
+  landBranch,
+  readLandReadiness,
+  runGit,
+} from "./landing";
 
 // Every case here is built on a real git repo and driven through the real
 // landBranch. A landing diagnostic that is only ever tested against a mocked git
@@ -282,6 +287,63 @@ describe("the remaining ways a land dies", () => {
       const { commit } = await landBranch(root, "hive/writer");
       expect(commit).toBe(git(root, ["rev-parse", "HEAD"]));
       expect(await Bun.file(join(root, "feature.ts")).exists()).toBe(true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
+// The measurement the re-arm decision rests on. Driven through real git for the
+// same reason as everything above: a mocked git would answer whatever the
+// decision wanted to hear.
+describe("readLandReadiness", () => {
+  test("a branch with work, rebased on main, measures as landable", async () => {
+    const root = await repo();
+    try {
+      expect(await readLandReadiness(root, "hive/writer")).toEqual({
+        pending: 1,
+        rebased: true,
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("a branch that already landed has nothing pending", async () => {
+    const root = await repo();
+    try {
+      await landBranch(root, "hive/writer");
+      expect(await readLandReadiness(root, "hive/writer")).toEqual({
+        pending: 0,
+        rebased: true,
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("a branch main has moved past is not rebased", async () => {
+    const root = await repo();
+    try {
+      await writeFile(join(root, "other.ts"), "export const o = 1;\n");
+      git(root, ["add", "-A"]);
+      git(root, ["commit", "-m", "main moves", "--no-gpg-sign"]);
+      expect(await readLandReadiness(root, "hive/writer")).toEqual({
+        pending: 1,
+        rebased: false,
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("a branch git cannot read measures unknown, never zero and never false", async () => {
+    const root = await repo();
+    try {
+      expect(await readLandReadiness(root, "hive/no-such-branch")).toEqual({
+        pending: null,
+        rebased: null,
+      });
     } finally {
       await rm(root, { recursive: true, force: true });
     }

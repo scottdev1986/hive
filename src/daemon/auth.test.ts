@@ -16,9 +16,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentRecord } from "../schemas";
 import { HiveDatabase } from "./db";
+import type { LandReadiness } from "./landing";
 import { listAuditEntries } from "./testing";
 import { readCredential, writeCredential, credentialPath } from "./credentials";
-import { HiveDaemon } from "./server";
+import { AUTO_REARM_BUDGET, HiveDaemon } from "./server";
 import type { SpawnRequest, Spawner } from "./spawner";
 
 const home = mkdtempSync(join(tmpdir(), "hive-auth-test-"));
@@ -67,12 +68,18 @@ interface Harness {
 }
 
 function harness(
-  options: { landFailsTimes?: number } = {},
+  options: { landFailsTimes?: number; readiness?: LandReadiness } = {},
 ): Harness {
   const db = new HiveDatabase(":memory:");
   const spawner = new StubSpawner();
   const landed: string[] = [];
   const landFailures = { count: options.landFailsTimes ?? 0 };
+  // Unknown by default: this harness has no git, and "we could not read the
+  // branch" is exactly what the daemon must treat as a reason to ask, not as a
+  // reason to grant. Every pre-existing re-arm test below therefore proves the
+  // fail-closed path.
+  const readiness: LandReadiness = options.readiness ??
+    { pending: null, rebased: null };
   const daemon = new HiveDaemon({
     db,
     spawner,
@@ -91,6 +98,7 @@ function harness(
       landed.push(branch);
       return { commit: "c0ffee".padEnd(40, "0") };
     },
+    readLandReadiness: async () => readiness,
     resourceRunners: { orphans: null },
   });
   return { daemon, db, spawner, landed, landFailures };
@@ -696,5 +704,123 @@ describe("audit", () => {
     expect(row.secretHash).not.toContain(secret);
     expect(row.secretHash).toMatch(/^[0-9a-f]{64}$/);
     void daemon.stop();
+  });
+});
+
+// The re-arm is where Hive was spending humans. Two things it must never do:
+// ask for an approval that grants nothing (the branch is already merged), and
+// grant one on evidence it does not have.
+describe("a spent land grant is measured before a human is asked", () => {
+  const pendingRearms = (db: HiveDatabase): number =>
+    db.listApprovals("pending").filter(
+      (approval) => approval.description.startsWith("Re-arm landing"),
+    ).length;
+
+  const autoRearms = (daemon: HiveDaemon): number =>
+    listAuditEntries(daemon.db, 50).filter(
+      (entry) => entry.reason === "capability.auto-rearm",
+    ).length;
+
+  test("an already-landed branch files no re-arm approval at all", async () => {
+    // main..branch is empty: there is nothing to merge, so there is nothing to
+    // grant. This is the no-op approval agents were declining by hand.
+    const { daemon, db, landed } = harness({
+      readiness: { pending: 0, rebased: true },
+    });
+    db.upsertAgent(agentRecord());
+    const { token } = daemon.capabilities.mint("maya", "writer", { epoch: 0 });
+
+    expect((await callTool(daemon, token, "hive_land", { agent: "maya", capabilityEpoch: 0 })).ok).toBe(true);
+    const again = await callTool(daemon, token, "hive_land", { agent: "maya", capabilityEpoch: 0 });
+    expect(again.ok).toBe(false);
+    expect(again.error).toContain("Nothing to land for maya");
+    expect(again.error).toContain("No re-arm approval was filed");
+    expect(pendingRearms(db)).toBe(0);
+    expect(autoRearms(daemon)).toBe(0);
+    expect(landed).toEqual(["hive/maya-work"]);
+    await daemon.stop();
+  });
+
+  test("real work on a rebased branch re-arms itself, up to the budget", async () => {
+    const { daemon, db, landed } = harness({
+      readiness: { pending: 2, rebased: true },
+    });
+    db.upsertAgent(agentRecord());
+    const { token } = daemon.capabilities.mint("maya", "writer", { epoch: 0 });
+
+    // The granted landing plus AUTO_REARM_BUDGET re-armed ones, none of which
+    // touches a human.
+    for (let attempt = 0; attempt <= AUTO_REARM_BUDGET; attempt += 1) {
+      const result = await callTool(daemon, token, "hive_land", { agent: "maya", capabilityEpoch: 0 });
+      expect(result.ok).toBe(true);
+    }
+    expect(landed).toHaveLength(AUTO_REARM_BUDGET + 1);
+    expect(autoRearms(daemon)).toBe(AUTO_REARM_BUDGET);
+    expect(pendingRearms(db)).toBe(0);
+
+    // The budget is a bound, not a bypass: the next landing asks.
+    const refused = await callTool(daemon, token, "hive_land", { agent: "maya", capabilityEpoch: 0 });
+    expect(refused.ok).toBe(false);
+    expect(refused.error).toContain("already spent");
+    expect(pendingRearms(db)).toBe(1);
+    expect(landed).toHaveLength(AUTO_REARM_BUDGET + 1);
+    await daemon.stop();
+  });
+
+  test("a branch main has moved past is never auto-re-armed", async () => {
+    // Not a fast-forward: the merge Hive would be granting cannot even happen,
+    // and the agent has to rebase and re-run its tests first.
+    const { daemon, db, landed } = harness({
+      readiness: { pending: 2, rebased: false },
+    });
+    db.upsertAgent(agentRecord());
+    const { token } = daemon.capabilities.mint("maya", "writer", { epoch: 0 });
+
+    expect((await callTool(daemon, token, "hive_land", { agent: "maya", capabilityEpoch: 0 })).ok).toBe(true);
+    const refused = await callTool(daemon, token, "hive_land", { agent: "maya", capabilityEpoch: 0 });
+    expect(refused.ok).toBe(false);
+    expect(autoRearms(daemon)).toBe(0);
+    expect(pendingRearms(db)).toBe(1);
+    expect(landed).toEqual(["hive/maya-work"]);
+    await daemon.stop();
+  });
+
+  test("a branch Hive cannot measure asks a human — unknown is never a yes", async () => {
+    // The whole guard: a reader that returns null returns NO EVIDENCE, and no
+    // evidence may not be converted into a grant.
+    const { daemon, db, landed } = harness({
+      readiness: { pending: null, rebased: null },
+    });
+    db.upsertAgent(agentRecord());
+    const { token } = daemon.capabilities.mint("maya", "writer", { epoch: 0 });
+
+    expect((await callTool(daemon, token, "hive_land", { agent: "maya", capabilityEpoch: 0 })).ok).toBe(true);
+    const refused = await callTool(daemon, token, "hive_land", { agent: "maya", capabilityEpoch: 0 });
+    expect(refused.ok).toBe(false);
+    expect(refused.error).toContain("already spent");
+    expect(refused.error).not.toContain("Nothing to land");
+    expect(autoRearms(daemon)).toBe(0);
+    expect(pendingRearms(db)).toBe(1);
+    expect(landed).toEqual(["hive/maya-work"]);
+    await daemon.stop();
+  });
+
+  test("a revoked writer is still refused, budget or no budget", async () => {
+    // The auto re-arm sits behind authorization, not in front of it: it is only
+    // ever reached by a caller whose *only* failing check was the spent grant.
+    const { daemon, db, landed } = harness({
+      readiness: { pending: 2, rebased: true },
+    });
+    db.upsertAgent(agentRecord());
+    const { token } = daemon.capabilities.mint("maya", "writer", { epoch: 0 });
+
+    expect((await callTool(daemon, token, "hive_land", { agent: "maya", capabilityEpoch: 0 })).ok).toBe(true);
+    db.upsertAgent(agentRecord({ writeRevoked: true }));
+    const refused = await callTool(daemon, token, "hive_land", { agent: "maya", capabilityEpoch: 0 });
+    expect(refused.ok).toBe(false);
+    expect(refused.error).toContain("revoked");
+    expect(autoRearms(daemon)).toBe(0);
+    expect(landed).toEqual(["hive/maya-work"]);
+    await daemon.stop();
   });
 });

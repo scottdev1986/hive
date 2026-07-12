@@ -1359,6 +1359,24 @@ export class HiveDatabase {
     );
   }
 
+  /** How many audit rows a subject already has for one (action, reason). The
+   * auto-re-arm budget is counted from the audit log rather than from a new
+   * column, because the audit log is already the durable record of every grant
+   * the daemon issued — a second counter could disagree with it. */
+  countAuditEntries(
+    callerSubject: string,
+    action: string,
+    reason: string,
+  ): number {
+    const row = z.object({ total: z.number() }).parse(
+      this.database.query(`
+        SELECT COUNT(*) AS total FROM audit_log
+        WHERE callerSubject = ? AND action = ? AND reason = ?
+      `).get(callerSubject, action, reason),
+    );
+    return row.total;
+  }
+
   insertApproval(approval: z.input<typeof ApprovalSchema>): Approval {
     const value = ApprovalSchema.parse(approval);
     this.database.query(`

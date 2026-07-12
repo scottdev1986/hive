@@ -26,7 +26,12 @@ import {
 import { ensureProfile } from "../adapters/profile";
 import { graphLocate, readGraphifyState } from "../adapters/graphify";
 import { GraphifyService } from "./graphify-service";
-import { landBranch, type LandBranch } from "./landing";
+import {
+  landBranch,
+  type LandBranch,
+  readLandReadiness,
+  type ReadLandReadiness,
+} from "./landing";
 import { checkBuildFreshness, type BuildFreshness } from "./build-freshness";
 import { readLiveClaudeModel } from "./live-model";
 import {
@@ -350,6 +355,26 @@ const LAND_REARM_NOTE =
   "Hive has already filed the re-arm approval for you — there is no command to run.\n" +
   "Fix: the orchestrator approves that request, which grants exactly one more hive_land.";
 
+// How many landings past the first Hive will re-arm on its own evidence, per
+// agent — so a productive agent is not a human bottleneck, while an agent still
+// cannot merge an unbounded stream of unreviewed increments: the fifth landing
+// of a task asks a person, and so does every landing after it. The budget is a
+// per-agent (therefore per-task) count read back from the audit log.
+export const AUTO_REARM_BUDGET = 3;
+export const AUTO_REARM_REASON = "capability.auto-rearm";
+
+/** An agent whose work is already on main is not blocked by a spent grant — it
+ * is finished. Saying so, and filing nothing, is the whole fix for the no-op
+ * re-arms a human kept being asked to clear. */
+const nothingToLand = (name: string, branch: string | null): Error =>
+  new Error(
+    `Nothing to land for ${name}: every commit on ${
+      branch ?? "its branch"
+    } is already on main, so there is no diff to merge.\n` +
+      "No re-arm approval was filed — a landing grant is not needed to merge nothing.\n" +
+      "Fix: if you have new work, commit it on your branch and land again; otherwise you are done.",
+  );
+
 // Resource and control alerts are the only way daemon degradation reaches the
 // orchestrator; a failed alert send must not crash the sweep, but it must not
 // vanish either.
@@ -411,6 +436,7 @@ export interface HiveDaemonOptions {
   ) => Promise<StrandedWork>;
   listUnmergedHiveBranches?: (repoRoot: string) => Promise<UnmergedBranch[]>;
   landBranch?: LandBranch;
+  readLandReadiness?: ReadLandReadiness;
   port?: number;
   hostname?: string;
   manageLifecycle?: boolean;
@@ -546,6 +572,7 @@ export class HiveDaemon {
    * restart recounts from offset zero instead of trusting a stale number. */
   private readonly graphifyCalls = new Map<string, GraphifyCallCursor>();
   private readonly land: LandBranch;
+  private readonly landReadiness: ReadLandReadiness;
   private bunServer: Server<undefined> | null = null;
   private reconciliationTimer: ReturnType<typeof setInterval> | null = null;
   private maintenanceRunning = false;
@@ -655,6 +682,7 @@ export class HiveDaemon {
     this.layout = options.layout ?? null;
     this.workspacePresence = options.workspacePresence ?? new WorkspacePresence();
     this.land = options.landBranch ?? landBranch;
+    this.landReadiness = options.readLandReadiness ?? readLandReadiness;
     this.resources = options.resources ?? null;
     this.lifecycleConfig = options.lifecycle ?? null;
     this.psSample = options.resourceRunners?.ps ?? runPs;
@@ -1040,6 +1068,64 @@ export class HiveDaemon {
     } finally {
       this.maintenanceRunning = false;
     }
+  }
+
+  /**
+   * A spent land grant is not automatically a human's problem, and this is
+   * where Hive stops making it one. Three answers, in order of how much
+   * evidence they need:
+   *
+   * - `nothing-to-land`: the branch has no commit the primary lacks. There is
+   *   nothing to merge, so there is nothing to grant, so no approval is filed.
+   *   This is the no-op re-arm Hive kept asking humans to clear — agents
+   *   checked `main..branch`, found it empty, and correctly refused the grant
+   *   Hive had just filed for them.
+   * - `rearmed`: Hive measured, in the primary checkout, the two things the
+   *   human was being asked to eyeball — the branch has work (`pending > 0`)
+   *   and it is rebased on current main, so the merge is a real fast-forward —
+   *   and the agent is still inside its auto-re-arm budget. It re-arms itself
+   *   and audits the grant.
+   * - `ask`: everything else, including every unknown. A branch we could not
+   *   read, a `null` from either measurement, a divergent branch, an exhausted
+   *   budget: file the approval and let a person decide. Unknown must never
+   *   read as permission — a `null` that means "we could not tell" is not a
+   *   yes, and this is the guard that would be disarmed if it were.
+   *
+   * What is deliberately NOT checked is the test suite: the daemon cannot run
+   * it in a land handler, and an agent's *claim* that it is green is an act,
+   * not a state. So the suite is not pretended to be verified — the budget is
+   * the containment instead, and beyond it a human sees the work.
+   */
+  private async decideSpentLandGrant(
+    capability: Capability,
+    branch: string | null,
+    mayAutoRearm: boolean,
+  ): Promise<"nothing-to-land" | "rearmed" | "ask"> {
+    if (branch === null) return "ask";
+    const readiness = await this.landReadiness(this.repoRoot, branch)
+      .catch(() => ({ pending: null, rebased: null }));
+    if (readiness.pending === 0) return "nothing-to-land";
+    if (!mayAutoRearm) return "ask";
+    if (readiness.pending === null || readiness.rebased !== true) return "ask";
+    const spent = this.db.countAuditEntries(
+      capability.subject,
+      "branch:land",
+      AUTO_REARM_REASON,
+    );
+    if (spent >= AUTO_REARM_BUDGET) return "ask";
+    this.capabilities.rearmOneShot(capability.subject, "branch:land");
+    this.capabilities.audit({
+      route: "/mcp:hive_land",
+      action: "branch:land",
+      callerSubject: capability.subject,
+      callerRole: capability.role,
+      capabilityId: capability.id,
+      requestedSubject: capability.subject,
+      epoch: capability.epoch,
+      decision: "allow",
+      reason: AUTO_REARM_REASON,
+    });
+    return "rearmed";
   }
 
   /** Files (once) the approval whose grant re-arms one landing for an agent
@@ -3220,17 +3306,25 @@ export class HiveDaemon {
         "Fast-forward land a writer branch only when its durable write capability epoch is current and not revoked.",
       inputSchema: LandRequestSchema,
     }, async ({ agent: name, capabilityEpoch }) => {
+      const branch = this.db.getAgentByName(name)?.branch ?? null;
       try {
         this.authorizeTool(capability, "hive_land", "branch:land", name);
       } catch (error) {
         // A spent grant is a dead end the caller cannot fix alone (a live
-        // agent asked to land follow-up work simply stalls); surface it as
-        // an approval whose grant re-arms exactly one landing.
+        // agent asked to land follow-up work simply stalls). Measure before
+        // spending a human on it: an empty branch needs no grant at all, and a
+        // rebased branch with real work re-arms on Hive's own evidence.
         if (error instanceof Error && error.message.includes("already spent")) {
-          this.fileLandRearmApproval(capability.subject);
-          throw new Error(`${error.message}. ${LAND_REARM_NOTE}`);
+          const outcome = await this.decideSpentLandGrant(capability, branch, true);
+          if (outcome === "nothing-to-land") throw nothingToLand(name, branch);
+          if (outcome === "ask") {
+            this.fileLandRearmApproval(capability.subject);
+            throw new Error(`${error.message}. ${LAND_REARM_NOTE}`);
+          }
+          // Re-armed: the one-shot is available again and the land proceeds.
+        } else {
+          throw error;
         }
-        throw error;
       }
       // Reserve the one-shot right before merging, so two concurrent lands
       // cannot both reach git. A lost fast-forward race releases it again:
@@ -3247,6 +3341,15 @@ export class HiveDaemon {
           decision: "deny",
           reason: "capability.replayed",
         });
+        // A lost reservation race means another land of this same branch is in
+        // flight, so this one is never auto-re-armed — but if that land already
+        // merged everything, there is still nothing here to grant.
+        if (
+          await this.decideSpentLandGrant(capability, branch, false) ===
+            "nothing-to-land"
+        ) {
+          throw nothingToLand(name, branch);
+        }
         this.fileLandRearmApproval(capability.subject);
         throw new Error(
           `The one-shot branch:land grant for ${capability.subject} is already spent. ${LAND_REARM_NOTE}`,
