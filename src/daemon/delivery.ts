@@ -117,9 +117,23 @@ const DEFAULT_CRITICAL_DEADLINE_MS = 10_000;
  * model reasoned, which is normal and not a fault. So this has to clear a long
  * reasoning phase without crying wolf. Five minutes without the recipient
  * reaching a single turn boundary means the message is genuinely still waiting,
- * and that is worth one line to the orchestrator.
+ * and that is worth one line to the orchestrator — unless the recipient is
+ * demonstrably mid-turn and alive (see stalledReason), because a deep builder
+ * routinely spends far longer than this inside one healthy turn.
  */
 const DELIVERY_CONFIRM_DEADLINE_MS = 5 * 60_000;
+
+/**
+ * How long an OPEN turn may go without a single sign of life before "busy"
+ * stops being an excuse. Every tool call refreshes the agent's lastEventAt
+ * (the tool-boundary tick), so this gap is only ever the length of one
+ * in-flight call — and one legitimate call can run a full test suite. Thirty
+ * minutes clears any suite this repo has seen while still surfacing a wedged
+ * process hours before the historical codex deafness (~2h unconfirmable)
+ * would have been noticed. Deaf-from-birth agents never open a turn at all
+ * and are alerted at the five-minute deadline, not this one.
+ */
+const OPEN_TURN_SILENCE_CAP_MS = 30 * 60_000;
 
 /**
  * How long an idle recipient gets to start a turn before we conclude its TUI
@@ -728,7 +742,7 @@ export class MessageDelivery {
     // the same thing to a test as it does to the daemon.
     const cutoff = new Date(Date.parse(now) - DELIVERY_CONFIRM_DEADLINE_MS)
       .toISOString();
-    const stalled: AgentMessage[] = [];
+    const stalled: Array<{ message: AgentMessage; reason: string }> = [];
 
     for (const message of this.db.listInjectedUnapplied()) {
       const injectedAt = message.injectedAt;
@@ -744,9 +758,37 @@ export class MessageDelivery {
         continue;
       }
 
-      // No boundary since. Give it the deadline, then tell someone.
+      // No boundary since. Give it the deadline — and then distinguish BUSY
+      // from DEAF before telling anyone. A recipient mid-turn and alive is
+      // not stalled: its TUI holds the paste until the turn's own boundary,
+      // and a deep build turn routinely outlives any fixed deadline. This
+      // alert fired seven times in one evening for agents that were simply
+      // working, and a wolf-cry on the very channel that reveals genuine
+      // deafness trains the one reader it has to ignore it. A busy message
+      // stays unalerted (alertAt null), so every later sweep re-judges it and
+      // still fires the moment its recipient stops showing signs of life.
       if (injectedAt < cutoff && message.alertAt === null) {
-        stalled.push(message);
+        const reason = this.stalledReason(message.to, now);
+        if (reason !== null) stalled.push({ message, reason });
+      }
+    }
+
+    // Queued messages get the same triage, because a genuinely deaf recipient
+    // never lets a message reach "injected" at all: the historical codex
+    // deafness BLOCKED delivery, and a watchdog reading only the injected
+    // state is blind to the one incident it exists for. Queued-while-busy is
+    // routine (ordinary traffic waits for the turn boundary) and stays
+    // silent; queued at a recipient that shows no signs of life is the alarm.
+    // Root-bound messages are exempt: the root's queue is its inbox, drained
+    // by hive_inbox on its own turns — and the root is this alert's audience,
+    // so "you have unread mail" would be noise by construction.
+    for (const message of this.db.listQueuedMessages()) {
+      if (message.to === ORCHESTRATOR_NAME) continue;
+      if (message.createdAt < cutoff && message.alertAt === null) {
+        const reason = this.stalledReason(message.to, now);
+        if (reason !== null) {
+          stalled.push({ message, reason: `${reason} (never delivered)` });
+        }
       }
     }
 
@@ -757,19 +799,24 @@ export class MessageDelivery {
       // orchestrator's next turn is a denial of service on the one context that
       // has to stay clear, and most of them are stale anyway. Dropping them is
       // precisely the silent loss SPEC §3 forbids. So we surface the FACT and
-      // preserve the DETAIL: the count and the recipients go in one line, every
-      // message stays queryable by id, and none is discarded.
-      const recipients = [...new Set(stalled.map((m) => m.to))].sort();
-      for (const message of stalled) {
+      // preserve the DETAIL: the count and each recipient's measured state go
+      // in one line, every message stays queryable by id, and none is
+      // discarded.
+      const reasons = new Map<string, string>();
+      for (const { message, reason } of stalled) {
+        reasons.set(message.to, reason);
         this.db.markMessageAlerted(message.id, now);
       }
+      const detail = [...reasons.entries()].sort(([a], [b]) =>
+        a.localeCompare(b)
+      ).map(([, reason]) => reason).join("; ");
       const alert = await this.send(
         "hive-control",
         ORCHESTRATOR_NAME,
-        `${stalled.length} message(s) were delivered but never confirmed applied ` +
-          `after ${Math.round(DELIVERY_CONFIRM_DEADLINE_MS / 60_000)}m ` +
-          `(recipients: ${recipients.join(", ")}). Their recipients have not ` +
-          "reached a turn boundary since, so we cannot say they were read. " +
+        `${stalled.length} message(s) stuck unconfirmed after ` +
+          `${Math.round(DELIVERY_CONFIRM_DEADLINE_MS / 60_000)}m: ` +
+          `${detail}. Recipients that are mid-turn and active are never ` +
+          "listed — a live turn holds messages until its own boundary. " +
           "Nothing was discarded and every one is still queryable by id.",
         { idempotencyKey: `delivery-unconfirmed:${now.slice(0, 16)}` },
       ).catch(() => undefined);
@@ -806,6 +853,50 @@ export class MessageDelivery {
     // emits `notification` events while doing nothing, so an unsubmitted paste
     // got "confirmed" by the recipient sitting still. Only a real turn counts.
     return this.db.latestTurnBoundaryAt(recipient);
+  }
+
+  /**
+   * Why an unconfirmed message deserves the alert — or null when it does not.
+   *
+   * "No boundary for five minutes" is one observation with two opposite
+   * causes, and they must not share a message. A BUSY recipient is mid-turn:
+   * its newest boundary is a `turn-start`, its TUI is holding the paste until
+   * the turn closes, and its process keeps proving itself alive (every tool
+   * call refreshes the agent row's lastEventAt; the root's events do the same
+   * in the events table). That is healthy work and earns silence. A DEAF
+   * recipient has nothing to show: no turn events at all (the historical
+   * codex deafness — five agents, zero hooks, ~2h unconfirmable), or a closed
+   * turn it never followed (an idle TUI that swallowed the paste), or a dead
+   * process, or an open turn that has gone silent past any legitimate single
+   * tool call. Each of those states is named in the alert, so the reader
+   * learns what was measured, not merely that a timer expired.
+   */
+  private stalledReason(recipient: string, now: string): string | null {
+    const agent = recipient === ORCHESTRATOR_NAME
+      ? null
+      : this.db.getAgentByName(recipient);
+    if (agent !== null && (agent.status === "dead" || agent.status === "failed")) {
+      return `${recipient} is ${agent.status} and will never reach a boundary`;
+    }
+    const boundary = this.db.latestTurnBoundary(recipient);
+    if (boundary === null) {
+      return `${recipient} has emitted no turn events at all — it may be unable to hear`;
+    }
+    if (boundary.kind === "turn-end") {
+      return `${recipient} is idle yet never submitted it — the paste may have been swallowed`;
+    }
+    const life = recipient === ORCHESTRATOR_NAME
+      ? this.db.latestEventAt(recipient)
+      : agent?.lastEventAt ?? null;
+    const quietMs = life === null
+      ? Number.POSITIVE_INFINITY
+      : Date.parse(now) - Date.parse(life);
+    if (quietMs < OPEN_TURN_SILENCE_CAP_MS) {
+      return null; // Mid-turn and demonstrably alive: busy, not deaf.
+    }
+    return `${recipient} is mid-turn but has shown no sign of life for ${
+      Math.round(quietMs / 60_000)
+    }m`;
   }
 
   async alertExpiredControls(now = new Date().toISOString()): Promise<number> {

@@ -894,6 +894,21 @@ export class HiveDatabase {
       .map((row) => AgentMessageSchema.parse(row));
   }
 
+  /**
+   * Every message still waiting to be handed over at all. The stalled-message
+   * sweep reads this alongside the injected list, because a genuinely deaf
+   * recipient never lets its messages *reach* injected — the historical codex
+   * deafness blocked delivery outright, and a watchdog that only reads
+   * "injected" is blind to exactly that incident.
+   */
+  listQueuedMessages(): AgentMessage[] {
+    return this.database.query(`
+      SELECT * FROM messages
+      WHERE state = 'queued'
+      ORDER BY sequence, rowid
+    `).all().map((row) => AgentMessageSchema.parse(row));
+  }
+
   listQueuedCriticalMessages(): AgentMessage[] {
     return this.database.query(`
       SELECT * FROM messages
@@ -974,6 +989,40 @@ export class HiveDatabase {
     const row = this.database.query(`
       SELECT MAX(timestamp) AS value FROM events
       WHERE agentName = ? AND kind IN ('turn-start', 'turn-end')
+    `).get(agentName) as { value: string | null };
+    return row.value;
+  }
+
+  /**
+   * The latest turn boundary *with its kind*, because the kind is a state:
+   * a newest boundary of `turn-start` means a turn is open right now — the
+   * TUI is holding queued pastes until it closes — while `turn-end` means the
+   * recipient is idle and anything pasted since should already have submitted.
+   * Delivery's stalled-message triage tells BUSY from DEAF with exactly this.
+   */
+  latestTurnBoundary(
+    agentName: string,
+  ): { timestamp: string; kind: "turn-start" | "turn-end" } | null {
+    const row = this.database.query(`
+      SELECT timestamp, kind FROM events
+      WHERE agentName = ? AND kind IN ('turn-start', 'turn-end')
+      ORDER BY timestamp DESC, rowid DESC LIMIT 1
+    `).get(agentName) as
+      | { timestamp: string; kind: "turn-start" | "turn-end" }
+      | null;
+    return row;
+  }
+
+  /**
+   * The newest event of any kind — a sign of life, never proof a turn ran.
+   * Spawned agents carry this on their own row (tool-boundary ticks update it
+   * without an events row); the orchestrator has no row, so its signs of life
+   * exist only here.
+   */
+  latestEventAt(agentName: string): string | null {
+    const row = this.database.query(`
+      SELECT MAX(timestamp) AS value FROM events
+      WHERE agentName = ?
     `).get(agentName) as { value: string | null };
     return row.value;
   }

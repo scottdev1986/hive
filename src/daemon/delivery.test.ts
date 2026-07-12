@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AgentRecord } from "../schemas";
+import type { AgentMessage, AgentRecord } from "../schemas";
 import { HiveDatabase } from "./db";
 import {
   MessageDelivery,
@@ -748,20 +748,298 @@ describe("reconciling messages we handed over", () => {
       await delivery.reconcileInjected();
 
       const alerts = db.getUndeliveredMessages("orchestrator")
-        .filter((m) => m.body.includes("never confirmed applied"));
+        .filter((m) => m.body.includes("stuck unconfirmed"));
       expect(alerts).toHaveLength(1);
       // One line naming the count — not ninety messages dumped into the
       // orchestrator's context.
       expect(alerts[0]?.body).toContain("1 message(s)");
       expect(alerts[0]?.body).toContain("maya");
       expect(alerts[0]?.body).toContain("Nothing was discarded");
+      // The alert names what was measured, not merely that a timer expired.
+      // This fixture's recipient has an ancient turn-start (the submit probe)
+      // and no sign of life since: an open turn gone silent far past any
+      // legitimate single tool call.
+      expect(alerts[0]?.body).toContain("no sign of life");
 
       // Surfaced once, never a repeating alarm.
       await delivery.reconcileInjected();
       expect(
         db.getUndeliveredMessages("orchestrator")
-          .filter((m) => m.body.includes("never confirmed applied")),
+          .filter((m) => m.body.includes("stuck unconfirmed")),
       ).toHaveLength(1);
+    } finally {
+      db.close();
+    }
+  });
+
+  /** Raw-SQL injection backdating, matching the alert test above: the deadline
+   * is measured from injectedAt, and only the database can move that. */
+  function backdateInjection(db: HiveDatabase, id: string, iso: string): void {
+    db.transitionMessage(id, "injected", iso);
+    (db as unknown as {
+      database: { query: (s: string) => { run: (...a: unknown[]) => void } };
+    }).database.query("UPDATE messages SET injectedAt = ? WHERE id = ?")
+      .run(iso, id);
+  }
+
+  const unconfirmedAlerts = (db: HiveDatabase): AgentMessage[] =>
+    db.getUndeliveredMessages("orchestrator")
+      .filter((m) => m.body.includes("stuck unconfirmed"));
+
+  test("a recipient mid-turn and alive is busy, not deaf: no alert, and its own boundary confirms it", async () => {
+    const db = new HiveDatabase(join(home, "recon-busy-alive.db"));
+    const delivery = new MessageDelivery(db, new RecordingTmuxSender());
+    try {
+      const now = Date.now();
+      // Every tool call refreshes lastEventAt (the tool-boundary tick), so a
+      // fresh value is what a deep builder mid-suite actually looks like.
+      db.insertAgent({
+        ...agent("working"),
+        lastEventAt: new Date(now).toISOString(),
+      });
+      // The turn opened before the message arrived and is still open.
+      db.insertEvent({
+        kind: "turn-start",
+        agentName: "maya",
+        timestamp: new Date(now - 15 * 60_000).toISOString(),
+      });
+      const urgent = await delivery.send("sam", "maya", "new brief", {
+        priority: "urgent",
+      });
+      await delivery.flushUrgent("maya");
+      backdateInjection(db, urgent.id, new Date(now - 10 * 60_000).toISOString());
+
+      // Ten minutes past injection, zero boundaries since — exactly the shape
+      // that fired seven false alarms in one evening. Busy earns silence.
+      expect(await delivery.reconcileInjected()).toEqual(0);
+      expect(unconfirmedAlerts(db)).toHaveLength(0);
+      // Not alerted means every later sweep re-judges it: deafness beginning
+      // after this moment still gets its alarm.
+      expect(db.getMessage(urgent.id)?.state).toEqual("injected");
+      expect(db.getMessage(urgent.id)?.alertAt).toEqual(null);
+
+      // The turn ends; the boundary is the proof, and the message confirms.
+      db.insertEvent({
+        kind: "turn-end",
+        agentName: "maya",
+        timestamp: new Date(now + 1_000).toISOString(),
+      });
+      expect(await delivery.reconcileInjected()).toEqual(1);
+      expect(db.getMessage(urgent.id)?.state).toEqual("applied");
+    } finally {
+      db.close();
+    }
+  });
+
+  test("a recipient with no turn events at all still rings the alarm — that is the deafness signature", async () => {
+    const db = new HiveDatabase(join(home, "recon-deaf.db"));
+    const delivery = new MessageDelivery(db, new RecordingTmuxSender());
+    try {
+      // The historical codex deafness: process up, hooks dead, zero events
+      // ever. Nothing here may read as "busy".
+      db.insertAgent(agent("working"));
+      const urgent = await delivery.send("sam", "maya", "stop", {
+        priority: "urgent",
+      });
+      await delivery.flushUrgent("maya");
+      backdateInjection(
+        db,
+        urgent.id,
+        new Date(Date.now() - 10 * 60_000).toISOString(),
+      );
+
+      await delivery.reconcileInjected();
+      const alerts = unconfirmedAlerts(db);
+      expect(alerts).toHaveLength(1);
+      expect(alerts[0]?.body).toContain("no turn events at all");
+    } finally {
+      db.close();
+    }
+  });
+
+  test("an idle recipient that never submitted the paste still rings", async () => {
+    const db = new HiveDatabase(join(home, "recon-idle-swallowed.db"));
+    const delivery = new MessageDelivery(db, new RecordingTmuxSender());
+    try {
+      const now = Date.now();
+      // Row status says "working" only so the urgent-flush path injects
+      // without the idle submit probe; the classifier reads the events, and
+      // the events say the last turn closed long ago.
+      db.insertAgent(agent("working"));
+      // A closed turn: started and finished before the message arrived. An
+      // idle TUI should submit a paste immediately, so five quiet minutes
+      // mean the paste was swallowed — this alert is the real thing.
+      db.insertEvent({
+        kind: "turn-start",
+        agentName: "maya",
+        timestamp: new Date(now - 30 * 60_000).toISOString(),
+      });
+      db.insertEvent({
+        kind: "turn-end",
+        agentName: "maya",
+        timestamp: new Date(now - 25 * 60_000).toISOString(),
+      });
+      const urgent = await delivery.send("sam", "maya", "hello", {
+        priority: "urgent",
+      });
+      await delivery.flushUrgent("maya");
+      backdateInjection(db, urgent.id, new Date(now - 10 * 60_000).toISOString());
+
+      await delivery.reconcileInjected();
+      const alerts = unconfirmedAlerts(db);
+      expect(alerts).toHaveLength(1);
+      expect(alerts[0]?.body).toContain("idle yet never submitted");
+    } finally {
+      db.close();
+    }
+  });
+
+  test("a dead recipient rings as dead, whatever its event history says", async () => {
+    const db = new HiveDatabase(join(home, "recon-dead.db"));
+    const delivery = new MessageDelivery(db, new RecordingTmuxSender());
+    try {
+      const now = Date.now();
+      const record = {
+        ...agent("working"),
+        lastEventAt: new Date(now).toISOString(),
+      };
+      db.insertAgent(record);
+      // An open turn and a fresh lastEventAt — the busy shape — but the agent
+      // died. Death outranks busyness: a crashed process holds its turn open
+      // forever, and "busy" must never suppress that alarm.
+      db.insertEvent({
+        kind: "turn-start",
+        agentName: "maya",
+        timestamp: new Date(now - 15 * 60_000).toISOString(),
+      });
+      const urgent = await delivery.send("sam", "maya", "brief", {
+        priority: "urgent",
+      });
+      await delivery.flushUrgent("maya");
+      backdateInjection(db, urgent.id, new Date(now - 10 * 60_000).toISOString());
+      db.upsertAgent({ ...record, status: "dead" });
+
+      await delivery.reconcileInjected();
+      const alerts = unconfirmedAlerts(db);
+      expect(alerts).toHaveLength(1);
+      expect(alerts[0]?.body).toContain("maya is dead");
+    } finally {
+      db.close();
+    }
+  });
+
+  /** The deadline clock for a queued message starts at creation. */
+  function backdateCreation(db: HiveDatabase, id: string, iso: string): void {
+    (db as unknown as {
+      database: { query: (s: string) => { run: (...a: unknown[]) => void } };
+    }).database.query("UPDATE messages SET createdAt = ? WHERE id = ?")
+      .run(iso, id);
+  }
+
+  test("a message queued behind a busy recipient's turn is routine, not an alarm", async () => {
+    const db = new HiveDatabase(join(home, "recon-queued-busy.db"));
+    const delivery = new MessageDelivery(db, new RecordingTmuxSender());
+    try {
+      const now = Date.now();
+      db.insertAgent({
+        ...agent("working"),
+        lastEventAt: new Date(now).toISOString(),
+      });
+      db.insertEvent({
+        kind: "turn-start",
+        agentName: "maya",
+        timestamp: new Date(now - 15 * 60_000).toISOString(),
+      });
+      // Ordinary priority: it waits for the turn boundary by design.
+      const message = await delivery.send("sam", "maya", "when you're done…");
+      expect(message.state).toEqual("queued");
+      backdateCreation(db, message.id, new Date(now - 10 * 60_000).toISOString());
+
+      await delivery.reconcileInjected();
+      expect(unconfirmedAlerts(db)).toHaveLength(0);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("a message queued at a lifeless recipient rings — deafness blocks delivery before injection", async () => {
+    const db = new HiveDatabase(join(home, "recon-queued-deaf.db"));
+    const delivery = new MessageDelivery(db, new RecordingTmuxSender());
+    try {
+      // The historical codex deafness exactly: agents whose hooks never fired
+      // once. Their messages never left "queued", and the old watchdog — which
+      // read only the injected state — was blind to all of it for two hours.
+      db.insertAgent(agent("working"));
+      const message = await delivery.send("sam", "maya", "hello?");
+      expect(message.state).toEqual("queued");
+      backdateCreation(
+        db,
+        message.id,
+        new Date(Date.now() - 10 * 60_000).toISOString(),
+      );
+
+      await delivery.reconcileInjected();
+      const alerts = unconfirmedAlerts(db);
+      expect(alerts).toHaveLength(1);
+      expect(alerts[0]?.body).toContain("no turn events at all");
+      expect(alerts[0]?.body).toContain("never delivered");
+    } finally {
+      db.close();
+    }
+  });
+
+  test("the root's queue is its inbox, never a deafness alarm", async () => {
+    const db = new HiveDatabase(join(home, "recon-queued-root.db"));
+    const delivery = new MessageDelivery(db, new RecordingTmuxSender());
+    try {
+      const message = await delivery.send("sam", "orchestrator", "report");
+      backdateCreation(
+        db,
+        message.id,
+        new Date(Date.now() - 60 * 60_000).toISOString(),
+      );
+      await delivery.reconcileInjected();
+      expect(unconfirmedAlerts(db)).toHaveLength(0);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("a busy orchestrator is not stalled either — its turns live in the events table", async () => {
+    const db = new HiveDatabase(join(home, "recon-root-busy.db"));
+    const delivery = new MessageDelivery(db, new RecordingTmuxSender());
+    try {
+      const now = Date.now();
+      // The root has no agents row; its open turn and signs of life are the
+      // events its own hooks post. This alert fired for the orchestrator
+      // itself tonight, mid-turn and healthy.
+      db.insertEvent({
+        kind: "turn-start",
+        agentName: "orchestrator",
+        timestamp: new Date(now - 15 * 60_000).toISOString(),
+      });
+      db.insertEvent({
+        kind: "notification",
+        agentName: "orchestrator",
+        timestamp: new Date(now - 60_000).toISOString(),
+      });
+      const message = await delivery.send("sam", "orchestrator", "report");
+      backdateInjection(
+        db,
+        message.id,
+        new Date(now - 10 * 60_000).toISOString(),
+      );
+
+      expect(await delivery.reconcileInjected()).toEqual(0);
+      expect(unconfirmedAlerts(db)).toHaveLength(0);
+
+      // Its turn ends: the boundary confirms the message, silence stays earned.
+      db.insertEvent({
+        kind: "turn-end",
+        agentName: "orchestrator",
+        timestamp: new Date(now + 1_000).toISOString(),
+      });
+      expect(await delivery.reconcileInjected()).toEqual(1);
     } finally {
       db.close();
     }
