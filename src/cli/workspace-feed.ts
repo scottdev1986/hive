@@ -26,6 +26,7 @@
  * 30 s of continuous unreachability — a daemon restart mid-session must look
  * like a hiccup, not a teardown.
  */
+import { randomUUID } from "node:crypto";
 import type { AgentRecord } from "../schemas";
 import { isAutonomy, type Autonomy } from "../config/autonomy";
 import { fetchAgentStatus } from "./mcp";
@@ -61,13 +62,18 @@ async function getAutonomy(port: number): Promise<Autonomy | null> {
   return isAutonomy(body?.autonomy) ? body.autonomy : null;
 }
 
+/** Who this feed is. One id per feed process, so the daemon can tell our lease
+ * from another workspace's: a second app shutting down must surrender only its
+ * own, never ours. */
+const FEED_OWNER = randomUUID();
+
 /** `POST /workspace` with the operator credential: grant, renew, or surrender
  * the viewer lease. */
 async function postPresence(port: number, present: boolean): Promise<void> {
   const response = await operatorFetch(`http://127.0.0.1:${port}/workspace`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ present }),
+    body: JSON.stringify({ present, owner: FEED_OWNER }),
   });
   if (!response.ok) {
     throw new Error(`workspace presence registration failed: HTTP ${response.status}`);

@@ -21,6 +21,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     /// the daemon predates the dial) — the menu items disable rather than
     /// guess.
     private(set) var currentAutonomy: String?
+    /// How long to wait before restarting a feed that exited. One second in the
+    /// common case (a killed or crashed feed), doubling to a ceiling so a feed
+    /// that cannot run at all — missing binary, dead daemon — is retried
+    /// without a spawn storm. A snapshot resets it: that is the feed proving it
+    /// works.
+    private var feedRestartDelay: TimeInterval = 1
+    private static let feedRestartCeiling: TimeInterval = 15
+    /// Set once the app has decided the feed should stay dead (window closing,
+    /// app quitting), so a restart already in flight cannot resurrect it.
+    private var feedRetired = false
 
     init(config: LaunchConfig) {
         self.config = config
@@ -62,7 +72,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         }
 
         controller.onWindowWillClose = { [weak self] in
-            self?.feedClient?.stop()
+            self?.retireFeed()
         }
         controller.bootstrapOrchestrator()
         startFeed()
@@ -82,11 +92,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
     /// The feed is a long-lived subprocess printing NDJSON snapshots; while it
     /// runs, the daemon knows a workspace is attached and stops opening
-    /// external terminal windows. It dies with the app (`stop()` below).
+    /// external terminal windows. It dies with the app (`retireFeed()` below).
     private func startFeed() {
         guard let invocation = config.feedInvocation else { return }
         let feed = FeedClient(executable: invocation.executable, arguments: invocation.arguments)
         feed.onSnapshot = { [weak self] agents in
+            self?.feedRestartDelay = 1
             self?.controller?.applyFeed(agents)
         }
         feed.onAutonomy = { [weak self] autonomy in
@@ -98,6 +109,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         feed.onExit = { [weak self] in
             NSLog("workspace-feed exited; agent statuses are stale")
             self?.controller?.feedLost()
+            self?.scheduleFeedRestart()
         }
         feedClient = feed
         do {
@@ -105,7 +117,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         } catch {
             NSLog("failed to start workspace-feed: %@", error.localizedDescription)
             controller?.feedLost()
+            scheduleFeedRestart()
         }
+    }
+
+    /// A feed that exited is an event, not the state "no workspace is present".
+    ///
+    /// The feed is an ordinary child process: it can be killed (a stray
+    /// `pkill -f workspace-feed` aimed at someone else's test run matches it
+    /// exactly), crash, or be dropped by a daemon restart. It used to stay
+    /// dead, and the app went on sitting there — attached, visible, panes
+    /// live — while the daemon watched the lease lapse, concluded nobody was
+    /// watching, and reopened external Terminal.app windows over those panes.
+    /// So the live app restarts its own feed.
+    ///
+    /// The fallback survives because the app is the supervisor: a crashed or
+    /// force-quit app has nobody left to restart the feed, its lease lapses on
+    /// the TTL, and the daemon goes back to external viewers — which is the
+    /// whole reason presence is a lease. Only a *live* app reclaims it.
+    private func scheduleFeedRestart() {
+        guard !feedRetired, config.feedInvocation != nil else { return }
+        let delay = feedRestartDelay
+        feedRestartDelay = min(feedRestartDelay * 2, Self.feedRestartCeiling)
+        NSLog("restarting workspace-feed in %.0fs", delay)
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let self, !self.feedRetired else { return }
+            self.startFeed()
+        }
+    }
+
+    /// Stop the feed and keep it stopped: the workspace is going away, so the
+    /// daemon should get its external viewers back.
+    private func retireFeed() {
+        feedRetired = true
+        feedClient?.stop()
     }
 
     // MARK: Writer autonomy (Agents menu)
@@ -192,7 +237,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        feedClient?.stop()
+        retireFeed()
         controller?.terminateAllTerminals()
     }
 

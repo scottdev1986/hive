@@ -237,6 +237,9 @@ const OrchestratorTerminalRequestSchema = z.object({
 
 const WorkspacePresenceRequestSchema = z.object({
   present: z.boolean(),
+  /** Which workspace is speaking — one id per feed process. Optional so a feed
+   * from an older build still registers (as the shared legacy owner). */
+  owner: z.string().min(1).optional(),
 });
 
 const ViewerRequestSchema = z.object({
@@ -2206,11 +2209,15 @@ export class HiveDaemon {
     );
     if (!decision.ok) return this.denied(decision);
     if (parsed.data.present) {
-      this.workspacePresence.markPresent();
+      this.workspacePresence.markPresent(parsed.data.owner);
     } else {
-      this.workspacePresence.clear();
-      // The app stopped being the viewer; put the window wall back.
-      this.layout?.requestLayout();
+      this.workspacePresence.clear(parsed.data.owner);
+      // This app stopped being a viewer. Only put the window wall back if it
+      // was the last one — another workspace may still be attached, and one
+      // app's exit must not blind the daemon to the rest.
+      if (!this.workspacePresence.isPresent()) {
+        this.layout?.requestLayout();
+      }
     }
     return json({
       ok: true,

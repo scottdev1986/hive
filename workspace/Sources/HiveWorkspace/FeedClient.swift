@@ -8,8 +8,10 @@ import WorkspaceCore
 /// attached (so it stops opening external terminal windows); `stop()` is
 /// called when the window closes or the app quits.
 ///
-/// There is deliberately no auto-restart: if the feed dies the workspace
-/// marks agent panes disconnected and the user relaunches via `hive`.
+/// `onExit` fires only for an exit the app did not ask for (a kill, a crash, a
+/// daemon that went away); `stop()` silences it. The app treats that as a
+/// signal to restart the feed, not as proof the workspace is gone — see
+/// `AppDelegate.scheduleFeedRestart()`.
 final class FeedClient {
 
     private let process = Process()
