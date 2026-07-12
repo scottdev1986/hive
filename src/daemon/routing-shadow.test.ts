@@ -64,6 +64,9 @@ describe("the comparison", () => {
           releaseDate: "2026-06-25",
           fetchedAt: "2026-07-11T12:00:00.000Z",
         }],
+        wouldChange: null,
+        influenceDetail:
+          "No benchmark threshold or fit policy is approved; measurements cannot change the live route.",
       },
     });
     expect(measured.derived).toEqual(base.derived);

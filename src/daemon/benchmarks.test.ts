@@ -74,4 +74,49 @@ describe("benchmark catalog", () => {
     expect(catalog.models.get("codex\0gpt-discovered")?.map((row) => row.sourceId))
       .toEqual(["one", "two"]);
   });
+
+  test("a blocked candidate stays visible without being treated as unavailable", async () => {
+    const catalog = await readBenchmarkCatalog({
+      mode: "shadow",
+      discovery,
+      sources: [{
+        sourceId: "blocked",
+        async read() {
+          return {
+            sourceId: "blocked",
+            status: "blocked",
+            detail: "blocked by user policy",
+            releaseDate: null,
+            fetchedAt: null,
+            models: new Map(),
+          };
+        },
+      }],
+    });
+    expect(catalog).toMatchObject({ status: "blocked" });
+    expect(catalog.detail).toContain("1 blocked");
+  });
+
+  test("a blocked candidate does not make a healthy active source partial", async () => {
+    const source = (sourceId: string, status: "current" | "blocked") => ({
+      sourceId,
+      async read() {
+        return {
+          sourceId,
+          status,
+          detail: status,
+          releaseDate: status === "current" ? "2026-06-25" : null,
+          fetchedAt: status === "current" ? "2026-07-12T00:00:00.000Z" : null,
+          models: new Map(),
+        };
+      },
+    });
+    const catalog = await readBenchmarkCatalog({
+      mode: "shadow",
+      discovery,
+      sources: [source("active", "current"), source("candidate", "blocked")],
+    });
+    expect(catalog.status).toBe("current");
+    expect(catalog.sources[1]?.status).toBe("blocked");
+  });
 });

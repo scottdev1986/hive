@@ -6,6 +6,7 @@ import {
   type DerivedRouting,
 } from "../schemas";
 import { buildModelInventory, formatModelInventory } from "./model-inventory";
+import type { InventoryBenchmark } from "./benchmarks";
 
 const AT = "2026-07-11T12:00:00.000Z";
 
@@ -154,5 +155,33 @@ describe("model inventory", () => {
     expect(text).toContain("0/0, INCOMPLETE");
     expect(text).toContain("claude — UNAVAILABLE: CLI not installed");
     expect(text).toContain("codex — UNAVAILABLE: discovery has not run");
+  });
+
+  test("corroborating sources stay separate without an approved materiality threshold", () => {
+    const model = buildModelInventory({
+      discovery,
+      routing,
+      benchmarks: new Map<string, InventoryBenchmark[]>([["claude\0claude-fable-5", [
+        {
+          sourceId: "artificial-analysis",
+          effort: "max",
+          scores: { coding_index: 61 },
+          source: "https://artificialanalysis.ai/api/v2/language/models",
+          releaseDate: "2026-06",
+          fetchedAt: AT,
+        },
+        {
+          sourceId: "livebench",
+          effort: "max",
+          scores: { code_generation: 91.549 },
+          source: "https://livebench.ai/table_2026_06_25.csv",
+          releaseDate: "2026-06-25",
+          fetchedAt: AT,
+        },
+      ]]]),
+    }).models.find((entry) => entry.canonicalId === "claude-fable-5")!;
+    expect(model.benchmarks).toHaveLength(2);
+    expect(model.benchmarkComparison).toMatchObject({ status: "unassessed" });
+    expect(model.benchmarkComparison.detail).toContain("does not average");
   });
 });

@@ -34,6 +34,7 @@ import {
   type BenchmarkMode,
   type InventoryBenchmark,
 } from "./benchmarks";
+import { configuredBenchmarkSources } from "./benchmark-sources";
 
 const hiveHome = (): string => Bun.env.HIVE_HOME ?? join(homedir(), ".hive");
 
@@ -68,6 +69,10 @@ export type InventoryModel = {
     cliVersion: string;
   };
   benchmarks: InventoryBenchmark[];
+  benchmarkComparison: {
+    status: "unknown" | "single-source" | "unassessed";
+    detail: string;
+  };
 };
 
 export type ModelInventory = {
@@ -143,7 +148,11 @@ export async function readModelInventory(
   const discovery = { claude, codex };
   const benchmarkCatalog = await (
     options.readBenchmarks?.(config.benchmarks.mode, discovery) ??
-      readBenchmarkCatalog({ mode: config.benchmarks.mode, discovery })
+      readBenchmarkCatalog({
+        mode: config.benchmarks.mode,
+        discovery,
+        sources: configuredBenchmarkSources(),
+      })
   );
   const billing: AccountBillings = {
     ...(claudeBilling === null ? {} : { claude: claudeBilling }),
@@ -306,6 +315,9 @@ export function buildModelInventory(input: ModelInventoryInput): ModelInventory 
         cliVersion: record.cliVersion,
       },
       benchmarks: [...(input.benchmarks?.get(benchmarkKey) ?? [])],
+      benchmarkComparison: comparisonFor(
+        input.benchmarks?.get(benchmarkKey) ?? [],
+      ),
     };
   }).sort((left, right) =>
     left.vendor.localeCompare(right.vendor) ||
@@ -344,6 +356,26 @@ export function buildModelInventory(input: ModelInventoryInput): ModelInventory 
     },
     models,
     warnings,
+  };
+}
+
+function comparisonFor(
+  benchmarks: readonly InventoryBenchmark[],
+): InventoryModel["benchmarkComparison"] {
+  const sources = new Set(benchmarks.map((row) => row.sourceId));
+  if (sources.size === 0) {
+    return { status: "unknown", detail: "No matching published result." };
+  }
+  if (sources.size === 1) {
+    return {
+      status: "single-source",
+      detail: "No independent corroborating measurement matches this model and effort.",
+    };
+  }
+  return {
+    status: "unassessed",
+    detail:
+      "Multiple sources are shown separately; no materiality threshold is approved, so Hive does not average or grade their disagreement.",
   };
 }
 
@@ -388,6 +420,9 @@ export function formatModelInventory(inventory: ModelInventory): string {
           );
         }
       }
+      lines.push(
+        `    compare     ${model.benchmarkComparison.status} — ${model.benchmarkComparison.detail}`,
+      );
     }
   }
   for (const warning of inventory.warnings) lines.push(`\n! ${warning}`);

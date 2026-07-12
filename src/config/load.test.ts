@@ -51,7 +51,7 @@ describe("config loading", () => {
       autonomy: "sandboxed",
       routingManifest: "auto",
       router: "derived",
-      benchmarks: { mode: "off" },
+      benchmarks: { mode: "shadow" },
       resources: {
         enabled: true,
         perProcessMemoryMb: 12_288,
@@ -83,13 +83,13 @@ describe("config loading", () => {
     expect((await loadHiveConfig()).autonomy).toEqual("dangerous");
   });
 
-  test("benchmark inspection has an explicit shadow-only switch", async () => {
+  test("benchmark inspection has an explicit hard-off switch", async () => {
     await resetHome();
     await writeFile(
       join(hiveHome, "config.toml"),
-      '[benchmarks]\nmode = "shadow"\n',
+      '[benchmarks]\nmode = "off"\n',
     );
-    expect((await loadHiveConfig()).benchmarks.mode).toBe("shadow");
+    expect((await loadHiveConfig()).benchmarks.mode).toBe("off");
   });
 
   test("parses model-specific quota pools and rejects invalid timezone configuration", async () => {
@@ -176,7 +176,7 @@ describe("config loading", () => {
       autonomy: "sandboxed",
       routingManifest: "auto",
       router: "derived",
-      benchmarks: { mode: "off" },
+      benchmarks: { mode: "shadow" },
       resources: {
         enabled: true,
         perProcessMemoryMb: 12_288,

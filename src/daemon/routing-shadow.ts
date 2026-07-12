@@ -29,6 +29,7 @@ import {
   type BenchmarkCatalog,
   type BenchmarkMode,
 } from "./benchmarks";
+import { configuredBenchmarkSources } from "./benchmark-sources";
 
 /**
  * Shadow mode: derive what the router *would* have chosen, record it beside what
@@ -120,10 +121,11 @@ export const ShadowObservationSchema = z.strictObject({
       "partial",
       "last-good",
       "unavailable",
+      "blocked",
     ]),
     sources: z.array(z.strictObject({
       sourceId: z.string().min(1),
-      status: z.enum(["current", "last-good", "unavailable"]),
+      status: z.enum(["current", "last-good", "unavailable", "blocked"]),
       releaseDate: z.string().nullable(),
       fetchedAt: z.string().nullable(),
     })),
@@ -136,6 +138,10 @@ export const ShadowObservationSchema = z.strictObject({
       releaseDate: z.string().min(1),
       fetchedAt: z.string().min(1),
     })),
+    wouldChange: z.boolean().nullable().default(null),
+    influenceDetail: z.string().min(1).default(
+      "No benchmark threshold or fit policy is approved; measurements cannot change the live route.",
+    ),
   }).nullable().default(null),
   /** The model's answer, past the transport. */
   outcome: z.enum(["launched", "failed"]),
@@ -223,7 +229,11 @@ export async function recordShadowObservation(
     };
     const benchmarks = await (
       dependencies.readBenchmarks?.(config.benchmarks.mode, discovery) ??
-        readBenchmarkCatalog({ mode: config.benchmarks.mode, discovery })
+        readBenchmarkCatalog({
+          mode: config.benchmarks.mode,
+          discovery,
+          sources: configuredBenchmarkSources(),
+        })
     );
 
     const derivation = deriveRouting({
@@ -393,8 +403,11 @@ export function shadowBenchmark(
           scores: { ...match.scores },
           source: match.source,
           releaseDate: match.releaseDate,
-          fetchedAt: match.fetchedAt,
-        })),
+      fetchedAt: match.fetchedAt,
+    })),
+    wouldChange: null,
+    influenceDetail:
+      "No benchmark threshold or fit policy is approved; measurements cannot change the live route.",
   };
 }
 

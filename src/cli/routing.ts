@@ -44,6 +44,7 @@ import {
   formatModelInventory,
 } from "../daemon/model-inventory";
 import { readBenchmarkCatalog } from "../daemon/benchmarks";
+import { configuredBenchmarkSources } from "../daemon/benchmark-sources";
 
 /**
  * `hive routing` — the derived table, with per-cell provenance.
@@ -262,6 +263,7 @@ export async function printRouting(): Promise<void> {
   const benchmarkCatalog = await readBenchmarkCatalog({
     mode: config.benchmarks.mode,
     discovery: { claude: liveClaude, codex: liveCodex },
+    sources: configuredBenchmarkSources(),
   });
 
   // The consent ledger is the approvals queue Hive already has. Opened read-only

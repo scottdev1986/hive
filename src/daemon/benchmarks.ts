@@ -13,7 +13,7 @@ export type InventoryBenchmark = {
 
 export type BenchmarkSourceStatus = {
   sourceId: string;
-  status: "current" | "last-good" | "unavailable";
+  status: "current" | "last-good" | "unavailable" | "blocked";
   detail: string;
   releaseDate: string | null;
   fetchedAt: string | null;
@@ -31,7 +31,14 @@ export interface BenchmarkSourceAdapter {
 }
 
 export type BenchmarkCatalog = {
-  status: "off" | "not-configured" | "current" | "partial" | "last-good" | "unavailable";
+  status:
+    | "off"
+    | "not-configured"
+    | "current"
+    | "partial"
+    | "last-good"
+    | "unavailable"
+    | "blocked";
   detail: string;
   sources: BenchmarkSourceStatus[];
   models: ReadonlyMap<string, InventoryBenchmark[]>;
@@ -84,17 +91,22 @@ export async function readBenchmarkCatalog(options: {
   const statuses = results.map(({ models: _models, ...status }) => status);
   const current = statuses.filter((source) => source.status === "current").length;
   const lastGood = statuses.filter((source) => source.status === "last-good").length;
-  const unavailable = statuses.length - current - lastGood;
-  const status = current === statuses.length
+  const unavailable = statuses.filter((source) => source.status === "unavailable").length;
+  const blocked = statuses.filter((source) => source.status === "blocked").length;
+  const active = statuses.length - blocked;
+  const status = active > 0 && current === active
     ? "current"
-    : lastGood === statuses.length
+    : active > 0 && lastGood === active
     ? "last-good"
-    : unavailable === statuses.length
+    : blocked === statuses.length
+    ? "blocked"
+    : active > 0 && unavailable === active
     ? "unavailable"
     : "partial";
   return {
     status,
-    detail: `${current} current, ${lastGood} last-good, ${unavailable} unavailable source(s).`,
+    detail:
+      `${current} current, ${lastGood} last-good, ${unavailable} unavailable, ${blocked} blocked source(s).`,
     sources: statuses,
     models,
   };
