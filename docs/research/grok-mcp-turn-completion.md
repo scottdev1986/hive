@@ -204,6 +204,54 @@ cost of losing the tmux pane the Workspace shows users (visibility would have
 to be rebuilt from the `updates.jsonl` stream, which carries the full
 tool-call/chunk timeline).
 
+## grok-4.5: the rule set binds the default model too
+
+Follow-up (prompts 11–13, authorized budget extension to 13; grok-4.5 at
+`--reasoning-effort low`). The hazard: grok-4.5's "grok-build-plan" profile
+invokes MCP through a wrapper named `use_tool` — the very tool whose
+unanswered approval killed the original failing runs — and the allow-rule
+had only been proven on composer, whose MCP tool is auto-allowed anyway.
+
+P11, the exact recommended read-only rule set on grok-4.5, prompt forcing an
+MCP call, a shell attempt, and a file-write attempt:
+
+```
+"permission_resolved","tool_name":"search_tool","decision":"allow","wait_ms":0
+"permission_resolved","tool_name":"use_tool","decision":"allow","wait_ms":0
+"permission_resolved","tool_name":"run_terminal_command","decision":"deny","wait_ms":0
+"permission_resolved","tool_name":"write","decision":"deny","wait_ms":0
+"turn_ended","outcome":"completed"
+```
+
+`end_turn`, signals.json written, denied file never appeared on disk. So
+**`--allow "MCPTool"` does bind `use_tool`**, and the deny rules bind
+grok-4.5's differently-named write tools as well. Permission rules are
+SEMANTIC prefixes, not tool-name matches: the same six rules bound three
+distinct tool vocabularies (`Shell`/`CallMcpTool` on composer "cursor";
+`run_terminal_command`/`write`/`use_tool`/`search_tool` on grok-4.5
+"grok-build-plan"). One rule set therefore serves both models Hive runs.
+
+## MCP allow rules scope to a server — not all-or-nothing
+
+- P12 (positive): `--allow "MCPTool(graphify__*)"` on grok-4.5 →
+  `use_tool decision="allow"`, turn completed.
+- P13 (negative control): `--allow "MCPTool(otherserver__*)"` →
+  `use_tool decision="cancelled"`, `turn_ended outcome="cancelled"
+  cancellation_category="permission_cancelled"`, no signals.json,
+  `stopReason:"Cancelled"` — and the process still exited 0.
+
+The glob matches the `server__toolname` string, so Hive can grant exactly the
+MCP servers an agent is entitled to. Two cautions for the adapter:
+
+1. An MCP server covered by NO allow rule does not get a clean deny — the
+   approval is unanswerable, so the turn DIES headless (and would prompt-hang
+   in the TUI). The primary gate should remain which servers Hive writes into
+   the project `.grok/config.toml`; scoped rules are belt-and-braces.
+2. Do not append a blanket `--deny "MCPTool(*)"` after a scoped allow: deny
+   beats allow, so it would kill the granted server too. (MCP discovery,
+   `search_tool`, is auto-allowed regardless of scope; only invocation is
+   gated.)
+
 ## Open unknowns (measured as unknown, not assumed)
 
 - `--permission-mode dontAsk` semantics for an approval-needing tool covered
@@ -212,11 +260,8 @@ tool-call/chunk timeline).
   exercised the ask-path under `dontAsk`. Do not rely on `dontAsk` as a
   deny-backstop until someone forces a genuinely approval-needing uncovered
   tool through it.
-- Whether `--allow "MCPTool"` pre-authorizes grok-4.5's `use_tool` MCP
-  wrapper (agent profile "grok-build-plan", which DID require approval in the
-  original failing runs): unmeasured — the allow-rule test ran on the
-  composer profile, whose MCP tool (`CallMcpTool`) is auto-allowed anyway.
-  One prompt on grok-4.5 settles it; the ten-prompt budget was exhausted.
-  This matters for read-only reviewers on grok-4.5.
 - Path-glob granularity of `Read(...)`/`Write(...)` rules: untested; only
   bare-prefix rules were measured.
+- A scoped `--deny "MCPTool(server__*)"` producing a clean (turn-surviving)
+  refusal: inferred from the measured deny semantics of `Bash`/`Write`/`Edit`
+  on both profiles, but not itself measured.
