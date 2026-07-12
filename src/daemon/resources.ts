@@ -96,12 +96,12 @@ export function parseAvailableMemoryMb(raw: string): number | null {
 
 /** Every sample reachable from the given roots by following parent links,
  * including the roots themselves. */
-export function descendantsOf(
-  samples: ProcessSample[],
+export function descendantsOf<T extends { pid: number; ppid: number }>(
+  samples: T[],
   rootPids: number[],
-): ProcessSample[] {
-  const byParent = new Map<number, ProcessSample[]>();
-  const byPid = new Map<number, ProcessSample>();
+): T[] {
+  const byParent = new Map<number, T[]>();
+  const byPid = new Map<number, T>();
   for (const sample of samples) {
     byPid.set(sample.pid, sample);
     const siblings = byParent.get(sample.ppid);
@@ -109,7 +109,7 @@ export function descendantsOf(
     else siblings.push(sample);
   }
   const seen = new Set<number>();
-  const result: ProcessSample[] = [];
+  const result: T[] = [];
   const queue = [...rootPids];
   while (queue.length > 0) {
     const pid = queue.shift()!;
@@ -120,6 +120,61 @@ export function descendantsOf(
     for (const child of byParent.get(pid) ?? []) queue.push(child.pid);
   }
   return result;
+}
+
+/**
+ * What the OS says about the processes in a pane, for the stalled-message
+ * sweep. Silence is an inference; a process state is a measurement — a
+ * SIGSTOPped agent shows `T` in one `ps` call, and waiting thirty minutes to
+ * conclude what the kernel already published is the exact act-for-state
+ * substitution this repo keeps paying for.
+ */
+export type PaneProcessState = "running" | "stopped" | "gone";
+
+export interface ProcessStateSample {
+  pid: number;
+  ppid: number;
+  stat: string;
+}
+
+export const runPsState: CommandOutput = async () => {
+  const child = Bun.spawn(["ps", "-axo", "pid=,ppid=,stat="], {
+    stdout: "pipe",
+    stderr: "ignore",
+  });
+  return await new Response(child.stdout).text();
+};
+
+export function parseStateTable(raw: string): ProcessStateSample[] {
+  const samples: ProcessStateSample[] = [];
+  for (const line of raw.split("\n")) {
+    const match = /^\s*(\d+)\s+(\d+)\s+(\S+)/.exec(line);
+    if (match === null) continue;
+    samples.push({
+      pid: Number(match[1]),
+      ppid: Number(match[2]),
+      stat: match[3]!,
+    });
+  }
+  return samples;
+}
+
+/**
+ * The verdict over a pane's whole process tree. "stopped" wins over
+ * "running": a suspended CLI under a sleeping shell is a wedge even though
+ * the shell itself looks healthy. An empty tree means every process is gone —
+ * nothing left in the pane can ever hear anything. Zombies count as gone,
+ * not running: a `Z` process is an exit the parent has not reaped.
+ */
+export function paneProcessState(
+  samples: ProcessStateSample[],
+  rootPids: number[],
+): PaneProcessState {
+  const tree = descendantsOf(samples, rootPids);
+  if (tree.length === 0) return "gone";
+  if (tree.some((sample) => sample.stat.startsWith("T"))) return "stopped";
+  if (tree.every((sample) => sample.stat.startsWith("Z"))) return "gone";
+  return "running";
 }
 
 /**

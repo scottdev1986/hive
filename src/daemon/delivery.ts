@@ -8,6 +8,7 @@ import {
   type OrchestratorMessageEnvelope,
 } from "../schemas";
 import { TmuxAdapter } from "../adapters/tmux";
+import type { PaneProcessState } from "./resources";
 import { HiveDatabase } from "./db";
 import {
   createOrchestratorEnvelope,
@@ -172,6 +173,12 @@ export class MessageDelivery {
       sleep?: (ms: number) => Promise<void>;
       submitConfirmMs?: number;
     } = {},
+    /** What the OS says about the recipient's pane processes — a measurement,
+     * consulted before any inference from silence. Absent (tests, embedded
+     * daemons), triage falls back to the silence cap alone. */
+    private readonly processState?: (
+      tmuxSession: string,
+    ) => Promise<PaneProcessState>,
   ) {}
 
   private sleep(ms: number): Promise<void> {
@@ -768,7 +775,7 @@ export class MessageDelivery {
       // stays unalerted (alertAt null), so every later sweep re-judges it and
       // still fires the moment its recipient stops showing signs of life.
       if (injectedAt < cutoff && message.alertAt === null) {
-        const reason = this.stalledReason(message.to, now);
+        const reason = await this.stalledReason(message.to, now);
         if (reason !== null) stalled.push({ message, reason });
       }
     }
@@ -785,7 +792,7 @@ export class MessageDelivery {
     for (const message of this.db.listQueuedMessages()) {
       if (message.to === ORCHESTRATOR_NAME) continue;
       if (message.createdAt < cutoff && message.alertAt === null) {
-        const reason = this.stalledReason(message.to, now);
+        const reason = await this.stalledReason(message.to, now);
         if (reason !== null) {
           stalled.push({ message, reason: `${reason} (never delivered)` });
         }
@@ -871,7 +878,10 @@ export class MessageDelivery {
    * tool call. Each of those states is named in the alert, so the reader
    * learns what was measured, not merely that a timer expired.
    */
-  private stalledReason(recipient: string, now: string): string | null {
+  private async stalledReason(
+    recipient: string,
+    now: string,
+  ): Promise<string | null> {
     const agent = recipient === ORCHESTRATOR_NAME
       ? null
       : this.db.getAgentByName(recipient);
@@ -884,6 +894,22 @@ export class MessageDelivery {
     }
     if (boundary.kind === "turn-end") {
       return `${recipient} is idle yet never submitted it — the paste may have been swallowed`;
+    }
+    // An open turn. Before inferring anything from silence, ask the OS: a
+    // stopped or vanished process is a measured state, provable in one call,
+    // and it rings NOW — not after a timeout dressed up as a diagnosis. A
+    // failed probe reads as running (never alarm on a read we could not
+    // make); the silence cap below remains the honest last resort for the one
+    // wedge the kernel cannot see, a process alive but internally hung.
+    if (agent !== null && this.processState !== undefined) {
+      const state = await this.processState(agent.tmuxSession)
+        .catch(() => "running" as const);
+      if (state === "stopped") {
+        return `${recipient}'s process is stopped (suspended mid-turn, ps state T) — it cannot hear anything`;
+      }
+      if (state === "gone") {
+        return `${recipient}'s process is gone mid-turn — nothing is left to reach a boundary`;
+      }
     }
     const life = recipient === ORCHESTRATOR_NAME
       ? this.db.latestEventAt(recipient)

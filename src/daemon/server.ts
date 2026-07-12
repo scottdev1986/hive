@@ -104,9 +104,12 @@ import {
 } from "../adapters/tools/codex-app-server";
 import {
   assessResources,
+  paneProcessState,
   parseAvailableMemoryMb,
   parseProcessTable,
+  parseStateTable,
   runPs,
+  runPsState,
   runVmStat,
   type CommandOutput,
   type SessionProcessRoots,
@@ -549,6 +552,23 @@ export class HiveDaemon {
       // lazily; it is assigned a few lines below.
       options.rootProtocol ??
         new CodexRootDelivery(() => this.repoRoot),
+      {},
+      // The stalled-message triage's OS probe: what `ps` says about the
+      // recipient's pane tree. Reads this.panePids/this.tmux lazily — both
+      // are assigned below, and the sweep runs long after construction. A
+      // pane whose pids cannot be listed is judged by whether the session
+      // still exists at all; a session that vanished mid-probe is honestly
+      // "gone".
+      async (tmuxSession) => {
+        let pids: number[];
+        try {
+          pids = await this.panePids(tmuxSession);
+        } catch {
+          return (await this.tmux.hasSession(tmuxSession)) ? "running" : "gone";
+        }
+        if (pids.length === 0) return "gone";
+        return paneProcessState(parseStateTable(await runPsState()), pids);
+      },
     );
     this.quota?.setAlertSink(async (body) => {
       await this.delivery.send("hive-quota", ORCHESTRATOR_NAME, body);

@@ -936,6 +936,91 @@ describe("reconciling messages we handed over", () => {
       .run(iso, id);
   }
 
+  test("a suspended process rings at once on the OS's word, not after a silence timeout", async () => {
+    const db = new HiveDatabase(join(home, "recon-stopped.db"));
+    // The probe is the measurement: ps says the pane tree holds a T-state
+    // process. No thirty-minute wait — the kernel already published the state.
+    const delivery = new MessageDelivery(
+      db,
+      new RecordingTmuxSender(),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      {},
+      async () => "stopped",
+    );
+    try {
+      const now = Date.now();
+      // The busy shape in every inferred surface: open turn, fresh
+      // lastEventAt (its last tick landed just before the SIGSTOP). Only the
+      // OS knows, and the OS is asked first.
+      db.insertAgent({
+        ...agent("working"),
+        lastEventAt: new Date(now).toISOString(),
+      });
+      db.insertEvent({
+        kind: "turn-start",
+        agentName: "maya",
+        timestamp: new Date(now - 15 * 60_000).toISOString(),
+      });
+      const urgent = await delivery.send("sam", "maya", "brief", {
+        priority: "urgent",
+      });
+      await delivery.flushUrgent("maya");
+      backdateInjection(db, urgent.id, new Date(now - 6 * 60_000).toISOString());
+
+      await delivery.reconcileInjected();
+      const alerts = unconfirmedAlerts(db);
+      expect(alerts).toHaveLength(1);
+      expect(alerts[0]?.body).toContain("process is stopped");
+    } finally {
+      db.close();
+    }
+  });
+
+  test("a probe that says running defers to the silence cap, and a failed probe never rings by itself", async () => {
+    const db = new HiveDatabase(join(home, "recon-probe-running.db"));
+    const probes: string[] = [];
+    const delivery = new MessageDelivery(
+      db,
+      new RecordingTmuxSender(),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      {},
+      async (session) => {
+        probes.push(session);
+        throw new Error("ps unavailable");
+      },
+    );
+    try {
+      const now = Date.now();
+      db.insertAgent({
+        ...agent("working"),
+        lastEventAt: new Date(now).toISOString(),
+      });
+      db.insertEvent({
+        kind: "turn-start",
+        agentName: "maya",
+        timestamp: new Date(now - 15 * 60_000).toISOString(),
+      });
+      const urgent = await delivery.send("sam", "maya", "brief", {
+        priority: "urgent",
+      });
+      await delivery.flushUrgent("maya");
+      backdateInjection(db, urgent.id, new Date(now - 6 * 60_000).toISOString());
+
+      // The probe failed; the recipient shows recent life; silence is earned.
+      await delivery.reconcileInjected();
+      expect(probes.length).toBeGreaterThan(0);
+      expect(unconfirmedAlerts(db)).toHaveLength(0);
+    } finally {
+      db.close();
+    }
+  });
+
   test("a message queued behind a busy recipient's turn is routine, not an alarm", async () => {
     const db = new HiveDatabase(join(home, "recon-queued-busy.db"));
     const delivery = new MessageDelivery(db, new RecordingTmuxSender());
