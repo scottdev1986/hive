@@ -303,7 +303,7 @@ const MemoryFactRequestSchema = z.object({
   id: MemoryIdSchema,
 });
 
-const MemoryWriteRequestSchema = MemoryWriteInputSchema.extend({
+const MemoryWriteRequestSchema = MemoryWriteInputSchema.safeExtend({
   id: MemoryIdSchema.optional(),
 });
 
@@ -874,11 +874,14 @@ export class HiveDaemon {
     return run;
   }
 
-  async writeMemoryFact(input: MemoryWriteInput): Promise<MemoryFact> {
+  async writeMemoryFact(input: MemoryWriteInput) {
     return this.serializeMemory(async () => {
-      const fact = await writeMemoryFactFile(this.repoRoot, input);
-      this.memory.upsertFact(fact);
-      return fact;
+      const written = await writeMemoryFactFile(this.repoRoot, input);
+      for (const id of written.supersededIds) {
+        this.memory.removeFact(input.scope, id);
+      }
+      this.memory.upsertFact(written);
+      return written;
     });
   }
 
@@ -3057,7 +3060,7 @@ export class HiveDaemon {
     server.registerTool("memory_search", {
       title: "Search Hive memory",
       description:
-        'Full-text search durable memory facts across repo (".hive/memory/", committed) and global ("~/.hive/memory/") scope. Returns short snippets only; pull a full fact with memory_read before relying on it.',
+        'Full-text search compiled memory articles across repo (".hive/memory/wiki/") and global ("~/.hive/memory/wiki/") scope. Raw observations are immutable evidence and are not search results. Returns short snippets only; pull a full article with memory_read before relying on it.',
       inputSchema: MemorySearchRequestSchema,
     }, async ({ query, scope, limit }) => {
       this.authorizeTool(capability, "memory_search", "memory:read", undefined, false);
@@ -3065,20 +3068,23 @@ export class HiveDaemon {
     });
 
     server.registerTool("memory_write", {
-      title: "Write a Hive memory fact",
+      title: "Write a Hive memory observation and article",
       description:
-        "Create or update one durable narrative memory fact. WRITE POLICY (SPEC decision 5): a lesson earns a fact only if it is durable (true past this run), non-derivable (not recoverable from the code, git, or the profile), and load-bearing (it would change what a future agent does) — chit-chat, restatements, and anything a grep or the repo profile already answers do not qualify, and structured truth (commands, layout, entry points) belongs in the profile, never here. DEDUP-BEFORE-WRITE: memory_search first and pass that fact's scope+id to update it in place rather than adding a near-duplicate. CORRECTION-NOT-APPEND: to fix a wrong fact, overwrite it (same id) or memory_delete it — never append a contradiction; git history is the changelog. Set `source` to who is writing (agent at landing, orchestrator for its decisions, init for seeded facts, human for hand-authored) and `verified` to today when you have confirmed the fact against the repo. Omit id to create (slug derived from title); repo scope is committed and travels with the clone, global accumulates lessons across projects. Writes are serialized and immediately reflected in search. Returns id/scope/title/path/source/verified, not the body you just wrote — read it back with memory_read.",
+        "Record one immutable raw observation and create or update its compiled memory article. The schema is enforced here: topic, source provenance, evidence, verification status, and supersedes relationships are required. Search first; update a matching id instead of adding a duplicate. For a correction, pass the corrected article id in supersedes, make body state current truth, and preserve prior reasoning through the raw history. status=verified requires verified=YYYY-MM-DD; conflicted means the article must describe the unresolved disagreement. Repo scope lives under .hive/memory/{raw,wiki}; global under ~/.hive/memory/{raw,wiki}. Writes are serialized, rebuild wiki/index.md, append wiki/log.md, and immediately update compiled-article search.",
       inputSchema: MemoryWriteRequestSchema,
     }, async (input) => {
       this.authorizeTool(capability, "memory_write", "memory:write");
-      const fact = await this.writeMemoryFact(input);
-      return toolResult(compactMemoryWriteResult(fact), "fact");
+      const written = await this.writeMemoryFact(input);
+      return toolResult(
+        compactMemoryWriteResult(written, written.rawPath),
+        "fact",
+      );
     });
 
     server.registerTool("memory_read", {
-      title: "Read a full Hive memory fact",
+      title: "Read a compiled Hive memory article",
       description:
-        "Read one full memory fact by scope and id, as referenced by the injected index or a memory_search result. The returned fact carries `source` and `verified`; if `verified` is absent or older than `date`, or the fact names a concrete path/command/flag, re-check it against the repo before acting on it (SPEC decision 5: the index is a pointer, the fact is a claim, the repo is truth).",
+        "Read one compiled memory article by scope and id, as referenced by the injected wiki index or memory_search. The result includes topic, evidence, verification status, supersedes relationships, and links to immutable raw observations. Reconcile unverified, stale, or conflicted knowledge before acting.",
       inputSchema: MemoryFactRequestSchema,
     }, async ({ scope, id }) => {
       this.authorizeTool(capability, "memory_read", "memory:read", undefined, false);
@@ -3090,9 +3096,9 @@ export class HiveDaemon {
     });
 
     server.registerTool("memory_delete", {
-      title: "Delete a Hive memory fact",
+      title: "Delete a compiled Hive memory article",
       description:
-        "Delete one memory fact's Markdown file and remove it from the search index. Use for pruning stale facts.",
+        "Delete one compiled article and remove it from the index. Immutable raw observations remain as audit evidence.",
       inputSchema: MemoryFactRequestSchema,
     }, async ({ scope, id }) => {
       this.authorizeTool(capability, "memory_delete", "memory:write");
@@ -3102,7 +3108,7 @@ export class HiveDaemon {
     server.registerTool("memory_reindex", {
       title: "Rebuild the Hive memory search index",
       description:
-        "Rebuild the SQLite FTS index for this repo's committed and global memory facts from the Markdown files on disk. The files are authoritative and the index is always disposable, so this is safe to call any time.",
+        "Migrate legacy flat facts, rebuild each scope's wiki/index.md, and rebuild disposable SQLite FTS from compiled wiki articles.",
       inputSchema: z.object({}),
     }, async () => {
       this.authorizeTool(capability, "memory_reindex", "memory:write");

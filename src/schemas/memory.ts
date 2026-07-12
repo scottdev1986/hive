@@ -1,47 +1,61 @@
 import { z } from "zod";
 
-// Durable knowledge has exactly two scopes (SPEC.md decision 5): per-repo
-// facts committed at `.hive/memory/` travel with the clone, global facts at
-// `~/.hive/memory/` accumulate lessons across every project.
 export const MemoryScopeSchema = z.enum(["repo", "global"]);
 export type MemoryScope = z.infer<typeof MemoryScopeSchema>;
 
-// Provenance is first-class, not decoration (SPEC.md decision 5): who authored
-// a fact decides how it ages. `init` facts are derived-and-re-derivable — the
-// cheap target of init's re-verify pass — while `agent`/`orchestrator`/`human`
-// facts are earned and load-bearing until something disproves them. A *missing*
-// source means a legacy fact written before provenance existed; §5 binds that
-// to "treated as earned", so absence is the honest encoding of an unknown
-// author — there is deliberately no "unknown" member to invent precision with.
 export const MemorySourceSchema = z.enum([
   "init",
   "agent",
   "orchestrator",
   "human",
+  "legacy",
 ]);
 export type MemorySource = z.infer<typeof MemorySourceSchema>;
+
+export const MemoryWriterSourceSchema = z.enum([
+  "init",
+  "agent",
+  "orchestrator",
+  "human",
+]);
+
+export const MemoryVerificationStatusSchema = z.enum([
+  "verified",
+  "unverified",
+  "stale",
+  "conflicted",
+]);
+export type MemoryVerificationStatus = z.infer<
+  typeof MemoryVerificationStatusSchema
+>;
 
 const IsoDateSchema = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}$/, "date must be YYYY-MM-DD");
 
-// One fact per Markdown file; the file is the source of truth and the id is
-// its filename (without extension), so re-reading the file always agrees
-// with whatever the SQLite FTS index says.
+export const MemoryTopicSchema = z
+  .string()
+  .min(1)
+  .max(60)
+  .regex(
+    /^[a-z0-9][a-z0-9-]*$/,
+    "topic must be lowercase kebab-case",
+  );
+
 export const MemoryFactSchema = z.object({
   id: z.string().min(1),
   scope: MemoryScopeSchema,
+  topic: MemoryTopicSchema,
   title: z.string().min(1),
   body: z.string(),
   tags: z.array(z.string()),
   date: IsoDateSchema,
   path: z.string().min(1),
-  // Provenance (§5). Both optional: a legacy fact carries neither, and §5
-  // reads absence as "earned, never re-confirmed", with `date` as the
-  // freshness floor when `verified` is missing.
-  source: MemorySourceSchema.optional(),
-  // The date the fact was last confirmed true against the repo — distinct from
-  // `date` (last written). Absent means never re-confirmed.
+  source: MemorySourceSchema,
+  evidence: z.string().min(1),
+  status: MemoryVerificationStatusSchema,
+  supersedes: z.array(z.string()),
+  raw: z.array(z.string()),
   verified: IsoDateSchema.optional(),
 });
 export type MemoryFact = z.infer<typeof MemoryFactSchema>;
@@ -49,40 +63,74 @@ export type MemoryFact = z.infer<typeof MemoryFactSchema>;
 export const MemoryWriteInputSchema = z.object({
   scope: MemoryScopeSchema,
   id: z.string().min(1).optional(),
+  topic: MemoryTopicSchema,
   title: z.string().min(1),
   body: z.string().min(1),
   tags: z.array(z.string()).optional(),
   date: IsoDateSchema.optional(),
-  // The writer records who is writing (§5): `agent` at landing, `orchestrator`
-  // for decisions it made, `init` for seeded narrative facts, `human` for a
-  // hand-authored one. Omitting it stores a fact with no provenance, read as
-  // legacy/earned — callers that know the author should always pass it.
-  source: MemorySourceSchema.optional(),
+  source: MemoryWriterSourceSchema,
+  evidence: z.string().min(1),
+  status: MemoryVerificationStatusSchema,
+  supersedes: z.array(z.string()),
   verified: IsoDateSchema.optional(),
+}).superRefine((input, context) => {
+  if (input.status === "verified" && input.verified === undefined) {
+    context.addIssue({
+      code: "custom",
+      path: ["verified"],
+      message: "verified date is required when status is verified",
+    });
+  }
+  if (input.status === "unverified" && input.verified !== undefined) {
+    context.addIssue({
+      code: "custom",
+      path: ["verified"],
+      message: "unverified articles cannot carry a verified date",
+    });
+  }
+  if (input.status === "stale" && input.verified === undefined) {
+    context.addIssue({
+      code: "custom",
+      path: ["verified"],
+      message: "stale articles require their prior verified date",
+    });
+  }
+  if (input.status === "conflicted" && !/conflict|disagree|contradict/i.test(input.body)) {
+    context.addIssue({
+      code: "custom",
+      path: ["body"],
+      message: "conflicted articles must annotate the disagreement",
+    });
+  }
 });
 export type MemoryWriteInput = z.infer<typeof MemoryWriteInputSchema>;
 
-// What memory_write echoes back. The caller just wrote `body` itself, so
-// echoing it back doubles the token cost of every write for no new
-// information — memory_read (or the file at `path`) is the full-fidelity
-// read path when the fact needs to be seen again.
 export const MemoryWriteResultSchema = z.object({
   id: z.string().min(1),
   scope: MemoryScopeSchema,
+  topic: MemoryTopicSchema,
   title: z.string().min(1),
   path: z.string().min(1),
-  source: MemorySourceSchema.optional(),
+  rawPath: z.string().min(1),
+  source: MemorySourceSchema,
+  status: MemoryVerificationStatusSchema,
   verified: IsoDateSchema.optional(),
 });
 export type MemoryWriteResult = z.infer<typeof MemoryWriteResultSchema>;
 
-export function compactMemoryWriteResult(fact: MemoryFact): MemoryWriteResult {
+export function compactMemoryWriteResult(
+  fact: MemoryFact,
+  rawPath: string,
+): MemoryWriteResult {
   return {
     id: fact.id,
     scope: fact.scope,
+    topic: fact.topic,
     title: fact.title,
     path: fact.path,
-    ...(fact.source !== undefined ? { source: fact.source } : {}),
+    rawPath,
+    source: fact.source,
+    status: fact.status,
     ...(fact.verified !== undefined ? { verified: fact.verified } : {}),
   };
 }
@@ -90,13 +138,12 @@ export function compactMemoryWriteResult(fact: MemoryFact): MemoryWriteResult {
 export const MemorySearchResultSchema = z.object({
   id: z.string().min(1),
   scope: MemoryScopeSchema,
+  topic: MemoryTopicSchema,
   title: z.string().min(1),
   snippet: z.string(),
   date: z.string(),
+  status: MemoryVerificationStatusSchema,
   tags: z.array(z.string()),
   path: z.string().min(1),
 });
-// Search returns short snippets to *find* a fact; provenance and the
-// re-verify check surface where §5 places them — the injected index marks
-// staleness, and `verified` rides the full fact from memory_read.
 export type MemorySearchResult = z.infer<typeof MemorySearchResultSchema>;

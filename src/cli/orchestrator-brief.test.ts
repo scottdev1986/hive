@@ -553,7 +553,7 @@ describe("orchestrator brief", () => {
       ];
       expect(prompt).toContain("Hive memory index");
       expect(prompt).toContain(
-        "[repo] flaky-login-test (2026-06-01): The login test is flaky",
+        "[repo/general] flaky-login-test (2026-06-01) [unverified]: The login test is flaky",
       );
       expect(prompt).toContain(ORCHESTRATOR_BRIEF);
     } finally {

@@ -1,27 +1,35 @@
-import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  appendFile,
+  mkdir,
+  readdir,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join, relative } from "node:path";
 import {
   MemoryFactSchema,
   MemorySourceSchema,
+  MemoryWriteInputSchema,
   type MemoryFact,
   type MemoryScope,
   type MemorySource,
+  type MemoryVerificationStatus,
+  type MemoryWriteInput,
 } from "../schemas";
 
+export type MemoryWriteFileInput = MemoryWriteInput;
+
 const isMissingFileError = (error: unknown): boolean =>
-  typeof error === "object" &&
-  error !== null &&
-  "code" in error &&
+  typeof error === "object" && error !== null && "code" in error &&
   error.code === "ENOENT";
 
-/** Defense-in-depth validation of memory fact IDs. The daemon rejects invalid
- * IDs at the MCP boundary (MemoryIdSchema in src/daemon/server.ts), but this
- * adapter validates before any path join so direct calls cannot traverse
- * directories with ../ paths. The regex mirrors MemoryIdSchema: alphanumeric
- * start, then [a-z0-9._-], max 120 chars. */
+const MEMORY_ID_PATTERN = /^[a-z0-9][a-z0-9._-]*$/i;
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+const MEMORY_INDEX_MAX_ENTRIES = 30;
+
 function validateMemoryId(id: string): void {
-  const MEMORY_ID_PATTERN = /^[a-z0-9][a-z0-9._-]*$/i;
   if (!MEMORY_ID_PATTERN.test(id) || id.length > 120) {
     throw new Error(
       `Invalid memory id: must be 1–120 characters, alphanumeric start, ` +
@@ -46,12 +54,20 @@ export function scopeRoot(root: string, scope: MemoryScope): string {
   return scope === "repo" ? getRepoMemoryRoot(root) : getGlobalMemoryRoot();
 }
 
-function slugify(title: string): string {
-  const slug = title
+function rawRoot(root: string, scope: MemoryScope): string {
+  return join(scopeRoot(root, scope), "raw");
+}
+
+function wikiRoot(root: string, scope: MemoryScope): string {
+  return join(scopeRoot(root, scope), "wiki");
+}
+
+function slugify(value: string, max = 40): string {
+  const slug = value
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
-    .slice(0, 40)
+    .slice(0, max)
     .replace(/-+$/g, "");
   return slug || "fact";
 }
@@ -60,44 +76,55 @@ function todayIsoDate(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-function parseFrontmatterValue(raw: string): string {
-  return raw.trim();
-}
-
-function parseTags(raw: string): string[] {
+function parseList(raw: string): string[] {
   const trimmed = raw.trim().replace(/^\[/, "").replace(/\]$/, "");
-  if (trimmed.length === 0) {
-    return [];
-  }
-  return trimmed.split(",").map((tag) => tag.trim()).filter((tag) =>
-    tag.length > 0
-  );
+  return trimmed.length === 0
+    ? []
+    : trimmed.split(",").map((value) => value.trim()).filter(Boolean);
 }
 
-function serializeTags(tags: string[]): string {
-  return `[${tags.join(", ")}]`;
+function serializeList(values: string[]): string {
+  return `[${values.join(", ")}]`;
 }
 
-const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
-
-function parseSource(raw: string): MemorySource | undefined {
-  // Tolerant of a hand-edited file: an unrecognized word drops to undefined
-  // (legacy/earned) rather than throwing, matching how a missing key is read.
-  const parsed = MemorySourceSchema.safeParse(raw.trim());
-  return parsed.success ? parsed.data : undefined;
+function oneLine(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
 }
 
 export function serializeMemoryFile(
-  fact: Pick<MemoryFact, "title" | "date" | "tags" | "body"> &
-    Partial<Pick<MemoryFact, "source" | "verified">>,
+  fact: Pick<
+    MemoryFact,
+    | "title"
+    | "date"
+    | "topic"
+    | "source"
+    | "evidence"
+    | "status"
+    | "supersedes"
+    | "raw"
+    | "tags"
+    | "body"
+  > & Partial<Pick<MemoryFact, "verified">>,
 ): string {
-  // Provenance lines are only written when present, so a legacy fact
-  // re-serialized without them stays byte-faithful to its earned/unknown
-  // status instead of gaining a fabricated `source` (§5).
-  const lines = ["---", `title: ${fact.title}`, `date: ${fact.date}`];
-  if (fact.source !== undefined) lines.push(`source: ${fact.source}`);
+  const lines = [
+    "---",
+    `title: ${oneLine(fact.title)}`,
+    `updated: ${fact.date}`,
+    `topic: ${fact.topic}`,
+    `source: ${fact.source}`,
+    `status: ${fact.status}`,
+  ];
   if (fact.verified !== undefined) lines.push(`verified: ${fact.verified}`);
-  lines.push(`tags: ${serializeTags(fact.tags)}`, "---", "", fact.body.trimEnd(), "");
+  lines.push(
+    `evidence: ${oneLine(fact.evidence)}`,
+    `tags: ${serializeList(fact.tags)}`,
+    `supersedes: ${serializeList(fact.supersedes)}`,
+    `raw: ${serializeList(fact.raw)}`,
+    "---",
+    "",
+    fact.body.trimEnd(),
+    "",
+  );
   return lines.join("\n");
 }
 
@@ -108,77 +135,68 @@ export function parseMemoryFile(
   contents: string,
 ): MemoryFact {
   const lines = contents.split(/\r?\n/);
-  let title = id;
-  let date = todayIsoDate();
-  let tags: string[] = [];
-  let source: MemorySource | undefined;
-  let verified: string | undefined;
-  let bodyStart = 0;
-
-  if (lines[0]?.trim() === "---") {
-    const closingIndex = lines.findIndex(
-      (line, index) => index > 0 && line.trim() === "---",
-    );
-    if (closingIndex > 0) {
-      for (const line of lines.slice(1, closingIndex)) {
-        const separator = line.indexOf(":");
-        if (separator === -1) continue;
-        const key = line.slice(0, separator).trim();
-        const value = parseFrontmatterValue(line.slice(separator + 1));
-        if (key === "title") title = value;
-        else if (key === "date") date = value;
-        else if (key === "tags") tags = parseTags(value);
-        else if (key === "source") source = parseSource(value);
-        // A malformed verified date is dropped, not carried — an unparseable
-        // confirmation is no confirmation, so the fact reads as never-verified.
-        else if (key === "verified") verified = ISO_DATE.test(value) ? value : undefined;
-      }
-      bodyStart = closingIndex + 1;
-    }
+  const closingIndex = lines.findIndex(
+    (line, index) => index > 0 && line.trim() === "---",
+  );
+  if (lines[0]?.trim() !== "---" || closingIndex < 1) {
+    throw new Error(`Malformed compiled memory article: ${path}`);
   }
-
-  const body = lines.slice(bodyStart).join("\n").trim();
+  const fields = new Map<string, string>();
+  for (const line of lines.slice(1, closingIndex)) {
+    const separator = line.indexOf(":");
+    if (separator < 0) continue;
+    fields.set(line.slice(0, separator).trim(), line.slice(separator + 1).trim());
+  }
+  const source = MemorySourceSchema.safeParse(fields.get("source"));
   return MemoryFactSchema.parse({
     id,
     scope,
-    title,
-    body,
-    tags,
-    date,
+    topic: fields.get("topic"),
+    title: fields.get("title"),
+    body: lines.slice(closingIndex + 1).join("\n").trim(),
+    tags: parseList(fields.get("tags") ?? "[]"),
+    date: fields.get("updated"),
     path,
-    source,
-    verified,
+    source: source.success ? source.data : undefined,
+    evidence: fields.get("evidence"),
+    status: fields.get("status"),
+    supersedes: parseList(fields.get("supersedes") ?? "[]"),
+    raw: parseList(fields.get("raw") ?? "[]"),
+    verified: ISO_DATE.test(fields.get("verified") ?? "")
+      ? fields.get("verified")
+      : undefined,
   });
 }
 
-async function isMarkdownFile(path: string): Promise<boolean> {
-  return path.endsWith(".md");
+async function readTopicDirectories(directory: string): Promise<string[]> {
+  try {
+    return (await readdir(directory, { withFileTypes: true }))
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name);
+  } catch (error) {
+    if (isMissingFileError(error)) return [];
+    throw error;
+  }
 }
 
 export async function discoverMemoryFacts(
   root: string,
   scope: MemoryScope,
 ): Promise<MemoryFact[]> {
-  const directory = scopeRoot(root, scope);
-  let entries;
-  try {
-    entries = await readdir(directory, { withFileTypes: true });
-  } catch (error) {
-    if (isMissingFileError(error)) {
-      return [];
-    }
-    throw error;
-  }
-
+  const directory = wikiRoot(root, scope);
   const facts: MemoryFact[] = [];
-  for (const entry of entries) {
-    if (!entry.isFile() || !(await isMarkdownFile(entry.name))) {
-      continue;
+  for (const topic of await readTopicDirectories(directory)) {
+    const topicDirectory = join(directory, topic);
+    for (const entry of await readdir(topicDirectory, { withFileTypes: true })) {
+      if (!entry.isFile() || !entry.name.endsWith(".md")) continue;
+      const path = join(topicDirectory, entry.name);
+      facts.push(parseMemoryFile(
+        entry.name.slice(0, -3),
+        scope,
+        path,
+        await readFile(path, "utf8"),
+      ));
     }
-    const path = join(directory, entry.name);
-    const id = entry.name.slice(0, -3);
-    const contents = await readFile(path, "utf8");
-    facts.push(parseMemoryFile(id, scope, path, contents));
   }
   return facts;
 }
@@ -191,71 +209,214 @@ export async function listMemoryFacts(root: string): Promise<MemoryFact[]> {
   return [...repo, ...global];
 }
 
+async function findMemoryFact(
+  root: string,
+  scope: MemoryScope,
+  id: string,
+): Promise<MemoryFact | null> {
+  const matches = (await discoverMemoryFacts(root, scope)).filter((fact) =>
+    fact.id === id
+  );
+  if (matches.length > 1) {
+    throw new Error(`Duplicate compiled memory article id: [${scope}] ${id}`);
+  }
+  return matches[0] ?? null;
+}
+
 export async function readMemoryFact(
   root: string,
   scope: MemoryScope,
   id: string,
 ): Promise<MemoryFact | null> {
   validateMemoryId(id);
-  const path = join(scopeRoot(root, scope), `${id}.md`);
-  try {
-    const contents = await readFile(path, "utf8");
-    return parseMemoryFile(id, scope, path, contents);
-  } catch (error) {
-    if (isMissingFileError(error)) {
-      return null;
+  return findMemoryFact(root, scope, id);
+}
+
+async function nextRawPath(
+  root: string,
+  input: MemoryWriteInput,
+  id: string,
+  date: string,
+): Promise<string> {
+  const directory = join(rawRoot(root, input.scope), input.topic);
+  await mkdir(directory, { recursive: true });
+  const base = `${date}-${id}`;
+  let path = join(directory, `${base}.md`);
+  let suffix = 2;
+  while (true) {
+    try {
+      await readFile(path);
+      path = join(directory, `${base}-${suffix}.md`);
+      suffix += 1;
+    } catch (error) {
+      if (isMissingFileError(error)) return path;
+      throw error;
     }
-    throw error;
   }
 }
 
-export interface MemoryWriteFileInput {
-  scope: MemoryScope;
-  id?: string;
-  title: string;
-  body: string;
-  tags?: string[];
-  date?: string;
-  source?: MemorySource;
-  verified?: string;
+function serializeRawObservation(
+  input: MemoryWriteInput,
+  id: string,
+  date: string,
+): string {
+  const lines = [
+    "---",
+    `article: ${id}`,
+    `topic: ${input.topic}`,
+    `recorded: ${date}`,
+    `source: ${input.source}`,
+    `status: ${input.status}`,
+  ];
+  if (input.verified !== undefined) lines.push(`verified: ${input.verified}`);
+  lines.push(
+    `supersedes: ${serializeList(input.supersedes)}`,
+    "---",
+    "",
+    `# ${input.title}`,
+    "",
+    "## Evidence",
+    "",
+    input.evidence.trim(),
+    "",
+    "## Observation",
+    "",
+    input.body.trim(),
+    "",
+  );
+  return lines.join("\n");
 }
 
-// Upserts a Markdown fact file: an explicit id overwrites that fact in
-// place, an omitted id derives a fresh slug from the title and disambiguates
-// against any file already using it. The file is the sole source of truth —
-// callers are responsible for re-indexing after this returns.
+async function appendLog(
+  root: string,
+  scope: MemoryScope,
+  date: string,
+  operation: string,
+): Promise<void> {
+  const directory = wikiRoot(root, scope);
+  await mkdir(directory, { recursive: true });
+  const path = join(directory, "log.md");
+  try {
+    await readFile(path);
+  } catch (error) {
+    if (!isMissingFileError(error)) throw error;
+    await writeFile(path, "# Hive Memory Log\n");
+  }
+  await appendFile(path, `\n## [${date}] ${operation}\n`);
+}
+
+async function rebuildScopeIndex(
+  root: string,
+  scope: MemoryScope,
+): Promise<void> {
+  try {
+    await readdir(scopeRoot(root, scope));
+  } catch (error) {
+    if (isMissingFileError(error)) return;
+    throw error;
+  }
+  const directory = wikiRoot(root, scope);
+  await mkdir(directory, { recursive: true });
+  const facts = await discoverMemoryFacts(root, scope);
+  const rows = [...facts]
+    .sort((a, b) => b.date.localeCompare(a.date) || a.id.localeCompare(b.id))
+    .map((fact) =>
+      `- [${scope}/${fact.topic}] ${fact.id} (${fact.date}) [${fact.status}]: ${fact.title}`
+    );
+  await writeFile(
+    join(directory, "index.md"),
+    ["# Hive Memory Index", "", ...rows, ""].join("\n"),
+  );
+}
+
+export type MemoryWriteFileResult = MemoryFact & {
+  rawPath: string;
+  supersededIds: string[];
+};
+
 export async function writeMemoryFact(
   root: string,
-  input: MemoryWriteFileInput,
-): Promise<MemoryFact> {
-  const directory = scopeRoot(root, input.scope);
-  await mkdir(directory, { recursive: true });
-
+  input: MemoryWriteInput,
+): Promise<MemoryWriteFileResult> {
+  input = MemoryWriteInputSchema.parse(input);
+  const date = input.date ?? todayIsoDate();
+  if (input.status === "verified" && input.verified! < date) {
+    throw new Error("verified date predates the article update; use status stale");
+  }
+  if (input.status === "stale" && input.verified! >= date) {
+    throw new Error("stale status requires verified to predate the article update");
+  }
   let id = input.id;
   if (id === undefined) {
     const base = slugify(input.title);
     id = base;
     let suffix = 2;
-    while (await readMemoryFact(root, input.scope, id) !== null) {
+    while (await findMemoryFact(root, input.scope, id) !== null) {
       id = `${base}-${suffix}`;
       suffix += 1;
     }
   }
   validateMemoryId(id);
 
+  const existing = await findMemoryFact(root, input.scope, id);
+  if (existing !== null && existing.topic !== input.topic) {
+    throw new Error(
+      `Memory article [${input.scope}] ${id} already belongs to topic ${existing.topic}`,
+    );
+  }
+  if (existing !== null && existing.body !== input.body &&
+    !input.supersedes.includes(id)) {
+    throw new Error(
+      `Updating memory article [${input.scope}] ${id} requires supersedes: [${id}]`,
+    );
+  }
+  const supersededFacts: MemoryFact[] = [];
+  for (const supersededId of input.supersedes) {
+    validateMemoryId(supersededId);
+    if (supersededId === id) continue;
+    const superseded = await findMemoryFact(root, input.scope, supersededId);
+    if (superseded === null) {
+      throw new Error(
+        `Superseded memory article not found: [${input.scope}] ${supersededId}`,
+      );
+    }
+    supersededFacts.push(superseded);
+  }
+
+  const rawPath = await nextRawPath(root, input, id, date);
+  await writeFile(rawPath, serializeRawObservation(input, id, date), { flag: "wx" });
+  const articlePath = join(wikiRoot(root, input.scope), input.topic, `${id}.md`);
+  await mkdir(dirname(articlePath), { recursive: true });
+  const rawReference = relative(dirname(articlePath), rawPath);
   const fact = MemoryFactSchema.parse({
     id,
     scope: input.scope,
+    topic: input.topic,
     title: input.title,
     body: input.body,
-    tags: input.tags ?? [],
-    date: input.date ?? todayIsoDate(),
-    path: join(directory, `${id}.md`),
+    tags: input.tags ?? existing?.tags ?? [],
+    date,
+    path: articlePath,
     source: input.source,
+    evidence: oneLine(input.evidence),
+    status: input.status,
+    supersedes: [...new Set([...(existing?.supersedes ?? []), ...input.supersedes])],
+    raw: [...new Set([
+      ...(existing?.raw ?? []),
+      ...supersededFacts.flatMap((superseded) => superseded.raw),
+      rawReference,
+    ])],
     verified: input.verified,
   });
-  await writeFile(fact.path, serializeMemoryFile(fact));
-  return fact;
+  await writeFile(articlePath, serializeMemoryFile(fact));
+  for (const superseded of supersededFacts) await rm(superseded.path);
+  await rebuildScopeIndex(root, input.scope);
+  await appendLog(root, input.scope, date, `ingest | ${fact.title}`);
+  return {
+    ...fact,
+    rawPath,
+    supersededIds: supersededFacts.map((superseded) => superseded.id),
+  };
 }
 
 export async function deleteMemoryFact(
@@ -264,128 +425,253 @@ export async function deleteMemoryFact(
   id: string,
 ): Promise<boolean> {
   validateMemoryId(id);
-  const path = join(scopeRoot(root, scope), `${id}.md`);
-  try {
-    await rm(path);
-    return true;
-  } catch (error) {
-    if (isMissingFileError(error)) {
-      return false;
-    }
-    throw error;
-  }
+  const fact = await findMemoryFact(root, scope, id);
+  if (fact === null) return false;
+  await rm(fact.path);
+  await rebuildScopeIndex(root, scope);
+  await appendLog(root, scope, todayIsoDate(), `delete | ${fact.title}`);
+  return true;
 }
 
-export interface LegacyFactReport {
-  scope: MemoryScope;
+interface LegacyFact {
   id: string;
-  // What is missing on the legacy fact. `verified` absence is expected for old
-  // facts (never re-confirmed); `source` absence is what marks it legacy.
-  missingSource: boolean;
-  missingVerified: boolean;
+  title: string;
+  body: string;
+  tags: string[];
+  date: string;
+  source?: MemorySource;
+  verified?: string;
+  path: string;
+  contents: string;
+}
+
+function parseLegacyFile(path: string, contents: string): LegacyFact {
+  const id = basename(path, ".md");
+  const lines = contents.split(/\r?\n/);
+  const closingIndex = lines.findIndex(
+    (line, index) => index > 0 && line.trim() === "---",
+  );
+  const fields = new Map<string, string>();
+  if (lines[0]?.trim() === "---" && closingIndex > 0) {
+    for (const line of lines.slice(1, closingIndex)) {
+      const separator = line.indexOf(":");
+      if (separator < 0) continue;
+      fields.set(line.slice(0, separator).trim(), line.slice(separator + 1).trim());
+    }
+  }
+  const source = MemorySourceSchema.safeParse(fields.get("source"));
+  return {
+    id,
+    title: fields.get("title") ?? id,
+    body: lines.slice(closingIndex > 0 ? closingIndex + 1 : 0).join("\n").trim(),
+    tags: parseList(fields.get("tags") ?? "[]"),
+    date: ISO_DATE.test(fields.get("date") ?? "")
+      ? fields.get("date")!
+      : todayIsoDate(),
+    source: source.success ? source.data : undefined,
+    verified: ISO_DATE.test(fields.get("verified") ?? "")
+      ? fields.get("verified")
+      : undefined,
+    path,
+    contents,
+  };
+}
+
+async function discoverLegacyFacts(
+  root: string,
+  scope: MemoryScope,
+): Promise<LegacyFact[]> {
+  const directory = scopeRoot(root, scope);
+  let entries;
+  try {
+    entries = await readdir(directory, { withFileTypes: true });
+  } catch (error) {
+    if (isMissingFileError(error)) return [];
+    throw error;
+  }
+  const facts: LegacyFact[] = [];
+  for (const entry of entries) {
+    if (!entry.isFile() || !entry.name.endsWith(".md")) continue;
+    const path = join(directory, entry.name);
+    facts.push(parseLegacyFile(path, await readFile(path, "utf8")));
+  }
+  return facts;
+}
+
+function legacyTopic(fact: LegacyFact): string {
+  const aliases: Record<string, string> = {
+    router: "routing",
+    routing: "routing",
+    model: "routing",
+    fable: "routing",
+    codex: "routing",
+    quota: "quota",
+    delivery: "delivery",
+    telemetry: "telemetry",
+    landing: "landing",
+    graphify: "graphify",
+    orchestration: "delivery",
+    workspace: "workspace-ui",
+    "workspace-ui": "workspace-ui",
+    swiftterm: "workspace-ui",
+    release: "release",
+    update: "release",
+    packaging: "release",
+    skill: "skills",
+    skills: "skills",
+    memory: "memory",
+    autonomy: "autonomy",
+    spawn: "spawn",
+    lifecycle: "lifecycle",
+    testing: "testing",
+    discovery: "discovery",
+    "stranded-work": "stranded-work",
+    context: "context",
+    handoff: "operations",
+    restart: "operations",
+    session: "operations",
+  };
+  for (const tag of fact.tags) {
+    if (aliases[tag] !== undefined) return aliases[tag];
+  }
+  return slugify(fact.tags[0] ?? "general", 60);
 }
 
 export interface MemoryMigrationReport {
   scanned: number;
-  legacy: LegacyFactReport[];
-  // Always 0 by default: the migration refuses to fabricate provenance. §5
-  // binds a missing `source` to "legacy, treated as earned" and offers no
-  // "unknown" member, so absence *is* the honest encoding — inventing an author
-  // for an old fact would be exactly the invented precision §5 forbids.
-  stamped: number;
+  migrated: number;
+  flagged: Array<{ scope: MemoryScope; id: string; status: MemoryVerificationStatus }>;
 }
 
-// Migrate the existing `.hive/memory/` (and global) facts onto the provenance
-// schema (SPEC.md decision 5). The honest migration for a fact whose author is
-// unknowable is to leave `source`/`verified` absent — the parser already reads
-// that as legacy/earned/never-verified and recall already flags it
-// `[unverified]`, so no file is rewritten and the real committed facts are
-// preserved byte-for-byte. This is a diagnostic/idempotent pass: it reports
-// which facts are legacy so an operator (or `hive init`) can choose to
-// re-verify and re-author them with real provenance, but it never guesses one.
 export async function migrateLegacyMemory(
   root: string,
 ): Promise<MemoryMigrationReport> {
-  const facts = await listMemoryFacts(root);
-  const legacy: LegacyFactReport[] = [];
-  for (const fact of facts) {
-    const missingSource = fact.source === undefined;
-    const missingVerified = fact.verified === undefined;
-    if (missingSource || missingVerified) {
-      legacy.push({
-        scope: fact.scope,
-        id: fact.id,
-        missingSource,
-        missingVerified,
-      });
+  const repo = await discoverLegacyFacts(root, "repo");
+  const global = await discoverLegacyFacts(root, "global");
+  const legacy = [
+    ...repo.map((fact) => ({ fact, scope: "repo" as const })),
+    ...global.map((fact) => ({ fact, scope: "global" as const })),
+  ];
+  const flagged: MemoryMigrationReport["flagged"] = [];
+  for (const { fact: old, scope } of legacy) {
+    const topic = legacyTopic(old);
+    const status: MemoryVerificationStatus = old.verified === undefined
+      ? "unverified"
+      : old.verified < old.date
+      ? "stale"
+      : "verified";
+    if (status !== "verified") flagged.push({ scope, id: old.id, status });
+    const destination = join(rawRoot(root, scope), topic, `${old.date}-${old.id}.md`);
+    await mkdir(dirname(destination), { recursive: true });
+    try {
+      await writeFile(destination, old.contents, { flag: "wx" });
+    } catch (error) {
+      if (!(typeof error === "object" && error !== null && "code" in error &&
+        error.code === "EEXIST")) throw error;
+      if (await readFile(destination, "utf8") !== old.contents) {
+        throw new Error(`Legacy raw destination already contains different evidence: ${destination}`);
+      }
     }
+    const existing = await findMemoryFact(root, scope, old.id);
+    const articlePath = existing?.path ??
+      join(wikiRoot(root, scope), topic, `${old.id}.md`);
+    await mkdir(dirname(articlePath), { recursive: true });
+    const rawReference = relative(dirname(articlePath), destination);
+    if (existing !== null) {
+      if (existing.raw.includes(rawReference)) {
+        await rm(old.path);
+        continue;
+      }
+      const conflicted = MemoryFactSchema.parse({
+        ...existing,
+        body: `${existing.body}\n\n## Uncompiled legacy observation\n\n` +
+          `A newly discovered legacy source disagrees with or duplicates this article. ` +
+          `Reconcile the raw observation before treating either account as current.`,
+        date: todayIsoDate(),
+        evidence: `${existing.evidence}; conflicting legacy flat memory ${old.id}`,
+        status: "conflicted",
+        raw: [...existing.raw, rawReference],
+      });
+      await writeFile(articlePath, serializeMemoryFile(conflicted));
+      flagged.push({ scope, id: old.id, status: "conflicted" });
+      await rm(old.path);
+      await appendLog(root, scope, todayIsoDate(), `migrate-conflict | ${existing.title}`);
+      continue;
+    }
+    const article = MemoryFactSchema.parse({
+      id: old.id,
+      scope,
+      topic,
+      title: old.title.replace(/^CORRECTED:\s*/i, ""),
+      body: old.body,
+      tags: old.tags,
+      date: old.date,
+      path: articlePath,
+      source: old.source ?? "legacy",
+      evidence: `Migrated verbatim from legacy flat memory ${old.id}`,
+      status,
+      supersedes: [],
+      raw: [rawReference],
+      verified: old.verified,
+    });
+    await writeFile(articlePath, serializeMemoryFile(article));
+    await rm(old.path);
+    await appendLog(root, scope, todayIsoDate(), `migrate | ${article.title}`);
   }
-  return { scanned: facts.length, legacy, stamped: 0 };
+  await Promise.all([
+    rebuildScopeIndex(root, "repo"),
+    rebuildScopeIndex(root, "global"),
+  ]);
+  return { scanned: legacy.length, migrated: legacy.length, flagged };
 }
 
-// The fact-count cap on the injected index (SPEC.md decision 5). This is the
-// budget knob for memory and is deliberately distinct from the profile's
-// file-count budget (§14): this one is driven by how many facts exist, not by
-// repo size. At ~15–25 tokens per line the ceiling holds the index tax near
-// ~500 tokens no matter how large the store grows — a flat tax, not a scaling
-// cost (asserted in adapters/memory.test.ts).
-const MEMORY_INDEX_MAX_ENTRIES = 30;
-
-// A recalled fact that names a concrete path, command, or flag must be
-// re-checked against the repo before it drives an action (§5). The index is a
-// pointer, the fact is a claim, the repo is truth — so recall marks the facts
-// most in need of that check. `unverified`: never confirmed against the repo.
-// `stale`: last verified *before* it was last written, so the current content
-// was never re-confirmed even though an older confirmation exists.
 export function factVerificationFlag(
-  fact: Pick<MemoryFact, "date" | "verified">,
-): "unverified" | "stale" | null {
+  fact: { status?: MemoryVerificationStatus; date: string; verified?: string },
+): "unverified" | "stale" | "conflicted" | null {
+  if (fact.status === "unverified" || fact.status === "stale" ||
+    fact.status === "conflicted") return fact.status;
+  if (fact.status === "verified") return null;
   if (fact.verified === undefined) return "unverified";
-  if (fact.verified < fact.date) return "stale";
-  return null;
+  return fact.verified < fact.date ? "stale" : null;
 }
 
-async function fileExists(path: string): Promise<boolean> {
+export async function rebuildMemoryIndexFiles(root: string): Promise<void> {
+  await migrateLegacyMemory(root);
+  await Promise.all([
+    rebuildScopeIndex(root, "repo"),
+    rebuildScopeIndex(root, "global"),
+  ]);
+}
+
+async function readIndexRows(root: string, scope: MemoryScope): Promise<string[]> {
   try {
-    await readFile(path);
-    return true;
+    return (await readFile(join(wikiRoot(root, scope), "index.md"), "utf8"))
+      .split(/\r?\n/)
+      .filter((line) => line.startsWith("- ["));
   } catch (error) {
-    if (isMissingFileError(error)) return false;
-    // A directory or a permission error still means "there is something here";
-    // only a genuine absence should suppress the pointer.
-    return true;
+    if (isMissingFileError(error)) return [];
+    throw error;
   }
 }
 
-// The context-budget rule from SPEC.md decision 5: agents see a merged
-// index of a few hundred tokens, never the store itself. One line per fact,
-// newest first, capped and noting what was left out so pruning stays honest.
-// The date on every line puts staleness in front of the agent at zero extra
-// tool cost; a `[unverified]`/`[stale]` marker flags the facts whose concrete
-// claims the reader must re-check before acting on them.
 export async function buildMemoryIndex(root: string): Promise<string> {
-  const facts = await listMemoryFacts(root);
-  if (facts.length === 0) {
-    return "";
-  }
-  const sorted = [...facts].sort((a, b) => b.date.localeCompare(a.date));
-  const shown = sorted.slice(0, MEMORY_INDEX_MAX_ENTRIES);
-  const lines = shown.map((fact) => {
-    const flag = factVerificationFlag(fact);
-    const marker = flag === null ? "" : ` [${flag}]`;
-    return `- [${fact.scope}] ${fact.id} (${fact.date}): ${fact.title}${marker}`;
+  await rebuildMemoryIndexFiles(root);
+  const rows = [
+    ...await readIndexRows(root, "repo"),
+    ...await readIndexRows(root, "global"),
+  ].sort((a, b) => {
+    const aDate = a.match(/\((\d{4}-\d{2}-\d{2})\)/)?.[1] ?? "";
+    const bDate = b.match(/\((\d{4}-\d{2}-\d{2})\)/)?.[1] ?? "";
+    return bDate.localeCompare(aDate) || a.localeCompare(b);
   });
-  const omitted = sorted.length - shown.length;
-  const header =
-    "Hive memory index — durable facts from past runs. Pull the full fact with memory_read(scope, id) before relying on it; a fact marked [unverified] or [stale] that names a path, command, or flag must be re-checked against the repo before you act on it. Search more with memory_search.";
-  // The index draws memory's boundary rather than restating what is on the other
-  // side of it (§14): structured repo truth — build/test commands, entry points,
-  // doc allowlist — is the profile's, derived by Hive and handed to an agent in
-  // its brief, and it is never duplicated into a fact.
-  const profilePointer =
-    "Structured repo facts (build/test commands, entry points, layout) are Hive's to derive and are already in your brief — memory holds only narrative lessons, so never write one here.";
-  const footer = omitted > 0
-    ? [`(${omitted} older fact${omitted === 1 ? "" : "s"} omitted — use memory_search to find them)`]
-    : [];
-  return [header, profilePointer, ...lines, ...footer].join("\n");
+  if (rows.length === 0) return "";
+  const shown = rows.slice(0, MEMORY_INDEX_MAX_ENTRIES);
+  const omitted = rows.length - shown.length;
+  return [
+    "Hive memory index — compiled durable repo knowledge. Pull the full article with memory_read(scope, id); [unverified], [stale], and [conflicted] articles are claims to reconcile before acting. Search more with memory_search.",
+    ...shown,
+    ...(omitted > 0
+      ? [`(${omitted} older article${omitted === 1 ? "" : "s"} omitted — use memory_search)`]
+      : []),
+  ].join("\n");
 }

@@ -1,5 +1,8 @@
 import type { Database } from "bun:sqlite";
-import { listMemoryFacts } from "../adapters/memory";
+import {
+  listMemoryFacts,
+  rebuildMemoryIndexFiles,
+} from "../adapters/memory";
 import {
   MemorySearchResultSchema,
   type MemoryFact,
@@ -15,14 +18,16 @@ function toFtsQuery(query: string): string | null {
   return tokens.map((token) => `"${token}"`).join(" AND ");
 }
 
-// A disposable SQLite FTS5 search index over the Markdown facts adapters/
+// A disposable SQLite FTS5 search index over the compiled Markdown articles
 // memory.ts treats as the source of truth. Every row here can be reproduced
 // from the files at any time via rebuild(); nothing here is authoritative.
 export class MemoryIndex {
   constructor(private readonly database: Database) {
     this.database.exec(`
-      CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(
-        id, scope UNINDEXED, title, body, tags, date UNINDEXED, path UNINDEXED,
+      DROP TABLE IF EXISTS memory_fts;
+      CREATE VIRTUAL TABLE memory_fts USING fts5(
+        id, scope UNINDEXED, topic UNINDEXED, title, body, tags,
+        date UNINDEXED, status UNINDEXED, path UNINDEXED,
         tokenize = 'porter'
       )
     `);
@@ -30,15 +35,17 @@ export class MemoryIndex {
 
   private insertRow(fact: MemoryFact): void {
     this.database.query(`
-      INSERT INTO memory_fts (id, scope, title, body, tags, date, path)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO memory_fts (id, scope, topic, title, body, tags, date, status, path)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       fact.id,
       fact.scope,
+      fact.topic,
       fact.title,
       fact.body,
       fact.tags.join(" "),
       fact.date,
+      fact.status,
       fact.path,
     );
   }
@@ -66,6 +73,7 @@ export class MemoryIndex {
   // memory_reindex — because the files are authoritative and the index is
   // not.
   async rebuild(root: string): Promise<number> {
+    await rebuildMemoryIndexFiles(root);
     const facts = await listMemoryFacts(root);
     this.database.transaction((rows: MemoryFact[]) => {
       this.database.exec("DELETE FROM memory_fts");
@@ -87,13 +95,13 @@ export class MemoryIndex {
     const limit = options.limit ?? 10;
     const rows = options.scope === undefined
       ? this.database.query(`
-          SELECT id, scope, title, date, tags, path,
-                 snippet(memory_fts, 3, '[', ']', '…', 12) AS snippet
+          SELECT id, scope, topic, title, date, status, tags, path,
+                 snippet(memory_fts, 4, '[', ']', '…', 12) AS snippet
           FROM memory_fts WHERE memory_fts MATCH ? ORDER BY rank LIMIT ?
         `).all(ftsQuery, limit)
       : this.database.query(`
-          SELECT id, scope, title, date, tags, path,
-                 snippet(memory_fts, 3, '[', ']', '…', 12) AS snippet
+          SELECT id, scope, topic, title, date, status, tags, path,
+                 snippet(memory_fts, 4, '[', ']', '…', 12) AS snippet
           FROM memory_fts WHERE memory_fts MATCH ? AND scope = ?
           ORDER BY rank LIMIT ?
         `).all(ftsQuery, options.scope, limit);

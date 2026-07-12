@@ -50,8 +50,15 @@ import {
 import { runWorkspace } from "./cli/workspace";
 import { runWorkspaceFeedCli } from "./cli/workspace-feed";
 import { versionLine } from "./version";
-import type { MemoryScope, MemorySource } from "./schemas";
-import { MemorySourceSchema } from "./schemas";
+import type {
+  MemoryScope,
+  MemorySource,
+  MemoryVerificationStatus,
+} from "./schemas";
+import {
+  MemoryWriterSourceSchema,
+  MemoryVerificationStatusSchema,
+} from "./schemas";
 
 export interface EventCliOptions {
   agent?: string;
@@ -95,11 +102,21 @@ function parseMemoryScope(value: string): MemoryScope {
   return value;
 }
 
-function parseMemorySource(value: string): MemorySource {
-  const parsed = MemorySourceSchema.safeParse(value);
+function parseMemorySource(value: string): Exclude<MemorySource, "legacy"> {
+  const parsed = MemoryWriterSourceSchema.safeParse(value);
   if (!parsed.success) {
     throw new Error(
       `Invalid memory source "${value}": expected init, agent, orchestrator, or human`,
+    );
+  }
+  return parsed.data;
+}
+
+function parseMemoryStatus(value: string): MemoryVerificationStatus {
+  const parsed = MemoryVerificationStatusSchema.safeParse(value);
+  if (!parsed.success) {
+    throw new Error(
+      `Invalid memory status "${value}": expected verified, unverified, stale, or conflicted`,
     );
   }
   return parsed.data;
@@ -373,11 +390,11 @@ export function createProgram(): Command {
   const memory = program
     .command("memory")
     .description(
-      "Search, read, write, delete, and reindex durable Hive memory facts",
+      "Search, read, write, delete, and reindex durable Hive memory articles",
     );
 
   memory.command("search <query>")
-    .description("Full-text search memory facts")
+    .description("Full-text search compiled memory articles")
     .option("--scope <scope>", "repo or global")
     .option("--limit <n>", "max results")
     .action(async (
@@ -395,33 +412,49 @@ export function createProgram(): Command {
     });
 
   memory.command("write <title>")
-    .description("Create or update a memory fact")
+    .description("Record an observation and create or update its compiled article")
     .requiredOption("--scope <scope>", "repo or global")
+    .requiredOption("--topic <topic>", "lowercase kebab-case topic")
     .requiredOption("--body <text>", "fact body (Markdown)")
+    .requiredOption("--source <source>", "init, agent, orchestrator, or human")
+    .requiredOption("--evidence <text>", "what was measured or supplied, and where")
+    .requiredOption(
+      "--status <status>",
+      "verified, unverified, stale, or conflicted",
+    )
+    .requiredOption(
+      "--supersedes <ids>",
+      "comma-separated article ids; use an empty string when none",
+    )
     .option("--id <id>", "existing fact id to overwrite")
     .option("--tags <tags>", "comma-separated tags")
     .option("--date <yyyy-mm-dd>", "fact date (defaults to today)")
-    .option(
-      "--source <source>",
-      "provenance: init, agent, orchestrator, or human",
-    )
     .option(
       "--verified <yyyy-mm-dd>",
       "date the fact was last confirmed true against the repo",
     )
     .action(async (title: string, options: {
       scope: string;
+      topic: string;
       body: string;
+      source: string;
+      evidence: string;
+      status: string;
+      supersedes: string;
       id?: string;
       tags?: string;
       date?: string;
-      source?: string;
       verified?: string;
     }) => {
       await writeMemoryCli({
         scope: parseMemoryScope(options.scope),
+        topic: options.topic,
         title,
         body: options.body,
+        source: parseMemorySource(options.source),
+        evidence: options.evidence,
+        status: parseMemoryStatus(options.status),
+        supersedes: options.supersedes.split(",").map((id) => id.trim()).filter(Boolean),
         ...(options.id === undefined ? {} : { id: options.id }),
         ...(options.tags === undefined ? {} : {
           tags: options.tags.split(",").map((tag) => tag.trim()).filter((
@@ -429,21 +462,18 @@ export function createProgram(): Command {
           ) => tag.length > 0),
         }),
         ...(options.date === undefined ? {} : { date: options.date }),
-        ...(options.source === undefined
-          ? {}
-          : { source: parseMemorySource(options.source) }),
         ...(options.verified === undefined ? {} : { verified: options.verified }),
       });
     });
 
   memory.command("read <scope> <id>")
-    .description("Print one full memory fact")
+    .description("Print one compiled memory article")
     .action(async (scope: string, id: string) => {
       await readMemoryCli(parseMemoryScope(scope), id);
     });
 
   memory.command("delete <scope> <id>")
-    .description("Delete one memory fact")
+    .description("Delete one compiled memory article")
     .action(async (scope: string, id: string) => {
       await deleteMemoryCli(parseMemoryScope(scope), id);
     });

@@ -30,6 +30,7 @@ const repoRoot = join(import.meta.dir, "..", "..");
 const EXPECTED_SHIPPED_SKILLS = [
   "hive-claude",
   "hive-codex",
+  "hive-memory",
   "karpathy-guidelines",
 ];
 

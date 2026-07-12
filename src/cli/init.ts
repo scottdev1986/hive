@@ -9,7 +9,7 @@
  *   - When no `AGENTS.md` exists, *offer* to scaffold one (opt-in, never blind —
  *     Codex caps the AGENTS.md chain at 32 KiB and truncates silently, so we
  *     never append to a human's existing instructions).
- *   - Seed a small set of narrative memory facts with `source: "init"` and a
+ *   - Seed a small set of narrative memory articles with `source: "init"` and a
  *     `verified` date (decision 5's provenance), derived and re-derivable —
  *     distinct from the earned facts an agent learns. Structured facts never
  *     become memory; they are already in the profile.
@@ -180,10 +180,15 @@ export async function seedInitFacts(
     const written = await deps.writeMemoryFact(root, {
       scope: "repo",
       id,
+      topic: "project",
       title: fact.title,
       body: fact.body,
       tags: fact.tags ?? [],
+      date: today,
       source: "init",
+      evidence: "Derived by hive init from the current repository profile",
+      status: "verified",
+      supersedes: [id],
       verified: today,
     });
     seeded.push(written.id);
@@ -340,7 +345,7 @@ export async function runInit(
       // rebuilds the index from the files on disk anyway.
     });
     messages.push(
-      `Seeded and indexed ${factsSeeded.length} narrative memory fact${factsSeeded.length === 1 ? "" : "s"} (source: init).`,
+      `Seeded and indexed ${factsSeeded.length} narrative memory article${factsSeeded.length === 1 ? "" : "s"} (source: init).`,
     );
   }
 

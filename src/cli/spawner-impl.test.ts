@@ -1920,10 +1920,10 @@ describe("HiveSpawner wiring", () => {
       const launched = await deliveredPrompt(tmux.sessions[0]?.[2] ?? "");
       expect(launched).toContain("Hive memory index");
       expect(launched).toContain(
-        "[repo] flaky-login-test (2026-06-01): The login test is flaky",
+        "[repo/testing] flaky-login-test (2026-06-01) [unverified]: The login test is flaky",
       );
       expect(launched).toContain(
-        "[global] cli-distribution (2026-05-12): Python has a bad CLI distribution story",
+        "[global/general] cli-distribution (2026-05-12) [unverified]: Python has a bad CLI distribution story",
       );
     } finally {
       if (previousHome === undefined) {

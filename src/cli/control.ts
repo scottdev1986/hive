@@ -192,7 +192,7 @@ export async function searchMemoryCli(
 ): Promise<void> {
   const results = await searchMemory(requireDaemonPort(), query, options);
   if (results.length === 0) {
-    console.log("no matching memory facts");
+    console.log("no matching memory articles");
     return;
   }
   for (const result of results) {
@@ -204,7 +204,10 @@ export async function searchMemoryCli(
 
 export async function writeMemoryCli(input: MemoryWriteInput): Promise<void> {
   const fact = await writeMemory(requireDaemonPort(), input);
-  console.log(`wrote [${fact.scope}] ${fact.id} — ${fact.path}`);
+  console.log(
+    `wrote [${fact.scope}/${fact.topic}] ${fact.id} — ${fact.path}\n` +
+      `raw observation: ${fact.rawPath}`,
+  );
 }
 
 export async function readMemoryCli(
@@ -218,13 +221,18 @@ export async function readMemoryCli(
   const flag = factVerificationFlag(fact);
   const provenance = [
     `date: ${fact.date}`,
-    `source: ${fact.source ?? "unknown (legacy — treated as earned)"}`,
+    `topic: ${fact.topic}`,
+    `source: ${fact.source}`,
+    `status: ${fact.status}`,
     `verified: ${fact.verified ?? "never"}`,
+    `evidence: ${fact.evidence}`,
+    `supersedes: ${fact.supersedes.join(", ")}`,
+    `raw: ${fact.raw.join(", ")}`,
     `tags: ${fact.tags.join(", ")}`,
   ].join("\n");
   const notice = flag === null
     ? ""
-    : `\n⚠ ${flag}: re-check any path, command, or flag this fact names against the repo before acting on it.`;
+    : `\n⚠ ${flag}: reconcile this article before acting on any path, command, or flag it names.`;
   console.log(`# ${fact.title}\n\n${provenance}${notice}\n\n${fact.body}`);
 }
 
@@ -236,13 +244,13 @@ export async function deleteMemoryCli(
   console.log(
     deleted
       ? `Deleted [${scope}] ${id}.`
-      : `No memory fact found at [${scope}] ${id}.`,
+      : `No memory article found at [${scope}] ${id}.`,
   );
 }
 
 export async function reindexMemoryCli(): Promise<void> {
   const count = await reindexMemory(requireDaemonPort());
-  console.log(`rebuilt the memory search index from ${count} fact(s)`);
+  console.log(`rebuilt the memory search index from ${count} article(s)`);
 }
 
 export interface RecoveryOutcomeView {

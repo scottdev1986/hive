@@ -30,6 +30,7 @@ test("every shipped skill carries real content and vendor-required frontmatter",
   expect(SHIPPED_SKILLS.map((skill) => skill.name).sort()).toEqual([
     "hive-claude",
     "hive-codex",
+    "hive-memory",
     "karpathy-guidelines",
   ]);
 
@@ -48,10 +49,12 @@ test("every shipped skill carries real content and vendor-required frontmatter",
 test("each vendor is offered the skills written for it", () => {
   expect(shippedSkillsFor("claude").map((skill) => skill.name)).toEqual([
     "hive-claude",
+    "hive-memory",
     "karpathy-guidelines",
   ]);
   expect(shippedSkillsFor("codex").map((skill) => skill.name)).toEqual([
     "hive-codex",
+    "hive-memory",
     "karpathy-guidelines",
   ]);
 });
