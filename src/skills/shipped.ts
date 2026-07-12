@@ -16,6 +16,7 @@
  */
 import hiveClaude from "../../skills/hive-claude/SKILL.md" with { type: "text" };
 import hiveCodex from "../../skills/hive-codex/SKILL.md" with { type: "text" };
+import hiveGrok from "../../skills/hive-grok/SKILL.md" with { type: "text" };
 import hiveMemory from "../../skills/hive-memory/SKILL.md" with { type: "text" };
 import karpathyGuidelines from "../../skills/karpathy-guidelines/SKILL.md" with {
   type: "text",
@@ -36,6 +37,7 @@ export interface ShippedSkill {
 export const SHIPPED_SKILLS: readonly ShippedSkill[] = [
   { name: "hive-claude", content: hiveClaude, tools: ["claude"] },
   { name: "hive-codex", content: hiveCodex, tools: ["codex"] },
+  { name: "hive-grok", content: hiveGrok, tools: ["grok"] },
   { name: "hive-memory", content: hiveMemory, tools: ["claude", "codex"] },
   {
     name: "karpathy-guidelines",

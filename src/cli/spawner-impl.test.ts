@@ -85,13 +85,15 @@ const timestamp = "2026-07-09T12:00:00.000Z";
 const tempRoots: string[] = [];
 
 function capabilityRecord(
-  provider: "claude" | "codex",
+  provider: "claude" | "codex" | "grok",
   model: string,
   levels: string[],
 ): CapabilityRecord {
   const surface = provider === "claude"
     ? "claude.initialize" as const
-    : "codex.model/list" as const;
+    : provider === "codex"
+      ? "codex.model/list" as const
+      : "grok.models_cache" as const;
   return {
     provider,
     accountFingerprint: "account",
@@ -132,7 +134,8 @@ const fakeResolveModel = async (
   tool: Route["tool"],
   route: Route,
 ): Promise<string> => {
-  const configured = route[tool].model;
+  const configured = route[tool]?.model;
+  if (configured === undefined) throw new Error(`missing ${tool} fixture route`);
   if (tool === "claude" && configured === "best") {
     return "claude-fable-5";
   }
@@ -1533,7 +1536,7 @@ describe("HiveSpawner wiring", () => {
     );
     const store = new FakeStore();
     const tmux = new FakeTmux();
-    const probes: Array<"claude" | "codex"> = [];
+    const probes: Array<"claude" | "codex" | "grok"> = [];
     const spawner = new HiveSpawner({
       db: store,
       repoRoot: root,
@@ -1543,11 +1546,13 @@ describe("HiveSpawner wiring", () => {
       routingPins: async () => ({}),
       discoverCapabilities: async (provider) => {
         probes.push(provider);
-        return discovery(
-          provider === "claude"
-            ? capabilityRecord("claude", "claude-opus-4-8", ["low", "high"])
-            : capabilityRecord("codex", "gpt-5.6-sol", ["low", "ultra"]),
-        );
+        return provider === "grok"
+          ? { status: "unavailable", reason: "not in fixture" }
+          : discovery(
+            provider === "claude"
+              ? capabilityRecord("claude", "claude-opus-4-8", ["low", "high"])
+              : capabilityRecord("codex", "gpt-5.6-sol", ["low", "ultra"]),
+          );
       },
       tmux,
       terminal: new FakeTerminal(),
@@ -1850,6 +1855,74 @@ describe("HiveSpawner wiring", () => {
       effort: "ultra",
     });
     expect(tmux.sessions[0]?.[2]).toContain("model_reasoning_effort=ultra");
+  });
+
+  test("launches Grok with catalog identity, project MCP config, and compatibility isolation", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-spawner-grok-"));
+    tempRoots.push(root);
+    const store = new FakeStore();
+    const tmux = new FakeTmux();
+    const record = capabilityRecord(
+      "grok",
+      "catalog-model",
+      ["low", "medium", "high"],
+    );
+    const spawner = new HiveSpawner({
+      db: store,
+      repoRoot: root,
+      port: 4317,
+      config: { terminal: "auto", headless: true },
+      routing: async () => DEFAULT_ROUTING.standard,
+      routingPins: async () => ({}),
+      discoverCapabilities: async (provider) =>
+        provider === "grok"
+          ? discovery(record)
+          : { status: "unavailable", reason: "not in fixture" },
+      grokIdentity: () => ({
+        version: "test-version",
+        buildHash: "test-build",
+        channel: "stable",
+      }),
+      issueCredential: () => "test-capability",
+      tmux,
+      terminal: new FakeTerminal(),
+      createWorktree: async (_repoRoot, name, slug) => {
+        const path = join(root, name);
+        await mkdir(path, { recursive: true });
+        return { path, branch: `hive/${name}-${slug}` };
+      },
+      sleep: signalReadiness(store),
+      resolveModel: fakeResolveModel,
+    });
+
+    const spawned = await spawner.spawn({
+      task: "Launch the catalog model",
+      tier: "standard",
+      tool: "grok",
+      model: "catalog-model",
+      effort: "high",
+    });
+    expect(spawned.executionIdentity).toEqual({
+      tool: "grok",
+      model: "catalog-model",
+      effort: "high",
+      cliVersion: "test-version",
+      cliBuildHash: "test-build",
+    });
+    const shell = tmux.sessions[0]?.[2] ?? "";
+    expect(shell).toContain("GROK_CLAUDE_SKILLS_ENABLED=false");
+    expect(shell).toContain("'grok' '-m' 'catalog-model'");
+    expect(shell).toContain("'--reasoning-effort' 'high'");
+    expect(shell).toContain("'--always-approve'");
+    const config = await readFile(join(spawned.worktreePath!, ".grok", "config.toml"), "utf8");
+    expect(config).toContain('Authorization = "Bearer test-capability"');
+    expect(await Bun.file(join(
+      spawned.worktreePath!,
+      ".agents",
+      "skills",
+      "hive-grok",
+      "SKILL.md",
+    )).exists()).toBe(true);
   });
 
   test("an explicit claude model forces the claude tool off a codex-routed tier", async () => {
@@ -3557,8 +3630,10 @@ describe("the release valve follows the provider's metering, not a model name", 
         tool === "claude" ? options.claudeModel : "gpt-5.6-sol",
       ...(options.withMeasurement
         ? {
-          discoverCapabilities: async (provider: "claude" | "codex") =>
-            provider === "claude"
+          discoverCapabilities: async (provider: "claude" | "codex" | "grok") =>
+            provider === "grok"
+              ? { status: "unavailable" as const, reason: "not in fixture" }
+              : provider === "claude"
               ? discovery()
               : {
                 status: "ok" as const,
@@ -3576,8 +3651,10 @@ describe("the release valve follows the provider's metering, not a model name", 
                   effort: known("medium", "codex.config/read", timestamp),
                 },
               },
-          readBilling: async (provider: "claude" | "codex") =>
-            provider === "claude"
+          readBilling: async (provider: "claude" | "codex" | "grok") =>
+            provider === "grok"
+              ? null
+              : provider === "claude"
               ? billing(options.metered)
               : accountBillingFromCodexRateLimits({
                 rateLimits: {
@@ -4099,4 +4176,22 @@ describe("graph context in the spawn prompt", () => {
     expect(prompt).toContain("unavailable");
     expect(prompt).not.toContain("query_graph");
   });
+});
+
+test("Grok safety facts ride the spawn prompt, not skill uptake", () => {
+  const worktree = { path: "/tmp/maya", branch: "hive/maya-task" };
+  const prompt = buildAgentPrompt(
+    "maya",
+    "Fix auth",
+    worktree,
+    "/repo",
+    "",
+    { tool: "grok" },
+  );
+  expect(prompt).toContain("sandbox is not a write barrier");
+  expect(prompt).toContain("still exits 0");
+  expect(prompt).toContain("A --deny refusal is different");
+  expect(prompt).toContain("CLAUDE.md");
+  expect(buildAgentPrompt("maya", "Fix auth", worktree, "/repo"))
+    .not.toContain("Grok safety facts");
 });

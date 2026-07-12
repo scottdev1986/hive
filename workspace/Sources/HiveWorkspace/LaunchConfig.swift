@@ -4,7 +4,7 @@ import Foundation
 ///
 ///     open -a HiveWorkspace --args --project <abs dir> --port <daemon port>
 ///       --hive <abs hive binary> --orchestrator-session <tmux session>
-///       [--orchestrator claude|codex]
+///       [--orchestrator claude|codex|grok]
 ///
 /// Plus two development/CI flags:
 ///     --smoke          headless end-to-end checks (offscreen windows, exits 0/1)
@@ -53,7 +53,8 @@ struct LaunchConfig {
             case "--hive":
                 config.hivePath = iterator.next()
             case "--orchestrator":
-                if let tool = iterator.next(), tool == "claude" || tool == "codex" {
+                if let tool = iterator.next(),
+                   tool == "claude" || tool == "codex" || tool == "grok" {
                     config.orchestrator = tool
                 }
             case "--orchestrator-session":

@@ -7,7 +7,7 @@
  * installed release app with everything it needs on argv: `--project <root>`,
  * `--port <port>`, `--hive <this binary>`, the instance-scoped
  * `--orchestrator-session`, and, for an explicit orchestrator entry,
- * `--orchestrator <claude|codex>` — so the app spawns
+ * `--orchestrator <claude|codex|grok>` — so the app spawns
  * `workspace-feed` from the same build as the daemon, never whatever `hive`
  * happens to be on the app's PATH. Run outside a git repo, it stays a
  * project-neutral launcher: a forced release-metadata check, then an argless

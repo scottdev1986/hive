@@ -4,6 +4,7 @@ import { loadHiveConfig, loadRoutingFloors, loadRoutingPins } from "../config/lo
 import {
   ClaudeCapabilityProbe,
   CodexCapabilityProbe,
+  GrokCapabilityProbe,
 } from "../daemon/capability-discovery";
 import {
   knownBillings,
@@ -154,7 +155,12 @@ export function formatDerivedRouting(
         `tool=${(tier.tool.value ?? "—").padEnd(8)}` +
         `${LAYER_LABEL[tier.tool.layer].padEnd(LAYER_WIDTH)}${tier.tool.reason}`,
     );
-    lines.push(...formatCell(tier.claude), ...formatCell(tier.codex), "");
+    lines.push(
+      ...formatCell(tier.claude),
+      ...formatCell(tier.codex),
+      ...formatCell(tier.grok),
+      "",
+    );
   }
 
   if (derived.warnings.length > 0) {
@@ -167,11 +173,12 @@ export function formatDerivedRouting(
 export async function printRouting(): Promise<void> {
   const now = new Date();
   const config = await loadHiveConfig();
-  const [pins, floors, claude, codex, snapshot, billing] = await Promise.all([
+  const [pins, floors, claude, codex, grok, snapshot, billing] = await Promise.all([
     loadRoutingPins(),
     loadRoutingFloors(),
     new ClaudeCapabilityProbe().read(),
     new CodexCapabilityProbe().read(),
+    new GrokCapabilityProbe().read(),
     readSnapshot(),
     // What the account is actually charged. Measured, not dated — and read for
     // every vendor in the union, not for a hardcoded pair: `AccountBillings` is
@@ -181,7 +188,7 @@ export async function printRouting(): Promise<void> {
   ]);
   const benchmarkCatalog = await readBenchmarkCatalog({
     mode: config.benchmarks.mode,
-    discovery: { claude, codex },
+    discovery: { claude, codex, grok },
     sources: configuredBenchmarkSources(),
   });
 
@@ -190,7 +197,7 @@ export async function printRouting(): Promise<void> {
   const db = new HiveDatabase();
   const derived = deriveRouting({
     costConsent: (model) => readCostConsent(db, model),
-    discovery: { claude, codex },
+    discovery: { claude, codex, grok },
     pins,
     floors,
     snapshot,
@@ -228,7 +235,7 @@ export async function printRouting(): Promise<void> {
           .join(", ") + ".",
   );
   console.log("\n" + formatModelInventory(buildModelInventory({
-    discovery: { claude, codex },
+    discovery: { claude, codex, grok },
     routing: derived,
     billing,
     benchmarks: benchmarkCatalog.models,

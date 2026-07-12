@@ -1,5 +1,6 @@
 import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { removeGrokAgentConfig } from "../adapters/tools/grok";
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -175,7 +176,8 @@ export async function repairLeakedProjectConfig(root: string): Promise<string[]>
     cleanClaudeSettings(root),
     cleanCodexConfig(root),
     cleanCodexNotify(root),
+    removeGrokAgentConfig(root),
   ]);
-  return [".mcp.json", ".claude/settings.local.json", ".codex/config.toml", ".codex/hive-notify.sh"]
+  return [".mcp.json", ".claude/settings.local.json", ".codex/config.toml", ".codex/hive-notify.sh", ".grok/config.toml"]
     .filter((_, index) => repairs[index]);
 }

@@ -46,6 +46,11 @@ export function nativeSkillDirectory(tool: SkillTool): string {
       return join(".claude", "skills");
     case "codex":
       return join(".agents", "skills");
+    case "grok":
+      // Measured with grok 0.2.93 `inspect --json` while all Claude/Cursor
+      // compatibility imports were disabled: project skills still resolved
+      // from `.agents/skills/*/SKILL.md` with source.type `project`.
+      return join(".agents", "skills");
     default:
       return unknownVendor(tool, "native skill directory");
   }

@@ -48,10 +48,19 @@ export const CodexRouteSchema = z.strictObject({
 
 export type CodexRoute = z.infer<typeof CodexRouteSchema>;
 
+export const GrokRouteSchema = z.strictObject({
+  model: ModelSchema,
+  effort: EffortLevelSchema.optional(),
+});
+
+export type GrokRoute = z.infer<typeof GrokRouteSchema>;
+
 export const RouteSchema = z.strictObject({
   tool: CapabilityProviderSchema,
   claude: ClaudeRouteSchema,
   codex: CodexRouteSchema,
+  // Optional for persisted two-vendor routing tables; new Grok routes carry it.
+  grok: GrokRouteSchema.optional(),
 });
 
 export type Route = z.infer<typeof RouteSchema>;

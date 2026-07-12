@@ -2,8 +2,10 @@ import { describe, expect, test } from "bun:test";
 import {
   ClaudeCapabilityProbe,
   CodexCapabilityProbe,
+  GrokCapabilityProbe,
   recordsFromClaudeInitialize,
   recordsFromCodexModelList,
+  recordsFromGrokModels,
   claudeEffectiveDefault,
   codexEffectiveDefault,
 } from "./capability-discovery";
@@ -18,6 +20,46 @@ import {
   unknown,
   valueOr,
 } from "../schemas/capability";
+
+const GROK_PAYLOAD = {
+  stdout: [
+    "Available models:",
+    "  - fixture-reasoning-model",
+    "  * fixture-fast-model (default)",
+  ].join("\n"),
+  cliVersion: "fixture-version",
+  invokedAt: "2026-07-12T11:59:59.000Z",
+  cache: {
+    fetched_at: "2026-07-12T12:00:00.000Z",
+    etag: "fixture-etag",
+    grok_version: "fixture-version",
+    auth_method: "oauth",
+    origin: "subscription",
+    models: {
+      "fixture-reasoning-model": {
+        info: {
+          id: "fixture-reasoning-model",
+          name: "Fixture Reasoning",
+          hidden: false,
+          supports_reasoning_effort: true,
+          reasoning_efforts: [
+            { value: "low", default: false },
+            { value: "high", default: true },
+          ],
+        },
+      },
+      "fixture-fast-model": {
+        info: {
+          id: "fixture-fast-model",
+          name: "Fixture Fast",
+          hidden: false,
+          supports_reasoning_effort: false,
+          reasoning_efforts: [],
+        },
+      },
+    },
+  },
+};
 
 /**
  * The fixtures below are the payloads the real binaries returned on 2026-07-11
@@ -255,6 +297,48 @@ describe("claude initialize → capability records", () => {
     for (const record of claudeRecords()) {
       expect(record.entitled).toMatchObject({ state: "known", value: true });
     }
+  });
+});
+
+describe("Grok models catalog", () => {
+  test("joins the free stdout default to fresh structured cache records", async () => {
+    const records = recordsFromGrokModels(GROK_PAYLOAD, OBSERVED_AT);
+    expect(records.map((record) => record.canonicalId)).toEqual([
+      "fixture-reasoning-model",
+      "fixture-fast-model",
+    ]);
+    expect(records[0]?.supportedEffortLevels).toMatchObject({
+      state: "known",
+      value: ["low", "high"],
+    });
+    expect(records[1]?.supportsEffort).toMatchObject({
+      state: "known",
+      value: false,
+    });
+
+    const probe = new GrokCapabilityProbe(
+      { readCatalog: async () => GROK_PAYLOAD },
+      () => new Date(OBSERVED_AT),
+    );
+    const result = await probe.read();
+    expect(result.status).toBe("ok");
+    if (result.status === "ok") {
+      expect(result.effectiveDefault.model).toMatchObject({
+        state: "known",
+        value: "fixture-fast-model",
+      });
+    }
+  });
+
+  test("rejects a cache older than the command that was meant to refresh it", async () => {
+    const stale = {
+      ...GROK_PAYLOAD,
+      cache: { ...GROK_PAYLOAD.cache, fetched_at: "2026-07-12T11:00:00.000Z" },
+    };
+    expect(recordsFromGrokModels(stale, OBSERVED_AT)).toEqual([]);
+    const result = await new GrokCapabilityProbe({ readCatalog: async () => stale })
+      .read();
+    expect(result).toMatchObject({ status: "unavailable" });
   });
 });
 

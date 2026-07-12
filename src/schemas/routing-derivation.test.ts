@@ -112,9 +112,14 @@ const HEADROOM_BILLING = {
   },
 } satisfies NonNullable<DerivationInput["billing"]>;
 
+const NO_GROK = {
+  grok: { status: "unavailable", reason: "not part of this fixture" },
+} as const;
+
 function input(overrides: Partial<DerivationInput> = {}): DerivationInput {
   return {
     discovery: {
+      ...NO_GROK,
       claude: ok(CLAUDE_RECORDS, CLAUDE_DEFAULT),
       codex: ok(CODEX_RECORDS, CODEX_DEFAULT),
     },
@@ -158,6 +163,7 @@ describe("the derived route: the vendor's effective default, vouched live", () =
   test("an effective default no record vouches for is not derived", () => {
     const derived = deriveRouting(input({
       discovery: {
+        ...NO_GROK,
         claude: ok(CLAUDE_RECORDS, {
           ...CLAUDE_DEFAULT,
           model: known("claude-mystery-6", "claude.initialize", FRESH),
@@ -177,6 +183,7 @@ describe("the derived route: the vendor's effective default, vouched live", () =
     }));
     const derived = deriveRouting(input({
       discovery: {
+        ...NO_GROK,
         claude: ok(stale, CLAUDE_DEFAULT),
         codex: ok(CODEX_RECORDS, CODEX_DEFAULT),
       },
@@ -189,6 +196,7 @@ describe("the derived route: the vendor's effective default, vouched live", () =
   test("a discovery that declares no default is a refusal, not a guess", () => {
     const derived = deriveRouting(input({
       discovery: {
+        ...NO_GROK,
         claude: ok(CLAUDE_RECORDS, {
           ...CLAUDE_DEFAULT,
           model: unknown("field-absent", "claude.initialize", FRESH),
@@ -220,6 +228,7 @@ describe("the pin: a standing user directive, never silently obeyed", () => {
     ];
     const derived = deriveRouting(input({
       discovery: {
+        ...NO_GROK,
         claude: ok(stale, CLAUDE_DEFAULT),
         codex: ok(CODEX_RECORDS, CODEX_DEFAULT),
       },
@@ -262,6 +271,7 @@ describe("capability floors: user-editable membership, unset by default", () => 
   test("a below-floor derived candidate is excluded and the cell REFUSES, naming the floor", () => {
     const derived = deriveRouting(input({
       discovery: {
+        ...NO_GROK,
         claude: ok(FLOOR_RECORDS, WEAK_DEFAULT),
         codex: ok(CODEX_RECORDS, CODEX_DEFAULT),
       },
@@ -279,6 +289,7 @@ describe("capability floors: user-editable membership, unset by default", () => 
   test("the review tier is floor-bound the same as deep and standard", () => {
     const derived = deriveRouting(input({
       discovery: {
+        ...NO_GROK,
         claude: ok(FLOOR_RECORDS, WEAK_DEFAULT),
         codex: ok(CODEX_RECORDS, CODEX_DEFAULT),
       },
@@ -292,6 +303,7 @@ describe("capability floors: user-editable membership, unset by default", () => 
   test("the cheap tier is exempt from the building floor", () => {
     const derived = deriveRouting(input({
       discovery: {
+        ...NO_GROK,
         claude: ok(FLOOR_RECORDS, WEAK_DEFAULT),
         codex: ok(CODEX_RECORDS, CODEX_DEFAULT),
       },
@@ -305,6 +317,7 @@ describe("capability floors: user-editable membership, unset by default", () => 
   test("a floor-clearing candidate routes and the evidence basis is named", () => {
     const derived = deriveRouting(input({
       discovery: {
+        ...NO_GROK,
         claude: ok(FLOOR_RECORDS, STRONG_DEFAULT),
         codex: ok(CODEX_RECORDS, CODEX_DEFAULT),
       },
@@ -318,6 +331,7 @@ describe("capability floors: user-editable membership, unset by default", () => 
   test("a pin below the floor is not honoured; derivation falls through and the conflict is named", () => {
     const derived = deriveRouting(input({
       discovery: {
+        ...NO_GROK,
         claude: ok(FLOOR_RECORDS, STRONG_DEFAULT),
         codex: ok(CODEX_RECORDS, CODEX_DEFAULT),
       },
@@ -337,6 +351,7 @@ describe("capability floors: user-editable membership, unset by default", () => 
   test("an unconfigured floor changes nothing — none is shipped, only the schema", () => {
     const derived = deriveRouting(input({
       discovery: {
+        ...NO_GROK,
         claude: ok(FLOOR_RECORDS, WEAK_DEFAULT),
         codex: ok(CODEX_RECORDS, CODEX_DEFAULT),
       },
@@ -357,6 +372,7 @@ describe("capability floors: user-editable membership, unset by default", () => 
     const records = [record("codex", codexWeak, { displayName: "Codex Weak" })];
     const derived = deriveRouting(input({
       discovery: {
+        ...NO_GROK,
         claude: ok(FLOOR_RECORDS, STRONG_DEFAULT),
         codex: ok(records, belowFloor),
       },
@@ -371,6 +387,7 @@ describe("capability floors: user-editable membership, unset by default", () => 
   test("an optional note is carried through the schema, unread by enforcement", () => {
     const derived = deriveRouting(input({
       discovery: {
+        ...NO_GROK,
         claude: ok(FLOOR_RECORDS, STRONG_DEFAULT),
         codex: ok(CODEX_RECORDS, CODEX_DEFAULT),
       },
@@ -484,6 +501,7 @@ describe("effort: chosen by tier policy, grounded in the live record", () => {
     const deep = tierOf(
       deriveRouting(input({
         discovery: {
+          ...NO_GROK,
           claude: ok(records, CLAUDE_DEFAULT),
           codex: ok(CODEX_RECORDS, CODEX_DEFAULT),
         },
@@ -515,6 +533,7 @@ describe("effort: chosen by tier policy, grounded in the live record", () => {
     const derived = deriveRouting(
       input({
         discovery: {
+          ...NO_GROK,
           claude: ok(CLAUDE_RECORDS, CLAUDE_DEFAULT),
           codex: ok(records, CODEX_DEFAULT),
         },
@@ -539,11 +558,16 @@ describe("the last-known-good rung guards discovery outages", () => {
         tool: null,
         claude: { model: "claude-opus-4-8", effort: null, ...STAMP },
         codex: { model: "gpt-5.6-sol", effort: "high", ...STAMP },
+        grok: null,
       },
     },
   };
 
-  const blind = { claude: down("claude is not signed in"), codex: down("no codex") };
+  const blind = {
+    claude: down("claude is not signed in"),
+    codex: down("no codex"),
+    grok: down("no grok"),
+  };
 
   test("an outage rides the snapshot, labelled with its age, loudly", () => {
     const derived = deriveRouting(input({ discovery: blind, snapshot: SNAPSHOT }));
@@ -594,7 +618,13 @@ describe("the snapshot records only what was actually derived", () => {
 
   test("a run that derived nothing writes no snapshot to launder later", () => {
     const derived = deriveRouting(
-      input({ discovery: { claude: down("down"), codex: down("down") } }),
+      input({
+        discovery: {
+          claude: down("down"),
+          codex: down("down"),
+          grok: down("down"),
+        },
+      }),
     );
     expect(snapshotOf(derived)).toBeNull();
   });
@@ -607,6 +637,7 @@ describe("the snapshot records only what was actually derived", () => {
         input({
           now: later,
           discovery: {
+            ...NO_GROK,
             claude: ok(
               CLAUDE_RECORDS.map((entry) => ({
                 ...entry,

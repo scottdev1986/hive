@@ -163,6 +163,7 @@ function harness(
     },
     resolveClaudeSessionId: async () => null,
     resolveCodexSessionId: async () => null,
+    resolveGrokSessionId: async () => null,
     worktreeExists: () => true,
     sleep: async () => {
       if (!proveLife) return;
@@ -178,6 +179,7 @@ function harness(
     seedClaudeTrust: async () => {},
     writeClaudeConfig: async () => {},
     writeCodexConfig: async () => {},
+    writeGrokConfig: async () => {},
     ...overrides,
   });
   return {
@@ -430,6 +432,34 @@ describe("crash resume", () => {
     expect(command).toContain("019f-codex-thread");
     expect(command).toContain("model_reasoning_effort=high");
     expect(command).toContain("workspace-write");
+  });
+
+  test("a Grok agent resumes the exact session with current flags and compatibility isolation", async () => {
+    const h = harness();
+    h.signalProofOfLife();
+    h.db.insertAgent(agent({
+      tool: "grok",
+      model: "catalog-model",
+      status: "working",
+      toolSessionId: "019f-grok-session",
+      executionIdentity: {
+        tool: "grok",
+        model: "catalog-model",
+        effort: "high",
+        cliVersion: "fixture-version",
+        cliBuildHash: "fixture-build",
+      },
+    }));
+
+    const outcomes = await h.recovery.sweep();
+
+    expect(outcomes).toMatchObject([{ agent: "maya", action: "resumed" }]);
+    const command = h.tmux.created[0]!.command;
+    expect(command).toContain("GROK_CLAUDE_SKILLS_ENABLED=false");
+    expect(command).toContain("'grok' '-r' '019f-grok-session'");
+    expect(command).toContain("'--reasoning-effort' 'high'");
+    expect(command).toContain("'--always-approve'");
+    expect(command).not.toContain("--session-id");
   });
 
   test("a session id discovered on disk is used and persisted when none was captured", async () => {

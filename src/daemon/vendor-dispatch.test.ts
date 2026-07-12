@@ -17,7 +17,7 @@ import { countGraphifyCallLines, readGraphifyCalls } from "./tool-telemetry";
 import { knownBillings } from "./usage-credits";
 
 /**
- * Hive knows exactly two vendors, and for a long time it said so only by
+ * Hive knows a closed vendor set, and for a long time it said so only by
  * implication: `tool === "claude" ? claudeThing : codexThing`. A third vendor
  * would have compiled, run, and been treated as Codex everywhere — its
  * transcript parsed by Codex's parser, its crash resumed with Codex's flags,
@@ -37,7 +37,7 @@ import { knownBillings } from "./usage-credits";
  * into the database too — these casts reach past both walls on purpose, to
  * prove the innermost one holds.
  */
-const UNKNOWN = "grok" as unknown as CapabilityProvider;
+const UNKNOWN = "future-vendor" as unknown as CapabilityProvider;
 
 let home = "";
 
@@ -63,7 +63,7 @@ test("counting graphify calls for an unknown vendor throws, and does not count i
   expect(countGraphifyCallLines(CODEX_GRAPHIFY_LINE, "codex")).toBe(1);
 
   expect(() => countGraphifyCallLines(CODEX_GRAPHIFY_LINE, UNKNOWN)).toThrow(
-    /unknown vendor "grok"/,
+    /unknown vendor "future-vendor"/,
   );
 });
 
@@ -71,14 +71,14 @@ test("an unknown vendor with nothing to read still throws, rather than reporting
   // The dangerous shape: a per-line switch would never reach its default on an
   // empty transcript and would report a confident, wrong zero.
   expect(() => countGraphifyCallLines("", UNKNOWN)).toThrow(
-    /unknown vendor "grok"/,
+    /unknown vendor "future-vendor"/,
   );
 });
 
 test("reading graphify calls for an unknown vendor throws instead of hunting a codex rollout", async () => {
   await expect(
     readGraphifyCalls(UNKNOWN, join(home, "worktree"), "session-1", undefined, home),
-  ).rejects.toThrow(/unknown vendor "grok"/);
+  ).rejects.toThrow(/unknown vendor "future-vendor"/);
 });
 
 test("crash recovery refuses to resolve an unknown vendor's session with the codex resolver", async () => {
@@ -99,7 +99,7 @@ test("crash recovery refuses to resolve an unknown vendor's session with the cod
   });
 
   expect(outcomes[0]?.action).toBe("marked-dead");
-  expect(outcomes[0]?.reason).toMatch(/unknown vendor "grok"/);
+  expect(outcomes[0]?.reason).toMatch(/unknown vendor "future-vendor"/);
   // The discriminating assertion: a silent fallthrough would have resolved a
   // Codex session id here and gone on to resume the agent.
   expect(codexResolves).toBe(0);
@@ -125,7 +125,7 @@ test("crash recovery refuses to resume an unknown vendor with codex's config and
   });
 
   expect(outcomes[0]?.action).toBe("marked-dead");
-  expect(outcomes[0]?.reason).toMatch(/unknown vendor "grok"/);
+  expect(outcomes[0]?.reason).toMatch(/unknown vendor "future-vendor"/);
   // A silent fallthrough would have written a Codex agent config and launched
   // `codex resume` in the worktree.
   expect(codexConfigs).toBe(0);
@@ -160,7 +160,7 @@ test("a vendor whose billing reads null is omitted, not invented", () => {
     Parameters<typeof knownBillings>[0][CapabilityProvider]
   >;
 
-  const billings = knownBillings({ claude: billing, codex: null });
+  const billings = knownBillings({ claude: billing, codex: null, grok: null });
 
   expect(billings.claude).toBe(billing);
   expect("codex" in billings).toBe(false);
@@ -204,7 +204,7 @@ test("a review of an unknown vendor is not silently handed to claude", async () 
       reviewOfTool: UNKNOWN,
       candidates,
     }),
-  ).rejects.toThrow(/unknown vendor "grok"/);
+  ).rejects.toThrow(/unknown vendor "future-vendor"/);
   db.close();
 });
 
@@ -225,6 +225,12 @@ test("a model no catalog claims cannot be billed to any vendor's pool", () => {
     provider: "codex",
     modelId: "gpt-5.6-sol",
     displayName: "GPT-5.6 Sol",
+    discoveredAt: new Date("2026-07-09T12:00:00.000Z").toISOString(),
+  }]);
+  ledger.replaceModelCatalog("grok", [{
+    provider: "grok",
+    modelId: "fixture-grok-model",
+    displayName: "Fixture Grok Model",
     discoveredAt: new Date("2026-07-09T12:00:00.000Z").toISOString(),
   }]);
 

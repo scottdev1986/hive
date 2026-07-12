@@ -69,6 +69,7 @@ import { repairLeakedProjectConfig } from "./project-config-cleanup";
 const VENDORS: Record<SkillTool, { command: string; label: string }> = {
   claude: { command: "claude", label: "Claude Code" },
   codex: { command: "codex", label: "Codex" },
+  grok: { command: "grok", label: "Grok" },
 };
 
 /** A narrative fact for init to seed. Structured truth never comes through here
@@ -358,7 +359,7 @@ export async function runInit(
     .filter((vendor) => deps.hasCli(vendor.command));
   if (installed.length === 0) {
     messages.push(
-      "No Claude Code or Codex CLI found on PATH; installed no skills and created no vendor directories.",
+      "No Claude Code, Codex, or Grok CLI found on PATH; installed no skills and created no vendor directories.",
     );
   }
   for (const vendor of installed) {

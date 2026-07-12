@@ -59,6 +59,7 @@ const discovery = {
       effort: known("medium", "codex.config/read", AT),
     },
   },
+  grok: { status: "unavailable" as const, reason: "not in fixture" },
 };
 
 const routing: DerivedRouting = {
@@ -84,13 +85,20 @@ const routing: DerivedRouting = {
       chain: ["gpt-hidden"],
       notes: [],
     },
+    grok: {
+      provider: "grok",
+      model: { value: null, layer: "unknown", reason: "not in fixture" },
+      effort: { value: null, layer: "unknown", reason: "not in fixture" },
+      chain: [],
+      notes: [],
+    },
   }],
 };
 
 describe("model inventory", () => {
   test("renders every discovered record, including hidden and unrouted models", () => {
     const inventory = buildModelInventory({ discovery, routing, now: new Date(AT) });
-    expect(inventory.complete).toBe(true);
+    expect(inventory.complete).toBe(false);
     expect(inventory.discoveredCount).toBe(3);
     expect(inventory.renderedCount).toBe(3);
     expect(inventory.models.map((model) => model.canonicalId)).toEqual([
@@ -126,7 +134,7 @@ describe("model inventory", () => {
     const text = formatModelInventory(
       buildModelInventory({ discovery, routing, now: new Date(AT) }),
     );
-    expect(text).toContain("ALL DISCOVERED MODELS (3/3, complete)");
+    expect(text).toContain("ALL DISCOVERED MODELS (3/3, INCOMPLETE)");
     expect(text).toContain("gpt-hidden");
     expect(text).toContain("Quota fallback for deep work");
     expect(text).toContain("CLI 0.144.1");
@@ -138,10 +146,12 @@ describe("model inventory", () => {
       discovery: {
         claude: { status: "unavailable", reason: "CLI not installed" },
         codex: { status: "unavailable", reason: "discovery has not run" },
+        grok: { status: "unavailable", reason: "discovery has not run" },
       },
       routing: { ...routing, discovery: {
         claude: { status: "unavailable", reason: "CLI not installed" },
         codex: { status: "unavailable", reason: "discovery has not run" },
+        grok: { status: "unavailable", reason: "discovery has not run" },
       } },
     });
     expect(empty).toMatchObject({

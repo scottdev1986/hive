@@ -1,5 +1,8 @@
 import { z } from "zod";
-import { CapabilityProviderSchema } from "./capability";
+import {
+  CapabilityProviderSchema,
+  type CapabilityProvider,
+} from "./capability";
 import { RoutingTierSchema } from "./routing";
 
 export const QuotaConfidenceSchema = z.enum([
@@ -212,7 +215,7 @@ export const StatuslineReportSchema = z.object({
 export type StatuslineReport = z.infer<typeof StatuslineReportSchema>;
 
 export interface QuotaScope {
-  provider: "claude" | "codex";
+  provider: CapabilityProvider;
   account: string;
   pool: string;
 }
@@ -265,7 +268,7 @@ export interface QuotaPoolStatus extends QuotaScope {
  * rendered. `probeError` carries the provider's own reason for the gap.
  */
 export interface QuotaUnconfiguredStatus {
-  provider: "claude" | "codex";
+  provider: CapabilityProvider;
   model: string;
   configured: false;
   confidence: "missing";

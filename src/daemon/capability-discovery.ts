@@ -1,4 +1,7 @@
 import { tmpdir } from "node:os";
+import { homedir } from "node:os";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { z } from "zod";
 import {
   type CapabilityProvider,
@@ -13,6 +16,7 @@ import {
 } from "../schemas/capability";
 import { pendingControlResponses, pendingResponses } from "./quota-sources";
 import { HIVE_VERSION } from "../version";
+import { parseGrokCliVersion } from "../adapters/tools/grok";
 
 /**
  * Runtime capability discovery.
@@ -637,6 +641,187 @@ export class CodexCapabilityProbe implements CapabilityProbe {
         reason: error instanceof Error
           ? error.message
           : "codex capability probe failed",
+      };
+    }
+  }
+}
+
+// --------------------------------------------------------------------------
+// Grok: `grok models` plus the cache it refreshes.
+// --------------------------------------------------------------------------
+
+const GROK_MODELS = "grok.models" as const;
+const GROK_MODELS_CACHE = "grok.models_cache" as const;
+
+const GrokReasoningEffortSchema = z.object({
+  value: z.string().min(1),
+  default: z.boolean().optional(),
+}).passthrough();
+
+const GrokModelInfoSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().nullable().optional(),
+  hidden: z.boolean(),
+  supports_reasoning_effort: z.boolean(),
+  reasoning_efforts: z.array(GrokReasoningEffortSchema).nullable(),
+}).passthrough();
+
+const GrokModelsCacheSchema = z.object({
+  fetched_at: z.string().min(1),
+  etag: z.string().min(1),
+  grok_version: z.string().min(1),
+  auth_method: z.string().nullable().optional(),
+  origin: z.string().nullable().optional(),
+  models: z.record(
+    z.string().min(1),
+    z.object({ info: GrokModelInfoSchema }).passthrough(),
+  ),
+}).passthrough();
+
+export interface GrokCapabilityPayload {
+  stdout: string;
+  cache: unknown;
+  cliVersion: string;
+  invokedAt: string;
+}
+
+export interface GrokCapabilityTransport {
+  readCatalog(timeoutMs: number): Promise<GrokCapabilityPayload>;
+}
+
+export class GrokCliCapabilityTransport implements GrokCapabilityTransport {
+  async readCatalog(timeoutMs: number): Promise<GrokCapabilityPayload> {
+    const invokedAt = new Date().toISOString();
+    const models = Bun.spawn(["grok", "models"], {
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: timeoutMs,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(models.stdout).text(),
+      new Response(models.stderr).text(),
+      models.exited,
+    ]);
+    if (exitCode !== 0) {
+      throw new Error(`grok models failed: ${stderr.trim() || `exit ${exitCode}`}`);
+    }
+    const version = Bun.spawnSync(["grok", "--version"], {
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "ignore",
+      timeout: timeoutMs,
+      killSignal: "SIGKILL",
+    });
+    const identity = version.exitCode === 0
+      ? parseGrokCliVersion(version.stdout.toString())
+      : null;
+    if (identity === null) throw new Error("grok --version was unrecognized");
+    const home = Bun.env.GROK_HOME ?? join(homedir(), ".grok");
+    const cache = JSON.parse(await readFile(join(home, "models_cache.json"), "utf8"));
+    return { stdout, cache, cliVersion: identity.version, invokedAt };
+  }
+}
+
+function grokDefaultFromStdout(stdout: string): string | null {
+  for (const line of stdout.split("\n")) {
+    const match = /^\s*\*\s+(\S+)\s+\(default\)\s*$/.exec(line);
+    if (match !== null) return match[1]!;
+  }
+  return null;
+}
+
+export function recordsFromGrokModels(
+  payload: GrokCapabilityPayload,
+  observedAt: string,
+): CapabilityRecord[] {
+  const parsed = GrokModelsCacheSchema.safeParse(payload.cache);
+  if (!parsed.success) return [];
+  const fetchedAt = Date.parse(parsed.data.fetched_at);
+  if (
+    !Number.isFinite(fetchedAt) || fetchedAt < Date.parse(payload.invokedAt) ||
+    parsed.data.grok_version !== payload.cliVersion
+  ) return [];
+  const accountFingerprint = fingerprintAccount("grok", [
+    parsed.data.auth_method,
+    parsed.data.origin,
+  ]);
+  return Object.entries(parsed.data.models).flatMap(([key, entry]) => {
+    const info = entry.info;
+    if (info.id !== key) return [];
+    const reasoningEfforts = info.reasoning_efforts ?? [];
+    const efforts = reasoningEfforts.map((effort) => effort.value);
+    const advertisedDefault = reasoningEfforts.find((effort) =>
+      effort.default === true
+    )?.value;
+    return [{
+      provider: "grok" as const,
+      accountFingerprint,
+      cliVersion: payload.cliVersion,
+      canonicalId: info.id,
+      variant: null,
+      launchToken: info.id,
+      displayName: info.name ?? null,
+      aliases: [],
+      entitled: known(true, GROK_MODELS, observedAt),
+      hidden: known(info.hidden, GROK_MODELS_CACHE, observedAt),
+      supportsEffort: known(
+        info.supports_reasoning_effort,
+        GROK_MODELS_CACHE,
+        observedAt,
+      ),
+      supportedEffortLevels: known(efforts, GROK_MODELS_CACHE, observedAt),
+      defaultEffort: advertisedDefault === undefined
+        ? unknown("field-absent", GROK_MODELS_CACHE, observedAt)
+        : known(advertisedDefault, GROK_MODELS_CACHE, observedAt),
+      observedAt,
+    }];
+  });
+}
+
+export class GrokCapabilityProbe implements CapabilityProbe {
+  readonly provider = "grok";
+
+  constructor(
+    private readonly transport: GrokCapabilityTransport =
+      new GrokCliCapabilityTransport(),
+    private readonly clock: () => Date = () => new Date(),
+  ) {}
+
+  async read(): Promise<CapabilityDiscoveryResult> {
+    try {
+      const payload = await this.transport.readCatalog(DISCOVERY_TIMEOUT_MS);
+      const observedAt = this.clock().toISOString();
+      const records = recordsFromGrokModels(payload, observedAt);
+      const defaultModel = grokDefaultFromStdout(payload.stdout);
+      if (records.length === 0 || defaultModel === null) {
+        return {
+          status: "unavailable",
+          reason: "grok models returned no fresh usable model catalog/default",
+        };
+      }
+      if (!records.some((record) => record.canonicalId === defaultModel)) {
+        return {
+          status: "unavailable",
+          reason: "grok models default was absent from its refreshed cache",
+        };
+      }
+      return {
+        status: "ok",
+        records,
+        effectiveDefault: {
+          provider: "grok",
+          model: known(defaultModel, GROK_MODELS, observedAt),
+          effort: unknown("surface-silent", GROK_MODELS, observedAt),
+        },
+      };
+    } catch (error) {
+      return {
+        status: "unavailable",
+        reason: error instanceof Error
+          ? error.message
+          : "grok capability probe failed",
       };
     }
   }

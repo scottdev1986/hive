@@ -9,7 +9,7 @@ const unavailable: ProviderDiscovery = {
   status: "unavailable",
   reason: "not installed",
 };
-const discovery = { claude: unavailable, codex: unavailable };
+const discovery = { claude: unavailable, codex: unavailable, grok: unavailable };
 
 describe("benchmark catalog", () => {
   test("off is a hard source kill switch", async () => {

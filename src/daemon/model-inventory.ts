@@ -21,6 +21,7 @@ import {
 import {
   ClaudeCapabilityProbe,
   CodexCapabilityProbe,
+  GrokCapabilityProbe,
   type CapabilityDiscoveryResult,
 } from "./capability-discovery";
 import {
@@ -140,6 +141,8 @@ export async function readModelInventory(
         return await new ClaudeCapabilityProbe().read();
       case "codex":
         return await new CodexCapabilityProbe().read();
+      case "grok":
+        return await new GrokCapabilityProbe().read();
       default:
         return unknownVendor(provider, "model inventory probe");
     }

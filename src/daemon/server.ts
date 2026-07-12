@@ -80,6 +80,7 @@ import {
   type TmuxSender,
 } from "./delivery";
 import { CodexRootDelivery } from "./codex-root-delivery";
+import { readLiveGrokModel } from "../adapters/tools/grok";
 import {
   clampPct,
   type ClaudeTelemetryReader,
@@ -372,11 +373,13 @@ export interface HiveDaemonOptions {
   recovery?: {
     resolveClaudeSessionId?: SessionResolver;
     resolveCodexSessionId?: SessionResolver;
+    resolveGrokSessionId?: SessionResolver;
     worktreeExists?: (path: string) => boolean;
     sleep?: (milliseconds: number) => Promise<void>;
     seedClaudeTrust?: CrashRecoveryDependencies["seedClaudeTrust"];
     writeClaudeConfig?: CrashRecoveryDependencies["writeClaudeConfig"];
     writeCodexConfig?: CrashRecoveryDependencies["writeCodexConfig"];
+    writeGrokConfig?: CrashRecoveryDependencies["writeGrokConfig"];
     readCodexActivity?: CrashRecoveryDependencies["readCodexActivity"];
   };
   /** The live autonomy dial: read by `/autonomy` and by crash recovery (so a
@@ -423,6 +426,10 @@ export interface HiveDaemonOptions {
     claude?: ClaudeTelemetryReader;
     codex?: TelemetryReader;
     liveModel?: (
+      worktreePath: string,
+      toolSessionId: string | undefined,
+    ) => Promise<string | null>;
+    grokLiveModel?: (
       worktreePath: string,
       toolSessionId: string | undefined,
     ) => Promise<string | null>;
@@ -487,6 +494,10 @@ export class HiveDaemon {
   private readonly readClaudeTelemetry: ClaudeTelemetryReader;
   private readonly readCodexTelemetry: TelemetryReader;
   private readonly readLiveModel: (
+    worktreePath: string,
+    toolSessionId: string | undefined,
+  ) => Promise<string | null>;
+  private readonly readGrokLiveModel: (
     worktreePath: string,
     toolSessionId: string | undefined,
   ) => Promise<string | null>;
@@ -643,6 +654,9 @@ export class HiveDaemon {
     this.readLiveModel = options.telemetryReaders?.liveModel ??
       ((worktreePath, toolSessionId) =>
         readLiveClaudeModel(worktreePath, toolSessionId));
+    this.readGrokLiveModel = options.telemetryReaders?.grokLiveModel ??
+      ((worktreePath, toolSessionId) =>
+        readLiveGrokModel(worktreePath, toolSessionId));
     this.handshake = () => expectedDaemonHandshake(this.repoRoot);
     this.cleanupWorktree = options.removeWorktree ?? removeWorktree;
     this.assessStranded = options.assessStrandedWork ?? assessStrandedWork;
@@ -676,6 +690,9 @@ export class HiveDaemon {
       ...(options.recovery?.resolveCodexSessionId === undefined
         ? {}
         : { resolveCodexSessionId: options.recovery.resolveCodexSessionId }),
+      ...(options.recovery?.resolveGrokSessionId === undefined
+        ? {}
+        : { resolveGrokSessionId: options.recovery.resolveGrokSessionId }),
       ...(options.recovery?.worktreeExists === undefined
         ? {}
         : { worktreeExists: options.recovery.worktreeExists }),
@@ -691,6 +708,9 @@ export class HiveDaemon {
       ...(options.recovery?.writeCodexConfig === undefined
         ? {}
         : { writeCodexConfig: options.recovery.writeCodexConfig }),
+      ...(options.recovery?.writeGrokConfig === undefined
+        ? {}
+        : { writeGrokConfig: options.recovery.writeGrokConfig }),
       ...(options.recovery?.readCodexActivity === undefined
         ? {}
         : { readCodexActivity: options.recovery.readCodexActivity }),
@@ -1060,6 +1080,10 @@ export class HiveDaemon {
             continue;
           }
           break;
+        case "grok":
+          // Grok telemetry is read from its own session artifacts below; a
+          // missing parser is unknown, never permission to read a Codex rollout.
+          break;
         default:
           unknownVendor(agent.tool, "refreshToolTelemetry");
       }
@@ -1143,6 +1167,17 @@ export class HiveDaemon {
           ) {
             updates.lastEventAt = telemetry.lastActivityAt;
             if (current.status === "spawning") updates.status = "working";
+          }
+          break;
+        }
+        case "grok": {
+          if (current.worktreePath !== null) {
+            const live = await this
+              .readGrokLiveModel(current.worktreePath, current.toolSessionId)
+              .catch(() => null);
+            if (live !== null && live !== current.liveModel) {
+              updates.liveModel = live;
+            }
           }
           break;
         }
@@ -2005,7 +2040,10 @@ export class HiveDaemon {
         { status: 404 },
       );
     }
-    if (parsed.data.effort !== undefined && agent.tool === "claude") {
+    if (
+      parsed.data.effort !== undefined &&
+      (agent.tool === "claude" || agent.tool === "grok")
+    ) {
       await this.reconcileClaudeEffort(agent, parsed.data.effort);
     }
     // Claude's own occupancy figure, landed on the row exactly as measured —
@@ -2064,9 +2102,18 @@ export class HiveDaemon {
     observedEffort: string,
   ): Promise<void> {
     const current = this.db.getAgentByName(agent.name);
-    if (current === null || current.tool !== "claude") return;
+    if (
+      current === null ||
+      (current.tool !== "claude" && current.tool !== "grok")
+    ) return;
     const identity = current.executionIdentity;
     if (identity === undefined) {
+      if (current.tool === "grok") {
+        console.error(
+          `Cannot reconcile Grok effort for ${current.name}: execution identity is absent`,
+        );
+        return;
+      }
       if (current.model === "default") return;
       this.db.upsertAgent({
         ...current,
@@ -2078,7 +2125,7 @@ export class HiveDaemon {
       });
       return;
     }
-    if (identity.tool !== "claude") return;
+    if (identity.tool !== current.tool) return;
     if (identity.effort === undefined) {
       this.db.upsertAgent({
         ...current,
@@ -2191,11 +2238,25 @@ export class HiveDaemon {
    */
   private async reconcileModel(agent: AgentRecord): Promise<string> {
     const known = agent.liveModel ?? agent.model;
-    if (agent.tool !== "claude" || agent.worktreePath === null) return known;
+    if (agent.worktreePath === null) return known;
 
-    const live = await this
-      .readLiveModel(agent.worktreePath, agent.toolSessionId)
-      .catch(() => null);
+    let live: string | null;
+    switch (agent.tool) {
+      case "claude":
+        live = await this
+          .readLiveModel(agent.worktreePath, agent.toolSessionId)
+          .catch(() => null);
+        break;
+      case "grok":
+        live = await this
+          .readGrokLiveModel(agent.worktreePath, agent.toolSessionId)
+          .catch(() => null);
+        break;
+      case "codex":
+        return known;
+      default:
+        return unknownVendor(agent.tool, "live model reconciliation");
+    }
     if (live === null) return known;
     if (live !== agent.liveModel) {
       // Re-read before writing: the sweep and this handler both land here, and a

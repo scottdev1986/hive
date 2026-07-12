@@ -38,6 +38,10 @@ import { runStart } from "./cli/start";
 import { runStatusline } from "./cli/statusline";
 import { runUninstall } from "./cli/uninstall";
 import {
+  CapabilityProviderSchema,
+  type CapabilityProvider,
+} from "./schemas/capability";
+import {
   printUpdateStatus,
   runRollback,
   runUpdate,
@@ -71,7 +75,7 @@ export interface EventCliOptions {
 }
 
 interface QuotaReconcileOptions {
-  provider: "claude" | "codex";
+  provider: CapabilityProvider;
   account: string;
   pool: string;
   fiveHourUsed: string;
@@ -316,6 +320,13 @@ export function createProgram(): Command {
     });
 
   program
+    .command("grok")
+    .description("Open Workspace with a read-only Grok orchestrator")
+    .action(async () => {
+      process.exitCode = await runWorkspace({ orchestrator: "grok" });
+    });
+
+  program
     .command("status")
     .description("Show Hive agent status")
     .action(printStatus);
@@ -348,7 +359,7 @@ export function createProgram(): Command {
 
   quota.command("reconcile")
     .description("Record a manual provider dashboard observation")
-    .requiredOption("--provider <provider>", "claude or codex")
+    .requiredOption("--provider <provider>", "claude, codex, or grok")
     .option("--account <account>", "account scope", "default")
     .requiredOption("--pool <pool>", "configured quota pool")
     .requiredOption("--five-hour-used <units>", "used 5-hour units")
@@ -357,11 +368,10 @@ export function createProgram(): Command {
     .option("--five-hour-reset-at <iso>", "known 5-hour reset time")
     .option("--weekly-reset-at <iso>", "known weekly reset time")
     .action(async (options: QuotaReconcileOptions) => {
-      if (options.provider !== "claude" && options.provider !== "codex") {
-        throw new Error("provider must be claude or codex");
-      }
+      const provider = CapabilityProviderSchema.safeParse(options.provider);
+      if (!provider.success) throw new Error("provider must be claude, codex, or grok");
       await recordQuotaObservation({
-        provider: options.provider,
+        provider: provider.data,
         account: options.account,
         pool: options.pool,
         fiveHourUsed: parseNonnegative(
@@ -610,18 +620,19 @@ export function createProgram(): Command {
     });
 
   // The Workspace master pane calls this private process boundary. Public
-  // `hive claude|codex` launch the app; they must never be invoked from the
+  // `hive claude|codex|grok` launch the app; they must never be invoked from the
   // pane itself or the app would recursively open another Workspace.
   program
     .command("workspace-orchestrator", { hidden: true })
-    .requiredOption("--tool <tool>", "claude or codex")
+    .requiredOption("--tool <tool>", "claude, codex, or grok")
     .requiredOption("--port <number>", "daemon port")
     .action(async (options: { tool: string; port: string }) => {
-      if (options.tool !== "claude" && options.tool !== "codex") {
+      const tool = CapabilityProviderSchema.safeParse(options.tool);
+      if (!tool.success) {
         throw new Error(`unsupported orchestrator tool: ${options.tool}`);
       }
       process.exitCode = await launchOrchestrator(
-        options.tool,
+        tool.data,
         parsePort(options.port),
       );
     });

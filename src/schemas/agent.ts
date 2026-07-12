@@ -39,6 +39,13 @@ export const ExecutionIdentitySchema = z.discriminatedUnion("tool", [
     model: z.string().min(1),
     effort: EffortLevelSchema,
   }),
+  z.strictObject({
+    tool: z.literal("grok"),
+    model: z.string().min(1),
+    effort: EffortLevelSchema.optional(),
+    cliVersion: z.string().min(1),
+    cliBuildHash: z.string().min(1),
+  }),
 ]);
 
 export type ExecutionIdentity = z.infer<typeof ExecutionIdentitySchema>;

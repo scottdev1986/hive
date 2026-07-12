@@ -2,7 +2,7 @@ import AppKit
 
 // Entry point. The CLI launches the app with
 //   --project <abs dir> --port <daemon port> --hive <abs hive binary>
-//   --orchestrator-session <tmux session> [--orchestrator claude|codex]
+//   --orchestrator-session <tmux session> [--orchestrator claude|codex|grok]
 // `--smoke` runs the headless end-to-end checks (offscreen windows, real
 // terminals, real tmux) and exits 0/1; `--feed <binary>` overrides the feed
 // subprocess for that harness.

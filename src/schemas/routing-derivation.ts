@@ -130,6 +130,10 @@ export const RoutingPinSchema = z.looseObject({
     model: z.string().min(1).optional(),
     effort: z.string().min(1).optional(),
   }).optional(),
+  grok: z.looseObject({
+    model: z.string().min(1).optional(),
+    effort: z.string().min(1).optional(),
+  }).optional(),
 });
 
 // Keyed by a plain string, not by the tier enum: a `z.record` over an enum
@@ -162,6 +166,7 @@ export type RoutingFloor = z.infer<typeof RoutingFloorSchema>;
 export const RoutingFloorsSchema = z.strictObject({
   claude: RoutingFloorSchema.optional(),
   codex: RoutingFloorSchema.optional(),
+  grok: RoutingFloorSchema.optional(),
 });
 export type RoutingFloors = z.infer<typeof RoutingFloorsSchema>;
 
@@ -216,6 +221,7 @@ export const RoutingSnapshotSchema = z.strictObject({
       tool: SnapshotToolSchema.nullable(),
       claude: SnapshotCellSchema.nullable(),
       codex: SnapshotCellSchema.nullable(),
+      grok: SnapshotCellSchema.nullable().default(null),
     }),
   ),
 });
@@ -355,6 +361,7 @@ export interface DerivedTier {
   tool: Resolved<CapabilityProvider>;
   claude: DerivedCell;
   codex: DerivedCell;
+  grok: DerivedCell;
 }
 
 export interface DerivedRouting {
@@ -424,6 +431,7 @@ function deriveTier(
     tool: resolveTool(tier, input),
     claude: deriveCell("claude", tier, kind, input, warn, needConsent),
     codex: deriveCell("codex", tier, kind, input, warn, needConsent),
+    grok: deriveCell("grok", tier, kind, input, warn, needConsent),
   };
 }
 
@@ -1071,11 +1079,12 @@ export function snapshotOf(
 
     const claude = cell(tier.claude);
     const codex = cell(tier.codex);
-    if (claude === null && codex === null && tool === null) {
+    const grok = cell(tier.grok);
+    if (claude === null && codex === null && grok === null && tool === null) {
       delete tiers[tier.tier];
       continue;
     }
-    tiers[tier.tier] = { tool, claude, codex };
+    tiers[tier.tier] = { tool, claude, codex, grok };
   }
   if (Object.keys(tiers).length === 0) return null;
   return { tiers };

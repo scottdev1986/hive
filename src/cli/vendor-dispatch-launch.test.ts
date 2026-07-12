@@ -39,8 +39,8 @@ import {
  * permits it. That is the point: these casts reach past the type wall on
  * purpose, to prove the runtime one behind it holds.
  */
-const UNKNOWN_TOOL = "grok" as unknown as OrchestratorTool;
-const UNKNOWN_PROVIDER = "grok" as unknown as CapabilityProvider;
+const UNKNOWN_TOOL = "future-vendor" as unknown as OrchestratorTool;
+const UNKNOWN_PROVIDER = "future-vendor" as unknown as CapabilityProvider;
 
 const noExistingRoot = {
   hasSession: async () => false,
@@ -67,7 +67,7 @@ afterEach(async () => {
 
 test("an unknown vendor's orchestrator config is refused, not silently skipped", async () => {
   await expect(prepareOrchestratorConfig(UNKNOWN_TOOL, 4317, process.cwd()))
-    .rejects.toThrow(/unknown vendor "grok"/);
+    .rejects.toThrow(/unknown vendor "future-vendor"/);
   // The old `if (tool === "claude")` wrote nothing and said nothing. Silence is
   // the failure being asserted here: an orchestrator with no config posts its
   // hooks nowhere and can never prove life.
@@ -81,7 +81,7 @@ test("no orchestrator command is built for an unknown vendor, least of all codex
   let command: string[] | null = null;
   expect(() => {
     command = buildOrchestratorCommand(UNKNOWN_TOOL, 4317);
-  }).toThrow(/unknown vendor "grok"/);
+  }).toThrow(/unknown vendor "future-vendor"/);
   // The discriminating assertion: a claude-or-else ternary would have handed
   // back Codex's argv, sandbox flags and all, for a CLI that is not Codex.
   expect(command).toBeNull();
@@ -91,7 +91,7 @@ test("no tmux launch command is built for an unknown vendor", () => {
   let command: string[] | null = null;
   expect(() => {
     command = buildOrchestratorLaunchCommand(UNKNOWN_TOOL, 4317, "/repo");
-  }).toThrow(/unknown vendor "grok"/);
+  }).toThrow(/unknown vendor "future-vendor"/);
   expect(command).toBeNull();
 
   // Honest about what this proves. Both arms of buildOrchestratorLaunchCommand
@@ -129,7 +129,7 @@ test("launching an unknown vendor's orchestrator spawns nothing and touches no t
         return false;
       },
     },
-  )).rejects.toThrow(/unknown vendor "grok"/);
+  )).rejects.toThrow(/unknown vendor "future-vendor"/);
 
   // The vendor switch is the FIRST thing the launch does, so an unknown vendor
   // costs nothing: no process, no tmux session killed, no Claude install
@@ -153,7 +153,7 @@ test("a 'default' model is never resolved for an unknown vendor from codex's con
   // or, finding none, returned the "default" alias as though it had resolved
   // something.
   await expect(resolveConcreteModel(UNKNOWN_TOOL as Route["tool"], route))
-    .rejects.toThrow(/unknown vendor "grok"/);
+    .rejects.toThrow(/unknown vendor "future-vendor"/);
 });
 
 test("billing for an unknown vendor throws instead of probing claude's usage surface", async () => {
@@ -188,7 +188,7 @@ test("billing for an unknown vendor throws instead of probing claude's usage sur
 
   await expect(
     readAccountBilling(UNKNOWN_PROVIDER, undefined, 10, transports),
-  ).rejects.toThrow(/unknown vendor "grok"/);
+  ).rejects.toThrow(/unknown vendor "future-vendor"/);
   // Never swallowed into the null a quiet vendor produces, and never answered
   // by the other vendor's probe.
   expect(claudeProbes).toBe(1);
@@ -215,7 +215,7 @@ test("an unknown vendor's spawn provisions no skills at all, rather than the wro
       UNKNOWN_PROVIDER as SkillTool,
       join(hiveHome, "global"),
     ),
-  ).rejects.toThrow(/unknown vendor "grok"/);
+  ).rejects.toThrow(/unknown vendor "future-vendor"/);
 
   // Nothing was written anywhere: the vendor is resolved before the first mkdir,
   // so a vendor Hive cannot provision does not get a half-provisioned worktree

@@ -6,7 +6,7 @@ import WorkspaceCore
 /// daemon-owned tmux session, and the feed subprocess that drives the pane
 /// set. Launched by the CLI as
 /// `open -a HiveWorkspace --args --project <dir> --port <n> --hive <bin>
-/// --orchestrator-session <tmux session> --orchestrator <claude|codex>`.
+/// --orchestrator-session <tmux session> --orchestrator <claude|codex|grok>`.
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
     private let config: LaunchConfig

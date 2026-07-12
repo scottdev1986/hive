@@ -881,7 +881,7 @@ export class QuotaLedger {
 
   /** Replace one provider's catalog as one snapshot, never a mix of two reads. */
   replaceModelCatalog(
-    provider: "claude" | "codex",
+    provider: CapabilityProvider,
     entries: ModelCatalogRow[],
   ): void {
     this.immediate(() => {
@@ -913,7 +913,7 @@ export class QuotaLedger {
 
   /** A launch that never proved life. The route is suspect until one does. */
   recordLaunchFailure(
-    provider: "claude" | "codex",
+    provider: CapabilityProvider,
     model: string,
     effort: string | null,
     reason: string,
@@ -937,7 +937,7 @@ export class QuotaLedger {
    * it is what lets the guard release the route the instant it is fixed.
    */
   recordLaunchSuccess(
-    provider: "claude" | "codex",
+    provider: CapabilityProvider,
     model: string,
     effort: string | null,
     at: string,
@@ -956,7 +956,7 @@ export class QuotaLedger {
   }
 
   routeHealth(
-    provider: "claude" | "codex",
+    provider: CapabilityProvider,
     model: string,
     effort: string | null = null,
   ): RouteHealth | null {

@@ -593,6 +593,11 @@ function billingReader(
           new ClaudeStdioProbeTransport()).readUsage(timeoutMs);
         return accountBillingFromUsage(payload.usage, observedAt);
       };
+    case "grok":
+      // The billing/rolling-reset adapter lands separately. Until then the
+      // money guard sees unknown and requires consent; it never borrows another
+      // vendor's answer or silently claims no-spend.
+      return async () => null;
     default:
       return unknownVendor(provider, "readAccountBilling");
   }

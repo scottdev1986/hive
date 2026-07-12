@@ -1,8 +1,11 @@
 import {
   DEFAULT_PERCENT_ESTIMATES,
+  CAPABILITY_PROVIDERS,
+  CapabilityProviderSchema,
   QuotaObservationSchema,
   unknownVendor,
   type CapabilityProvider,
+  type CapabilityRecord,
   type QuotaConfidence,
   type QuotaConfig,
   type QuotaLimit,
@@ -34,7 +37,7 @@ const HOUR_MS = 60 * 60 * 1_000;
 const DAY_MS = 24 * HOUR_MS;
 
 export interface QuotaRouteCandidate {
-  tool: "claude" | "codex";
+  tool: CapabilityProvider;
   model: string;
   /** Null/absent means the provider default has not been observed yet. */
   effort?: string;
@@ -43,11 +46,11 @@ export interface QuotaRouteCandidate {
 export interface QuotaRouteRequest {
   agentName: string;
   tier: RoutingTier;
-  preferredTool: "claude" | "codex";
-  explicitTool?: "claude" | "codex";
+  preferredTool: CapabilityProvider;
+  explicitTool?: CapabilityProvider;
   /** A human named this exact model; catalog quarantine warns but does not veto. */
   explicitCandidate?: boolean;
-  reviewOfTool?: "claude" | "codex";
+  reviewOfTool?: CapabilityProvider;
   candidates: QuotaRouteCandidate[];
 }
 
@@ -229,24 +232,6 @@ export function describeRemaining(
     : `${window.remaining.toFixed(1)}${unit}`;
 }
 
-/**
- * Who reviews an agent's work: never the vendor that produced it. With exactly
- * two vendors "the other one" is unambiguous, and that is precisely why this
- * was a ternary — a third vendor would have been handed to Claude by the
- * `: "claude"` fallback, a pairing nobody chose. There is no honest default
- * for a vendor Hive has not been told how to pair, so it says so.
- */
-function reviewerFor(reviewOf: CapabilityProvider): CapabilityProvider {
-  switch (reviewOf) {
-    case "claude":
-      return "codex";
-    case "codex":
-      return "claude";
-    default:
-      return unknownVendor(reviewOf, "cross-vendor review pairing");
-  }
-}
-
 export class QuotaExhaustedError extends Error {
   constructor(message: string, readonly fallback?: QuotaRouteCandidate) {
     super(message);
@@ -298,7 +283,7 @@ export interface ResolvedQuotaLimit extends QuotaLimit {
 }
 
 export interface QuotaRefreshReport {
-  provider: "claude" | "codex";
+  provider: CapabilityProvider;
   status: "ok" | "unavailable" | "skipped";
   pools: number;
   reason?: string;
@@ -311,9 +296,9 @@ const discoveredMaxAgeMinutes = (config: QuotaConfig): number =>
 export class QuotaService {
   private alertSink: QuotaAlertSink | null = null;
   private readonly probes: QuotaProbe[];
-  private readonly probeErrors = new Map<"claude" | "codex", string>();
+  private readonly probeErrors = new Map<CapabilityProvider, string>();
   /** Unspent usage-limit reset grants, as the provider reports them. Read only. */
-  private readonly resetCredits = new Map<"claude" | "codex", number>();
+  private readonly resetCredits = new Map<CapabilityProvider, number>();
   private lastRefreshAt: Date | null = null;
 
   constructor(
@@ -347,6 +332,25 @@ export class QuotaService {
 
   setAlertSink(sink: QuotaAlertSink): void {
     this.alertSink = sink;
+  }
+
+  /** Bind the free launch catalog to the billing ledger before reservation. */
+  replaceCapabilityCatalog(
+    provider: CapabilityProvider,
+    records: readonly CapabilityRecord[],
+  ): void {
+    this.ledger.replaceModelCatalog(provider, records.flatMap((record) =>
+      [...new Set([
+        record.displayName ?? record.canonicalId,
+        record.launchToken,
+        ...record.aliases,
+      ])].map((displayName) => ({
+        provider,
+        modelId: record.canonicalId,
+        displayName,
+        discoveredAt: record.observedAt,
+      }))
+    ));
   }
 
   /**
@@ -546,7 +550,7 @@ export class QuotaService {
    * shared snapshot heals the join, automatic adoption on that provider is
    * unsafe; another provider remains entirely unaffected.
    */
-  private unboundModelPools(provider: "claude" | "codex"): ResolvedQuotaLimit[] {
+  private unboundModelPools(provider: CapabilityProvider): ResolvedQuotaLimit[] {
     return this.resolvedLimits().filter((limit) =>
       limit.provider === provider && limit.origin === "discovered" &&
       !limit.routable && limit.label !== null
@@ -576,7 +580,7 @@ export class QuotaService {
 
   /** The account-wide pool: what every model spends from, whatever else it has. */
   private generalLimit(
-    provider: "claude" | "codex",
+    provider: CapabilityProvider,
   ): ResolvedQuotaLimit | null {
     return this.resolvedLimits().find((limit) =>
       limit.routable && limit.provider === provider &&
@@ -1043,7 +1047,7 @@ export class QuotaService {
    * `estimated` ledger has never been read from the provider, and skipping its
    * probe would be how an operator's override silently disables discovery.
    */
-  private hasFreshReading(provider: "claude" | "codex", now: Date): boolean {
+  private hasFreshReading(provider: CapabilityProvider, now: Date): boolean {
     const live = (confidence: QuotaConfidence): boolean =>
       confidence === "authoritative" || confidence === "reported";
     return this.resolvedLimits()
@@ -1055,7 +1059,7 @@ export class QuotaService {
   }
 
   /** Why a provider's live numbers are missing, if they are. */
-  probeError(provider: "claude" | "codex"): string | null {
+  probeError(provider: CapabilityProvider): string | null {
     return this.probeErrors.get(provider) ?? null;
   }
 
@@ -1317,7 +1321,7 @@ export class QuotaService {
     }
     // A provider with no routable pool has no live numbers. Say which provider,
     // and say why, instead of implying an operator forgot to fill in a file.
-    for (const provider of ["claude", "codex"] as const) {
+    for (const provider of CAPABILITY_PROVIDERS) {
       if (trackedProviders.has(provider)) continue;
       if (resolved.some((limit) => limit.provider === provider && limit.routable)) {
         continue;
@@ -1332,7 +1336,7 @@ export class QuotaService {
   }
 
   private gapStatus(
-    provider: "claude" | "codex",
+    provider: CapabilityProvider,
     model: string,
     recorded: {
       reserved: number;
@@ -1423,13 +1427,27 @@ export class QuotaService {
 
   async routeAndReserve(request: QuotaRouteRequest): Promise<QuotaRouteDecision> {
     const now = this.clock();
-    const preferred = request.reviewOfTool !== undefined &&
-        request.tier === "review"
-      ? reviewerFor(request.reviewOfTool)
-      : request.preferredTool;
+    if (
+      request.reviewOfTool !== undefined &&
+      !CapabilityProviderSchema.safeParse(request.reviewOfTool).success
+    ) {
+      return unknownVendor(request.reviewOfTool as never, "review provider");
+    }
     let candidates = request.candidates.filter((candidate) =>
       request.explicitTool === undefined || candidate.tool === request.explicitTool
     );
+    if (request.reviewOfTool !== undefined && request.tier === "review") {
+      candidates = candidates.filter((candidate) =>
+        candidate.tool !== request.reviewOfTool
+      );
+    }
+    // Candidate order is the ordinary derived ranking. Review removes the
+    // producer, then uses that same ranking instead of inventing "the other"
+    // vendor now that more than one alternate can exist.
+    const preferred = request.reviewOfTool !== undefined &&
+        request.tier === "review"
+      ? candidates[0]?.tool ?? request.preferredTool
+      : request.preferredTool;
     if (candidates.length === 0) {
       throw new QuotaExhaustedError(
         `Requested provider ${request.explicitTool} has no route for ${request.tier}`,
@@ -1659,7 +1677,7 @@ export class QuotaService {
    * a bad agent, and the fact that it would look helpful is exactly what makes it
    * dangerous. The human is told the option exists and decides.
    */
-  private describeResetCredits(providers: Set<"claude" | "codex">): string {
+  private describeResetCredits(providers: Set<CapabilityProvider>): string {
     const notes: string[] = [];
     for (const provider of providers) {
       const credits = this.resetCredits.get(provider) ?? 0;
@@ -1862,7 +1880,7 @@ export class QuotaService {
    * and never overwrites an equally fresh authoritative feed.
    */
   async observeStatusline(
-    agent: { tool: "claude" | "codex"; model: string },
+    agent: { tool: CapabilityProvider; model: string },
     report: {
       fiveHour?: { usedPct: number; resetsAt: string | null };
       sevenDay?: { usedPct: number; resetsAt: string | null };
@@ -1967,7 +1985,7 @@ export class QuotaService {
    * the fact that it was learned from the statusLine rather than a probe.
    */
   private discoverStatuslinePool(
-    provider: "claude" | "codex",
+    provider: CapabilityProvider,
     observedAt: string,
   ): ResolvedQuotaLimit {
     this.ledger.upsertDiscoveredPool({
@@ -2070,7 +2088,7 @@ export class QuotaService {
 
   /** One durable, deduplicated message per provider outage — never a wall of them. */
   private async alertProbeFailure(
-    provider: "claude" | "codex",
+    provider: CapabilityProvider,
     reason: string,
     now: Date,
   ): Promise<void> {

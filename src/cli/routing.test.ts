@@ -41,7 +41,10 @@ const CODEX_UP: ProviderDiscovery = {
 describe("the routing surface prints only what it derived", () => {
   const derive = (discovery: Record<"claude" | "codex", ProviderDiscovery>) =>
     deriveRouting({
-      discovery,
+      discovery: {
+        ...discovery,
+        grok: { status: "unavailable", reason: "not in fixture" },
+      },
       pins: {},
       snapshot: null,
       billing: {

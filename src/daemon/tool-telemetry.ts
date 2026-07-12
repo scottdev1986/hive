@@ -245,6 +245,10 @@ export function countGraphifyCallLines(
       return countClaudeGraphifyCalls(slice);
     case "codex":
       return countCodexGraphifyCalls(slice);
+    case "grok":
+      throw new Error(
+        "Grok Graphify counting is unavailable until its updates.jsonl parser is installed",
+      );
     default:
       return unknownVendor(tool, "countGraphifyCallLines");
   }
@@ -323,6 +327,10 @@ export async function readGraphifyCalls(
       path = rollout.path;
       break;
     }
+    case "grok":
+      // Unknown, never zero: Grok's measured source is updates.jsonl and it
+      // must not be read through either transcript parser.
+      return null;
     default:
       return unknownVendor(tool, "readGraphifyCalls");
   }

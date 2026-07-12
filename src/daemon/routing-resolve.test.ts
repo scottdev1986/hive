@@ -93,11 +93,15 @@ const BILLED: AccountBilling = {
   modelUtilization: { "claude-opus-4-8": 100 },
 };
 
-const io = (billing: Record<"claude" | "codex", AccountBilling | null> = {
+const io = (billing: Record<"claude" | "codex" | "grok", AccountBilling | null> = {
   claude: FREE,
   codex: FREE,
+  grok: null,
 }): RoutingIo => ({
-  discover: async (provider) => provider === "claude" ? CLAUDE : CODEX,
+  discover: async (provider) =>
+    provider === "grok"
+      ? { status: "unavailable", reason: "not in fixture" }
+      : provider === "claude" ? CLAUDE : CODEX,
   readBilling: async (provider) => billing[provider],
   now: () => NOW,
 });
@@ -232,7 +236,7 @@ describe("what governs may never break", () => {
   test("the spend guard still refuses to auto-route into a charge", async () => {
     const governing = await resolveGoverningRoute(
       "deep",
-      io({ claude: BILLED, codex: FREE }),
+      io({ claude: BILLED, codex: FREE, grok: null }),
     );
     // The account default would be billed, so the router does not choose it on
     // Hive's own authority — the cell refuses and says why; the codex column
@@ -245,7 +249,7 @@ describe("what governs may never break", () => {
   test("an unreadable billing surface is not read as free", async () => {
     const governing = await resolveGoverningRoute(
       "deep",
-      io({ claude: null, codex: FREE }),
+      io({ claude: null, codex: FREE, grok: null }),
     );
     expect(governing!.cells.claude.model).toBeNull();
     expect(governing!.notes.join(" ")).toContain("cannot rule out a charge");
@@ -260,7 +264,7 @@ describe("what governs may never break", () => {
     };
     const governing = await resolveGoverningRoute(
       "deep",
-      io({ claude: creditOnly, codex: FREE }),
+      io({ claude: creditOnly, codex: FREE, grok: null }),
     );
     expect(governing!.cells.claude.model).toBeNull();
     expect(governing!.notes.join(" ")).toContain("is not routable");

@@ -19,6 +19,12 @@ import {
   writeCodexAgentConfig,
 } from "../adapters/tools/codex";
 import {
+  buildGrokResumeCommand,
+  findLatestGrokSessionId,
+  wrapGrokSpawnWithCompatibilityEnv,
+  writeGrokAgentConfig,
+} from "../adapters/tools/grok";
+import {
   ORCHESTRATOR_NAME,
   unknownVendor,
   type AgentRecord,
@@ -97,6 +103,7 @@ export interface CrashRecoveryDependencies {
   onTerminalsChanged?: (() => void) | undefined;
   resolveClaudeSessionId?: SessionResolver;
   resolveCodexSessionId?: SessionResolver;
+  resolveGrokSessionId?: SessionResolver;
   worktreeExists?: (path: string) => boolean;
   sleep?: Sleep;
   claudeExecutable?: string;
@@ -107,6 +114,7 @@ export interface CrashRecoveryDependencies {
   seedClaudeTrust?: (worktreePath: string) => Promise<void>;
   writeClaudeConfig?: typeof writeClaudeAgentConfig;
   writeCodexConfig?: typeof writeCodexAgentConfig;
+  writeGrokConfig?: typeof writeGrokAgentConfig;
   /** The current writer autonomy, read at resume time so a recovered agent
    * matches the setting the user can see in the Workspace menu — a thunk
    * because the user may flip the dial mid-session. Absent fails safe to the
@@ -142,12 +150,14 @@ function boundedTask(task: string, limit = 500): string {
 export class CrashRecovery {
   private readonly resolveClaude: SessionResolver;
   private readonly resolveCodex: SessionResolver;
+  private readonly resolveGrok: SessionResolver;
   private readonly worktreeExists: (path: string) => boolean;
   private readonly wait: Sleep;
   private readonly claudeExecutable: string;
   private readonly seedClaudeTrust: (worktreePath: string) => Promise<void>;
   private readonly writeClaudeConfig: typeof writeClaudeAgentConfig;
   private readonly writeCodexConfig: typeof writeCodexAgentConfig;
+  private readonly writeGrokConfig: typeof writeGrokAgentConfig;
   private readonly readCodexActivity: (
     worktreePath: string,
   ) => Promise<string | null>;
@@ -163,12 +173,15 @@ export class CrashRecovery {
       ((worktreePath) => findLatestClaudeSessionId(worktreePath));
     this.resolveCodex = deps.resolveCodexSessionId ??
       ((worktreePath) => findLatestCodexSessionId(worktreePath));
+    this.resolveGrok = deps.resolveGrokSessionId ??
+      ((worktreePath) => findLatestGrokSessionId(worktreePath));
     this.worktreeExists = deps.worktreeExists ?? existsSync;
     this.wait = deps.sleep ?? defaultSleep;
     this.claudeExecutable = deps.claudeExecutable ?? resolveWorkingClaudeExecutable().path;
     this.seedClaudeTrust = deps.seedClaudeTrust ?? seedClaudeWorktreeTrust;
     this.writeClaudeConfig = deps.writeClaudeConfig ?? writeClaudeAgentConfig;
     this.writeCodexConfig = deps.writeCodexConfig ?? writeCodexAgentConfig;
+    this.writeGrokConfig = deps.writeGrokConfig ?? writeGrokAgentConfig;
     this.readCodexActivity = deps.readCodexActivity ??
       (async (worktreePath) =>
         (await readCodexTelemetry(worktreePath)).lastActivityAt);
@@ -342,6 +355,8 @@ export class CrashRecovery {
         return this.resolveClaude(worktreePath);
       case "codex":
         return this.resolveCodex(worktreePath);
+      case "grok":
+        return this.resolveGrok(worktreePath);
       default:
         return unknownVendor(tool, "crash recovery session resolver");
     }
@@ -439,13 +454,30 @@ export class CrashRecovery {
           }, sessionId);
           break;
         }
+        case "grok": {
+          await this.writeGrokConfig(worktreePath, {
+            daemonPort: this.deps.port,
+          });
+          argv = buildGrokResumeCommand({
+            model,
+            ...(identity?.tool === "grok" && identity.effort !== undefined
+              ? { effort: identity.effort }
+              : {}),
+            worktreePath,
+            readOnly: false,
+          }, sessionId);
+          break;
+        }
         default:
           unknownVendor(record.tool, "crash recovery resume");
       }
+      const command = record.tool === "grok"
+        ? wrapGrokSpawnWithCompatibilityEnv(shellJoin(argv))
+        : shellJoin(argv);
       await this.deps.tmux.newSession(
         record.tmuxSession,
         worktreePath,
-        shellJoin(argv),
+        command,
       );
       const failure = await this.monitorResume(record);
       if (failure !== null) {

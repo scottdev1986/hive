@@ -1,6 +1,10 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { unknownVendor, type Route } from "../../schemas";
+import {
+  CapabilityProviderSchema,
+  unknownVendor,
+  type Route,
+} from "../../schemas";
 
 // CLAUDE_BEST_MODEL and CLAUDE_OPUS_MODEL used to live here: compiled-in
 // model ids, i.e. predetermined model knowledge, removed as route sources by
@@ -74,7 +78,13 @@ export async function resolveConcreteModel(
   tool: Route["tool"],
   route: Route,
 ): Promise<string> {
-  const configured = route[tool].model;
+  if (!CapabilityProviderSchema.safeParse(tool).success) {
+    return unknownVendor(tool as never, "resolveConcreteModel");
+  }
+  const configured = route[tool]?.model;
+  if (configured === undefined) {
+    throw new Error(`No ${tool} route is configured`);
+  }
   if (configured !== "default") {
     return configured;
   }
@@ -94,6 +104,10 @@ function readVendorConfiguredModel(
       return readConfiguredModel(claudeSettingsPath(), JSON.parse);
     case "codex":
       return readConfiguredModel(codexConfigPath(), Bun.TOML.parse);
+    case "grok":
+      // Grok's effective default comes from the live `grok models` catalog.
+      // Project `[models]` config is ignored, so no file fallback is honest.
+      return Promise.resolve(undefined);
     default:
       return unknownVendor(tool, "resolveConcreteModel");
   }

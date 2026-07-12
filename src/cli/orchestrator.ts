@@ -19,8 +19,16 @@ import { hiveInstanceSuffix } from "../daemon/tmux-sessions";
 import { unknownVendor, type TerminalHandle } from "../schemas";
 import { ORCHESTRATOR_BRIEF, orchestratorDocGuidance } from "./orchestrator-brief";
 import { ensureProfile } from "../adapters/profile";
+import {
+  buildGrokSpawnCommand,
+  GROK_COMPATIBILITY_ENV,
+  probeGrokCliVersion,
+  probeGrokDefaultModel,
+  writeGrokAgentConfig,
+} from "../adapters/tools/grok";
+import type { CapabilityProvider } from "../schemas";
 
-export type OrchestratorTool = "claude" | "codex";
+export type OrchestratorTool = CapabilityProvider;
 export type OrchestratorTerminalApp = "auto" | "terminal" | "iterm2";
 
 /** The Codex root app-server socket. It lives in the per-user temp dir (0700
@@ -150,7 +158,7 @@ export async function provisionCodexRootToken(
 export async function prepareOrchestratorConfig(
   tool: OrchestratorTool,
   port: number,
-  _cwd: string,
+  cwd: string,
 ): Promise<void> {
   switch (tool) {
     case "claude":
@@ -167,6 +175,14 @@ export async function prepareOrchestratorConfig(
       // `buildOrchestratorCommand` builds. An empty arm is a decision, not an
       // omission — which is exactly what the old `if (claude)` could not say.
       return;
+    case "grok": {
+      const authorization = operatorHeaders().Authorization;
+      await writeGrokAgentConfig(cwd, {
+        daemonPort: port,
+        capabilityToken: authorization?.replace(/^Bearer\s+/, ""),
+      });
+      return;
+    }
     default:
       unknownVendor(tool, "orchestrator config");
   }
@@ -230,6 +246,20 @@ export function buildOrchestratorCommand(
         "read-only",
         brief,
       ];
+    case "grok": {
+      const model = probeGrokDefaultModel();
+      if (model === null) {
+        throw new Error("grok models did not report an effective default");
+      }
+      return [
+        ...buildGrokSpawnCommand({
+          model,
+          worktreePath: process.cwd(),
+          readOnly: true,
+        }),
+        brief,
+      ];
+    }
     default:
       unknownVendor(tool, "orchestrator command");
   }
@@ -374,6 +404,25 @@ export function buildOrchestratorLaunchCommand(
         "mouse",
         "on",
       ];
+    case "grok":
+      return [
+        "tmux",
+        "new-session",
+        "-s",
+        orchestratorTmuxSession(),
+        "-c",
+        cwd,
+        "env",
+        ...Object.entries(GROK_COMPATIBILITY_ENV).map(([key, value]) =>
+          `${key}=${value}`
+        ),
+        ...buildOrchestratorCommand(tool, port, memoryIndex, docGuidance),
+        ";",
+        "set-option",
+        "-g",
+        "mouse",
+        "on",
+      ];
     default:
       unknownVendor(tool, "orchestrator launch command");
   }
@@ -412,6 +461,11 @@ export async function launchOrchestrator(
       // feature. A future vendor must state its own minimum here rather than
       // inherit Codex's silence — an ungated launch of a CLI too old for the
       // hive MCP server stalls instead of failing.
+      break;
+    case "grok":
+      if (probeGrokCliVersion() === null) {
+        throw new Error("the Grok orchestrator needs a working grok CLI");
+      }
       break;
     default:
       unknownVendor(tool, "orchestrator launch");
@@ -465,6 +519,10 @@ export async function launchOrchestrator(
       case "claude":
         // Claude's orchestrator authenticates over the same operator
         // credential every Claude agent uses; there is no root token to mint.
+        break;
+      case "grok":
+        // Grok authenticates through the operator credential written into its
+        // worktree-local project MCP config above.
         break;
       default:
         unknownVendor(tool, "orchestrator root token");

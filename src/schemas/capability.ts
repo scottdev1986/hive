@@ -27,7 +27,7 @@ import { z } from "zod";
  * CLI appends and the launch flag must never receive).
  */
 
-export const CapabilityProviderSchema = z.enum(["claude", "codex"]);
+export const CapabilityProviderSchema = z.enum(["claude", "codex", "grok"]);
 export type CapabilityProvider = z.infer<typeof CapabilityProviderSchema>;
 
 /** Every vendor Hive knows, as a value: a record that must cover all of them is
@@ -82,6 +82,16 @@ export const CapabilitySurfaceSchema = z.enum([
    * unflagged launch as `gpt-5.6-sol` at `xhigh`.
    */
   "codex.config/read",
+  /** `grok models` stdout: the live catalog and effective default marker. */
+  "grok.models",
+  /** `~/.grok/models_cache.json`: structured per-model capability facts. */
+  "grok.models_cache",
+  /** Grok ACP's subscription tier and rolling reset boundary. */
+  "grok._x.ai/billing",
+  /** Grok's append-only per-session update stream. */
+  "grok.updates.jsonl",
+  /** Grok ACP's connected-session context snapshot. */
+  "grok._x.ai/session/info",
   /**
    * Claude's `get_usage` control response — the same free frame quota discovery
    * already drives. It carries the account's usage-credit state (`extra_usage`,

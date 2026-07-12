@@ -144,8 +144,13 @@ export async function resolveGoverningRoute(
     cells: {
       claude: governingCell(cell.claude),
       codex: governingCell(cell.codex),
+      grok: governingCell(cell.grok),
     },
-    chain: { claude: chainOf(cell.claude), codex: chainOf(cell.codex) },
-    notes: [...cell.claude.notes, ...cell.codex.notes],
+    chain: {
+      claude: chainOf(cell.claude),
+      codex: chainOf(cell.codex),
+      grok: chainOf(cell.grok),
+    },
+    notes: [...cell.claude.notes, ...cell.codex.notes, ...cell.grok.notes],
   };
 }

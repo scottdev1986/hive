@@ -1,46 +1,11 @@
-# The Grok agent skill, staged
-
-**This file is the body of `skills/hive-grok/SKILL.md`, not a design document.**
-It is parked here because it cannot yet live where it belongs.
-
-`skills/` is the shipped-skills directory, and `src/skills/packaging.test.ts`
-asserts it matches the shipped manifest *exactly* — a skill on disk that no
-manifest ships is a skill no agent ever receives, which is the failure that test
-exists to prevent. Wiring it into `src/skills/shipped.ts` is not possible either:
-`ShippedSkill.tools` is `SkillTool[]`, which is `CapabilityProvider[]`, which has
-no `grok` member until the vendor is added for real.
-
-The Grok adapter commit — the one that widens the vendor enum — must, in the same
-commit:
-
-1. move everything below the rule verbatim (frontmatter included) to
-   `skills/hive-grok/SKILL.md`;
-2. add `{ name: "hive-grok", content: hiveGrok, tools: ["grok"] }` to
-   `SHIPPED_SKILLS`, and `hive-grok` to `EXPECTED_SHIPPED_SKILLS` in
-   `src/skills/packaging.test.ts`;
-3. teach `nativeSkillDirectory()` in `src/adapters/skills.ts` the directory Grok
-   actually scans at project scope — measured, not assumed. Grok's own skill
-   ingestion path is NOT `.claude/skills`, and the ten `GROK_*_SKILLS_ENABLED`
-   compatibility switches are set to `false` by Hive, so the Claude/Cursor
-   compatibility directories are not a fallback. A positive `grok inspect`
-   fixture showing the skill loaded from the intended worktree is the acceptance
-   test (grok-integration-spec §11);
-4. delete this file.
-
-Everything below the rule is the skill.
-
-Measured against `grok 0.2.93 (f00f96316d4b) [stable]`. Sources:
-`docs/research/grok-mcp-turn-completion.md` (the permission/cancellation
-measurements) and `docs/architecture/grok-integration-spec.md`.
-
----
-
 ---
 name: hive-grok
-description: Operating contract for a Grok CLI agent spawned by Hive into a git worktree. Read this immediately on waking inside a directory under .hive/worktrees/, or whenever a prompt identifies you as a Hive-spawned agent — before editing a file or reporting status.
+description: Operating contract only for a Grok CLI agent spawned by Hive into a git worktree; it does not apply to any other vendor. Read this immediately on waking inside a directory under .hive/worktrees/, or whenever a prompt identifies you as a Hive-spawned Grok agent — before editing a file or reporting status.
 ---
 
 # Hive Grok Agent Contract
+
+This operating contract applies only to a Grok CLI agent. It does not apply to Claude, Codex, or any other vendor.
 
 ## Where you are
 - You are in your own git worktree on your own branch, not the user's main checkout. Sibling agents work in other worktrees on their own branches, sharing one object store.

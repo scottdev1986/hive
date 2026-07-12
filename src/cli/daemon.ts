@@ -27,6 +27,7 @@ import { ORCHESTRATOR_NAME, unknownVendor } from "../schemas";
 import {
   ClaudeCapabilityProbe,
   CodexCapabilityProbe,
+  GrokCapabilityProbe,
 } from "../daemon/capability-discovery";
 import { resolveGoverningRoute } from "../daemon/routing-resolve";
 import { readBenchmarkCatalog } from "../daemon/benchmarks";
@@ -124,6 +125,8 @@ export async function runDaemon(): Promise<void> {
           return await new ClaudeCapabilityProbe().read();
         case "codex":
           return await new CodexCapabilityProbe().read();
+        case "grok":
+          return await new GrokCapabilityProbe().read();
         default:
           return unknownVendor(provider, "capability discovery");
       }

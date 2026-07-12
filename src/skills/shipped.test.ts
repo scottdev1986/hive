@@ -30,6 +30,7 @@ test("every shipped skill carries real content and vendor-required frontmatter",
   expect(SHIPPED_SKILLS.map((skill) => skill.name).sort()).toEqual([
     "hive-claude",
     "hive-codex",
+    "hive-grok",
     "hive-memory",
     "karpathy-guidelines",
   ]);
@@ -57,6 +58,9 @@ test("each vendor is offered the skills written for it", () => {
     "hive-memory",
     "karpathy-guidelines",
   ]);
+  expect(shippedSkillsFor("grok").map((skill) => skill.name)).toEqual([
+    "hive-grok",
+  ]);
 });
 
 test(
@@ -75,7 +79,8 @@ test(
       `import { installShippedSkills } from ${JSON.stringify(installer)};\n` +
         `const root = process.argv[2]!;\n` +
         `await installShippedSkills(root, "claude");\n` +
-        `await installShippedSkills(root, "codex");\n`,
+        `await installShippedSkills(root, "codex");\n` +
+        `await installShippedSkills(root, "grok");\n`,
     );
 
     const compile = Bun.spawnSync([

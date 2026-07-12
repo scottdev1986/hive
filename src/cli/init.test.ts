@@ -285,7 +285,7 @@ describe("runInit — installing the shipped skills", () => {
       expect(await Bun.file(join(root, ".claude")).exists()).toBe(false);
       expect(await Bun.file(join(root, ".agents")).exists()).toBe(false);
       expect(result.skills).toEqual([]);
-      expect(result.messages.some((m) => m.includes("No Claude Code or Codex CLI")))
+      expect(result.messages.some((m) => m.includes("No Claude Code, Codex, or Grok CLI")))
         .toBe(true);
     } finally {
       await rm(root, { recursive: true, force: true });

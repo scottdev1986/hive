@@ -207,6 +207,7 @@ describe("LiveBench ingestion", () => {
           effort: known("xhigh", "codex.config/read", AT),
         },
       },
+      grok: { status: "unavailable" as const, reason: "not in fixture" },
     };
     const matched = liveBenchInventoryBenchmarks(snapshot, discovery);
     expect(matched.get("claude\0claude-opus-4-8")?.map((row) => row.effort))
