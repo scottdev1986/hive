@@ -31,6 +31,8 @@ import { resolveGoverningRoute } from "../daemon/routing-resolve";
 import { recordShadowObservation } from "../daemon/routing-shadow";
 import { readBillingWithMemory } from "../daemon/usage-credits";
 import { persistAutonomy } from "../config/autonomy";
+import { readCostConsent } from "../daemon/cost-consent";
+import { readModelInventory } from "../daemon/model-inventory";
 
 export async function runDaemon(): Promise<void> {
   const repoRoot = process.env.HIVE_PROJECT_ROOT ?? process.cwd();
@@ -143,6 +145,10 @@ export async function runDaemon(): Promise<void> {
     layout,
     workspacePresence,
     quota,
+    modelInventory: () =>
+      readModelInventory({
+        readConsent: (model) => readCostConsent(db, model),
+      }),
     codexControl: codexAppServer,
     resources: config.resources,
     lifecycle: config.lifecycle,

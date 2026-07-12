@@ -36,6 +36,10 @@ import {
   type Resolved,
   type RoutingSnapshot,
 } from "../schemas";
+import {
+  buildModelInventory,
+  formatModelInventory,
+} from "../daemon/model-inventory";
 
 /**
  * `hive routing` — the derived table, with per-cell provenance.
@@ -280,6 +284,12 @@ export async function printRouting(): Promise<void> {
   db.close();
 
   console.log(formatDerivedRouting(derived, now, trusted, billing, governs));
+  console.log("\n" + formatModelInventory(buildModelInventory({
+    discovery: { claude, codex },
+    routing: derived,
+    billing,
+    now,
+  })));
 
   // Feed the next run's first ladder rung. Only cells this run actually derived
   // are recorded, and cells it could not derive keep what the last healthy run

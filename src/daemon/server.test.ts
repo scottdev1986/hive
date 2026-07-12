@@ -856,6 +856,18 @@ describe("HiveDaemon HTTP server", () => {
         closedTerminals.push(handle);
         throw new Error("terminal handle is already stale");
       },
+      modelInventory: async () => ({
+        observedAt: timestamp,
+        complete: true,
+        discoveredCount: 0,
+        renderedCount: 0,
+        providers: {
+          claude: { status: "ok", count: 0 },
+          codex: { status: "unavailable", reason: "not installed" },
+        },
+        models: [],
+        warnings: [],
+      }),
     });
     const baseUrl = "http://hive";
     const transport = new StreamableHTTPClientTransport(
@@ -900,6 +912,12 @@ describe("HiveDaemon HTTP server", () => {
         arguments: {},
       }));
       expect(status).toEqual([spawned]);
+
+      const inventory = textValue(await client.callTool({
+        name: "hive_models",
+        arguments: {},
+      })) as { complete: boolean; discoveredCount: number };
+      expect(inventory).toMatchObject({ complete: true, discoveredCount: 0 });
 
       const tools = await client.listTools();
       expect(tools.tools.every((tool) =>

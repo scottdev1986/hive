@@ -116,6 +116,7 @@ import {
 } from "./resources";
 import type { LifecycleConfig, ResourceLimits } from "../schemas";
 import { HIVE_VERSION } from "../version";
+import type { ModelInventory } from "./model-inventory";
 
 export { HIVE_VERSION };
 
@@ -376,6 +377,8 @@ export interface HiveDaemonOptions {
    * attached; an embedded daemon gets its own inert instance. */
   workspacePresence?: WorkspacePresence;
   quota?: QuotaService;
+  /** Complete live model inventory for the read-only orchestrator surface. */
+  modelInventory?: () => Promise<ModelInventory>;
   /** Root wake transport override for tests; defaults to the lazy Codex
    * root app-server deliverer, inert when no codex root socket exists. */
   rootProtocol?: RootProtocolDeliverer;
@@ -470,6 +473,7 @@ export class HiveDaemon {
   private readonly closeTerminal: TerminalCloser;
   private readonly layout: LayoutCoordinator | null;
   private readonly quota: QuotaService | undefined;
+  private readonly modelInventory: HiveDaemonOptions["modelInventory"];
   private readonly codexControl: HiveDaemonOptions["codexControl"];
   private readonly autonomy: AutonomyControl | undefined;
   private readonly land: LandBranch;
@@ -502,6 +506,7 @@ export class HiveDaemon {
     this.manageLifecycle = options.manageLifecycle ?? false;
     this.tmux = options.tmux ?? new TmuxAdapter();
     this.quota = options.quota;
+    this.modelInventory = options.modelInventory;
     this.codexControl = options.codexControl;
     this.autonomy = options.autonomy;
     this.channels = new ChannelRegistry(this.db);
@@ -2489,6 +2494,19 @@ export class HiveDaemon {
     }, async () => {
       this.authorizeTool(capability, "hive_quota_status", "quota:read", undefined, false);
       return toolResult(this.quota?.statuses() ?? [], "quotas");
+    });
+
+    server.registerTool("hive_models", {
+      title: "Hive model inventory",
+      description:
+        "List every model discovered from Claude and Codex, including hidden and unrouted models, with effort levels, plan status, routing roles, benchmark provenance, and when Hive would use each one.",
+      inputSchema: z.object({}),
+    }, async () => {
+      this.authorizeTool(capability, "hive_models", "status:read", undefined, false);
+      if (this.modelInventory === undefined) {
+        throw new Error("Live model inventory is unavailable");
+      }
+      return toolResult(await this.modelInventory(), "inventory");
     });
 
     server.registerTool("hive_quota_reconcile", {
