@@ -2,7 +2,12 @@ import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { readClaudeTelemetry, readCodexTelemetry } from "./tool-telemetry";
+import {
+  countGraphifyCallLines,
+  readClaudeTelemetry,
+  readCodexTelemetry,
+  readGraphifyCalls,
+} from "./tool-telemetry";
 
 const WORKTREE = "/repo/.hive/worktrees/maya";
 
@@ -188,5 +193,76 @@ describe("codex rollout telemetry", () => {
     const telemetry = await readCodexTelemetry(WORKTREE, home);
     expect(telemetry.contextPct).toEqual(null);
     expect(telemetry.lastActivityAt).not.toEqual(null);
+  });
+});
+
+describe("graphify call counting", () => {
+  const toolUseLine = (name: string, sidechain = false): string =>
+    JSON.stringify({
+      type: "assistant",
+      ...(sidechain ? { isSidechain: true } : {}),
+      message: {
+        role: "assistant",
+        content: [
+          { type: "text", text: "using the graph" },
+          { type: "tool_use", id: "t1", name, input: {} },
+        ],
+      },
+    });
+
+  const mcpEndLine = (server: string): string =>
+    JSON.stringify({
+      type: "event_msg",
+      payload: {
+        type: "mcp_tool_call_end",
+        invocation: { server, tool: "query_graph", arguments: {} },
+      },
+    });
+
+  test("counts claude graphify tool_use entries, not sidechains or other servers", () => {
+    const slice = [
+      toolUseLine("mcp__graphify__query_graph"),
+      toolUseLine("mcp__graphify__get_node"),
+      toolUseLine("mcp__graphify__god_nodes", true),
+      toolUseLine("mcp__hive__hive_send"),
+      "not json at all",
+    ].join("\n") + "\n";
+    expect(countGraphifyCallLines(slice, "claude")).toEqual(2);
+  });
+
+  test("counts codex mcp_tool_call_end events for the graphify server only", () => {
+    const slice = [
+      mcpEndLine("graphify"),
+      mcpEndLine("hive"),
+      mcpEndLine("graphify"),
+    ].join("\n") + "\n";
+    expect(countGraphifyCallLines(slice, "codex")).toEqual(2);
+  });
+
+  test("cursors advance incrementally and never count a partial line", async () => {
+    const home = makeHome();
+    const directory = claudeProjectDir(home);
+    const path = join(directory, "session-g.jsonl");
+    const first = toolUseLine("mcp__graphify__query_graph") + "\n";
+    // A complete line plus the torn beginning of the next write.
+    writeFileSync(path, first + '{"type":"assist');
+    const one = await readGraphifyCalls("claude", WORKTREE, "session-g", undefined, home);
+    expect(one?.count).toEqual(1);
+    expect(one?.offset).toEqual(Buffer.byteLength(first, "utf8"));
+
+    // The torn line completes and another call lands; only the delta is read.
+    writeFileSync(
+      path,
+      first + '{"type":"assistant"}\n' + toolUseLine("mcp__graphify__graph_stats") + "\n",
+    );
+    const two = await readGraphifyCalls("claude", WORKTREE, "session-g", one ?? undefined, home);
+    expect(two?.count).toEqual(2);
+  });
+
+  test("no session id means unknown, never zero", async () => {
+    const home = makeHome();
+    expect(
+      await readGraphifyCalls("claude", WORKTREE, undefined, undefined, home),
+    ).toBeNull();
   });
 });

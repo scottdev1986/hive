@@ -307,6 +307,13 @@ export interface HiveSpawnerDependencies {
    * Absent (tests, unwired embedders), spawning is bit-identical.
    */
   graphifyUrl?: () => string | null;
+  /**
+   * The layer-1 graph digest for a task, or null for repos that never opted
+   * in. Hard-bounded inside (query token budget + time-box), so awaiting it
+   * beside the scoped brief adds at most the time-box to a spawn; a throw
+   * degrades to no digest, never a failed spawn.
+   */
+  graphifyBrief?: (task: string) => Promise<string | null>;
   /** Test seam for the daemon-resolved Claude binary. */
   claudeExecutable?: string;
   /** Reads the process table for the readiness probe's process-tree check.
@@ -560,10 +567,27 @@ export interface AgentPromptOptions {
   tier?: RoutingTier;
   /** Doc sections the task named, extracted at spawn. See adapters/brief.ts. */
   brief?: string;
+  /** Task-scoped knowledge-graph digest, injected by the daemon so the graph
+   * pays out with zero agent compliance (integration doc, layer 1). Either
+   * the digest or its one-line unavailability note; absent for repos that
+   * never opted in. */
+  graphBrief?: string;
+  /** True only when the graphify MCP server is being attached to this spawn,
+   * so the one-sentence directive (layer 2) never advertises tools the agent
+   * does not have. */
+  graphifyTools?: boolean;
   /** The repo profile's verify commands, so the landing gate names this repo's
    * concrete test/typecheck commands instead of a hardcoded guess (SPEC §14). */
   landingCommands?: LandingCommands;
 }
+
+/** Layer 2 of the integration doc's adoption strategy: exactly one directive,
+ * in the spawn prompt — the channel agents demonstrably read — not a skill. */
+const GRAPHIFY_DIRECTIVE =
+  "This repo serves a graphify knowledge graph over MCP (query_graph, get_node, " +
+  "get_neighbors, graph_stats, shortest_path, …). When orienting in unfamiliar code, " +
+  "prefer one query_graph call over broad grep sweeps — and treat its answers as leads " +
+  "to verify, never as authority.";
 
 export function buildAgentPrompt(
   name: string,
@@ -607,6 +631,10 @@ export function buildAgentPrompt(
     ...(options.brief === undefined || options.brief === ""
       ? []
       : [options.brief]),
+    ...(options.graphBrief === undefined || options.graphBrief === ""
+      ? []
+      : [options.graphBrief]),
+    ...(options.graphifyTools === true ? [GRAPHIFY_DIRECTIVE] : []),
     ...(memoryIndex === "" ? [] : [memoryIndex]),
   ].join("\n\n");
 }
@@ -1752,7 +1780,10 @@ export class HiveSpawner implements Spawner {
       briefableDirectories: profile.docs.briefableDirectories,
       primaryDoc: profile.docs.primary,
     };
-    const [memoryIndex, brief] = await Promise.all([
+    // Read once, before the prompt: the directive, the digest, and the MCP
+    // config below must all describe the same server observation.
+    const graphifyUrl = this.dependencies.graphifyUrl?.() ?? null;
+    const [memoryIndex, brief, graphBrief] = await Promise.all([
       buildMemoryIndex(worktree.path),
       buildScopedBrief(
         worktree.path,
@@ -1766,6 +1797,18 @@ export class HiveSpawner implements Spawner {
         );
         return "";
       }),
+      this.dependencies.graphifyBrief === undefined
+        ? Promise.resolve(null)
+        : this.dependencies.graphifyBrief(request.task).catch(
+          (error: unknown) => {
+            console.error(
+              `Hive could not build a graph brief for ${name}; spawning without one: ${
+                error instanceof Error ? error.message : "unknown error"
+              }`,
+            );
+            return null;
+          },
+        ),
     ]);
     const prompt = buildAgentPrompt(
       name,
@@ -1776,6 +1819,8 @@ export class HiveSpawner implements Spawner {
       {
         tier: request.tier,
         brief,
+        ...(graphBrief === null ? {} : { graphBrief }),
+        ...(graphifyUrl === null ? {} : { graphifyTools: true }),
         ...(profile === null ? {} : {
           landingCommands: {
             test: profile.commands.test,
@@ -1831,8 +1876,6 @@ export class HiveSpawner implements Spawner {
     );
     try {
       await provisionSkills(worktree.path, tool);
-      // Read once so config and argv agree; null attaches nothing anywhere.
-      const graphifyUrl = this.dependencies.graphifyUrl?.() ?? null;
       if (tool === "claude") {
         // Before the config, because an untrusted workspace makes the CLI
         // discard the hooks and permissions we are about to write.

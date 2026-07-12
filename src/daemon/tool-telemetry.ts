@@ -208,3 +208,124 @@ export async function readCodexTelemetry(
   }
   return { contextPct, lastActivityAt };
 }
+
+// ---------------------------------------------------------------------------
+// Graphify adoption telemetry (docs/architecture/graphify-integration.md,
+// layer 3): count the graphify MCP calls each agent actually made, from the
+// same durable artifacts the context readers use. Measured, never assumed —
+// a shipped tool nobody calls is pure context cost, and only this number can
+// say which it is. Counts are cursor-incremental (each sweep reads only the
+// bytes appended since the last one) and rebuild from offset zero after a
+// daemon restart, because the transcripts are durable and the cursor is not.
+// ---------------------------------------------------------------------------
+
+export interface GraphifyCallCursor {
+  /** The artifact the count came from. A changed path resets the count: a
+   * fresh rollout is a fresh conversation, never a continuation. */
+  path: string;
+  /** Bytes already counted — always the end of a complete line. */
+  offset: number;
+  count: number;
+}
+
+/** Count graphify MCP calls in complete transcript lines. Pure; exported for
+ * tests. Claude records tool use as assistant-message content items named
+ * `mcp__<server>__<tool>`; Codex rollouts record `mcp_tool_call_end` events
+ * whose invocation names the server (both shapes verified against real
+ * artifacts of the pinned versions). */
+export function countGraphifyCallLines(
+  slice: string,
+  tool: "claude" | "codex",
+): number {
+  let count = 0;
+  for (const entry of parseJsonLines(slice)) {
+    if (!isRecord(entry)) continue;
+    if (tool === "claude") {
+      if (entry.type !== "assistant" || entry.isSidechain === true) continue;
+      if (!isRecord(entry.message) || !Array.isArray(entry.message.content)) {
+        continue;
+      }
+      for (const item of entry.message.content) {
+        if (
+          isRecord(item) && item.type === "tool_use" &&
+          typeof item.name === "string" &&
+          item.name.startsWith("mcp__graphify__")
+        ) count++;
+      }
+    } else {
+      if (!isRecord(entry.payload)) continue;
+      const payload = entry.payload;
+      if (payload.type !== "mcp_tool_call_end") continue;
+      if (
+        isRecord(payload.invocation) && payload.invocation.server === "graphify"
+      ) count++;
+    }
+  }
+  return count;
+}
+
+/**
+ * Advance a call-count cursor against the agent's own artifact. Claude reads
+ * are keyed by `toolSessionId` — never "newest file in the directory", which
+ * inherits a dead predecessor's transcript across respawns. The Codex rollout
+ * is still discovered per worktree and carries that known aliasing; the
+ * changed-path reset above bounds it to one rollout's worth. Returns the
+ * cursor unchanged when there is nothing new, and null when there is nothing
+ * to read at all — unknown, not zero.
+ */
+export async function readGraphifyCalls(
+  tool: "claude" | "codex",
+  worktreePath: string,
+  toolSessionId: string | undefined,
+  cursor: GraphifyCallCursor | undefined,
+  home?: string,
+): Promise<GraphifyCallCursor | null> {
+  let path: string;
+  if (tool === "claude") {
+    if (toolSessionId === undefined) return null;
+    const directory = home === undefined
+      ? claudeProjectDirectory(worktreePath)
+      : claudeProjectDirectory(worktreePath, home);
+    path = join(directory, `${toolSessionId}.jsonl`);
+  } else {
+    const rollout = home === undefined
+      ? await findLatestCodexRollout(worktreePath)
+      : await findLatestCodexRollout(worktreePath, home);
+    if (rollout === null) return cursor ?? null;
+    path = rollout.path;
+  }
+
+  const base = cursor !== undefined && cursor.path === path
+    ? cursor
+    : { path, offset: 0, count: 0 };
+  let slice: string;
+  try {
+    const handle = await open(path, "r");
+    try {
+      const { size } = await handle.stat();
+      if (size <= base.offset) return base;
+      const length = size - base.offset;
+      const { buffer, bytesRead } = await handle.read(
+        Buffer.alloc(length),
+        0,
+        length,
+        base.offset,
+      );
+      slice = buffer.subarray(0, bytesRead).toString("utf8");
+    } finally {
+      await handle.close();
+    }
+  } catch {
+    return cursor ?? null;
+  }
+  // Only complete lines count; a partial trailing write is left for the next
+  // sweep so no entry is ever split and lost.
+  const lastNewline = slice.lastIndexOf("\n");
+  if (lastNewline === -1) return base;
+  const complete = slice.slice(0, lastNewline + 1);
+  return {
+    path,
+    offset: base.offset + Buffer.byteLength(complete, "utf8"),
+    count: base.count + countGraphifyCallLines(complete, tool),
+  };
+}

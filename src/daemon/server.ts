@@ -78,8 +78,10 @@ import { CodexRootDelivery } from "./codex-root-delivery";
 import {
   clampPct,
   type ClaudeTelemetryReader,
+  type GraphifyCallCursor,
   readClaudeTelemetry,
   readCodexTelemetry,
+  readGraphifyCalls,
   type TelemetryReader,
   type ToolTelemetry,
 } from "./tool-telemetry";
@@ -500,6 +502,10 @@ export class HiveDaemon {
   private readonly codexControl: HiveDaemonOptions["codexControl"];
   private readonly autonomy: AutonomyControl | undefined;
   private readonly graphify: GraphifyService | undefined;
+  /** Per-agent graphify MCP call counts (integration doc, layer 3). Keyed by
+   * AgentUUID, in memory on purpose: the transcripts are durable, so a
+   * restart recounts from offset zero instead of trusting a stale number. */
+  private readonly graphifyCalls = new Map<string, GraphifyCallCursor>();
   private readonly land: LandBranch;
   private bunServer: Server<undefined> | null = null;
   private reconciliationTimer: ReturnType<typeof setInterval> | null = null;
@@ -1029,6 +1035,18 @@ export class HiveDaemon {
         }
       } catch {
         continue;
+      }
+      // Layer-3 graphify adoption count, off the same artifacts. Only when
+      // this daemon has a graphify service at all; a failed read keeps the
+      // previous cursor rather than inventing a zero.
+      if (this.graphify !== undefined) {
+        const cursor = await readGraphifyCalls(
+          agent.tool === "claude" ? "claude" : "codex",
+          worktree,
+          agent.toolSessionId,
+          this.graphifyCalls.get(agent.id),
+        ).catch(() => null);
+        if (cursor !== null) this.graphifyCalls.set(agent.id, cursor);
       }
       // Re-read after the file I/O: hook events may have advanced the row.
       const current = this.db.getAgentById(agent.id);
@@ -2520,7 +2538,15 @@ export class HiveDaemon {
       inputSchema: StatusRequestSchema,
     }, async ({ detail }) => {
       this.authorizeTool(capability, "hive_status", "status:read", undefined, false);
-      const agents = this.db.listAgents();
+      // graphifyCalls says whether the graph tools are earning their context
+      // cost (integration doc, layer 3). Null is unknown — no observation —
+      // never zero; only rendered at all when this daemon runs graphify.
+      const agents = this.db.listAgents().map((agent) => (
+        this.graphify === undefined ? agent : {
+          ...agent,
+          graphifyCalls: this.graphifyCalls.get(agent.id)?.count ?? null,
+        }
+      ));
       return toolResult(
         detail === "active" ? compactActiveTeam(agents) : agents,
         "agents",

@@ -5,6 +5,7 @@ import { join } from "node:path";
 import graphifyLock from "../../graphify.lock" with { type: "text" };
 import {
   buildGraph,
+  buildGraphBrief,
   ensureGraphifyIgnored,
   graphifyPin,
   graphifyStatePath,
@@ -248,6 +249,72 @@ describe("buildGraph", () => {
     const result = await buildGraph("/repo", run);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toContain("timed out");
+  });
+});
+
+describe("buildGraphBrief", () => {
+  test("a repo that never opted in gets silence, not a note", async () => {
+    const root = await gitRepo();
+    expect(await buildGraphBrief(root, "fix the bug")).toBeNull();
+    await rm(root, { recursive: true, force: true });
+  });
+
+  test("opted in but no graph yet: one loud line, no command run", async () => {
+    const root = await gitRepo();
+    await writeGraphifyState(root, { enabled: true, pin: graphifyPin() });
+    const calls: string[][] = [];
+    const brief = await buildGraphBrief(root, "fix the bug", async (argv) => {
+      calls.push(argv);
+      return ok();
+    });
+    expect(brief).toContain("unavailable");
+    expect(brief).toContain("proceeding without it");
+    expect(calls).toEqual([]);
+    await rm(root, { recursive: true, force: true });
+  });
+
+  test("a timed-out query degrades to the loud line inside its time-box", async () => {
+    const root = await gitRepo();
+    await writeGraphifyState(root, { enabled: true, pin: graphifyPin() });
+    // Fake an installed binary and graph so the query path is reached.
+    const { mkdir, writeFile: write } = await import("node:fs/promises");
+    const { graphifyBin, graphJsonPath } = await import("./graphify");
+    const { dirname } = await import("node:path");
+    await mkdir(dirname(graphifyBin()), { recursive: true });
+    await write(graphifyBin(), "");
+    await mkdir(dirname(graphJsonPath(root)), { recursive: true });
+    await write(graphJsonPath(root), "{}");
+    let seen: { argv: string[]; timeoutMs: number } | null = null;
+    const brief = await buildGraphBrief(root, "fix the bug", async (argv, options) => {
+      seen = { argv, timeoutMs: options.timeoutMs };
+      return { exitCode: 143, stdout: "", stderr: "", timedOut: true };
+    });
+    expect(brief).toContain("timed out");
+    const call = seen as unknown as { argv: string[]; timeoutMs: number };
+    // The digest is budgeted and time-boxed — the two bounds that keep the
+    // spawn from ever waiting on a sick graphify.
+    expect(call.timeoutMs).toBe(3_000);
+    expect(call.argv).toContain("--budget");
+    expect(call.argv).toContain("query");
+    await rm(root, { recursive: true, force: true });
+  });
+
+  test("a healthy query becomes an advisory-prefixed digest", async () => {
+    const root = await gitRepo();
+    await writeGraphifyState(root, { enabled: true, pin: graphifyPin() });
+    const { mkdir, writeFile: write } = await import("node:fs/promises");
+    const { graphifyBin, graphJsonPath } = await import("./graphify");
+    const { dirname } = await import("node:path");
+    await mkdir(dirname(graphifyBin()), { recursive: true });
+    await write(graphifyBin(), "");
+    await mkdir(dirname(graphJsonPath(root)), { recursive: true });
+    await write(graphJsonPath(root), "{}");
+    const brief = await buildGraphBrief(root, "fix the bug", async () =>
+      ok("NODE server.ts [src=src/daemon/server.ts]"));
+    expect(brief).toContain("advisory");
+    expect(brief).toContain("verify");
+    expect(brief).toContain("NODE server.ts");
+    await rm(root, { recursive: true, force: true });
   });
 });
 

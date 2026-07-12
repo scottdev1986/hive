@@ -18,6 +18,7 @@
  *     verified with `check-ignore --no-index`, because plain `check-ignore`
  *     consults the index and cannot prove anything.
  */
+import { existsSync } from "node:fs";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import graphifyLock from "../../graphify.lock" with { type: "text" };
@@ -293,6 +294,62 @@ export async function updateGraph(
     };
   }
   return { ok: true, detail: "graph updated" };
+}
+
+// ---------------------------------------------------------------------------
+// The spawn-brief digest (integration doc, layer 1): graph-derived context
+// injected by the daemon, so the graph pays out even for an agent that never
+// touches the MCP tools.
+// ---------------------------------------------------------------------------
+
+const GRAPH_BRIEF_PREAMBLE =
+  "Graph context (graphify, advisory): a task-scoped slice of this repo's local code " +
+  "knowledge graph. It is a hint for orientation — upstream accuracy is 45-76% — so " +
+  "verify anything load-bearing against the source before building on it.";
+
+/** Keeps the digest a hint-sized fraction of the prompt: ~1500 tokens with
+ * the preamble, alongside a scoped brief of similar size. */
+const GRAPH_BRIEF_MAX_CHARS = 6_000;
+const GRAPH_BRIEF_TIMEOUT_MS = 3_000;
+
+/** The task-scoped digest for a spawn brief, or null when this repo never
+ * opted in (silence — a repo without graphify should not hear about it).
+ * Once opted in, every failure degrades to one loud line instead: an absent
+ * graph must never look like a repo with nothing to find. Bounded by the
+ * query's own token budget and a hard time-box; the spawn never waits longer
+ * than this on graphify, healthy or not. */
+export async function buildGraphBrief(
+  root: string,
+  task: string,
+  run: CommandRunner = runCommand,
+): Promise<string | null> {
+  const state = await readGraphifyState(root);
+  if (!state.enabled) return null;
+  if (!existsSync(graphifyBin()) || !existsSync(graphJsonPath(root))) {
+    return "Graph context: unavailable (graph not built yet); proceeding without it.";
+  }
+  const result = await run(
+    [
+      graphifyBin(),
+      "query",
+      task,
+      "--budget",
+      "1200",
+      "--graph",
+      graphJsonPath(root),
+    ],
+    { cwd: root, env: scrubbedGraphifyEnv(), timeoutMs: GRAPH_BRIEF_TIMEOUT_MS },
+  );
+  if (result.exitCode !== 0) {
+    return `Graph context: unavailable (${
+      result.timedOut ? "query timed out" : "query failed"
+    }); proceeding without it.`;
+  }
+  const output = result.stdout.trim();
+  if (output === "") {
+    return "Graph context: unavailable (empty query result); proceeding without it.";
+  }
+  return `${GRAPH_BRIEF_PREAMBLE}\n\n${output.slice(0, GRAPH_BRIEF_MAX_CHARS)}`;
 }
 
 // ---------------------------------------------------------------------------

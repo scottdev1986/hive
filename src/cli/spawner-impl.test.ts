@@ -3930,3 +3930,37 @@ describe("the Codex spend reader drives the SAME live spawn guard", () => {
     expect([...store.approvals.values()]).toHaveLength(1);
   });
 });
+
+describe("graph context in the spawn prompt", () => {
+  const worktree = {
+    path: "/repo/.hive/worktrees/maya",
+    branch: "hive/maya-auth-api",
+  };
+
+  test("the digest and the tools directive ride their own options", () => {
+    const prompt = buildAgentPrompt("maya", "Fix auth", worktree, "/repo", "", {
+      graphBrief: "Graph context (graphify, advisory): NODE auth.ts",
+      graphifyTools: true,
+    });
+    expect(prompt).toContain("Graph context (graphify, advisory)");
+    // Layer 2: one directive, present only because the tools are attached.
+    expect(prompt).toContain("query_graph");
+    expect(prompt).toContain("never as authority");
+  });
+
+  test("no opt-in means a bit-identical prompt", () => {
+    const bare = buildAgentPrompt("maya", "Fix auth", worktree, "/repo");
+    expect(
+      buildAgentPrompt("maya", "Fix auth", worktree, "/repo", "", {}),
+    ).toBe(bare);
+    expect(bare).not.toContain("graphify");
+  });
+
+  test("the directive never advertises tools that are not attached", () => {
+    const prompt = buildAgentPrompt("maya", "Fix auth", worktree, "/repo", "", {
+      graphBrief: "Graph context: unavailable (graph not built yet); proceeding without it.",
+    });
+    expect(prompt).toContain("unavailable");
+    expect(prompt).not.toContain("query_graph");
+  });
+});

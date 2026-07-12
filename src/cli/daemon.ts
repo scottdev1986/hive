@@ -8,6 +8,7 @@ import {
 } from "../config/load";
 import { HiveDatabase } from "../daemon/db";
 import { BunTmuxSender } from "../daemon/delivery";
+import { buildGraphBrief } from "../adapters/graphify";
 import { GraphifyService } from "../daemon/graphify-service";
 import { TerminalLayoutManager } from "../daemon/layout";
 import { readConfiguredPort } from "../daemon/lifecycle";
@@ -90,6 +91,9 @@ export async function runDaemon(): Promise<void> {
     // Synchronous read of the live server; null attaches nothing and costs
     // the spawn nothing.
     graphifyUrl: () => graphify.serverUrl(),
+    // The layer-1 digest, built against the primary checkout's graph — that
+    // is where builds land — and hard-bounded inside.
+    graphifyBrief: (task) => buildGraphBrief(repoRoot, task),
     // Only the daemon mints. The spawner asks for a credential, it never
     // creates one, and the token is written to a 0600 file rather than handed
     // to the agent process through its environment.
