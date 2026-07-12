@@ -264,6 +264,9 @@ export async function buildGraph(
   root: string,
   run: CommandRunner = runCommand,
 ): Promise<GraphifyOutcome> {
+  // Regenerated before every build so new gitignore rules keep taking effect,
+  // and folded into the detail so what was excluded is said out loud.
+  const ignore = await writeGraphifyIgnore(root, run);
   const result = await run(
     [graphifyBin(), "extract", root, "--code-only"],
     { cwd: root, env: scrubbedGraphifyEnv(), timeoutMs: 900_000 },
@@ -277,7 +280,10 @@ export async function buildGraph(
     };
   }
   const summary = result.stdout.match(/wrote .*graph\.json: (.*)$/m);
-  return { ok: true, detail: summary?.[1] ?? "graph written" };
+  return {
+    ok: true,
+    detail: `${summary?.[1] ?? "graph written"}${ignore.ok ? ` (${ignore.detail})` : ""}`,
+  };
 }
 
 /** Incremental re-extraction after HEAD moved (`graphify update`: code files
@@ -288,6 +294,9 @@ export async function updateGraph(
   root: string,
   run: CommandRunner = runCommand,
 ): Promise<GraphifyOutcome> {
+  // Same regeneration as buildGraph: a landing can introduce gitignore rules,
+  // and the incremental walk honours the ignore file for changed files.
+  await writeGraphifyIgnore(root, run);
   const result = await run(
     [graphifyBin(), "update", root, "--force"],
     { cwd: root, env: scrubbedGraphifyEnv(), timeoutMs: 900_000 },
@@ -319,6 +328,93 @@ const GRAPH_BRIEF_PREAMBLE =
 const GRAPH_BRIEF_MAX_CHARS = 6_000;
 const GRAPH_BRIEF_TIMEOUT_MS = 3_000;
 
+/** The query's serializer writes every NODE line before the first EDGE line,
+ * so a small `--budget` cuts the output before the edges — the only cited,
+ * provenance-tagged content — ever appear (measured: on this repo edges start
+ * near budget 16000; Hive's old 1200 delivered zero, always). The budget is
+ * therefore large enough that edges reliably survive serialization, and
+ * selectGraphBrief — not this number — bounds what the brief costs. Measured
+ * at 40000 against this repo: ~450ms, ~56KB, well inside the time-box. */
+const GRAPH_QUERY_BUDGET = 40_000;
+const GRAPH_BRIEF_HEADER_MAX_CHARS = 800;
+const GRAPH_BRIEF_NODE_MAX_CHARS = 2_000;
+
+/** Select — never head-slice — the digest out of a `graphify query` dump.
+ * The output shape is: header, all NODE lines (name + file:line citation),
+ * then all EDGE lines (the provenance-tagged relations). A head slice keeps
+ * the least dense part and always drops every edge, so this keeps the header,
+ * the edges up to their own budget, and then the node lines that ground those
+ * edges' endpoints with citations, before any other nodes. */
+export function selectGraphBrief(output: string): string {
+  const lines = output.split("\n");
+  const headerLines: string[] = [];
+  const nodeLines: string[] = [];
+  const edgeLines: string[] = [];
+  for (const line of lines) {
+    if (line.startsWith("NODE ")) nodeLines.push(line);
+    else if (line.startsWith("EDGE ")) edgeLines.push(line);
+    else if (nodeLines.length === 0 && edgeLines.length === 0 && line !== "") {
+      headerLines.push(line);
+    }
+  }
+
+  let header = headerLines.join("\n");
+  if (header.length > GRAPH_BRIEF_HEADER_MAX_CHARS) {
+    header = `${header.slice(0, GRAPH_BRIEF_HEADER_MAX_CHARS)}…`;
+  }
+
+  const edgeBudget =
+    GRAPH_BRIEF_MAX_CHARS - header.length - GRAPH_BRIEF_NODE_MAX_CHARS;
+  const keptEdges: string[] = [];
+  let edgeChars = 0;
+  for (const line of edgeLines) {
+    if (edgeChars + line.length + 1 > edgeBudget) break;
+    keptEdges.push(line);
+    edgeChars += line.length + 1;
+  }
+
+  // `EDGE <a> --relation [TAG …]--> <b>`: a node cited in a kept edge earns
+  // its NODE line (that is where the file:line lives) ahead of the rest, in
+  // the order the edges cite it — the head edges are the traversal's closest.
+  const endpointRank = new Map<string, number>();
+  for (const line of keptEdges) {
+    const match = line.match(/^EDGE (.*?) --.*?--> (.*)$/);
+    for (const name of [match?.[1], match?.[2]]) {
+      if (name !== undefined && !endpointRank.has(name)) {
+        endpointRank.set(name, endpointRank.size);
+      }
+    }
+  }
+  const nodeName = (line: string): string =>
+    (line.match(/^NODE (.*?)(?: \[src=.*)?$/)?.[1] ?? line).trim();
+  const cited = nodeLines.filter((line) => endpointRank.has(nodeName(line)));
+  cited.sort(
+    (a, b) =>
+      (endpointRank.get(nodeName(a)) as number) -
+      (endpointRank.get(nodeName(b)) as number),
+  );
+  const orderedNodes = [
+    ...cited,
+    ...nodeLines.filter((line) => !endpointRank.has(nodeName(line))),
+  ];
+  const keptNodes: string[] = [];
+  let nodeChars = 0;
+  for (const line of orderedNodes) {
+    if (nodeChars + line.length + 1 > GRAPH_BRIEF_NODE_MAX_CHARS) break;
+    keptNodes.push(line);
+    nodeChars += line.length + 1;
+  }
+
+  // Truncation must be visible: an elided section that looks complete reads
+  // as "the graph had nothing else", which is the absent-is-unknown bug.
+  const summary =
+    `[graph brief: kept ${keptNodes.length}/${nodeLines.length} nodes, ` +
+    `${keptEdges.length}/${edgeLines.length} edges]`;
+  return [header, keptNodes.join("\n"), keptEdges.join("\n"), summary]
+    .filter((section) => section !== "")
+    .join("\n\n");
+}
+
 /** The task-scoped digest for a spawn brief, or null when this repo never
  * opted in (silence — a repo without graphify should not hear about it).
  * Once opted in, every failure degrades to one loud line instead: an absent
@@ -341,7 +437,7 @@ export async function buildGraphBrief(
       "query",
       task,
       "--budget",
-      "1200",
+      String(GRAPH_QUERY_BUDGET),
       "--graph",
       graphJsonPath(root),
     ],
@@ -356,7 +452,7 @@ export async function buildGraphBrief(
   if (output === "") {
     return "Graph context: unavailable (empty query result); proceeding without it.";
   }
-  return `${GRAPH_BRIEF_PREAMBLE}\n\n${output.slice(0, GRAPH_BRIEF_MAX_CHARS)}`;
+  return `${GRAPH_BRIEF_PREAMBLE}\n\n${selectGraphBrief(output)}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -364,12 +460,15 @@ export async function buildGraphBrief(
 // ---------------------------------------------------------------------------
 
 const EXCLUDE_COMMENT = "# hive graphify: local knowledge graph, never committed";
-const EXCLUDE_ENTRY = "graphify-out/";
+/** Both are Hive-written, machine-local state: the graph output dir and the
+ * generated ignore file below. Excluding them here — never in the tracked
+ * `.gitignore` — is what keeps enablement from mutating the user's repo. */
+const EXCLUDE_ENTRIES = ["graphify-out/", ".graphifyignore"];
 
-/** Append `graphify-out/` to the repo's `.git/info/exclude` (the common dir,
- * so one entry covers every linked worktree) and prove it took: check-ignore
- * without `--no-index` answers from the index and would happily say "ignored"
- * about nothing. */
+/** Append Hive's graphify entries to the repo's `.git/info/exclude` (the
+ * common dir, so one entry covers every linked worktree) and prove they took:
+ * check-ignore without `--no-index` answers from the index and would happily
+ * say "ignored" about nothing. */
 export async function ensureGraphifyIgnored(
   root: string,
   run: CommandRunner = runCommand,
@@ -394,29 +493,145 @@ export async function ensureGraphifyIgnored(
   } catch {
     // No exclude file yet; git treats it as optional and so do we.
   }
-  const present = existing
-    .split("\n")
-    .some((line) => line.trim() === EXCLUDE_ENTRY);
-  if (!present) {
+  const lines = existing.split("\n").map((line) => line.trim());
+  const missing = EXCLUDE_ENTRIES.filter((entry) => !lines.includes(entry));
+  if (missing.length > 0) {
     await mkdir(dirname(excludePath), { recursive: true });
     const lead = existing.length === 0 || existing.endsWith("\n") ? "" : "\n";
     await writeFile(
       excludePath,
-      `${existing}${lead}${EXCLUDE_COMMENT}\n${EXCLUDE_ENTRY}\n`,
+      `${existing}${lead}${EXCLUDE_COMMENT}\n${missing.join("\n")}\n`,
     );
   }
 
   const verify = await run(
-    ["git", "check-ignore", "--no-index", "graphify-out/probe"],
+    ["git", "check-ignore", "--no-index", "graphify-out/probe", ".graphifyignore"],
     { cwd: root, timeoutMs: 10_000 },
   );
-  if (verify.exitCode !== 0) {
+  // check-ignore exits 0 when ANY path is ignored; both must be, so count the
+  // echoed matches instead of trusting the exit code.
+  if (
+    verify.exitCode !== 0 ||
+    verify.stdout.trim().split("\n").length !== EXCLUDE_ENTRIES.length
+  ) {
     return {
       ok: false,
       reason: "wrote .git/info/exclude but check-ignore --no-index does not confirm it",
     };
   }
   return { ok: true, detail: excludePath };
+}
+
+// ---------------------------------------------------------------------------
+// The generated .graphifyignore: keep vendored dependencies out of the graph.
+// ---------------------------------------------------------------------------
+
+/** First line of a Hive-generated `.graphifyignore`. A file without it is the
+ * user's own and is never rewritten or removed. */
+export const GRAPHIFY_IGNORE_MARKER =
+  "# Generated by Hive from this repo's own gitignore rules; excluded from git via .git/info/exclude.";
+
+/** Vendored-dependency dirs that are commonly *committed*, so no gitignore
+ * rule ever names them. Everything gitignored is handled by the derived
+ * section instead — this floor is deliberately short, because a hand-kept
+ * ecosystem list is always one ecosystem behind. */
+const VENDORED_DIR_FLOOR = [
+  ".build/",
+  ".swiftpm/",
+  "Pods/",
+  "Carthage/",
+  "DerivedData/",
+  "vendor/",
+  "third_party/",
+  "bower_components/",
+  ".gradle/",
+];
+
+/** Keep the pattern list bounded: extraction evaluates every pattern against
+ * every file, and a monorepo can gitignore thousands of directories. */
+const GITIGNORED_DIR_CAP = 400;
+
+/** Write `<root>/.graphifyignore` so extraction skips vendored dependencies.
+ *
+ * Why this exists at all: the pinned binary honours gitignore rules **only
+ * from the scan root itself** (`_load_graphifyignore` walks ancestors, never
+ * descendants), so a nested declaration like `workspace/.gitignore: .build/`
+ * is invisible to it — measured on this repo, that one gap put 5,142 vendored
+ * Swift nodes (51%) into the graph and poisoned query start-node selection.
+ * The repo's own gitignore rules are the general signal: they are the team's
+ * declaration of "not our code", per-repo, ecosystem-free. `git ls-files
+ * --ignored` evaluates them at every level, so its directory list is exactly
+ * the nested-gitignore knowledge the binary cannot see, and the static floor
+ * covers vendored dirs that teams commit. The file lands in the repo root
+ * because the binary reads it nowhere else; the `.git/info/exclude` entry
+ * above keeps it out of anyone's `git status`.
+ *
+ * Over-exclusion is a silent failure, so: a `.graphifyignore` Hive did not
+ * generate is left alone entirely (edit or replace the file to override any
+ * rule — gitignore `!` negations win by last-match), and callers surface the
+ * returned detail so what was excluded is said out loud at build time. */
+export async function writeGraphifyIgnore(
+  root: string,
+  run: CommandRunner = runCommand,
+): Promise<GraphifyOutcome> {
+  const path = join(root, ".graphifyignore");
+  let existing: string | null = null;
+  try {
+    existing = await readFile(path, "utf8");
+  } catch {
+    // Absent: generate below.
+  }
+  if (existing !== null && !existing.startsWith(GRAPHIFY_IGNORE_MARKER)) {
+    return { ok: true, detail: ".graphifyignore is user-authored; left untouched" };
+  }
+
+  // Everything the repo's own gitignore machinery (root, nested, and
+  // .git/info/exclude) already excludes, collapsed to directories.
+  const ignored = await run(
+    ["git", "ls-files", "--others", "--ignored", "--exclude-standard", "--directory"],
+    { cwd: root, timeoutMs: 30_000 },
+  );
+  const derived = ignored.exitCode !== 0
+    ? []
+    : ignored.stdout
+        .split("\n")
+        .filter((line) => line.endsWith("/") && line !== "graphify-out/");
+  const capped = derived.slice(0, GITIGNORED_DIR_CAP);
+
+  const lines = [
+    GRAPHIFY_IGNORE_MARKER,
+    "# Regenerated before each graph build. To override, replace this file with",
+    "# your own (any content not starting with the line above is never touched).",
+    "",
+    "# Vendored-dependency dirs that are commonly committed:",
+    ...VENDORED_DIR_FLOOR,
+    "",
+    "# Directories this repo's own gitignore rules exclude:",
+    ...capped.map((dir) => `/${dir}`),
+    ...(derived.length > capped.length
+      ? [`# (+${derived.length - capped.length} more git-ignored directories omitted)`]
+      : []),
+    "",
+  ];
+  // Never let ignore hygiene block a build: an unwritable root degrades to
+  // extraction without exclusions, reported through the build detail.
+  try {
+    const temporary = `${path}.${process.pid}.tmp`;
+    await writeFile(temporary, lines.join("\n"));
+    await rename(temporary, path);
+  } catch (error) {
+    return {
+      ok: false,
+      reason: `could not write .graphifyignore: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    };
+  }
+  return {
+    ok: true,
+    detail: `excluding ${VENDORED_DIR_FLOOR.length} common vendored patterns` +
+      `${capped.length > 0 ? ` and ${capped.length} git-ignored dirs (${capped.slice(0, 5).join(" ")}${capped.length > 5 ? " …" : ""})` : ""}`,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -435,6 +650,17 @@ export async function purgeGraphify(root: string): Promise<string[]> {
       // force:true means the only failures are exotic (permissions); the
       // caller prints what was removed, and what wasn't stays visible.
     }
+  }
+  // The generated ignore file goes too — but only Hive's: a user-authored
+  // .graphifyignore (no marker) is their file, not our uninstall's.
+  const ignorePath = join(root, ".graphifyignore");
+  try {
+    if ((await readFile(ignorePath, "utf8")).startsWith(GRAPHIFY_IGNORE_MARKER)) {
+      await rm(ignorePath, { force: true });
+      removed.push(ignorePath);
+    }
+  } catch {
+    // Absent or unreadable: nothing of Hive's to remove.
   }
   return removed;
 }

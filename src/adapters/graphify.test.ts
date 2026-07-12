@@ -7,13 +7,17 @@ import {
   buildGraph,
   buildGraphBrief,
   ensureGraphifyIgnored,
+  GRAPHIFY_IGNORE_MARKER,
   graphifyPin,
   graphifyStatePath,
   installGraphify,
+  purgeGraphify,
   readGraphifyState,
   runCommand,
   scrubbedGraphifyEnv,
+  selectGraphBrief,
   UV_MISSING_MESSAGE,
+  writeGraphifyIgnore,
   writeGraphifyState,
   type CommandRunner,
   type RunResult,
@@ -144,12 +148,14 @@ describe("ensureGraphifyIgnored", () => {
     const second = await ensureGraphifyIgnored(root);
     expect(second.ok).toBe(true);
     const exclude = await readFile(join(root, ".git", "info", "exclude"), "utf8");
-    const occurrences = exclude
-      .split("\n")
-      .filter((line) => line.trim() === "graphify-out/").length;
-    expect(occurrences).toBe(1);
+    for (const entry of ["graphify-out/", ".graphifyignore"]) {
+      const occurrences = exclude
+        .split("\n")
+        .filter((line) => line.trim() === entry).length;
+      expect(occurrences, entry).toBe(1);
+    }
     const check = Bun.spawnSync(
-      ["git", "-C", root, "check-ignore", "--no-index", "graphify-out/probe"],
+      ["git", "-C", root, "check-ignore", "--no-index", "graphify-out/probe", ".graphifyignore"],
       { stdout: "ignore", stderr: "ignore" },
     );
     expect(check.exitCode).toBe(0);
@@ -301,6 +307,10 @@ describe("buildGraphBrief", () => {
     expect(call.timeoutMs).toBe(3_000);
     expect(call.argv).toContain("--budget");
     expect(call.argv).toContain("query");
+    // The serializer emits all nodes before any edge; below ~16000 the edges
+    // — the only cited, tagged content — never survive to be selected.
+    expect(Number(call.argv[call.argv.indexOf("--budget") + 1]))
+      .toBeGreaterThanOrEqual(16_000);
     await rm(root, { recursive: true, force: true });
   });
 
@@ -319,6 +329,91 @@ describe("buildGraphBrief", () => {
     expect(brief).toContain("advisory");
     expect(brief).toContain("verify");
     expect(brief).toContain("NODE server.ts");
+    await rm(root, { recursive: true, force: true });
+  });
+});
+
+describe("selectGraphBrief", () => {
+  // The serializer writes every NODE before the first EDGE; a head slice
+  // therefore always delivers zero edges (measured: 51 nodes, 0 edges at the
+  // old budget on the acceptance question). Selection must keep edges.
+  const header = "Traversal: BFS depth=2 | Start: ['a'] | 999 nodes found";
+  const output = [
+    header,
+    "",
+    ...Array.from({ length: 400 }, (_, i) => `NODE filler${i} [src=src/f${i}.ts loc=L1 community=1]`),
+    "NODE alpha [src=src/a.ts loc=L10 community=2]",
+    "NODE beta [src=src/b.ts loc=L20 community=2]",
+    "EDGE alpha --imports_from [EXTRACTED context=import]--> beta",
+    ...Array.from({ length: 300 }, (_, i) => `EDGE filler${i} --indirect_call [INFERRED context=collection]--> filler${i + 1}`),
+  ].join("\n");
+
+  test("keeps the header, the edges, and cites kept edges' endpoints first", () => {
+    const brief = selectGraphBrief(output);
+    expect(brief).toContain("Traversal: BFS");
+    expect(brief).toContain("EDGE alpha --imports_from [EXTRACTED context=import]--> beta");
+    // alpha/beta sit at position 401/402 of 402 — a head slice would never
+    // reach them; endpoint-first selection must.
+    expect(brief).toContain("NODE alpha [src=src/a.ts loc=L10");
+    expect(brief).toContain("NODE beta [src=src/b.ts loc=L20");
+  });
+
+  test("stays within the brief's context cost and says what it elided", () => {
+    const brief = selectGraphBrief(output);
+    expect(brief.length).toBeLessThanOrEqual(6_200);
+    expect(brief).toMatch(/\[graph brief: kept \d+\/402 nodes, \d+\/301 edges\]/);
+  });
+
+  test("a small result passes through whole", () => {
+    const small = `${header}\n\nNODE a [src=s.ts loc=L1]\nEDGE a --calls [EXTRACTED]--> b`;
+    const brief = selectGraphBrief(small);
+    expect(brief).toContain("NODE a [src=s.ts loc=L1]");
+    expect(brief).toContain("EDGE a --calls [EXTRACTED]--> b");
+    expect(brief).toContain("kept 1/1 nodes, 1/1 edges");
+  });
+});
+
+describe("writeGraphifyIgnore", () => {
+  test("derives nested-gitignore dirs the binary cannot see, plus the floor", async () => {
+    // The pinned binary reads gitignore rules only at the scan root; a nested
+    // `sub/.gitignore: .build/` is invisible to it (this is how 51% of this
+    // repo's graph became vendored Swift). git ls-files evaluates every level.
+    const root = await gitRepo();
+    const { mkdir } = await import("node:fs/promises");
+    await mkdir(join(root, "sub", ".build", "checkouts"), { recursive: true });
+    await writeFile(join(root, "sub", ".gitignore"), ".build/\n");
+    await writeFile(join(root, "sub", ".build", "checkouts", "dep.swift"), "let x = 1\n");
+    const result = await writeGraphifyIgnore(root);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.detail).toContain("sub/.build/");
+    const content = await readFile(join(root, ".graphifyignore"), "utf8");
+    expect(content.startsWith(GRAPHIFY_IGNORE_MARKER)).toBe(true);
+    expect(content).toContain("/sub/.build/");
+    expect(content).toContain("vendor/");
+    expect(content).toContain("third_party/");
+    await rm(root, { recursive: true, force: true });
+  });
+
+  test("a user-authored .graphifyignore is never rewritten", async () => {
+    const root = await gitRepo();
+    await writeFile(join(root, ".graphifyignore"), "my-own-rules/\n");
+    const result = await writeGraphifyIgnore(root);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.detail).toContain("user-authored");
+    expect(await readFile(join(root, ".graphifyignore"), "utf8")).toBe("my-own-rules/\n");
+    await rm(root, { recursive: true, force: true });
+  });
+
+  test("purge removes Hive's generated file but never a user's", async () => {
+    const root = await gitRepo();
+    await writeGraphifyIgnore(root);
+    let removed = await purgeGraphify(root);
+    expect(removed.some((path) => path.endsWith(".graphifyignore"))).toBe(true);
+
+    await writeFile(join(root, ".graphifyignore"), "my-own-rules/\n");
+    removed = await purgeGraphify(root);
+    expect(removed.some((path) => path.endsWith(".graphifyignore"))).toBe(false);
+    expect(await readFile(join(root, ".graphifyignore"), "utf8")).toBe("my-own-rules/\n");
     await rm(root, { recursive: true, force: true });
   });
 });

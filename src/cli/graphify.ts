@@ -134,7 +134,7 @@ export async function runGraphifyDisable(
   if (options.purge === true) {
     const removed = await purgeGraphify(root);
     for (const path of removed) deps.log(`Removed ${path}.`);
-    deps.log("Nothing else to clean — graphify never writes outside those two paths.");
+    deps.log("Nothing else to clean — graphify never writes outside those paths.");
   } else {
     deps.log(
       `The installed tool and graphify-out/ were kept for cheap re-enable; \`hive graphify disable --purge\` removes both.`,

@@ -3825,6 +3825,9 @@ describe("graph context in the spawn prompt", () => {
     expect(prompt).toContain("query_graph");
     expect(prompt).toContain("before using grep, rg, or Glob");
     expect(prompt).toContain("never as authority");
+    // The tool's own default budget provably returns zero edges; the
+    // directive must carry the working number.
+    expect(prompt).toContain("token_budget: 16000");
   });
 
   test("no opt-in means a bit-identical prompt", () => {

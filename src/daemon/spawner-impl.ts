@@ -576,8 +576,11 @@ export interface AgentPromptOptions {
 const GRAPHIFY_DIRECTIVE =
   "This repo serves a graphify knowledge graph over MCP (query_graph, get_node, " +
   "get_neighbors, graph_stats, shortest_path, …). When orienting in unfamiliar code, " +
-  "call query_graph once before using grep, rg, or Glob — and treat its answers as leads " +
-  "to verify, never as authority.";
+  "call query_graph once before using grep, rg, or Glob, and pass token_budget: 16000 — " +
+  "the tool's default of 2000 cuts the output off before the EDGE lines, which are the " +
+  "only cited, provenance-tagged part of the answer. For one symbol's connections or the " +
+  "route between two files, get_neighbors and shortest_path return the same cited output " +
+  "with no truncation cliff. Treat every answer as a lead to verify, never as authority.";
 
 export function buildAgentPrompt(
   name: string,
