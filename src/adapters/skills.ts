@@ -146,6 +146,61 @@ export interface SkillInstallReport {
   /** The name is taken by a skill the user provides themselves (a symlink from
    * their own `.hive/skills`). Theirs wins; Hive does not write through it. */
   userOwned: string[];
+  /** Not written, because another vendor installed in this same root reads the
+   * same directory and this skill is not addressed to it. Never silent: the
+   * caller reports it, because a skill that quietly did not install is
+   * indistinguishable from one that failed to. */
+  withheld: string[];
+}
+
+/**
+ * Which vendors will READ the directory `tool` writes into, among the vendors
+ * sharing this root.
+ *
+ * Usually just `tool` itself. But vendors do not each get their own directory —
+ * Grok scans `.agents/skills`, which is exactly where Codex reads from — so in a
+ * root where both are installed, a file written "for Codex" is read by Grok too.
+ * `coresident` is the set of other vendors installed in this same root: `hive
+ * init` passes the CLIs it detected, and a worktree passes nothing, because one
+ * worktree belongs to exactly one agent on exactly one vendor.
+ */
+export function skillReaders(
+  tool: SkillTool,
+  coresident: readonly SkillTool[] = [],
+): SkillTool[] {
+  const directory = nativeSkillDirectory(tool);
+  const readers = new Set<SkillTool>([tool]);
+  for (const other of coresident) {
+    if (nativeSkillDirectory(other) === directory) readers.add(other);
+  }
+  return [...readers];
+}
+
+/**
+ * May this skill be written into a directory these vendors all read?
+ *
+ * Only if it is addressed to every one of them. A skill's `tools` list says who
+ * it is FOR, and a shared directory shows it to everyone — so a skill installed
+ * into a directory a second vendor also reads must be a skill that second vendor
+ * was meant to have.
+ *
+ * This is what keeps a vendor CONTRACT out of a shared directory while the
+ * vendor-neutral skills (hive-memory, karpathy-guidelines — shipped to every
+ * vendor) still install everywhere. No "is this a contract?" flag is needed: it
+ * falls out of the manifest, which already records exactly who each skill is for.
+ *
+ * The condition is CONDITIONAL ON A SECOND VENDOR, and that is load-bearing — do
+ * not simplify it into "never install a single-vendor skill". With one vendor
+ * installed, or in an agent's worktree, the reader set is that vendor alone and
+ * every one of its skills installs exactly as before. It bites only where two
+ * vendors genuinely share a directory, which today means Codex and Grok both
+ * present in one root.
+ */
+export function skillAddressesEveryReader(
+  skill: { tools: SkillTool[] },
+  readers: readonly SkillTool[],
+): boolean {
+  return readers.every((reader) => skill.tools.includes(reader));
 }
 
 /**
@@ -157,14 +212,22 @@ export interface SkillInstallReport {
  * user asked for their version by editing it, and `--force` is how they ask for
  * ours back. A name occupied by the user's own skill is theirs, and we do not
  * write through the symlink to reach it.
+ *
+ * `coresidentVendors` names the other vendors installed in this same root, and a
+ * skill is withheld from a directory one of them also reads unless it is
+ * addressed to them too — see `skillAddressesEveryReader`. Hive's vendor contract
+ * is written for an agent spawned into a worktree; a second vendor reading it out
+ * of a shared directory is being told, with total confidence, facts that are
+ * false for it.
  */
 export async function installShippedSkills(
   root: string,
   tool: SkillTool,
-  options: { force?: boolean } = {},
+  options: { force?: boolean; coresidentVendors?: readonly SkillTool[] } = {},
 ): Promise<SkillInstallReport> {
   const nativeDirectory = nativeSkillDirectory(tool);
   const nativeRoot = join(root, nativeDirectory);
+  const readers = skillReaders(tool, options.coresidentVendors ?? []);
   const report: SkillInstallReport = {
     tool,
     nativeDirectory,
@@ -173,9 +236,14 @@ export async function installShippedSkills(
     unchanged: [],
     drifted: [],
     userOwned: [],
+    withheld: [],
   };
 
   for (const skill of shippedSkillsFor(tool)) {
+    if (!skillAddressesEveryReader(skill, readers)) {
+      report.withheld.push(skill.name);
+      continue;
+    }
     const destination = join(nativeRoot, skill.name);
     const existing = await lstat(destination).catch((error: unknown) => {
       if (isMissingFileError(error)) return null;

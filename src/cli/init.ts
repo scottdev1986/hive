@@ -133,7 +133,7 @@ export interface InitDeps {
   installShippedSkills: (
     root: string,
     tool: SkillTool,
-    options: { force?: boolean },
+    options: { force?: boolean; coresidentVendors?: readonly SkillTool[] },
   ) => Promise<SkillInstallReport>;
   /** Where the opt-in graphify decision stands, so init can report it. */
   readGraphifyState: (root: string) => Promise<GraphifyState>;
@@ -362,8 +362,15 @@ export async function runInit(
     );
   }
   for (const vendor of installed) {
+    // Every CLI on this machine writes into the same repo root, and vendors do
+    // not each get their own directory — Grok reads `.agents/skills`, which is
+    // where Codex reads too. So a skill installed "for Codex" here is read by
+    // Grok as well, and Hive's vendor contract is addressed to neither of them
+    // in that case. Passing the detected CLIs is what lets the installer
+    // withhold a contract from a directory a second vendor also reads.
     const report = await deps.installShippedSkills(cwd, vendor.tool, {
       ...(options.force === true ? { force: true } : {}),
+      coresidentVendors: installed.map((other) => other.tool),
     });
     skills.push(report);
     const where = `${report.nativeDirectory}/${report.createdDirectory ? " (created)" : " (merged into what was already there)"}`;
@@ -380,6 +387,15 @@ export async function runInit(
     if (report.userOwned.length > 0) {
       messages.push(
         `${vendor.label}: ${report.userOwned.join(", ")} is provided by your own skills; yours wins, left alone.`,
+      );
+    }
+    if (report.withheld.length > 0) {
+      // Said out loud, because a skill that quietly did not install reads
+      // exactly like one that failed to. The agents Hive spawns still get their
+      // contract: it is written into each worktree at spawn, where one vendor
+      // reads one directory.
+      messages.push(
+        `${vendor.label}: left ${report.withheld.join(", ")} out of ${report.nativeDirectory}/ — another installed CLI reads that directory too, and this skill is not addressed to it. Agents still get it in their own worktree.`,
       );
     }
     if (report.drifted.length > 0) {
