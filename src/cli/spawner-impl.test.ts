@@ -62,6 +62,7 @@ function capabilityRecord(
     canonicalId: model,
     variant: null,
     launchToken: model,
+    displayName: null,
     aliases: [],
     entitled: known(true, surface, timestamp),
     hidden: unknown("surface-silent", surface, timestamp),

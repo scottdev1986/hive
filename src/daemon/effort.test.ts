@@ -17,6 +17,7 @@ function record(overrides: Partial<CapabilityRecord> = {}): CapabilityRecord {
     canonicalId: "claude-opus-4-8",
     variant: null,
     launchToken: "claude-opus-4-8",
+    displayName: null,
     aliases: ["opus"],
     entitled: known(true, surface, observedAt),
     hidden: unknown("surface-silent", surface, observedAt),

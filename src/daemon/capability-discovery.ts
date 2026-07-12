@@ -63,6 +63,7 @@ export type CapabilityDiscoveryResult =
 const ClaudeModelEntrySchema = z.object({
   value: z.string().nullable().optional(),
   resolvedModel: z.string().nullable().optional(),
+  displayName: z.string().nullable().optional(),
   supportsEffort: z.boolean().nullable().optional(),
   supportedEffortLevels: z.array(z.string()).nullable().optional(),
 }).passthrough();
@@ -134,6 +135,7 @@ export function recordsFromClaudeInitialize(
       variant,
       // Never the variant: `--model` rejects the bracketed form.
       launchToken: canonicalId,
+      displayName: entry.displayName ?? null,
       aliases: entry.value === null || entry.value === undefined
         ? []
         : [entry.value],
@@ -176,6 +178,7 @@ function merge(base: CapabilityRecord, next: CapabilityRecord): CapabilityRecord
     a.state === "known" ? a : b;
   return {
     ...base,
+    displayName: base.displayName ?? next.displayName,
     aliases: [...new Set([...base.aliases, ...next.aliases])],
     entitled: prefer(base.entitled, next.entitled),
     hidden: prefer(base.hidden, next.hidden),
@@ -276,6 +279,7 @@ export function codexEffectiveDefault(
 const CodexModelEntrySchema = z.object({
   id: z.string().nullable().optional(),
   model: z.string().nullable().optional(),
+  displayName: z.string().nullable().optional(),
   hidden: z.boolean().nullable().optional(),
   defaultReasoningEffort: z.string().nullable().optional(),
   supportedReasoningEfforts: z.array(
@@ -334,6 +338,7 @@ export function recordsFromCodexModelList(
       canonicalId,
       variant: null,
       launchToken: canonicalId,
+      displayName: entry.displayName ?? null,
       aliases: [],
       entitled: known(true, CODEX, observedAt),
       hidden: entry.hidden === null || entry.hidden === undefined

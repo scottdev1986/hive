@@ -16,6 +16,7 @@ import {
   type RoutingTier,
 } from "../schemas";
 import type { CapabilityDiscoveryResult } from "./capability-discovery";
+import { readAccountBilling, type AccountBilling } from "./usage-credits";
 
 /**
  * Shadow mode: derive what the router *would* have chosen, record it beside what
@@ -104,6 +105,7 @@ export interface ShadowDependencies {
   ) => Promise<CapabilityDiscoveryResult>;
   now?: () => Date;
   append?: (line: string) => Promise<void>;
+  readBilling?: () => Promise<AccountBilling | null>;
 }
 
 const ladderLayers: ReadonlySet<ResolutionLayer> = new Set([
@@ -133,12 +135,13 @@ export async function recordShadowObservation(
 ): Promise<ShadowObservation | null> {
   try {
     const now = dependencies.now?.() ?? new Date();
-    const [config, pins, snapshot, claude, codex] = await Promise.all([
+    const [config, pins, snapshot, claude, codex, billing] = await Promise.all([
       loadHiveConfig(),
       loadRoutingPins(),
       readSnapshot(),
       dependencies.discoverCapabilities("claude"),
       dependencies.discoverCapabilities("codex"),
+      dependencies.readBilling?.() ?? readAccountBilling(),
     ]);
     const trusted = await loadTrustedRoutingManifest(config);
 
@@ -152,6 +155,7 @@ export async function recordShadowObservation(
       pins,
       snapshot,
       shipped: defaultRoutingTable(now),
+      billing,
       now,
     });
 

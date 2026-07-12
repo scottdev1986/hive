@@ -50,6 +50,13 @@ export const CapabilitySurfaceSchema = z.enum([
    * unflagged launch as `gpt-5.6-sol` at `xhigh`.
    */
   "codex.config/read",
+  /**
+   * Claude's `get_usage` control response — the same free frame quota discovery
+   * already drives. It carries the account's usage-credit state (`extra_usage`,
+   * `spend`) and the per-model plan ceilings, which is what makes "would this
+   * spawn cost real money" a measurement instead of a guess about a date.
+   */
+  "claude.get_usage",
 ]);
 export type CapabilitySurface = z.infer<typeof CapabilitySurfaceSchema>;
 
@@ -171,11 +178,14 @@ export const CapabilityRecordSchema = z.strictObject({
   aliases: z.array(z.string().min(1)),
 
   // --- Discovered facts, each stamped with its own surface and time. ---
-  // No display name lives here. It is a real discovered fact, but nothing in
-  // this layer reads it, and the quota ledger already derives its own
-  // display-name → id catalog (`ModelCatalogEntry` in quota-sources.ts) for the
-  // pool join. A second copy would be a field with no reader and a second name
-  // to disagree with the first. Add it when something needs it.
+  /**
+   * The vendor's own display name ("Fable"). Phase 1 left this out and said to
+   * add it when something needed it; the billing surface is that something. It
+   * is the ONLY key `get_usage` gives a per-model plan pool under
+   * (`model_scoped[].display_name`), so without it "would this model spend real
+   * money" cannot be joined to the model at all. Null when the menu omits it.
+   */
+  displayName: z.string().min(1).nullable(),
   /**
    * That the account can use this model. Derived from presence in an
    * account-scoped catalog, which is the only evidence either vendor offers:

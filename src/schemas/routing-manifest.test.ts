@@ -32,6 +32,7 @@ function record(
     canonicalId,
     variant: null,
     launchToken: canonicalId,
+    displayName: null,
     aliases: [],
     entitled: options.entitledUnknown
       ? unknown("field-absent", surface, observedAt)

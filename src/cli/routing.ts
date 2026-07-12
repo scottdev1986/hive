@@ -10,6 +10,9 @@ import {
   ClaudeCapabilityProbe,
   CodexCapabilityProbe,
 } from "../daemon/capability-discovery";
+import { readAccountBilling, type AccountBilling } from "../daemon/usage-credits";
+import { readCostConsent, requestCostConsent } from "../daemon/cost-consent";
+import { HiveDatabase } from "../daemon/db";
 import {
   readShadowObservations,
   summarizeShadow,
@@ -131,6 +134,7 @@ export function formatDerivedRouting(
   derived: DerivedRouting,
   now: Date,
   trusted: TrustedRoutingManifest,
+  billing: AccountBilling | null = null,
 ): string {
   const lines: string[] = [
     "Derived routing — INERT. Live spawns still resolve through the shipped " +
@@ -142,6 +146,9 @@ export function formatDerivedRouting(
   // The manifest's *trust* is the first thing printed, because every derived
   // cell below is only as trustworthy as the document that proposed it.
   lines.push(`  trust      ${ORIGIN_LABEL[trusted.origin]} — ${trusted.detail}`);
+  // And what the account is actually charged. This is what decides whether a
+  // model may be auto-routed on cost grounds — measured, never a date.
+  lines.push(`  billing    ${describeBilling(billing)}`);
   lines.push(
     derived.manifest === null
       ? "  manifest   none in force — every cell falls to the ladder"
@@ -194,24 +201,44 @@ export async function printRouting(): Promise<void> {
     status: "unavailable",
     reason: "not probed — the routing manifest kill switch is engaged",
   };
-  const [pins, claude, codex, snapshot] = await Promise.all([
+  const [pins, claude, codex, snapshot, billing] = await Promise.all([
     loadRoutingPins(),
     killed ? unprobed : new ClaudeCapabilityProbe().read(),
     killed ? unprobed : new CodexCapabilityProbe().read(),
     killed ? null : readSnapshot(),
+    // What the account is actually charged. Measured, not dated.
+    killed ? null : readAccountBilling(),
   ]);
 
+  // The consent ledger is the approvals queue Hive already has. Opened read-only
+  // here; the only write is filing a question nobody has been asked yet.
+  const db = new HiveDatabase();
   const derived = deriveRouting({
     manifest: trusted.manifest,
     manifestAbsentReason: trusted.detail,
+    costConsent: (model) => readCostConsent(db, model),
     discovery: { claude, codex },
     pins,
     snapshot,
     shipped: defaultRoutingTable(now),
+    billing,
     now,
   });
 
-  console.log(formatDerivedRouting(derived, now, trusted));
+  // Ask — once — about every model the router wanted but may not pay for. The
+  // question goes to the approvals queue, where the user answers it; Hive never
+  // answers it for him, and never asks twice.
+  for (const { canonicalId, detail } of derived.consentRequired) {
+    const state = requestCostConsent(db, canonicalId, detail);
+    console.log(
+      `\nCONSENT ${state === "pending" ? "REQUESTED" : state.toUpperCase()}: ${canonicalId} ` +
+        `would spend usage credits. Answer it in the approvals queue ` +
+        `(hive_approvals / hive_approve). Pinning it yourself always works.`,
+    );
+  }
+  db.close();
+
+  console.log(formatDerivedRouting(derived, now, trusted, billing));
 
   // Feed the next run's first ladder rung. Only cells this run actually derived
   // are recorded, and cells it could not derive keep what the last healthy run
@@ -298,4 +325,27 @@ export function formatShadowSummary(summary: ShadowSummary): string {
 export async function printShadowRouting(): Promise<void> {
   const observations = await readShadowObservations();
   console.log(formatShadowSummary(summarizeShadow(observations)));
+}
+
+/**
+ * The measured billing state, in one line. `unknown` prints as unknown: a credit
+ * flag Hive could not read is never rendered as "off", because "off" reads as
+ * "this model cannot run" and would silently disable a model the user is using.
+ */
+function describeBilling(billing: AccountBilling | null): string {
+  if (billing === null) {
+    return "not read — the cost filter is OFF (an unreadable bill is not a free " +
+      "one, but it is not grounds to refuse every model either)";
+  }
+  const credits = billing.creditsEnabled.state === "known"
+    ? billing.creditsEnabled.value ? "usage credits ON" : "usage credits OFF"
+    : `usage credits UNKNOWN (${billing.creditsEnabled.reason})`;
+  const general = billing.generalUtilization.state === "known"
+    ? `plan ${billing.generalUtilization.value}% used`
+    : "plan usage unknown";
+  const scoped = Object.entries(billing.modelUtilization)
+    .map(([name, used]) => `${name} ${used}%`)
+    .join(", ");
+  return `${credits}; ${general}${scoped === "" ? "" : `; caps: ${scoped}`} ` +
+    `[${billing.creditsEnabled.state === "known" ? billing.creditsEnabled.surface : "claude.get_usage"}]`;
 }

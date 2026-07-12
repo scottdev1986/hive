@@ -1,10 +1,6 @@
 import { z } from "zod";
 import { capabilityFreshness, type CapabilityRecord } from "./capability";
-import {
-  FABLE_AUTO_ROUTING_CUTOFF,
-  RoutingTierSchema,
-  type RoutingTier,
-} from "./routing";
+import { RoutingTierSchema, type RoutingTier } from "./routing";
 
 export const TaskKindSchema = z.enum([
   "coding",
@@ -231,22 +227,21 @@ export const FIRST_ROUTING_MANIFEST: RoutingManifest =
       deep: {
         preferredProvider: "claude",
         claude: [
-          {
-            canonicalId: "claude-fable-5",
-            // The Fable auto-routing cutoff, as *data* rather than as a branch in
-            // the code — which is the whole point of the effective window, and
-            // the design's own example of one. Without this the manifest would go
-            // on deriving Fable for the deep tier after the shipped table had
-            // stopped, and shadow mode caught exactly that divergence minutes
-            // after the cutoff passed: a derived route that, had it governed,
-            // would have kept sending deep spawns to a model that moved to
-            // usage-only billing off the user's plan.
-            //
-            // It reads the same constant the shipped table branches on, so the
-            // two cannot disagree about the date. When the constant is retired,
-            // this becomes a literal and nothing else changes.
-            validUntil: FABLE_AUTO_ROUTING_CUTOFF,
-          },
+          // No effective window on Fable, and deliberately none.
+          //
+          // It briefly carried `validUntil: FABLE_AUTO_ROUTING_CUTOFF` — a date
+          // standing in for a billing belief. Driving the live surface on
+          // 2026-07-12, AFTER that date, falsified the belief: Fable still has a
+          // plan-scoped weekly pool with most of it unused, so it costs the user
+          // nothing extra and there is nothing to expire. A date is a proxy for
+          // cost, and a wrong proxy fails silently.
+          //
+          // Cost is now MEASURED instead (`usage-credits.ts`): a model is
+          // auto-routable while the plan pool gating it has headroom, needs the
+          // user's consent once it would spend usage credits, and cannot run at
+          // all when the pool is spent and credits are off. That rule needs no
+          // date and names no model.
+          { canonicalId: "claude-fable-5" },
           { canonicalId: "claude-opus-4-8" },
         ],
         codex: [{ canonicalId: "gpt-5.6-sol" }],

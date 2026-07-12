@@ -6,6 +6,10 @@ import {
   type EffectiveDefault,
 } from "./capability";
 import {
+  modelCost,
+  type AccountBilling,
+} from "../daemon/usage-credits";
+import {
   defaultTaskKind,
   kindRequiresCodingCapability,
   manifestAlias,
@@ -174,6 +178,15 @@ export interface DerivationInput {
   pins: RoutingPins;
   snapshot: RoutingSnapshot | null;
   shipped: RoutingTable;
+  /**
+   * What this account is actually charged, measured from the provider. Null means
+   * Hive could not read it — and then no cost filter runs at all, rather than a
+   * guessed one: an unreadable bill is not a free one, but it is also not a
+   * licence to refuse every model on suspicion.
+   */
+  billing: AccountBilling | null;
+  /** The user's standing answer for a model that would spend real money. */
+  costConsent?: (canonicalId: string) => "approved" | "denied" | "pending" | "none";
   now: Date;
   ttlMinutes?: number;
 }
@@ -214,6 +227,12 @@ export interface DerivedRouting {
   tiers: DerivedTier[];
   /** Deduplicated, and loud: which rung failed, and why. */
   warnings: string[];
+  /**
+   * Models the router would have chosen but may not, because running them would
+   * spend the user's real money. The caller asks him — through the approvals
+   * queue — and never on Hive's own authority.
+   */
+  consentRequired: { canonicalId: string; detail: string }[];
 }
 
 // --------------------------------------------------------------------------
@@ -236,7 +255,15 @@ export function deriveRouting(input: DerivationInput): DerivedRouting {
   const warn = (message: string): void => {
     if (!warnings.includes(message)) warnings.push(message);
   };
-  const tiers = ROUTING_TIERS.map((tier) => deriveTier(tier, input, warn));
+  const consentRequired: { canonicalId: string; detail: string }[] = [];
+  const needConsent = (canonicalId: string, detail: string): void => {
+    if (!consentRequired.some((entry) => entry.canonicalId === canonicalId)) {
+      consentRequired.push({ canonicalId, detail });
+    }
+  };
+  const tiers = ROUTING_TIERS.map((tier) =>
+    deriveTier(tier, input, warn, needConsent)
+  );
   const manifest = input.manifest;
   return {
     derivedAt: input.now.toISOString(),
@@ -249,21 +276,25 @@ export function deriveRouting(input: DerivationInput): DerivedRouting {
     discovery: input.discovery,
     tiers,
     warnings,
+    consentRequired,
   };
 }
+
+type ConsentSink = (canonicalId: string, detail: string) => void;
 
 function deriveTier(
   tier: RoutingTier,
   input: DerivationInput,
   warn: (message: string) => void,
+  needConsent: ConsentSink,
 ): DerivedTier {
   const kind = defaultTaskKind(tier);
   return {
     tier,
     kind,
     tool: resolveTool(tier, input, warn),
-    claude: deriveCell("claude", tier, kind, input, warn),
-    codex: deriveCell("codex", tier, kind, input, warn),
+    claude: deriveCell("claude", tier, kind, input, warn, needConsent),
+    codex: deriveCell("codex", tier, kind, input, warn, needConsent),
   };
 }
 
@@ -342,6 +373,7 @@ function deriveCell(
   kind: TaskKind,
   input: DerivationInput,
   warn: (message: string) => void,
+  needConsent: ConsentSink,
 ): DerivedCell {
   const notes: string[] = [];
   const ttl = input.ttlMinutes ?? DERIVATION_TTL_MINUTES;
@@ -350,7 +382,7 @@ function deriveCell(
   if (discovery.status === "unavailable") {
     notes.push(`${provider} discovery unavailable: ${discovery.reason}`);
   }
-  const candidates = input.manifest === null ? [] : manifestCandidates(
+  const listed = input.manifest === null ? [] : manifestCandidates(
     input.manifest,
     tier,
     provider,
@@ -359,6 +391,33 @@ function deriveCell(
     input.now,
     ttl,
   );
+
+  // Cost is an eligibility filter, and it belongs beside capability rather than
+  // inside quota for the same reason capability does: the user's money is not a
+  // price that enough headroom can outbid. A model Hive would have to spend real
+  // money to run is not auto-routable on Hive's own say-so — it is his money, so
+  // it is his call. This filter applies to AUTO-ROUTING only: a pin never reaches
+  // it, because an explicit instruction already IS the consent.
+  // A model the user pinned in this cell never reaches the cost filter. He told
+  // Hive to run it, and an explicit instruction IS the consent: Hive does not ask
+  // a man to approve the thing he just asked for. He is told what it costs — the
+  // cost is his to know — but he is not blocked and he is never re-asked.
+  const pinnedModel = input.pins[tier]?.[provider]?.model;
+  const pinnedCanonical = pinnedModel === undefined
+    ? undefined
+    : canonicalise(input, provider, pinnedModel);
+
+  const candidates = listed.filter((candidate) => {
+    if (candidate.record.canonicalId === pinnedCanonical) {
+      const cost = pinnedCost(input, candidate.record);
+      if (cost !== null) notes.push(cost);
+      return true;
+    }
+    const refusal = costRefusal(input, candidate.record, needConsent);
+    if (refusal === null) return true;
+    notes.push(refusal);
+    return false;
+  });
 
   const model = resolveModel(
     provider,
@@ -486,6 +545,74 @@ function resolveModel(
     layer: "unknown",
     reason: `no layer names a ${provider} model for ${tier}`,
   };
+}
+
+/**
+ * What a PINNED model costs, said plainly and without blocking anything. The user
+ * asked for this model; he gets it. He is simply told what it will spend, because
+ * spending his money quietly is the thing to avoid — not spending it at all.
+ */
+function pinnedCost(
+  input: DerivationInput,
+  record: CapabilityRecord,
+): string | null {
+  if (input.billing === null || input.billing === undefined) return null;
+  if (record.displayName === null) return null;
+  const cost = modelCost(input.billing, record.displayName);
+  if (cost.state === "spends-credits") {
+    return `you pinned ${record.displayName} and ${cost.detail} — running it as ` +
+      "instructed; this is a cost notice, not a refusal";
+  }
+  if (cost.state === "unpayable") {
+    return `you pinned ${record.displayName}, but ${cost.detail}. Hive will still ` +
+      "launch it as instructed; the provider is what will refuse";
+  }
+  return null;
+}
+
+/**
+ * Why this candidate may not be auto-routed on cost grounds, or `null` if it may.
+ *
+ * The rule the calendar constant was a bad proxy for. Running a model is free to
+ * the user while the plan pool that gates it has headroom; past that, the vendor
+ * bills usage credits, which is real money. So:
+ *
+ *   plan headroom            → auto-route, it costs nothing extra
+ *   pool spent, credits ON   → real money: ask, via the approvals queue
+ *   pool spent, credits OFF  → nothing can pay for it; it genuinely cannot run
+ *   not measurable           → do not auto-route; a pin still works
+ *
+ * No date, no model name, no shipped table. And the unknown branch never renders
+ * as "yes, spend": an absent reading is the one thing that must never authorize a
+ * charge.
+ */
+function costRefusal(
+  input: DerivationInput,
+  record: CapabilityRecord,
+  needConsent: ConsentSink,
+): string | null {
+  if (input.billing === null || input.billing === undefined) return null;
+  // The billing surface names a model only by the vendor's display name, so a
+  // record without one cannot be joined to a pool. That is unknown, not free.
+  const name = record.displayName;
+  if (name === null) {
+    return `${record.launchToken} has no vendor display name, so Hive cannot ` +
+      "join it to a plan pool and cannot tell whether it would spend money; " +
+      "not auto-routed (pin it to run it anyway)";
+  }
+  const cost = modelCost(input.billing, name);
+  if (cost.state === "on-plan") return null;
+  if (cost.state === "spends-credits") {
+    if (input.costConsent?.(record.canonicalId) === "approved") return null;
+    needConsent(record.canonicalId, cost.detail);
+    return `${name} would spend USAGE CREDITS (${cost.detail}). Hive does not ` +
+      "spend your money to route a task it chose itself — approve it in the " +
+      `approvals queue, or pin ${record.launchToken} to run it regardless`;
+  }
+  if (cost.state === "unpayable") {
+    return `${name} cannot run: ${cost.detail}`;
+  }
+  return `${name}: ${cost.detail}; not auto-routed`;
 }
 
 /**

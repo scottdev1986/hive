@@ -5,6 +5,7 @@ import {
   type CapabilityRecord,
   type EffectiveDefault,
 } from "./capability";
+import type { AccountBilling } from "../daemon/usage-credits";
 import {
   deriveRouting,
   snapshotOf,
@@ -32,6 +33,7 @@ function record(
     canonicalId,
     variant: null,
     launchToken: canonicalId,
+    displayName: null,
     aliases: [],
     entitled: known(true, surface, FRESH),
     hidden: unknown("surface-silent", surface, FRESH),
@@ -93,6 +95,7 @@ function input(overrides: Partial<DerivationInput> = {}): DerivationInput {
     pins: {},
     snapshot: null,
     shipped: DEFAULT_ROUTING,
+    billing: null,
     now: NOW,
     ...overrides,
   };
@@ -294,51 +297,119 @@ describe("the fallback ladder, rung by rung", () => {
   });
 });
 
-describe("the shipped manifest reproduces the shipped table across the cutoff", () => {
-  // Shadow mode caught this for real, minutes after the cutoff passed: the table
-  // had moved off Fable and the manifest had not, because the cutoff was a code
-  // constant the manifest could not see. Had routing been flipped, every deep
-  // Claude spawn would have kept landing on a model that had just moved to
-  // usage-only billing off the user's plan. The effective window in the manifest
-  // is the fix; this is what keeps the two from drifting apart again.
-  const deepAt = (iso: string) => {
-    const now = new Date(iso);
-    const observedAt = new Date(now.getTime() - 60_000).toISOString();
-    const fresh = (records: CapabilityRecord[]) =>
-      records.map((entry) => ({ ...entry, observedAt }));
+describe("cost is measured, and a date never stands in for it", () => {
+  // The manifest briefly expired Fable on FABLE_AUTO_ROUTING_CUTOFF — a date
+  // standing in for "Fable now costs extra". Driving the live surface AFTER that
+  // date falsified it: Fable still sits on a plan pool with most of it unused. So
+  // the date is gone and cost is measured. These tests pin the rule that replaced
+  // it, and the direction it fails in.
+  const billing = (
+    creditsOn: boolean | null,
+    fableUsed: number,
+  ): AccountBilling => ({
+    creditsEnabled: creditsOn === null
+      ? unknown("field-absent", "claude.get_usage", FRESH)
+      : known(creditsOn, "claude.get_usage", FRESH),
+    disabledReason: null,
+    generalUtilization: known(10, "claude.get_usage", FRESH),
+    modelUtilization: { fable: fableUsed },
+  });
+
+  // Records are stamped fresh relative to the clock under test: staleness is a
+  // different rule with its own tests, and it must not silently do cost's job.
+  const named = (records: CapabilityRecord[], now: Date) =>
+    records.map((entry) => ({
+      ...entry,
+      displayName: entry.canonicalId === "claude-fable-5" ? "Fable" : "Opus",
+      observedAt: new Date(now.getTime() - 60_000).toISOString(),
+    }));
+
+  const deepAt = (input_: Partial<DerivationInput>) => {
+    const now = input_.now ?? NOW;
     return tierOf(
       deriveRouting(
         input({
-          now,
           discovery: {
-            claude: ok(fresh(CLAUDE_RECORDS), CLAUDE_DEFAULT),
-            codex: ok(fresh(CODEX_RECORDS), CODEX_DEFAULT),
+            claude: ok(named(CLAUDE_RECORDS, now), CLAUDE_DEFAULT),
+            codex: ok(named(CODEX_RECORDS, now), CODEX_DEFAULT),
           },
+          ...input_,
         }),
       ),
       "deep",
     );
   };
 
-  test("before the cutoff the deep tier derives Fable, with Opus behind it", () => {
-    const deep = deepAt("2026-07-11T12:00:00Z");
+  test("after the old cutoff date, Fable is STILL auto-routable — because it is on plan", () => {
+    // The regression the date would have caused: silently refusing a model the
+    // user is paying nothing extra for, forever, on a calendar's say-so.
+    const deep = deepAt({
+      now: new Date("2026-07-12T00:00:01Z"),
+      billing: billing(false, 12),
+    });
     expect(deep.claude.model.value).toBe("claude-fable-5");
-    expect(deep.claude.chain).toEqual(["claude-opus-4-8"]);
+    expect(deep.claude.model.layer).toBe("derived");
   });
 
-  test("after it, Fable's window has closed and Opus is the primary", () => {
-    const deep = deepAt("2026-07-12T00:00:01Z");
+  test("an exhausted pool with credits OFF makes it genuinely unusable, and says so", () => {
+    const deep = deepAt({ billing: billing(false, 100) });
     expect(deep.claude.model.value).toBe("claude-opus-4-8");
-    expect(deep.claude.model.layer).toBe("derived");
-    // Fable is gone from the chain as well: an expired entry is not a downshift
-    // target, it is not a candidate at all.
-    expect(deep.claude.chain).toEqual([]);
-    // Which is exactly what the shipped table says at the same instant. The
-    // manifest reproduces the table as data, and the two read the same constant,
-    // so they cannot disagree about the date.
-    expect(
-      defaultRoutingTable(new Date("2026-07-12T00:00:01Z")).deep!.claude.model,
-    ).toBe("claude-opus-4-8");
+    expect(deep.claude.notes.join(" ")).toContain("cannot run");
+    expect(deep.claude.notes.join(" ")).toContain("usage credits are off");
+  });
+
+  test("an exhausted pool with credits ON needs consent, and is not auto-routed without it", () => {
+    const deep = deepAt({ billing: billing(true, 100) });
+    expect(deep.claude.model.value).toBe("claude-opus-4-8");
+    expect(deep.claude.notes.join(" ")).toContain("USAGE CREDITS");
+    expect(deep.claude.notes.join(" ")).toContain("approve");
+  });
+
+  test("consent granted lets it auto-route again", () => {
+    const deep = deepAt({
+      billing: billing(true, 100),
+      costConsent: (model) =>
+        model === "claude-fable-5" ? "approved" : "none",
+    });
+    expect(deep.claude.model.value).toBe("claude-fable-5");
+  });
+
+  test("UNREADABLE credits never authorize a charge", () => {
+    // The absent-key trap, in its most expensive form: a key Hive cannot read
+    // must not become "yes, spend his money".
+    const deep = deepAt({ billing: billing(null, 100) });
+    expect(deep.claude.model.value).toBe("claude-opus-4-8");
+    expect(deep.claude.notes.join(" ")).toContain("not auto-routed");
+  });
+
+  test("a pinned model is never QUEUED for consent — asking would be re-asking", () => {
+    // He pinned it. Filing an approval for the thing he just instructed is the
+    // rubber-stamp failure: a queue that asks about what you already decided is
+    // a queue you learn to click through without reading.
+    const derived = deriveRouting(
+      input({
+        discovery: {
+          claude: ok(named(CLAUDE_RECORDS, NOW), CLAUDE_DEFAULT),
+          codex: ok(named(CODEX_RECORDS, NOW), CODEX_DEFAULT),
+        },
+        billing: billing(true, 100),
+        pins: { deep: { claude: { model: "claude-fable-5" } } },
+      }),
+    );
+    expect(derived.consentRequired).toEqual([]);
+    const deep = derived.tiers.find((entry) => entry.tier === "deep")!;
+    expect(deep.claude.notes.join(" ")).toContain("cost notice, not a refusal");
+  });
+
+  test("a pin bypasses the cost gate entirely: an explicit instruction IS consent", () => {
+    // He is running two Fable agents by name right now. Hive does not get to
+    // second-guess that, and it must never re-ask.
+    const deep = deepAt({
+      billing: billing(false, 100),
+      pins: { deep: { claude: { model: "claude-fable-5" } } },
+    });
+    expect(deep.claude.model.value).toBe("claude-fable-5");
+    expect(deep.claude.model.layer).toBe("pinned");
   });
 });
 
