@@ -86,6 +86,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         if config.smoke {
             let runner = SmokeRunner(controller: controller, config: config)
             smokeRunner = runner
+            // Focus is only real in a key window: macOS routes the first click
+            // into an inactive window to activation, not to a control. The
+            // click-to-focus checks therefore need a shown, activated window,
+            // which HIVE_SMOKE_VISIBLE=1 asks for (and which is also how the
+            // indicator gets looked at). Default smoke stays offscreen.
+            if ProcessInfo.processInfo.environment["HIVE_SMOKE_VISIBLE"] == "1" {
+                controller.showWindow(nil)
+                controller.commitInitialGeometry()
+                NSApp.activate(ignoringOtherApps: true)
+                controller.window?.makeKeyAndOrderFront(nil)
+            }
             controller.window?.layoutIfNeeded()
             runner.run() // exits the process 0/1
         } else {

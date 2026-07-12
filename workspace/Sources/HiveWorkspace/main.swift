@@ -11,5 +11,10 @@ let config = LaunchConfig.parse(Array(CommandLine.arguments.dropFirst()))
 let app = NSApplication.shared
 let delegate = AppDelegate(config: config)
 app.delegate = delegate
-app.setActivationPolicy(config.smoke ? .accessory : .regular)
+// Smoke stays a background process (offscreen windows, no Dock icon) — except
+// under HIVE_SMOKE_VISIBLE, where the checks that need a KEY window (a click
+// only moves focus in one) require a regular, activatable app. The policy has
+// to be right at launch: flipping it later does not win key status.
+let smokeVisible = ProcessInfo.processInfo.environment["HIVE_SMOKE_VISIBLE"] == "1"
+app.setActivationPolicy(config.smoke && !smokeVisible ? .accessory : .regular)
 app.run()

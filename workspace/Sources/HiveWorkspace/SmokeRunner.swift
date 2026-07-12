@@ -37,12 +37,24 @@ final class SmokeRunner {
 
     /// Pumps the main run loop until the condition holds or the timeout hits.
     /// Real subprocesses and ptys need real time; this is the only clock.
+    ///
+    /// It pumps AppKit's event queue too, not just the run loop: window key
+    /// status, clicks, and the first-responder changes they cause arrive as
+    /// NSEvents, and nothing delivers those but `NSApp.sendEvent`. Draining the
+    /// run loop alone leaves them sitting in the queue — which is why a shown,
+    /// activated window still reported itself as not key.
     @discardableResult
     private func waitUntil(_ timeout: TimeInterval, _ condition: () -> Bool) -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
             if condition() { return true }
-            RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.05))
+            if let event = NSApp.nextEvent(
+                matching: .any,
+                until: Date().addingTimeInterval(0.05),
+                inMode: .default,
+                dequeue: true) {
+                NSApp.sendEvent(event)
+            }
         }
         return condition()
     }
@@ -221,11 +233,82 @@ final class SmokeRunner {
                   "keystroke round trip through tmux ('\(rtMarker)')")
         }
 
-        // 8. Closing a pane detaches: the attach client dies, the pane view
+        // 8. The active-pane indicator tracks the REAL keyboard, not the last
+        //    click: a click is delivered through the window's own event dispatch
+        //    (hit-test → SwiftTerm takes first responder), and the indicator is
+        //    read back off the pane VIEW — never off the reducer, which would
+        //    prove only that the app agrees with itself.
+        if let agent = expectedAgents.first {
+            let paneID = ProjectState.paneID(forAgent: agent.name)
+            let orchestrator = ProjectState.orchestratorPaneID
+
+            // Activation is asynchronous: in visible mode the window is ordered
+            // in and activated, but it is not key until the run loop has spun.
+            // Wait for it, and FAIL if it never arrives — silently falling back
+            // to the non-key branch would quietly delete the click coverage.
+            let wantsKey = ProcessInfo.processInfo.environment["HIVE_SMOKE_VISIBLE"] == "1"
+            let windowIsKey = wantsKey
+                ? waitUntil(5) { self.controller.window?.isKeyWindow ?? false }
+                : (controller.window?.isKeyWindow ?? false)
+            if wantsKey {
+                check(windowIsKey, "HIVE_SMOKE_VISIBLE window became key")
+            }
+
+            // Focus moves by keyboard, and the indicator follows the keyboard —
+            // this holds whether or not the window is key.
+            controller.dispatch(.focusPane(paneID))
+            check(waitUntil(2) { self.controller.firstResponderPane() == paneID },
+                  "a focus command hands the pane the real first responder")
+            check(controller.focusIndicator(pane: paneID) != .none,
+                  "the focused pane shows an indicator")
+            check(controller.focusIndicator(pane: orchestrator) == .none,
+                  "the pane that lost the keyboard drops its indicator")
+
+            if windowIsKey {
+                // Key window: a real click must move the keyboard AND the ring.
+                check(controller.postClick(pane: orchestrator),
+                      "click delivered to the orchestrator pane")
+                check(waitUntil(2) { self.controller.firstResponderPane() == orchestrator },
+                      "clicking a pane gives it the keyboard (first responder)")
+                check(controller.focusIndicator(pane: orchestrator) == .active,
+                      "the clicked pane shows the ACTIVE indicator in a key window")
+                check(controller.focusIndicator(pane: paneID) == .none,
+                      "the previously focused pane drops its indicator on click")
+                check(controller.state.focusedPane == orchestrator,
+                      "the reducer follows the real first responder after a click")
+                controller.dispatch(.focusPane(paneID))
+            } else {
+                // A click into a non-key window is an ACTIVATION on macOS, not a
+                // focus change, so click-to-focus cannot be asserted here. Say so
+                // rather than let the coverage look complete.
+                print("  (skipped: click-to-focus needs a key window — rerun with HIVE_SMOKE_VISIBLE=1)")
+
+                // What this mode CAN prove is the honesty rule: the pane still
+                // holds focus, and the indicator says so — but it must never
+                // claim the vivid "keystrokes land here" state while none can.
+                check(controller.focusIndicator(pane: paneID) == .inactive,
+                      "a non-key window shows the dimmed indicator, never .active")
+            }
+
+            controller.dispatch(.focusOrchestrator)
+            check(waitUntil(2) { self.controller.firstResponderPane() == orchestrator },
+                  "keyboard focus move hands the keyboard to the orchestrator")
+            check(controller.focusIndicator(pane: orchestrator) != .none
+                  && controller.focusIndicator(pane: paneID) == .none,
+                  "the indicator follows a keyboard focus move")
+        }
+
+        // 9. Closing a pane detaches: the attach client dies, the pane view
         //    goes away, and the harness asserts the session survived.
         if let closeTarget {
             let paneID = ProjectState.paneID(forAgent: closeTarget)
             let countBefore = controller.paneViewCount
+            // Close the pane that currently holds the keyboard: the indicator
+            // must not survive on a dead pane, and exactly one live pane may
+            // claim focus afterwards.
+            controller.dispatch(.focusPane(paneID))
+            check(waitUntil(2) { self.controller.firstResponderPane() == paneID },
+                  "focused the pane that is about to close")
             controller.dispatch(.closePane(paneID))
             check(controller.paneViewCount == countBefore - 1, "closed pane view removed")
             check(controller.state.panes[paneID] == nil, "closed pane left the reducer")
@@ -233,6 +316,13 @@ final class SmokeRunner {
                   "attach client terminated on close")
             check(controller.currentPaneFrames().count == controller.state.panes.count,
                   "layout re-solved after close")
+
+            let focused = controller.state.panes.keys.filter {
+                controller.focusIndicator(pane: $0) != .none
+            }
+            check(focused.count == 1, "exactly one live pane shows the indicator after a close")
+            check(controller.firstResponderPane() == focused.first,
+                  "the indicator sits on the pane that really took the keyboard")
         }
 
         // Give SIGTERM'd children a beat to die before the harness inspects tmux.

@@ -19,9 +19,10 @@ final class PaneView: NSView {
     let contentView: TerminalPaneView
 
     private let statusBorderLayer = CAShapeLayer()
-    private let focusRingLayer = CAShapeLayer()
+    private let focusRing = PaneFocusRingView()
     private var currentStatus: PaneStatus = .running
     private var pulsing = false
+    private var focusIndicator: PaneFocusIndicator = .none
 
     init(paneID: PaneID, title: String, tmuxSession: String? = nil,
          allowsMouseReporting: Bool = true,
@@ -153,15 +154,21 @@ final class PaneView: NSView {
             contentView.bottomAnchor.constraint(equalTo: backgroundView.bottomAnchor),
         ])
 
-        // Status border (outer) and focus ring (inset) are separate layers.
         statusBorderLayer.fillColor = nil
         statusBorderLayer.lineWidth = 2
         layer?.addSublayer(statusBorderLayer)
 
-        focusRingLayer.fillColor = nil
-        focusRingLayer.lineWidth = 2
-        focusRingLayer.isHidden = true
-        layer?.addSublayer(focusRingLayer)
+        // The focus ring is the LAST subview: it must draw over the pane's
+        // opaque background (and it passes every click through to the terminal).
+        headerView.wantsLayer = true
+        focusRing.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(focusRing)
+        NSLayoutConstraint.activate([
+            focusRing.topAnchor.constraint(equalTo: topAnchor),
+            focusRing.leadingAnchor.constraint(equalTo: leadingAnchor),
+            focusRing.trailingAnchor.constraint(equalTo: trailingAnchor),
+            focusRing.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
 
         // Double-click the header promotes (same command as menu/shortcut).
         let doubleClick = NSClickGestureRecognizer(target: self, action: #selector(promoteAction))
@@ -197,10 +204,13 @@ final class PaneView: NSView {
                                 cornerWidth: 10, cornerHeight: 10, transform: nil)
         statusBorderLayer.path = borderPath
         statusBorderLayer.frame = bounds
-        let ringPath = CGPath(roundedRect: bounds.insetBy(dx: 4, dy: 4),
-                              cornerWidth: 7, cornerHeight: 7, transform: nil)
-        focusRingLayer.path = ringPath
-        focusRingLayer.frame = bounds
+    }
+
+    /// CGColors are resolved, not dynamic: re-resolve the header tint whenever
+    /// the pane switches between light and dark.
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        applyHeaderTint()
     }
 
     // MARK: State rendering
@@ -265,10 +275,24 @@ final class PaneView: NSView {
         pulsing = false
     }
 
-    func setFocused(_ focused: Bool) {
-        focusRingLayer.strokeColor = NSColor.controlAccentColor.cgColor
-        focusRingLayer.isHidden = !focused
-        // The status border above is untouched: focus never overwrites status.
+    /// What this pane is actually rendering (smoke introspection).
+    var currentFocusIndicator: PaneFocusIndicator { focusIndicator }
+
+    /// Driven by the window's REAL first responder and key state — never by the
+    /// last click. See `ProjectWindowController.refreshFocusIndicators()`.
+    func setFocusIndicator(_ indicator: PaneFocusIndicator) {
+        guard indicator != focusIndicator else { return }
+        focusIndicator = indicator
+        focusRing.indicator = indicator
+        applyHeaderTint()
+        // The status border is untouched: focus never overwrites status.
+    }
+
+    private func applyHeaderTint() {
+        let tint = PaneFocusRing.headerTint(for: focusIndicator)
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            headerView.layer?.backgroundColor = tint.cgColor
+        }
     }
 
     /// Called exactly once per settled layout change (end of the ~180 ms
