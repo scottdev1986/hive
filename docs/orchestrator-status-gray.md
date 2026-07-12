@@ -192,11 +192,20 @@ So, mapped onto the dot vocabulary:
 
 | Real state | Observed how | Status word | Dot |
 | --- | --- | --- | --- |
-| live, mid-turn | `latestTurnBoundary("orchestrator").kind == "turn-start"` | `working` | green |
-| live, waiting for a prompt or an envelope | `.kind == "turn-end"` | `idle` | yellow |
-| live, session up but no turn yet | a `session-start` event and no boundary | `idle` | yellow |
+| live, mid-turn | newest boundary is `turn-start` | `working` | green |
+| live, waiting for a prompt or an envelope | newest is `turn-end`, **preceded by a `turn-start`** | `idle` | yellow |
 | gone | the pane's child process exited — the app owns that PTY and already knows (`controller.terminalChildRunning(pane:)`, used at `SmokeRunner.swift:204`) | `dead` | gray dashed |
-| no events at all | nothing observed | *omit the field* | gray |
+| no boundaries, or a self-contradicting record | nothing trustworthy observed | *omit the field* | gray |
+
+**Correction to my own first draft.** That table originally had a fourth row —
+"live, session up but no turn yet → `idle` (yellow)", justified by a
+`session-start` event. Implementing it changed my mind, and the measurement is
+why. A root that has posted `session-start` and no boundary is *indistinguishable
+from* a root whose turn-start hook is orphaned: both look like silence. Calling
+that "idle" is the exact guess this document exists to refuse, and during the
+15-hour window in §6a it would have been wrong. It is now `unknown`. The cost is
+a gray dot for the few seconds between the app opening and the user's first
+prompt; the benefit is that gray always means gray.
 
 ## 6a. Measured, not inferred
 
@@ -420,6 +429,34 @@ catches the recurrence rather than trusting that it never recurs.
 - **What we still cannot see.** Whether the human is looking at the window.
   Whether a mid-turn root is productively working or wedged. We should not try.
 
+## 8. What shipped
+
+Implemented as recommended, in three pieces:
+
+- **`src/daemon/orchestrator-status.ts`** (new) — the pure derivation, including
+  the unpaired-turn-end contradiction rule. It reads *kinds only, never
+  timestamps*, so no timeout inference can be introduced without changing its
+  signature. Unit-tested for all five shapes, including the two that must return
+  null.
+- **`src/daemon/db.ts`** — `recentTurnBoundaries(agentName, limit = 2)`, newest
+  first. Two rows, because one cannot express the difference between "idle" and
+  "the hooks are lying".
+- **`src/daemon/server.ts`** — `GET /orchestrator-status`, gated on the existing
+  `status:read` action (this is the root's status, not a new kind of authority,
+  and the feed already holds that capability — no new `Action` was added).
+- **`src/cli/workspace-feed.ts`** — the `orchestrator` field on the snapshot
+  line, **omitted** when the daemon returns null, and omitted when the read
+  itself fails. A status we could not read is not a status we may invent.
+- **Swift** — `OrchestratorSnapshot` decoded from the feed line;
+  `addOrchestrator` seeds `"unknown"` instead of the fictional `"running"`;
+  `apply(feed:orchestrator:)` applies the measured word and *reverts to unknown*
+  when the field is absent; `markFeedLost` no longer exempts the orchestrator.
+
+The old test `testMarkFeedLostTurnsAgentsGrayButLeavesOrchestrator` asserted the
+exemption and now asserts the opposite, renamed accordingly. That is a
+deliberate contract change, and §7B is the argument for it: the exemption was
+correct only while the status was a constant.
+
 ## Scope note
 
 The Workspace was never launched, the daemon was never attached to or
@@ -428,6 +465,13 @@ killed the user's feed. The diagnosis (§1-§5) is entirely source-derived. The
 observability claim (§6) is measured in §6a by a read-only `SELECT` against
 `~/.hive/hive.db`, which touches the file, not the daemon.
 
-What remains unverified: that the fix in §7 renders green/yellow correctly in
-the running app. That needs the Workspace, and the Workspace needs the user's
-feed, so it belongs to whoever implements — not to this investigation.
+What remains unverified, stated plainly: **nobody has seen the dot change
+colour.** The derivation, the wire format, the decode, and the pane update are
+each tested (Swift: 59 tests green; TypeScript: 1354 green), and the Swift
+package builds — but confirming that the orchestrator's dot actually renders
+green mid-turn and yellow at rest requires launching the Workspace against a
+live daemon, which is the one thing that would kill the user's feed. So it was
+not done. The failure this leaves open is a wiring mistake (a status that is
+derived and published correctly but never reaches the icon); the logic itself is
+covered. Whoever next runs the Workspace should glance at the root's dot, and
+that glance is the last verification step.

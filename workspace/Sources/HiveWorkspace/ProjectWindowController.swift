@@ -95,8 +95,8 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
     }
 
     /// One feed snapshot in, pane set reconciled.
-    func applyFeed(_ agents: [AgentSnapshot]) {
-        react(to: state.apply(feed: agents))
+    func applyFeed(_ agents: [AgentSnapshot], orchestrator: OrchestratorSnapshot? = nil) {
+        react(to: state.apply(feed: agents, orchestrator: orchestrator))
     }
 
     /// The feed process exited: agent statuses can no longer be trusted.

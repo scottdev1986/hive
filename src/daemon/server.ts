@@ -55,6 +55,7 @@ import {
   type MemoryWriteInput,
 } from "../schemas";
 import { isAutonomy, type AutonomyControl } from "../config/autonomy";
+import { deriveOrchestratorStatus } from "./orchestrator-status";
 import { ChannelRegistry } from "./channels";
 import {
   bearerToken,
@@ -1742,6 +1743,9 @@ export class HiveDaemon {
     ) {
       return this.autonomyEndpoint(request);
     }
+    if (url.pathname === "/orchestrator-status" && request.method === "GET") {
+      return this.orchestratorStatusEndpoint(request);
+    }
     if (url.pathname === "/graphify" && request.method === "POST") {
       return this.graphifyEndpoint(request);
     }
@@ -2195,6 +2199,38 @@ export class HiveDaemon {
    * when the lease state actually flips — the renewals are a heartbeat and,
    * like channel polls, would bury every other audit row.
    */
+  /**
+   * `GET /orchestrator-status` — what the root is doing, for the Workspace dot.
+   *
+   * The root has no agents-table row, so it is absent from `hive_status` by
+   * construction and the Workspace had nothing to render; it invented a status
+   * word instead, and got a permanently gray (unknown) dot for it. This is the
+   * honest surface: derived from the root's own turn-boundary events, and
+   * `{"status": null}` whenever they cannot be trusted — an absent status is
+   * unknown, never a flattering guess. See orchestrator-status.ts.
+   *
+   * Gated on `status:read`, the same action `hive_status` needs: this is the
+   * root's status, not a new kind of authority, and the feed already holds it.
+   */
+  private orchestratorStatusEndpoint(request: Request): Response {
+    const authenticated = this.authenticate(request, "/orchestrator-status");
+    if (!authenticated.ok) return this.denied(authenticated);
+    // A poll surface (the feed asks every second): don't audit allows.
+    const decision = this.authorize(
+      authenticated.capability,
+      "/orchestrator-status",
+      "status:read",
+      undefined,
+      false,
+    );
+    if (!decision.ok) return this.denied(decision);
+    return json({
+      status: deriveOrchestratorStatus(
+        this.db.recentTurnBoundaries(ORCHESTRATOR_NAME),
+      ),
+    });
+  }
+
   /**
    * `/autonomy` — the writer-autonomy dial.
    *

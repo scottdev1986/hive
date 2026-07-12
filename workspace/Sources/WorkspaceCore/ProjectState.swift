@@ -120,15 +120,24 @@ public final class ProjectState {
 
     // MARK: Orchestrator pane (local, not feed-driven)
 
-    /// The master pane is the selected orchestrator terminal, created
-    /// by the window at open — the feed only describes worker agents.
+    /// The master pane is the selected orchestrator terminal, created by the
+    /// window at open — the feed's `agents` array only describes worker agents.
+    ///
+    /// It is seeded "unknown" and NOT a status word of its own. It used to be
+    /// seeded "running", a word that exists in no daemon vocabulary, which the
+    /// dot's (correct) unknown-word rule degraded to gray — so the root, which is
+    /// alive by definition whenever this app is running, showed a permanently
+    /// gray "unknown" dot. The lesson is not "pick a better constant": ANY
+    /// constant here is a fabrication. The real status arrives on the feed's
+    /// `orchestrator` field and is applied below; until the first snapshot lands,
+    /// "unknown" is the honest word, and gray is the honest colour.
     @discardableResult
     public func addOrchestrator(title: String = "Orchestrator") -> [StateChange] {
         let paneID = ProjectState.orchestratorPaneID
         guard panes[paneID] == nil else { return [] }
         panes[paneID] = PaneState(
             id: paneID, kind: .orchestrator, title: title,
-            feedStatus: "running", status: .running)
+            feedStatus: "unknown", status: .running)
         layout.insert(paneID, in: layoutBounds)
         orchestratorPane = paneID
         var changes: [StateChange] = [.paneAdded(paneID), .layoutChanged]
@@ -147,11 +156,17 @@ public final class ProjectState {
     /// - `closedAt` present, or agent vanished from the snapshot → the pane is
     ///   marked close-pending exactly once; the UI closes it after the grace.
     /// - agents already closed (or "dead") that never had a pane are ignored.
+    /// - the root's status (a separate field, since the root has no AgentRecord)
+    ///   updates the orchestrator pane; nil means the daemon could not honestly
+    ///   say, so the pane goes back to "unknown" rather than keeping a stale word.
     @discardableResult
     public func apply(feed agents: [AgentSnapshot],
+                      orchestrator: OrchestratorSnapshot? = nil,
                       now: TimeInterval = Date().timeIntervalSince1970) -> [StateChange] {
         var changes: [StateChange] = []
         var seen: Set<PaneID> = []
+
+        changes.append(contentsOf: applyOrchestrator(orchestrator))
 
         for agent in agents {
             let paneID = ProjectState.paneID(forAgent: agent.name)
@@ -180,13 +195,39 @@ public final class ProjectState {
         return changes
     }
 
-    /// The feed process died: statuses can no longer be trusted, so every
-    /// non-terminal agent pane turns gray dashed (disconnected). Terminals
-    /// stay attached — only the metadata stream is gone.
+    /// The root's status word from one snapshot. A nil snapshot is the daemon
+    /// saying it does not know (no turn events, or a self-contradicting record
+    /// that means the root's hooks are not reaching it) — so the pane reverts to
+    /// "unknown" and its dot goes gray. Reverting matters: holding the last known
+    /// word would turn a lost signal into a confident stale claim, which is the
+    /// exact failure this whole change exists to remove.
+    private func applyOrchestrator(_ snapshot: OrchestratorSnapshot?) -> [StateChange] {
+        let paneID = ProjectState.orchestratorPaneID
+        guard var pane = panes[paneID] else { return [] }
+        let word = snapshot?.status ?? "unknown"
+        guard pane.feedStatus != word else { return [] }
+        pane.feedStatus = word
+        pane.status = FeedStatusMap.paneStatus(for: word)
+        panes[paneID] = pane
+        return [.statusChanged(paneID)]
+    }
+
+    /// The feed process died: statuses can no longer be trusted, so every pane
+    /// turns gray dashed (disconnected). Terminals stay attached — only the
+    /// metadata stream is gone.
+    ///
+    /// The orchestrator is included. It used to be exempt, which was right only
+    /// while its status was a hardcoded constant: a constant cannot go stale, so
+    /// there was nothing to invalidate. Now that its word is measured, a dead
+    /// feed makes it exactly as untrustworthy as any agent's — the root may have
+    /// started or finished ten turns since the last line we read — so it must go
+    /// unknown with the rest. Its terminal is still live and still attached; what
+    /// we have lost is not the root, only our knowledge of it, and those are
+    /// different things to say.
     @discardableResult
     public func markFeedLost(reason: String = "workspace feed exited") -> [StateChange] {
         var changes: [StateChange] = []
-        for (paneID, var pane) in panes where pane.kind != .orchestrator {
+        for (paneID, var pane) in panes {
             if case .disconnected = pane.status { continue }
             pane.status = .disconnected(reason: reason, lastConfirmed: pane.feedStatus)
             pane.feedStatus = "unknown"

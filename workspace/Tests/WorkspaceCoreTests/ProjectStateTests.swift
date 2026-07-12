@@ -291,16 +291,24 @@ final class ProjectStateTests: XCTestCase {
         XCTAssertNil(state.attention.ordered.first { $0.paneID == failed })
     }
 
-    func testMarkFeedLostTurnsAgentsGrayButLeavesOrchestrator() {
+    /// The orchestrator used to be EXEMPT from feed loss, on the grounds that its
+    /// terminal is not feed-driven. That was right only while its status was a
+    /// hardcoded constant: a constant cannot go stale, so a dead feed invalidated
+    /// nothing. Its status is now measured from the root's turn boundaries, so a
+    /// dead feed makes it exactly as untrustworthy as any agent's — the root may
+    /// have started or finished any number of turns since the last line we read.
+    /// It goes disconnected/unknown with the rest. The terminal stays attached;
+    /// what we lost is our knowledge of the root, not the root.
+    func testMarkFeedLostTurnsEveryPaneGrayIncludingTheOrchestrator() {
         let state = drivenState()
         state.markFeedLost()
-        for (paneID, pane) in state.panes where pane.kind == .agent {
+        for (paneID, pane) in state.panes {
             if case .disconnected = pane.status {} else {
                 XCTFail("\(paneID) should be disconnected after feed loss")
             }
+            XCTAssertEqual(pane.feedStatus, "unknown",
+                           "\(paneID) must not keep a stale status word")
         }
-        XCTAssertEqual(state.panes[ProjectState.orchestratorPaneID]?.status, .running,
-                       "the orchestrator terminal is not feed-driven")
     }
 
     func testSwitcherCardIsSanitized() {

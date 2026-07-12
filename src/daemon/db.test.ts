@@ -853,4 +853,55 @@ describe("contextPct can say 'unknown'", () => {
       db.close();
     }
   });
+
+  /**
+   * The orchestrator's dot is derived from these two rows, so the reader must
+   * return them newest-first and must be able to show the contradiction (a
+   * turn-end whose predecessor is another turn-end) that means the root's
+   * turn-start hook is not reaching us. See orchestrator-status.ts.
+   */
+  test("reads the root's last turn boundaries, newest first", () => {
+    const db = new HiveDatabase(join(home, "boundaries.db"));
+    try {
+      // The root has no agents-table row by design; its turns live here.
+      db.insertEvent({
+        kind: "session-start",
+        agentName: "orchestrator",
+        timestamp: "2026-07-12T10:00:00.000Z",
+      });
+      db.insertEvent({
+        kind: "turn-start",
+        agentName: "orchestrator",
+        timestamp: "2026-07-12T10:00:01.000Z",
+      });
+      db.insertEvent({
+        kind: "turn-end",
+        agentName: "orchestrator",
+        timestamp: "2026-07-12T10:00:02.000Z",
+      });
+      // session-start is not a boundary and must not displace one.
+      expect(db.recentTurnBoundaries("orchestrator")).toEqual([
+        "turn-end",
+        "turn-start",
+      ]);
+
+      // The 2026-07-11 stale-port shape: turn-ends keep landing while every
+      // turn-start is orphaned. The reader must surface it as-is so the
+      // derivation can refuse to call it "idle".
+      db.insertEvent({
+        kind: "turn-end",
+        agentName: "orchestrator",
+        timestamp: "2026-07-12T10:00:03.000Z",
+      });
+      expect(db.recentTurnBoundaries("orchestrator")).toEqual([
+        "turn-end",
+        "turn-end",
+      ]);
+
+      // A root nobody has heard from has no boundaries at all — not a default.
+      expect(db.recentTurnBoundaries("never-seen")).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
 });

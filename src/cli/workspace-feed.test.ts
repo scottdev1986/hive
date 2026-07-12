@@ -45,12 +45,14 @@ interface FeedRun {
 }
 
 /** Drives the real loop on a fake clock: sleeping advances time instantly, so
- * heartbeat and give-up behavior are exact, not wall-clock flaky. Autonomy is
- * injected (default null) so no test ever touches a real daemon. */
+ * heartbeat and give-up behavior are exact, not wall-clock flaky. Autonomy and
+ * the orchestrator's status are injected (default null) so no test ever touches
+ * a real daemon. */
 async function runScript(
   steps: Step[],
   fetchAutonomy: () => Promise<"sandboxed" | "dangerous" | null> = async () =>
     null,
+  fetchOrchestrator: () => Promise<"working" | "idle" | null> = async () => null,
 ): Promise<FeedRun> {
   const controller = new AbortController();
   const lines: Array<Record<string, unknown>> = [];
@@ -72,6 +74,7 @@ async function runScript(
       presence.push(present);
     },
     fetchAutonomy,
+    fetchOrchestrator,
     fetchStatus: async () => {
       const step = steps[index];
       if (step === undefined) {
@@ -278,5 +281,52 @@ describe("runWorkspaceFeed", () => {
     expect(presence.filter((present) => present).length).toBeGreaterThanOrEqual(3);
     // And it still surrenders on the way out.
     expect(presence.at(-1)).toEqual(false);
+  });
+
+  test("carries the root's status beside the agents, not inside them", async () => {
+    const run = await runScript(
+      [last(snapshot(agent("maya")))],
+      async () => null,
+      async () => "working",
+    );
+    expect(run.lines[0]?.orchestrator).toEqual({ status: "working" });
+    // Beside, never inside: the root has no AgentRecord, and inventing one
+    // would break the no-row invariant the daemon relies on in four places.
+    expect(run.lines[0]?.agents).toHaveLength(1);
+  });
+
+  /**
+   * The load-bearing one. When the daemon cannot honestly say what the root is
+   * doing, the field must be ABSENT — not "idle", not a stale last value, not a
+   * placeholder. The Workspace renders a missing status as unknown/gray, so
+   * omission is how the wire says "nobody knows", and an absent field is unknown,
+   * never false.
+   *
+   * A test that only covered the happy path would let a future change quietly
+   * default this to a status word, which is precisely the bug being fixed here:
+   * a fabricated status that looks like a measurement.
+   */
+  test("omits the field entirely when the root's status is unknown", async () => {
+    const run = await runScript(
+      [last(snapshot(agent("maya")))],
+      async () => null,
+      async () => null,
+    );
+    expect(run.lines[0]).not.toHaveProperty("orchestrator");
+    // The agent list must still arrive: an unknowable root never takes the
+    // rest of the snapshot down with it.
+    expect(run.lines[0]?.agents).toHaveLength(1);
+  });
+
+  test("a root-status read that throws degrades to omission, not to a guess", async () => {
+    const run = await runScript(
+      [last(snapshot(agent("maya")))],
+      async () => null,
+      async () => {
+        throw new Error("daemon wedged");
+      },
+    );
+    expect(run.lines[0]).not.toHaveProperty("orchestrator");
+    expect(run.lines[0]?.agents).toHaveLength(1);
   });
 });

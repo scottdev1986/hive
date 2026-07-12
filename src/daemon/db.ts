@@ -1,4 +1,5 @@
 import { Database } from "bun:sqlite";
+import type { TurnBoundaryKind } from "./orchestrator-status";
 import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
@@ -1077,6 +1078,24 @@ export class HiveDatabase {
       | { timestamp: string; kind: "turn-start" | "turn-end" }
       | null;
     return row;
+  }
+
+  /**
+   * The last `limit` turn boundaries, newest first.
+   *
+   * Two of them is a state the one on its own cannot express: a `turn-end`
+   * preceded by a `turn-start` is an idle agent, while a `turn-end` preceded by
+   * another `turn-end` is a turn that ended without starting — impossible, so
+   * the hooks are not reaching us and nothing here can be trusted. The
+   * orchestrator's dot is derived from exactly this (orchestrator-status.ts).
+   */
+  recentTurnBoundaries(agentName: string, limit = 2): TurnBoundaryKind[] {
+    const rows = this.database.query(`
+      SELECT kind FROM events
+      WHERE agentName = ? AND kind IN ('turn-start', 'turn-end')
+      ORDER BY timestamp DESC, rowid DESC LIMIT ?
+    `).all(agentName, limit) as Array<{ kind: TurnBoundaryKind }>;
+    return rows.map((row) => row.kind);
   }
 
   /**

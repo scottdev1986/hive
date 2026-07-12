@@ -4,11 +4,14 @@
  * A long-lived child of the app that turns the daemon's `hive_status` into
  * NDJSON on stdout, one JSON object per line and nothing else:
  *
- *   {"v":1,"agents":[...],"autonomy":"sandboxed"}
- *                             the full AgentRecord array plus the daemon's
- *                             live autonomy dial (omitted when unreadable) —
- *                             on the first snapshot, on any change, and at
- *                             least every 5 s (heartbeat), so a silent wire is
+ *   {"v":1,"agents":[...],"autonomy":"sandboxed","orchestrator":{"status":"working"}}
+ *                             the full AgentRecord array, the daemon's live
+ *                             autonomy dial (omitted when unreadable), and what
+ *                             the root is doing (omitted when the daemon cannot
+ *                             honestly say — the root has no AgentRecord, so it
+ *                             travels beside the array, not inside it) — on the
+ *                             first snapshot, on any change, and at least every
+ *                             5 s (heartbeat), so a silent wire is
  *                             distinguishable from an unchanged one.
  *   {"v":1,"error":"..."}     the daemon is unreachable — emitted once per
  *                             distinct failure, not per retry, so a dead
@@ -29,6 +32,7 @@
 import { randomUUID } from "node:crypto";
 import type { AgentRecord } from "../schemas";
 import { isAutonomy, type Autonomy } from "../config/autonomy";
+import type { OrchestratorStatus } from "../daemon/orchestrator-status";
 import { fetchAgentStatus } from "./mcp";
 import { operatorFetch } from "./credential";
 
@@ -47,6 +51,10 @@ export interface WorkspaceFeedDeps {
    * degrade to null (field omitted) — the menu goes unknown, the agent list
    * must not. */
   readonly fetchAutonomy?: (port: number) => Promise<Autonomy | null>;
+  /** Reads what the root is doing, for the orchestrator pane's dot. Errors and
+   * un-knowable states alike degrade to null (field omitted): the root's dot
+   * goes gray/unknown, which is the truth, rather than a fabricated word. */
+  readonly fetchOrchestrator?: (port: number) => Promise<OrchestratorStatus | null>;
   readonly setPresence?: (port: number, present: boolean) => Promise<void>;
   readonly write?: (line: string) => void;
   readonly sleep?: (milliseconds: number, signal?: AbortSignal) => Promise<void>;
@@ -65,6 +73,26 @@ async function getAutonomy(port: number): Promise<Autonomy | null> {
     | { autonomy?: unknown }
     | null;
   return isAutonomy(body?.autonomy) ? body.autonomy : null;
+}
+
+/** `GET /orchestrator-status` with the operator credential: what the root is
+ * doing, derived by the daemon from the root's own turn boundaries. Null when
+ * it cannot be honestly known — the field is then omitted from the line, and
+ * the app's dot stays gray (unknown). Errors degrade to null for the same
+ * reason: a status we could not read is not a status we may invent. */
+async function getOrchestratorStatus(
+  port: number,
+): Promise<OrchestratorStatus | null> {
+  const response = await operatorFetch(
+    `http://127.0.0.1:${port}/orchestrator-status`,
+  );
+  if (!response.ok) return null;
+  const body = await response.json().catch(() => null) as
+    | { status?: unknown }
+    | null;
+  return body?.status === "working" || body?.status === "idle"
+    ? body.status
+    : null;
 }
 
 /** Who this feed is. One id per feed process, so the daemon can tell our lease
@@ -133,6 +161,7 @@ export async function runWorkspaceFeed(
 ): Promise<number> {
   const fetchStatus = deps.fetchStatus ?? fetchAgentStatus;
   const fetchAutonomy = deps.fetchAutonomy ?? getAutonomy;
+  const fetchOrchestrator = deps.fetchOrchestrator ?? getOrchestratorStatus;
   const setPresence = deps.setPresence ?? postPresence;
   const write = deps.write ??
     ((line: string) => void process.stdout.write(`${line}\n`));
@@ -172,7 +201,12 @@ export async function runWorkspaceFeed(
       // dial. Best-effort by design: its failure must never take the agent
       // list down with it.
       const autonomy = await fetchAutonomy(port).catch(() => null);
-      const snapshot = JSON.stringify({ agents, autonomy });
+      // The root's own status rides the same line. Best-effort like autonomy —
+      // and omitted, never defaulted, when the daemon cannot honestly say: the
+      // Workspace renders a missing status as unknown/gray, which is exactly
+      // what it should show when nobody knows.
+      const orchestrator = await fetchOrchestrator(port).catch(() => null);
+      const snapshot = JSON.stringify({ agents, autonomy, orchestrator });
       const heartbeatDue = lastEmitAt === null ||
         now() - lastEmitAt >= FEED_HEARTBEAT_MS;
       // A recovery from an error state re-emits even an unchanged snapshot:
@@ -182,6 +216,7 @@ export async function runWorkspaceFeed(
           v: FEED_VERSION,
           agents,
           ...(autonomy === null ? {} : { autonomy }),
+          ...(orchestrator === null ? {} : { orchestrator: { status: orchestrator } }),
         }));
         lastSnapshot = snapshot;
         lastEmitAt = now();

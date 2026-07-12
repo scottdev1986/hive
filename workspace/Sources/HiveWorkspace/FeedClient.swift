@@ -28,8 +28,11 @@ final class FeedClient {
     private var buffer = Data()
     private var stopped = false
 
-    /// All callbacks are delivered on the main queue.
-    var onSnapshot: (([AgentSnapshot]) -> Void)?
+    /// All callbacks are delivered on the main queue. The orchestrator snapshot
+    /// is nil when the daemon reported no trustworthy status for the root; it is
+    /// passed through as nil rather than dropped, because "we do not know" is a
+    /// value the pane must act on, not an absence it may ignore.
+    var onSnapshot: (([AgentSnapshot], OrchestratorSnapshot?) -> Void)?
     /// The daemon's live writer-autonomy dial ("sandboxed"/"dangerous"),
     /// fired for every snapshot line that carries it.
     var onAutonomy: ((String) -> Void)?
@@ -84,7 +87,7 @@ final class FeedClient {
                 if let autonomy = decoded.autonomy {
                     onAutonomy?(autonomy)
                 }
-                onSnapshot?(agents)
+                onSnapshot?(agents, decoded.orchestrator)
             } else if let error = decoded.error {
                 onError?(error)
             }

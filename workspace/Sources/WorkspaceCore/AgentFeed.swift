@@ -47,14 +47,33 @@ public struct AgentSnapshot: Equatable, Decodable {
     }
 }
 
+/// What the orchestrator is doing, as measured by the daemon from the root's own
+/// turn-boundary events. The root is not a spawned agent and has no AgentRecord,
+/// so it travels beside the `agents` array rather than inside it.
+///
+/// Its ABSENCE is meaningful and must stay meaningful: the daemon omits this
+/// whenever it cannot honestly say (no turn events, or a record that contradicts
+/// itself because the root's hooks are not reaching it). Absent is unknown —
+/// never a default, and never a flattering guess.
+public struct OrchestratorSnapshot: Equatable, Decodable {
+    public let status: String
+
+    public init(status: String) {
+        self.status = status
+    }
+}
+
 /// One NDJSON line from the feed: either a snapshot (`agents`, optionally
-/// carrying the daemon's live writer-autonomy dial) or an error.
+/// carrying the daemon's live writer-autonomy dial and the root's own status)
+/// or an error.
 public struct FeedLine: Decodable {
     public let v: Int?
     public let agents: [AgentSnapshot]?
     /// "sandboxed" or "dangerous"; nil when the daemon didn't report it
     /// (older feed, or no autonomy control configured).
     public let autonomy: String?
+    /// nil when the daemon reported no trustworthy status for the root.
+    public let orchestrator: OrchestratorSnapshot?
     public let error: String?
 
     /// Parses one line of feed output; returns nil for blank/undecodable lines

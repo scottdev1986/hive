@@ -102,12 +102,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private func startFeed() {
         guard let invocation = config.feedInvocation else { return }
         let feed = FeedClient(executable: invocation.executable, arguments: invocation.arguments)
-        feed.onSnapshot = { [weak self] agents in
+        feed.onSnapshot = { [weak self] agents, orchestrator in
             // A snapshot is the feed proving it works: the budget is for a feed
             // that cannot run, not for one that was killed five times.
             self?.feedRestartDelay = 1
             self?.feedRestartsLeft = AppDelegate.feedRestartLimit
-            self?.controller?.applyFeed(agents)
+            self?.controller?.applyFeed(agents, orchestrator: orchestrator)
         }
         feed.onAutonomy = { [weak self] autonomy in
             self?.currentAutonomy = autonomy

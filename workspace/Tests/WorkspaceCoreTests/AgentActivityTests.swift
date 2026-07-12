@@ -41,4 +41,76 @@ final class AgentActivityTests: XCTestCase {
         let pane = state.panes[ProjectState.paneID(forAgent: "alfie")]!
         XCTAssertEqual(FeedStatusMap.activity(for: pane.feedStatus), .unknown)
     }
+
+    // MARK: The orchestrator's dot
+
+    private func orchestratorPane(in state: ProjectState) -> PaneState {
+        state.panes[ProjectState.orchestratorPaneID]!
+    }
+
+    /// The bug this fix exists for: the pane was seeded with the invented word
+    /// "running", which is in no daemon vocabulary, so the dot degraded it to
+    /// unknown and the root — alive by definition — was gray forever. The seed
+    /// must now be an honest "unknown", and no status word may be fabricated.
+    func testOrchestratorIsSeededUnknownNotAFabricatedWord() {
+        let state = ProjectState(projectID: ProjectID("p"), displayName: "p")
+        state.addOrchestrator()
+        let pane = orchestratorPane(in: state)
+        XCTAssertEqual(pane.feedStatus, "unknown")
+        XCTAssertNotEqual(pane.feedStatus, "running")
+        // Honest, and honestly gray: nothing has been measured yet.
+        XCTAssertEqual(FeedStatusMap.activity(for: pane.feedStatus), .unknown)
+    }
+
+    /// A measured open turn: the root is working, and the dot goes green.
+    func testOrchestratorWorkingFromFeed() {
+        let state = ProjectState(projectID: ProjectID("p"), displayName: "p")
+        state.addOrchestrator()
+        state.apply(feed: [], orchestrator: OrchestratorSnapshot(status: "working"), now: 0)
+        XCTAssertEqual(FeedStatusMap.activity(for: orchestratorPane(in: state).feedStatus), .working)
+    }
+
+    /// A measured closed turn: the root is idle (yellow), which is a real state
+    /// and NOT the same as unknown (gray). That distinction is the whole point.
+    func testOrchestratorIdleFromFeed() {
+        let state = ProjectState(projectID: ProjectID("p"), displayName: "p")
+        state.addOrchestrator()
+        state.apply(feed: [], orchestrator: OrchestratorSnapshot(status: "idle"), now: 0)
+        let activity = FeedStatusMap.activity(for: orchestratorPane(in: state).feedStatus)
+        XCTAssertEqual(activity, .idle)
+        XCTAssertNotEqual(activity, .unknown)
+    }
+
+    /// The daemon omits the field when it cannot honestly say (no turn events,
+    /// or a self-contradicting record — the stale-hook case). The pane must fall
+    /// BACK to unknown rather than keep the last word it heard: a lost signal
+    /// must never become a confident stale claim.
+    func testOrchestratorRevertsToUnknownWhenTheFieldIsAbsent() {
+        let state = ProjectState(projectID: ProjectID("p"), displayName: "p")
+        state.addOrchestrator()
+        state.apply(feed: [], orchestrator: OrchestratorSnapshot(status: "working"), now: 0)
+        XCTAssertEqual(FeedStatusMap.activity(for: orchestratorPane(in: state).feedStatus), .working)
+
+        state.apply(feed: [], orchestrator: nil, now: 1)
+        XCTAssertEqual(FeedStatusMap.activity(for: orchestratorPane(in: state).feedStatus), .unknown)
+    }
+
+    /// A dead feed invalidates the root's status exactly as it does an agent's.
+    /// The pane used to be exempt, which was only ever right while its word was
+    /// a constant — a constant cannot go stale. A measured one can.
+    func testFeedLossTurnsTheOrchestratorDotUnknownToo() {
+        let state = ProjectState(projectID: ProjectID("p"), displayName: "p")
+        state.addOrchestrator()
+        state.apply(feed: [], orchestrator: OrchestratorSnapshot(status: "working"), now: 0)
+        state.markFeedLost()
+        XCTAssertEqual(FeedStatusMap.activity(for: orchestratorPane(in: state).feedStatus), .unknown)
+    }
+
+    /// Red means a measured human block, and the root can never be in one: it IS
+    /// the human's seat. No status the feed can carry for it may reach needsUser.
+    func testOrchestratorCanNeverRenderNeedsUser() {
+        for word in ["working", "idle", "unknown"] {
+            XCTAssertNotEqual(FeedStatusMap.activity(for: word), .needsUser)
+        }
+    }
 }
