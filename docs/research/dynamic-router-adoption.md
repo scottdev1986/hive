@@ -51,7 +51,7 @@ A pure predicate — eligibility with no list — does **not** reproduce it. Tod
 
 - **Eligibility**: it clears every machine-checkable gate.
 - **Capability**: unknown. `codingCapable` is absent, and absent means unknown, and unknown means **excluded**. The description is not evidence.
-- **Therefore it is not routable**, and it is not silently ignored either: it raises **one approval** (§6).
+- **Therefore it is not routable**, and it is not silently ignored either: it raises **one question to the user** (§6).
 - **Except in one case**, which is the only confident automatic placement I can defend: **the vendor makes it the account's effective default** (`config/read` for Codex; the menu's `default` entry for Claude). That is not an inference from a name — it is the vendor declaring *this is what you get when you ask for nothing*, and Hive's fallback ladder already trusts exactly that signal at rung 2. A new model that becomes the account's default may be adopted automatically **into the cells the previous default occupied**, like for like, and he is told after the fact.
 
 ## 5. Adopt automatically, or ask?
@@ -66,59 +66,52 @@ The rule that keeps the policy intact:
 
 Build on what exists: abel's quota work already quarantines auto-adoption on a provider whose model-scoped pool cannot be bound to a model. Same concept, same queue, same word — *auto-adoption is quarantined until a human clears it* — rather than a parallel mechanism.
 
-## 6. What the recommendation looks like
+## 6. What Hive asks him, and what it never decides
 
-Every fact carries its evidence class. They are never blended into one confident sentence, because the whole point is that they are not equally trustworthy.
+**Hive is not in the business of model judgment.** It does not score models, rank them, consult the internet, read benchmarks, or form an opinion about which model is better. It cannot do that job well, and every attempt would be a claim wearing a measurement's clothes — the exact failure this whole line of work exists to end.
+
+There are **two sources of truth, and no third**:
+
+1. **What the vendor declares**, read live off the surface. Facts. No judgment required to read them.
+2. **What the user decides.** He is the judge of models. Hive is not.
+
+So the whole of adoption is: **Hive detects the model, shows him what the vendor declares, and asks where it belongs. He answers once. Hive remembers it and routes on it forever** — no re-release, no manifest publish, no rebuild. The detection and the plumbing are Hive's; the judgment is his. That is fully dynamic, and Hive never grades anything.
 
 ```
-NEW MODEL DETECTED — gpt-5.7 (Codex).  Route it? [deep] [standard] [cheap] [review] [never]
+NEW MODEL DETECTED — gpt-5.7 (Codex), first seen 2026-07-13 09:14.
 
-VENDOR-DECLARED, measured on your account just now      ← may act alone; only ever to ADD above the floor
-  entitled            yes (present in your catalog)
+WHAT THE VENDOR DECLARES (read from your account just now):
+  entitled            yes — it is in your catalog
   hidden              no
   effort levels       low, medium, high, xhigh, max, ultra
-  metered separately  YES — the vendor gives it its own pool, i.e. it meters it as heavy
-  coding-capable      NOT DECLARED BY ANYONE. No vendor publishes this field.
+  metered separately  YES — the vendor gives it its own pool, so it meters it as heavy
+  vendor default      no  (your unflagged launch is still gpt-5.6-sol)
+  coding-capable      the vendor does not publish this. Nobody has said. That is why you are being asked.
 
-VENDOR'S OWN DOCS (openai.com)                          ← advisory. The vendor's marketing about its own product.
-  "Our most capable model for agentic coding."  [model card, retrieved 2026-07-12]
-
-BENCHMARKS                                              ← advisory. A claim with a provenance, not a measurement Hive made.
-  Terminal-Bench 2.1   83.4%   run by: <who>  retrieved: <when>  agentic: YES — CLI, long-horizon
-                       contamination: unknown — no held-out set published
-  SWE-bench Verified   95.0%   run by: <who>  retrieved: <when>  agentic: YES — multi-file repo patching
-  (LiveCodeBench and single-turn code-generation scores are EXCLUDED: they do not
-   measure what Hive does, and a high number on an irrelevant benchmark wins an
-   argument it should not be in.)
-
-YOUR OWN RESULTS ON YOUR OWN REPO                       ← ground truth. Beats everything above the moment it exists.
-  no history yet — this model has never run here.
+WHERE DOES IT BELONG?   [deep] [standard] [cheap] [review] [never] [not yet — ask me again later]
 ```
 
-As his telemetry accumulates, that last block moves to the top and the two advisory blocks shrink to a footnote. **The web is the cold-start prior; his own repo is the authority.**
+No score. No recommendation. No prose from Hive about whether the model is any good. The card is the vendor's facts and one question.
 
-## 7. The injection surface, and how it is closed
+**The one thing Hive may adopt without asking is a rank the VENDOR declares.** An alias like `best`, an `isDefault`, an explicit ordering, or the account's effective default (`config/read`; the menu's `default` entry) is *the vendor's judgment*, and passing it through is honest reporting rather than Hive opining. So when the vendor promotes a new model to be the account's default, Hive may take it into the cells the previous default occupied — like for like — and tell him after the fact. When the vendor declares nothing that places a model, **Hive asks. It does not guess, it does not score, and it does not consult the internet.**
 
-A fetched page that can move a route is a page that can *attack* a route — pointed straight at the thing that executes code in his repo. A stale constant cannot be written by an attacker; a blog post can.
+And because nothing in the routing path ever fetches a web page, **there is no prompt-injection surface here to defend.** A feature that cannot be attacked beats one that is defended.
 
-The paths, and the closures:
+## 7. What Hive may still report: what it saw, never what it thinks
 
-1. **Fetched text reaching an agent's acting context.** Closed by never putting fetched prose into a prompt that holds tools. The fetcher extracts into a **typed struct** (`{benchmark, score, ranAt, source, methodologyUrl}`) and everything that fails to parse is dropped, not summarized.
-2. **Fetched text reaching the user as persuasion.** Closed by rendering only typed fields — never model-authored prose *about* the page. Quoted vendor copy is shown as a quotation, attributed, and clearly marked class 2.
-3. **A page naming a model into existence.** Closed structurally, and this is the important one: **the routable set is always `discovery ∩ approved`.** A page cannot introduce a model his account cannot launch, because a model that is not in his live catalog is not a candidate no matter what any document says. Web evidence can only ever reorder a human's opinion about models he already has.
-4. **A page influencing a route without a human.** Closed by rule: **web evidence recommends; it never routes.** The only thing a fetch can produce is a row in an approvals queue.
-5. **Domain trust.** Class 2 is an allowlist of vendor domains. Class 3 carries the source domain visibly, and is assumed adversarial.
+Hive already records, per model, facts it observed on his own repo: launch outcome past the transport (the shadow log, keyed to the exact model), terminal status (`done` / `dead` / `failed`), `recoveryAttempts`, `stuck`, context burn, and quota consumption.
 
-## What Hive already measures, and the part it does not
+That is **measurement, not judgment** — Hive reporting what happened, not deciding what is good — so it is allowed. Two rules keep it that way, and they are not optional:
 
-**It already records, per model:** launch outcome past the transport (shadow log: `launched`/`failed` + reason, keyed to the exact model), terminal agent status (`done` / `dead` / `failed`), `recoveryAttempts`, `stuck`, context burn and usage units per event, and quota consumption per model. That is a real, private, ungameable signal about **reliability**, and no leaderboard can compete with it.
+- It is **shown to him**, never acted on. It must never silently re-rank his routing. Even here, he decides.
+- It is reported as **what happened**, not as a verdict: *"3 of 4 deep spawns on this model failed to launch"*, never *"this model is unreliable"*.
 
-**It does not record quality.** Nothing counts an escalation (established while grading the flip criteria — "escalation" is prompt wording, nothing increments a counter). Nothing records whether the work **landed**, whether it was **reverted**, whether review found defects in it, or whether a human had to redo it. So today's telemetry can tell you a model *crashed, hung, or needed rescuing* — it cannot tell you the model *was wrong*, which is the failure the user actually fears ("a cheap model that produces wrong work is not a saving; it costs him a whole task and he may not notice").
+**And be honest about what it does and does not measure.** These signals capture **reliability**, not **quality**. They can tell him a model crashed, hung, or needed rescuing. They cannot tell him the model produced **wrong code**, which is the failure he actually fears — *"a cheap model that produces wrong work is not a saving; it costs him a whole task and he may not notice."* Nothing counts an escalation; nothing records whether the work **landed**, was **reverted**, or was **redone**.
 
-**The missing signal is one join away.** `hive_land` already performs the merge and knows the agent; recording *landed / abandoned / reverted* per agent — and therefore per model — would turn the reliability signal into a **quality** signal, and it is the single highest-value telemetry Hive could add. It is the thing that would let his own repo out-rank every benchmark on the internet, which is where the authority belongs.
+That missing signal is one join away: `hive_land` already performs the merge and knows the agent, and therefore the model. Recording *landed / abandoned / reverted* per agent would turn reliability telemetry into quality telemetry. Not to be built now, and not to be designed out — but note that even then it stays a **report to him**, never an input that re-ranks his routes behind his back.
 
 ## Open, and I am not closing them by guessing
 
-- **Preference order has no derivation.** Eligibility is a predicate; ranking is a judgment. Until landed-work telemetry exists, the order is a human's, and pretending otherwise would be the same guess in a new place.
+- **Preference order has no derivation.** Eligibility is a predicate; ranking is a judgment, and the judgment is his. Where the vendor declares a rank, Hive passes it through; where it does not, Hive asks.
 - **Two floors exist and only one is implemented.** `codingCapable` ("can it code at all") is enforced. The user's standing floor — *nothing below `claude-opus-4-8` / `gpt-5.6-sol` does building work* — is not, and the Claude columns of `standard` and `cheap` currently sit beneath it.
 - **A vendor could make a model unrunnable in a way no surface reveals** (pool silently removed, model left in the catalog). Two of the three plausible shapes are handled; the third is undetectable, and the launch simply fails.
