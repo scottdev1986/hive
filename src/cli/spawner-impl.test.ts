@@ -3823,6 +3823,7 @@ describe("graph context in the spawn prompt", () => {
     expect(prompt).toContain("Graph context (graphify, advisory)");
     // Layer 2: one directive, present only because the tools are attached.
     expect(prompt).toContain("query_graph");
+    expect(prompt).toContain("before using grep, rg, or Glob");
     expect(prompt).toContain("never as authority");
   });
 

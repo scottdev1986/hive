@@ -576,7 +576,7 @@ export interface AgentPromptOptions {
 const GRAPHIFY_DIRECTIVE =
   "This repo serves a graphify knowledge graph over MCP (query_graph, get_node, " +
   "get_neighbors, graph_stats, shortest_path, …). When orienting in unfamiliar code, " +
-  "prefer one query_graph call over broad grep sweeps — and treat its answers as leads " +
+  "call query_graph once before using grep, rg, or Glob — and treat its answers as leads " +
   "to verify, never as authority.";
 
 export function buildAgentPrompt(

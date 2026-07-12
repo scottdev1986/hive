@@ -1,7 +1,8 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { Subprocess } from "bun";
 import { writeGraphifyState } from "../adapters/graphify";
 import { GraphifyService } from "./graphify-service";
 
@@ -30,6 +31,21 @@ async function gitRepo(): Promise<string> {
     stderr: "ignore",
   });
   return root;
+}
+
+async function installFakeMcp(): Promise<void> {
+  const bin = join(hiveHome, "tools", "graphify", "venv", "bin");
+  await mkdir(bin, { recursive: true });
+  const source = [
+    `#!${process.execPath}`,
+    "const flag = process.argv.indexOf('--port');",
+    "const server = Bun.serve({ hostname: '127.0.0.1', port: Number(process.argv[flag + 1]), fetch: () => new Response('', { status: 406 }) });",
+    "process.on('SIGTERM', () => { server.stop(true); process.exit(0); });",
+    "",
+  ].join("\n");
+  const path = join(bin, "graphify-mcp");
+  await writeFile(path, source);
+  await chmod(path, 0o755);
 }
 
 describe("GraphifyService", () => {
@@ -89,6 +105,40 @@ describe("GraphifyService", () => {
     const service = new GraphifyService(root);
     await service.stop();
     expect(service.serverUrl()).toBeNull();
+    await rm(root, { recursive: true, force: true });
+  });
+
+  test("rebuild keeps the advertised endpoint stable; a crash withdraws it", async () => {
+    const root = await gitRepo();
+    await installFakeMcp();
+    await writeGraphifyState(root, { enabled: true, pin: "0.9.12" });
+    await mkdir(join(root, "graphify-out"));
+    await writeFile(join(root, "graphify-out", "graph.json"), "{}");
+    const logged: string[] = [];
+    const service = new GraphifyService(
+      root,
+      async () => ({ exitCode: 0, stdout: "", stderr: "", timedOut: false }),
+      (line) => logged.push(line),
+    );
+
+    await service.start();
+    const firstUrl = service.serverUrl();
+    expect(firstUrl).not.toBeNull();
+    expect((await fetch(firstUrl as string)).status).toBe(406);
+
+    service.scheduleRebuild();
+    await (service as unknown as { rebuildChain: Promise<void> }).rebuildChain;
+    expect(service.serverUrl()).toBe(firstUrl);
+    expect((await fetch(firstUrl as string)).status).toBe(406);
+
+    const child = (service as unknown as { child: Subprocess }).child;
+    child.kill();
+    await child.exited;
+    await Bun.sleep(0);
+    expect(service.serverUrl()).toBeNull();
+    expect(logged.some((line) => line.includes("agents spawn without graph tools"))).toBe(true);
+
+    await service.stop();
     await rm(root, { recursive: true, force: true });
   });
 });

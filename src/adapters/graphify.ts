@@ -243,6 +243,13 @@ export async function installGraphify(
   if (probe.exitCode !== 0) {
     return { ok: false, reason: `installed graphify does not run: ${probe.stderr.trim()}` };
   }
+  const mcpProbe = await deps.run([graphifyMcpBin(), "--help"], {
+    env: scrubbedGraphifyEnv(),
+    timeoutMs: 30_000,
+  });
+  if (mcpProbe.exitCode !== 0) {
+    return { ok: false, reason: `installed graphify MCP server does not run: ${mcpProbe.stderr.trim()}` };
+  }
   return { ok: true, detail: `graphifyy==${graphifyPin()} (hash-verified) in ${tools}` };
 }
 

@@ -90,12 +90,16 @@ export class GraphifyService {
 
   async stop(): Promise<void> {
     const child = this.child;
+    const port = this.port;
     this.child = null;
-    this.port = null;
     if (child !== null) {
       child.kill();
       await child.exited;
     }
+    // Keep the repo's endpoint stable across a rebuild. Agent MCP configs are
+    // fixed at spawn time; choosing a fresh port here strands every live agent
+    // on the old URL even when the replacement server is healthy.
+    this.port = port;
   }
 
   /** Called after every successful landing. Fire-and-forget by design: the
@@ -127,7 +131,7 @@ export class GraphifyService {
   }
 
   private async startServer(): Promise<void> {
-    const port = await freeLoopbackPort();
+    const port = this.port ?? await freeLoopbackPort();
     const child = Bun.spawn(
       [
         graphifyMcpBin(),
@@ -148,6 +152,12 @@ export class GraphifyService {
         stderr: "ignore",
       },
     );
+    // Hold the process before waiting for readiness. The URL remains hidden
+    // because port is not published until the probe succeeds, while an exit
+    // between the successful probe and publication can now clear this handle
+    // instead of leaving a dead child advertised.
+    this.child = child;
+    this.port = null;
     // An early exit (bad graph, stolen port) must not leave a corpse handle
     // that serverUrl() advertises forever.
     void child.exited.then(() => {
@@ -169,7 +179,7 @@ export class GraphifyService {
           method: "GET",
           signal: AbortSignal.timeout(1_000),
         });
-        this.child = child;
+        if (this.child !== child || child.exitCode !== null) break;
         this.port = port;
         this.lastError = null;
         this.log(`graphify: MCP server serving ${graphJsonPath(this.repoRoot)} on 127.0.0.1:${port}`);
@@ -178,6 +188,7 @@ export class GraphifyService {
         await Bun.sleep(250);
       }
     }
+    if (this.child === child) this.child = null;
     child.kill();
     this.lastError = "graphify MCP server never became ready";
     this.log(`graphify: ${this.lastError} — agents run without graph tools`);

@@ -206,8 +206,10 @@ describe("installGraphify", () => {
       },
     });
     expect(result.ok).toBe(true);
-    expect(calls.length).toBe(3);
-    const [venv, install, probe] = calls as [string[], string[], string[]];
+    expect(calls.length).toBe(4);
+    const [venv, install, probe, mcpProbe] = calls as [
+      string[], string[], string[], string[],
+    ];
     expect(venv.slice(0, 2)).toEqual(["/fake/uv", "venv"]);
     expect(install).toContain("--require-hashes");
     expect(install[0]).toBe("/fake/uv");
@@ -215,6 +217,9 @@ describe("installGraphify", () => {
     expect(await readFile(lockPath, "utf8")).toBe(graphifyLock);
     // The probe runs the venv binary by absolute path, never a PATH lookup.
     expect(probe[0]).toContain(join("tools", "graphify", "venv", "bin", "graphify"));
+    expect(mcpProbe[0]).toContain(
+      join("tools", "graphify", "venv", "bin", "graphify-mcp"),
+    );
   });
 });
 
