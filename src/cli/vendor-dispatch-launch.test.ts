@@ -92,6 +92,14 @@ test("no tmux launch command is built for an unknown vendor", () => {
     command = buildOrchestratorLaunchCommand(UNKNOWN_TOOL, 4317, "/repo");
   }).toThrow(/unknown vendor "grok"/);
   expect(command).toBeNull();
+
+  // Honest about what this proves. Both arms of buildOrchestratorLaunchCommand
+  // delegate to buildOrchestratorCommand, which already throws — so restoring
+  // the codex fallthrough at THIS site leaves this test passing, on a throw
+  // raised one frame deeper. Measured, not assumed: the mutation survives. The
+  // property asserted (no argv escapes for a vendor Hive cannot launch) is
+  // real and holds; this site's own switch earns its place as a compile error,
+  // not as a second runtime guard, and it is not claimed to be more.
 });
 
 test("launching an unknown vendor's orchestrator spawns nothing and touches no tmux session", async () => {
