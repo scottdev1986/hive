@@ -18,7 +18,12 @@ import {
   findLatestCodexSessionId,
   writeCodexAgentConfig,
 } from "../adapters/tools/codex";
-import { ORCHESTRATOR_NAME, type AgentRecord, type HiveConfig } from "../schemas";
+import {
+  ORCHESTRATOR_NAME,
+  unknownVendor,
+  type AgentRecord,
+  type HiveConfig,
+} from "../schemas";
 import type { HiveDatabase } from "./db";
 import { readCodexTelemetry } from "./tool-telemetry";
 
@@ -293,10 +298,21 @@ export class CrashRecovery {
     if (agent.worktreePath === null || !this.worktreeExists(agent.worktreePath)) {
       return this.markDead(agent, "worktree is missing; session not resumable");
     }
-    const sessionId = agent.toolSessionId ??
-      await (agent.tool === "claude" ? this.resolveClaude : this.resolveCodex)(
-        agent.worktreePath,
-      ).catch(() => null);
+    let sessionId: string | null;
+    try {
+      // `.catch` turns a failed *lookup* into "no session"; the surrounding
+      // try is for the vendor itself being unknown, which is not the same
+      // thing and must not be reported as a missing session.
+      sessionId = agent.toolSessionId ??
+        await this.resolveSession(agent.tool, agent.worktreePath).catch(() =>
+          null
+        );
+    } catch (error) {
+      return this.markDead(
+        agent,
+        error instanceof Error ? error.message : "unknown error",
+      );
+    }
     if (sessionId === null) {
       return this.markDead(
         agent,
@@ -304,6 +320,31 @@ export class CrashRecovery {
       );
     }
     return this.resume(agent, sessionId);
+  }
+
+  /**
+   * The vendor's session resolver. Exhaustive: a new vendor is a compile error
+   * here, and one that slipped past the types throws rather than hunting a
+   * Codex rollout in a worktree that never held one — which would resolve
+   * nothing, or worse, a stale predecessor's id.
+   *
+   * Deliberately not `async`: the caller's `.catch(() => null)` is there to
+   * turn a failed *lookup* into "no session", and an unknown vendor is not a
+   * failed lookup. A rejected promise would be swallowed into a markDead that
+   * blames the worktree and never names the vendor.
+   */
+  private resolveSession(
+    tool: AgentRecord["tool"],
+    worktreePath: string,
+  ): Promise<string | null> {
+    switch (tool) {
+      case "claude":
+        return this.resolveClaude(worktreePath);
+      case "codex":
+        return this.resolveCodex(worktreePath);
+      default:
+        return unknownVendor(tool, "crash recovery session resolver");
+    }
   }
 
   private async resume(
@@ -336,39 +377,38 @@ export class CrashRecovery {
     // would silently stall on the first prompt.
     const dangerous = this.deps.autonomy?.() === "dangerous";
     try {
-      if (record.tool === "claude") {
-        // Re-seed rather than assume: the operator's ~/.claude.json may have
-        // been reset between the crash and the resume, and an unattended
-        // resume that meets the trust dialog stalls exactly like a spawn.
-        // Best-effort because the existing file usually already records
-        // trust — but never silently: a failed seed is the prime suspect
-        // when a resume stalls.
-        await this.seedClaudeTrust(worktreePath).catch((error: unknown) => {
-          console.error(
-            `Hive could not re-seed worktree trust for ${record.name}: ${
-              error instanceof Error ? error.message : "unknown error"
-            }`,
-          );
-        });
-        // The config write must succeed or the resume must fail: the spawn-time
-        // config carries a daemon port this restarted daemon may no longer
-        // hold, and an agent whose hooks post to a dead port can never prove
-        // life. A throw here lands in the launch-failure catch below.
-        await this.writeClaudeConfig(worktreePath, {
-          daemonPort: this.deps.port,
-          name: record.name,
-          readOnly: false,
-          dangerous,
-        });
-      } else {
-        await this.writeCodexConfig(worktreePath, {
-          daemonPort: this.deps.port,
-          name: record.name,
-          readOnly: false,
-        });
-      }
-      const argv = record.tool === "claude"
-        ? buildClaudeResumeCommand({
+      // One switch decides both the config the resume writes and the argv it
+      // launches: a vendor with no arm gets neither, and the throw lands in
+      // the launch-failure catch below naming it. Splitting the two would let
+      // a future vendor write one harness's config and launch the other's CLI.
+      let argv: string[];
+      switch (record.tool) {
+        case "claude": {
+          // Re-seed rather than assume: the operator's ~/.claude.json may have
+          // been reset between the crash and the resume, and an unattended
+          // resume that meets the trust dialog stalls exactly like a spawn.
+          // Best-effort because the existing file usually already records
+          // trust — but never silently: a failed seed is the prime suspect
+          // when a resume stalls.
+          await this.seedClaudeTrust(worktreePath).catch((error: unknown) => {
+            console.error(
+              `Hive could not re-seed worktree trust for ${record.name}: ${
+                error instanceof Error ? error.message : "unknown error"
+              }`,
+            );
+          });
+          // The config write must succeed or the resume must fail: the
+          // spawn-time config carries a daemon port this restarted daemon may
+          // no longer hold, and an agent whose hooks post to a dead port can
+          // never prove life. A throw here lands in the launch-failure catch
+          // below.
+          await this.writeClaudeConfig(worktreePath, {
+            daemonPort: this.deps.port,
+            name: record.name,
+            readOnly: false,
+            dangerous,
+          });
+          argv = buildClaudeResumeCommand({
             daemonPort: this.deps.port,
             model,
             ...(identity?.tool === "claude" && identity.effort !== undefined
@@ -379,8 +419,16 @@ export class CrashRecovery {
             dangerous,
             worktreePath,
             executable: this.claudeExecutable,
-          }, sessionId)
-        : buildCodexResumeCommand({
+          }, sessionId);
+          break;
+        }
+        case "codex": {
+          await this.writeCodexConfig(worktreePath, {
+            daemonPort: this.deps.port,
+            name: record.name,
+            readOnly: false,
+          });
+          argv = buildCodexResumeCommand({
             daemonPort: this.deps.port,
             effort: identity?.tool === "codex" ? identity.effort : "medium",
             model,
@@ -389,6 +437,11 @@ export class CrashRecovery {
             dangerous,
             worktreePath,
           }, sessionId);
+          break;
+        }
+        default:
+          unknownVendor(record.tool, "crash recovery resume");
+      }
       await this.deps.tmux.newSession(
         record.tmuxSession,
         worktreePath,

@@ -30,6 +30,38 @@ import { z } from "zod";
 export const CapabilityProviderSchema = z.enum(["claude", "codex"]);
 export type CapabilityProvider = z.infer<typeof CapabilityProviderSchema>;
 
+/** Every vendor Hive knows, as a value: a record that must cover all of them is
+ * built from this list rather than from a hardcoded pair. */
+export const CAPABILITY_PROVIDERS = CapabilityProviderSchema.options;
+
+/**
+ * A vendor Hive has no branch for. Every vendor dispatch ends in a `default`
+ * that calls this: the `never` parameter turns a new vendor into a compile
+ * error at each such site, and the throw turns a value that slipped past the
+ * types into a loud failure rather than a plausible codex answer — the wrong
+ * transcript parsed, the wrong resume flags, the wrong quota pool.
+ */
+export function unknownVendor(vendor: never, site: string): never {
+  throw new Error(
+    `${site}: unknown vendor ${JSON.stringify(vendor)}; Hive knows ${
+      CAPABILITY_PROVIDERS.join(" and ")
+    }`,
+  );
+}
+
+/** Read something per vendor, for every vendor. Returns a total record, so a
+ * new vendor is discovered rather than silently absent. */
+export async function forEachProvider<T>(
+  read: (provider: CapabilityProvider) => Promise<T>,
+): Promise<Record<CapabilityProvider, T>> {
+  const entries = await Promise.all(
+    CAPABILITY_PROVIDERS.map(async (provider) =>
+      [provider, await read(provider)] as const
+    ),
+  );
+  return Object.fromEntries(entries) as Record<CapabilityProvider, T>;
+}
+
 /**
  * The exact surface a fact was read from. Provenance is per field, not per
  * record, because one record is assembled from more than one read and the two

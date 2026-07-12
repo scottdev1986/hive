@@ -2,6 +2,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 import {
+  CAPABILITY_PROVIDERS,
   discovered,
   known,
   unknown,
@@ -104,6 +105,21 @@ export interface AccountBilling {
 export type AccountBillings = Partial<
   Record<CapabilityProvider, AccountBilling>
 >;
+
+/** The vendors whose billing actually read back. A vendor that answered null is
+ * omitted — absent means unknown here, and the derivation reads it as such —
+ * but the caller supplies a slot for every known vendor, so "unknown" is a
+ * measured null and never a vendor nobody remembered to ask. */
+export function knownBillings(
+  read: Record<CapabilityProvider, AccountBilling | null>,
+): AccountBillings {
+  const billings: AccountBillings = {};
+  for (const provider of CAPABILITY_PROVIDERS) {
+    const billing = read[provider];
+    if (billing !== null) billings[provider] = billing;
+  }
+  return billings;
+}
 
 /**
  * Read the billing facts out of one `get_usage` response.

@@ -48,6 +48,7 @@ import {
   QuotaObservationSchema,
   StatuslineReportSchema,
   TerminalHandleSchema,
+  unknownVendor,
   type AgentRecord,
   type HookEvent,
   type MemoryFact,
@@ -1039,22 +1040,35 @@ export class HiveDaemon {
       if (worktree === null || worktree === undefined) continue;
       let telemetry: ToolTelemetry | null = null;
       let claudeContext: number | null = null;
-      try {
-        if (agent.tool === "claude") {
-          claudeContext = (await this
-            .readClaudeTelemetry(worktree, agent.toolSessionId)).contextTokens;
-        } else {
-          telemetry = await this.readCodexTelemetry(worktree);
-        }
-      } catch {
-        continue;
+      // The vendor switch sits outside the read's catch: a failed read is
+      // routine and skips the agent, but a vendor with no reader is a bug that
+      // must be heard — swallowing it would report this agent's context off
+      // Codex's rollout parser and call the wrong number telemetry.
+      switch (agent.tool) {
+        case "claude":
+          try {
+            claudeContext = (await this
+              .readClaudeTelemetry(worktree, agent.toolSessionId)).contextTokens;
+          } catch {
+            continue;
+          }
+          break;
+        case "codex":
+          try {
+            telemetry = await this.readCodexTelemetry(worktree);
+          } catch {
+            continue;
+          }
+          break;
+        default:
+          unknownVendor(agent.tool, "refreshToolTelemetry");
       }
       // Layer-3 graphify adoption count, off the same artifacts. Only when
       // this daemon has a graphify service at all; a failed read keeps the
       // previous cursor rather than inventing a zero.
       if (this.graphify !== undefined) {
         const cursor = await readGraphifyCalls(
-          agent.tool === "claude" ? "claude" : "codex",
+          agent.tool,
           worktree,
           agent.toolSessionId,
           this.graphifyCalls.get(agent.id),

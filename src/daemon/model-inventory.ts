@@ -14,7 +14,9 @@ import type {
 } from "../schemas";
 import {
   deriveRouting,
+  forEachProvider,
   RoutingSnapshotSchema,
+  unknownVendor,
 } from "../schemas";
 import {
   ClaudeCapabilityProbe,
@@ -22,6 +24,7 @@ import {
   type CapabilityDiscoveryResult,
 } from "./capability-discovery";
 import {
+  knownBillings,
   poolAvailability,
   readBillingWithMemory,
   spendRisk,
@@ -128,23 +131,29 @@ export async function readModelInventory(
   options: ModelInventoryReaderOptions = {},
 ): Promise<ModelInventory> {
   const now = options.now?.() ?? new Date();
-  const discover = options.discover ?? (async (provider) =>
-    provider === "claude"
-      ? await new ClaudeCapabilityProbe().read()
-      : await new CodexCapabilityProbe().read());
+  // Each vendor is probed by its own probe. A vendor with no probe throws here
+  // rather than being read through Codex's, which would answer with Codex's
+  // models under the new vendor's name.
+  const discover = options.discover ?? (async (provider) => {
+    switch (provider) {
+      case "claude":
+        return await new ClaudeCapabilityProbe().read();
+      case "codex":
+        return await new CodexCapabilityProbe().read();
+      default:
+        return unknownVendor(provider, "model inventory probe");
+    }
+  });
   const readBilling = options.readBilling ?? readBillingWithMemory;
   const config = await loadHiveConfig();
-  const [pins, floors, snapshot, claude, codex, claudeBilling, codexBilling] =
-    await Promise.all([
-      loadRoutingPins(),
-      loadRoutingFloors(),
-      readSnapshot(),
-      discover("claude"),
-      discover("codex"),
-      readBilling("claude"),
-      readBilling("codex"),
-    ]);
-  const discovery = { claude, codex };
+  // Every vendor Hive knows is probed and billed, not a hardcoded pair.
+  const [pins, floors, snapshot, discovery, billings] = await Promise.all([
+    loadRoutingPins(),
+    loadRoutingFloors(),
+    readSnapshot(),
+    forEachProvider((provider) => discover(provider)),
+    forEachProvider((provider) => readBilling(provider)),
+  ]);
   const benchmarkCatalog = await (
     options.readBenchmarks?.(config.benchmarks.mode, discovery) ??
       readBenchmarkCatalog({
@@ -153,10 +162,7 @@ export async function readModelInventory(
         sources: configuredBenchmarkSources(),
       })
   );
-  const billing: AccountBillings = {
-    ...(claudeBilling === null ? {} : { claude: claudeBilling }),
-    ...(codexBilling === null ? {} : { codex: codexBilling }),
-  };
+  const billing: AccountBillings = knownBillings(billings);
   const routing = deriveRouting({
     discovery,
     pins,

@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { loadRoutingFloors, loadRoutingPins } from "../config/load";
 import {
   deriveRouting,
+  forEachProvider,
   RoutingSnapshotSchema,
   type CapabilityProvider,
   type DerivedCell,
@@ -12,7 +13,7 @@ import {
 } from "../schemas";
 import type { CapabilityDiscoveryResult } from "./capability-discovery";
 import type { BenchmarkCatalog } from "./benchmarks";
-import type { AccountBilling } from "./usage-credits";
+import { knownBillings, type AccountBilling } from "./usage-credits";
 
 /**
  * What governs a spawn: the derivation engine, and nothing else.
@@ -93,21 +94,20 @@ export async function resolveGoverningRoute(
   io: RoutingIo,
 ): Promise<GoverningRoute | null> {
   const now = io.now?.() ?? new Date();
-  const [pins, floors, snapshot, claude, codex, claudeBilling, codexBilling] =
-    await Promise.all([
-      loadRoutingPins(),
-      loadRoutingFloors(),
-      readSnapshot(),
-      io.discover("claude"),
-      io.discover("codex"),
-      io.readBilling("claude"),
-      io.readBilling("codex"),
-    ]);
+  // Probed and billed per vendor, for every vendor Hive knows — not for a
+  // hardcoded pair. A vendor added to the union is discovered and billed here
+  // without an edit, so it can never route off an absent probe or land in no
+  // quota pool at all.
+  const [pins, floors, snapshot, discovery, billings] = await Promise.all([
+    loadRoutingPins(),
+    loadRoutingFloors(),
+    readSnapshot(),
+    forEachProvider(async (provider): Promise<ProviderDiscovery> =>
+      (await io.discover(provider)) ?? unprobed("no discoverer is installed")
+    ),
+    forEachProvider((provider) => io.readBilling(provider)),
+  ]);
 
-  const discovery = {
-    claude: (claude ?? unprobed("no discoverer is installed")) as ProviderDiscovery,
-    codex: (codex ?? unprobed("no discoverer is installed")) as ProviderDiscovery,
-  };
   // The catalog read never blocks a route: a source failure surfaces as an
   // unavailable catalog with no rows, and the fit policy is simply inert.
   const benchmarks = io.readBenchmarks === undefined
@@ -119,10 +119,7 @@ export async function resolveGoverningRoute(
     floors,
     snapshot,
     ...(benchmarks === undefined ? {} : { benchmarks: benchmarks.models }),
-    billing: {
-      ...(claudeBilling === null ? {} : { claude: claudeBilling }),
-      ...(codexBilling === null ? {} : { codex: codexBilling }),
-    },
+    billing: knownBillings(billings),
     now,
   });
 

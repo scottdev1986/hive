@@ -2,6 +2,7 @@ import { open, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { claudeProjectDirectory } from "../adapters/tools/claude";
 import { findLatestCodexRollout } from "../adapters/tools/codex";
+import { type CapabilityProvider, unknownVendor } from "../schemas/capability";
 
 /**
  * Context and activity read from each tool's durable artifacts (SPEC
@@ -235,37 +236,55 @@ export interface GraphifyCallCursor {
  * artifacts of the pinned versions). */
 export function countGraphifyCallLines(
   slice: string,
-  tool: "claude" | "codex",
+  tool: CapabilityProvider,
 ): number {
+  // The vendor is resolved before the scan, not per line: an unknown vendor
+  // must fail on an empty slice too, or it reports a plausible zero.
+  switch (tool) {
+    case "claude":
+      return countClaudeGraphifyCalls(slice);
+    case "codex":
+      return countCodexGraphifyCalls(slice);
+    default:
+      return unknownVendor(tool, "countGraphifyCallLines");
+  }
+}
+
+function countClaudeGraphifyCalls(slice: string): number {
   let count = 0;
   for (const entry of parseJsonLines(slice)) {
     if (!isRecord(entry)) continue;
-    if (tool === "claude") {
-      if (entry.type !== "assistant" || entry.isSidechain === true) continue;
-      if (!isRecord(entry.message) || !Array.isArray(entry.message.content)) {
-        continue;
-      }
-      for (const item of entry.message.content) {
-        if (
-          isRecord(item) && item.type === "tool_use" &&
-          typeof item.name === "string" &&
-          // graph_locate is graph usage that rides Hive's own server, so the
-          // adoption count must see it or the rollout metric undercounts.
-          (item.name.startsWith("mcp__graphify__") ||
-            item.name === "mcp__hive__graph_locate")
-        ) count++;
-      }
-    } else {
-      if (!isRecord(entry.payload)) continue;
-      const payload = entry.payload;
-      if (payload.type !== "mcp_tool_call_end") continue;
+    if (entry.type !== "assistant" || entry.isSidechain === true) continue;
+    if (!isRecord(entry.message) || !Array.isArray(entry.message.content)) {
+      continue;
+    }
+    for (const item of entry.message.content) {
       if (
-        isRecord(payload.invocation) &&
-        (payload.invocation.server === "graphify" ||
-          (payload.invocation.server === "hive" &&
-            payload.invocation.tool === "graph_locate"))
+        isRecord(item) && item.type === "tool_use" &&
+        typeof item.name === "string" &&
+        // graph_locate is graph usage that rides Hive's own server, so the
+        // adoption count must see it or the rollout metric undercounts.
+        (item.name.startsWith("mcp__graphify__") ||
+          item.name === "mcp__hive__graph_locate")
       ) count++;
     }
+  }
+  return count;
+}
+
+function countCodexGraphifyCalls(slice: string): number {
+  let count = 0;
+  for (const entry of parseJsonLines(slice)) {
+    if (!isRecord(entry)) continue;
+    if (!isRecord(entry.payload)) continue;
+    const payload = entry.payload;
+    if (payload.type !== "mcp_tool_call_end") continue;
+    if (
+      isRecord(payload.invocation) &&
+      (payload.invocation.server === "graphify" ||
+        (payload.invocation.server === "hive" &&
+          payload.invocation.tool === "graph_locate"))
+    ) count++;
   }
   return count;
 }
@@ -280,25 +299,32 @@ export function countGraphifyCallLines(
  * to read at all — unknown, not zero.
  */
 export async function readGraphifyCalls(
-  tool: "claude" | "codex",
+  tool: CapabilityProvider,
   worktreePath: string,
   toolSessionId: string | undefined,
   cursor: GraphifyCallCursor | undefined,
   home?: string,
 ): Promise<GraphifyCallCursor | null> {
   let path: string;
-  if (tool === "claude") {
-    if (toolSessionId === undefined) return null;
-    const directory = home === undefined
-      ? claudeProjectDirectory(worktreePath)
-      : claudeProjectDirectory(worktreePath, home);
-    path = join(directory, `${toolSessionId}.jsonl`);
-  } else {
-    const rollout = home === undefined
-      ? await findLatestCodexRollout(worktreePath)
-      : await findLatestCodexRollout(worktreePath, home);
-    if (rollout === null) return cursor ?? null;
-    path = rollout.path;
+  switch (tool) {
+    case "claude": {
+      if (toolSessionId === undefined) return null;
+      const directory = home === undefined
+        ? claudeProjectDirectory(worktreePath)
+        : claudeProjectDirectory(worktreePath, home);
+      path = join(directory, `${toolSessionId}.jsonl`);
+      break;
+    }
+    case "codex": {
+      const rollout = home === undefined
+        ? await findLatestCodexRollout(worktreePath)
+        : await findLatestCodexRollout(worktreePath, home);
+      if (rollout === null) return cursor ?? null;
+      path = rollout.path;
+      break;
+    }
+    default:
+      return unknownVendor(tool, "readGraphifyCalls");
   }
 
   const base = cursor !== undefined && cursor.path === path
