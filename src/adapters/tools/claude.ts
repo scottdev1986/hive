@@ -34,6 +34,10 @@ export interface ClaudeSpawnOptions {
    * flag raises a warning dialog nothing can pre-accept, so spawned agents
    * leave this off and take tmux delivery instead. */
   channels?: boolean;
+  /** The per-repo graphify MCP server, when the daemon has one up and healthy
+   * (docs/architecture/graphify-integration.md). Absent means no entry at all:
+   * a dead URL in the config would cost every agent a connect-timeout. */
+  graphifyUrl?: string;
   /** Absolute path selected by the daemon. tmux servers can outlive the
    * daemon and retain a different PATH, so production launches must not ask
    * the pane to resolve `claude` again. */
@@ -53,7 +57,7 @@ export interface ClaudeSpawnOptions {
 
 export type ClaudeAgentConfigOptions = Pick<
   ClaudeSpawnOptions,
-  "name" | "daemonPort" | "readOnly" | "dangerous" | "channels"
+  "name" | "daemonPort" | "readOnly" | "dangerous" | "channels" | "graphifyUrl"
 >;
 
 // The .mcp.json name of the stdio bridge Claude Code spawns as a subprocess.
@@ -545,11 +549,30 @@ export async function writeClaudeAgentConfig(
             },
           }
         : {}),
+      // The repo's local knowledge graph, read-only and loopback-only. Only
+      // written when the daemon's server was healthy at spawn time.
+      ...(options.graphifyUrl === undefined
+        ? {}
+        : {
+            graphify: {
+              type: "http",
+              url: options.graphifyUrl,
+            },
+          }),
     },
   };
 
   const mergedSettings = deepMerge(existingSettings, settings);
   const mergedMcp = deepMerge(existingMcp, mcp);
+  // A respawn merges over the previous spawn's file, so a graphify entry from
+  // a daemon that is no longer serving would survive as a dead URL every
+  // agent pays a connect-timeout for. No URL now means no entry, period.
+  if (
+    options.graphifyUrl === undefined &&
+    isRecord(mergedMcp.mcpServers)
+  ) {
+    delete mergedMcp.mcpServers.graphify;
+  }
 
   await Promise.all([
     writeFile(

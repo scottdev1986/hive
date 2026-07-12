@@ -9,6 +9,7 @@ import {
 } from "../config/load";
 import { HiveDatabase } from "../daemon/db";
 import { BunTmuxSender } from "../daemon/delivery";
+import { GraphifyService } from "../daemon/graphify-service";
 import { TerminalLayoutManager } from "../daemon/layout";
 import { readConfiguredPort } from "../daemon/lifecycle";
 import { HiveDaemon } from "../daemon/server";
@@ -79,10 +80,17 @@ export async function runDaemon(): Promise<void> {
     observeRateLimits: (model, response, observedAt) =>
       quota.observeCodexRateLimits(model, response, observedAt),
   });
+  // The per-repo graphify MCP server (docs/architecture/graphify-integration.md).
+  // Constructed unconditionally — start() reads the repo's opt-in state and is
+  // a no-op for the repos that never enabled it.
+  const graphify = new GraphifyService(repoRoot);
   const spawner = new HiveSpawner({
     db,
     repoRoot,
     port,
+    // Synchronous read of the live server; null attaches nothing and costs
+    // the spawn nothing.
+    graphifyUrl: () => graphify.serverUrl(),
     // Only the daemon mints. The spawner asks for a credential, it never
     // creates one, and the token is written to a 0600 file rather than handed
     // to the agent process through its environment.
@@ -140,6 +148,7 @@ export async function runDaemon(): Promise<void> {
     // Crash-recovered agents get their viewers reopened unless headless.
     ...(config.headless ? {} : { terminal }),
     repoRoot,
+    graphify,
     port,
     manageLifecycle: true,
     layout,

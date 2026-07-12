@@ -426,6 +426,35 @@ describe("Claude adapter", () => {
     });
   });
 
+  test("a graphify URL becomes an http entry; its absence removes a stale one", async () => {
+    await writeClaudeAgentConfig(worktreePath, {
+      name: "maya",
+      daemonPort: 4317,
+      readOnly: false,
+      graphifyUrl: "http://127.0.0.1:7799/mcp",
+    });
+    const withGraph = JSON.parse(
+      await readFile(join(worktreePath, ".mcp.json"), "utf8"),
+    ) as { mcpServers: Record<string, { type: string; url: string }> };
+    expect(withGraph.mcpServers.graphify).toEqual({
+      type: "http",
+      url: "http://127.0.0.1:7799/mcp",
+    });
+
+    // A respawn under a daemon with no healthy server must not leave the old
+    // URL behind: every agent would pay a connect-timeout for a dead entry.
+    await writeClaudeAgentConfig(worktreePath, {
+      name: "maya",
+      daemonPort: 4317,
+      readOnly: false,
+    });
+    const without = JSON.parse(
+      await readFile(join(worktreePath, ".mcp.json"), "utf8"),
+    ) as { mcpServers: Record<string, unknown> };
+    expect(without.mcpServers.graphify).toBeUndefined();
+    expect(without.mcpServers.hive).toBeDefined();
+  });
+
   test("deep-merges settings.local.json and .mcp.json without touching settings.json", async () => {
     const claudeDirectory = join(worktreePath, ".claude");
     await mkdir(claudeDirectory, { recursive: true });

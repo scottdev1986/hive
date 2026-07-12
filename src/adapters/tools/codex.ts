@@ -11,7 +11,7 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import type { CodexRoute } from "../../schemas";
-import { buildCodexMcpExclusionArgs } from "./mcp-scope";
+import { buildCodexMcpExclusionArgs, HIVE_MCP_SERVERS } from "./mcp-scope";
 
 export interface CodexSpawnOptions {
   name: string;
@@ -37,6 +37,10 @@ export interface CodexSpawnOptions {
    * shows unexpanded. Never emitted without a token: codex 0.144.1 silently
    * disables an MCP server whose bearer_token_env_var is unset. */
   withCapabilityToken?: boolean;
+  /** The per-repo graphify MCP server, when the daemon has one up and healthy
+   * (docs/architecture/graphify-integration.md). Attached through the same
+   * config-override channel as `hive`; absent means no entry at all. */
+  graphifyUrl?: string;
 }
 
 export type CodexAgentConfigOptions = Pick<
@@ -165,9 +169,21 @@ function buildCodexConfigArgs(
         `mcp_servers.hive.bearer_token_env_var=${tomlString(CODEX_CAPABILITY_TOKEN_ENV)}`,
       ]
       : []),
+    ...(options.graphifyUrl === undefined ? [] : [
+      "-c",
+      `mcp_servers.graphify.url=${tomlString(options.graphifyUrl)}`,
+    ]),
     // Detach the human's own servers from this agent. Same override channel as
-    // hooks and trust, so spawn and resume stay one shape.
-    ...buildCodexMcpExclusionArgs(options.excludeMcpServers ?? []).args,
+    // hooks and trust, so spawn and resume stay one shape. When Hive attaches
+    // graphify, "graphify" joins the keep-set: otherwise a user's inherited
+    // server of the same name would be disabled by the very exclusion pass
+    // whose url override we just claimed.
+    ...buildCodexMcpExclusionArgs(
+      options.excludeMcpServers ?? [],
+      options.graphifyUrl === undefined
+        ? HIVE_MCP_SERVERS
+        : [...HIVE_MCP_SERVERS, "graphify"],
+    ).args,
   );
 
   return args;

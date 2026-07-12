@@ -272,6 +272,29 @@ export async function buildGraph(
   return { ok: true, detail: summary?.[1] ?? "graph written" };
 }
 
+/** Incremental re-extraction after HEAD moved (`graphify update`: code files
+ * only, no LLM, per the pinned CLI). `--force` because landings legitimately
+ * delete code and a shrinking graph must still apply; the caller only reloads
+ * the server on exit 0, so a failed update leaves the old graph serving. */
+export async function updateGraph(
+  root: string,
+  run: CommandRunner = runCommand,
+): Promise<GraphifyOutcome> {
+  const result = await run(
+    [graphifyBin(), "update", root, "--force"],
+    { cwd: root, env: scrubbedGraphifyEnv(), timeoutMs: 900_000 },
+  );
+  if (result.exitCode !== 0) {
+    return {
+      ok: false,
+      reason: result.timedOut
+        ? "graphify update timed out after 15 minutes"
+        : `graphify update failed: ${result.stderr.trim().slice(-2000)}`,
+    };
+  }
+  return { ok: true, detail: "graph updated" };
+}
+
 // ---------------------------------------------------------------------------
 // Ignore hygiene: `.git/info/exclude`, verified, never `.gitignore`.
 // ---------------------------------------------------------------------------

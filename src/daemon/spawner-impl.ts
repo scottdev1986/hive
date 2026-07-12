@@ -298,6 +298,14 @@ export interface HiveSpawnerDependencies {
    * Absent, spawning is bit-identical; nothing below branches on it.
    */
   recordShadowRoute?: (spawn: ShadowSpawn) => Promise<unknown>;
+  /**
+   * The per-repo graphify MCP server's URL, or null when there is nothing
+   * healthy to attach (docs/architecture/graphify-integration.md). Read
+   * synchronously at spawn time and never awaited: a broken graph means the
+   * agent spawns without graph tools, noted, never a slower or failed spawn.
+   * Absent (tests, unwired embedders), spawning is bit-identical.
+   */
+  graphifyUrl?: () => string | null;
   /** Test seam for the daemon-resolved Claude binary. */
   claudeExecutable?: string;
   /** Reads the process table for the readiness probe's process-tree check.
@@ -1768,6 +1776,8 @@ export class HiveSpawner implements Spawner {
     );
     try {
       await provisionSkills(worktree.path, tool);
+      // Read once so config and argv agree; null attaches nothing anywhere.
+      const graphifyUrl = this.dependencies.graphifyUrl?.() ?? null;
       if (tool === "claude") {
         // Before the config, because an untrusted workspace makes the CLI
         // discard the hooks and permissions we are about to write.
@@ -1778,6 +1788,7 @@ export class HiveSpawner implements Spawner {
           readOnly: false,
           dangerous,
           channels,
+          ...(graphifyUrl === null ? {} : { graphifyUrl }),
         });
         argv = buildClaudeSpawnCommand({
           daemonPort: this.dependencies.port,
@@ -1816,6 +1827,7 @@ export class HiveSpawner implements Spawner {
               worktreePath: worktree.path,
               excludeMcpServers,
               withCapabilityToken: capabilityToken !== undefined,
+              ...(graphifyUrl === null ? {} : { graphifyUrl }),
             });
       }
       const nativeCodex = tool === "codex" &&

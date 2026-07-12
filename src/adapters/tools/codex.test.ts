@@ -78,6 +78,27 @@ describe("Codex spawn-scoped MCP surface", () => {
     expect(command).toContain("mcp_servers.idea.enabled=false");
   });
 
+  test("attaches graphify by URL and keeps a same-named inherited server enabled", () => {
+    const command = buildCodexSpawnCommand({
+      ...base,
+      graphifyUrl: "http://127.0.0.1:7799/mcp",
+      excludeMcpServers: ["graphify", "idea"],
+    });
+    expect(command).toContain('mcp_servers.graphify.url="http://127.0.0.1:7799/mcp"');
+    // The exclusion pass must not disable the entry whose url we just claimed.
+    expect(command.join(" ")).not.toContain("mcp_servers.graphify.enabled=false");
+    expect(command).toContain("mcp_servers.idea.enabled=false");
+  });
+
+  test("without a graphify URL there is no graphify entry, and an inherited one is detached", () => {
+    const command = buildCodexSpawnCommand({
+      ...base,
+      excludeMcpServers: ["graphify"],
+    });
+    expect(command.join(" ")).not.toContain("mcp_servers.graphify.url");
+    expect(command).toContain("mcp_servers.graphify.enabled=false");
+  });
+
   // codex-cli 0.144.0 cannot address a quoted key through `-c`; emitting the
   // override would make the CLI refuse to load its config at all.
   test("leaves an unaddressable server name attached", () => {

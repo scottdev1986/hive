@@ -24,6 +24,7 @@ import {
   writeMemoryFact as writeMemoryFactFile,
 } from "../adapters/memory";
 import { ensureProfile } from "../adapters/profile";
+import { GraphifyService } from "./graphify-service";
 import { landBranch, type LandBranch } from "./landing";
 import { readLiveClaudeModel } from "./live-model";
 import {
@@ -377,6 +378,11 @@ export interface HiveDaemonOptions {
    * resume matches the setting the user can see), written only through the
    * operator-gated `/autonomy` endpoint, which persists before it applies. */
   autonomy?: AutonomyControl;
+  /** The per-repo graphify MCP server, when this repo opted in
+   * (docs/architecture/graphify-integration.md). The daemon owns its
+   * lifecycle: up on start, down on stop, rebuilt-and-reloaded after each
+   * landing — all fire-and-forget, never in a caller's latency. */
+  graphify?: GraphifyService;
   repoRoot?: string;
   removeWorktree?: (
     repoRoot: string,
@@ -498,6 +504,7 @@ export class HiveDaemon {
   private readonly modelInventory: HiveDaemonOptions["modelInventory"];
   private readonly codexControl: HiveDaemonOptions["codexControl"];
   private readonly autonomy: AutonomyControl | undefined;
+  private readonly graphify: GraphifyService | undefined;
   private readonly land: LandBranch;
   private bunServer: Server<undefined> | null = null;
   private reconciliationTimer: ReturnType<typeof setInterval> | null = null;
@@ -531,6 +538,7 @@ export class HiveDaemon {
     this.modelInventory = options.modelInventory;
     this.codexControl = options.codexControl;
     this.autonomy = options.autonomy;
+    this.graphify = options.graphify;
     this.channels = new ChannelRegistry(this.db);
     this.delivery = new MessageDelivery(
       this.db,
@@ -822,6 +830,16 @@ export class HiveDaemon {
     void this.rebuildMemoryIndex().catch((error) => {
       console.error(
         `Hive memory reindex failed: ${
+          error instanceof Error ? error.message : "unknown error"
+        }`,
+      );
+    });
+    // The graphify MCP server, for repos that opted in. Same posture as the
+    // reindex above: a repo whose graph will not build or serve runs exactly
+    // as it would without graphify, and the failure is logged, not raised.
+    void this.graphify?.start().catch((error) => {
+      console.error(
+        `Hive graphify start failed: ${
           error instanceof Error ? error.message : "unknown error"
         }`,
       );
@@ -1415,6 +1433,7 @@ export class HiveDaemon {
     this.bunServer?.stop(true);
     this.bunServer = null;
     this.codexControl?.close();
+    await this.graphify?.stop();
     if (this.manageLifecycle) {
       await this.tmux.killSession(orchestratorTmuxSession(), {
         ignoreMissing: true,
@@ -1610,7 +1629,12 @@ export class HiveDaemon {
           `Fix: call hive_land again with capabilityEpoch ${agent.capabilityEpoch}.`,
       );
     }
-    return this.land(this.repoRoot, agent.branch);
+    const landed = await this.land(this.repoRoot, agent.branch);
+    // The graph tracks main, and this is the one choke point every landing
+    // passes through. Fire-and-forget: the merge result is already decided
+    // and a graph rebuild must never appear in landing latency.
+    this.graphify?.scheduleRebuild();
+    return landed;
   }
 
   async acknowledgeControlMessage(
