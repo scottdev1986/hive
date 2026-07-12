@@ -60,6 +60,8 @@ test("each vendor is offered the skills written for it", () => {
   ]);
   expect(shippedSkillsFor("grok").map((skill) => skill.name)).toEqual([
     "hive-grok",
+    "hive-memory",
+    "karpathy-guidelines",
   ]);
 });
 

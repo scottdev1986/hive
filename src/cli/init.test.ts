@@ -17,6 +17,7 @@ import {
   parseMemoryFile,
 } from "../adapters/memory";
 import { bootstrapProfile } from "../adapters/profile";
+import { provisionSkills } from "../adapters/skills";
 import { shippedSkillsFor } from "../skills/shipped";
 
 // `hive init` profiles the repo like any other start, and the profile lands in
@@ -261,6 +262,56 @@ describe("runInit — installing the shipped skills", () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+
+  const codexPromptTest = Bun.which("codex") === null ? test.skip : test;
+  codexPromptTest(
+    "a shared Codex/Grok directory exposes no foreign contract to the model",
+    async () => {
+      const root = await tsRepo();
+      try {
+        const result = await runInit(root, {}, machineWith("codex", "grok"));
+        expect(result.skills.map((report) => [report.tool, report.withheld]))
+          .toEqual([
+            ["codex", ["hive-codex"]],
+            ["grok", ["hive-grok"]],
+          ]);
+
+        const renderCodexPrompt = (): string => {
+          const rendered = Bun.spawnSync(
+            ["codex", "debug", "prompt-input", "shared-skill probe"],
+            { cwd: root, stderr: "pipe", stdout: "pipe" },
+          );
+          expect(rendered.exitCode).toBe(0);
+          return new TextDecoder().decode(rendered.stdout);
+        };
+
+        // The effect is model-visible, not merely a directory listing.
+        expect(renderCodexPrompt()).not.toContain("hive-grok");
+
+        // Positive control / mutation: putting the foreign contract back where
+        // Codex reads makes the same instrument see it by name.
+        const grokSkill = shippedSkillsFor("grok").find(
+          (skill) => skill.name === "hive-grok",
+        )!;
+        const foreignPath = skillFile(root, ".agents", grokSkill.name);
+        await mkdir(join(root, ".agents", "skills", grokSkill.name), {
+          recursive: true,
+        });
+        await writeFile(foreignPath, grokSkill.content);
+        expect(renderCodexPrompt()).toContain("hive-grok");
+
+        // Agent worktrees have one reader and receive only their own contract.
+        const worktree = join(root, "grok-worktree");
+        await provisionSkills(worktree, "grok", join(root, "missing-global"));
+        expect(await Bun.file(skillFile(worktree, ".agents", "hive-grok")).exists())
+          .toBe(true);
+        expect(await Bun.file(skillFile(worktree, ".agents", "hive-codex")).exists())
+          .toBe(false);
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    },
+  );
 
   test("a vendor whose CLI is absent gets no directory at all", async () => {
     const root = await tsRepo();

@@ -38,11 +38,11 @@ export const SHIPPED_SKILLS: readonly ShippedSkill[] = [
   { name: "hive-claude", content: hiveClaude, tools: ["claude"] },
   { name: "hive-codex", content: hiveCodex, tools: ["codex"] },
   { name: "hive-grok", content: hiveGrok, tools: ["grok"] },
-  { name: "hive-memory", content: hiveMemory, tools: ["claude", "codex"] },
+  { name: "hive-memory", content: hiveMemory, tools: ["claude", "codex", "grok"] },
   {
     name: "karpathy-guidelines",
     content: karpathyGuidelines,
-    tools: ["claude", "codex"],
+    tools: ["claude", "codex", "grok"],
   },
 ];
 
