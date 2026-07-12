@@ -2,15 +2,15 @@
 set -eu
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-SOURCE="$ROOT/Resources/AppIcon.svg"
+SOURCE="$ROOT/../assets/hive_app_icon.png"
 MODERN_RECIPE="$ROOT/Resources/AppIcon.icon.json"
 ICONSET="$ROOT/Resources/AppIcon.iconset"
 ICNS="$ROOT/Resources/AppIcon.icns"
 ASSETS="$ROOT/Resources/Assets.car"
 PREVIEW="$ROOT/../docs/assets/hive-workspace-icon.png"
 
-command -v rsvg-convert >/dev/null 2>&1 || {
-  echo "error: rsvg-convert is required (brew install librsvg)" >&2
+command -v sips >/dev/null 2>&1 || {
+  echo "error: sips is required (ships with macOS)" >&2
   exit 1
 }
 command -v iconutil >/dev/null 2>&1 || {
@@ -31,8 +31,8 @@ mkdir -p "$ICONSET" "$(dirname -- "$PREVIEW")"
 render() {
   pixels=$1
   name=$2
-  rsvg-convert --width "$pixels" --height "$pixels" --keep-aspect-ratio \
-    --output "$ICONSET/$name" "$SOURCE"
+  sips --resampleHeightWidth "$pixels" "$pixels" "$SOURCE" \
+    --out "$ICONSET/$name" >/dev/null
 }
 
 render 16   icon_16x16.png
@@ -49,10 +49,10 @@ render 1024 icon_512x512@2x.png
 iconutil --convert icns --output "$ICNS" "$ICONSET"
 
 # macOS 26 applies a compatibility plate to legacy bitmap icons. Compile the
-# same vector into its native icon stack so Tahoe can render system glass,
+# the same artwork into its native icon stack so Tahoe can render system glass,
 # dark, and mono treatments; AppIcon.icns remains the macOS 14–15 fallback.
 mkdir -p "$TMP/AppIcon.icon/Assets" "$TMP/out"
-cp "$SOURCE" "$TMP/AppIcon.icon/Assets/AppIcon.svg"
+cp "$SOURCE" "$TMP/AppIcon.icon/Assets/AppIcon.png"
 cp "$MODERN_RECIPE" "$TMP/AppIcon.icon/icon.json"
 xcrun actool "$TMP/AppIcon.icon" \
   --compile "$TMP/out" \

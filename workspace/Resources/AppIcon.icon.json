@@ -7,7 +7,7 @@
     {
       "layers" : [
         {
-          "image-name" : "AppIcon.svg",
+          "image-name" : "AppIcon.png",
           "name" : "Hive",
           "position" : {
             "scale" : 1,
