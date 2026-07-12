@@ -43,19 +43,13 @@ yarn-error.log*
 !.env.example
 
 # --- hive runtime (repo-local state that must not be committed) ---
-# .hive/memory and .hive/skills ARE committed by design (see SPEC.md);
-# only ephemeral agent worktrees and runtime state are ignored.
-.hive/worktrees/
-.hive/*.db
-.hive/*.pid
-# The repo profile is derived, not authored: Hive regenerates it in its own
-# per-project state dir (~/.hive/projects/<id>/) in milliseconds. This entry is
-# for the copy older Hives committed here — inert now, and nobody's diff.
-# `.hive/profile.override.toml` is the opposite: hand-written, and committed.
-.hive/profile.toml
+# All of .hive/ is local working state now — agent worktrees, runtime state,
+# and the memory/skills that earlier Hives committed. It stays on disk; git
+# just stops tracking it.
+.hive/
 
 #Coding Agents
-.claude/worktrees
+.claude/
 .codex/
 # hive writes per-worktree MCP wiring at spawn (see writeClaudeAgentConfig)
 .mcp.json
@@ -64,12 +58,10 @@ yarn-error.log*
 # file is evaluated from each worktree's own root, where that path never
 # matches.
 .agents/
-# The Claude-native equivalents of the two rules above: hive writes
-# .claude/settings.local.json (writeClaudeAgentConfig) and symlinks skills
-# into .claude/skills/ at spawn, so an unignored entry makes every Claude
-# worktree look dirty and blocks hive_kill cleanup. Committed skill symlinks
-# stay tracked; add new intentional ones with `git add -f`.
-.claude/settings.local.json
-.claude/skills/
+
+# --- local working docs (kept on disk, out of git) ---
+docs/
+research/
+prototypes/
 
 apple

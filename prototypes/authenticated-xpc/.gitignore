@@ -1,4 +1,0 @@
-.build/
-*.xcodeproj
-.swiftpm/
-DerivedData/
