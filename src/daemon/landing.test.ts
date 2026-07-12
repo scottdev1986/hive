@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { diagnoseLand, landBranch, runGit } from "./landing";
@@ -25,7 +25,8 @@ function git(root: string, args: string[]): string {
 }
 
 /** `main`, plus a writer branch one commit ahead that touches `app.ts` and adds
- * `feature.ts`. */
+ * `feature.ts` and `assets/logo.png` — the latter inside a directory that does
+ * not exist on main, which is the shape of the untracked-collision incident. */
 async function repo(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "hive-land-"));
   git(root, ["init", "-b", "main"]);
@@ -35,6 +36,8 @@ async function repo(): Promise<string> {
   git(root, ["checkout", "-q", "-b", "hive/writer"]);
   await writeFile(join(root, "app.ts"), "export const v = 2;\n");
   await writeFile(join(root, "feature.ts"), "export const f = 1;\n");
+  await mkdir(join(root, "assets"));
+  await writeFile(join(root, "assets", "logo.png"), "logo-bytes-v1\n");
   git(root, ["add", "-A"]);
   git(root, ["commit", "-m", "writer work", "--no-gpg-sign"]);
   git(root, ["checkout", "-q", "main"]);
@@ -89,12 +92,20 @@ describe("a blocked land says which file blocked it", () => {
     }
   });
 
-  test("an untracked file standing where the merge would write one is named", async () => {
+  test("an untracked file with different content is named, and the message explains the collision", async () => {
     const root = await repo();
     try {
       await writeFile(join(root, "feature.ts"), "my scratch notes\n");
       const message = await landFails(root);
+      // Not git's "untracked working tree files would be overwritten by
+      // merge" — the user's file and the agent's committed file collide, and
+      // the message says whose is whose and what to do next.
       expect(message).toContain("feature.ts");
+      expect(message).toContain("differs");
+      expect(message).toContain("hive/writer committed");
+      expect(message).toContain("Fix:");
+      expect(message).toContain("mv feature.ts feature.ts.mine");
+      expect(message).not.toContain("untracked working tree files");
       expect(await Bun.file(join(root, "feature.ts")).text()).toBe("my scratch notes\n");
     } finally {
       await rm(root, { recursive: true, force: true });
@@ -110,6 +121,75 @@ describe("a blocked land says which file blocked it", () => {
       const { commit } = await landBranch(root, "hive/writer");
       expect(commit).toHaveLength(40);
       expect(await Bun.file(join(root, "scratch.ts")).exists()).toBe(true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("untracked files the branch also adds — the drop-a-file-in incident", () => {
+  test("byte-identical: the land proceeds on its own and the content survives, tracked", async () => {
+    const root = await repo();
+    try {
+      // The user's original, byte-for-byte what the agent copied and committed.
+      // git would refuse to fast-forward over it; proving identity by hash
+      // makes removing it lossless, so this must land with no human involved.
+      await mkdir(join(root, "assets"));
+      await writeFile(join(root, "assets", "logo.png"), "logo-bytes-v1\n");
+      await writeFile(join(root, "feature.ts"), "export const f = 1;\n");
+
+      const { commit } = await landBranch(root, "hive/writer");
+      expect(commit).toHaveLength(40);
+      expect(await Bun.file(join(root, "assets", "logo.png")).text()).toBe("logo-bytes-v1\n");
+      expect(await Bun.file(join(root, "feature.ts")).text()).toBe("export const f = 1;\n");
+      // Not just present: tracked, exactly as the branch committed them.
+      expect(git(root, ["status", "--porcelain"])).toBe("");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("an untracked directory is seen file-by-file, not skipped as one `dir/` line", async () => {
+    const root = await repo();
+    try {
+      // The incident's exact shape: the whole directory is untracked, so plain
+      // `status --porcelain` collapses it to `?? assets/` — which matches no
+      // file path — and diagnosis used to miss it entirely, handing the agent
+      // git's raw "untracked working tree files would be overwritten by merge".
+      await mkdir(join(root, "assets"));
+      await writeFile(join(root, "assets", "logo.png"), "logo-bytes-v2 EDITED BY USER\n");
+
+      const message = await landFails(root);
+      expect(message).toContain("assets/logo.png");
+      expect(message).toContain("differs");
+      expect(message).toContain("Fix:");
+      expect(message).not.toContain("untracked working tree files");
+      // The user's copy is exactly where they left it, byte for byte.
+      expect(await Bun.file(join(root, "assets", "logo.png")).text()).toBe(
+        "logo-bytes-v2 EDITED BY USER\n",
+      );
+      expect(git(root, ["rev-parse", "--abbrev-ref", "HEAD"])).toBe("main");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("mixed collisions: the differing file blocks, and the identical one is not touched", async () => {
+    const root = await repo();
+    try {
+      await mkdir(join(root, "assets"));
+      await writeFile(join(root, "assets", "logo.png"), "logo-bytes-v1\n"); // identical
+      await writeFile(join(root, "feature.ts"), "not what the agent committed\n"); // differs
+
+      const message = await landFails(root);
+      expect(message).toContain("feature.ts");
+      expect(message).not.toContain("assets/logo.png");
+      // A refused land removes NOTHING — the identical copy is only ever
+      // removed on the way into a merge that immediately restores it.
+      expect(await Bun.file(join(root, "assets", "logo.png")).text()).toBe("logo-bytes-v1\n");
+      expect(await Bun.file(join(root, "feature.ts")).text()).toBe(
+        "not what the agent committed\n",
+      );
     } finally {
       await rm(root, { recursive: true, force: true });
     }

@@ -22,8 +22,18 @@
  * rebase invalidates the tests it just ran green, so Hive cannot rebase for it),
  * or a change in the user's working tree that Hive did not write and cannot
  * prove is disposable. Guessing at either is how you lose someone's work.
+ *
+ * One exception, precisely because it is provable: an untracked file in the
+ * primary whose bytes are identical (by blob hash) to the version the branch
+ * commits at the same path. Removing it loses nothing — the fast-forward
+ * immediately restores the same content, tracked. This is the most ordinary
+ * collision Hive has: a user drops a file in, an agent copies it into its
+ * worktree and commits it, and git then refuses to fast-forward the primary
+ * over the user's original. When the bytes differ, that proof is gone and the
+ * usual rule holds absolutely: name both versions and let the human choose.
  */
 import { existsSync } from "node:fs";
+import { unlink } from "node:fs/promises";
 import { join } from "node:path";
 
 export type LandBranch = (
@@ -81,18 +91,74 @@ const lines = (out: string): string[] =>
 const plural = (n: number, one: string, many: string): string =>
   n === 1 ? one : many;
 
-/** `git status --porcelain` split into the paths that could block a merge. A
- * rename's `XY orig -> new` form is reduced to the destination, which is the
- * path a merge would collide with. */
+/** `git status --porcelain` split into the tracked-but-modified paths that
+ * could block a merge. A rename's `XY orig -> new` form is reduced to the
+ * destination, which is the path a merge would collide with. Untracked (`??`)
+ * lines are deliberately excluded: they are a different collision with a
+ * different remedy, handled by `untrackedCollisions` below. */
 function dirtyPaths(porcelain: string): Set<string> {
   const paths = new Set<string>();
   for (const line of porcelain.split("\n")) {
-    if (line.length < 4) continue;
+    if (line.length < 4 || line.startsWith("??")) continue;
     const path = line.slice(3);
     const arrow = path.indexOf(" -> ");
     paths.add(arrow === -1 ? path : path.slice(arrow + 4));
   }
   return paths;
+}
+
+export interface UntrackedCollision {
+  path: string;
+  /** True when the untracked file's blob hash equals the branch's committed
+   * blob at the same path — the proof that removing it loses nothing. */
+  identical: boolean;
+}
+
+/**
+ * Untracked files in the primary checkout sitting at paths the branch adds —
+ * the files `git merge` refuses to overwrite. `-uall` is load-bearing: plain
+ * porcelain collapses a fully-untracked directory to one `dir/` line, which
+ * can never match a file path the branch adds, so the most ordinary shape of
+ * this collision (a user drops `assets/*.png` into the repo, an agent commits
+ * them) used to sail straight past diagnosis into git's raw refusal.
+ * Identity is by content hash, never name or size: `git hash-object` on the
+ * working-tree file against the branch's blob at the same path.
+ */
+export async function untrackedCollisions(
+  repoRoot: string,
+  branch: string,
+): Promise<UntrackedCollision[]> {
+  const status = await runGit(repoRoot, ["status", "--porcelain", "-uall"]);
+  if (status.exitCode !== 0) return [];
+  const untracked = new Set(
+    status.stdout
+      .split("\n")
+      .filter((line) => line.startsWith("?? "))
+      .map((line) => line.slice(3)),
+  );
+  if (untracked.size === 0) return [];
+
+  const added = await runGit(repoRoot, [
+    "diff",
+    "--name-only",
+    "--diff-filter=A",
+    "HEAD",
+    branch,
+  ]);
+  if (added.exitCode !== 0) return [];
+
+  const collisions: UntrackedCollision[] = [];
+  for (const path of lines(added.stdout)) {
+    if (!untracked.has(path)) continue;
+    const ours = await runGit(repoRoot, ["hash-object", "--", path]);
+    const theirs = await runGit(repoRoot, ["rev-parse", `${branch}:${path}`]);
+    collisions.push({
+      path,
+      identical: ours.exitCode === 0 && theirs.exitCode === 0 &&
+        trimmed(ours) === trimmed(theirs),
+    });
+  }
+  return collisions;
 }
 
 export interface LandBlocker {
@@ -212,6 +278,25 @@ export async function diagnoseLand(
     }
   }
 
+  // Untracked files at paths the branch adds. The identical ones are not
+  // blockers — landBranch removes them under the hash proof above — so only a
+  // content mismatch is reported: the user's copy and the agent's committed
+  // copy genuinely differ, and choosing between them is not Hive's call.
+  const differing = (await untrackedCollisions(repoRoot, branch))
+    .filter((collision) => !collision.identical);
+  if (differing.length > 0) {
+    const list = differing.map((collision) => collision.path).join(", ");
+    const first = differing[0]?.path as string;
+    return blocked(
+      `your ${plural(differing.length, "copy", "copies")} of ${list} in the primary checkout ${
+        plural(differing.length, "differs", "differ")
+      } from the ${plural(differing.length, "version", "versions")} ${branch} committed — the branch lands ${
+        plural(differing.length, "a file", "files")
+      } you also have untracked there, with different content`,
+      `Fix: in ${repoRoot}, move your ${plural(differing.length, "copy", "copies")} aside (e.g. \`mv ${first} ${first}.mine\`), land again, then compare and keep what you meant. Hive will not choose between two different versions of your file.`,
+    );
+  }
+
   return null;
 }
 
@@ -227,6 +312,18 @@ export function landError(branch: string, blocker: LandBlocker): Error {
 export const landBranch: LandBranch = async (repoRoot, branch) => {
   const blocker = await diagnoseLand(repoRoot, branch);
   if (blocker !== null) throw landError(branch, blocker);
+
+  // The one provably lossless resolution (module doc): an untracked file whose
+  // bytes are identical to what the branch commits at the same path. git would
+  // still refuse to fast-forward over it, so remove it — the merge immediately
+  // restores the same content, tracked. Diagnosis above already turned any
+  // content MISMATCH into a refusal, so nothing differing is touched here; a
+  // removal that fails falls through to the merge's own refusal and re-diagnosis.
+  for (const collision of await untrackedCollisions(repoRoot, branch)) {
+    if (collision.identical) {
+      await unlink(join(repoRoot, collision.path)).catch(() => {});
+    }
+  }
 
   const merge = await runGit(repoRoot, ["merge", "--ff-only", branch]);
   if (merge.timedOut) {
