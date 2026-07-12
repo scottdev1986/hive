@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -223,11 +223,15 @@ describe("legacy flat-memory migration", () => {
     const original = await readFile(join(directory, "corrected-router.md"), "utf8");
 
     const report = await migrateLegacyMemory(root);
-    expect(report).toEqual({
-      scanned: 1,
-      migrated: 1,
-      flagged: [{ scope: "repo", id: "corrected-router", status: "unverified" }],
-    });
+    expect(report.scanned).toBe(1);
+    expect(report.migrated).toBe(1);
+    expect(report.flagged).toEqual([
+      { scope: "repo", id: "corrected-router", status: "unverified" },
+    ]);
+    expect(report.alreadyMigrated).toEqual([]);
+    expect(report.backups).toEqual([
+      { scope: "repo", path: expect.stringContaining("memory-backups/legacy-v1-") },
+    ]);
     const article = await readMemoryFact(root, "repo", "corrected-router");
     expect(article?.title).toBe("Router truth");
     expect(article?.topic).toBe("routing");
@@ -235,21 +239,79 @@ describe("legacy flat-memory migration", () => {
     expect(article?.status).toBe("unverified");
     const preserved = join(article!.path, "..", article!.raw[0]!);
     expect(await readFile(preserved, "utf8")).toBe(original);
-    await expect(readFile(join(directory, "corrected-router.md"), "utf8"))
-      .rejects.toThrow();
+    expect(await readFile(join(directory, "corrected-router.md"), "utf8"))
+      .toBe(original);
+    expect(await readFile(
+      join(report.backups[0]!.path, "corrected-router.md"),
+      "utf8",
+    )).toBe(original);
+
+    const beforeSecond = {
+      raw: await readdir(join(directory, "raw", "routing")),
+      articles: await readdir(join(directory, "wiki", "routing")),
+      log: await readFile(join(directory, "wiki", "log.md"), "utf8"),
+      backups: await readdir(join(root, ".hive", "memory-backups")),
+    };
+    const second = await migrateLegacyMemory(root);
+    expect(second).toEqual({
+      scanned: 1,
+      migrated: 0,
+      flagged: [],
+      backups: [],
+      alreadyMigrated: ["repo"],
+    });
+    expect(await readdir(join(directory, "raw", "routing"))).toEqual(beforeSecond.raw);
+    expect(await readdir(join(directory, "wiki", "routing"))).toEqual(beforeSecond.articles);
+    expect(await readFile(join(directory, "wiki", "log.md"), "utf8"))
+      .toBe(beforeSecond.log);
+    expect(await readdir(join(root, ".hive", "memory-backups")))
+      .toEqual(beforeSecond.backups);
   });
 
-  test("is idempotent after legacy files are consumed", async () => {
+  test("an empty store is a no-op", async () => {
     const root = await makeRoot();
     expect(await migrateLegacyMemory(root)).toEqual({
       scanned: 0,
       migrated: 0,
       flagged: [],
+      backups: [],
+      alreadyMigrated: [],
     });
     expect(await migrateLegacyMemory(root)).toEqual({
       scanned: 0,
       migrated: 0,
       flagged: [],
+      backups: [],
+      alreadyMigrated: [],
     });
+  });
+
+  test("backs up the whole corpus before a failed first compile write", async () => {
+    const root = await makeRoot();
+    const directory = getRepoMemoryRoot(root);
+    const original = "---\ntitle: Router\ndate: 2026-07-11\ntags: [router]\n---\n\nSource.\n";
+    await Bun.write(join(directory, "router.md"), original);
+    const rawDirectory = join(directory, "raw", "routing");
+    await mkdir(rawDirectory, { recursive: true });
+    await writeFile(join(rawDirectory, "2026-07-11-router.md"), "different\n");
+
+    await expect(migrateLegacyMemory(root)).rejects.toThrow(
+      "already contains different evidence",
+    );
+    const backups = await readdir(join(root, ".hive", "memory-backups"));
+    expect(backups).toHaveLength(1);
+    expect(await readFile(
+      join(root, ".hive", "memory-backups", backups[0]!, "router.md"),
+      "utf8",
+    )).toBe(original);
+    expect(await readFile(join(directory, "router.md"), "utf8")).toBe(original);
+    expect(await readFile(
+      join(directory, "raw", "routing", "2026-07-11-router.md"),
+      "utf8",
+    )).toBe("different\n");
+    expect(await readdir(join(directory, "wiki")).catch(() => [])).toEqual([]);
+    expect((await readdir(join(root, ".hive"))).filter((name) =>
+      name.startsWith("memory-restore-") || name.startsWith("memory-failed-")
+    )).toEqual([]);
   });
 });

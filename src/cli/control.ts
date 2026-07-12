@@ -249,8 +249,11 @@ export async function deleteMemoryCli(
 }
 
 export async function reindexMemoryCli(): Promise<void> {
-  const count = await reindexMemory(requireDaemonPort());
-  console.log(`rebuilt the memory search index from ${count} article(s)`);
+  const result = await reindexMemory(requireDaemonPort());
+  console.log(`rebuilt the memory search index from ${result.count} article(s)`);
+  for (const backup of result.migration.backups) {
+    console.log(`backed up [${backup.scope}] legacy memory to ${backup.path}`);
+  }
 }
 
 export interface RecoveryOutcomeView {

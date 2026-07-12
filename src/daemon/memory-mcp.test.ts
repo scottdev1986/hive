@@ -413,8 +413,35 @@ describe("memory MCP tools", () => {
       const reindexed = textValue(await client.callTool({
         name: "memory_reindex",
         arguments: {},
-      })) as { count: number };
+      })) as {
+        count: number;
+        migration: {
+          scanned: number;
+          migrated: number;
+          backups: Array<{ scope: string; path: string }>;
+          alreadyMigrated: string[];
+        };
+      };
       expect(reindexed.count).toEqual(1);
+      expect(reindexed.migration.scanned).toBe(1);
+      expect(reindexed.migration.migrated).toBe(1);
+      expect(reindexed.migration.backups).toEqual([
+        { scope: "repo", path: expect.stringContaining("memory-backups/legacy-v1-") },
+      ]);
+      expect(await readFile(join(memoryDir, "externally-added.md"), "utf8"))
+        .toContain("Discovered by reindex");
+
+      const again = textValue(await client.callTool({
+        name: "memory_reindex",
+        arguments: {},
+      })) as typeof reindexed;
+      expect(again.count).toBe(1);
+      expect(again.migration).toMatchObject({
+        scanned: 1,
+        migrated: 0,
+        backups: [],
+        alreadyMigrated: ["repo"],
+      });
 
       const afterReindex = textValue(await client.callTool({
         name: "memory_search",
@@ -483,8 +510,8 @@ describe("memory MCP tools", () => {
       const foundBeforeRebuild = daemonB.memory.search("persists");
       expect(foundBeforeRebuild).toEqual([]);
 
-      const count = await daemonB.rebuildMemoryIndex();
-      expect(count).toEqual(1);
+      const rebuilt = await daemonB.rebuildMemoryIndex();
+      expect(rebuilt.count).toEqual(1);
 
       const clientB = await connectedClient(daemonB);
       try {

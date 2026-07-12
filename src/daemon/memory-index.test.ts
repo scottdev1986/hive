@@ -61,8 +61,8 @@ describe("MemoryIndex (SQLite FTS over Markdown facts)", () => {
     }));
 
     const index = new MemoryIndex(new Database(":memory:"));
-    const count = await index.rebuild(root);
-    expect(count).toEqual(2);
+    const rebuilt = await index.rebuild(root);
+    expect(rebuilt.count).toEqual(2);
 
     const byTitle = index.search("flaky");
     expect(byTitle.map((result) => result.id)).toEqual(["flaky-login-test"]);

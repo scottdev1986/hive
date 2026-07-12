@@ -895,7 +895,7 @@ export class HiveDaemon {
     });
   }
 
-  async rebuildMemoryIndex(): Promise<number> {
+  async rebuildMemoryIndex() {
     return this.serializeMemory(() => this.memory.rebuild(this.repoRoot));
   }
 
@@ -3108,11 +3108,11 @@ export class HiveDaemon {
     server.registerTool("memory_reindex", {
       title: "Rebuild the Hive memory search index",
       description:
-        "Migrate legacy flat facts, rebuild each scope's wiki/index.md, and rebuild disposable SQLite FTS from compiled wiki articles.",
+        "Non-destructively migrate legacy flat facts, rebuild each scope's wiki/index.md, and rebuild disposable SQLite FTS from compiled wiki articles. The first migration backs up the complete scope before writing, preserves every flat source, and returns the backup path; later rebuilds detect the completion marker and do not migrate again.",
       inputSchema: z.object({}),
     }, async () => {
       this.authorizeTool(capability, "memory_reindex", "memory:write");
-      return toolResult({ count: await this.rebuildMemoryIndex() }, "result");
+      return toolResult(await this.rebuildMemoryIndex(), "result");
     });
 
     return server;

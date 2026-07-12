@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 import {
   listMemoryFacts,
   rebuildMemoryIndexFiles,
+  type MemoryMigrationReport,
 } from "../adapters/memory";
 import {
   MemorySearchResultSchema,
@@ -72,8 +73,11 @@ export class MemoryIndex {
   // daemon startup, after external edits to the files, or on demand via
   // memory_reindex — because the files are authoritative and the index is
   // not.
-  async rebuild(root: string): Promise<number> {
-    await rebuildMemoryIndexFiles(root);
+  async rebuild(root: string): Promise<{
+    count: number;
+    migration: MemoryMigrationReport;
+  }> {
+    const migration = await rebuildMemoryIndexFiles(root);
     const facts = await listMemoryFacts(root);
     this.database.transaction((rows: MemoryFact[]) => {
       this.database.exec("DELETE FROM memory_fts");
@@ -81,7 +85,7 @@ export class MemoryIndex {
         this.insertRow(fact);
       }
     })(facts);
-    return facts.length;
+    return { count: facts.length, migration };
   }
 
   search(

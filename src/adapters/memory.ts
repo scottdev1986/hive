@@ -1,8 +1,10 @@
 import {
   appendFile,
+  cp,
   mkdir,
   readdir,
   readFile,
+  rename,
   rm,
   writeFile,
 } from "node:fs/promises";
@@ -541,88 +543,200 @@ export interface MemoryMigrationReport {
   scanned: number;
   migrated: number;
   flagged: Array<{ scope: MemoryScope; id: string; status: MemoryVerificationStatus }>;
+  backups: Array<{ scope: MemoryScope; path: string }>;
+  alreadyMigrated: MemoryScope[];
+}
+
+const LEGACY_MIGRATION_MARKER = ".legacy-migration-v1.json";
+
+async function migrationMarker(
+  root: string,
+  scope: MemoryScope,
+): Promise<{ backup: string } | null> {
+  try {
+    return JSON.parse(
+      await readFile(join(wikiRoot(root, scope), LEGACY_MIGRATION_MARKER), "utf8"),
+    ) as { backup: string };
+  } catch (error) {
+    if (isMissingFileError(error)) return null;
+    throw error;
+  }
+}
+
+async function backupLegacyMemory(
+  root: string,
+  scope: MemoryScope,
+): Promise<string> {
+  const source = scopeRoot(root, scope);
+  const backupRoot = join(dirname(source), "memory-backups");
+  await mkdir(backupRoot, { recursive: true });
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+  let destination = join(backupRoot, `legacy-v1-${timestamp}`);
+  let suffix = 2;
+  while (true) {
+    try {
+      await cp(source, destination, {
+        recursive: true,
+        errorOnExist: true,
+        force: false,
+      });
+      return destination;
+    } catch (error) {
+      if (!(typeof error === "object" && error !== null && "code" in error &&
+        error.code === "ERR_FS_CP_EEXIST")) throw error;
+      destination = join(backupRoot, `legacy-v1-${timestamp}-${suffix}`);
+      suffix += 1;
+    }
+  }
+}
+
+async function restoreLegacyBackup(
+  root: string,
+  scope: MemoryScope,
+  backup: string,
+): Promise<void> {
+  const source = scopeRoot(root, scope);
+  const parent = dirname(source);
+  const suffix = new Date().toISOString().replace(/[:.]/g, "-");
+  const restored = join(parent, `memory-restore-${suffix}`);
+  const failed = join(parent, `memory-failed-${suffix}`);
+  await cp(backup, restored, {
+    recursive: true,
+    errorOnExist: true,
+    force: false,
+  });
+  await rename(source, failed);
+  try {
+    await rename(restored, source);
+  } catch (error) {
+    await rename(failed, source);
+    await rm(restored, { recursive: true, force: true });
+    throw error;
+  }
+  await rm(failed, { recursive: true, force: true });
+}
+
+async function migrateLegacyScope(
+  root: string,
+  scope: MemoryScope,
+): Promise<MemoryMigrationReport> {
+  const legacy = await discoverLegacyFacts(root, scope);
+  if (legacy.length === 0) {
+    return { scanned: 0, migrated: 0, flagged: [], backups: [], alreadyMigrated: [] };
+  }
+  if (await migrationMarker(root, scope) !== null) {
+    return {
+      scanned: legacy.length,
+      migrated: 0,
+      flagged: [],
+      backups: [],
+      alreadyMigrated: [scope],
+    };
+  }
+
+  // This is deliberately the first write associated with migration. The
+  // destination is outside the memory root, so the snapshot sees the complete
+  // pre-migration corpus and cannot recursively include itself.
+  const backup = await backupLegacyMemory(root, scope);
+  console.error(`Hive backed up [${scope}] legacy memory to ${backup}`);
+  try {
+    const flagged: MemoryMigrationReport["flagged"] = [];
+    let migrated = 0;
+    for (const old of legacy) {
+      const topic = legacyTopic(old);
+      const status: MemoryVerificationStatus = old.verified === undefined
+        ? "unverified"
+        : old.verified < old.date
+        ? "stale"
+        : "verified";
+      if (status !== "verified") flagged.push({ scope, id: old.id, status });
+      const destination = join(rawRoot(root, scope), topic, `${old.date}-${old.id}.md`);
+      await mkdir(dirname(destination), { recursive: true });
+      try {
+        await writeFile(destination, old.contents, { flag: "wx" });
+      } catch (error) {
+        if (!(typeof error === "object" && error !== null && "code" in error &&
+          error.code === "EEXIST")) throw error;
+        if (await readFile(destination, "utf8") !== old.contents) {
+          throw new Error(`Legacy raw destination already contains different evidence: ${destination}`);
+        }
+      }
+      const existing = await findMemoryFact(root, scope, old.id);
+      const articlePath = existing?.path ??
+        join(wikiRoot(root, scope), topic, `${old.id}.md`);
+      await mkdir(dirname(articlePath), { recursive: true });
+      const rawReference = relative(dirname(articlePath), destination);
+      if (existing !== null) {
+        if (existing.raw.includes(rawReference)) continue;
+        const conflicted = MemoryFactSchema.parse({
+          ...existing,
+          body: `${existing.body}\n\n## Uncompiled legacy observation\n\n` +
+            `A newly discovered legacy source disagrees with or duplicates this article. ` +
+            `Reconcile the raw observation before treating either account as current.`,
+          date: todayIsoDate(),
+          evidence: `${existing.evidence}; conflicting legacy flat memory ${old.id}`,
+          status: "conflicted",
+          raw: [...existing.raw, rawReference],
+        });
+        await writeFile(articlePath, serializeMemoryFile(conflicted));
+        flagged.push({ scope, id: old.id, status: "conflicted" });
+        migrated += 1;
+        await appendLog(root, scope, todayIsoDate(), `migrate-conflict | ${existing.title}`);
+        continue;
+      }
+      const article = MemoryFactSchema.parse({
+        id: old.id,
+        scope,
+        topic,
+        title: old.title.replace(/^CORRECTED:\s*/i, ""),
+        body: old.body,
+        tags: old.tags,
+        date: old.date,
+        path: articlePath,
+        source: old.source ?? "legacy",
+        evidence: `Migrated verbatim from legacy flat memory ${old.id}`,
+        status,
+        supersedes: [],
+        raw: [rawReference],
+        verified: old.verified,
+      });
+      await writeFile(articlePath, serializeMemoryFile(article));
+      migrated += 1;
+      await appendLog(root, scope, todayIsoDate(), `migrate | ${article.title}`);
+    }
+    await rebuildScopeIndex(root, scope);
+    await writeFile(
+      join(wikiRoot(root, scope), LEGACY_MIGRATION_MARKER),
+      JSON.stringify({ completedAt: new Date().toISOString(), backup }, null, 2) + "\n",
+      { flag: "wx" },
+    );
+    return {
+      scanned: legacy.length,
+      migrated,
+      flagged,
+      backups: [{ scope, path: backup }],
+      alreadyMigrated: [],
+    };
+  } catch (error) {
+    await restoreLegacyBackup(root, scope, backup);
+    throw error;
+  }
 }
 
 export async function migrateLegacyMemory(
   root: string,
 ): Promise<MemoryMigrationReport> {
-  const repo = await discoverLegacyFacts(root, "repo");
-  const global = await discoverLegacyFacts(root, "global");
-  const legacy = [
-    ...repo.map((fact) => ({ fact, scope: "repo" as const })),
-    ...global.map((fact) => ({ fact, scope: "global" as const })),
-  ];
-  const flagged: MemoryMigrationReport["flagged"] = [];
-  for (const { fact: old, scope } of legacy) {
-    const topic = legacyTopic(old);
-    const status: MemoryVerificationStatus = old.verified === undefined
-      ? "unverified"
-      : old.verified < old.date
-      ? "stale"
-      : "verified";
-    if (status !== "verified") flagged.push({ scope, id: old.id, status });
-    const destination = join(rawRoot(root, scope), topic, `${old.date}-${old.id}.md`);
-    await mkdir(dirname(destination), { recursive: true });
-    try {
-      await writeFile(destination, old.contents, { flag: "wx" });
-    } catch (error) {
-      if (!(typeof error === "object" && error !== null && "code" in error &&
-        error.code === "EEXIST")) throw error;
-      if (await readFile(destination, "utf8") !== old.contents) {
-        throw new Error(`Legacy raw destination already contains different evidence: ${destination}`);
-      }
-    }
-    const existing = await findMemoryFact(root, scope, old.id);
-    const articlePath = existing?.path ??
-      join(wikiRoot(root, scope), topic, `${old.id}.md`);
-    await mkdir(dirname(articlePath), { recursive: true });
-    const rawReference = relative(dirname(articlePath), destination);
-    if (existing !== null) {
-      if (existing.raw.includes(rawReference)) {
-        await rm(old.path);
-        continue;
-      }
-      const conflicted = MemoryFactSchema.parse({
-        ...existing,
-        body: `${existing.body}\n\n## Uncompiled legacy observation\n\n` +
-          `A newly discovered legacy source disagrees with or duplicates this article. ` +
-          `Reconcile the raw observation before treating either account as current.`,
-        date: todayIsoDate(),
-        evidence: `${existing.evidence}; conflicting legacy flat memory ${old.id}`,
-        status: "conflicted",
-        raw: [...existing.raw, rawReference],
-      });
-      await writeFile(articlePath, serializeMemoryFile(conflicted));
-      flagged.push({ scope, id: old.id, status: "conflicted" });
-      await rm(old.path);
-      await appendLog(root, scope, todayIsoDate(), `migrate-conflict | ${existing.title}`);
-      continue;
-    }
-    const article = MemoryFactSchema.parse({
-      id: old.id,
-      scope,
-      topic,
-      title: old.title.replace(/^CORRECTED:\s*/i, ""),
-      body: old.body,
-      tags: old.tags,
-      date: old.date,
-      path: articlePath,
-      source: old.source ?? "legacy",
-      evidence: `Migrated verbatim from legacy flat memory ${old.id}`,
-      status,
-      supersedes: [],
-      raw: [rawReference],
-      verified: old.verified,
-    });
-    await writeFile(articlePath, serializeMemoryFile(article));
-    await rm(old.path);
-    await appendLog(root, scope, todayIsoDate(), `migrate | ${article.title}`);
-  }
-  await Promise.all([
-    rebuildScopeIndex(root, "repo"),
-    rebuildScopeIndex(root, "global"),
+  const [repo, global] = await Promise.all([
+    migrateLegacyScope(root, "repo"),
+    migrateLegacyScope(root, "global"),
   ]);
-  return { scanned: legacy.length, migrated: legacy.length, flagged };
+  return {
+    scanned: repo.scanned + global.scanned,
+    migrated: repo.migrated + global.migrated,
+    flagged: [...repo.flagged, ...global.flagged],
+    backups: [...repo.backups, ...global.backups],
+    alreadyMigrated: [...repo.alreadyMigrated, ...global.alreadyMigrated],
+  };
 }
 
 export function factVerificationFlag(
@@ -635,12 +749,13 @@ export function factVerificationFlag(
   return fact.verified < fact.date ? "stale" : null;
 }
 
-export async function rebuildMemoryIndexFiles(root: string): Promise<void> {
-  await migrateLegacyMemory(root);
+export async function rebuildMemoryIndexFiles(root: string): Promise<MemoryMigrationReport> {
+  const migration = await migrateLegacyMemory(root);
   await Promise.all([
     rebuildScopeIndex(root, "repo"),
     rebuildScopeIndex(root, "global"),
   ]);
+  return migration;
 }
 
 async function readIndexRows(root: string, scope: MemoryScope): Promise<string[]> {

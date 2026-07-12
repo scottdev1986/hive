@@ -6,6 +6,7 @@ import { HIVE_VERSION } from "../version";
 import {
   AgentRecordSchema,
   MemoryFactSchema,
+  MemoryScopeSchema,
   MemorySearchResultSchema,
   MemoryWriteResultSchema,
   QuotaObservationSchema,
@@ -162,9 +163,29 @@ export async function deleteMemory(
 export async function reindexMemory(
   port: number,
   fetcher?: McpFetcher,
-): Promise<number> {
-  const result = z.object({ count: z.number() }).parse(
+): Promise<{
+  count: number;
+  migration: {
+    scanned: number;
+    migrated: number;
+    backups: Array<{ scope: MemoryScope; path: string }>;
+    alreadyMigrated: MemoryScope[];
+  };
+}> {
+  return z.object({
+    count: z.number(),
+    migration: z.object({
+      scanned: z.number(),
+      migrated: z.number(),
+      flagged: z.array(z.object({
+        scope: MemoryScopeSchema,
+        id: z.string(),
+        status: z.string(),
+      })),
+      backups: z.array(z.object({ scope: MemoryScopeSchema, path: z.string() })),
+      alreadyMigrated: z.array(MemoryScopeSchema),
+    }),
+  }).parse(
     await callHiveTool(port, "memory_reindex", {}, "result", fetcher),
   );
-  return result.count;
 }
