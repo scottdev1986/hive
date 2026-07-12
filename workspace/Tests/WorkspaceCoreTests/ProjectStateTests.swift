@@ -163,7 +163,7 @@ final class ProjectStateTests: XCTestCase {
         XCTAssertEqual(status("f"), .waiting(.userInput))
         XCTAssertEqual(status("g"), .completed(acknowledged: false))
         XCTAssertEqual(status("h"), .failed(acknowledged: false))
-        XCTAssertEqual(status("i"), .running, "unknown words degrade to running")
+        XCTAssertEqual(status("i"), .unknown, "unknown words remain visibly unknown")
         XCTAssertEqual(state.panes[ProjectState.paneID(forAgent: "i")]?.feedStatus,
                        "brand-new-status", "raw word survives for the header")
     }

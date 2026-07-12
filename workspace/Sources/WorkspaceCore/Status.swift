@@ -5,16 +5,15 @@ public enum WaitingKind: String, Codable, Equatable {
     case approval
 }
 
-/// Semantic pane status. Rendering rules (blueprint "State and attention"):
-/// running = steady blue; waiting = amber pulse burst then steady amber;
-/// completed = green until acknowledged, then subdued; failed = red + badge
-/// until opened/resolved; disconnected = gray dashed with last confirmed state.
+/// Semantic pane status. Unknown is explicit so an unrecognized feed word can
+/// never be silently upgraded to a healthy state.
 /// The focus ring is a separate signal and never overwrites the status border.
 public enum PaneStatus: Equatable, Codable {
     case running
     case waiting(WaitingKind)
     case completed(acknowledged: Bool)
     case failed(acknowledged: Bool)
+    case unknown
     case disconnected(reason: String, lastConfirmed: String)
 
     /// Whether the amber pulse burst applies (bounded burst handled by the view;
@@ -30,6 +29,7 @@ public enum PaneStatus: Equatable, Codable {
         case .waiting: return true
         case .completed(let acknowledged): return !acknowledged
         case .failed(let acknowledged): return !acknowledged
+        case .unknown: return false
         case .disconnected: return true
         }
     }

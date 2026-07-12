@@ -69,11 +69,12 @@ everything unknown. Reconciliation rules:
 - feed process dies → agent panes turn gray dashed (statuses untrusted); no
   auto-restart, relaunch via `hive`
 
-Status words map onto the existing status/attention model: spawning/working/
-idle → running (blue); awaiting-approval, control-paused, stuck → amber +
-attention; done → green until acknowledged; failed → red + badge; dead → gray
-dashed. The raw word still shows in the pane header, next to tool, model, and
-context %.
+The header symbol, pane border, and attention icon share one status legend:
+working green; idle yellow; spawning blue; awaiting-approval/control-paused/
+stuck orange; done purple; failed red; unknown or disconnected gray and
+dashed. Symbols distinguish every state without hue. Unrecognized feed words
+remain explicitly unknown rather than being upgraded to healthy. The raw word
+still shows in the pane header, next to tool, model, and context %.
 
 ### Lifecycle
 

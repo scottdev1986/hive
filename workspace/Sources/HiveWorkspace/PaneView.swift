@@ -18,9 +18,9 @@ final class PaneView: NSView {
     private let failureBadge = NSImageView()
     let contentView: TerminalPaneView
 
-    private let statusBorderLayer = CAShapeLayer()
+    private let statusBorder = PaneStatusBorderView()
     private let focusRing = PaneFocusRingView()
-    private var currentStatus: PaneStatus = .running
+    private var currentStatus: PaneStatus = .unknown
     private var pulsing = false
     private var focusIndicator: PaneFocusIndicator = .none
 
@@ -149,21 +149,26 @@ final class PaneView: NSView {
             headerSeparator.trailingAnchor.constraint(equalTo: backgroundView.trailingAnchor),
 
             contentView.topAnchor.constraint(equalTo: headerSeparator.bottomAnchor),
-            contentView.leadingAnchor.constraint(equalTo: backgroundView.leadingAnchor),
-            contentView.trailingAnchor.constraint(equalTo: backgroundView.trailingAnchor),
-            contentView.bottomAnchor.constraint(equalTo: backgroundView.bottomAnchor),
+            // The status stroke occupies x/y 2...6 inside the pane. SwiftTerm
+            // must receive only the pixels it can actually draw in; otherwise
+            // its negotiated grid includes edge glyphs hidden by the overlay.
+            contentView.leadingAnchor.constraint(equalTo: backgroundView.leadingAnchor, constant: 6),
+            contentView.trailingAnchor.constraint(equalTo: backgroundView.trailingAnchor, constant: -6),
+            contentView.bottomAnchor.constraint(equalTo: backgroundView.bottomAnchor, constant: -6),
         ])
 
-        statusBorderLayer.fillColor = nil
-        statusBorderLayer.lineWidth = 2
-        layer?.addSublayer(statusBorderLayer)
-
-        // The focus ring is the LAST subview: it must draw over the pane's
-        // opaque background (and it passes every click through to the terminal).
+        // Status and focus are sibling overlays above the opaque background.
+        // Both pass every click through to the terminal below.
         headerView.wantsLayer = true
+        statusBorder.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(statusBorder)
         focusRing.translatesAutoresizingMaskIntoConstraints = false
         addSubview(focusRing)
         NSLayoutConstraint.activate([
+            statusBorder.topAnchor.constraint(equalTo: topAnchor),
+            statusBorder.leadingAnchor.constraint(equalTo: leadingAnchor),
+            statusBorder.trailingAnchor.constraint(equalTo: trailingAnchor),
+            statusBorder.bottomAnchor.constraint(equalTo: bottomAnchor),
             focusRing.topAnchor.constraint(equalTo: topAnchor),
             focusRing.leadingAnchor.constraint(equalTo: leadingAnchor),
             focusRing.trailingAnchor.constraint(equalTo: trailingAnchor),
@@ -198,14 +203,6 @@ final class PaneView: NSView {
         return button
     }
 
-    override func layout() {
-        super.layout()
-        let borderPath = CGPath(roundedRect: bounds.insetBy(dx: 1, dy: 1),
-                                cornerWidth: 10, cornerHeight: 10, transform: nil)
-        statusBorderLayer.path = borderPath
-        statusBorderLayer.frame = bounds
-    }
-
     /// CGColors are resolved, not dynamic: re-resolve the header tint whenever
     /// the pane switches between light and dark.
     override func viewDidChangeEffectiveAppearance() {
@@ -219,18 +216,16 @@ final class PaneView: NSView {
         titleLabel.stringValue = state.title
         detailLabel.stringValue = state.headerDescription
 
-        let color = Theme.statusColor(for: state.status)
-        statusIcon.image = NSImage(systemSymbolName: Theme.statusSymbol(for: state.status),
+        let appearance = FeedStatusMap.activity(
+            for: state.feedStatus, paneStatus: state.status).appearance
+        var subdued = false
+        if case .completed(let acknowledged) = state.status { subdued = acknowledged }
+        let color = Theme.statusColor(for: appearance.color, subdued: subdued)
+        statusIcon.image = NSImage(systemSymbolName: appearance.symbol,
                                    accessibilityDescription: state.statusDescription)
-        // The dot reports measured activity (finer than the border's semantic
-        // state): working and idle must read differently at a glance.
-        var doneAcknowledged = false
-        if case .completed(let acknowledged) = state.status { doneAcknowledged = acknowledged }
-        statusIcon.contentTintColor = Theme.dotColor(
-            for: FeedStatusMap.activity(for: state.feedStatus),
-            acknowledged: doneAcknowledged)
-        statusBorderLayer.strokeColor = color.cgColor
-        statusBorderLayer.lineDashPattern = Theme.statusIsDashed(state.status) ? [6, 4] : nil
+        statusIcon.contentTintColor = color
+        statusBorder.statusAppearance = appearance
+        statusBorder.subdued = subdued
 
         if case .failed(false) = state.status {
             failureBadge.isHidden = false
@@ -257,21 +252,14 @@ final class PaneView: NSView {
     private func startBoundedPulse() {
         guard !pulsing, !Theme.reduceMotion else { return }
         pulsing = true
-        let pulse = CABasicAnimation(keyPath: "opacity")
-        pulse.fromValue = 1.0
-        pulse.toValue = 0.25
-        pulse.duration = StatusMotion.waitingPulseCycleSeconds / 2
-        pulse.autoreverses = true
-        pulse.repeatCount = Float(StatusMotion.waitingPulseCycles)
-        pulse.isRemovedOnCompletion = true
-        statusBorderLayer.add(pulse, forKey: "waiting-pulse")
+        statusBorder.startPulse()
         DispatchQueue.main.asyncAfter(deadline: .now() + StatusMotion.waitingPulseBurstSeconds) { [weak self] in
             self?.pulsing = false
         }
     }
 
     private func stopPulse() {
-        statusBorderLayer.removeAnimation(forKey: "waiting-pulse")
+        statusBorder.stopPulse()
         pulsing = false
     }
 

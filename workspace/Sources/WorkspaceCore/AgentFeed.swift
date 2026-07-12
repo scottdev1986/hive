@@ -88,13 +88,13 @@ public struct FeedLine: Decodable {
 /// Maps daemon status words onto the workspace's semantic pane status.
 /// The raw word still travels to the pane header via `PaneState.feedStatus`;
 /// this mapping only decides border color and attention semantics:
-/// - spawning/working/idle → running (steady blue: alive and healthy)
+/// - spawning/working/idle → running (alive and healthy)
 /// - awaiting-approval → waiting(.approval) (amber, attention)
 /// - control-paused/stuck → waiting(.userInput) (amber, attention)
 /// - done → completed (green until acknowledged)
 /// - failed → failed (red + badge until acknowledged)
 /// - dead → disconnected (gray dashed)
-/// - anything unknown → running (unknown is never rendered as an alarm)
+/// - anything unknown → unknown (visible uncertainty, never healthy)
 public enum FeedStatusMap {
     public static func paneStatus(for raw: String, acknowledged: Bool = false) -> PaneStatus {
         switch raw {
@@ -111,7 +111,7 @@ public enum FeedStatusMap {
         case "dead":
             return .disconnected(reason: "agent reported dead", lastConfirmed: "dead")
         default:
-            return .running
+            return .unknown
         }
     }
 
@@ -127,8 +127,8 @@ public enum FeedStatusMap {
     }
 }
 
-/// What an agent is actually doing, as measured by the daemon — this drives
-/// the header dot's colour (the status border keeps its own coarser mapping).
+/// What an agent is actually doing, as measured by the daemon. Its appearance
+/// is the single legend consumed by both the header symbol and status border.
 /// `needsUser` is only ever a measured condition: the daemon sets
 /// awaiting-approval when a pending approval record exists, and
 /// control-paused/stuck when the agent is genuinely blocked on a human. It is
@@ -143,7 +143,54 @@ public enum AgentActivity: Equatable {
     case spawning
     case done
     case failed
+    case disconnected
     case unknown
+}
+
+public enum StatusColor: Equatable {
+    case green, yellow, orange, blue, purple, red, gray
+}
+
+public enum StatusBorder: Equatable {
+    case solid, dashed
+}
+
+public struct StatusAppearance: Equatable {
+    public let color: StatusColor
+    public let symbol: String
+    public let border: StatusBorder
+
+    public init(color: StatusColor, symbol: String, border: StatusBorder) {
+        self.color = color
+        self.symbol = symbol
+        self.border = border
+    }
+}
+
+extension AgentActivity {
+    public var appearance: StatusAppearance {
+        switch self {
+        case .working: return StatusAppearance(color: .green, symbol: "circle.fill", border: .solid)
+        case .idle: return StatusAppearance(color: .yellow, symbol: "pause.circle.fill", border: .solid)
+        case .needsUser: return StatusAppearance(color: .orange, symbol: "hand.raised.fill", border: .solid)
+        case .spawning: return StatusAppearance(color: .blue, symbol: "circle.dotted", border: .solid)
+        case .done: return StatusAppearance(color: .purple, symbol: "checkmark.circle.fill", border: .solid)
+        case .failed: return StatusAppearance(color: .red, symbol: "exclamationmark.circle.fill", border: .solid)
+        case .disconnected: return StatusAppearance(color: .gray, symbol: "bolt.horizontal.circle.fill", border: .dashed)
+        case .unknown: return StatusAppearance(color: .gray, symbol: "questionmark.circle", border: .dashed)
+        }
+    }
+}
+
+extension AttentionSeverity {
+    public var statusColor: StatusColor {
+        switch self {
+        case .waiting: return .orange
+        case .completed: return .purple
+        case .failed: return .red
+        case .disconnected: return .gray
+        }
+    }
 }
 
 extension FeedStatusMap {
@@ -156,11 +203,18 @@ extension FeedStatusMap {
         case "spawning": return .spawning
         case "done": return .done
         case "failed": return .failed
-        // "dead", the feed-lost sentinel "unknown", and any word this app
-        // does not recognize: the dot must say "no signal", not impersonate
-        // a real state.
+        case "dead": return .disconnected
+        // The feed-lost sentinel "unknown" and any word this app does not
+        // recognize must say "no signal", not impersonate a real state.
         default: return .unknown
         }
+    }
+
+    /// A lost feed is structurally disconnected even though its raw word is
+    /// rewritten to "unknown". Preserve that stronger non-color cue.
+    public static func activity(for raw: String, paneStatus: PaneStatus) -> AgentActivity {
+        if case .disconnected = paneStatus { return .disconnected }
+        return activity(for: raw)
     }
 }
 

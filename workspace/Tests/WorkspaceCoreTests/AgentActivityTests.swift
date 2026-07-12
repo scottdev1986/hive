@@ -3,6 +3,43 @@ import XCTest
 
 final class AgentActivityTests: XCTestCase {
 
+    func testUnifiedLegendMapsEveryActivityToOneAppearance() {
+        XCTAssertEqual(AgentActivity.working.appearance,
+                       StatusAppearance(color: .green, symbol: "circle.fill", border: .solid))
+        XCTAssertEqual(AgentActivity.idle.appearance,
+                       StatusAppearance(color: .yellow, symbol: "pause.circle.fill", border: .solid))
+        XCTAssertEqual(AgentActivity.spawning.appearance,
+                       StatusAppearance(color: .blue, symbol: "circle.dotted", border: .solid))
+        XCTAssertEqual(AgentActivity.needsUser.appearance,
+                       StatusAppearance(color: .orange, symbol: "hand.raised.fill", border: .solid))
+        XCTAssertEqual(AgentActivity.done.appearance,
+                       StatusAppearance(color: .purple, symbol: "checkmark.circle.fill", border: .solid))
+        XCTAssertEqual(AgentActivity.failed.appearance,
+                       StatusAppearance(color: .red, symbol: "exclamationmark.circle.fill", border: .solid))
+        XCTAssertEqual(AgentActivity.disconnected.appearance,
+                       StatusAppearance(color: .gray, symbol: "bolt.horizontal.circle.fill", border: .dashed))
+        XCTAssertEqual(AgentActivity.unknown.appearance,
+                       StatusAppearance(color: .gray, symbol: "questionmark.circle", border: .dashed))
+        XCTAssertEqual(AttentionSeverity.waiting.statusColor, .orange)
+        XCTAssertEqual(AttentionSeverity.completed.statusColor, .purple)
+        XCTAssertEqual(AttentionSeverity.failed.statusColor, .red)
+        XCTAssertEqual(AttentionSeverity.disconnected.statusColor, .gray)
+    }
+
+    func testUnrecognizedStatusIsUnknownAndNeverHealthy() {
+        let raw = "some-future-status"
+        XCTAssertEqual(FeedStatusMap.paneStatus(for: raw), .unknown)
+        XCTAssertEqual(FeedStatusMap.activity(for: raw), .unknown)
+        XCTAssertNotEqual(FeedStatusMap.activity(for: raw).appearance,
+                          AgentActivity.working.appearance)
+    }
+
+    func testFeedLossKeepsDisconnectedAppearance() {
+        let status = PaneStatus.disconnected(reason: "feed lost", lastConfirmed: "working")
+        XCTAssertEqual(FeedStatusMap.activity(for: "unknown", paneStatus: status), .disconnected)
+        XCTAssertNotEqual(FeedStatusMap.activity(for: "unknown", paneStatus: status), .unknown)
+    }
+
     func testDaemonVocabularyMapsToActivity() {
         XCTAssertEqual(FeedStatusMap.activity(for: "working"), .working)
         XCTAssertEqual(FeedStatusMap.activity(for: "idle"), .idle)
@@ -27,7 +64,7 @@ final class AgentActivityTests: XCTestCase {
     /// impersonate working, idle, or (worst) needs-user.
     func testUnknownWordsDegradeToUnknownNotAState() {
         XCTAssertEqual(FeedStatusMap.activity(for: "unknown"), .unknown)
-        XCTAssertEqual(FeedStatusMap.activity(for: "dead"), .unknown)
+        XCTAssertEqual(FeedStatusMap.activity(for: "dead"), .disconnected)
         XCTAssertEqual(FeedStatusMap.activity(for: ""), .unknown)
         XCTAssertEqual(FeedStatusMap.activity(for: "some-future-status"), .unknown)
     }
