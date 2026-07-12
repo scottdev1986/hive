@@ -643,28 +643,66 @@ async function inventoryDocPaths(root: string): Promise<{
   return { rootDocs, briefable, briefableDirectories };
 }
 
-/** Rank docs by inbound links (how often each is referenced by path across the
+/**
+ * Every path this doc *links to*: markdown inline targets `](path)` and
+ * reference definitions `[id]: path`. Anchors and queries are stripped, so
+ * `SPEC.md#routing` cites `SPEC.md`.
+ *
+ * A link target is the whole point. The ranker used to count how many times a
+ * doc's basename appeared anywhere in the corpus, which cannot tell a citation
+ * from a sentence that merely contains the characters `SPEC.md` — so a document
+ * that TALKED ABOUT a filename voted for it. That is not hypothetical: a staged
+ * doc naming the repo's Claude conventions file four times flipped this repo's
+ * briefing primary away from SPEC.md, and that file is cited by exactly zero
+ * links. What every agent gets briefed with must not be decidable by prose.
+ */
+function citedPaths(text: string): string[] {
+  const targets: string[] = [];
+  for (const match of text.matchAll(/\]\(\s*<?([^)<>\s]+)/g)) {
+    targets.push(match[1]!);
+  }
+  for (const match of text.matchAll(/^\s*\[[^\]]+\]:\s*<?([^\s<>]+)/gm)) {
+    targets.push(match[1]!);
+  }
+  return targets
+    .map((target) => target.split("#")[0]!.split("?")[0]!)
+    .filter((target) => target.length > 0);
+}
+
+/** Rank docs by inbound *citations* (how often each is linked to across the
  * corpus) with a small role boost, and return the most-cited as primary. This
  * is the doc-level analogue of aider's symbol ranking; the primary is "the one
- * everything else cites", whatever it is called. Returns null primary when the
- * corpus is empty or nothing is cited and no doc carries a design role. */
+ * everything else cites", whatever it is called.
+ *
+ * A citation is a link, not a mention. Counting mentions made the ranking a
+ * popularity contest over prose, which any new document could win by discussing
+ * a filename often enough — silently re-pointing the primary doc that every
+ * agent in the system is briefed with. Measured on this repo when the
+ * distinction was introduced: SPEC.md carried 5 inbound links and 23 bare
+ * mentions; the Claude conventions file carried 0 links and the same 23
+ * mentions. Mentions could not separate them. Links are decisive.
+ *
+ * Returns null primary when the corpus is empty or nothing is cited and no doc
+ * carries a design role. */
 export function rankPrimaryDoc(
   docs: string[],
   corpus: Array<{ path: string; text: string }>,
 ): string | null {
   if (docs.length === 0) return null;
   const basename = (p: string): string => p.split("/").pop() ?? p;
+  const citations = corpus.map((file) => ({
+    path: file.path,
+    // Cited by basename, so a relative prefix (`../SPEC.md`, `./SPEC.md`) still
+    // resolves to the doc it names.
+    targets: citedPaths(file.text).map(basename),
+  }));
   const score = new Map<string, number>();
-  for (const doc of docs) score.set(doc, 0);
   for (const doc of docs) {
     const name = basename(doc);
     let inbound = 0;
-    for (const file of corpus) {
+    for (const file of citations) {
       if (file.path === doc) continue;
-      // Count references by basename (SPEC.md, DESIGN.md) — the form docs cite
-      // each other with, robust to relative-path prefixes.
-      const matches = file.text.split(name).length - 1;
-      inbound += matches;
+      inbound += file.targets.filter((target) => target === name).length;
     }
     // Role boost: a design/architecture doc is a natural primary even in a young
     // repo where little cites it yet.

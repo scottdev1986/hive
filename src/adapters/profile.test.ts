@@ -84,10 +84,52 @@ async function repoWithSpec(): Promise<string> {
 describe("rankPrimaryDoc", () => {
   test("picks the most inbound-linked doc as primary", () => {
     const primary = rankPrimaryDoc(["SPEC.md", "NOTES.md"], [
-      { path: "README.md", text: "see SPEC.md and SPEC.md again" },
-      { path: "NOTES.md", text: "one ref to SPEC.md" },
+      { path: "README.md", text: "see [the spec](SPEC.md) and [again](./SPEC.md)" },
+      { path: "NOTES.md", text: "one ref to [SPEC](../SPEC.md#routing)" },
     ]);
     expect(primary).toBe("SPEC.md");
+  });
+
+  test("reference-style links and anchors are citations too", () => {
+    expect(rankPrimaryDoc(["NOTES.md", "TODO.md"], [
+      { path: "TODO.md", text: "the plan is in [notes][n]\n\n[n]: NOTES.md#plan" },
+    ])).toBe("NOTES.md");
+  });
+
+  test("a doc that merely TALKS ABOUT another doc does not vote for it", () => {
+    // The bug this ranking exists to not have. A document that discusses a
+    // filename — a migration note, a skill explaining which conventions file a
+    // vendor reads, this very sentence — used to cast one vote per mention, and
+    // the primary doc every agent is briefed with moved because of prose.
+    //
+    // Measured on this repo: CLAUDE.md had 23 bare mentions and ZERO inbound
+    // links, exactly as many mentions as SPEC.md. Under mention-counting a
+    // single new doc naming CLAUDE.md four times was enough to flip the primary.
+    const primary = rankPrimaryDoc(["SPEC.md", "CLAUDE.md"], [
+      { path: "SPEC.md", text: "the design" },
+      { path: "README.md", text: "the design lives in [the spec](SPEC.md)" },
+      {
+        path: "docs/grok-contract.md",
+        text: [
+          "Grok ingests the repository's CLAUDE.md even with compat off.",
+          "CLAUDE.md was written for another vendor's agents.",
+          "Follow CLAUDE.md's engineering conventions, but your brief wins.",
+          "The repository's CLAUDE.md is not addressed to you.",
+        ].join("\n"),
+      },
+    ]);
+    // CLAUDE.md is named four times and linked zero times. It is not the primary.
+    expect(primary).toBe("SPEC.md");
+  });
+
+  test("mentions cannot outvote a citation, however many there are", () => {
+    // The effect, stated as starkly as it can be: one link beats a hundred
+    // mentions, because a mention is not evidence of anything.
+    const shouting = Array.from({ length: 100 }, () => "NOTES.md").join(" ");
+    expect(rankPrimaryDoc(["GUIDE.md", "NOTES.md"], [
+      { path: "chatter.md", text: shouting },
+      { path: "index.md", text: "start at [the guide](GUIDE.md)" },
+    ])).toBe("GUIDE.md");
   });
 
   test("a repo whose docs cite nothing and carry no design role has no primary", () => {
@@ -191,9 +233,13 @@ describe("bootstrapProfile — docs-rich repo", () => {
       await write(root, "bun.lock", "");
       await write(root, "tsconfig.json", "{}");
       await write(root, "CLAUDE.md", "# conventions\n");
-      await write(root, "README.md", "See SPEC.md for the design. SPEC.md is canonical.");
+      await write(
+        root,
+        "README.md",
+        "See [the spec](SPEC.md) for the design. [SPEC.md](./SPEC.md) is canonical.",
+      );
       await write(root, "SPEC.md", "# Spec\n\n### 1. Thing\n\nbody\n");
-      await write(root, "docs/research/x.md", "background, cites SPEC.md once");
+      await write(root, "docs/research/x.md", "background, [cites](../SPEC.md) once");
       await write(root, "src/cli.ts", "console.log('hi')\n");
       commitAll(root, "init");
 
@@ -239,10 +285,14 @@ describe("a doc is briefable because it is there, not because git tracks it", ()
       git(root, ["init"]);
       await write(root, ".gitignore", "docs/\nresearch/\n");
       await write(root, "CLAUDE.md", "# conventions\n");
-      await write(root, "README.md", "See SPEC.md for the design.");
+      await write(root, "README.md", "See [the spec](SPEC.md) for the design.");
       await write(root, "SPEC.md", "# Spec\n");
-      await write(root, "docs/design.md", "the design, per SPEC.md");
-      await write(root, "research/notes.md", "background reading on SPEC.md");
+      await write(root, "docs/design.md", "the design, per [SPEC](../SPEC.md)");
+      await write(
+        root,
+        "research/notes.md",
+        "background reading on [the spec](../SPEC.md)",
+      );
       commitAll(root, "init");
 
       // Positive control: prove the fixture really is untracked, or the rest of
