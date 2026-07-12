@@ -2,34 +2,123 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Design discovery (read-only) |
-| Author | cesar (Hive writer) |
-| Date | 2026-07-12 |
-| Product surface | Hive Workspace app (`workspace/`) settings |
-| Quality bar | ChatGPT / Claude settings polish: calm hierarchy, system materials, no inventing numbers |
-| Implementation | **Not started** — this document is specification only |
+| Status | Design spec (not started). **Subordinate to** `docs/architecture/router-redesign-recommended.md` |
+| Authors | cesar (first draft, e2d38fb) · clifford (rewrite against the settled architecture) |
+| Date | 2026-07-12 (rewritten) |
+| Product surface | Hive Workspace app (`workspace/`) — **AppKit, Swift** |
+| Quality bar | macOS system-settings polish: calm hierarchy, system materials, no inventing numbers |
+
+**Read this first.** The version that landed as e2d38fb was written before the
+Workspace stack was known and before the router scope was settled. It assumed a
+web-shaped UI, treated settled questions as open, and modelled `long_context` as
+a task role. Those parts are **gone**, not hedged. What remains is what survived
+review: the honesty rules, the percent-only meter, the unmetered-provider panel,
+the ordered-chain UI, and the HIG structure.
+
+Where this document and `router-redesign-recommended.md` disagree, **that one
+wins and this one is a bug.**
 
 ---
 
 ## 1. Overview
 
-The Model Control Center is a settings screen inside the Hive Workspace app where a human turns providers and models on or off, sets per-model effort, and assigns models to task roles as **ordered fallback chains**. It also shows honest capacity and billing state: what Hive measured, and what Hive does not know.
+The Model Control Center is a settings surface inside the Hive Workspace app
+where a human turns providers and models on or off, sets per-model effort, and
+assigns models to **task categories** as **ordered fallback chains**. It also
+shows honest capacity and billing state: what Hive measured, and what Hive does
+not know.
 
-This is not a marketing dashboard. The hard product rule — already law in `src/schemas/quota.ts`, `docs/research/provider-quota-surfaces.md`, and `docs/architecture/grok-integration-spec.md` §10 — is:
+The hard product rule — already law in `src/schemas/quota.ts`,
+`docs/research/provider-quota-surfaces.md`, and
+`docs/architecture/grok-integration-spec.md` §10 — is:
 
-> **Measure or say unknown. Never invent a number. Never render zero where the truth is “we cannot tell.”**
+> **Measure or say unknown. Never invent a number. Never render zero where the
+> truth is "we cannot tell."**
 
-An implementer who ships a pretty empty bar labeled “0% used” for Grok, or “X of Y remaining” when the wire only carries percent, has failed this design even if every layout pixel is perfect.
+An implementer who ships a pretty empty bar labeled "0% used" for Grok, or
+"X of Y requests remaining" when no vendor publishes an absolute allowance at
+all, has failed this design even if every pixel is right.
 
 ---
 
-## 2. Ground truth the UI must absorb
+## 2. The four constraints an implementer must not get wrong
 
-These are measured facts in this repo, not aspirations. Design **for** them.
+These come first because getting any one of them wrong makes the screen lie, and
+a confident lie about capacity is worse than no screen.
 
-### 2.1 Providers Hive knows today
+### 2.1 No vendor publishes an absolute allowance. Percent is the only honest meter.
 
-Canonical enum: `claude` | `codex` | `grok` (`src/schemas/capability.ts`). Display names:
+Not Claude, not Codex, not Grok. Every metered surface reports a **fraction
+consumed**, or nothing at all. There is no denominator on the wire.
+
+- **"128 of 500 requests" is fiction for every provider that exists.** This is
+  not a Claude gap or a Codex gap — it is universal.
+- The only honest meter is a **percent bar + a reset timestamp**.
+- Discovered pools are percent-denominated by construction
+  (`QuotaWindowStatus.unit = "percent"`, allowance 100 when known). Manual
+  `quota.toml` pools use operator-declared units; this screen renders discovered
+  percent meters and neither edits nor invents operator units.
+
+### 2.2 Claude's usage feed is EXPERIMENTAL and goes silent. Design the silence.
+
+Claude's `get_usage` is **vendor-described as experimental**
+(`src/daemon/quota-sources.ts:614`, `:753` — "marked experimental by the CLI").
+It is not a stable contract, and it does not fail loudly — it goes quiet. **It
+went silent twice on 2026-07-12 alone.**
+
+The UI needs a first-class **unavailable / stale** state for a normally-metered
+provider:
+
+- **A silent feed must never render as a zeroed bar.** A determinate bar at 0% is
+  a claim of measured emptiness. The truth is "we asked and heard nothing."
+- Stale readings keep the last percent **only with a visible age and a Stale
+  badge**. A six-hour-old "12% used" is not current headroom.
+- **A dropped feed is not an outage.** Claude may be perfectly spawnable while
+  its usage surface says nothing. Do not disable the card or grey out the models.
+- The silence is *expected*, not exceptional. It should read as a known condition
+  with a known name — not as an error demanding action.
+
+### 2.3 Grok has no gauge at all — and that state must look deliberate.
+
+Grok exposes **no capacity surface**. `_x.ai/billing` is a **money guard, not a
+gauge**: `onDemandUsed` / `onDemandCap` / `prepaidBalance` say whether Hive is
+about to spend, and nothing about how full any plan is.
+
+- Grok gets a **warning badge and the unmetered panel** (§7.5), never a meter.
+- **Rendering Grok's money-rail zeros as a capacity gauge is forbidden.** Those
+  zeros read as "full tank." They mean "no on-demand spend has occurred."
+- The panel must look **deliberate, not broken**: same card chrome, same mark
+  weight, an `info.circle`, a muted inset. No hollow track, no error red, no bare
+  `N/A`. "Hive cannot measure this" is a designed state; "the component failed to
+  load" is not.
+
+### 2.4 Effort is THREE-valued. Conflating two of the values is a lie the UI renders.
+
+| Value | Meaning | UI |
+| --- | --- | --- |
+| `known(values[])` | The vendor listed effort levels | Picker with exactly those strings, in vendor order |
+| `known-none` | The vendor **stated** there is no effort axis (Grok's `supports_reasoning_effort: false`) | **No picker.** Caption: *This model has no effort setting.* |
+| `unknown(reason)` | Surface silent / field absent / malformed — we could not read it | **No picker.** Caption: *Effort options unknown* + the measured reason |
+
+"This model has no effort axis" and "we could not read this model's effort axis"
+are different facts. One greyed-out control for both claims knowledge we do not
+have.
+
+**Blocking dependency:** today's `buildModelInventory` is **two**-valued — it
+exposes `effortLevels` as known/unknown and **drops `supportsEffort` entirely**
+(`src/daemon/model-inventory.ts:300`), even though `CapabilityRecord` keeps the
+two fields separate (`src/schemas/capability.ts`). A UI reading only the
+inventory **cannot** tell `known-none` from empty-`known` from `unknown`.
+**Inventory must go three-valued before any effort picker ships** (governing doc
+§4.2.3, PR2).
+
+---
+
+## 3. Ground truth the UI must absorb
+
+### 3.1 Providers Hive knows today
+
+Canonical enum: `claude` | `codex` | `grok` (`src/schemas/capability.ts`).
 
 | Provider id | Card title | Vendor mark |
 | --- | --- | --- |
@@ -37,326 +126,292 @@ Canonical enum: `claude` | `codex` | `grok` (`src/schemas/capability.ts`). Displ
 | `codex` | Codex | OpenAI official mark |
 | `grok` | Grok | xAI official mark |
 
-More providers later: the component inventory is keyed by `CapabilityProvider`, not by a hard-coded three-card layout.
+The UI is keyed by `CapabilityProvider` and built through the single legal
+enumerator (`CAPABILITY_PROVIDERS` / `forEachProvider`) — never a hardcoded
+three-card layout, never an ad-hoc `["claude", "codex"]` literal. That literal is
+exactly how Grok became invisible in `buildModelInventory` and `cli/routing.ts`
+while being fully discovered underneath (governing doc §2.2). The MCC must pass
+the **fourth-provider test**: a vendor Hive has never seen, with a novel model
+and an effort level named `overdrive`, appears on this screen with no UI change.
 
-### 2.2 Usage data is heterogeneous
+### 3.2 Usage data is heterogeneous
 
-| Provider | 5-hour window | 7-day / weekly window | Absolute counts | Notes |
+| Provider | Short window | Long window | Absolute counts | Notes |
 | --- | --- | --- | --- | --- |
-| Claude Code | Yes — `utilization` 0–100 via `get_usage` | Yes — `seven_day` | **No** | Confidence typically `reported` (experimental control frame) |
-| Codex | Yes — shorter window sorted by `windowDurationMins` (~300) | Yes — longer window (~10080) | **No** | Confidence can be `authoritative` on `account/rateLimits/read` |
-| Grok | **None measured** | **No capacity %** — only `currentPeriod.end` reset boundary | **No** | `_x.ai/billing` is a **money guard**, not a gauge. `onDemand*` / `prepaidBalance` must **never** be drawn as remaining quota |
+| Claude Code | `utilization` 0–100 via `get_usage` | `seven_day` | **No** | Confidence `reported`. **Experimental; goes silent — §2.2** |
+| Codex | shorter window (~300 min) | longer window (~10080 min) | **No** | Can be `authoritative` — `account/rateLimits/read` is stable protocol |
+| Grok | **None** | **None** — only a `currentPeriod.end` reset boundary | **No** | Money guard only — §2.3 |
 
-Discovered pools are percent-denominated by construction (`QuotaWindowStatus.unit = "percent"`, allowance 100 when known). Manual `quota.toml` pools use operator units; this settings UI **defaults to discovered percent meters** and must not invent absolute denominators.
-
-### 2.3 Unknown is a first-class value
+### 3.3 Unknown is a first-class value
 
 From `QuotaWindowStatus` (`src/schemas/quota.ts`):
 
 - `used`, `remaining`, `remainingPct`, `allowance` may each be `null`
-- `null` means **unknown**, not 0, not 100
-- Hive-local ledger spend on an unconfigured provider is **local recorded spend**, never account usage — if shown at all, it must be labeled as Hive-only and must not look like a quota meter
+- `null` means **unknown** — not 0, not 100
+- Hive-local ledger spend on an unconfigured provider is **local recorded
+  spend**, never account usage. If shown, label it Hive-only; it must not look
+  like a quota meter.
 
-Confidence values: `authoritative` | `reported` | `estimated` | `missing` | `stale`.
+Confidence: `authoritative` | `reported` | `estimated` | `missing` | `stale`.
 
-Near-limit thresholds already exist in config (fractions of **remaining**, not used):
+Near-limit thresholds exist in config as fractions of **remaining**, not used:
 
-- warning when `remainingPct ≤ warningRemainingPct` (default **0.25** → ≤25% remaining ≈ ≥75% used)
+- warning when `remainingPct ≤ warningRemainingPct` (default **0.25**)
 - critical when `remainingPct ≤ criticalRemainingPct` (default **0.1**)
 
-UI near-limit styling must follow these measured remaining thresholds (or the live config values), not a hard-coded “80% used” guess.
+Styling follows those live config values, not a hardcoded "80% used."
 
-### 2.4 Billing ≠ capacity
+### 3.4 Billing ≠ capacity
 
-Spend risk (`spendRisk` in `src/daemon/usage-credits.ts`) answers **“would this spend money?”**, not “how full is the bar.”
+`spendRisk` (`src/daemon/usage-credits.ts`) answers **"would this spend
+money?"**, not "how full is the bar."
 
-- Plan headroom + credits off → free (no spend)
+- Plan headroom + credits off → free
 - Exhausted + credits on → would-spend (consent)
 - Exhausted + credits unknown (Codex auto-top-up) → ask, with uncertainty copy
-- Grok: money rails zero → paid overflow off; any positive rail → loud money-state change; **unit of `val` is UNKNOWN** — show raw change without inventing a currency label unless a later measurement binds one
+- Grok: rails zero → paid overflow off; any positive rail → loud money-state
+  change; **the unit of `val` is UNKNOWN** — show the raw change, invent no
+  currency label
 
-### 2.5 Routing today vs this screen’s IA
+When paid overflow is off, do **not** nag "may spend money." The wallet is safe;
+a plan limit is a wall, not a bill.
 
-**Loud mismatch — do not paper over it.**
+### 3.5 The router this screen drives (settled)
 
-| This UI (requested IA) | Live Hive today (`docs/model-selection.md`, `src/schemas/routing.ts`) |
-| --- | --- |
-| Nine **task roles** (light research, heavy research, simple coding, …) | Four **routing tiers**: `deep`, `standard`, `cheap`, `review` |
-| Per-role **ordered multi-model fallback chain** | No downshift chain; derivation is pin → account default → last-known-good → refuse; quota chooses between vendor cells, not a same-role ladder |
-| Model enable/disable master controls | Floors + pins + spend/availability filters; no per-model “enabled” boolean in a settings store yet |
-| Empty role “falls back to any enabled model” | Unresolved cell **refuses** with a reason — it does not silently pick a random enabled model |
-
-**Design stance (required):**
-
-1. The **settings surface** ships the requested nine-role IA as the human-facing policy model.
-2. The **daemon contract** that persists and applies that policy is a separate implementation PR and must be explicit — see §12 and Open Questions.
-3. Until the daemon implements ordered fallback chains, the UI **must not** claim “Hive will try secondary if primary fails” as live behavior. Ship either:
-   - **A (recommended for honesty):** UI editable, with a visible “Policy not yet applied by router” banner until the router lands; or
-   - **B:** Land router + UI together; settings screen is dark until then.
-
-This document specifies the UI as if the persistence model in §11 exists. It flags every place where today’s router would make the UI a lie if shipped alone.
-
-### 2.6 Effort is vendor-advertised strings
-
-Effort is **not** a fixed Hive enum at ingestion (`EffortLevelSchema` = raw vendor strings). Per-model supported efforts come from live capability records. A model that advertises no levels (e.g. some Haiku / some Grok composer entries) shows no effort control — not a disabled fake dropdown of `low|medium|high`.
+The four tiers (`deep` | `standard` | `cheap` | `review`) and the hardcoded
+tier→vendor preference (`TIER_PREFERRED_TOOL`) are **being deleted**. **Task
+categories replace them.** There is no mapping to display, no aliasing to
+disclose, and no "currently applied as routing tier: deep" caption. The old
+draft's nine-roles-vs-four-tiers mismatch is not an open question — it is a
+migration that ends with the tiers gone (governing doc §3.2, §5).
 
 ---
 
-## 3. Goals and non-goals
+## 4. Settled decisions this screen encodes
+
+The first draft listed these as open. They are closed. An implementer who
+reopens them is building the wrong screen.
+
+| Question | Ruling (governing doc) |
+| --- | --- |
+| Empty category → refuse, or fall back? | **Fall back, within consent.** Never "any enabled model." |
+| Fall back to *what*? | The **`default` chain** — user-authored, ordered policy. |
+| Does the user confirm it first? | **No.** It **ships provisional-and-ACTIVE** with researched exact targets, labeled provisional, editable. No confirmation prompt; no per-spawn approval beyond `spendGuard`. |
+| Nine roles vs four tiers? | **Categories replace tiers.** Tiers and `TIER_PREFERRED_TOOL` are deleted. |
+| Is `long_context` a role? | **No.** It is a **requirement modifier** (`minContextTokens`) cutting across every category. |
+| Where does policy persist? | **SQLite in `hive.db`** — daemon sole writer, CAS revision + audit, deterministic export. |
+| How does the app reach it? | The `hive` **CLI as a subprocess** (§10). |
+
+**"Fall back within consent" is not "any enabled model."** Consent answers *may
+this vendor charge me?* It does not answer *which of six enabled models should do
+code review?* An ordering is required, and if Hive invents one, that invention
+becomes the real router — the exact defect this redesign exists to kill. The
+ordering is the user's `default` chain. The UI must never suggest otherwise.
+
+**Empty ≠ exhausted.** An *empty* category walks the `default` chain. A category
+with a *deliberate* chain whose every link gated out **refuses by default**;
+widening to the global chain requires that category's explicit
+`exhaustion_behavior: use_global_fallback`. That is a per-category control on
+this screen (§8.2).
+
+---
+
+## 5. Goals and non-goals
 
 ### Goals
 
-1. Let a human see every discovered provider and model, and control whether Hive may spawn them.
-2. Show usage and billing **honestly** under percent-only, missing, and money-guard-only data.
-3. Assign models to task roles as **ordered fallback chains** (primary → secondary → …), never as ensembles.
-4. Make provider-off override visually undeniable on every model row under that provider.
-5. Match Workspace visual language: macOS HIG, system materials, light **and** dark first-class (`docs/architecture/hive-workspace-blueprint.md`).
-6. Warn on degenerate policy: no providers enabled; role with no enabled model while routing still has a soft fallback rule.
+1. Every discovered provider and model is visible and controllable — including a
+   vendor Hive learned about after this screen shipped.
+2. Usage and billing shown **honestly** under percent-only, silent, stale, and
+   money-guard-only data.
+3. Assign models to categories as **ordered fallback chains**, never ensembles.
+4. Provider-off override is visually undeniable on every model row beneath it.
+5. Effort is three-valued and never fabricated.
+6. Warn on degenerate policy: no providers enabled; a chain whose every model is
+   ineffective; an emptied `default` chain.
 
 ### Non-goals
 
 - Re-implementing vendor TUIs, billing portals, or account management.
-- Fabricating absolute request/token allowances.
-- Parallel / ensemble multi-model execution UI.
-- Per-turn cost prediction (explicit false-negative gap in `spendRisk` docs — do not pretend the UI closes it).
-- Editing `quota.toml` manual unit pools in v1 (advanced; link-out only if useful later).
-- Logo artwork production — implementer sources official vendor marks under their license terms.
+- Fabricating absolute request/token allowances (§2.1 — impossible for all).
+- Parallel / ensemble multi-model execution.
+- Per-turn cost prediction (a known false-negative gap in `spendRisk` — the UI
+  does not close it and must not pretend to).
+- Editing `quota.toml` manual unit pools.
+- Logo artwork production — the implementer sources official marks.
 
 ---
 
-## 4. Information architecture
+## 6. Information architecture
 
 ```
 Settings
-└── Model Control Center          ← this screen (full page or settings pane)
-    ├── Page header + global warnings
+└── Model Control Center
+    ├── Page header + global warnings + provisional-defaults banner
     ├── Provider list (cards)
     │   ├── Provider card (collapsed summary)
     │   └── Provider card expanded
     │       └── Model rows
-    ├── Task role chains (second major section)
+    ├── Task categories (ordered chains) + Default chain
     └── Footer: last refreshed, confidence legend
 ```
 
-**Two binding axes** (both visible; neither is hidden inside the other only):
+**Two binding axes**, both primary:
 
 1. **Provider → models** — discovery, enablement, effort, usage/billing.
-2. **Task role → ordered model chain** — routing policy the human wants.
+2. **Task category → ordered chain** — the routing policy the human owns.
 
-Enablement on axis 1 feeds eligibility on axis 2. A model disabled (self or provider override) must not appear as an active chain member without a strike-through / “inactive” treatment — see §7.
+Enablement on axis 1 feeds eligibility on axis 2. A model disabled (by itself or
+by its provider) must never appear as an active chain member without ineffective
+chrome (§7.4).
 
 ---
 
-## 5. Layout
+## 7. Layout, states, and components
 
-### 5.1 Desktop (≥ 900 pt content width)
+### 7.1 Desktop (≥ 900 pt content width)
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────┐
 │  Model Control Center                                                    │
 │  Choose which tools Hive may use, and which models handle each kind of   │
-│  work. Usage numbers are what the provider reported — never estimates     │
+│  work. Usage numbers are what the provider reported — never estimates    │
 │  dressed as measurements.                                                │
 │                                                                          │
+│  ℹ Provisional Hive suggestions — edit anytime; no outcome data yet.     │  ← until edited
 │  ⚠ No providers enabled — Hive cannot spawn agents until at least one    │
 │    provider is turned on.                                                │  ← conditional
 ├────────────────────────────────────────────┬─────────────────────────────┤
-│  PROVIDERS                                 │  TASK ROLES                  │
-│  (scroll)                                  │  (scroll, sticky header)    │
+│  PROVIDERS                                 │  TASK CATEGORIES            │
 │                                            │                             │
-│  ┌──────────────────────────────────────┐  │  Light research             │
-│  │ [Anthropic] Claude Code        [on] │  │  1. claude · Sonnet · high  │
-│  │ Plan · Max   Credits off            │  │  2. codex  · …     · med    │
+│  ┌──────────────────────────────────────┐  │  Complex coding             │
+│  │ [Anthropic] Claude Code        [on] │  │  1. claude · Opus 4.8 · high │
+│  │ Max plan · Paid overflow off        │  │  2. codex  · …      · med    │
 │  │ 5h  ████████░░  63% used            │  │  [+ Add model]  ⋮⋮ drag     │
-│  │ 7d  ████░░░░░░  42% used            │  │                             │
-│  │ Resets 5h in 2h 14m · 7d in 3d      │  │  Complex coding             │
-│  │ ▾ 4 models                          │  │  1. …                       │
-│  └──────────────────────────────────────┘  │                             │
-│  ┌──────────────────────────────────────┐  │  ⚠ Summarization has no     │
-│  │ [OpenAI] Codex                 [on] │  │    enabled model assigned.  │
-│  │ …                                   │  │    Hive will fall back to    │
-│  └──────────────────────────────────────┘  │    any enabled model.       │
-│  ┌──────────────────────────────────────┐  │                             │
-│  │ [xAI] Grok                     [on] │  │                             │
-│  │ SuperGrok · Paid overflow off       │  │                             │
-│  │ ⚠ Usage limits cannot be tracked    │  │                             │
+│  │ 7d  ████░░░░░░  42% used            │  │  If all unavailable: Refuse ▾│
+│  │ Resets 5h in 2h 14m · 7d in 3d      │  │                             │
+│  │ ▾ 4 models                          │  │  Summarization              │
+│  └──────────────────────────────────────┘  │  (no models)                │
+│  ┌──────────────────────────────────────┐  │  ⚠ Uses your Default chain. │
+│  │ [OpenAI] Codex                 [on] │  │                             │
+│  │ …                                   │  │  ─────────────────────────  │
+│  └──────────────────────────────────────┘  │  Default (global fallback)  │
+│  ┌──────────────────────────────────────┐  │  Used when a category has   │
+│  │ [xAI] Grok                     [on] │  │  no chain of its own.       │
+│  │ SuperGrok · Paid overflow off       │  │  1. …                       │
+│  │ ⚠ Usage limits cannot be tracked    │  │  2. …                       │
 │  │   for this provider                 │  │                             │
 │  │ Next weekly reset: Tue 19:00 UTC    │  │                             │
-│  │ (no capacity meter — by design)     │  │                             │
+│  │ (reset time only — no capacity)     │  │                             │
 │  └──────────────────────────────────────┘  │                             │
-└────────────────────────────────────────────┴─────────────────────────────┘
+├────────────────────────────────────────────┴─────────────────────────────┤
 │  Last refreshed 12s ago · Confidence legend · Measure or say unknown     │
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
-- **Two-column split**: providers ~55–60%, task roles ~40–45%.
-- Cards use grouped inset list style (system `NSVisualEffectView` / secondary grouped background).
-- Expanded model rows nest indented under the card, full width of the left column.
+- Two-column split: providers ~55–60%, categories ~40–45%.
+- Cards use grouped inset style over system materials (`NSVisualEffectView`).
+- Expanded model rows nest indented under the card.
+- Below ~900 pt a segmented control switches Providers / Task categories. Do not
+  shrink two columns until illegible. Controls stay ≥ 28 pt.
 
-### 5.2 Narrow (< 900 pt, including compact window / future split)
-
-```
-┌────────────────────────────────────┐
-│ Model Control Center               │
-│ [Providers] [Task roles]   ← segmented control
-├────────────────────────────────────┤
-│ (active segment full width)        │
-│                                    │
-│ Provider cards stack vertically;   │
-│ meters stack under title, not      │
-│ side-by-side with toggle.          │
-│                                    │
-│ Model rows: effort and role chips  │
-│ wrap to second line.               │
-└────────────────────────────────────┘
-```
-
-- Segmented control switches major sections; do not shrink two columns until illegible.
-- Provider toggle stays top-right of card header at all widths.
-- Touch targets ≥ 28 pt (AppKit control sizing).
-
-### 5.3 Visual hierarchy (size / weight)
+### 7.2 Visual hierarchy
 
 | Layer | Treatment |
 | --- | --- |
-| Page title | System title2 / 22pt semibold |
-| Section label | 11–12pt secondary label, uppercase optional (prefer title case + tracking for HIG) |
-| Provider name | 15pt semibold body |
-| Card meta (plan, billing) | 12pt secondary |
-| Meter label + value | 11–12pt; value uses monospaced digits where percent shown |
-| Model display name | 13pt regular/semibold |
-| Model id (secondary) | 11pt tertiary, monospaced optional |
-| Badges | 10–11pt medium; capsule |
-| Warnings | 12pt; orange or red semantic — never pure gray for “important unknown” |
+| Page title | System title2 / 22 pt semibold |
+| Section label | 11–12 pt secondary, title case + tracking |
+| Provider name | 15 pt semibold |
+| Card meta (plan, billing) | 12 pt secondary |
+| Meter label + value | 11–12 pt; monospaced digits for the percent |
+| Model display name | 13 pt |
+| Model id | 11 pt tertiary, monospaced |
+| Badges | 10–11 pt medium; capsule |
+| Warnings | 12 pt; orange or red semantic — never pure gray for an important unknown |
 
-Hyprland inspires **tiling behavior of the Workspace**, not this settings chrome. Settings = standard macOS settings density.
+Hyprland inspires the Workspace's **tiling behavior**, never this settings
+chrome. Settings is standard macOS settings density.
 
----
-
-## 6. Component inventory
+### 7.3 Component inventory
 
 | Component | Responsibility |
 | --- | --- |
 | `ModelControlCenterView` | Page shell, refresh, global banners |
-| `ProviderCard` | Logo, title, master toggle, billing strip, meters or unknown panel, expand chevron |
-| `UsageMeter` | One window (5h or 7d): percent-only, unknown, near-limit, healthy |
+| `ProviderCard` | Mark, title, master toggle, billing strip, meters **or** unmetered panel, disclosure |
+| `UsageMeter` | One window: percent, unknown, stale, near-limit, healthy |
+| `UnmeteredUsagePanel` | Grok (and any vendor with no capacity surface) — §7.5 |
 | `BillingStatusChip` | Credits / paid overflow / unknown money state |
+| `ModelRow` | Enable toggle, name + id, effort control, override chrome, availability |
+| `EffortControl` | Three-valued: picker \| "no effort setting" \| "options unknown (reason)" |
+| `CategorySection` | Category header + ordered chain + exhaustion control |
+| `DefaultChainSection` | The global fallback chain; visually distinct, never deletable |
+| `FallbackChainList` | Drag reorder, rank labels, remove |
+| `ChainEntryPicker` | Add an **exact** model, or the labeled **vendor-default** mode (§8.3) |
 | `WarningBadge` | Capsule badge with SF Symbol + copy |
-| `ModelRow` | Enable toggle, name, effort control, override chrome, availability |
-| `EffortPicker` | Vendor-advertised levels only; or “Vendor default” when levels known but unset; or hidden when none |
-| `TaskRoleSection` | One role header + ordered chain |
-| `FallbackChainList` | Drag reorder, rank labels Primary / 2 / 3…, remove |
-| `ChainModelPicker` | Add model to chain from enabled+available models |
-| `EmptyRoleWarning` | Per-role soft-fallback warning |
-| `GlobalNoProviderBanner` | All masters off |
-| `ConfidenceLegend` | Footer popover: what authoritative/reported/estimated/missing/stale mean |
-| `LastRefreshedLabel` | Age of probe; stale treatment |
-| `ProviderMarkImage` | Official vendor mark with light/dark treatment |
+| `ConfidenceLegend` | Footer popover explaining each confidence value |
+| `ProviderMarkImage` | Official vendor mark, light/dark safe |
 
----
+### 7.4 State matrices
 
-## 7. State matrix
+**Provider card**
 
-### 7.1 Provider card states
+| State | When | Visual |
+| --- | --- | --- |
+| `enabled` | Master on, CLI present, discovery OK | Full opacity; meters or unmetered panel |
+| `disabled` | Master off | Content ≈0.55 opacity; badge **Off — Hive will not invoke this CLI**; still expandable |
+| `unavailable` | CLI absent / not signed in / probe failed closed | Dashed border; badge **Not available**; master locked; measured probe error in detail |
+| `usage-healthy` | Windows known, above warning remaining | Neutral fill |
+| `usage-near-limit` | Any window remaining ≤ warning | Amber fill + **Near limit** on that window |
+| `usage-critical` | Any window remaining ≤ critical | Red fill + **Critically low** |
+| `usage-silent` | **Normally metered vendor, no reading** — Claude's experimental feed went quiet | **No determinate track.** Hatched/absent bar + **Usage unknown** + measured reason. Provider stays enabled and spawnable |
+| `usage-stale` | Reading aged past freshness | Last percent, desaturated, **Stale reading** + age. Refresh action |
+| `usage-unmetered` | Vendor publishes no capacity at all (Grok) | `UnmeteredUsagePanel` — never a meter |
+| `billing-off` | Paid overflow known off | Chip **Paid overflow off** (calm) |
+| `billing-on` | Credits known on | Chip **Credits available** |
+| `billing-unknown` | Overflow switch unreadable | Chip **Billing state unknown** |
+| `billing-would-spend` | Exhausted plan + live overflow path | Chip **May spend money** (amber) |
 
-| State id | When | Visual | Interaction |
-| --- | --- | --- | --- |
-| `provider.enabled` | Master on, CLI present, discovery OK | Full opacity; meters or unknown panel as data allows | Expand, toggle off |
-| `provider.disabled` | Master off | Card dimmed (≈0.55 opacity content); toggle off; badge **Off — Hive will not invoke this CLI** | Expand still allowed (inspect models); toggles on models show override |
-| `provider.unavailable` | CLI not installed / not signed in / probe failed closed | Dashed border or tertiary fill; badge **Not available**; master toggle disabled or off+locked | Tooltip/detail with measured probe error; link to install docs if we have one |
-| `provider.usage-healthy` | Both windows known and above warning remaining | Green/neutral fill meters | — |
-| `provider.usage-near-limit` | Any window remaining ≤ warning threshold | Amber meter fill + **Near limit** chip on that window | — |
-| `provider.usage-critical` | Any window remaining ≤ critical | Red/orange meter + **Critically low** | — |
-| `provider.usage-unknown` | No capacity numbers (Grok by design, or probe missing) | **No meter track that could read as 0%**; warning badge + optional reset time | — |
-| `provider.billing-off` | Credits/paid overflow known off | Chip **Paid overflow off** (secondary, calm) | — |
-| `provider.billing-on` | Credits known on | Chip **Credits available** (not scary by itself) | — |
-| `provider.billing-unknown` | Cannot determine overflow switch | Chip **Billing state unknown** + detail | — |
-| `provider.billing-would-spend` | Exhausted plan + overflow path live | Chip **May spend money** (amber) | — |
-| `provider.stale` | Confidence stale / observation aged out | Clock badge **Stale reading**; meters desaturated | Refresh action |
+`usage-silent` and `usage-unmetered` are **different states with different
+copy**. One is "the vendor has nothing to report, by design." The other is "the
+vendor normally reports and did not." They must not share a component.
 
-### 7.2 Model row states
+**Model row**
 
-| State id | When | Visual | Toggle |
-| --- | --- | --- | --- |
-| `model.enabled` | Self on, provider on, entitled, not hidden-from-routing if policy excludes | Full strength row | On |
-| `model.disabled-by-self` | Self off, provider on | Row tertiary labels; strike or “Disabled” caption | Off (user chose) |
-| `model.disabled-by-provider` | Provider master off | Row dimmed; **toggle shows user’s remembered preference but is non-authoritative**; overlay caption **Off because Claude Code is off** (provider name varies); optional lock icon on toggle | Toggle may still edit stored preference, but **effective state is off** and UI must say so — never show green “enabled” while provider is off |
-| `model.unavailable` | Not in live catalog / not entitled / hidden vendor entry excluded | Badge **Unavailable**; toggle disabled | — |
-| `model.not-installed-provider` | Parent provider unavailable | Same as unavailable; inherit provider reason | — |
-| `model.pool-exhausted` | Measured pool exhausted and no free path | Badge **Plan limit reached** (or would-spend) | Still enable-able as preference; spawn path still gated by spend/availability |
-| `model.no-effort-surface` | Record advertises no effort levels | Effort control **omitted**, caption **Uses vendor default effort** | — |
+| State | When | Chrome |
+| --- | --- | --- |
+| `enabled` | Self on, provider on, in live catalog | Full strength |
+| `disabled-by-self` | Self off, provider on | Tertiary labels; caption **Disabled** |
+| `disabled-by-provider` | Provider master off | Dimmed; caption **Off because {Provider} is off**; the stored preference is shown but **non-authoritative** — never a green "enabled" while the provider is off |
+| `unavailable` | Not in the live catalog / not entitled | Badge **Unavailable**; toggle disabled |
+| `pool-exhausted` | Measured pool exhausted, no free path | Badge **Plan limit reached**; still settable as a preference — the spawn path gates it |
 
-**Override rule (non-negotiable):**  
-`effectiveEnabled = providerEnabled && modelSelfEnabled && modelAvailable`.  
-UI always shows both **effective** and **preference** when they differ.
+**Override rule (non-negotiable):**
+`effectiveEnabled = providerEnabled && modelSelfEnabled && modelAvailable`.
+When effective and preference differ, the UI shows **both**.
 
-### 7.3 Meter component states
+**Meter**
 
 | State | Render | Forbidden |
 | --- | --- | --- |
-| **Percent known** | Track with fill = `usedPercent` (0–100); label **“{n}% used”**; optional **“{100-n}% remaining”** only if remaining is also known; reset caption if `resetsAt` known | “{used} of {allowance} requests”; fake absolute counts; fill based on Hive estimates without `estimated` labeling |
-| **Percent-only** (always, for discovered pools) | Same as above — **percent is the native unit** | Inventing “of 500 requests” |
-| **Unknown / missing** | Hollow track with **hatch or dashed empty** pattern OR no track — prefer **no fill bar**; centered label **“Usage unknown”**; sublabel reason | Empty bar that looks like 0% used; gray full bar; “0%” |
-| **Stale** | Last known percent if we still hold one, with **Stale** badge and reduced contrast; if policy drops stale numbers, fall back to unknown | Presenting stale as fresh |
-| **Estimated** (Hive added unreported spend) | Percent + badge **Includes Hive estimate** | Badge `authoritative` |
-| **Near limit / critical** | Fill color amber/red per §5 thresholds; label may add **Near limit** | Only color change with no text |
-| **Grok / unmetered provider** | **Do not mount `UsageMeter` at all** for capacity; use `UnmeteredUsagePanel` (§8.3) | Drawing `onDemandUsed` as a gauge |
+| Percent known | Track filled to `usedPercent`; **{n}% used**; reset caption when known | Any absolute count — **no vendor has a denominator** |
+| Only `remainingPct` known | Fill = `1 - remainingPct`; label **remaining** | Mixing an invented "used" with a known "remaining" |
+| Measured zero | **0% used** — that is the truth | — |
+| Unknown / silent | **No determinate track.** Hatch or no bar; **Usage unknown** + reason | An empty bar (reads as 0% used); a gray full bar; the string "0%" |
+| Stale | Last percent, reduced contrast, **Stale reading** + age | Presenting stale as fresh |
+| Estimated (Hive added unreported spend) | Percent + badge **Includes Hive estimate** | Badging it `authoritative` |
+| Unmetered vendor | **Do not mount this component at all** | Drawing money rails as a gauge |
 
-### 7.4 Task-role chain states
+**Chain**
 
 | State | Visual |
 | --- | --- |
-| Ordered chain with ≥1 **effective** model | Numbered list; “Primary”, “If unavailable…”, never “Ensemble” or “Also run” |
-| Chain has models but all ineffective | List shown struck; warning **No enabled model in this chain** |
-| Empty chain | Warning per §10 copy; soft-fallback note if product rule is soft fallback |
-| Reordering | Drag handle; live rank renumber |
+| ≥1 effective model | Numbered list; "Primary", "If unavailable…" — never "Ensemble" or "Also run" |
+| All links ineffective | Struck list; **Every model in this chain is off or unavailable** + what the category will actually do |
+| Empty chain | **Uses your Default chain** — informational, not an error |
+| Empty `default` chain | **Warning.** This is the one chain that must not be empty |
+| Reordering | Drag handle; live renumber; Primary is index 0 |
 
----
-
-## 8. Detailed component specs
-
-### 8.1 Provider card (collapsed)
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│ [LOGO 20×20]  Claude Code                    ◎────● ON      │
-│               Max plan · Paid overflow off                  │
-│               5 hour   ████████░░  63% used                 │
-│               7 day    ████░░░░░░  42% used                 │
-│               ▸ 4 models                                    │
-└─────────────────────────────────────────────────────────────┘
-```
-
-- Logo: 20×20 logical pt (@2x assets); 4pt corner radius if mark is square; optical alignment with title baseline.
-- Master toggle: standard AppKit/SwiftUI `Toggle`; accessible label “Enable Claude Code”.
-- Expand control: chevron or whole-card disclosure (except toggle hit target).
-
-### 8.2 Provider card (expanded) + model rows
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│ [LOGO] Claude Code                               ● ON       │
-│ … meters …                                                  │
-│ ▾ Models                                                    │
-│   ┌─────────────────────────────────────────────────────┐   │
-│   │ ●  Sonnet 5                              effort ▾   │   │
-│   │    claude-sonnet-5 · plan                           │   │
-│   ├─────────────────────────────────────────────────────┤   │
-│   │ ○  Opus 4.8  (disabled)                  effort ▾   │   │
-│   │    claude-opus-4-8                                  │   │
-│   ├─────────────────────────────────────────────────────┤   │
-│   │ ⊘  Haiku 4.5   Off because Claude Code is off       │   │
-│   │    (your preference: on)  effort locked             │   │
-│   └─────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────┘
-```
-
-Model row columns (desktop):  
-`[effective toggle] [name + id stack] …spacer… [effort]`.
-
-Narrow: effort drops under name.
-
-### 8.3 Unmetered / Grok usage panel (deliberate, not broken)
+### 7.5 The unmetered panel (Grok) — deliberate, not broken
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -377,17 +432,15 @@ Narrow: effort drops under name.
 └─────────────────────────────────────────────────────────────┘
 ```
 
-**Why this must look intentional:**
+- Same card chrome, padding, and mark weight as Claude and Codex. Grok is a
+  first-class vendor with an unmeasurable surface, not a broken card.
+- Inset uses **secondary grouped fill**, not error red.
+- Icon `info.circle` — **not** `xmark.octagon`.
+- **No hollow meter track.** A hollow track reads as an empty tank.
+- If the Grok probe fails entirely (no tier, no reset boundary): **Billing and
+  usage unknown** with the measured error — still no fake meter.
 
-- Same card chrome, padding, and logo weight as Claude/Codex.
-- Inset panel uses **secondary grouped fill**, not error red.
-- Icon is `info.circle` or custom “unmetered” — **not** `xmark.octagon` (broken).
-- No hollow meter tracks. Hollow tracks read as “empty tank.”
-- Optional small positive label: **“By design”** is acceptable in caption; do not use “N/A” alone (reads like a bug).
-
-If Grok probe fails entirely (no tier, no reset): show **Billing and usage unknown** with measured error string; still no fake meters.
-
-### 8.4 `UsageMeter` — percent-only honesty
+### 7.6 The meter
 
 ```
   5 hour window
@@ -398,53 +451,23 @@ If Grok probe fails entirely (no tier, no reset): show **Billing and usage unkno
   [████████████████████]  100% used · Plan limit reached
   Resets Wed 19:00
 
-  (unknown)
+  (silent / unknown)
   [· · · · · · · · · · ·]  Usage unknown
-  Hive has no reading for this window
+  Claude Code reported no usage data (experimental surface)
 ```
 
-Rules:
+1. Fill = `used / 100`, only when `used` is a known percent.
+2. `used == 0` with a real reading → **"0% used"**. Data absent → **never** 0%.
+3. Confidence is available as secondary detail: "Reported by Claude Code · 12s ago."
+4. Two meters side-by-side only above ~320 pt of meter block; otherwise stack.
 
-1. Fill width = `used / 100` only when `used` is a known percent.
-2. If only `remainingPct` is known, fill = `1 - remainingPct` (and label remaining, not used) — prefer one consistent story; **do not mix invented used with known remaining**.
-3. If `used == 0` and confidence is real → show **“0% used”** (truth). If data absent → **never** show 0%.
-4. Caption may show `confidence` as secondary text on hover/detail: e.g. “Reported by Claude Code · 12s ago”.
-5. Two meters side-by-side only when width ≥ ~320pt for the meter block; otherwise stack.
+---
 
-### 8.5 Effort picker
+## 8. Task categories and chains
 
-- Options = exact strings from `supportedEffortLevels` on the live capability record, in vendor order.
-- Plus optional first item **“Vendor default”** (clear pin / omit flag) when product allows unset.
-- If levels unknown/empty: hide picker; show static caption **“Uses vendor default effort”**.
-- Never list Hive’s historical enum (`minimal`, etc.) unless the model advertises it.
+### 8.1 The categories
 
-### 8.6 Task role fallback chain
-
-```
-  Complex coding
-  Hive tries models in order. Only one runs — not an ensemble.
-
-  ⋮⋮  1  Primary     Claude Code · Opus 4.8 · high      [−]
-  ⋮⋮  2  Fallback    Codex · (account default) · medium [−]
-  ⋮⋮  3  Fallback    Grok · … · low                     [−]
-
-  [ + Add model ]
-
-  ⚠ If every model above is off or unavailable, Hive falls back
-    to any enabled model (not a failure). Assign at least one
-    enabled model to keep routing predictable.
-```
-
-**Copy and chrome that prevent ensemble misunderstanding:**
-
-- Section subtitle fixed: **“Ordered fallback — one model at a time.”**
-- Rank labels: **Primary**, **2nd**, **3rd**… or **Fallback**.
-- Forbid icons that imply parallel (no stacked play triangles without order).
-- Drag reorder updates order immediately in UI; persist as ordered list.
-
-### 8.7 Task roles (requested set)
-
-Exact role ids for persistence (stable snake_case) and display labels:
+Stable snake_case ids for persistence:
 
 | id | Label |
 | --- | --- |
@@ -456,114 +479,222 @@ Exact role ids for persistence (stable snake_case) and display labels:
 | `planning` | Planning |
 | `debugging` | Debugging |
 | `summarization` | Summarization |
-| `long_context` | Long-context work |
+| `default` | **Default (global fallback)** — used when a category has no chain |
 
-**Pushback (must surface in implementation planning):**  
-Today’s router only has `deep | standard | cheap | review`. Mapping nine roles onto four tiers without a new policy table **will mislead**. Recommended mapping is an explicit new policy document/schema, not silent aliasing (e.g. “complex coding = deep”) without user-visible explanation. If temporary aliasing is required for v1, show under each role: **“Currently applied as routing tier: deep”** until full role support lands.
+`long_context` is **not on this list.** It was a role in the first draft; it is a
+**requirement modifier** (§8.4).
+
+### 8.2 Chain section
+
+```
+  Complex coding
+  Hive tries models in order. Only one runs — not an ensemble.
+
+  ⋮⋮  1  Primary   Claude Code · Opus 4.8 · high                     [−]
+  ⋮⋮  2  Fallback  Codex · vendor default (currently gpt-x) · medium [−]
+  ⋮⋮  3  Fallback  Grok · grok-4.5 · (no effort setting)             [−]
+
+  [ + Add model ]
+
+  If every model above is unavailable:  ( • ) Refuse   (   ) Use Default chain
+```
+
+- Section subtitle, fixed: **"Ordered fallback — one model at a time. Not an
+  ensemble."**
+- Rank labels **Primary**, **2nd**, **3rd**… Never an icon implying parallelism.
+- The **exhaustion control** is per-category and defaults to **Refuse** (governing
+  doc §2.7). It is a different concept from an *empty* chain and the UI must not
+  let the two blur: an empty chain quietly uses `default`; an exhausted deliberate
+  chain refuses unless the user opted in right here.
+- Effort is **per chain link**, not only per model row. The same model may sit at
+  `high` in complex coding and `medium` in summarization.
+
+### 8.3 Chain entries are exact — with one labeled exception
+
+```
+ChainEntry =
+  | { mode: "exact";          provider; model; variant?; effort }
+  | { mode: "vendor-default"; provider;                  effort }
+```
+
+- **`exact`** is what almost every UI edit produces: a concrete model id.
+- **`vendor-default`** is the user saying *"keep me on this vendor's current
+  default."* It is **opt-in**, rendered as **volatile** ("vendor default —
+  currently *X*"), re-resolved from live discovery at every spawn, and **never
+  cached as an identity** in the policy row. Vendors move their defaults under us
+  without notice; a cached resolution would be a stale lie.
+- There is **no bare `"default"` string** that a reader could mistake for a model
+  id. That token is how a quiet system default sneaks back in.
+
+### 8.4 Requirement modifiers, not more categories
+
+A spawn may carry requirements that cut **across** every category:
+
+| Modifier | Meaning | UI |
+| --- | --- | --- |
+| `minContextTokens` | This job needs a big window | A context-demand control on **any** category — not a category of its own |
+| `codingRequired` | Model must be able to write code | Capability floor |
+| `independentOfProvider` | Review must not reuse the producer's vendor | Capability floor |
+| `requiredTools` | Named tools must be available | Capability floor |
+
+**Context size is not a discovered field across vendors today.** The UI must not
+show a per-model context window it does not have. Where context is unknown the
+gate **fails closed** — an unknown window does not satisfy a minimum. Say that
+where the control lives; do not invent a number to fill a column.
+
+**Floors are not enablement.** A capability floor blocks a model **even when the
+user pinned it explicitly.** Enablement is user policy; floors are capability
+truth. The UI must not present a floor refusal as "you disabled this."
+
+### 8.5 The provisional default chain
+
+The `default` chain **ships pre-filled and ACTIVE** with researched exact targets
+resolved against the **live discovery catalog** at migration — not from training
+memory, not from a table frozen in the binary. It is not a draft, there is no
+confirmation dialog, and spawns work on day one.
+
+- Persistent banner until the user edits: **"Provisional Hive suggestions — edit
+  anytime; no outcome data yet."**
+- Each entry carries `confidence: documented | assumed`. Nothing claims
+  `measured` until outcome telemetry exists.
+- **Hive never auto-reorders a chain from telemetry.** It may show evidence and
+  propose; the user re-ranks. Fallback traffic is selection-biased and the UI must
+  say so wherever it shows outcome data.
+- If a cited model is absent from the signed-in account, that link is skipped at
+  migration and the reason recorded — never silently swapped.
 
 ---
 
-## 9. Light and dark mode
+## 9. Data model (UI contract)
 
-Both are first-class; no “dark is inverted light dump.”
+The daemon owns the store: **SQLite in `hive.db`**, CAS revision, audit trail,
+deterministic export. The UI never writes files under `~/.hive/`.
+
+```ts
+// Contract shape, not shipped code.
+type ProviderId = CapabilityProvider;   // CLOSED enum: claude | codex | grok.
+                                        // NOT `| string` — an open union is how a
+                                        // vendor becomes invisible. Extend by schema
+                                        // version + driver registration.
+
+interface ModelControlPolicy {
+  revision: number;                     // CAS: the UI sends the revision it read;
+                                        // stale → daemon rejects, UI reloads
+  providers: Record<ProviderId, {
+    enabled: boolean;                   // master — off = no CLI invoke
+    models: Record<string /* canonical model id */, {
+      enabled: boolean;                 // preference; provider-off overrides
+      effort: EffortTarget;
+    }>;
+  }>;
+  categories: Record<CategoryId, {
+    chain: ChainEntry[];                // ordered; only one link ever runs
+    exhaustionBehavior: "refuse" | "use_global_fallback";
+  }>;
+  defaultChain: ChainEntry[];           // never empty; provisional-and-active
+}
+
+type EffortTarget =
+  | { mode: "exact"; value: string }    // must be advertised by the model
+  | { mode: "none" }                    // model stated it has no effort axis
+  | { mode: "provider-controlled" };    // omit the flag; do NOT claim to know
+                                        // the vendor's default
+```
+
+- **Provider-off overrides every descendant.** Effective state dominates chrome.
+- **Absent model policy inherits the provider state** — a newly discovered model
+  is reachable, but does not silently enter anyone's chain.
+- **Orphaned chain targets** (the model left the catalog) stay in policy, are
+  marked **unresolvable** in the UI, and are never silently dropped and never
+  launched.
+- Validation, enforced daemon-side and mirrored in the UI: no duplicate chain
+  targets; an `exact` effort must be advertised; an effort on a `known-none` model
+  is rejected; an unknown effort surface may only be `provider-controlled`.
+
+Read models this screen consumes (never writes): the capability catalog + effort
+records, `QuotaPoolStatus` / `QuotaUnconfiguredStatus`, `AccountBilling` /
+spend risk, and the provider install/sign-in probe.
+
+---
+
+## 10. How the app talks to the daemon
+
+**The Workspace is a native macOS AppKit app in Swift.** 3,331 lines, `NSView` +
+Auto Layout, `NSAppearance` theming, semantic colors in `Theme.swift`. There is
+**no SwiftUI, no HTML/CSS/JS, no design system, no component library, no token
+file, and no existing settings screen.** This is the first one.
+
+**The app does not speak HTTP to the daemon.** It **shells out to the `hive` CLI
+as a subprocess and reads NDJSON from stdout** — see `FeedClient.swift`, which
+runs `hive workspace-feed --port <n>` as a long-lived `Process` and parses
+newline-delimited JSON. `hive autonomy` follows the same pattern.
+
+| Item | Spec |
+| --- | --- |
+| Stack | AppKit. `NSView` subclasses + Auto Layout. Build new views the way `PaneView.swift` and `ProjectSwitcher.swift` build theirs |
+| Theming | `NSAppearance` + system semantic colors via `Theme.swift`. Extend `Theme` for meter tokens; do not fork it |
+| Transport | `Process` → `hive models` / `hive routing …` / the approvals CLI; NDJSON on stdout. **Never** a direct HTTP call, **never** a direct write to `~/.hive/` |
+| Writes | UI intent → daemon validates against the live registry → one transaction, revision bumped, audit row written. The UI sends `expectedRevision`; stale is rejected, not merged |
+| Optimism | **None.** The UI does not mutate local policy ahead of the daemon, and does not decrement meters locally when a spawn starts |
+| Consent | Inline approve routes through the **existing approvals queue**, not a second store |
+| Previews | Fixture-driven. Fixtures must include: three-valued effort, a silent Claude feed, a stale reading, and the Grok unmetered panel |
+| Entry | `Hive → Settings…`, section **Models** |
+
+A design that assumes the AppKit app speaks HTTP is wrong. A design that assumes
+it writes `~/.hive/*.json` itself is also wrong.
+
+---
+
+## 11. Light and dark
+
+Both first-class. No inverted-light dark mode.
 
 | Token | Light | Dark |
 | --- | --- | --- |
 | Page background | `windowBackgroundColor` | same semantic |
 | Card fill | `controlBackgroundColor` / secondary grouped | same semantic |
-| Primary label | `labelColor` | `labelColor` |
-| Secondary | `secondaryLabelColor` | `secondaryLabelColor` |
+| Primary / secondary label | `labelColor` / `secondaryLabelColor` | same semantic |
 | Separator | `separatorColor` | `separatorColor` |
 | Meter track | black @ 8–12% | white @ 10–14% |
-| Meter fill healthy | accent / systemBlue | same (system adapts) |
-| Meter fill warning | systemOrange | systemOrange |
-| Meter fill critical | systemRed | systemRed |
-| Meter unknown hatch | secondaryLabel @ 40% | secondaryLabel @ 40% |
+| Meter fill healthy | accent / `systemBlue` | same (system adapts) |
+| Meter fill warning / critical | `systemOrange` / `systemRed` | same |
+| Meter unknown hatch | `secondaryLabelColor` @ 40% | same |
 | Warning badge fill | orange @ 12% | orange @ 18% |
-| Info (unmetered) badge | blue @ 10% | blue @ 16% |
+| Unmetered info badge | blue @ 10% | blue @ 16% |
 | Disabled row | label @ 45–55% | label @ 45–55% |
-| Provider override banner | tertiary fill + secondary label | same |
 | Focus ring | system focus | system focus |
 
-Respect **Increase Contrast** and **Reduce Transparency**: solid fills instead of ultra-thin materials when those settings are on. Respect **Reduce Motion**: no card expand spring; instant disclosure.
-
-Do **not** hard-code hex that only works in one appearance.
+Respect **Increase Contrast** and **Reduce Transparency** (solid fills instead of
+thin materials), and **Reduce Motion** (instant disclosure, no expand spring —
+`Theme.reduceMotion` already reads this). Do not hardcode hex that only works in
+one appearance.
 
 ---
 
-## 10. Vendor logos
+## 12. Vendor marks
 
-### Requirements (implementer sources assets)
+| Provider | Source requirement |
+| --- | --- |
+| Claude Code | Official Anthropic brand assets only |
+| Codex | Official OpenAI brand assets only |
+| Grok | Official xAI brand assets only |
 
-| Provider | Mark | Source requirement |
-| --- | --- | --- |
-| Claude Code | Anthropic mark | Official Anthropic brand assets / press kit only |
-| Codex | OpenAI mark | Official OpenAI brand assets only |
-| Grok | xAI mark | Official xAI brand assets only |
-
-**Do not** invent SVG paths or hotlink random third-party PNGs from this doc.
-
-### Treatment
+Do not invent SVG paths and do not hotlink third-party PNGs.
 
 | Rule | Spec |
 | --- | --- |
-| Size | 20×20 pt in card header; 16×16 in compact chain rows |
-| Shape | Contain in square; preserve aspect; no forced circle crop that clips trademark |
-| Color vs mono | Prefer **single-color template** images that tint to `labelColor` for quiet settings chrome; if official color marks are required by brand guidelines, use color in both appearances **only if contrast ≥ WCAG AA** on card fill — otherwise use the official monochrome variant |
-| Dark mode | Provide dark-safe asset or template tint; never ship a black mark on dark fill |
-| Missing asset | Fallback SF Symbol `cpu` / `chevron.left.forwardslash.chevron.right` **plus** text name — never a broken image frame |
+| Size | 20×20 pt in the card header; 16×16 in chain rows |
+| Shape | Contain in square, preserve aspect; no circle crop that clips a trademark |
+| Color vs mono | Prefer single-color template images tinted to `labelColor`; use official color marks only where brand guidelines require **and** contrast ≥ WCAG AA on the card fill |
+| Dark mode | Dark-safe asset or template tint; never a black mark on a dark fill |
+| Missing asset | SF Symbol fallback **plus** the text name — never a broken image frame |
 | Spacing | 8 pt between mark and title |
 
 ---
 
-## 11. Data model (settings persistence — UI contract)
+## 13. Copy catalog
 
-This is the shape the UI assumes. Exact file format is an implementation choice; fields must exist.
-
-```ts
-// Conceptual — not shipped code
-type ProviderId = "claude" | "codex" | "grok" | string;
-
-interface ModelControlPolicy {
-  providers: Record<ProviderId, {
-    enabled: boolean;                 // master — off = no CLI invoke
-    models: Record<string /* launch id */, {
-      enabled: boolean;               // preference; overridden by provider
-      effort: string | null;          // null = vendor default / omit flag
-    }>;
-  }>;
-  /** Ordered fallback chains; only one model runs. */
-  taskRoles: Record<TaskRoleId, Array<{
-    provider: ProviderId;
-    model: string;                    // concrete id or "default"
-  }>>;
-}
-```
-
-**Effective enablement** computed client-side for display and server-side for spawn:
-
-```
-effective = provider.enabled && model.enabled && available(model)
-```
-
-**Soft fallback when chain empty / all ineffective** (product rule from brief):
-
-> Router may use **any effective model** rather than hard-fail.
-
-UI **must** warn (never silent). When daemon still hard-refuses (today’s behavior), UI must not claim soft fallback — see Open Questions.
-
-Live read models (not written by this screen except via refresh):
-
-- Capability catalog + effort lists
-- `QuotaPoolStatus` / `QuotaUnconfiguredStatus`
-- `AccountBilling` / spend risk
-- Provider install/sign-in probe
-
----
-
-## 12. Copy catalog (exact strings)
-
-Use these strings unless localization lands. Implementer should not rephrase in ways that soften “unknown.”
+Exact strings. Do not rephrase in ways that soften "unknown."
 
 ### Badges
 
@@ -583,19 +714,10 @@ Use these strings unless localization lands. Implementer should not rephrase in 
 | `badge.billing_unknown` | Billing state unknown |
 | `badge.may_spend` | May spend money |
 | `badge.includes_estimate` | Includes Hive estimate |
-| `badge.by_design_unmetered` | Capacity not reported |
+| `badge.provisional` | Provisional |
+| `badge.unresolvable` | Model no longer offered by this provider |
 
-### Override / model captions
-
-| id | Copy |
-| --- | --- |
-| `model.overridden_by_provider` | Off because {ProviderTitle} is off |
-| `model.preference_on_overridden` | Your preference: on (not effective) |
-| `model.disabled_self` | Disabled |
-| `model.vendor_default_effort` | Uses vendor default effort |
-| `model.pool_exhausted` | Plan capacity exhausted for this model |
-
-### Meters
+### Meters and the silent feed
 
 | id | Copy |
 | --- | --- |
@@ -606,9 +728,11 @@ Use these strings unless localization lands. Implementer should not rephrase in 
 | `meter.resets_in` | Resets in {relative} |
 | `meter.resets_at` | Resets {absolute} |
 | `meter.unknown_body` | Hive has no reading for this window |
-| `meter.estimated_footnote` | Part of this figure is Hive’s estimate of spend since the last provider reading |
+| `meter.silent_feed` | {ProviderTitle} reported no usage data. This surface is experimental and sometimes goes quiet — {ProviderTitle} itself is still available. |
+| `meter.stale_age` | Last read {relative} ago |
+| `meter.estimated_footnote` | Part of this figure is Hive's estimate of spend since the last provider reading |
 
-### Grok / unmetered panel
+### Unmetered provider
 
 | id | Copy |
 | --- | --- |
@@ -618,19 +742,40 @@ Use these strings unless localization lands. Implementer should not rephrase in 
 | `unmetered.reset_footnote` | Reset time only — not remaining quota |
 | `unmetered.money_changed` | Paid capacity rails changed (raw values shown; unit unknown) |
 
-### Global / role warnings
+### Effort
 
 | id | Copy |
 | --- | --- |
-| `warn.no_providers` | No providers enabled — Hive cannot spawn agents until at least one provider is turned on. |
-| `warn.empty_role` | {RoleLabel} has no enabled model assigned. Hive will fall back to any enabled model rather than failing. Assign at least one enabled model to keep routing predictable. |
-| `warn.empty_role_hard_fail_if_configured` | {RoleLabel} has no enabled model assigned. Spawns for this role will fail until you assign one. |
-| `warn.chain_all_ineffective` | Every model in this chain is off or unavailable. |
-| `warn.policy_not_wired` | These task-role chains are saved, but the router does not apply ordered fallbacks yet. Hive still uses its current tier derivation until that lands. |
+| `effort.none` | This model has no effort setting. |
+| `effort.unknown` | Effort options unknown — {reason} |
+| `effort.provider_controlled` | Vendor default (Hive sends no effort flag) |
+
+`effort.none` and `effort.unknown` are **not interchangeable** (§2.4).
+
+### Models, chains, warnings
+
+| id | Copy |
+| --- | --- |
+| `model.overridden_by_provider` | Off because {ProviderTitle} is off |
+| `model.preference_on_overridden` | Your preference: on (not effective) |
+| `model.disabled_self` | Disabled |
+| `model.pool_exhausted` | Plan capacity exhausted for this model |
 | `subtitle.fallback` | Ordered fallback — one model at a time. Not an ensemble. |
+| `chain.vendor_default` | Vendor default — currently {ModelDisplayName} |
+| `chain.vendor_default_note` | Tracks this vendor's current default. It can change without notice. |
+| `chain.empty_uses_default` | No chain of its own — uses your Default chain. |
+| `chain.all_ineffective` | Every model in this chain is off or unavailable. |
+| `chain.exhaustion_refuse` | If every model here is unavailable, spawns for this category will fail. |
+| `chain.exhaustion_widen` | If every model here is unavailable, Hive will use your Default chain. |
+| `warn.no_providers` | No providers enabled — Hive cannot spawn agents until at least one provider is turned on. |
+| `warn.default_chain_empty` | Your Default chain is empty. Categories with no chain of their own have nowhere to go. |
+| `banner.provisional` | Provisional Hive suggestions — edit anytime; no outcome data yet. |
 | `footer.honesty` | Measure or say unknown. Zero means measured zero; blank means Hive cannot tell. |
 
-### Accessibility labels
+There is **no** "Hive will fall back to any enabled model" string. That behavior
+does not exist and must not be promised.
+
+### Accessibility
 
 | id | Copy |
 | --- | --- |
@@ -639,256 +784,145 @@ Use these strings unless localization lands. Implementer should not rephrase in 
 | `a11y.model_toggle_overridden` | {ModelDisplayName}, off because {ProviderTitle} is off |
 | `a11y.meter` | {WindowLabel}: {n} percent used |
 | `a11y.meter_unknown` | {WindowLabel}: usage unknown |
+| `a11y.chain_rank` | {ModelDisplayName}, fallback position {n} of {total} |
 
 ---
 
-## 13. Interaction details
+## 14. Interaction
 
 | Action | Behavior |
 | --- | --- |
-| Toggle provider off | Immediate preference write; all child rows flip to override chrome; no spawn from that CLI |
-| Toggle provider on | Restores children to their stored preferences + availability |
-| Toggle model | Writes preference; if provider off, show override caption still |
-| Change effort | Writes per-model effort; validate against live advertised set on save and on spawn |
-| Expand/collapse | Local UI state; remember last expanded set in `UserDefaults` optional |
-| Drag reorder chain | Updates order; Primary is index 0 |
-| Add to chain | Sheet/popover of **effective** models first; allow adding disabled with warning badge on row |
-| Refresh | Re-probe capabilities + billing + quota; show spinner on footer; never leave previous numbers unlabeled if replaced by unknown |
-| First open | Expand first provider with a warning; scroll to global banners |
-
-**No optimistic capacity:** UI does not decrement meters locally when a spawn starts. Meters follow daemon readings + labeled estimates only.
-
----
-
-## 14. ASCII state gallery (implementer checklist)
-
-### Enabled + healthy (Claude)
-
-```
-[Anthropic] Claude Code                          [ON]
-Max · Paid overflow off
-5 hour  ████░░░░░░  28% used · Resets in 4h
-7 day   ███░░░░░░░  31% used · Resets in 5d
-```
-
-### Near limit
-
-```
-5 hour  ████████████████░░░░  82% used  [Near limit]
-```
-
-### Unknown window (probe miss on a normally metered vendor)
-
-```
-5 hour  ··········  Usage unknown
-        Hive has no reading for this window
-```
-
-### Provider off → model override
-
-```
-[Anthropic] Claude Code                          [OFF]
-Off — Hive will not invoke this CLI
-  ⊘ Sonnet 5   Off because Claude Code is off
-               Your preference: on
-```
-
-### Unavailable provider
-
-```
-[OpenAI] Codex                                   [—]
-Not available · codex CLI not signed in
-(probe: … measured error …)
-```
-
-### Empty role
-
-```
-Summarization
-  (no models)
-  ⚠ Summarization has no enabled model assigned. Hive will fall
-    back to any enabled model rather than failing. …
-```
-
-### All providers off
-
-```
-⚠ No providers enabled — Hive cannot spawn agents until at least
-  one provider is turned on.
-```
+| Toggle provider | Write preference; every child row flips to override chrome immediately |
+| Toggle model | Write preference; if the provider is off, the override caption persists |
+| Change effort | Validated against the live advertised set on save **and** again at spawn |
+| Drag reorder | Updates order; Primary is index 0; persisted as an ordered list |
+| Add to chain | Picker offers **effective** models first; a disabled model may be added, with a warning badge on the row |
+| Change exhaustion behavior | Per-category; default **Refuse** |
+| Refresh | Re-probe capabilities, billing, quota. **If a value that was known becomes unknown, the meter must change state** — never leave a stale number wearing a fresh label |
+| Stale write | Daemon rejects on revision mismatch; the UI reloads and says so rather than merging blind |
 
 ---
 
 ## 15. Places this design would MISLEAD if built carelessly
 
-**These are the highest-value traps. Treat as review gates.**
+Review gates. Each is a way to ship a confident lie.
 
-1. **Grok money rails as meters** — Drawing `onDemandUsed` / `onDemandCap` / `prepaidBalance` as “remaining quota” is a direct contradiction of `grok-integration-spec.md` §10. Zeros look like “full allowance.” **Forbidden.**
-
-2. **Unknown as empty bar** — A blank `NSProgressIndicator` at 0 reads as 0% used. Users will green-light heavy work. Unknown must use hatch/copy, not an empty determinate bar.
-
-3. **Absolute counts** — Neither Claude nor Codex publish absolute window sizes on the free probes. “128 of 500” is fiction. Percent only.
-
-4. **Hive estimates wearing provider badges** — If the figure includes post-reading ledger spend, badge **Includes Hive estimate**. Never `authoritative` for that composite (`provider-quota-surfaces.md`).
-
-5. **Soft fallback silent success** — If the product rule is “empty role → any enabled model,” the UI must warn every time. Silent surprise is a routing lie.
-
-6. **UI-only fallback chains** — Showing Primary/Secondary while the daemon still has no chain **trains false confidence**. Ship `warn.policy_not_wired` or land router first.
-
-7. **Nine roles silently aliased to four tiers** — Users will believe “debugging” is distinct from “simple coding.” If both map to `standard`, say so in the UI until roles are real.
-
-8. **Provider off but model toggle still looks on** — Classic settings bug. Effective state must dominate chrome.
-
-9. **Effort menu of levels the model does not advertise** — Spawn will refuse or drop flags; UI promised a lie.
-
-10. **Stale numbers without age** — A 6-hour-old 12% used is not “current headroom.”
-
-11. **Local ledger spend as account quota** — `QuotaUnconfiguredStatus.fiveHourRecorded` is Hive-only. If shown, label **“Recorded by this Hive only — not account usage.”**
-
-12. **Ensemble language** — “Also use,” “team of models,” multi-select without order → implies parallel execution Hive does not do.
-
-13. **Billing-off nag** — When paid overflow is off, do not warn “may spend money.” The wallet is safe; plan limit is a wall (`spendRisk` docs).
-
-14. **Mid-run credit cross** — UI cannot promise a spawn that starts free stays free. Do not add copy that claims otherwise.
-
----
-
-## 16. Workspace integration
-
-| Item | Spec |
-| --- | --- |
-| Entry | Settings window or `Hive → Settings…` / toolbar gear; section **Models** |
-| Process | Workspace UI sends intents to daemon; **no optimistic policy mutation that spawn ignores** |
-| Theme | Reuse `Theme` fonts (`bodyFont`, `captionFont`, …) and system colors; extend only for meter-specific tokens |
-| Terminal panes | Unaffected; this is settings chrome, not pane UI |
-| Autonomy | Out of scope for this screen (already Agents menu / config) |
+1. **Grok money rails as a meter.** `onDemandUsed` / `prepaidBalance` drawn as
+   remaining quota. The zeros read as a full tank. **Forbidden.**
+2. **Unknown as an empty bar.** A determinate bar at 0 says "measured, nearly
+   nothing used." The user green-lights heavy work on a number that does not exist.
+3. **A silent Claude feed rendered as a zeroed meter.** The most likely instance
+   of (2), because that feed is experimental and **actually goes quiet** (§2.2).
+4. **Absolute counts.** "128 of 500" is fiction for **every** provider. Nobody
+   publishes a denominator.
+5. **`known-none` effort shown as unknown**, or unknown shown as "no effort axis."
+   Two different facts; one greyed-out control for both is a lie.
+6. **"Falls back to any enabled model."** It does not. Empty → the user's
+   `default` chain. Anything else is Hive inventing an order and becoming the
+   router again.
+7. **Blurring empty and exhausted.** Empty walks the default chain; an exhausted
+   deliberate chain refuses unless the user opted in.
+8. **A floor refusal shown as "you disabled this."** Floors bind even an explicit
+   pin. That is capability truth, not user policy.
+9. **Provider off but the model toggle still looks on.** Effective state must
+   dominate chrome.
+10. **Hive's estimate wearing a provider's badge.** A figure that includes
+    post-reading ledger spend is **Includes Hive estimate** — never `authoritative`.
+11. **Stale numbers without an age.** A six-hour-old 12% is not headroom.
+12. **Local ledger spend as account quota.** `fiveHourRecorded` is Hive-only.
+    Label it or omit it.
+13. **Ensemble language.** "Also use," "team of models," an unordered multi-select
+    — all imply parallel execution Hive does not do.
+14. **A billing-off nag.** Paid overflow off means the wallet is safe. Do not warn
+    about spending.
+15. **An open `ProviderId` union.** `"claude" | "codex" | "grok" | string` reopens
+    the Grok-class hole at the UI contract. Closed enum only.
 
 ---
 
-## 17. Alternatives considered
+## 16. Security and privacy
 
-| Alternative | Why rejected / deferred |
-| --- | --- |
-| Single combined table (all models flat) | Loses provider master semantics and per-vendor billing honesty |
-| Hide Grok card until meters exist | Makes Grok second-class; contradicts first-class vendor work |
-| Fake 100% allowance for Grok | Explicitly forbidden by Grok quota design |
-| Ensemble multi-select | Not Hive’s execution model |
-| Only four tier dropdowns (match today) | Cleaner vs current router, but brief requires task-role chains; keep honesty banner if mapping |
-| CLI-only `routing.toml` editor | Fails ChatGPT/Claude settings quality bar; power users still have the file |
-
----
-
-## 18. Security and privacy
-
-- Settings show **plan type, utilization percent, reset times, money-rail raw values** already available to the local user via the same CLIs — no new cloud call from the UI beyond daemon probes.
-- Do not display full account email in the card unless already shown elsewhere and necessary; prefer plan tier.
+- The screen shows plan type, utilization percent, reset times, and money-rail raw
+  values — all already available to the local user through the same CLIs. No new
+  network call originates in the UI.
+- No account email unless it is already shown elsewhere and necessary; prefer the
+  plan tier.
 - No prompts or transcripts on this screen.
-- Vendor logos: comply with trademark guidelines; no modification that creates confusion.
+- Policy writes are logged with a timestamp and no secrets. Refresh failures
+  surface the **measured** error string, in the UI and in the daemon log.
+- Do not poll vendor endpoints more aggressively than the daemon's existing
+  refresh interval (`refreshIntervalMinutes`, default 15).
 
 ---
 
-## 19. Observability
+## 17. Build order
 
-- Log policy writes (provider/model enable, effort, chain edits) with timestamp — no secrets.
-- Refresh failures surface probe errors in UI (measured string) and daemon logs.
-- Do not metrics-scrape vendor endpoints more aggressively than existing daemon refresh interval (`refreshIntervalMinutes`, default 15).
+This screen is **PR6 in the governing sequence** and depends on the policy store
+(PR4). Building it earlier means building against a contract that does not exist.
 
----
+| Step | Ship | Acceptance |
+| --- | --- | --- |
+| **1. Read-only shell** | AppKit settings scene; provider cards; percent meters; silent/stale states; Grok unmetered panel; model list; light + dark; fixture previews | Unknown never renders as 0%. Grok has no determinate bar. A silent Claude feed does not read as an empty tank. |
+| **2. Read API** | `hive` CLI subcommands returning providers, models, **three-valued** effort, quota windows, billing chips | Positive controls in tests for: claude percent, claude silence, codex percent, grok null capacity, `known-none` effort, `unknown` effort |
+| **3. Enablement + effort writes** | Policy writes through the daemon with CAS; spawn honors `effectiveEnabled` | Provider off blocks every spawn on that CLI. An unadvertised effort is rejected at save **and** at spawn. |
+| **4. Category chains + default chain** | Chain editor, per-category exhaustion control, provisional-active default chain | Order is visible and reorderable. No ensemble language. Empty vs exhausted behave differently and say so. |
+| **5. Edge honesty** | Stale treatment, estimate badges, unresolvable chain targets, a11y audit, marks | Every item in §15 fails closed under review. |
 
-## 20. Rollout
-
-1. **UI shell + read-only live data** (providers, meters, Grok panel, model list) — pure honesty win.
-2. **Enable toggles** wired to daemon policy.
-3. **Effort picks** wired.
-4. **Task role chains** + router support (same release train preferred).
-5. Soft-fallback warnings only when router implements soft fallback; else hard-fail copy.
-
-Feature flag optional: `workspace.modelControlCenter`.
-
----
-
-## 21. Open questions
-
-1. **Soft vs hard empty-role behavior** — Brief says soft fallback to any enabled model; today’s derivation **refuses**. Product must pick one; UI copy has both strings ready.
-2. **Nine roles vs four tiers** — New schema vs explicit temporary mapping with disclosure?
-3. **Where policy persists** — `~/.hive/routing.toml` extension vs new `models.toml` vs daemon DB?
-4. **Per-model vs per-pool meters on the card** — Card-level general pool is v1; model-scoped pools (Fable-style) as row badges in v1.1?
-5. **Whether disabled models stay visible in chains** — Spec says yes, with ineffective chrome; confirm.
-6. **Reset-credit grants (Codex)** — Surfacing “you have N full resets” is valuable and not yet done in CLI; include as secondary chip in v1?
+**Do not wire chain writes before the gatekeeper (`AuthorizedLaunch`) is on
+main.** Populating chains against today's ungated quota candidate path is how
+Hive spends money without consent (governing doc §1, §5).
 
 ---
 
-## 22. Key decisions
+## 18. Success criteria
 
-1. **Honesty over symmetry** — Grok’s unmetered panel is a first-class design, not a missing feature.
-2. **Percent-native meters** — No absolute denominators on discovered pools.
-3. **Unknown ≠ zero** — Distinct visual language mandatory.
-4. **Effective vs preference** — Provider override always visible.
-5. **Fallback chains, not ensembles** — Ordering + copy enforce single-runner semantics.
-6. **Two-axis IA** — Provider cards and task-role chains are both primary; narrow width uses segments.
-7. **HIG settings chrome** — System materials/colors; light and dark equal.
-8. **Do not ship lying chains** — Router wiring or explicit “not applied” banner.
-9. **Effort from live catalog only** — No invented level lists.
-10. **Official marks only** — Spec requires; does not bundle artwork URLs.
-
----
-
-## 23. References
-
-- `docs/research/provider-quota-surfaces.md` — wire shapes, percent-only, estimate vs measurement
-- `docs/architecture/grok-integration-spec.md` §10 — Grok money guard, null capacity
-- `docs/architecture/hive-workspace-blueprint.md` — HIG visual language
-- `docs/model-selection.md` — live routing derivation (4 tiers, no downshift chain)
-- `src/schemas/quota.ts` — `QuotaWindowStatus`, confidence, null usage
-- `src/schemas/capability.ts` — providers, `Discovered<T>`, effort strings
-- `src/daemon/usage-credits.ts` — `AccountBilling`, `spendRisk`
-- `workspace/Sources/HiveWorkspace/Theme.swift` — existing semantic colors/fonts
-
----
-
-## 24. PR Plan
-
-### PR 1 — Read-only Model Control Center shell
-- **Files:** new SwiftUI/AppKit settings scene under `workspace/Sources/HiveWorkspace/`; Theme meter tokens; fixture-driven previews
-- **Depends on:** none
-- **Ship:** Provider cards, meters (percent + unknown), Grok unmetered panel, model list without writes; light/dark; state gallery from fixtures
-- **Acceptance:** Unknown never renders as 0%; Grok has no determinate capacity bar
-
-### PR 2 — Daemon policy read API for settings
-- **Files:** daemon HTTP/XPC snapshot: providers, models, efforts, quota windows, billing chips
-- **Depends on:** existing capability + quota + billing readers
-- **Acceptance:** Positive controls for claude/codex percent and grok null capacity in tests
-
-### PR 3 — Enablement + effort writes
-- **Files:** policy persistence; spawn path honors `effectiveEnabled`; Workspace toggles/effort pickers
-- **Depends on:** PR1–2
-- **Acceptance:** Provider off blocks all spawns for that CLI; override chrome tested
-
-### PR 4 — Task-role chains + router
-- **Files:** schema for nine roles + ordered lists; derivation uses chain; UI chain editor; soft or hard empty-role behavior per product decision
-- **Depends on:** PR3 + product answer to Open Questions 1–2
-- **Acceptance:** Order visible and reorderable; no ensemble language; empty-role warning matches actual router behavior
-
-### PR 5 — Polish and edge honesty
-- **Files:** stale treatment, estimate badges, model-scoped pool badges, Codex reset grants chip (if approved), a11y audit, logo assets
-- **Depends on:** PR1–4
-- **Acceptance:** Checklist in §15 all fail-closed under review
-
----
-
-## 25. Success criteria (for implementers and reviewers)
-
-- [ ] Claude and Codex cards show 5h + 7d **percent** meters with no absolute fiction
-- [ ] Grok card shows warning badge + unmetered panel + optional reset; **zero money-rail gauges**
-- [ ] Unknown window cannot be mistaken for 0% used (screenshot test)
-- [ ] Provider off paints every model as overridden, not enabled
-- [ ] Disabled-by-self ≠ disabled-by-provider ≠ unavailable (three distinct looks)
+- [ ] Claude and Codex cards show percent meters with **no absolute fiction**
+- [ ] A silent Claude usage feed renders as unknown-with-a-reason, **not** 0%, and
+      does not disable the provider
+- [ ] Grok shows the warning badge and the unmetered panel — **zero** money-rail
+      gauges — and looks deliberate, not broken
+- [ ] `known-none` effort, `unknown` effort, and a real picker are three visibly
+      different things
+- [ ] Provider off paints every model beneath it as overridden, never enabled
+- [ ] `disabled-by-self` ≠ `disabled-by-provider` ≠ `unavailable` (three looks)
+- [ ] An empty category says it uses the Default chain; an exhausted chain says
+      what it will actually do
+- [ ] No string anywhere promises "any enabled model"
+- [ ] `long_context` appears **nowhere** as a category
+- [ ] The `ProviderId` in the UI contract is the closed `CapabilityProvider` enum
 - [ ] Light and dark both pass contrast on meters and badges
-- [ ] Fallback chain copy forbids ensemble reading
-- [ ] Empty-role and no-provider warnings use exact product semantics
-- [ ] Effort options ⊆ live advertised levels
-- [ ] No PR claims router fallback until PR4 lands (or banner present)
+- [ ] Chain copy forbids an ensemble reading
+- [ ] No SwiftUI, no HTTP, no direct writes to `~/.hive/`
 
 ---
 
-*End of design spec. Discovery only — no implementation in this change set beyond this document.*
+## 19. Still open
+
+Genuinely undecided, and small. Everything the first draft called open in its
+§21 is **settled** — see §4.
+
+1. **Per-model pools as row badges.** Card-level pools are the v1 story;
+   model-scoped pools (where a vendor exposes one) could be a row badge later.
+2. **Codex reset grants.** "You have N full resets" is real, useful, and surfaced
+   by no CLI today. A secondary chip, if the product wants it.
+
+---
+
+## 20. References
+
+- `docs/architecture/router-redesign-recommended.md` — **the governing
+  architecture.** Categories, chains, gates, policy store, PR order
+- `docs/research/provider-quota-surfaces.md` — wire shapes; percent-only;
+  estimate vs measurement
+- `docs/architecture/grok-integration-spec.md` §10 — Grok money guard, null capacity
+- `docs/architecture/hive-workspace-blueprint.md` — Workspace visual language
+- `src/schemas/quota.ts` — `QuotaWindowStatus`, confidence, null usage
+- `src/schemas/capability.ts` — provider enum, `Discovered<T>`, effort records
+- `src/daemon/quota-sources.ts` — Claude's experimental `get_usage`; Codex's
+  authoritative `account/rateLimits/read`
+- `src/daemon/model-inventory.ts` — the two-valued effort surface §2.4 requires be
+  fixed first
+- `src/daemon/usage-credits.ts` — `AccountBilling`, `spendRisk`
+- `workspace/Sources/HiveWorkspace/Theme.swift` — semantic colors and fonts
+- `workspace/Sources/HiveWorkspace/FeedClient.swift` — the CLI-subprocess + NDJSON
+  transport this screen uses
