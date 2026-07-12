@@ -208,6 +208,82 @@ test("a review of an unknown vendor is not silently handed to claude", async () 
   db.close();
 });
 
+test("a model no catalog claims cannot be billed to any vendor's pool", () => {
+  const db = new HiveDatabase(join(home, "billing.db"));
+  const ledger = new QuotaLedger(db);
+  // Both vendors' catalogs are READ. Nothing in them is this model. That is a
+  // measurement — "nobody claims it" — and it is grounds to refuse. (With no
+  // catalog at all the honest answer is "cannot tell", which is a different
+  // state and must not refuse; that case is covered in quota-discovery.test.)
+  ledger.replaceModelCatalog("claude", [{
+    provider: "claude",
+    modelId: "claude-opus-4-8",
+    displayName: "Opus 4.8",
+    discoveredAt: new Date("2026-07-09T12:00:00.000Z").toISOString(),
+  }]);
+  ledger.replaceModelCatalog("codex", [{
+    provider: "codex",
+    modelId: "gpt-5.6-sol",
+    displayName: "GPT-5.6 Sol",
+    discoveredAt: new Date("2026-07-09T12:00:00.000Z").toISOString(),
+  }]);
+
+  expect(ledger.modelVendorFromCatalog("claude-opus-4-8")).toEqual({
+    state: "claimed",
+    provider: "claude",
+  });
+  expect(ledger.modelVendorFromCatalog("grok-4-fast")).toEqual({
+    state: "unclaimed",
+  });
+
+  // The defect: modelVendor("grok-4-fast") is null, null was read as "no
+  // provable contradiction", and the spend was billed as asked. Restore that
+  // and this reservation succeeds against the Claude pool.
+  expect(() => reserve(ledger, "claude", "grok-4-fast")).toThrow(
+    /Refusing to bill unidentifiable model "grok-4-fast" to the claude meter/,
+  );
+  expect(() => reserve(ledger, "codex", "grok-4-fast")).toThrow(
+    /Refusing to bill unidentifiable model "grok-4-fast" to the codex meter/,
+  );
+
+  // Positive control: the catalog's own models still book, and a model billed
+  // to the wrong vendor's meter still refuses. If either breaks, the guard is
+  // not doing what it says.
+  expect(reserve(ledger, "claude", "claude-opus-4-8").ok).toBe(true);
+  expect(() => reserve(ledger, "codex", "claude-opus-4-8")).toThrow(
+    /Refusing to bill claude model/,
+  );
+  db.close();
+});
+
+function reserve(
+  ledger: QuotaLedger,
+  provider: "claude" | "codex",
+  model: string,
+): { ok: boolean } {
+  const now = new Date("2026-07-09T12:00:00.000Z");
+  return ledger.tryReserveGroup([{
+    id: `r-${provider}-${model}`,
+    agentName: "maya",
+    provider,
+    account: "personal",
+    pool: `${provider}-premium`,
+    model,
+    tier: "standard",
+    estimatedUnits: 4,
+    now: now.toISOString(),
+    expiresAt: new Date(now.getTime() + 60_000).toISOString(),
+    fiveHourStart: now.toISOString(),
+    weeklyStart: now.toISOString(),
+    supplementalFiveHourUsed: 0,
+    supplementalWeeklyUsed: 0,
+    fiveHourAllowance: 100,
+    weeklyAllowance: 100,
+    fiveHourFloor: 0,
+    weeklyFloor: 0,
+  }]);
+}
+
 function quotaLimit(provider: "claude" | "codex"): QuotaLimit {
   return {
     provider,

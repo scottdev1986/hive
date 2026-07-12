@@ -1448,6 +1448,80 @@ describe("HiveSpawner wiring", () => {
     quotaDb.close();
   });
 
+  // modelVendor() used to decide a model's vendor by regex over its NAME, and
+  // return null for anything it could not place — which both of its guards read
+  // as permission. A model no vendor can run was waved onto whatever tool the
+  // router had picked. The vendor is a fact the catalog knows; it is read from
+  // there now, and a model nobody claims is refused. Restoring the permissive
+  // `!== null` fails this test: the spawn succeeds on the Claude CLI.
+  test("refuses a model no vendor's catalog claims, instead of launching it on the routed tool", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-spawner-unclaimed-"));
+    tempRoots.push(root);
+    const quotaDb = new HiveDatabase(join(root, "quota.db"));
+    const quota = new QuotaService(
+      new QuotaLedger(quotaDb),
+      QuotaConfigSchema.parse({}),
+      () => new Date(timestamp),
+    );
+    const store = new FakeStore();
+    const tmux = new FakeTmux();
+    const spawner = new HiveSpawner({
+      db: store,
+      repoRoot: root,
+      port: 4317,
+      config: { terminal: "auto", headless: true },
+      routing: async () => DEFAULT_ROUTING.deep,
+      routingPins: async () => ({}),
+      // Both vendors answer, and neither lists this model. That is a
+      // measurement, not a gap — the grounds to refuse.
+      discoverCapabilities: async (provider) =>
+        discovery(
+          provider === "claude"
+            ? capabilityRecord("claude", "claude-opus-4-8", ["low", "high"])
+            : capabilityRecord("codex", "gpt-5.6-sol", ["low", "ultra"]),
+        ),
+      tmux,
+      terminal: new FakeTerminal(),
+      createWorktree: async (_repoRoot, name, slug) => {
+        const path = join(root, name);
+        await mkdir(path, { recursive: true });
+        return { path, branch: `hive/${name}-${slug}` };
+      },
+      sleep: signalReadiness(store),
+      resolveModel: async (tool) =>
+        tool === "claude" ? "claude-opus-4-8" : "gpt-5.6-sol",
+      quota,
+    });
+
+    await expect(
+      spawner.spawn({
+        task: "Run on a model nobody has",
+        tier: "deep",
+        tool: "claude",
+        model: "grok-4-fast",
+      }),
+    ).rejects.toThrow(/no vendor's catalog lists model "grok-4-fast"/);
+    // Nothing launched, nothing booked: the old code kept the routed tool and
+    // opened a TUI on a model that CLI can never run.
+    expect(tmux.sessions).toEqual([]);
+    expect(store.listAgents()).toEqual([]);
+    expect(quota.ledger.activeReservations()).toEqual([]);
+
+    // Positive control — the same guard must not touch a real model. If this
+    // stops spawning, the refusal above is too broad.
+    const spawned = await spawner.spawn({
+      task: "A model the catalog does claim",
+      tier: "deep",
+      tool: "claude",
+      model: "claude-opus-4-8",
+    });
+    expect(spawned.executionIdentity).toMatchObject({
+      tool: "claude",
+      model: "claude-opus-4-8",
+    });
+    quotaDb.close();
+  });
+
   test("filters capability before quota and reserves the selected effort triple", async () => {
     const root = await mkdtemp(join(tmpdir(), "hive-spawner-quota-effort-"));
     tempRoots.push(root);

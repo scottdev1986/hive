@@ -1,7 +1,11 @@
 import { z } from "zod";
 import {
+  CAPABILITY_PROVIDERS,
   CapabilityProviderSchema,
   QuotaObservationSchema,
+  splitVariant,
+  type CapabilityProvider,
+  type ModelVendorVerdict,
   RoutingTierSchema,
   type QuotaObservation,
   type QuotaScope,
@@ -684,20 +688,93 @@ export class QuotaLedger {
    * accepts an incoherent fact will accept the next one too. Cross-vendor billing
    * corruption stays small until it doesn't.
    *
-   * Only a *provable* contradiction is rejected. `modelVendor` returns null for a
-   * name it cannot place — `default` is a real Codex alias, and an unrecognised
-   * model may simply be new — and Hive does not get to guess which meter a spend
-   * belongs to. An unknown vendor is recorded as asked; a known-wrong one throws.
+   * The stored catalog is the authority, because a model's vendor is a fact the
+   * vendor publishes — not something to be inferred from how the name is spelt.
+   * This guard used to ask `modelVendor()`, a regex over the model string, and
+   * treat its null ("I cannot place this name") as PERMISSION: an unplaceable
+   * model's spend was billed to whatever meter it arrived on. Unknown read as
+   * yes, in the one guard whose whole purpose is to refuse.
+   *
+   * So the states are kept apart. Every catalog read and none of them lists the
+   * model: that is a MEASUREMENT, and it refuses. No catalog read at all: that
+   * is no evidence, and absence of evidence may not be converted into either a
+   * yes or a no — Hive falls back to the name's shape, which can still prove a
+   * contradiction (a `claude-` model on the Codex meter) but can never grant
+   * permission, and says out loud when it cannot vouch for the pairing at all.
    */
-  private requireCoherent(provider: "claude" | "codex", model: string): void {
-    const vendor = modelVendor(model);
-    if (vendor !== null && vendor !== provider) {
+  private requireCoherent(provider: CapabilityProvider, model: string): void {
+    const verdict = this.modelVendorFromCatalog(model);
+    if (verdict.state === "claimed") {
+      if (verdict.provider !== provider) {
+        throw new Error(
+          `Refusing to bill ${verdict.provider} model "${model}" to the ${provider} meter: ` +
+            "a spend belongs to the vendor whose model produced it, and Hive will " +
+            "not guess which pool an impossible pairing should be charged to.",
+        );
+      }
+      return;
+    }
+    if (verdict.state === "unclaimed") {
       throw new Error(
-        `Refusing to bill ${vendor} model "${model}" to the ${provider} meter: ` +
+        `Refusing to bill unidentifiable model "${model}" to the ${provider} meter: ` +
+          "every vendor's catalog has been read and not one of them lists it. A " +
+          "model nobody claims is not evidence that it belongs here.",
+      );
+    }
+    // No catalog to answer with. The name's shape may still expose an
+    // impossible pair; it may never be read as a licence.
+    const named = modelVendor(model);
+    if (named !== null && named !== provider) {
+      throw new Error(
+        `Refusing to bill ${named} model "${model}" to the ${provider} meter: ` +
           "a spend belongs to the vendor whose model produced it, and Hive will " +
           "not guess which pool an impossible pairing should be charged to.",
       );
     }
+    if (named === null) {
+      console.warn(
+        `Hive cannot verify that model "${model}" belongs to the ${provider} meter ` +
+          `(${verdict.reason}); billing it as asked. This is an unverified pairing, ` +
+          "not a confirmed one.",
+      );
+    }
+  }
+
+  /**
+   * Which vendor's own catalog claims this model. `unclaimed` is only ever
+   * returned when EVERY vendor's catalog has actually been read — otherwise the
+   * honest answer is that it cannot be read, and the caller must not mistake a
+   * missing catalog for a missing model.
+   */
+  modelVendorFromCatalog(model: string): ModelVendorVerdict {
+    const rows = this.modelCatalog();
+    const read = new Set(rows.map((row) => row.provider));
+    const unread = CAPABILITY_PROVIDERS.filter(
+      (provider) => !read.has(provider),
+    );
+    const wanted = splitVariant(model.trim()).base.toLowerCase();
+    const claims = [
+      ...new Set(
+        rows.filter((row) =>
+          row.modelId.trim().toLowerCase() === wanted ||
+          row.displayName.trim().toLowerCase() === wanted
+        ).map((row) => row.provider),
+      ),
+    ];
+    if (claims.length === 1) return { state: "claimed", provider: claims[0]! };
+    if (claims.length > 1) {
+      return {
+        state: "unreadable",
+        reason: `${claims.join(" and ")} both list ${JSON.stringify(model)}`,
+      };
+    }
+    if (unread.length > 0) {
+      return {
+        state: "unreadable",
+        reason: `no model catalog has been read for ${unread.join(" or ")}`,
+      };
+    }
+    return { state: "unclaimed" };
   }
 
   private insert(input: ReserveQuotaInput, groupId: string): void {

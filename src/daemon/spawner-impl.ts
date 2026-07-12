@@ -35,6 +35,8 @@ import {
 } from "../adapters/worktrees";
 import {
   ORCHESTRATOR_NAME,
+  forEachProvider,
+  identifyModelVendor,
   isLiveAgent,
   unknownVendor,
   type AgentMessage,
@@ -1544,12 +1546,39 @@ export class HiveSpawner implements Spawner {
     // An explicit model is bound to its vendor before anything launches: the
     // tier route must never carry a user-named model onto the other vendor's
     // CLI (tier=standard once routed tool=codex under an explicit
-    // "claude-opus-4-8" and opened a TUI on a model it can never run). A
-    // recognized model forces the matching tool when the caller pinned none,
-    // and a caller-pinned conflicting tool refuses the spawn outright. An
-    // unrecognizable name stays on the routed tool — it cannot be validated.
+    // "claude-opus-4-8" and opened a TUI on a model it can never run).
+    //
+    // The vendor is read from the DISCOVERED CATALOG — the vendor's own list of
+    // what it can run, aliases included — and never from the shape of the name.
+    // The name-shape regex this used to ask returned null for anything it could
+    // not place, and null was read as permission: an unplaceable model kept the
+    // routed tool and opened a TUI that could never run it. That is the failure
+    // above, merely one step further along.
     if (request.model !== undefined) {
-      const vendor = modelVendor(request.model);
+      const identified = identifyModelVendor(
+        request.model,
+        await forEachProvider((provider) => this.discoverOnce(provider)),
+      );
+      if (identified.state === "unclaimed") {
+        throw new Error(
+          `Cannot spawn ${name}: no vendor's catalog lists model ` +
+            `${JSON.stringify(request.model)}. Every vendor Hive knows was asked ` +
+            "and none of them can run it, so there is no tool to launch it on. " +
+            "Name a model one of them publishes.",
+        );
+      }
+      // Unreadable is not permission either, but it is not proof of absence:
+      // with no catalog to consult, the name's shape is the only evidence left,
+      // and it can still refuse an impossible pair (it just cannot bless one).
+      const vendor = identified.state === "claimed"
+        ? identified.provider
+        : modelVendor(request.model);
+      if (identified.state === "unreadable" && vendor === null) {
+        console.warn(
+          `Hive could not identify the vendor of model ${JSON.stringify(request.model)} ` +
+            `(${identified.reason}); it stays on the routed tool, unverified.`,
+        );
+      }
       if (vendor !== null) {
         if (request.tool !== undefined && request.tool !== vendor) {
           throw new Error(
