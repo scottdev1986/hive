@@ -104,6 +104,74 @@ describe("skill provisioning", () => {
     }
   });
 
+  /**
+   * Two vendors can share one skill directory, and both CLIs read all of it.
+   * Measured 2026-07-12: Grok scans `.agents/skills` — the same directory Codex
+   * reads — and `codex debug prompt-input` puts a foreign skill's name and
+   * description straight into the model-visible prompt, while `grok inspect
+   * --json` reports one with no `disabled` flag, i.e. active. `shippedSkillsFor`
+   * decides what Hive WRITES and nothing about what the CLI READS.
+   *
+   * A skill directory is per-checkout state (`.agents/`, `.claude/` are
+   * gitignored), so a fresh worktree is clean and a REUSED one is not: it still
+   * holds the last vendor's skills. That is what these tests close.
+   *
+   * The collision is exercised with the vendors that exist today, because it
+   * needs no third one: `hive-claude` is a shipped skill FOREIGN to Codex, and
+   * `.agents/skills` is Codex's own directory. Planting it there is the exact
+   * shape of the Grok/Codex case.
+   */
+  test("a foreign vendor's Hive skill is removed from a reused worktree", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-skills-foreign-"));
+    tempRoots.push(root);
+    const worktree = join(root, "worktree");
+    const native = join(worktree, ".agents", "skills");
+    const foreign = shippedSkillsFor("claude").find(
+      (skill) => skill.name === "hive-claude",
+    )!;
+
+    // The worktree's previous life: a Claude-contract skill sitting in the
+    // directory Codex (and Grok) scan, byte-identical to what Hive ships.
+    await mkdir(join(native, foreign.name), { recursive: true });
+    await writeFile(join(native, foreign.name, "SKILL.md"), foreign.content);
+
+    await provisionSkills(worktree, "codex", join(root, "missing-global"));
+
+    // The effect: the wrong vendor's contract is GONE from the directory this
+    // agent's CLI reads. Not relabelled, not deprioritised — absent. A label
+    // asks the model to cooperate; this does not need it to.
+    await expect(
+      readFile(join(native, foreign.name, "SKILL.md"), "utf8"),
+    ).rejects.toThrow();
+
+    // And the agent's own skills are still there: the prune removed the foreign
+    // contract, not the provisioning.
+    for (const skill of shippedSkillsFor("codex")) {
+      expect(
+        await readFile(join(native, skill.name, "SKILL.md"), "utf8"),
+      ).toEqual(skill.content);
+    }
+  });
+
+  test("a human's edited copy of a foreign skill is theirs, and survives", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-skills-foreign-edited-"));
+    tempRoots.push(root);
+    const worktree = join(root, "worktree");
+    const native = join(worktree, ".agents", "skills");
+
+    // Same name Hive ships for another vendor, but the bytes are the human's.
+    // Hive removes only its own copy; it does not get to delete someone's work
+    // because the name collides with one of ours.
+    const mine = "# mine, not Hive's\n";
+    await mkdir(join(native, "hive-claude"), { recursive: true });
+    await writeFile(join(native, "hive-claude", "SKILL.md"), mine);
+
+    await provisionSkills(worktree, "codex", join(root, "missing-global"));
+
+    expect(await readFile(join(native, "hive-claude", "SKILL.md"), "utf8"))
+      .toEqual(mine);
+  });
+
   test("an edited skill is never clobbered, is reported, and yields to --force", async () => {
     const root = await mkdtemp(join(tmpdir(), "hive-skills-drift-"));
     tempRoots.push(root);

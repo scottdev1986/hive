@@ -4,13 +4,14 @@ import {
   readdir,
   readFile,
   readlink,
+  rm,
   stat,
   symlink,
   writeFile,
 } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { shippedSkillsFor } from "../skills/shipped";
+import { SHIPPED_SKILLS, shippedSkillsFor } from "../skills/shipped";
 import { unknownVendor, type CapabilityProvider } from "../schemas";
 
 /**
@@ -247,4 +248,69 @@ export async function provisionSkills(
   }
 
   await installShippedSkills(worktreePath, tool);
+  await removeForeignShippedSkills(worktreePath, tool);
+}
+
+/**
+ * Remove the skills Hive ships for a DIFFERENT vendor from this vendor's own
+ * skill directory.
+ *
+ * Two vendors can share one directory — measured, not assumed: Grok scans
+ * `.agents/skills`, which is exactly where Codex reads from. Both CLIs then
+ * surface everything in it. `codex debug prompt-input` puts a foreign skill's
+ * name and description straight into the model-visible prompt, and
+ * `grok inspect --json` reports one with no `disabled` flag, which is to say
+ * active. So the per-vendor filter in `shippedSkillsFor` decides what Hive
+ * WRITES, and decides nothing at all about what the CLI READS.
+ *
+ * The consequence is a wrong-vendor contract, which is worse than no contract
+ * because it is trusted: Hive's Grok skill tells an agent its exit code is not
+ * success, its sandbox does not bind, and its MCP calls travel through a
+ * profile-dependent wrapper. Every one of those is false for Codex, and all of
+ * them are stated with total confidence.
+ *
+ * A skill directory is per-checkout state (`.agents/` and `.claude/` are
+ * gitignored, so nothing arrives through git), which means a fresh worktree is
+ * clean and only a REUSED one can hold a previous vendor's skills. That is the
+ * case this closes.
+ *
+ * Two rules it inherits from `installShippedSkills`, because they are the same
+ * rule: a symlink is the user's own skill and is never touched, and a file that
+ * differs from what Hive ships was edited by a human and is theirs. Hive removes
+ * only its own bytes.
+ *
+ * Deliberately NOT part of `installShippedSkills`: `hive init` calls that once
+ * per detected vendor against the SAME root, so a prune there would have each
+ * vendor delete the previous vendor's skills as it installed its own. This runs
+ * only at spawn, where one worktree belongs to exactly one agent on exactly one
+ * vendor. (In the primary checkout both vendors' skills legitimately coexist —
+ * Hive cannot hide one from the other without uninstalling it for the vendor
+ * that wants it. There, a skill's description naming its vendor is the only
+ * available mitigation, and a label is not a mechanism.)
+ */
+async function removeForeignShippedSkills(
+  root: string,
+  tool: SkillTool,
+): Promise<void> {
+  const nativeRoot = join(root, nativeSkillDirectory(tool));
+  const mine = new Set(shippedSkillsFor(tool).map((skill) => skill.name));
+
+  for (const skill of SHIPPED_SKILLS) {
+    if (mine.has(skill.name)) continue;
+    const destination = join(nativeRoot, skill.name);
+    const existing = await lstat(destination).catch((error: unknown) => {
+      if (isMissingFileError(error)) return null;
+      throw error;
+    });
+    if (existing === null || existing.isSymbolicLink()) continue;
+
+    const current = await readFile(join(destination, "SKILL.md"), "utf8")
+      .catch((error: unknown) => {
+        if (isMissingFileError(error)) return null;
+        throw error;
+      });
+    // Only Hive's own, unmodified copy. Anything else is the human's.
+    if (current !== skill.content) continue;
+    await rm(destination, { recursive: true, force: true });
+  }
 }
