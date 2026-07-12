@@ -23,6 +23,8 @@ import {
   readGraphifyState,
   runCommand,
   scrubbedGraphifyEnv,
+  servingGraphPath,
+  snapshotGraphForServing,
   updateGraph,
   type CommandRunner,
 } from "../adapters/graphify";
@@ -131,12 +133,21 @@ export class GraphifyService {
   }
 
   private async startServer(): Promise<void> {
+    // Serve a snapshot, never the live graphify-out/graph.json: the server
+    // re-reads its graph file per query, and rebuilds rewrite the live file
+    // in place — an agent querying mid-rebuild would get "graph.json not
+    // found" from a perfectly healthy server. Snapshot failure (exotic:
+    // disk full) degrades to the old serve-the-live-file behavior, noted.
+    const snapshot = await snapshotGraphForServing(this.repoRoot);
+    if (!snapshot.ok) {
+      this.log(`graphify: ${snapshot.reason}; serving the live graph file`);
+    }
     const port = this.port ?? await freeLoopbackPort();
     const child = Bun.spawn(
       [
         graphifyMcpBin(),
         "--graph",
-        graphJsonPath(this.repoRoot),
+        snapshot.ok ? servingGraphPath(this.repoRoot) : graphJsonPath(this.repoRoot),
         "--transport",
         "http",
         "--host",

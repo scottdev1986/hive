@@ -19,7 +19,7 @@
  *     consults the index and cannot prove anything.
  */
 import { existsSync } from "node:fs";
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import graphifyLock from "../../graphify.lock" with { type: "text" };
 import { getHiveHome } from "../daemon/db";
@@ -456,6 +456,55 @@ export async function buildGraphBrief(
 }
 
 // ---------------------------------------------------------------------------
+// The serving snapshot: the MCP server must never read a file a rebuild is
+// rewriting.
+// ---------------------------------------------------------------------------
+
+/** The graph file the MCP server is pointed at. The serve process re-resolves
+ * and re-reads its graph from disk on every query (upstream's hot-reload), and
+ * `graphify update` rewrites `graphify-out/graph.json` in place — so a server
+ * aimed at the live file answers "graph.json not found" to any query landing
+ * inside a rebuild's write window, which post-landing rebuilds open on every
+ * merge (measured 2026-07-12: a fresh agent hit exactly that). The daemon
+ * therefore serves a copy under Hive's project state dir that no rebuild ever
+ * touches; each successful rebuild refreshes it and restarts the server. */
+export function servingGraphPath(root: string): string {
+  return join(projectStateDir(root), "graphify-serving", "graph.json");
+}
+
+/** Refresh the serving snapshot from the freshly built graph. The copy lands
+ * via tmp+rename so even the snapshot itself is never half-written. */
+export async function snapshotGraphForServing(
+  root: string,
+): Promise<GraphifyOutcome> {
+  const target = servingGraphPath(root);
+  try {
+    await mkdir(dirname(target), { recursive: true });
+    const temporary = `${target}.${process.pid}.tmp`;
+    await copyFile(graphJsonPath(root), temporary);
+    await rename(temporary, target);
+  } catch (error) {
+    return {
+      ok: false,
+      reason: `could not snapshot graph for serving: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    };
+  }
+  // Display-only annotation sidecar, read from the served graph's directory;
+  // absent upstream degrades to un-annotated output, so best-effort is right.
+  try {
+    await copyFile(
+      join(graphOutDir(root), ".graphify_learning.json"),
+      join(dirname(target), ".graphify_learning.json"),
+    );
+  } catch {
+    // No sidecar to carry over.
+  }
+  return { ok: true, detail: target };
+}
+
+// ---------------------------------------------------------------------------
 // Ignore hygiene: `.git/info/exclude`, verified, never `.gitignore`.
 // ---------------------------------------------------------------------------
 
@@ -642,7 +691,7 @@ export async function writeGraphifyIgnore(
 
 export async function purgeGraphify(root: string): Promise<string[]> {
   const removed: string[] = [];
-  for (const path of [graphifyToolsDir(), graphOutDir(root)]) {
+  for (const path of [graphifyToolsDir(), graphOutDir(root), dirname(servingGraphPath(root))]) {
     try {
       await rm(path, { recursive: true, force: true });
       removed.push(path);

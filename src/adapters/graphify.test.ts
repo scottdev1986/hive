@@ -418,6 +418,40 @@ describe("writeGraphifyIgnore", () => {
   });
 });
 
+describe("snapshotGraphForServing", () => {
+  test("copies the built graph to state-dir path rebuilds never touch", async () => {
+    // The MCP server re-reads its graph file per query and rebuilds rewrite
+    // graphify-out/graph.json in place, so serving the live file opens a
+    // "graph.json not found" window on every landing (measured 2026-07-12).
+    const { snapshotGraphForServing, servingGraphPath, graphJsonPath } =
+      await import("./graphify");
+    const { mkdir } = await import("node:fs/promises");
+    const { dirname } = await import("node:path");
+    const root = await gitRepo();
+    await mkdir(dirname(graphJsonPath(root)), { recursive: true });
+    await writeFile(graphJsonPath(root), '{"nodes":[]}');
+    const result = await snapshotGraphForServing(root);
+    expect(result.ok).toBe(true);
+    const serving = servingGraphPath(root);
+    expect(serving.startsWith(hiveHome)).toBe(true);
+    expect(serving).not.toContain("graphify-out");
+    expect(await readFile(serving, "utf8")).toBe('{"nodes":[]}');
+    // Rewriting the live file must not disturb what the server reads.
+    await writeFile(graphJsonPath(root), "MID-REBUILD GARBAGE");
+    expect(await readFile(serving, "utf8")).toBe('{"nodes":[]}');
+    await rm(root, { recursive: true, force: true });
+  });
+
+  test("a missing graph degrades to a reason, never a throw", async () => {
+    const { snapshotGraphForServing } = await import("./graphify");
+    const root = await gitRepo();
+    const result = await snapshotGraphForServing(root);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toContain("snapshot");
+    await rm(root, { recursive: true, force: true });
+  });
+});
+
 describe("runCommand", () => {
   test("kills at the deadline and reports timedOut", async () => {
     const result = await runCommand(["/bin/sleep", "5"], { timeoutMs: 100 });
