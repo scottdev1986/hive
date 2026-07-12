@@ -19,6 +19,7 @@ import { readLiveClaudeModel } from "./live-model";
 import { formatStatusTable } from "../cli/status";
 import { WorkspacePresence } from "./workspace-presence";
 import { actingAs, submitPaste } from "./testing";
+import type { BuildFreshness } from "./build-freshness";
 import type { SpawnRequest, Spawner } from "./spawner";
 import { orchestratorTmuxSession } from "./tmux-sessions";
 
@@ -2924,5 +2925,111 @@ describe("a grok agent's turn is observed from its session artifacts", () => {
     } finally {
       db.close();
     }
+  });
+});
+
+describe("landed is not live", () => {
+  // The daemon executes a compiled binary, so main can be ahead of the code
+  // answering a tool call. These assert the two surfaces an orchestrator sees
+  // without thinking to ask: every hive_status, and any hive_spawn Hive cannot
+  // vouch for. The warning rides as a second content block, so the payload the
+  // callers parse is untouched.
+  async function withClient(
+    freshness: BuildFreshness,
+    dbName: string,
+    body: (client: Client) => Promise<void>,
+  ): Promise<void> {
+    const db = new HiveDatabase(join(home, dbName));
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new StubSpawner(),
+      tmuxSender: new RootUnavailableTmuxSender(db),
+      tmux: new FakeDaemonTmux(),
+      repoRoot: "/tmp/repo",
+      buildFreshness: async () => freshness,
+    });
+    const client = new Client({ name: "hive-test", version: "1.0.0" });
+    try {
+      await client.connect(new StreamableHTTPClientTransport(
+        new URL("http://hive/mcp"),
+        { fetch: actingAs(daemon, "operator") },
+      ));
+      await body(client);
+    } finally {
+      await client.close();
+      await daemon.stop();
+      db.close();
+    }
+  }
+
+  const notes = (result: Awaited<ReturnType<Client["callTool"]>>): string[] =>
+    (result as { content: Array<{ type: string; text?: string }> }).content
+      .slice(1)
+      .map((block) => block.text ?? "");
+
+  const stale: BuildFreshness = {
+    state: "stale",
+    version: "0.0.7",
+    buildCommit: "abc1234",
+    mainCommit: "f00dcafe",
+    commitsBehind: 3,
+    message: "STALE BINARY: this daemon runs 0.0.7, built from abc1234, which is 3 commits behind main (f00dcaf).",
+  };
+
+  test("a stale binary warns on hive_status and on every spawn, and never blocks", async () => {
+    await withClient(stale, "stale-binary.db", async (client) => {
+      const status = await client.callTool({ name: "hive_status", arguments: {} });
+      expect(notes(status)).toEqual([stale.message]);
+      // The payload the parsers read is unchanged: still the bare agent array.
+      expect(textValue(status)).toEqual([]);
+
+      const spawned = await client.callTool({
+        name: "hive_spawn",
+        arguments: { task: "Test the fix that is not in this binary", tier: "review", name: "sam", tool: "claude" },
+      });
+      expect(spawned.isError).toBeUndefined();
+      expect(notes(spawned)).toEqual([stale.message]);
+      expect(textValue(spawned)).toMatchObject({ name: "sam", status: "working" });
+    });
+  });
+
+  test("a binary Hive cannot vouch for reports unknown, never fresh", async () => {
+    const unknown: BuildFreshness = {
+      state: "unknown",
+      version: "0.0.0-dev",
+      buildCommit: null,
+      mainCommit: null,
+      commitsBehind: null,
+      message: "Hive cannot tell whether the running binary is up to date with main: this build carries no commit provenance (a dev build or a source checkout).",
+    };
+    await withClient(unknown, "unknown-binary.db", async (client) => {
+      const status = await client.callTool({ name: "hive_status", arguments: {} });
+      expect(notes(status)[0]).toContain("cannot tell");
+      const spawned = await client.callTool({
+        name: "hive_spawn",
+        arguments: { task: "Anything", tier: "review", name: "sam", tool: "claude" },
+      });
+      expect(notes(spawned)[0]).toContain("cannot tell");
+    });
+  });
+
+  test("a current binary confirms on status and stays silent on spawn", async () => {
+    const current: BuildFreshness = {
+      state: "current",
+      version: "0.0.7",
+      buildCommit: "abc1234",
+      mainCommit: "abc1234",
+      commitsBehind: 0,
+      message: "Running binary 0.0.7 was built from abc1234 and contains everything on main.",
+    };
+    await withClient(current, "current-binary.db", async (client) => {
+      expect(notes(await client.callTool({ name: "hive_status", arguments: {} })))
+        .toEqual([current.message]);
+      const spawned = await client.callTool({
+        name: "hive_spawn",
+        arguments: { task: "Anything", tier: "review", name: "sam", tool: "claude" },
+      });
+      expect(notes(spawned)).toEqual([]);
+    });
   });
 });

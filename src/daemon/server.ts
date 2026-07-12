@@ -27,6 +27,7 @@ import { ensureProfile } from "../adapters/profile";
 import { graphLocate, readGraphifyState } from "../adapters/graphify";
 import { GraphifyService } from "./graphify-service";
 import { landBranch, type LandBranch } from "./landing";
+import { checkBuildFreshness, type BuildFreshness } from "./build-freshness";
 import { readLiveClaudeModel } from "./live-model";
 import {
   assessStrandedWork,
@@ -394,6 +395,9 @@ export interface HiveDaemonOptions {
    * lifecycle: up on start, down on stop, rebuilt-and-reloaded after each
    * landing — all fire-and-forget, never in a caller's latency. */
   graphify?: GraphifyService;
+  /** Is the binary this daemon runs older than main? Injectable so a test can
+   * exercise a stale release without building one (see build-freshness.ts). */
+  buildFreshness?: () => Promise<BuildFreshness>;
   repoRoot?: string;
   removeWorktree?: (
     repoRoot: string,
@@ -469,9 +473,19 @@ function json(value: unknown, init?: ResponseInit): Response {
   return Response.json(value, init);
 }
 
-function toolResult(value: unknown, key: string) {
+/**
+ * A `note` rides as a second text block rather than inside the payload: every
+ * caller of these tools parses `content[0]` or `structuredContent[key]`, so a
+ * warning added there would be a shape change, while a model reading the result
+ * sees both blocks. That is exactly what a staleness warning needs — impossible
+ * for the reader to miss, invisible to the parsers.
+ */
+function toolResult(value: unknown, key: string, note?: string | null) {
+  const payload = { type: "text" as const, text: JSON.stringify(value) };
   return {
-    content: [{ type: "text" as const, text: JSON.stringify(value) }],
+    content: note === undefined || note === null
+      ? [payload]
+      : [payload, { type: "text" as const, text: note }],
     structuredContent: { [key]: value },
   };
 }
@@ -507,6 +521,7 @@ export class HiveDaemon {
     toolSessionId: string | undefined,
   ) => Promise<string | null>;
   private readonly handshake: () => ReturnType<typeof expectedDaemonHandshake>;
+  private readonly buildFreshness: () => Promise<BuildFreshness>;
   private readonly cleanupWorktree: typeof removeWorktree;
   private readonly assessStranded: NonNullable<
     HiveDaemonOptions["assessStrandedWork"]
@@ -666,6 +681,8 @@ export class HiveDaemon {
       ((worktreePath, toolSessionId) =>
         readLiveGrokModel(worktreePath, toolSessionId));
     this.handshake = () => expectedDaemonHandshake(this.repoRoot);
+    this.buildFreshness = options.buildFreshness ??
+      (() => checkBuildFreshness(this.repoRoot));
     this.cleanupWorktree = options.removeWorktree ?? removeWorktree;
     this.assessStranded = options.assessStrandedWork ?? assessStrandedWork;
     this.listUnmergedBranches = options.listUnmergedHiveBranches ??
@@ -2800,9 +2817,14 @@ export class HiveDaemon {
           graphifyCalls: this.graphifyCalls.get(agent.id)?.count ?? null,
         }
       ));
+      // Landed is not live: the daemon runs a compiled binary, so main can be
+      // ahead of the code answering this call. Status says so unasked — the
+      // failure mode is precisely that nobody thinks to ask.
+      const build = await this.buildFreshness();
       return toolResult(
         detail === "active" ? compactActiveTeam(agents) : agents,
         "agents",
+        build.message,
       );
     });
 
@@ -3085,7 +3107,15 @@ export class HiveDaemon {
           }`,
         );
       }
-      return toolResult(compactSpawnResult(persisted), "agent");
+      // An agent spawned to test a fix that is not in the running binary is
+      // wasted money, so a spawn that Hive cannot vouch for carries the reason
+      // with it. Warn, never block: the caller stays in control.
+      const build = await this.buildFreshness();
+      return toolResult(
+        compactSpawnResult(persisted),
+        "agent",
+        build.state === "current" ? null : build.message,
+      );
     });
 
     server.registerTool("hive_approvals", {
