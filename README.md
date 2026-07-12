@@ -22,7 +22,7 @@ you  > add rate limiting to the public API, and have the docs updated too
 hive > Splitting this into 3 tasks:
        • maya  (Claude, deep tier)  — rate-limit middleware      [pane opened]
        • david (Codex)              — apply it to the routes     [pane opened]
-       • sam   (Grok, cheap tier)   — update the API docs        [pane opened]
+       • sam   (cheap tier)         — update the API docs        [pane opened]
 
 you  > what's david doing?
 
@@ -66,10 +66,10 @@ Red is measured, never guessed: it appears only when the daemon records a pendin
 - macOS (Apple Silicon or Intel)
 - tmux (`brew install tmux`) and git
 - iTerm2 or the built-in Terminal app (for `hive watch` viewer windows)
-- At least one AI coding CLI, installed and signed in: [Claude Code](https://code.claude.com/docs), [Codex](https://developers.openai.com/codex), and/or [Grok](https://docs.x.ai/build/overview) (`curl -fsSL https://x.ai/cli/install.sh | bash`)
+- At least one AI coding CLI, installed and signed in: [Claude Code](https://code.claude.com/docs), [Codex](https://developers.openai.com/codex), and/or [Grok](https://docs.x.ai/build/overview)
 - [uv](https://docs.astral.sh/uv/) — only if you opt into `hive graphify`; everything else works without it
 
-Hive uses your existing Claude, OpenAI, or SuperGrok subscriptions or API keys and adds no fees of its own. Grok ships breaking CLI changes frequently, so Hive checks its version and refuses to trust unverified catalog shapes rather than guessing.
+Hive uses your existing Claude, OpenAI, or SuperGrok subscriptions or API keys and adds no fees of its own. Hive checks the Grok CLI's version, and on a version whose catalog it has not verified it declines to read the catalog rather than guess at its shape.
 
 ## Installation
 
@@ -136,7 +136,7 @@ grok/default/*: LIMITS UNKNOWN — Hive has not read live limits from grok yet; 
   hive-local estimate only: 0.0 reserved, 0.0 spent by hive in 5h, 0.0 spent by hive in week (not the account's usage)
 ```
 
-Grok's remaining weekly quota is unmeasurable: its reachable billing surface exposes pay-as-you-go rails, not subscription usage, and those rails do not move when the subscription is used. Hive therefore never shows a Grok percentage. The same surface reports `onDemandCap=0`, so this unknown is safe from surprise charges: reaching the weekly limit blocks the next Grok turn instead of billing it. Hive discovers the models available to the signed-in account live with the free, non-billable `grok models` command rather than keeping a model list in the binary.
+Grok's remaining quota is not measurable: the only billing surface its CLI exposes reports pay-as-you-go rails rather than subscription usage, and those rails do not move when the subscription is used. So Hive never shows a Grok percentage — it reports Grok's capacity as unknown and says so, rather than inferring a number it cannot read. Hive discovers the models available to the signed-in account with the free, session-free `grok models` command rather than keeping a model list in the binary.
 
 ## Configuration
 
