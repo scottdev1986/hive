@@ -148,7 +148,41 @@ final class SmokeRunner {
             }
         }
 
-        // 6. Keystrokes reach the real tmux pane: type an echo whose *output*
+        // 6. The actual Pane menu actions reach the controller, swap the
+        //    focused agent into the master slot, then restore the exact grid.
+        //    Real terminal children stay attached across both PTY resizes.
+        if let agent = expectedAgents.last {
+            let paneID = ProjectState.paneID(forAgent: agent.name)
+            let framesBefore = controller.currentPaneFrames()
+            let paneMenu = NSApp.mainMenu?.items.compactMap(\.submenu).first { $0.title == "Pane" }
+            if let paneMenu,
+               let promoteIndex = paneMenu.items.firstIndex(where: { $0.title == "Promote to Master" }),
+               let returnIndex = paneMenu.items.firstIndex(where: { $0.title == "Return Orchestrator to Master" }) {
+                controller.dispatch(.focusPane(paneID))
+                paneMenu.performActionForItem(at: promoteIndex)
+                check(waitUntil(2) { self.controller.state.layout.master == paneID },
+                      "Pane > Promote to Master swaps the focused agent")
+                check((controller.currentPaneFrames()[paneID]?.width ?? 0)
+                      > (framesBefore[paneID]?.width ?? 0),
+                      "promoted agent pane becomes wider")
+                waitUntil(LayoutTransition.duration + 0.1) { false }
+                check(controller.terminalChildRunning(pane: paneID),
+                      "promoted agent terminal remains live after PTY resize")
+
+                paneMenu.performActionForItem(at: returnIndex)
+                check(waitUntil(2) {
+                    self.controller.state.layout.master == ProjectState.orchestratorPaneID
+                        && self.controller.currentPaneFrames() == framesBefore
+                }, "Pane > Return Orchestrator to Master restores the grid")
+                waitUntil(LayoutTransition.duration + 0.1) { false }
+                check(controller.terminalChildRunning(pane: ProjectState.orchestratorPaneID),
+                      "orchestrator terminal remains live after PTY resize")
+            } else {
+                failures.append("Pane menu exposes promote and return actions")
+            }
+        }
+
+        // 7. Keystrokes reach the real tmux pane: type an echo whose *output*
         //    is the only place the full marker can appear.
         if let typeInto, let rtMarker, rtMarker.count > 2 {
             let paneID = ProjectState.paneID(forAgent: typeInto)
@@ -158,7 +192,7 @@ final class SmokeRunner {
                   "keystroke round trip through tmux ('\(rtMarker)')")
         }
 
-        // 7. Closing a pane detaches: the attach client dies, the pane view
+        // 8. Closing a pane detaches: the attach client dies, the pane view
         //    goes away, and the harness asserts the session survived.
         if let closeTarget {
             let paneID = ProjectState.paneID(forAgent: closeTarget)

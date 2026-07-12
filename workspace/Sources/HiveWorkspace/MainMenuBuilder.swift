@@ -1,11 +1,10 @@
 import AppKit
 
-/// Native menu bar. Every pane item sends a nil-targeted action down the
-/// responder chain, so the key window's controller handles it — the same
-/// command model as clicks and accessibility actions, routed by key window.
+/// Native menu bar. Every pane item targets the active project controller —
+/// the same command model as clicks and accessibility actions.
 enum MainMenuBuilder {
 
-    static func build() -> NSMenu {
+    static func build(paneTarget: AnyObject? = nil) -> NSMenu {
         let mainMenu = NSMenu()
 
         // Application
@@ -75,6 +74,9 @@ enum MainMenuBuilder {
                                action: #selector(ProjectWindowController.closeFocusedPane(_:)), keyEquivalent: "w")
         close.keyEquivalentModifierMask = [.command, .shift]
         paneMenu.addItem(close)
+        for item in paneMenu.items where item.action != nil {
+            item.target = paneTarget
+        }
 
         // Workspace (cross-project surfaces)
         let workspaceItem = NSMenuItem()

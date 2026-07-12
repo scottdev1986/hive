@@ -23,12 +23,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        NSApp.mainMenu = MainMenuBuilder.build()
-
         guard config.isComplete,
               let projectDirectory = config.projectDirectory,
               let hivePath = config.hivePath,
               let daemonPort = config.port else {
+            NSApp.mainMenu = MainMenuBuilder.build()
             if config.smoke {
                 // Smoke must never hang on a bad invocation.
                 print("SMOKE FAIL:\n  --smoke requires --project, --port, and --hive")
@@ -47,6 +46,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             daemonPort: daemonPort, orchestrator: config.orchestrator,
             orchestratorSession: config.orchestratorSession)
         self.controller = controller
+        NSApp.mainMenu = MainMenuBuilder.build(paneTarget: controller)
 
         projectSwitcher.register(state: state) { [weak controller] in
             controller?.window?.makeKeyAndOrderFront(nil)
