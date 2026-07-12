@@ -60,6 +60,24 @@ export const ApprovalSchema = z.object({
 
 export type Approval = z.infer<typeof ApprovalSchema>;
 
+/**
+ * One tier escalation: an agent's typed claim that its task exceeds its model.
+ * Recorded so the rate is MEASURED per model × tier — the routing-shadow flip
+ * criteria and the user's placement judgment read this; nothing re-routes on it.
+ */
+export const EscalationSchema = z.object({
+  id: z.string().min(1),
+  agentId: z.string().min(1),
+  agentName: z.string().min(1),
+  /** The launch identity (decision 6), so the count joins the routing that chose it. */
+  model: z.string().min(1),
+  tier: z.string().min(1),
+  reason: z.string().min(1),
+  createdAt: z.iso.datetime({ offset: true }),
+});
+
+export type Escalation = z.infer<typeof EscalationSchema>;
+
 const AgentDatabaseRowSchema = AgentRecordSchema.extend({
   failureReason: z.string().nullable(),
   failedAt: z.string().nullable(),
@@ -294,6 +312,16 @@ export class HiveDatabase {
       );
       CREATE INDEX IF NOT EXISTS approvals_status_created
         ON approvals(status, createdAt);
+      CREATE TABLE IF NOT EXISTS escalations (
+        id TEXT PRIMARY KEY,
+        agentId TEXT NOT NULL,
+        agentName TEXT NOT NULL,
+        model TEXT NOT NULL,
+        tier TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        createdAt TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS escalations_agent ON escalations(agentId);
       CREATE TABLE IF NOT EXISTS meta (
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
@@ -1303,6 +1331,40 @@ export class HiveDatabase {
           SELECT * FROM approvals WHERE status = ? ORDER BY createdAt, id
         `).all(status);
     return rows.map((row) => ApprovalSchema.parse(row));
+  }
+
+  insertEscalation(escalation: Escalation): Escalation {
+    const value = EscalationSchema.parse(escalation);
+    this.database.query(`
+      INSERT INTO escalations (
+        id, agentId, agentName, model, tier, reason, createdAt
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      value.id,
+      value.agentId,
+      value.agentName,
+      value.model,
+      value.tier,
+      value.reason,
+      value.createdAt,
+    );
+    return value;
+  }
+
+  listEscalations(): Escalation[] {
+    const rows = this.database.query(
+      "SELECT * FROM escalations ORDER BY createdAt, id",
+    ).all();
+    return rows.map((row) => EscalationSchema.parse(row));
+  }
+
+  /** Prior escalations by this exact agent (this task), for the repeat count the
+   * orchestrator reads. Measured and reported, never blocked. */
+  countEscalationsForAgent(agentId: string): number {
+    const row = this.database.query(
+      "SELECT COUNT(*) AS count FROM escalations WHERE agentId = ?",
+    ).get(agentId) as { count: number };
+    return row.count;
   }
 
   resolveApproval(

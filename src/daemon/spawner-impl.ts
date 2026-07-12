@@ -573,6 +573,7 @@ export function buildAgentPrompt(
         `Work only inside your worktree at ${worktree.path}.`,
         `Report completion, blockers, and findings to "${ORCHESTRATOR_NAME}" with hive_send (hive_inbox and hive_status are also available). Reference artifacts by path; never paste them.`,
         `Read only what the task names. Search for the lines that matter rather than reading files whole. If the task is substantially bigger than briefed, stop and report rather than grinding.`,
+        `If the task exceeds your model — a genuine capability wall after at least two distinct failed approaches, not a scope surprise — commit your WIP, then call hive_escalate once with the evidence and a handoff. Keep working until the orchestrator answers. Never grind on under-powered, and never quietly lower the quality bar instead.`,
         CONTINUOUS_EXECUTION,
       ]
     : [
@@ -582,6 +583,7 @@ export function buildAgentPrompt(
         "Use the Hive MCP tools hive_send, hive_inbox, and hive_status to message and coordinate with other named agents.",
         `Send concise completion reports, blockers, and important findings to "${ORCHESTRATOR_NAME}" with hive_send; reference large artifacts instead of pasting them.`,
         `Read only what the task needs: search for the lines that matter instead of reading large files whole, and reuse artifacts other agents already wrote instead of re-deriving them. If the task proves substantially larger than briefed, stop and report to "${ORCHESTRATOR_NAME}" rather than grinding.`,
+        `If the task exceeds your model — a genuine capability wall after at least two distinct failed approaches, not a scope surprise (that is a stop-and-report) — commit your WIP to your branch, then call hive_escalate once with the evidence (why, and what you tried) and a handoff (goal, done, remaining, decisions). Keep working until the orchestrator answers; it may respawn the task on a stronger model with your handoff or tell you to continue. Never grind on under-powered, and never quietly lower the quality bar instead. Escalations are recorded and measured.`,
         CONTINUOUS_EXECUTION,
       ];
   return [

@@ -37,6 +37,7 @@ import {
 import {
   HookEventSchema,
   ControlIntentSchema,
+  HandoffSchema,
   MemoryScopeSchema,
   MemoryWriteInputSchema,
   MessagePrioritySchema,
@@ -183,6 +184,22 @@ const MessageAcknowledgementSchema = z.object({
   messageId: z.string().min(1),
   capabilityEpoch: z.number().int().nonnegative().optional(),
   applied: z.boolean().optional().default(false),
+});
+
+/**
+ * A tier escalation is a typed claim with evidence, not a vibe: the reason says
+ * why the task exceeds the tier, and `failedApproaches` must name at least one
+ * concrete attempt — an agent that has tried nothing has nothing to escalate.
+ * The remaining fields are the handoff the replacement resumes from.
+ */
+const EscalationRequestSchema = z.object({
+  agent: z.string().min(1),
+  reason: z.string().min(1),
+  goal: z.string().min(1),
+  done: z.array(z.string()).default([]),
+  remaining: z.array(z.string()).default([]),
+  decisions: z.array(z.string()).default([]),
+  failedApproaches: z.array(z.string().min(1)).min(1),
 });
 
 export function inferLegacyControl(body: string):
@@ -2632,6 +2649,78 @@ export class HiveDaemon {
         ...requested,
         ...(inferred ?? {}),
       }), "message");
+    });
+
+    server.registerTool("hive_escalate", {
+      title: "Escalate: wrong model for this task",
+      description:
+        "Raise a typed tier escalation: this task exceeds the model you were launched on. " +
+        "Carry evidence (why, and at least one concrete failed approach) plus a handoff " +
+        "(goal, done, remaining, decisions) the replacement resumes from. Commit your WIP " +
+        "to your branch FIRST — the handoff points at it. The orchestrator decides: it may " +
+        "respawn the task on a stronger route with your handoff, or tell you to continue. " +
+        "Keep working until it answers. Escalations are recorded and measured per model " +
+        "and tier; escalate once per genuine wall, not to shop for a bigger model.",
+      inputSchema: EscalationRequestSchema,
+    }, async ({ agent, reason, goal, done, remaining, decisions, failedApproaches }) => {
+      // The claimed identity is checked, not trusted, exactly as in hive_send:
+      // an escalation is a structured send plus a telemetry row.
+      this.authorizeTool(capability, "hive_escalate", "message:send", agent, false);
+      const record = this.db.getAgentByName(agent);
+      if (record === null) {
+        throw new Error(`Cannot escalate: no agent named ${agent} exists`);
+      }
+      if (record.branch === null) {
+        throw new Error(
+          `Cannot escalate: ${agent} has no branch to hand off. Only spawned ` +
+            "writer agents with a worktree can escalate a tier",
+        );
+      }
+      const now = new Date().toISOString();
+      const handoff = HandoffSchema.parse({
+        agentName: agent,
+        goal,
+        done,
+        remaining,
+        decisions,
+        failedApproaches,
+        branch: record.branch,
+        timestamp: now,
+      });
+      // Measured BEFORE this row lands, so the message reports prior attempts.
+      const prior = this.db.countEscalationsForAgent(record.id);
+      const escalation = this.db.insertEscalation({
+        id: crypto.randomUUID(),
+        agentId: record.id,
+        agentName: agent,
+        // The launch identity: the row must join the routing decision that
+        // produced it, and that decision chose the launch model.
+        model: record.model,
+        tier: record.tier,
+        reason,
+        createdAt: now,
+      });
+      const message = await this.delivery.send(
+        agent,
+        ORCHESTRATOR_NAME,
+        [
+          `TIER ESCALATION from ${agent} (tier=${record.tier}, model=${record.model}` +
+          `${prior > 0 ? `; escalation #${prior + 1} from this agent` : ""}): ${reason}`,
+          `Tried and failed: ${failedApproaches.join("; ")}`,
+          `HANDOFF — goal: ${goal}`,
+          `  done: ${done.join("; ") || "nothing yet"}`,
+          `  remaining: ${remaining.join("; ") || "unstated"}`,
+          `  decisions: ${decisions.join("; ") || "none recorded"}`,
+          `  branch: ${record.branch} (WIP committed by the agent before escalating)`,
+          "You decide: respawn the task at a higher tier with this handoff and " +
+          `kill ${agent} once the replacement confirms pickup — or tell ${agent} ` +
+          "to continue. Do not leave it unanswered; it keeps working meanwhile.",
+        ].join("\n"),
+      );
+      return toolResult(
+        { escalation, handoff, priorEscalations: prior, message },
+        "escalation",
+      );
     });
 
     server.registerTool("hive_ack_message", {

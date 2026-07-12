@@ -964,6 +964,60 @@ describe("HiveDaemon HTTP server", () => {
         "Auth review complete on hive/sam-task.",
       );
 
+      // The self-escalation contract: a typed wrong-model claim carries evidence
+      // or it is refused — an agent that has tried nothing has nothing to
+      // escalate.
+      const noEvidence = await client.callTool({
+        name: "hive_escalate",
+        arguments: {
+          agent: "sam",
+          reason: "this exceeds my tier",
+          goal: "Review auth",
+          failedApproaches: [],
+        },
+      });
+      expect(noEvidence.isError).toEqual(true);
+
+      const escalated = textValue(await client.callTool({
+        name: "hive_escalate",
+        arguments: {
+          agent: "sam",
+          reason:
+            "the token refresh path needs a formal state-machine argument my " +
+            "model cannot hold together",
+          goal: "Review auth",
+          done: ["read the auth module"],
+          remaining: ["verify the refresh path"],
+          decisions: ["treated expiry as monotonic"],
+          failedApproaches: [
+            "manual trace of the refresh flow lost the concurrent case",
+            "a property test that could not encode the invariant",
+          ],
+        },
+      })) as {
+        escalation: { tier: string; agentName: string; model: string };
+        handoff: { branch: string; agentName: string };
+        priorEscalations: number;
+      };
+      expect(escalated.priorEscalations).toEqual(0);
+      expect(escalated.escalation.agentName).toEqual("sam");
+      expect(escalated.escalation.tier).toEqual("review");
+      expect(escalated.escalation.model.length).toBeGreaterThan(0);
+      expect(escalated.handoff.branch).toEqual("hive/sam-task");
+
+      // The escalation reached the orchestrator as a durable message carrying
+      // the handoff, and the telemetry row is countable (the second escalation
+      // reports the first — measured, reviewable, not blocked).
+      const escalationInbox = textValue(await client.callTool({
+        name: "hive_inbox",
+        arguments: { agent: "orchestrator" },
+      })) as Array<{ from: string; body: string }>;
+      expect(escalationInbox.length).toEqual(1);
+      expect(escalationInbox[0]?.from).toEqual("sam");
+      expect(escalationInbox[0]?.body).toContain("TIER ESCALATION from sam");
+      expect(escalationInbox[0]?.body).toContain("branch: hive/sam-task");
+      expect(daemon.db.countEscalationsForAgent("agent-sam")).toEqual(1);
+
       const sent = textValue(await client.callTool({
         name: "hive_send",
         arguments: { from: "maya", to: "sam", body: "Please check auth." },

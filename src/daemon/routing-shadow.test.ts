@@ -131,6 +131,28 @@ describe("the flip criteria are checkable, and an unknown is never a pass", () =
     expect(criterion(summary, "contradicted").verdict).toBe("fail");
   });
 
+  test("escalations are measured when read, and unread is never zero", () => {
+    const unread = summarizeShadow(many(3));
+    expect(rollback(unread, "escalation-baseline").verdict).toBe("unknown");
+    expect(rollback(unread, "escalation-baseline").detail).toContain("not read");
+
+    const empty = summarizeShadow(many(3), []);
+    expect(rollback(empty, "escalation-baseline").detail).toContain(
+      "MEASURED: 0",
+    );
+
+    const counted = summarizeShadow(many(3), [
+      { model: "gpt-5.6-sol", tier: "cheap" },
+      { model: "gpt-5.6-sol", tier: "cheap" },
+      { model: "claude-sonnet-5", tier: "review" },
+    ]);
+    const detail = rollback(counted, "escalation-baseline").detail;
+    expect(detail).toContain("3 tier escalation(s)");
+    expect(detail).toContain("2× cheap on gpt-5.6-sol");
+    // A measured count without a decided threshold still cannot pass.
+    expect(rollback(counted, "escalation-baseline").verdict).toBe("unknown");
+  });
+
   test("attribution and cost never self-certify", () => {
     const summary = summarizeShadow(many(MIN_JUDGED_SPAWNS));
     // Whether a divergence is a correct judgment or a resolution bug is not a
@@ -203,12 +225,13 @@ describe("the rollback trigger's baselines are measured, or declared missing", (
     expect(rollback(summary, "launch-failure-baseline").detail).toContain("1 of 10");
   });
 
-  test("the escalation baseline says plainly that nothing measures it", () => {
-    // Hive counts no escalations anywhere — "escalation" is prompt wording, not
-    // a metric. Reporting a rate here would be a number nobody measured.
+  test("the escalation baseline distinguishes unread from zero", () => {
+    // Escalations ARE counted now (`hive_escalate` writes a row per claim), but
+    // a summary whose caller passed no rows has not read the table — and an
+    // unread table is unknown, never zero.
     const escalation = rollback(summarizeShadow(many(80)), "escalation-baseline");
     expect(escalation.verdict).toBe("unknown");
-    expect(escalation.detail).toContain("NOT MEASURED ANYWHERE IN HIVE");
+    expect(escalation.detail).toContain("not read");
   });
 });
 

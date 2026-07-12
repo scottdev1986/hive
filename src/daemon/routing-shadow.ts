@@ -467,6 +467,9 @@ function compareAgainst(
 
 export function summarizeShadow(
   observations: readonly ShadowObservation[],
+  /** Recorded tier escalations (`hive_escalate` rows). Absent means the caller
+   * did not read them — which is "unknown", never "zero". */
+  escalations?: readonly { model: string; tier: string }[],
 ): ShadowSummary {
   // Each regime is judged against its own counterfactual. Mixing them would
   // average a pre-flip question ("would the router have agreed?") with a post-flip
@@ -621,11 +624,25 @@ export function summarizeShadow(
     {
       id: "escalation-baseline",
       question: "pre-flip escalation rate (the doc's second revert trigger)",
+      // Escalations are counted now (`hive_escalate` writes a row per claim), but
+      // a count without a decided threshold still cannot pass or fail: what rate
+      // triggers rollback is the user's call, and nobody has made it. The verdict
+      // stays unknown; the number stops being invented.
       verdict: "unknown",
-      detail: "NOT MEASURED ANYWHERE IN HIVE: 'escalation' exists only as prompt " +
-        "wording, and nothing counts one. Until something does, this half of the " +
-        "rollback trigger cannot fire, and saying otherwise would be a number " +
-        "nobody measured",
+      detail: escalations === undefined
+        ? "not read: the caller passed no escalation rows, and an unread table " +
+          "is unknown, never zero"
+        : escalations.length === 0
+        ? "MEASURED: 0 tier escalations recorded. No rollback threshold is set, " +
+          "so this stays unknown until someone decides what rate would trigger one"
+        : `MEASURED: ${escalations.length} tier escalation(s) recorded — ` +
+          [...escalations.reduce((counts, entry) => {
+            const key = `${entry.tier} on ${entry.model}`;
+            return counts.set(key, (counts.get(key) ?? 0) + 1);
+          }, new Map<string, number>())].map(([key, count]) => `${count}× ${key}`)
+            .join(", ") +
+          ". No rollback threshold is set, so this stays unknown until someone " +
+          "decides what rate would trigger one",
     },
   ];
 

@@ -404,7 +404,17 @@ export function formatShadowSummary(summary: ShadowSummary): string {
 
 export async function printShadowRouting(): Promise<void> {
   const observations = await readShadowObservations();
-  console.log(formatShadowSummary(summarizeShadow(observations)));
+  // Escalation rows live in the daemon's database, not the shadow log: read
+  // them here so the escalation criterion reports a measured count instead of
+  // "not read".
+  const db = new HiveDatabase();
+  try {
+    console.log(
+      formatShadowSummary(summarizeShadow(observations, db.listEscalations())),
+    );
+  } finally {
+    db.close();
+  }
 }
 
 /**
