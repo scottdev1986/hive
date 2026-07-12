@@ -122,3 +122,101 @@ Telemetry/liveness surfaces for either path, all under
   `stop_reason`
 - `signals.json` — written only on clean turn end (its absence is itself a
   cancellation signal)
+
+## Read-only agents: deny is a clean refusal, not a cancel
+
+Follow-up investigation (prompts 6–10 of the same budget, same grok 0.2.93,
+composer-2.5-fast, same artifact-verification discipline). The question:
+`--always-approve` is writer-shaped; can a Hive READ-ONLY agent exist on the
+TUI path at all, given that an *unanswerable approval* kills the turn?
+
+**Answer: yes. A rule-denied tool is a third, safe outcome.** The permission
+system has three distinct resolutions, all observed in `events.jsonl`:
+
+| decision | trigger | effect on turn |
+|---|---|---|
+| `allow` | auto-allowed tool, `--allow` rule, or `--always-approve` | runs, `wait_ms=0`, no round-trip |
+| `deny` | `--deny` rule match | tool gets a clean refusal ("deny rule on bash for tool Shell"); the model absorbs it and continues; turn ends `outcome="completed"`, `end_turn`, signals.json written |
+| `cancelled` | approval needed but nobody can answer (headless default mode) | tool result "User cancelled…", whole turn dies `cancellation_category="permission_cancelled"` |
+
+Measured (P6, headless): `--allow "MCPTool" --allow "Read" --allow "Grep"
+--deny "Bash" --deny "Write" --deny "Edit"` with a prompt forcing both an MCP
+call and a Shell attempt →
+
+```
+"permission_resolved","tool_name":"Shell","decision":"deny","wait_ms":4
+"permission_resolved","tool_name":"CallMcpTool","decision":"allow","wait_ms":0
+"turn_ended","outcome":"completed"
+```
+
+and the model's answer explicitly reported the refusal and still delivered the
+correct MCP-derived result. The same shape passes in the TUI inside a tmux
+pane (P8): `Shell` → `deny`, `CallMcpTool` → `allow`, `end_turn`,
+signals.json. Rule-name gotcha: rules use Claude Code prefixes — **`--deny
+"Bash"` is what binds grok's `Shell` tool**; `Write`/`Edit`/`Read`/`Grep`/
+`WebFetch`/`MCPTool` are the other prefixes, and deny beats allow.
+
+## Write-revoke: narrower permissions bind on resume
+
+P7: session `019f57cd-6b21…` was originally launched `--always-approve` and
+ran `Shell` with `decision="allow"`. Resumed with
+`grok -r <sid> --deny "Bash" -p "run echo …"` — the SAME session now resolves
+`Shell` → `decision="deny"`, turn `outcome="completed"`, model reports the
+refusal. Permissions are evaluated per-invocation from the flags of the
+current process; a resumed session does NOT replay its original authority.
+Hive's shrink-authority-by-restart model (critical control → restart
+read-only) therefore works on Grok.
+
+## The sandbox is NOT a write barrier on macOS
+
+P9: `--sandbox read-only` (documented: "FS Write: `~/.grok/` only") with
+`--always-approve` — the Write tool created `sbx-probe.txt` in CWD and the
+file was verified on disk. The flag registered (`summary.json` records
+`"sandbox_profile": "read-only"`); enforcement simply did not bind the
+agent's own Write tool. Consistent with the earlier finding that the
+sandbox's child-network blocking is a no-op on macOS. **Permission rules are
+the only measured-real write barrier; treat `--sandbox` as unproven
+defense-in-depth, never as the enforcement layer.**
+
+## Launch invocations Hive should use
+
+Writer (tmux pane, cwd = worktree; analog of Claude's `bypassPermissions`):
+
+```
+grok -m <model> --always-approve "<spawn prompt>"
+```
+
+Read-only (tmux pane; enforcement by deny rules, MCP scoped by glob if the
+agent's MCP servers expose write-capable tools):
+
+```
+grok -m <model> --deny "Bash" --deny "Write" --deny "Edit" \
+     --allow "MCPTool" --allow "Read" --allow "Grep" "<spawn prompt>"
+```
+
+Authority shrink mid-flight: kill the process and relaunch with
+`-r <session-id>` plus the narrower flag set — measured to bind (P7).
+
+Both roles exist on the same TUI path, so ACP is not *required* for safety.
+ACP remains strictly richer — Hive answers each `session/request_permission`
+against its capability matrix per call, instead of a static flag set — at the
+cost of losing the tmux pane the Workspace shows users (visibility would have
+to be rebuilt from the `updates.jsonl` stream, which carries the full
+tool-call/chunk timeline).
+
+## Open unknowns (measured as unknown, not assumed)
+
+- `--permission-mode dontAsk` semantics for an approval-needing tool covered
+  by no rule: unmeasured. The intended control (WebFetch) turned out to be
+  **default-allowed** even in headless default mode, so no reachable tool
+  exercised the ask-path under `dontAsk`. Do not rely on `dontAsk` as a
+  deny-backstop until someone forces a genuinely approval-needing uncovered
+  tool through it.
+- Whether `--allow "MCPTool"` pre-authorizes grok-4.5's `use_tool` MCP
+  wrapper (agent profile "grok-build-plan", which DID require approval in the
+  original failing runs): unmeasured — the allow-rule test ran on the
+  composer profile, whose MCP tool (`CallMcpTool`) is auto-allowed anyway.
+  One prompt on grok-4.5 settles it; the ten-prompt budget was exhausted.
+  This matters for read-only reviewers on grok-4.5.
+- Path-glob granularity of `Read(...)`/`Write(...)` rules: untested; only
+  bare-prefix rules were measured.
