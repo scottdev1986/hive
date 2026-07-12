@@ -37,6 +37,9 @@ export const FEED_POLL_MS = 1_000;
 export const FEED_HEARTBEAT_MS = 5_000;
 export const FEED_RETRY_MAX_MS = 4_000;
 export const FEED_GIVE_UP_MS = 30_000;
+/** A status poll may not outlast the presence TTL: a hung request must become a
+ * reported error, not a silent lapse. */
+export const FEED_STATUS_TIMEOUT_MS = 5_000;
 
 export interface WorkspaceFeedDeps {
   readonly fetchStatus?: (port: number) => Promise<AgentRecord[]>;
@@ -49,6 +52,8 @@ export interface WorkspaceFeedDeps {
   readonly sleep?: (milliseconds: number, signal?: AbortSignal) => Promise<void>;
   readonly now?: () => number;
   readonly signal?: AbortSignal;
+  /** Overrides FEED_STATUS_TIMEOUT_MS; tests use a short one. */
+  readonly statusTimeoutMs?: number;
 }
 
 /** `GET /autonomy` with the operator credential: the live dial, or null when
@@ -78,6 +83,28 @@ async function postPresence(port: number, present: boolean): Promise<void> {
   if (!response.ok) {
     throw new Error(`workspace presence registration failed: HTTP ${response.status}`);
   }
+}
+
+/** Reject if the work has not finished in time. Its own timer, not the injected
+ * `sleep`: a test that stubs sleep to a no-op must not thereby time out every
+ * poll. The loser is defused so a slow-but-successful poll cannot reject later. */
+function withTimeout<T>(work: Promise<T>, milliseconds: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error(`status poll timed out after ${milliseconds}ms`)),
+      milliseconds,
+    );
+    work.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error: unknown) => {
+        clearTimeout(timer);
+        reject(error instanceof Error ? error : new Error(String(error)));
+      },
+    );
+  });
 }
 
 /** A sleep the shutdown signal can cut short, so SIGTERM never waits out a
@@ -112,22 +139,35 @@ export async function runWorkspaceFeed(
   const sleep = deps.sleep ?? abortableSleep;
   const now = deps.now ?? Date.now;
   const signal = deps.signal;
+  const statusTimeoutMs = deps.statusTimeoutMs ?? FEED_STATUS_TIMEOUT_MS;
 
   let lastSnapshot: string | null = null;
   let lastEmitAt: number | null = null;
   let lastError: string | null = null;
+  let lastRenewAt: number | null = null;
   let unreachableSince: number | null = null;
   let retryMs = FEED_POLL_MS;
   let exitCode = 0;
 
-  // Take the lease before the first poll, so the daemon stops opening external
-  // viewers before the app has even rendered a pane. Best-effort: a daemon
-  // that cannot be reached is the poll loop's problem to report.
-  await setPresence(port, true).catch(() => undefined);
-
   while (signal?.aborted !== true) {
     try {
-      const agents = await fetchStatus(port);
+      // Renew BEFORE the poll and on our own clock, never as a reward for the
+      // poll succeeding. The lease says "an app is attached", and it is: this
+      // process lives exactly as long as the app's end of the pipe does.
+      // Renewal used to ride on an emit, so a status poll that hung — and
+      // `fetchStatus` had no timeout — left a live feed renewing nothing, the
+      // lease lapsed after 15s, and the daemon opened Terminal windows over
+      // live panes. That is the 2026-07-12 incident reached by a hang instead
+      // of a kill.
+      if (
+        lastRenewAt === null || now() - lastRenewAt >= FEED_HEARTBEAT_MS
+      ) {
+        lastRenewAt = now();
+        await setPresence(port, true).catch(() => undefined);
+      }
+      // And bound the poll, so a wedged daemon can never outlast the TTL: at
+      // worst one timeout plus one backoff, still well inside it.
+      const agents = await withTimeout(fetchStatus(port), statusTimeoutMs);
       // Autonomy rides the same snapshot line so the app's menu tracks the
       // dial. Best-effort by design: its failure must never take the agent
       // list down with it.
@@ -145,9 +185,6 @@ export async function runWorkspaceFeed(
         }));
         lastSnapshot = snapshot;
         lastEmitAt = now();
-        // Every emit renews the lease; emits are at most 5 s apart on a
-        // healthy wire, well inside the daemon's 15 s TTL.
-        await setPresence(port, true).catch(() => undefined);
       }
       lastError = null;
       unreachableSince = null;

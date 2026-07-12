@@ -131,10 +131,11 @@ describe("runWorkspaceFeed", () => {
       .toEqual("idle");
   });
 
-  test("shutdown surrenders the lease it took on start and renewed per emit", async () => {
+  test("shutdown surrenders the lease it took on start", async () => {
     const run = await runScript([last(snapshot(agent("maya")))]);
-    // true on start, true on the emit's renewal, false on the way out.
-    expect(run.presence).toEqual([true, true, false]);
+    // Renewal no longer rides on the emit — it is taken before the first poll,
+    // on the feed's own clock — so one grant here, then the surrender.
+    expect(run.presence).toEqual([true, false]);
   });
 
   test("a failure is emitted once, retried with backoff, and recovery re-emits", async () => {
@@ -186,7 +187,13 @@ describe("runWorkspaceFeed", () => {
     expect(run.lines).toEqual([{ v: 1, error: "connect ECONNREFUSED" }]);
     const failedFor = run.sleeps.reduce((total, ms) => total + ms, 0);
     expect(failedFor).toBeGreaterThanOrEqual(FEED_GIVE_UP_MS - FEED_RETRY_MAX_MS);
-    expect(run.presence).toEqual([true, false]);
+    // The feed keeps offering the lease across the outage — the app is still
+    // attached, and a daemon that comes back should find its viewer at once
+    // rather than after the next successful poll. The POSTs simply fail while
+    // it is down. What matters is that it surrenders on the way out.
+    expect(run.presence.filter((present) => present).length)
+      .toBeGreaterThanOrEqual(1);
+    expect(run.presence.at(-1)).toEqual(false);
   });
 
   test("an abort mid-outage exits zero: a closing app is not a dead daemon", async () => {
@@ -235,9 +242,41 @@ describe("runWorkspaceFeed", () => {
     steps.push(last(snapshot(maya)));
     const run = await runScript(steps);
     const renewals = run.presence.filter((present) => present).length;
-    expect(renewals).toBeGreaterThanOrEqual(4); // start + one per heartbeat
+    // Renewals ride the feed's own 5s clock (t=0, 5s, 10s), not the emits.
+    expect(renewals).toBeGreaterThanOrEqual(3);
     expect(run.lines.length).toEqual(3);
     expect(run.sleeps.filter((ms) => ms === FEED_POLL_MS).length)
       .toEqual(run.sleeps.length);
+  });
+
+  test("a status poll that hangs forever cannot stop the lease renewals", async () => {
+    // The 2026-07-12 incident reached by a hang instead of a kill: the feed is
+    // alive, the app is attached and looks perfectly normal, but a wedged
+    // status poll used to mean nothing ever renewed the lease — so the daemon
+    // concluded nobody was watching and opened Terminal windows over live panes.
+    const controller = new AbortController();
+    const presence: boolean[] = [];
+    let time = 0;
+    await runWorkspaceFeed(4483, {
+      // A daemon that accepted the request and never answered.
+      fetchStatus: () => new Promise<AgentRecord[]>(() => {}),
+      setPresence: async (_port, present) => {
+        presence.push(present);
+        // Three renewals is proof the heartbeat outlives the wedge; stop there
+        // so the loop cannot spin.
+        if (presence.filter(Boolean).length >= 3) controller.abort();
+      },
+      statusTimeoutMs: 1,
+      write: () => {},
+      now: () => time,
+      sleep: async (milliseconds) => {
+        time += milliseconds;
+      },
+      signal: controller.signal,
+    });
+
+    expect(presence.filter((present) => present).length).toBeGreaterThanOrEqual(3);
+    // And it still surrenders on the way out.
+    expect(presence.at(-1)).toEqual(false);
   });
 });
