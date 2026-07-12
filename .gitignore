@@ -59,9 +59,4 @@ yarn-error.log*
 # matches.
 .agents/
 
-# --- local working docs (kept on disk, out of git) ---
-docs/
-research/
-prototypes/
-
 apple
