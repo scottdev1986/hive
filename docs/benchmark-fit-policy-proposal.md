@@ -1,17 +1,20 @@
-# Benchmark threshold / fit policy — PROPOSAL, awaiting user sign-off
+# Benchmark threshold / fit policy — ADOPTED, live
 
-**Status: PROPOSAL ONLY.** Nothing in this document is implemented as route
-influence. Benchmark data remains shadow-only — recorded beside every route,
-changing none — until the user approves this policy explicitly. This document
-exists so there is a concrete thing to approve, amend, or reject.
+**Status: ADOPTED 2026-07-12.** The user approved the 5-point band and then
+ordered direct live activation — verbatim: "I do not want shadow at all i
+want the real thing live no parrallell path we go live with the real thing."
+The three-rule policy below orders real candidate selection in
+`deriveRouting`; the shadow/counterfactual apparatus this document once
+staged its rollout through is removed by that ruling. Routing telemetry
+records the real decision and its evidence basis — what was chosen and why,
+never a hypothetical.
 
 ## The question this answers
 
-Hive now fetches dated, machine-readable benchmark scores from eligible
-external sources (today: LiveBench, the sole registered source). The scores
-sit in the inventory and the shadow log and do nothing. The open question:
-**when data exists, how should a score move a placement decision among
-candidates that already cleared every other bar?**
+Hive fetches dated, machine-readable benchmark scores from eligible
+external sources (today: LiveBench, the sole registered source). The
+question this policy answers: **when data exists, how does a score move a
+placement decision among candidates that already cleared every other bar?**
 
 ## Hard constraints (not proposals — standing rulings this policy must obey)
 
@@ -21,10 +24,10 @@ candidates that already cleared every other bar?**
    shows as available and entitled, and every effort level it advertises, is
    routable. Unknowns route by vendor facts + user policy (tier→effort
    defaults, capability floors, pins); benchmarks overlay only when present.
-   This is structural today — `deriveRouting` takes no benchmark input, so a
-   score cannot veto a candidate — and this policy keeps it structural:
-   benchmarks act as an **ordering overlay** on an eligible list produced
-   without them, never as a filter on it.
+   This is structural: benchmark data reaches `deriveRouting` as an
+   **ordering-only** input — it reorders an eligible list produced without
+   it and has no code path by which to add, remove, or veto a candidate or
+   an advertised effort level.
 2. **Capability is a hard floor and benchmarks sit above it, not beside it.**
    The floor (codingCapable for coding/review work, the user's standing model
    directives) filters candidates before this policy ever sees them. A score,
@@ -46,7 +49,7 @@ candidates that already cleared every other bar?**
 
 One named step, in one place. For a tier×kind, the derivation pipeline
 already produces an ordered eligible list: pins win, then the capability
-floor and entitlement facts, then user policy order. The proposal inserts a
+floor and entitlement facts, then user policy order. The policy inserts a
 single reordering step **after that list exists and before quota
 tie-breaking**:
 
@@ -101,8 +104,8 @@ and the floor already bounded everything quota can see.
 
 ## Effort and placement semantics — three user-ruled rules
 
-All three are rulings, not knobs: they hold in this proposal and in the
-implementation when approved.
+All three are rulings, not knobs: they hold in this policy and in its live
+implementation.
 
 1. **Monotone-effort ordinal inference.** Within a single model, an
    unmeasured lower effort level ranks below that model's measured
@@ -111,8 +114,8 @@ implementation when approved.
    **ordinal only**: it produces a position in the ordering overlay, never a
    synthesized numeric score (the accurate-numbers rule holds; no invented
    numbers). Every inferred rank is marked as inferred with its basis —
-   e.g. "below claude-fable-5 high, LiveBench 2026-06-25" — in the shadow
-   log and the inventory, so inference is visible and never dressed as
+   e.g. "below claude-fable-5 high, LiveBench 2026-06-25" — in routing
+   telemetry and the inventory, so inference is visible and never dressed as
    measurement. An exact-match score beats an inferred rank where both
    exist. Cross-model inference stays forbidden: this is within-model
    ordering only, justified by the vendor's own effort semantics.
@@ -143,7 +146,8 @@ implementation when approved.
    **current measurement > stale measurement (dated) > within-model effort
    inference > vendor-tier placement > unknown-holds-policy-position.**
    Every non-measured placement is labeled with its basis in the inventory
-   and the shadow log — the same visibility discipline as effort inference.
+   and routing telemetry — the same visibility discipline as effort
+   inference.
    Net effect: haiku-class models live at the bottom of the ordering doing
    the simplest tasks, frontier models never waste effort on trivial work,
    and nothing capable sits unusable.
@@ -183,24 +187,24 @@ model, and the reasons are worth keeping because they will recur:
 The gate itself stays source-agnostic and fail-closed; any future source
 that clears it registers the same way LiveBench did.
 
-## Rollout — three stages, two of them already safe
+## Rollout — what happened
 
-1. **Shadow-annotate (no approval needed to build, no route change).** Compute
-   the would-be reordering per spawn and record it in the shadow log's
-   existing `benchmark.wouldChange` field (today always `null`) with the
-   pair and scores in `influenceDetail`. Routes unchanged.
-2. **Review.** The user reads the measured `wouldChange` rate and the actual
-   pairs — how often, which models, in which direction — instead of
-   approving a hypothetical.
-3. **Activate.** Only on explicit user approval, the reorder step goes live.
-   Config keeps a hard off switch (`benchmarks.mode`), and the shadow log
-   keeps recording so drift stays visible after the flip.
+This document originally proposed a three-stage rollout (shadow-annotate →
+review measured pairs → activate). On 2026-07-12 the user approved
+shadow-annotation and the 5-point band, then superseded the staging
+entirely: direct live activation, no shadow, no parallel path — "old path
+removed it is dead." The reorder step therefore runs in real route
+derivation, the shadow/counterfactual machinery is deleted, and
+`benchmarks.mode` remains the hard off switch. Non-shadow freight the
+parallel path used to carry — the escalation-count baseline, telemetry
+about real decisions and their evidence bases — is kept and rehomed;
+counterfactual comparison is not.
 
-## The knobs the user is asked to approve
+## The knobs, as decided
 
-| knob | proposed | nature |
+| knob | value | nature |
 |---|---|---|
-| band width B | 5 points (source scale) | judgment; user-settable |
+| band width B | 5 points (source scale) | APPROVED (2026-07-12, user) |
 | kind → score column | coding → `code_generation`, others unmapped | policy; user-editable |
 | cheap-tier fit rule | cheapest within B of best leads | policy |
 | staleness | `current` and `last-good` rows only | policy |
@@ -208,9 +212,9 @@ that clears it registers the same way LiveBench did.
 | effort inference | within-model ordinal only, labeled inferred with basis | user ruling (decided) |
 | effort economy | lowest sufficient effort among floor-clearing candidates | user ruling (decided) |
 | uncovered-model placement | stale measurement > vendor tiering > user pin, labeled; lower-class models get only the simplest work | user ruling (decided) |
-| activation | stage 3 only on explicit approval | standing rule |
+| activation | LIVE — user ordered direct activation (2026-07-12); shadow stage removed by ruling | user ruling (decided) |
 
-## What is explicitly not proposed
+## What the policy explicitly excludes
 
 - No gating: benchmarks never enter candidate *eligibility*, only order.
 - No averaging or single blended score across sources.
