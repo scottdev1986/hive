@@ -26,6 +26,11 @@ import {
   type HookEventOptions,
 } from "./cli/event";
 import { launchOrchestrator } from "./cli/orchestrator";
+import {
+  runGraphifyDisable,
+  runGraphifyEnable,
+  runGraphifyStatus,
+} from "./cli/graphify";
 import { runInitCli } from "./cli/init";
 import { projectRootOrCwd } from "./cli/project-root";
 import { printRouting, printShadowRouting } from "./cli/routing";
@@ -340,6 +345,35 @@ export function createProgram(): Command {
         source: "manual",
         confidence: "reported",
       });
+    });
+
+  const graphify = program
+    .command("graphify")
+    .description(
+      "Opt-in local code knowledge graph for agents (docs/architecture/graphify-integration.md)",
+    );
+
+  graphify.command("enable")
+    .description(
+      "Consent to graphify: hash-verified install into ~/.hive/tools, then a code-only local graph build",
+    )
+    .action(async () => {
+      process.exitCode = await runGraphifyEnable(projectRootOrCwd());
+    });
+
+  graphify.command("disable")
+    .description("Turn graphify off for this repo; --purge also removes the tool and graphify-out/")
+    .option("--purge", "delete the installed tool and this repo's graphify-out/")
+    .action(async (options: { purge?: boolean }) => {
+      process.exitCode = await runGraphifyDisable(projectRootOrCwd(), {
+        ...(options.purge === undefined ? {} : { purge: options.purge }),
+      });
+    });
+
+  graphify.command("status")
+    .description("Show pin, install state, and graph freshness for this repo")
+    .action(async () => {
+      process.exitCode = await runGraphifyStatus(projectRootOrCwd());
     });
 
   const memory = program

@@ -1,0 +1,123 @@
+/**
+ * `hive graphify enable|disable|status` — the consent surface for the
+ * graphify integration (docs/architecture/graphify-integration.md).
+ *
+ * There is no interactive prompt anywhere in Hive's CLI and this command does
+ * not introduce one: running `enable` IS the consent, in the same sense that
+ * running `init` is authorization for what init prints itself doing. The
+ * command states exactly what it is about to do, then does it, and a machine
+ * without uv gets instructions plus a clean exit — never a vendor installer
+ * run on the user's behalf.
+ */
+import { existsSync } from "node:fs";
+import { stat } from "node:fs/promises";
+import {
+  buildGraph,
+  defaultInstallDeps,
+  ensureGraphifyIgnored,
+  graphJsonPath,
+  graphifyBin,
+  graphifyPin,
+  graphifyToolsDir,
+  installGraphify,
+  purgeGraphify,
+  readGraphifyState,
+  writeGraphifyState,
+  type CommandRunner,
+  type GraphifyInstallDeps,
+  runCommand,
+} from "../adapters/graphify";
+
+export interface GraphifyCliDeps {
+  install: GraphifyInstallDeps;
+  run: CommandRunner;
+  log: (line: string) => void;
+}
+
+export const defaultGraphifyCliDeps: GraphifyCliDeps = {
+  install: defaultInstallDeps,
+  run: runCommand,
+  log: console.log,
+};
+
+/** Install (hash-verified), exclude, persist, build. Returns a process exit
+ * code: a machine that cannot enable gets told why and exits nonzero, but
+ * nothing else in Hive changes state. */
+export async function runGraphifyEnable(
+  root: string,
+  deps: GraphifyCliDeps = defaultGraphifyCliDeps,
+): Promise<number> {
+  deps.log(`Enabling graphify for ${root}:`);
+  deps.log(
+    `  installing graphifyy==${graphifyPin()} (hash-verified) into ${graphifyToolsDir()},`,
+  );
+  deps.log(
+    "  then building a code-only knowledge graph in graphify-out/ — parsed locally, nothing leaves this machine.",
+  );
+
+  const installed = await installGraphify(deps.install);
+  if (!installed.ok) {
+    deps.log(installed.reason);
+    return 1;
+  }
+  deps.log(`Installed ${installed.detail}.`);
+
+  const ignored = await ensureGraphifyIgnored(root, deps.run);
+  if (!ignored.ok) {
+    deps.log(`Could not keep graphify-out/ out of git: ${ignored.reason}`);
+    return 1;
+  }
+  deps.log(`graphify-out/ excluded via ${ignored.detail} (verified).`);
+
+  await writeGraphifyState(root, { enabled: true, pin: graphifyPin() });
+
+  deps.log("Building the graph (first build on a large repo can take minutes)…");
+  const built = await buildGraph(root, deps.run);
+  if (!built.ok) {
+    deps.log(
+      `Graph build failed — graphify stays enabled and the daemon will retry on the next landing: ${built.reason}`,
+    );
+    return 1;
+  }
+  deps.log(`Graph built: ${built.detail}.`);
+  return 0;
+}
+
+export async function runGraphifyDisable(
+  root: string,
+  options: { purge?: boolean } = {},
+  deps: GraphifyCliDeps = defaultGraphifyCliDeps,
+): Promise<number> {
+  await writeGraphifyState(root, { enabled: false, pin: null });
+  deps.log("Graphify disabled: no graph context, no MCP server, no rebuilds.");
+  if (options.purge === true) {
+    const removed = await purgeGraphify(root);
+    for (const path of removed) deps.log(`Removed ${path}.`);
+    deps.log("Nothing else to clean — graphify never writes outside those two paths.");
+  } else {
+    deps.log(
+      `The installed tool and graphify-out/ were kept for cheap re-enable; \`hive graphify disable --purge\` removes both.`,
+    );
+  }
+  return 0;
+}
+
+export async function runGraphifyStatus(
+  root: string,
+  deps: GraphifyCliDeps = defaultGraphifyCliDeps,
+): Promise<number> {
+  const state = await readGraphifyState(root);
+  const installed = existsSync(graphifyBin());
+  deps.log(`pin: graphifyy==${graphifyPin()}`);
+  deps.log(`enabled: ${state.enabled}${state.pin === null ? "" : ` (installed pin ${state.pin})`}`);
+  deps.log(`installed: ${installed ? graphifyToolsDir() : "no"}`);
+  try {
+    const graph = await stat(graphJsonPath(root));
+    deps.log(
+      `graph: ${graphJsonPath(root)} (${Math.round(graph.size / 1024)} KB, built ${graph.mtime.toISOString()})`,
+    );
+  } catch {
+    deps.log("graph: not built");
+  }
+  return 0;
+}

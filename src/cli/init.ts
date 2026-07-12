@@ -17,7 +17,10 @@
  * Running the command is the authorization, and every action it takes is
  * printed — but it never ends by asking for another command. Anything Hive can
  * finish itself, it finishes here (the memory index below is the example: seeded
- * facts are indexed on the spot, not left with a note to go reindex them).
+ * facts are indexed on the spot, not left with a note to go reindex them). The
+ * one thing it names instead of running is `hive graphify enable`: that is an
+ * opt-in consent decision, so init reports where it stands and leaves it to
+ * the human.
  * Model-authored narrative is supplied by the caller — hive's models are its
  * agents, not this CLI — and written through the same seeding path.
  */
@@ -33,6 +36,7 @@ import {
   writeMemoryFact,
   type MemoryWriteFileInput,
 } from "../adapters/memory";
+import { readGraphifyState, type GraphifyState } from "../adapters/graphify";
 import { readDaemonPort } from "../daemon/lifecycle";
 import { reindexMemory } from "./mcp";
 import {
@@ -113,6 +117,8 @@ export interface InitDeps {
     tool: SkillTool,
     options: { force?: boolean },
   ) => Promise<SkillInstallReport>;
+  /** Where the opt-in graphify decision stands, so init can report it. */
+  readGraphifyState: (root: string) => Promise<GraphifyState>;
   today: () => string;
 }
 
@@ -140,6 +146,7 @@ export const defaultInitDeps: InitDeps = {
   },
   hasCli: (command) => Bun.which(command) !== null,
   installShippedSkills,
+  readGraphifyState,
   today: () => new Date().toISOString().slice(0, 10),
 };
 
@@ -336,6 +343,15 @@ export async function runInit(
       `Seeded and indexed ${factsSeeded.length} narrative memory fact${factsSeeded.length === 1 ? "" : "s"} (source: init).`,
     );
   }
+
+  // 5. Graphify is opt-in and the choice is the human's, so init reports
+  //    where the decision stands rather than making it.
+  const graphify = await deps.readGraphifyState(cwd);
+  messages.push(
+    graphify.enabled
+      ? "Graphify: enabled — agents get a local, code-only knowledge graph."
+      : "Graphify: not enabled. `hive graphify enable` builds a local, code-only knowledge graph agents can query (opt-in; docs/architecture/graphify-integration.md).",
+  );
 
   return { profileWritten, agentsScaffolded, factsSeeded, skills, messages };
 }
