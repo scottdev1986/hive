@@ -3,6 +3,7 @@
 import { Command, CommanderError } from "commander";
 import { runCodexAppServerHost } from "./adapters/tools/codex-app-server";
 import {
+  autonomyCli,
   deleteMemoryCli,
   printQuotaStatus,
   printStatus,
@@ -290,6 +291,20 @@ export function createProgram(): Command {
       "Compare what the derived router would have chosen against what actually spawned",
     )
     .action(printShadowRouting);
+
+  program
+    .command("autonomy [mode]")
+    .description(
+      "Show or set writer-agent autonomy: sandboxed (approvals queue) or " +
+        "dangerous (no permission prompts)",
+    )
+    .option("--port <number>", "daemon port")
+    .action(async (mode: string | undefined, options: { port?: string }) => {
+      await autonomyCli(
+        mode,
+        ...(options.port === undefined ? [] : [parsePort(options.port)]),
+      );
+    });
 
   const quota = program
     .command("quota")

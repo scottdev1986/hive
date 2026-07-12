@@ -4,10 +4,12 @@
  * A long-lived child of the app that turns the daemon's `hive_status` into
  * NDJSON on stdout, one JSON object per line and nothing else:
  *
- *   {"v":1,"agents":[...]}    the full AgentRecord array — on the first
- *                             snapshot, on any change, and at least every 5 s
- *                             (heartbeat), so a silent wire is distinguishable
- *                             from an unchanged one.
+ *   {"v":1,"agents":[...],"autonomy":"sandboxed"}
+ *                             the full AgentRecord array plus the daemon's
+ *                             live autonomy dial (omitted when unreadable) —
+ *                             on the first snapshot, on any change, and at
+ *                             least every 5 s (heartbeat), so a silent wire is
+ *                             distinguishable from an unchanged one.
  *   {"v":1,"error":"..."}     the daemon is unreachable — emitted once per
  *                             distinct failure, not per retry, so a dead
  *                             daemon does not scroll the app's log.
@@ -25,6 +27,7 @@
  * like a hiccup, not a teardown.
  */
 import type { AgentRecord } from "../schemas";
+import { isAutonomy, type Autonomy } from "../config/autonomy";
 import { fetchAgentStatus } from "./mcp";
 import { operatorFetch } from "./credential";
 
@@ -36,11 +39,26 @@ export const FEED_GIVE_UP_MS = 30_000;
 
 export interface WorkspaceFeedDeps {
   readonly fetchStatus?: (port: number) => Promise<AgentRecord[]>;
+  /** Reads the daemon's live autonomy dial for the app's Agents menu. Errors
+   * degrade to null (field omitted) — the menu goes unknown, the agent list
+   * must not. */
+  readonly fetchAutonomy?: (port: number) => Promise<Autonomy | null>;
   readonly setPresence?: (port: number, present: boolean) => Promise<void>;
   readonly write?: (line: string) => void;
   readonly sleep?: (milliseconds: number, signal?: AbortSignal) => Promise<void>;
   readonly now?: () => number;
   readonly signal?: AbortSignal;
+}
+
+/** `GET /autonomy` with the operator credential: the live dial, or null when
+ * the daemon predates the endpoint or has no control configured. */
+async function getAutonomy(port: number): Promise<Autonomy | null> {
+  const response = await operatorFetch(`http://127.0.0.1:${port}/autonomy`);
+  if (!response.ok) return null;
+  const body = await response.json().catch(() => null) as
+    | { autonomy?: unknown }
+    | null;
+  return isAutonomy(body?.autonomy) ? body.autonomy : null;
 }
 
 /** `POST /workspace` with the operator credential: grant, renew, or surrender
@@ -81,6 +99,7 @@ export async function runWorkspaceFeed(
   deps: WorkspaceFeedDeps = {},
 ): Promise<number> {
   const fetchStatus = deps.fetchStatus ?? fetchAgentStatus;
+  const fetchAutonomy = deps.fetchAutonomy ?? getAutonomy;
   const setPresence = deps.setPresence ?? postPresence;
   const write = deps.write ??
     ((line: string) => void process.stdout.write(`${line}\n`));
@@ -103,13 +122,21 @@ export async function runWorkspaceFeed(
   while (signal?.aborted !== true) {
     try {
       const agents = await fetchStatus(port);
-      const snapshot = JSON.stringify(agents);
+      // Autonomy rides the same snapshot line so the app's menu tracks the
+      // dial. Best-effort by design: its failure must never take the agent
+      // list down with it.
+      const autonomy = await fetchAutonomy(port).catch(() => null);
+      const snapshot = JSON.stringify({ agents, autonomy });
       const heartbeatDue = lastEmitAt === null ||
         now() - lastEmitAt >= FEED_HEARTBEAT_MS;
       // A recovery from an error state re-emits even an unchanged snapshot:
       // the last thing on the wire must never remain a stale error.
       if (snapshot !== lastSnapshot || heartbeatDue || lastError !== null) {
-        write(JSON.stringify({ v: FEED_VERSION, agents }));
+        write(JSON.stringify({
+          v: FEED_VERSION,
+          agents,
+          ...(autonomy === null ? {} : { autonomy }),
+        }));
         lastSnapshot = snapshot;
         lastEmitAt = now();
         // Every emit renews the lease; emits are at most 5 s apart on a

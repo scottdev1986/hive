@@ -81,6 +81,19 @@ enum MainMenuBuilder {
             item.target = paneTarget
         }
 
+        // Agents (the writer-autonomy dial). State lives in the daemon: the
+        // AppDelegate validates the checkmarks from the feed's last report and
+        // sets the dial through `hive autonomy`, so this menu never shows a
+        // state the daemon has not confirmed.
+        let agentsItem = NSMenuItem()
+        mainMenu.addItem(agentsItem)
+        let agentsMenu = NSMenu(title: "Agents")
+        agentsItem.submenu = agentsMenu
+        agentsMenu.addItem(withTitle: "Sandboxed (Approvals Required)",
+                           action: #selector(AppDelegate.selectSandboxedAutonomy(_:)), keyEquivalent: "")
+        agentsMenu.addItem(withTitle: "Full Autonomy (No Permission Prompts)",
+                           action: #selector(AppDelegate.selectDangerousAutonomy(_:)), keyEquivalent: "")
+
         // Workspace (cross-project surfaces)
         let workspaceItem = NSMenuItem()
         mainMenu.addItem(workspaceItem)

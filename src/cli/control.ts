@@ -34,7 +34,8 @@ import {
   type OrchestratorTerminalApp,
   registerRunningOrchestratorTerminal,
 } from "./orchestrator";
-import { operatorHeaders } from "./credential";
+import { operatorFetch, operatorHeaders } from "./credential";
+import { isAutonomy, type Autonomy } from "../config/autonomy";
 import { formatQuotaStatus, formatStatusTable } from "./status";
 
 const isLive = (agent: AgentRecord): boolean =>
@@ -106,7 +107,7 @@ export function requireDaemonPort(): number {
   const port = readDaemonPort();
   if (port === null || port <= 0 || port > 65_535) {
     throw new Error(
-      "no daemon is running\nFix: start one with `hive claude` or `hive codex`",
+      "no daemon is running\nFix: run `hive init` in the project first",
     );
   }
   return port;
@@ -130,6 +131,49 @@ export async function printQuotaStatus(): Promise<void> {
   console.log(formatQuotaStatus(
     await fetchQuotaStatus(requireDaemonPort()),
   ));
+}
+
+const AUTONOMY_MEANING: Record<Autonomy, string> = {
+  sandboxed:
+    "writers run inside their vendor sandboxes; risky actions queue for approval",
+  dangerous: "writers run with permission prompts off",
+};
+
+/** `hive autonomy [mode]` — read or set the daemon's live autonomy dial.
+ * Both directions go through the daemon, never the config file directly:
+ * what this prints is what the next spawn will actually use, and a set is
+ * confirmed by the daemon's answer, not assumed from a clean exit. */
+export async function autonomyCli(
+  mode?: string,
+  port: number = requireDaemonPort(),
+): Promise<void> {
+  if (mode !== undefined && !isAutonomy(mode)) {
+    throw new Error('autonomy must be "sandboxed" or "dangerous"');
+  }
+  const response = await operatorFetch(`http://127.0.0.1:${port}/autonomy`, {
+    ...(mode === undefined ? {} : {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ autonomy: mode }),
+    }),
+  });
+  const body = await response.json().catch(() => null) as
+    | { autonomy?: unknown; error?: string }
+    | null;
+  if (!response.ok) {
+    throw new Error(body?.error ?? `autonomy request failed (HTTP ${response.status})`);
+  }
+  const value = body?.autonomy;
+  if (!isAutonomy(value)) {
+    throw new Error("the daemon reported no autonomy setting");
+  }
+  console.log(
+    mode === undefined
+      ? `${value} — ${AUTONOMY_MEANING[value]}`
+      : `autonomy is now ${value} — ${
+        AUTONOMY_MEANING[value]
+      } (persisted to config; applies to new spawns and crash resumes)`,
+  );
 }
 
 export async function recordQuotaObservation(

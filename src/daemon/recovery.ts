@@ -102,9 +102,11 @@ export interface CrashRecoveryDependencies {
   seedClaudeTrust?: (worktreePath: string) => Promise<void>;
   writeClaudeConfig?: typeof writeClaudeAgentConfig;
   writeCodexConfig?: typeof writeCodexAgentConfig;
-  /** Writer autonomy, so a resumed agent regains the launch posture it had at
-   * spawn. Absent fails safe to the sandboxed approval queue. */
-  autonomy?: HiveConfig["autonomy"];
+  /** The current writer autonomy, read at resume time so a recovered agent
+   * matches the setting the user can see in the Workspace menu — a thunk
+   * because the user may flip the dial mid-session. Absent fails safe to the
+   * sandboxed approval queue. */
+  autonomy?: () => HiveConfig["autonomy"];
   /** Test seam for codex rollout activity during the resume watch. Native
    * SessionStart is the primary signal; a fresh rollout mtime remains an
    * independent fallback when hooks are disabled by policy or fail. Defaults
@@ -329,9 +331,10 @@ export class CrashRecovery {
     const identity = record.executionIdentity;
     const model = identity?.model ?? record.model;
     const worktreePath = record.worktreePath!;
-    // A resumed writer must regain the autonomy it launched with, or an
-    // unattended crash-recovered agent silently stalls on the first prompt.
-    const dangerous = this.deps.autonomy === "dangerous";
+    // A resumed writer takes the current autonomy setting — the same one the
+    // next spawn would get — or an unattended crash-recovered dangerous agent
+    // would silently stall on the first prompt.
+    const dangerous = this.deps.autonomy?.() === "dangerous";
     try {
       if (record.tool === "claude") {
         // Re-seed rather than assume: the operator's ~/.claude.json may have

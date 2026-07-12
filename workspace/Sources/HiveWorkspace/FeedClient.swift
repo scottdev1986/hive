@@ -25,6 +25,9 @@ final class FeedClient {
 
     /// All callbacks are delivered on the main queue.
     var onSnapshot: (([AgentSnapshot]) -> Void)?
+    /// The daemon's live writer-autonomy dial ("sandboxed"/"dangerous"),
+    /// fired for every snapshot line that carries it.
+    var onAutonomy: ((String) -> Void)?
     var onError: ((String) -> Void)?
     var onExit: (() -> Void)?
 
@@ -73,6 +76,9 @@ final class FeedClient {
             guard let line = String(data: lineData, encoding: .utf8),
                   let decoded = FeedLine.parse(line) else { continue }
             if let agents = decoded.agents {
+                if let autonomy = decoded.autonomy {
+                    onAutonomy?(autonomy)
+                }
                 onSnapshot?(agents)
             } else if let error = decoded.error {
                 onError?(error)

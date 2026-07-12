@@ -7,7 +7,7 @@ import WorkspaceCore
 /// set. Launched by the CLI as
 /// `open -a HiveWorkspace --args --project <dir> --port <n> --hive <bin>
 /// --orchestrator-session <tmux session> --orchestrator <claude|codex>`.
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
     private let config: LaunchConfig
     private(set) var controller: ProjectWindowController?
@@ -16,6 +16,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let projectSwitcher = ProjectSwitcherController()
     private var placeholderWindow: NSWindow?
     private var smokeRunner: SmokeRunner?
+    /// The daemon's live writer-autonomy dial as last reported by the feed or
+    /// confirmed by a `hive autonomy` set. nil means unknown (no feed yet, or
+    /// the daemon predates the dial) — the menu items disable rather than
+    /// guess.
+    private(set) var currentAutonomy: String?
 
     init(config: LaunchConfig) {
         self.config = config
@@ -84,6 +89,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         feed.onSnapshot = { [weak self] agents in
             self?.controller?.applyFeed(agents)
         }
+        feed.onAutonomy = { [weak self] autonomy in
+            self?.currentAutonomy = autonomy
+        }
         feed.onError = { message in
             NSLog("workspace-feed error: %@", message)
         }
@@ -97,6 +105,64 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } catch {
             NSLog("failed to start workspace-feed: %@", error.localizedDescription)
             controller?.feedLost()
+        }
+    }
+
+    // MARK: Writer autonomy (Agents menu)
+
+    @objc func selectSandboxedAutonomy(_ sender: Any?) {
+        setAutonomy("sandboxed")
+    }
+
+    @objc func selectDangerousAutonomy(_ sender: Any?) {
+        setAutonomy("dangerous")
+    }
+
+    /// Sets the dial through `hive autonomy <mode>` — the same daemon
+    /// endpoint the CLI uses, which persists to `~/.hive/config.toml` before
+    /// applying. The checkmark updates only from the daemon's own answer
+    /// (stdout names the confirmed mode); the feed reconciles it afterwards
+    /// regardless, so the menu never claims a state the daemon doesn't hold.
+    private func setAutonomy(_ mode: String) {
+        guard let hivePath = config.hivePath, let port = config.port else { return }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: hivePath)
+        process.arguments = ["autonomy", mode, "--port", String(port)]
+        let stdout = Pipe()
+        process.standardOutput = stdout
+        process.standardError = FileHandle.standardError
+        process.terminationHandler = { finished in
+            let data = stdout.fileHandleForReading.readDataToEndOfFile()
+            let output = String(data: data, encoding: .utf8) ?? ""
+            // "autonomy is now <mode> — ..." — trust the named mode, not the
+            // exit code alone.
+            let confirmed = ["sandboxed", "dangerous"].first { output.contains("now \($0)") }
+            DispatchQueue.main.async { [weak self] in
+                if finished.terminationStatus == 0, let confirmed {
+                    self?.currentAutonomy = confirmed
+                } else {
+                    NSLog("hive autonomy %@ failed (exit %d): %@",
+                          mode, finished.terminationStatus, output)
+                }
+            }
+        }
+        do {
+            try process.run()
+        } catch {
+            NSLog("could not run hive autonomy: %@", error.localizedDescription)
+        }
+    }
+
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        switch menuItem.action {
+        case #selector(selectSandboxedAutonomy(_:)):
+            menuItem.state = currentAutonomy == "sandboxed" ? .on : .off
+            return currentAutonomy != nil
+        case #selector(selectDangerousAutonomy(_:)):
+            menuItem.state = currentAutonomy == "dangerous" ? .on : .off
+            return currentAutonomy != nil
+        default:
+            return true
         }
     }
 

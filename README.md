@@ -62,7 +62,7 @@ Red is measured, never guessed: it appears only when the daemon records a pendin
 - **Mixed vendors on one team.** Claude Code and Codex agents work side by side, and one vendor's model can review the other's code.
 - **Quota-aware.** Hive reads your real usage limits from the providers themselves and routes around whichever pool is running low. There is nothing to configure, and it never invents a number: a window it hasn't measured prints `unknown`.
 - **Isolated working copies.** Each agent works in its own git worktree on its own branch, and finished work reaches your main branch only through Hive's merge gate, one fast-forward at a time — main is never edited by two agents at once.
-- **Autonomous by default, sandboxed by choice.** Out of the box, agents run with their CLI's permission prompts off, the same trust you'd give `claude --dangerously-skip-permissions`. Set `autonomy = "sandboxed"` in `~/.hive/config.toml` and agents run inside their vendor sandboxes instead, with risky actions queued for your approval.
+- **Sandboxed by default, full autonomy one click away.** Out of the box, agents run inside their vendor sandboxes and anything risky — installs, pushes, writes outside their working copy — queues for your approval. When you'd rather walk away and let them run without prompts, flip the switch in the Workspace's Agents menu (or run `hive autonomy dangerous`); it persists until you flip it back.
 - **Remembers your repo.** Facts agents learn about the codebase persist as durable memory, ride into every future agent's brief, and are yours to inspect with `hive memory`.
 - **Steerable mid-flight.** Redirect an agent, or pause and stop it, while it works. A stopped agent's work is preserved, never half-merged.
 - **No black boxes.** Every agent is a live terminal you can watch, scroll, and reopen.
@@ -115,6 +115,7 @@ To update later, run `hive update` — it repeats those checks and additionally 
 | `hive init` | Profile the repo, install agent skills, seed memory, and bring up the daemon — no window (`--refresh` re-profiles only) |
 | `hive claude` / `hive codex` | Open the Workspace with that vendor's CLI as the orchestrator |
 | `hive status` | Show all agents, their model, status, context use, and task |
+| `hive autonomy [mode]` | Show or set writer autonomy: `sandboxed` (default) or `dangerous` |
 | `hive quota` | Show remaining capacity per provider, with reservations and reset times |
 | `hive watch <name>` | Open a terminal window viewing one agent |
 | `hive recover [name]` | Resume crashed agent sessions |
@@ -138,14 +139,14 @@ codex/default/codex (prolite) [discovered, fresh]
 
 None required. If you want to change the defaults, Hive reads three optional files:
 
-- `~/.hive/config.toml` — `autonomy = "sandboxed"` turns the approval queue on (the default, `"dangerous"`, runs agents without permission prompts). `layout = "off"` stops Hive from arranging its windows — it only ever moves its own windows either way, never anything else you have open. `terminal = "iterm2"` or `"terminal"` pins which app viewer windows open in.
+- `~/.hive/config.toml` — `autonomy = "dangerous"` runs agents without permission prompts (the default, `"sandboxed"`, queues risky actions for approval); the Workspace's Agents menu and `hive autonomy` set this for you. `layout = "off"` stops Hive from arranging its windows — it only ever moves its own windows either way, never anything else you have open. `terminal = "iterm2"` or `"terminal"` pins which app viewer windows open in.
 - `~/.hive/routing.toml` — override which tool and model serve each task tier (`cheap`, `standard`, `deep`, `review`).
 - `~/.hive/quota.toml` — overlay your own planning allowances and warning thresholds on top of the limits Hive discovers from the providers.
 
 ## FAQ
 
 **Is it safe to let agents run on my machine?**
-Treat it like running Claude Code or Codex with permission prompts turned off — because by default, that is exactly what each agent is. What contains them: every agent works in its own git worktree on its own branch, and nothing reaches your main branch except a fast-forward merge through Hive's gate. If you want prompts back, set `autonomy = "sandboxed"` in `~/.hive/config.toml`: agents then run inside their vendor sandboxes and anything beyond their working copy — installs, pushes, publishing — waits in one approval queue until you say yes.
+By default, yes, in the same sense your own Claude Code or Codex session is: each agent runs inside its vendor's sandbox, works in its own git worktree on its own branch, and anything beyond that — installs, pushes, publishing — waits in an approval queue until you say yes. Nothing reaches your main branch except a fast-forward merge through Hive's gate. If the prompts get in your way, the Agents menu (or `hive autonomy dangerous`) turns them off — that is the same trust as `claude --dangerously-skip-permissions`, so flip it knowingly.
 
 **What does it cost?**
 Whatever your Claude / OpenAI plans already cost. Hive routes easy tasks to cheaper models specifically to keep your usage down.

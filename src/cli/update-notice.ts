@@ -38,6 +38,7 @@ export const NOTICE_NETWORK_BUDGET_MS = 300;
 const USER_FACING_COMMANDS = new Set([
   "status",
   "quota",
+  "autonomy",
   "memory",
   "watch",
   "layout",

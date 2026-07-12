@@ -45,8 +45,13 @@ interface FeedRun {
 }
 
 /** Drives the real loop on a fake clock: sleeping advances time instantly, so
- * heartbeat and give-up behavior are exact, not wall-clock flaky. */
-async function runScript(steps: Step[]): Promise<FeedRun> {
+ * heartbeat and give-up behavior are exact, not wall-clock flaky. Autonomy is
+ * injected (default null) so no test ever touches a real daemon. */
+async function runScript(
+  steps: Step[],
+  fetchAutonomy: () => Promise<"sandboxed" | "dangerous" | null> = async () =>
+    null,
+): Promise<FeedRun> {
   const controller = new AbortController();
   const lines: Array<Record<string, unknown>> = [];
   const presence: boolean[] = [];
@@ -66,6 +71,7 @@ async function runScript(steps: Step[]): Promise<FeedRun> {
     setPresence: async (_port, present) => {
       presence.push(present);
     },
+    fetchAutonomy,
     fetchStatus: async () => {
       const step = steps[index];
       if (step === undefined) {
@@ -190,6 +196,36 @@ describe("runWorkspaceFeed", () => {
     ]);
     expect(run.exitCode).toEqual(0);
     expect(run.presence.at(-1)).toEqual(false);
+  });
+
+  test("the snapshot carries the autonomy dial, and a flip alone re-emits", async () => {
+    const maya = agent("maya");
+    const values: Array<"sandboxed" | "dangerous"> = [
+      "sandboxed",
+      "sandboxed",
+      "dangerous", // agents unchanged; the dial flip must still emit
+    ];
+    let poll = 0;
+    const run = await runScript(
+      [snapshot(maya), snapshot(maya), last(snapshot(maya))],
+      async () => values[poll++] ?? "dangerous",
+    );
+    expect(run.lines).toHaveLength(2);
+    expect(run.lines[0]?.autonomy).toEqual("sandboxed");
+    expect(run.lines[1]?.autonomy).toEqual("dangerous");
+  });
+
+  test("an unreadable autonomy omits the field and never drops the agents", async () => {
+    const maya = agent("maya");
+    const run = await runScript(
+      [last(snapshot(maya))],
+      async () => {
+        throw new Error("daemon predates /autonomy");
+      },
+    );
+    expect(run.lines).toHaveLength(1);
+    expect(run.lines[0]?.agents).toBeDefined();
+    expect("autonomy" in (run.lines[0] ?? {})).toEqual(false);
   });
 
   test("heartbeats renew the lease inside the daemon's TTL", async () => {

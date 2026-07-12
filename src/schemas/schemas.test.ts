@@ -30,7 +30,7 @@ describe("HiveConfigSchema", () => {
       layout: "auto",
       codex: { driver: "tui" },
       channels: "auto",
-      autonomy: "dangerous",
+      autonomy: "sandboxed",
       routingManifest: "auto",
       resources: {
         enabled: true,

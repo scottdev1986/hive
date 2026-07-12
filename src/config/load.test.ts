@@ -49,7 +49,7 @@ describe("config loading", () => {
       layout: "auto",
       codex: { driver: "tui" },
       channels: "auto",
-      autonomy: "dangerous",
+      autonomy: "sandboxed",
       routingManifest: "auto",
       resources: {
         enabled: true,
@@ -70,6 +70,17 @@ describe("config loading", () => {
       limits: [],
       estimates: { deep: 20, standard: 10, cheap: 4, review: 8 },
     });
+  });
+
+  test("an explicit autonomy choice survives the safe default", async () => {
+    // The shipped default flipped to "sandboxed" (2026-07-11); a user who
+    // deliberately configured "dangerous" must keep exactly what they chose.
+    await resetHome();
+    await writeFile(
+      join(hiveHome, "config.toml"),
+      'autonomy = "dangerous"\n',
+    );
+    expect((await loadHiveConfig()).autonomy).toEqual("dangerous");
   });
 
   test("parses model-specific quota pools and rejects invalid timezone configuration", async () => {
@@ -153,7 +164,7 @@ describe("config loading", () => {
       layout: "auto",
       codex: { driver: "app-server" },
       channels: "auto",
-      autonomy: "dangerous",
+      autonomy: "sandboxed",
       routingManifest: "auto",
       resources: {
         enabled: true,

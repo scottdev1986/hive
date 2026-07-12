@@ -71,12 +71,12 @@ The standing caveat that shaped Hive's *shipped* defaults: **naming a concrete C
 
 ## Autonomy: spawning without a human
 
-Writers launch fully autonomous by default (`autonomy = "dangerous"`, SPEC §4). The per-CLI mechanics, both verified on this machine:
+Writers launch sandboxed by default (SPEC §4, flipped 2026-07-11); `autonomy = "dangerous"` — set from the Workspace's Agents menu or `hive autonomy dangerous`, both persisting to `~/.hive/config.toml` — launches them fully autonomous. The per-CLI mechanics of dangerous mode, both verified on this machine:
 
 - **Claude** — set `permissions.defaultMode = "bypassPermissions"` in the worktree's `.claude/settings.local.json`. The session starts in bypass mode with no dialog. **Do not use `--dangerously-skip-permissions`**: it raises a blocking acceptance dialog on every launch that an unattended spawn cannot answer, `--allow-dangerously-skip-permissions` does not suppress it, and accepting it does not persist (nothing is written to `~/.claude.json`).
 - **Codex** — `-c approval_policy="never" -c sandbox_mode="danger-full-access"`, which the TUI renders as `permissions: YOLO mode`. The directory-trust prompt is separately suppressed by the `projects."<path>".trust_level="trusted"` override Hive already passes.
 
-`autonomy = "sandboxed"` in `~/.hive/config.toml` restores the approval queue. Read-only sessions — the orchestrator, and the replacement process a critical control spawns — ignore autonomy entirely in both adapters.
+`autonomy = "sandboxed"` (the default) keeps the approval queue. Read-only sessions — the orchestrator, and the replacement process a critical control spawns — ignore autonomy entirely in both adapters.
 
 ## The checklist when a model "won't open"
 

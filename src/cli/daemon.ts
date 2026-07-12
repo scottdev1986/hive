@@ -28,6 +28,7 @@ import {
   CodexCapabilityProbe,
 } from "../daemon/capability-discovery";
 import { recordShadowObservation } from "../daemon/routing-shadow";
+import { persistAutonomy } from "../config/autonomy";
 
 export async function runDaemon(): Promise<void> {
   const repoRoot = process.env.HIVE_PROJECT_ROOT ?? process.cwd();
@@ -136,7 +137,16 @@ export async function runDaemon(): Promise<void> {
     codexControl: codexAppServer,
     resources: config.resources,
     lifecycle: config.lifecycle,
-    autonomy: config.autonomy,
+    // One source of truth for autonomy: this very `config` object, which the
+    // spawner also reads at each spawn. Persist first, mutate second — if the
+    // disk write fails, the live value never diverges from the file.
+    autonomy: {
+      get: () => config.autonomy,
+      set: async (value) => {
+        await persistAutonomy(value);
+        config.autonomy = value;
+      },
+    },
   });
   daemon.start();
 

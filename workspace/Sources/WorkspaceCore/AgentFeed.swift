@@ -47,10 +47,14 @@ public struct AgentSnapshot: Equatable, Decodable {
     }
 }
 
-/// One NDJSON line from the feed: either a snapshot (`agents`) or an error.
+/// One NDJSON line from the feed: either a snapshot (`agents`, optionally
+/// carrying the daemon's live writer-autonomy dial) or an error.
 public struct FeedLine: Decodable {
     public let v: Int?
     public let agents: [AgentSnapshot]?
+    /// "sandboxed" or "dangerous"; nil when the daemon didn't report it
+    /// (older feed, or no autonomy control configured).
+    public let autonomy: String?
     public let error: String?
 
     /// Parses one line of feed output; returns nil for blank/undecodable lines

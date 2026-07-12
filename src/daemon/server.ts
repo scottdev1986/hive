@@ -45,12 +45,12 @@ import {
   StatuslineReportSchema,
   TerminalHandleSchema,
   type AgentRecord,
-  type HiveConfig,
   type HookEvent,
   type MemoryFact,
   type MemoryScope,
   type MemoryWriteInput,
 } from "../schemas";
+import { isAutonomy, type AutonomyControl } from "../config/autonomy";
 import { ChannelRegistry } from "./channels";
 import {
   bearerToken,
@@ -344,9 +344,10 @@ export interface HiveDaemonOptions {
     writeCodexConfig?: CrashRecoveryDependencies["writeCodexConfig"];
     readCodexActivity?: CrashRecoveryDependencies["readCodexActivity"];
   };
-  /** Writer autonomy, forwarded to crash recovery so a resumed agent relaunches
-   * with the posture it spawned with. */
-  autonomy?: HiveConfig["autonomy"];
+  /** The live autonomy dial: read by `/autonomy` and by crash recovery (so a
+   * resume matches the setting the user can see), written only through the
+   * operator-gated `/autonomy` endpoint, which persists before it applies. */
+  autonomy?: AutonomyControl;
   repoRoot?: string;
   removeWorktree?: (
     repoRoot: string,
@@ -464,6 +465,7 @@ export class HiveDaemon {
   private readonly layout: LayoutCoordinator | null;
   private readonly quota: QuotaService | undefined;
   private readonly codexControl: HiveDaemonOptions["codexControl"];
+  private readonly autonomy: AutonomyControl | undefined;
   private readonly land: LandBranch;
   private bunServer: Server<undefined> | null = null;
   private reconciliationTimer: ReturnType<typeof setInterval> | null = null;
@@ -495,6 +497,7 @@ export class HiveDaemon {
     this.tmux = options.tmux ?? new TmuxAdapter();
     this.quota = options.quota;
     this.codexControl = options.codexControl;
+    this.autonomy = options.autonomy;
     this.channels = new ChannelRegistry(this.db);
     this.delivery = new MessageDelivery(
       this.db,
@@ -594,6 +597,12 @@ export class HiveDaemon {
       flushQueued: (agentName) => this.delivery.flushQueued(agentName),
       terminal: options.terminal,
       onTerminalsChanged: () => this.layout?.requestLayout(),
+      // A thunk, not a value: a resume launched after the user flips the
+      // Agents-menu dial must match the setting the user can see, not the one
+      // the daemon booted with.
+      ...(options.autonomy === undefined
+        ? {}
+        : { autonomy: () => options.autonomy!.get() }),
       ...(options.recovery?.resolveClaudeSessionId === undefined
         ? {}
         : { resolveClaudeSessionId: options.recovery.resolveClaudeSessionId }),
@@ -1628,6 +1637,12 @@ export class HiveDaemon {
     if (url.pathname === "/statusline" && request.method === "POST") {
       return this.receiveStatusline(request);
     }
+    if (
+      url.pathname === "/autonomy" &&
+      (request.method === "GET" || request.method === "POST")
+    ) {
+      return this.autonomyEndpoint(request);
+    }
     if (request.method === "POST" && url.pathname.startsWith("/channel/")) {
       return this.handleChannel(url.pathname, request);
     }
@@ -2076,6 +2091,73 @@ export class HiveDaemon {
    * when the lease state actually flips — the renewals are a heartbeat and,
    * like channel polls, would bury every other audit row.
    */
+  /**
+   * `/autonomy` — the writer-autonomy dial.
+   *
+   * GET reads the live value: the one the next spawn or resume will actually
+   * use, which is what the Workspace menu checkmark and `hive autonomy`
+   * display. POST sets it, operator-only: the Workspace and the user's CLI
+   * hold the operator credential, agents never do, so no agent can raise its
+   * own autonomy. The control persists to `~/.hive/config.toml` before the
+   * live value changes — a set that could not be made durable is refused
+   * whole, never applied for this daemon's lifetime only.
+   */
+  private async autonomyEndpoint(request: Request): Promise<Response> {
+    const authenticated = this.authenticate(request, "/autonomy");
+    if (!authenticated.ok) return this.denied(authenticated);
+    if (request.method === "GET") {
+      // A poll surface (the feed asks every second): don't audit allows.
+      const decision = this.authorize(
+        authenticated.capability,
+        "/autonomy",
+        "autonomy:read",
+        undefined,
+        false,
+      );
+      if (!decision.ok) return this.denied(decision);
+      return json({ autonomy: this.autonomy?.get() ?? null });
+    }
+    const decision = this.authorize(
+      authenticated.capability,
+      "/autonomy",
+      "autonomy:write",
+      undefined,
+    );
+    if (!decision.ok) return this.denied(decision);
+    if (this.autonomy === undefined) {
+      return json(
+        { error: "this daemon has no autonomy control configured" },
+        { status: 503 },
+      );
+    }
+    let body: unknown;
+    try {
+      body = await request.json();
+    } catch {
+      return json({ error: "Invalid autonomy request" }, { status: 400 });
+    }
+    const requested = (body as { autonomy?: unknown } | null)?.autonomy;
+    if (!isAutonomy(requested)) {
+      return json(
+        { error: 'autonomy must be "sandboxed" or "dangerous"' },
+        { status: 400 },
+      );
+    }
+    try {
+      await this.autonomy.set(requested);
+    } catch (error) {
+      return json(
+        {
+          error: `could not persist autonomy: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        },
+        { status: 500 },
+      );
+    }
+    return json({ autonomy: this.autonomy.get() });
+  }
+
   private async setWorkspacePresenceEndpoint(
     request: Request,
   ): Promise<Response> {

@@ -40,7 +40,9 @@ export type Action =
   | "channel:use"
   | "viewer:attach"
   | "terminal:register"
-  | "root-token:mint";
+  | "root-token:mint"
+  | "autonomy:read"
+  | "autonomy:write";
 
 export interface RoleGrant {
   /** The explicit action allowlist. Anything absent is denied. */
@@ -64,6 +66,10 @@ const OPERATOR_ACTIONS: readonly Action[] = [
   "message:send", "message:ack", "message:read", "inbox:read",
   "branch:land", "memory:read", "memory:write", "event:report",
   "telemetry:report", "viewer:attach", "terminal:register",
+  // Autonomy is the human's dial: only the operator credential (the user's
+  // own CLI and the Workspace acting for them) may write it. Agents observing
+  // it is harmless; an agent raising it would be a sandbox escape.
+  "autonomy:read", "autonomy:write",
   // The one sanctioned token issuance outside the daemon's own spawn path:
   // the launcher mints the Codex root's capability (SPEC decision 4's "no
   // delegation" rule carves out exactly this exchange).
@@ -89,7 +95,7 @@ export const ROLE_GRANTS: Readonly<Record<Role, RoleGrant>> = {
       "agent:mark-dead", "agent:recover", "approval:read", "approval:decide",
       "message:send", "message:ack", "message:read", "inbox:read",
       "memory:read", "memory:write", "event:report", "telemetry:report",
-      "channel:use",
+      "channel:use", "autonomy:read",
     ],
     anySubject: AGENT_DIRECTED,
     oneShot: [],

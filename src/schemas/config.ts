@@ -33,14 +33,19 @@ export const HiveConfigSchema = z.strictObject({
   // CLI is new enough and falls back to tmux injection otherwise; "off" pins
   // every Claude session to the fallback.
   channels: z.enum(["auto", "off"]).default("auto"),
-  // Writer-agent autonomy. "dangerous" (the default) launches writers with no
-  // human input required: Claude runs with permissions.defaultMode
-  // "bypassPermissions" in its worktree settings, Codex with
-  // approval_policy="never" and sandbox_mode="danger-full-access". "sandboxed"
-  // restores decision 4's approval queue (acceptEdits allowlist,
-  // workspace-write + on-request). The read-only orchestrator and read-only
-  // control restarts are unaffected by either value.
-  autonomy: z.enum(["dangerous", "sandboxed"]).default("dangerous"),
+  // Writer-agent autonomy. "sandboxed" (the default) runs writers inside
+  // their vendor sandboxes with decision 4's approval queue (acceptEdits
+  // allowlist, workspace-write + on-request): a fresh install is safe out of
+  // the box, per the 2026-07-11 user decision (SPEC §4). "dangerous" launches
+  // writers with no human input required — Claude with
+  // permissions.defaultMode "bypassPermissions" in its worktree settings,
+  // Codex with approval_policy="never" and sandbox_mode="danger-full-access"
+  // — and remains fully available at runtime through the Workspace's Agents
+  // menu and `hive autonomy`, both of which persist here. An absent key means
+  // this default; an explicit key always means what it says. The read-only
+  // orchestrator and read-only control restarts are unaffected by either
+  // value.
+  autonomy: z.enum(["dangerous", "sandboxed"]).default("sandboxed"),
   // The routing manifest's kill switch. "auto" lets a *verified* installed
   // manifest supply the candidate lists, falling back to the built-in one when
   // none is installed or one fails to verify. "off" reverts routing to the
