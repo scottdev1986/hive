@@ -6,7 +6,6 @@ import {
   type DerivedRouting,
 } from "../schemas";
 import { buildModelInventory, formatModelInventory } from "./model-inventory";
-import type { InventoryBenchmark } from "./benchmarks";
 
 const AT = "2026-07-11T12:00:00.000Z";
 
@@ -138,7 +137,6 @@ describe("model inventory", () => {
     expect(text).toContain("gpt-hidden");
     expect(text).toContain("Quota fallback for deep work");
     expect(text).toContain("CLI 0.144.1");
-    expect(text).toContain("benchmark   unknown");
   });
 
   test("an unavailable fresh discovery is empty and explicitly incomplete", () => {
@@ -166,55 +164,20 @@ describe("model inventory", () => {
     expect(text).toContain("codex — UNAVAILABLE: discovery has not run");
   });
 
-  test("corroborating sources stay separate without an approved materiality threshold", () => {
-    const model = buildModelInventory({
-      discovery,
-      routing,
-      benchmarks: new Map<string, InventoryBenchmark[]>([["claude\0claude-fable-5", [
-        {
-          sourceId: "other-bench",
-          effort: "max",
-          scores: { coding_index: 61 },
-          source: "https://example.com/other-bench/2026-06.json",
-          releaseDate: "2026-06",
-          fetchedAt: AT,
-        },
-        {
-          sourceId: "livebench",
-          effort: "max",
-          scores: { code_generation: 91.549 },
-          source: "https://livebench.ai/table_2026_06_25.csv",
-          releaseDate: "2026-06-25",
-          fetchedAt: AT,
-        },
-      ]]]),
-    }).models.find((entry) => entry.canonicalId === "claude-fable-5")!;
-    expect(model.benchmarks).toHaveLength(2);
-    expect(model.benchmarkComparison).toMatchObject({ status: "unassessed" });
-    expect(model.benchmarkComparison.detail).toContain("does not average");
-  });
-
-  test("zero benchmark coverage never gates: an uncovered model keeps its routes and advertised efforts", () => {
+  test("a discovered model keeps its routes and every advertised effort", () => {
     // Ruling: a discovered, entitled model — and every effort level it
-    // advertises — must be routable. Benchmarks refine among capable
-    // candidates when data exists; absence of data stays a visible "unknown"
-    // and never excludes. No benchmarks are passed here at all.
+    // advertises — must be routable.
     const inventory = buildModelInventory({ discovery, routing, now: new Date(AT) });
-    const uncovered = inventory.models.find(
-      (model) => model.canonicalId === "claude-fable-5",
+    const model = inventory.models.find(
+      (entry) => entry.canonicalId === "claude-fable-5",
     )!;
-    expect(uncovered.benchmarks).toEqual([]);
-    expect(uncovered.benchmarkComparison.status).toBe("unknown");
-    expect(uncovered.routedCandidate).toBeTrue();
-    expect(uncovered.roles).toContainEqual(
+    expect(model.routedCandidate).toBeTrue();
+    expect(model.roles).toContainEqual(
       expect.objectContaining({ tier: "deep", use: "primary" }),
     );
-    expect(uncovered.effortLevels).toEqual({
+    expect(model.effortLevels).toEqual({
       state: "known",
       values: ["high", "xhigh"],
     });
-    expect(formatModelInventory(inventory)).toContain(
-      "benchmark   unknown — no matching published result",
-    );
   });
 });

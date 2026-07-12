@@ -1777,8 +1777,8 @@ export class HiveSpawner implements Spawner {
           // cell whose own engine said "nothing vouches for this". The chain
           // remainders ride after their primary, same shape as ever, so ties
           // and the no-quota case still prefer the primary while real pressure
-          // lets quota pick on headroom. (The chain is empty until the
-          // benchmark surface or user policy supplies an ordered list.)
+          // lets quota pick on headroom. (The chain is empty until user
+          // policy supplies an ordered list.)
           candidates = [
             ...(claudeModel === null ? [] : [
               { tool: "claude" as const, model: claudeModel },

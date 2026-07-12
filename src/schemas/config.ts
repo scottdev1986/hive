@@ -22,16 +22,6 @@ export const LifecycleConfigSchema = z.strictObject({
   idleReapMinutes: z.number().int().positive().default(10),
 });
 
-export const BenchmarkConfigSchema = z.strictObject({
-  // "off" is a hard network and data-use kill switch. "live" lets approved
-  // sources order real candidate selection (user order 2026-07-12: no shadow,
-  // the real thing live). "shadow" is accepted from older config files and
-  // means "live" — the parallel path it named was removed by that ruling.
-  mode: z.enum(["live", "shadow", "off"]).default("live").transform((
-    mode,
-  ): "live" | "off" => mode === "shadow" ? "live" : mode),
-});
-
 export const HiveConfigSchema = z.strictObject({
   terminal: z.enum(["iterm2", "terminal", "auto"]).default("auto"),
   headless: z.boolean().default(false),
@@ -66,12 +56,18 @@ export const HiveConfigSchema = z.strictObject({
   // is user policy and always wins.
   routingManifest: z.enum(["auto", "off"]).default("auto"),
   router: z.enum(["derived", "shipped"]).default("derived"),
-  benchmarks: BenchmarkConfigSchema.prefault({}),
+  // VESTIGIAL, parsed for compatibility only. The external benchmark ranker
+  // (LiveBench) this switch governed was removed entirely (user directive
+  // 2026-07-12: no external ranking dependency). Nothing reads this value; it
+  // remains in the schema so a config.toml written for an older build still
+  // parses.
+  benchmarks: z.strictObject({
+    mode: z.enum(["live", "shadow", "off"]).default("live"),
+  }).prefault({}),
   resources: ResourceLimitsSchema.prefault({}),
   lifecycle: LifecycleConfigSchema.prefault({}),
 });
 
 export type ResourceLimits = z.infer<typeof ResourceLimitsSchema>;
 export type LifecycleConfig = z.infer<typeof LifecycleConfigSchema>;
-export type BenchmarkConfig = z.infer<typeof BenchmarkConfigSchema>;
 export type HiveConfig = z.infer<typeof HiveConfigSchema>;

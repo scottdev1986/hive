@@ -2941,7 +2941,7 @@ export class HiveDaemon {
     server.registerTool("hive_models", {
       title: "Hive model inventory",
       description:
-        "List every model discovered from Claude and Codex, including hidden and unrouted models, with effort levels, plan status, routing roles, benchmark provenance, and when Hive would use each one.",
+        "List every model discovered from Claude and Codex, including hidden and unrouted models, with effort levels, plan status, routing roles, and when Hive would use each one.",
       inputSchema: z.object({}),
     }, async () => {
       this.authorizeTool(capability, "hive_models", "status:read", undefined, false);

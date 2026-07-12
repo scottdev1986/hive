@@ -1,10 +1,5 @@
 import { z } from "zod";
 import {
-  applyFitPolicy,
-  CODING_SCORE_COLUMN,
-  type FitBenchmarkRow,
-} from "./fit-policy";
-import {
   CAPABILITY_PROVIDERS,
   capabilityFreshness,
   CapabilityProviderSchema,
@@ -38,8 +33,8 @@ import {
  *
  * **The binary names no model.** The compiled manifest, the shipped alias
  * table, and the model-name constants were removed as route sources by the
- * user's directive (2026-07-12): routes derive from live discovery, the user's
- * own policy, and the benchmark surface once he activates it — nothing else.
+ * user's directive (2026-07-12): routes derive from live discovery and the
+ * user's own policy — nothing else.
  * The one vendor-declared rank Hive may pass through is the account's own
  * effective default (what an unflagged launch runs, read from `config/read` /
  * the menu's `default` entry): that is the vendor's judgment about the
@@ -311,19 +306,10 @@ export interface DerivationInput {
    * The user's capability floors (`routing.toml` `[floors]`). Missing means no
    * floor is configured for that vendor — the derivation runs exactly as it
    * did before floors existed. Applied after pins, per the ruled order (pins
-   * → capability floors → user policy → benchmark ordering → quota).
+   * → capability floors → user policy → quota).
    */
   floors?: RoutingFloors;
   snapshot: RoutingSnapshot | null;
-  /**
-   * Published benchmark rows keyed `${provider}\0${canonicalId}`, from the
-   * approved source catalog. Ordering evidence ONLY (the adopted fit policy,
-   * docs/benchmark-fit-policy-proposal.md): it can reorder eligible candidates
-   * and pick a lower sufficient effort, and has no code path by which to add,
-   * remove, or veto a candidate. Missing means no benchmark influence at all —
-   * absence of data never gates a route.
-   */
-  benchmarks?: ReadonlyMap<string, FitBenchmarkRow[]>;
   /**
    * What this account is actually charged, measured per provider. Missing means
    * Hive could not read it; that provider is not auto-routable on a guess.
@@ -352,9 +338,8 @@ export interface DerivedCell {
   /**
    * Eligible candidates after the primary: the downshift chain quota ranks
    * under pressure at spawn time. Empty today — with the manifest gone there
-   * is no ordered candidate list until the benchmark surface or user policy
-   * supplies one — and kept in the shape so that list has somewhere vetted to
-   * arrive.
+   * is no ordered candidate list until user policy supplies one — and kept in
+   * the shape so that list has somewhere vetted to arrive.
    */
   chain: string[];
   /** Conflicts named out loud. A disagreement Hive resolved silently is a lie. */
@@ -528,60 +513,9 @@ function deriveCell(
   return {
     provider,
     model,
-    effort: benchmarkFit(provider, kind, model, effort, resolvedRecord, input, notes),
+    effort,
     chain: [],
     notes,
-  };
-}
-
-/**
- * The adopted fit policy, live in the real derivation (user order 2026-07-12):
- * ordering evidence applied after pins, floors, and policy have resolved the
- * cell, and before quota ranks candidates at spawn. With the candidate list a
- * single model today (`chain` is empty until policy supplies alternatives),
- * its live effect is effort economy — a lower advertised effort measured
- * within the band of the routed one routes instead — plus the evidence basis
- * named in the cell's notes. A pinned effort is the user's and is never moved.
- */
-function benchmarkFit(
-  provider: CapabilityProvider,
-  kind: TaskKind,
-  model: Resolved<string>,
-  effort: Resolved<string>,
-  record: CapabilityRecord | undefined,
-  input: DerivationInput,
-  notes: string[],
-): Resolved<string> {
-  if (
-    input.benchmarks === undefined || model.value === null ||
-    !kindRequiresCodingCapability(kind)
-  ) {
-    return effort;
-  }
-  const canonicalId = record?.canonicalId ?? model.value;
-  const decision = applyFitPolicy({
-    candidates: [{
-      token: model.value,
-      canonicalId,
-      advertisedEfforts:
-        record !== undefined && record.supportedEffortLevels.state === "known"
-          ? [...record.supportedEffortLevels.value]
-          : null,
-      rows: input.benchmarks.get(`${provider}\0${canonicalId}`) ?? [],
-    }],
-    routedEffort: effort.value,
-    column: CODING_SCORE_COLUMN,
-  });
-  notes.push(
-    effort.layer === "pinned" && decision.effort !== null
-      ? `${decision.detail} — effort is pinned and stays ${effort.value}`
-      : decision.detail,
-  );
-  if (decision.effort === null || effort.layer === "pinned") return effort;
-  return {
-    value: decision.effort.value,
-    layer: "derived",
-    reason: decision.effort.basis,
   };
 }
 
@@ -645,7 +579,7 @@ function resolveModel(
   // Layer 1: the pin. A standing user directive about the user's own account
   // — but the capability floor is rule A's "nothing pushes a route below it",
   // unconditional, so it is checked even against a pin (ruled order: pins →
-  // capability floors → user policy → benchmark ordering → quota). A pin the
+  // capability floors → user policy → quota). A pin the
   // floor blocks is not silently obeyed; it falls through to the next rung.
   const pinned = input.pins[tier]?.[provider]?.model;
   if (pinned !== undefined) {
@@ -715,8 +649,8 @@ function resolveModel(
           );
         } else {
           // The capability floor has no declarer yet: the manifest that vouched
-          // codingCapable is gone, and neither the benchmark surface nor user
-          // policy has replaced it. Saying so per cell is what keeps the floor's
+          // codingCapable is gone, and user policy has not replaced it.
+          // Saying so per cell is what keeps the floor's
           // absence a visible fact instead of a silent regression. Once the
           // user HAS configured a floor for this vendor, this candidate cleared
           // it above, and that is what's said instead.
@@ -724,7 +658,7 @@ function resolveModel(
             notes.push(
               allow === null
                 ? `no capability evidence for ${record.launchToken} (kind=${kind}): ` +
-                  "no benchmark data or user policy vouches for it yet; the " +
+                  "no user policy vouches for it yet; the " +
                   "vendor's own default is passed through"
                 : `${record.launchToken} clears the capability floor for ` +
                   `${provider} (routing.toml [floors.${provider}].allow)`,

@@ -1,10 +1,6 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
-import {
-  loadHiveConfig,
-  loadRoutingFloors,
-  loadRoutingPins,
-} from "../config/load";
+import { loadRoutingFloors, loadRoutingPins } from "../config/load";
 import type {
   CapabilityProvider,
   CapabilityRecord,
@@ -31,13 +27,6 @@ import {
   spendRisk,
   type AccountBillings,
 } from "./usage-credits";
-import {
-  readBenchmarkCatalog,
-  type BenchmarkCatalog,
-  type BenchmarkMode,
-  type InventoryBenchmark,
-} from "./benchmarks";
-import { configuredBenchmarkSources } from "./benchmark-sources";
 
 const hiveHome = (): string => Bun.env.HIVE_HOME ?? join(homedir(), ".hive");
 
@@ -71,11 +60,6 @@ export type InventoryModel = {
     surface: string;
     cliVersion: string;
   };
-  benchmarks: InventoryBenchmark[];
-  benchmarkComparison: {
-    status: "unknown" | "single-source" | "unassessed";
-    detail: string;
-  };
 };
 
 export type ModelInventory = {
@@ -87,11 +71,6 @@ export type ModelInventory = {
     CapabilityProvider,
     { status: "ok"; count: number } | { status: "unavailable"; reason: string }
   >;
-  benchmarks: {
-    status: BenchmarkCatalog["status"] | "not-inspected";
-    detail: string;
-    sources: BenchmarkCatalog["sources"];
-  };
   models: InventoryModel[];
   warnings: string[];
 };
@@ -100,8 +79,6 @@ export type ModelInventoryInput = {
   discovery: Record<CapabilityProvider, ProviderDiscovery>;
   routing: DerivedRouting;
   billing?: AccountBillings | null;
-  benchmarks?: ReadonlyMap<string, InventoryBenchmark[]>;
-  benchmarkCatalog?: BenchmarkCatalog;
   now?: Date;
 };
 
@@ -112,11 +89,6 @@ export type ModelInventoryReaderOptions = {
   readBilling?: typeof readBillingWithMemory;
   readConsent?: (canonicalId: string) => "approved" | "denied" | "pending" | "none";
   now?: () => Date;
-  benchmarks?: ReadonlyMap<string, InventoryBenchmark[]>;
-  readBenchmarks?: (
-    mode: BenchmarkMode,
-    discovery: Record<CapabilityProvider, ProviderDiscovery>,
-  ) => Promise<BenchmarkCatalog>;
 };
 
 async function readSnapshot() {
@@ -148,7 +120,6 @@ export async function readModelInventory(
     }
   });
   const readBilling = options.readBilling ?? readBillingWithMemory;
-  const config = await loadHiveConfig();
   // Every vendor Hive knows is probed and billed, not a hardcoded pair.
   const [pins, floors, snapshot, discovery, billings] = await Promise.all([
     loadRoutingPins(),
@@ -157,23 +128,12 @@ export async function readModelInventory(
     forEachProvider((provider) => discover(provider)),
     forEachProvider((provider) => readBilling(provider)),
   ]);
-  const benchmarkCatalog = await (
-    options.readBenchmarks?.(config.benchmarks.mode, discovery) ??
-      readBenchmarkCatalog({
-        mode: config.benchmarks.mode,
-        discovery,
-        sources: configuredBenchmarkSources(),
-      })
-  );
   const billing: AccountBillings = knownBillings(billings);
   const routing = deriveRouting({
     discovery,
     pins,
     floors,
     snapshot,
-    // The same evidence the live spawn path uses, so the inventory's roles and
-    // efforts are the ones a spawn would actually launch with.
-    benchmarks: benchmarkCatalog.models,
     billing,
     costConsent: options.readConsent,
     now,
@@ -182,19 +142,11 @@ export async function readModelInventory(
     discovery,
     routing,
     billing,
-    benchmarks: options.benchmarks ?? benchmarkCatalog.models,
-    benchmarkCatalog,
     now,
   });
   return {
     ...inventory,
-    warnings: [
-      ...routing.warnings,
-      ...benchmarkCatalog.sources
-        .filter((source) => source.status !== "current")
-        .map((source) => source.detail),
-      ...inventory.warnings,
-    ],
+    warnings: [...routing.warnings, ...inventory.warnings],
   };
 }
 
@@ -290,7 +242,6 @@ export function buildModelInventory(input: ModelInventoryInput): ModelInventory 
   });
   const models = records.map((record): InventoryModel => {
     const roles = rolesFor(record, input);
-    const benchmarkKey = `${record.provider}\0${record.canonicalId}`;
     return {
       vendor: record.provider,
       canonicalId: record.canonicalId,
@@ -322,10 +273,6 @@ export function buildModelInventory(input: ModelInventoryInput): ModelInventory 
         surface: record.entitled.surface,
         cliVersion: record.cliVersion,
       },
-      benchmarks: [...(input.benchmarks?.get(benchmarkKey) ?? [])],
-      benchmarkComparison: comparisonFor(
-        input.benchmarks?.get(benchmarkKey) ?? [],
-      ),
     };
   }).sort((left, right) =>
     left.vendor.localeCompare(right.vendor) ||
@@ -353,37 +300,8 @@ export function buildModelInventory(input: ModelInventoryInput): ModelInventory 
     discoveredCount: records.length,
     renderedCount: models.length,
     providers,
-    benchmarks: input.benchmarkCatalog === undefined ? {
-      status: "not-inspected",
-      detail: "Benchmark sources were not inspected for this inventory.",
-      sources: [],
-    } : {
-      status: input.benchmarkCatalog.status,
-      detail: input.benchmarkCatalog.detail,
-      sources: input.benchmarkCatalog.sources,
-    },
     models,
     warnings,
-  };
-}
-
-function comparisonFor(
-  benchmarks: readonly InventoryBenchmark[],
-): InventoryModel["benchmarkComparison"] {
-  const sources = new Set(benchmarks.map((row) => row.sourceId));
-  if (sources.size === 0) {
-    return { status: "unknown", detail: "No matching published result." };
-  }
-  if (sources.size === 1) {
-    return {
-      status: "single-source",
-      detail: "No independent corroborating measurement matches this model and effort.",
-    };
-  }
-  return {
-    status: "unassessed",
-    detail:
-      "Multiple sources are shown separately; no materiality threshold is approved, so Hive does not average or grade their disagreement.",
   };
 }
 
@@ -392,7 +310,6 @@ export function formatModelInventory(inventory: ModelInventory): string {
     `Model inventory — ALL DISCOVERED MODELS (${inventory.renderedCount}/${inventory.discoveredCount}, ${
       inventory.complete ? "complete" : "INCOMPLETE"
     })`,
-    `Benchmarks — ${inventory.benchmarks.status}: ${inventory.benchmarks.detail}`,
   ];
   for (const provider of ["claude", "codex"] as const) {
     const status = inventory.providers[provider];
@@ -415,21 +332,6 @@ export function formatModelInventory(inventory: ModelInventory): string {
         `    effort      ${efforts}`,
         `    when        ${model.when}`,
         `    discovered  ${model.provenance.observedAt} via ${model.provenance.surface}, CLI ${model.provenance.cliVersion}`,
-      );
-      if (model.benchmarks.length === 0) {
-        lines.push("    benchmark   unknown — no matching published result");
-      } else {
-        for (const benchmark of model.benchmarks) {
-          const scores = Object.entries(benchmark.scores)
-            .map(([name, score]) => `${name}=${score}`)
-            .join(", ");
-          lines.push(
-            `    benchmark   ${benchmark.sourceId} effort=${benchmark.effort}; ${scores}; ${benchmark.source} release ${benchmark.releaseDate}, fetched ${benchmark.fetchedAt}`,
-          );
-        }
-      }
-      lines.push(
-        `    compare     ${model.benchmarkComparison.status} — ${model.benchmarkComparison.detail}`,
       );
     }
   }

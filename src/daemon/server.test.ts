@@ -867,11 +867,6 @@ describe("HiveDaemon HTTP server", () => {
           codex: { status: "unavailable", reason: "not installed" },
           grok: { status: "unavailable", reason: "not installed" },
         },
-        benchmarks: {
-          status: "off",
-          detail: "disabled in test",
-          sources: [],
-        },
         models: [],
         warnings: [],
       }),

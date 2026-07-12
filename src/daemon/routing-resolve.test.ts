@@ -225,9 +225,9 @@ describe("what governs may never break", () => {
   });
 
   test("no cell offers quota a downshift chain yet", async () => {
-    // The manifest's ordered candidate lists are gone; until the benchmark
-    // surface or user policy supplies one, there is nothing vetted to
-    // downshift onto — an empty chain, not a guessed one.
+    // The manifest's ordered candidate lists are gone; until user policy
+    // supplies one, there is nothing vetted to downshift onto — an empty
+    // chain, not a guessed one.
     const governing = await resolveGoverningRoute("deep", io());
     expect(governing!.chain.claude).toEqual([]);
     expect(governing!.chain.codex).toEqual([]);

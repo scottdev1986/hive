@@ -30,8 +30,6 @@ import {
   GrokCapabilityProbe,
 } from "../daemon/capability-discovery";
 import { resolveGoverningRoute } from "../daemon/routing-resolve";
-import { readBenchmarkCatalog } from "../daemon/benchmarks";
-import { configuredBenchmarkSources } from "../daemon/benchmark-sources";
 import { readBillingWithMemory } from "../daemon/usage-credits";
 import { persistAutonomy } from "../config/autonomy";
 import { readCostConsent } from "../daemon/cost-consent";
@@ -105,19 +103,8 @@ export async function runDaemon(): Promise<void> {
     // Every live spawn is governed by the derivation engine: live discovery +
     // the user's pins + the last-known-good derivation. No static `routing`
     // table is wired — the binary ships no model knowledge, and a cell nothing
-    // can author refuses the spawn with its reason. The benchmark catalog
-    // rides in as the live fit policy's ordering evidence; a read failure
-    // leaves the policy inert and the route still resolves.
-    governingRoute: (tier, io) =>
-      resolveGoverningRoute(tier, {
-        ...io,
-        readBenchmarks: async (discovery) =>
-          readBenchmarkCatalog({
-            mode: (await loadHiveConfig()).benchmarks.mode,
-            discovery,
-            sources: configuredBenchmarkSources(),
-          }),
-      }),
+    // can author refuses the spawn with its reason.
+    governingRoute: (tier, io) => resolveGoverningRoute(tier, io),
     routingPins: loadRoutingPins,
     discoverCapabilities: async (provider) => {
       switch (provider) {

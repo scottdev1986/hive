@@ -12,7 +12,6 @@ import {
   type RoutingTier,
 } from "../schemas";
 import type { CapabilityDiscoveryResult } from "./capability-discovery";
-import type { BenchmarkCatalog } from "./benchmarks";
 import type { ConsentState } from "./cost-consent";
 import { knownBillings, type AccountBilling } from "./usage-credits";
 
@@ -48,8 +47,8 @@ export interface GoverningRoute {
   cells: Record<CapabilityProvider, GoverningCell>;
   /**
    * Eligible candidates after the primary, per column — the downshift chain
-   * quota ranks under pressure. Empty until the benchmark surface or user
-   * policy supplies an ordered candidate list.
+   * quota ranks under pressure. Empty until user policy supplies an ordered
+   * candidate list.
    */
   chain: Record<CapabilityProvider, string[]>;
   /** Conflicts and refusals named out loud, verbatim. */
@@ -61,15 +60,6 @@ export interface RoutingIo {
     provider: CapabilityProvider,
   ) => Promise<CapabilityDiscoveryResult | undefined>;
   readBilling: (provider: CapabilityProvider) => Promise<AccountBilling | null>;
-  /**
-   * The approved benchmark catalog, for the live fit policy's ordering
-   * evidence. Absent means the derivation runs without benchmark influence —
-   * the composition root wires the real reader; a caller that cannot supply
-   * one still gets a route, because absence of data never gates.
-   */
-  readBenchmarks?: (
-    discovery: Record<CapabilityProvider, ProviderDiscovery>,
-  ) => Promise<BenchmarkCatalog>;
   /**
    * The user's standing answer about a charge, and the way to ASK him one.
    *
@@ -124,17 +114,11 @@ export async function resolveGoverningRoute(
     forEachProvider((provider) => io.readBilling(provider)),
   ]);
 
-  // The catalog read never blocks a route: a source failure surfaces as an
-  // unavailable catalog with no rows, and the fit policy is simply inert.
-  const benchmarks = io.readBenchmarks === undefined
-    ? undefined
-    : await io.readBenchmarks(discovery).catch(() => undefined);
   const derived = deriveRouting({
     discovery,
     pins,
     floors,
     snapshot,
-    ...(benchmarks === undefined ? {} : { benchmarks: benchmarks.models }),
     billing: knownBillings(billings),
     ...(io.readConsent === undefined ? {} : { costConsent: io.readConsent }),
     now,

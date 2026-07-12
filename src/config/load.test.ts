@@ -82,22 +82,13 @@ describe("config loading", () => {
     expect((await loadHiveConfig()).autonomy).toEqual("dangerous");
   });
 
-  test("benchmark inspection has an explicit hard-off switch", async () => {
+  test("a [benchmarks] section from an older build still parses — the ranker it governed is gone", async () => {
     await resetHome();
     await writeFile(
       join(hiveHome, "config.toml"),
       '[benchmarks]\nmode = "off"\n',
     );
     expect((await loadHiveConfig()).benchmarks.mode).toBe("off");
-  });
-
-  test("a legacy 'shadow' benchmarks mode parses as live — the parallel path it named is gone", async () => {
-    await resetHome();
-    await writeFile(
-      join(hiveHome, "config.toml"),
-      '[benchmarks]\nmode = "shadow"\n',
-    );
-    expect((await loadHiveConfig()).benchmarks.mode).toBe("live");
   });
 
   test("parses model-specific quota pools and rejects invalid timezone configuration", async () => {

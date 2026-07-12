@@ -1,6 +1,6 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { loadHiveConfig, loadRoutingFloors, loadRoutingPins } from "../config/load";
+import { loadRoutingFloors, loadRoutingPins } from "../config/load";
 import {
   ClaudeCapabilityProbe,
   CodexCapabilityProbe,
@@ -30,8 +30,6 @@ import {
   buildModelInventory,
   formatModelInventory,
 } from "../daemon/model-inventory";
-import { readBenchmarkCatalog } from "../daemon/benchmarks";
-import { configuredBenchmarkSources } from "../daemon/benchmark-sources";
 
 /**
  * `hive routing` — the derived table, with per-cell provenance.
@@ -172,7 +170,6 @@ export function formatDerivedRouting(
 
 export async function printRouting(): Promise<void> {
   const now = new Date();
-  const config = await loadHiveConfig();
   const [pins, floors, claude, codex, grok, snapshot, billing] = await Promise.all([
     loadRoutingPins(),
     loadRoutingFloors(),
@@ -186,12 +183,6 @@ export async function printRouting(): Promise<void> {
     // vendor that charges nothing.
     forEachProvider(readBillingWithMemory).then(knownBillings),
   ]);
-  const benchmarkCatalog = await readBenchmarkCatalog({
-    mode: config.benchmarks.mode,
-    discovery: { claude, codex, grok },
-    sources: configuredBenchmarkSources(),
-  });
-
   // The consent ledger is the approvals queue Hive already has. Opened read-only
   // here; the only write is filing a question nobody has been asked yet.
   const db = new HiveDatabase();
@@ -201,7 +192,6 @@ export async function printRouting(): Promise<void> {
     pins,
     floors,
     snapshot,
-    benchmarks: benchmarkCatalog.models,
     billing,
     now,
   });
@@ -238,8 +228,6 @@ export async function printRouting(): Promise<void> {
     discovery: { claude, codex, grok },
     routing: derived,
     billing,
-    benchmarks: benchmarkCatalog.models,
-    benchmarkCatalog,
     now,
   })));
 
