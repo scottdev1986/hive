@@ -13,6 +13,7 @@ import {
 let tempRoot = "";
 let hiveHome = "";
 let previousHiveHome: string | undefined;
+const BEFORE_FABLE_CUTOFF = new Date("2026-07-11T12:00:00.000Z");
 
 beforeAll(async () => {
   tempRoot = await mkdtemp(join(tmpdir(), "hive-config-"));
@@ -164,7 +165,7 @@ describe("config loading", () => {
         idleReapMinutes: 10,
       },
     });
-    const routing = await loadRoutingTable();
+    const routing = await loadRoutingTable(BEFORE_FABLE_CUTOFF);
     expect(routing.deep).toEqual({
       tool: "codex",
       claude: DEFAULT_ROUTING.deep.claude,
@@ -180,7 +181,7 @@ describe("config loading", () => {
         model: "gpt-cheap-local",
       },
     });
-    expect(await resolveRoute("deep")).toEqual(routing.deep);
+    expect(await resolveRoute("deep", BEFORE_FABLE_CUTOFF)).toEqual(routing.deep);
   });
 
   test("deep-merges one tool override without changing the other tool", async () => {
@@ -190,7 +191,7 @@ describe("config loading", () => {
       '[cheap.claude]\nmodel = "haiku-local"\n',
     );
 
-    const routing = await loadRoutingTable();
+    const routing = await loadRoutingTable(BEFORE_FABLE_CUTOFF);
     expect(routing.cheap.claude).toEqual({
       ...DEFAULT_ROUTING.cheap.claude,
       model: "haiku-local",
