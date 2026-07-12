@@ -2,6 +2,19 @@ import AppKit
 import SwiftTerm
 import WorkspaceCore
 
+/// SwiftTerm 1.11.2 misencodes no-button SGR motion as a button release.
+/// Drop that one packet at the PTY boundary; clicks, drags, and wheels pass
+/// through byte-for-byte. Hover highlighting is optional; committing is not.
+private final class WorkspaceTerminalView: LocalProcessTerminalView {
+    override func send(source: TerminalView, data: ArraySlice<UInt8>) {
+        if case .anyEvent = source.getTerminal().mouseMode,
+           isMalformedNoButtonMotion(Array(data)) {
+            return
+        }
+        super.send(source: source, data: data)
+    }
+}
+
 /// Serializes and coalesces tmux copy-mode commands for panes where Hive
 /// intentionally suppresses terminal mouse reporting. Trackpads can emit many
 /// events while one tmux process is running; adjacent events in the same
@@ -87,7 +100,7 @@ private final class TmuxScrollController: @unchecked Sendable {
 /// interesting process owns the pty directly.
 final class TerminalPaneView: NSView, LocalProcessTerminalViewDelegate {
 
-    let terminal = LocalProcessTerminalView(frame: .zero)
+    let terminal: LocalProcessTerminalView = WorkspaceTerminalView(frame: .zero)
     private let tmuxScroller: TmuxScrollController?
     private let forwardsScrollWheel: Bool
     private var scrollMonitor: Any?

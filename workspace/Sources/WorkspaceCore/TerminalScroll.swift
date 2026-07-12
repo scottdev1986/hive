@@ -24,6 +24,19 @@ public func terminalAllowsMouseReporting(for pane: PaneState) -> Bool {
     true
 }
 
+/// Identifies SwiftTerm's malformed SGR no-button motion packet. In all-motion
+/// mode SwiftTerm emits `ESC[<32;x;ym`, which looks like a button release.
+public func isMalformedNoButtonMotion(_ bytes: [UInt8]) -> Bool {
+    guard bytes.count >= 8,
+          bytes[0...2] == [0x1b, 0x5b, 0x3c],
+          bytes.last == 0x6d,
+          let flagEnd = bytes[3...].firstIndex(of: 0x3b),
+          let flags = Int(String(decoding: bytes[3..<flagEnd], as: UTF8.self)),
+          flags & 32 != 0, flags & 3 == 0
+    else { return false }
+    return true
+}
+
 /// A normalized terminal scroll gesture. The AppKit terminal host translates
 /// this into tmux copy-mode commands when terminal mouse reporting is disabled.
 public struct TerminalScrollRequest: Equatable, Sendable {

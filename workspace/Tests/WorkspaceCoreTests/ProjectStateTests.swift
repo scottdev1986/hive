@@ -53,6 +53,22 @@ final class ProjectStateTests: XCTestCase {
         XCTAssertTrue(terminalAllowsMouseReporting(for: agentPane))
     }
 
+    func testTerminalMouseFilterSuppressesOnlyMalformedNoButtonMotion() {
+        func bytes(_ value: String) -> [UInt8] { Array(value.utf8) }
+
+        XCTAssertTrue(isMalformedNoButtonMotion(bytes("\u{1b}[<32;14;21m")))
+        XCTAssertTrue(isMalformedNoButtonMotion(bytes("\u{1b}[<36;14;21m")),
+                      "modifier bits do not disguise malformed hover")
+        for intentional in [
+            "\u{1b}[<0;14;21M",  // click press
+            "\u{1b}[<0;14;21m",  // click release
+            "\u{1b}[<64;14;21M", // wheel up
+            "\u{1b}[<65;14;21M", // wheel down
+        ] {
+            XCTAssertFalse(isMalformedNoButtonMotion(bytes(intentional)))
+        }
+    }
+
     private func agent(_ name: String, status: String = "working",
                        tool: String = "claude", model: String = "opus",
                        task: String = "do things", session: String? = nil,
