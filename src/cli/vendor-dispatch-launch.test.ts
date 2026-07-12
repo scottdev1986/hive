@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { provisionSkills, type SkillTool } from "../adapters/skills";
 import { resolveConcreteModel } from "../adapters/tools/models";
 import {
   GRAPHIFY_HOOK_SCRIPT,
@@ -192,6 +193,34 @@ test("billing for an unknown vendor throws instead of probing claude's usage sur
   // by the other vendor's probe.
   expect(claudeProbes).toBe(1);
   expect(codexProbes).toBe(1);
+});
+
+test("an unknown vendor's spawn provisions no skills at all, rather than the wrong ones", async () => {
+  const worktree = join(hiveHome, "worktree");
+
+  // Positive control, and the discriminating half. Codex's skills land in
+  // `.agents/skills` and Claude's in `.claude/skills` — two directories, because
+  // neither CLI reads the other's. The private `SkillTool` alias this file used
+  // to keep was invisible to the shared vendor enum, so a third vendor would
+  // have been provisioned on every single spawn with whatever the record's
+  // missing key resolved to: no skills, or another CLI's.
+  await provisionSkills(worktree, "codex", join(hiveHome, "global"));
+  expect(existsSync(join(worktree, ".agents", "skills", "hive-codex"))).toBe(true);
+  expect(existsSync(join(worktree, ".claude", "skills"))).toBe(false);
+
+  const unknownWorktree = join(hiveHome, "unknown-worktree");
+  await expect(
+    provisionSkills(
+      unknownWorktree,
+      UNKNOWN_PROVIDER as SkillTool,
+      join(hiveHome, "global"),
+    ),
+  ).rejects.toThrow(/unknown vendor "grok"/);
+
+  // Nothing was written anywhere: the vendor is resolved before the first mkdir,
+  // so a vendor Hive cannot provision does not get a half-provisioned worktree
+  // that a later read would happily call provisioned.
+  expect(existsSync(unknownWorktree)).toBe(false);
 });
 
 test("every graphify hook kind nudges, and a kind the script does not know fails open", async () => {

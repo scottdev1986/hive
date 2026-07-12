@@ -11,18 +11,44 @@ import {
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { shippedSkillsFor } from "../skills/shipped";
+import { unknownVendor, type CapabilityProvider } from "../schemas";
 
-export type SkillTool = "claude" | "codex";
+/**
+ * The vendor a skill is installed for — the shared vendor enum, not a private
+ * spelling of it.
+ *
+ * It used to be its own `"claude" | "codex"` alias, and that made this the one
+ * file the enum collapse could not reach: a type alias is invisible to a fix
+ * that rewrites schema references, so adding a vendor would have widened every
+ * union in Hive except this one, and produced no compile error here to say so.
+ * Skills are provisioned on EVERY spawn, so the failure would have been silent
+ * and continuous: an agent launched with the wrong skills, or with none.
+ */
+export type SkillTool = CapabilityProvider;
 
-/** Where each vendor actually looks for project skills. Verified against the
- * vendor docs on 2026-07-11: Claude Code reads `.claude/skills/<name>/SKILL.md`,
- * Codex reads `.agents/skills/<name>/SKILL.md`. There is no shared location —
- * the open SKILL.md standard fixes the file format, not the directory — so one
- * skill authored once has to be delivered to two paths. */
-export const NATIVE_SKILL_DIRECTORIES: Record<SkillTool, string> = {
-  claude: join(".claude", "skills"),
-  codex: join(".agents", "skills"),
-};
+/**
+ * Where a vendor actually looks for project skills. Verified against the vendor
+ * docs on 2026-07-11: Claude Code reads `.claude/skills/<name>/SKILL.md`, Codex
+ * reads `.agents/skills/<name>/SKILL.md`. There is no shared location — the open
+ * SKILL.md standard fixes the file format, not the directory — so one skill
+ * authored once has to be delivered to two paths.
+ *
+ * A function, not a record, and exhaustive: every entry point into this file
+ * needs the directory before it can write anything, so a vendor with no arm
+ * fails here, loudly and by name, rather than installing Claude's skills into a
+ * directory its CLI never reads. A record would have answered `undefined` and
+ * let the failure surface as a path error naming no vendor at all.
+ */
+export function nativeSkillDirectory(tool: SkillTool): string {
+  switch (tool) {
+    case "claude":
+      return join(".claude", "skills");
+    case "codex":
+      return join(".agents", "skills");
+    default:
+      return unknownVendor(tool, "native skill directory");
+  }
+}
 
 const isMissingFileError = (error: unknown): boolean =>
   typeof error === "object" &&
@@ -136,7 +162,7 @@ export async function installShippedSkills(
   tool: SkillTool,
   options: { force?: boolean } = {},
 ): Promise<SkillInstallReport> {
-  const nativeDirectory = NATIVE_SKILL_DIRECTORIES[tool];
+  const nativeDirectory = nativeSkillDirectory(tool);
   const nativeRoot = join(root, nativeDirectory);
   const report: SkillInstallReport = {
     tool,
@@ -202,7 +228,10 @@ export async function provisionSkills(
   tool: SkillTool,
   globalSkillsPath = join(hiveHome(), "skills"),
 ): Promise<void> {
-  const nativeRoot = join(worktreePath, NATIVE_SKILL_DIRECTORIES[tool]);
+  // Before any disk work: an unknown vendor must not get the user's own skills
+  // symlinked into a directory chosen for a different CLI, and must not get a
+  // half-provisioned worktree that a later read would call provisioned.
+  const nativeRoot = join(worktreePath, nativeSkillDirectory(tool));
   const globalSkills = await discoverSkills(globalSkillsPath);
   const repoSkills = await discoverSkills(join(worktreePath, ".hive", "skills"));
 

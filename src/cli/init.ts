@@ -56,6 +56,7 @@ import {
   type SkillTool,
 } from "../adapters/skills";
 import type { RepoProfile } from "../schemas/profile";
+import { CAPABILITY_PROVIDERS } from "../schemas";
 import { runGraphifyEnable } from "./graphify";
 import { confirmOnTty, type ConfirmFn } from "./prompt";
 import { projectRootOrCwd } from "./project-root";
@@ -65,10 +66,10 @@ import { repairLeakedProjectConfig } from "./project-config-cleanup";
  * means the user actually has that CLI. Hive does not create a `.claude/` for
  * someone who has no Claude Code: an empty vendor directory in a stranger's repo
  * is litter, not a feature. */
-const VENDORS: ReadonlyArray<{ tool: SkillTool; command: string; label: string }> = [
-  { tool: "claude", command: "claude", label: "Claude Code" },
-  { tool: "codex", command: "codex", label: "Codex" },
-];
+const VENDORS: Record<SkillTool, { command: string; label: string }> = {
+  claude: { command: "claude", label: "Claude Code" },
+  codex: { command: "codex", label: "Codex" },
+};
 
 /** A narrative fact for init to seed. Structured truth never comes through here
  * — it lives in the profile (SPEC §14). A stable id keeps a `hive init --refresh`
@@ -350,7 +351,11 @@ export async function runInit(
   //    the user wrote is overwritten; drift is reported, and `--force` is the
   //    only way to take Hive's copy over theirs.
   const skills: SkillInstallReport[] = [];
-  const installed = VENDORS.filter((vendor) => deps.hasCli(vendor.command));
+  // Keyed by the vendor union rather than a hand-written list: a vendor with no
+  // row is a compile error here, not a CLI Hive quietly never looks for.
+  const installed = CAPABILITY_PROVIDERS
+    .map((tool) => ({ tool, ...VENDORS[tool] }))
+    .filter((vendor) => deps.hasCli(vendor.command));
   if (installed.length === 0) {
     messages.push(
       "No Claude Code or Codex CLI found on PATH; installed no skills and created no vendor directories.",

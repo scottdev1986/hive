@@ -49,7 +49,8 @@ import {
   type CommandRunner,
 } from "../adapters/graphify";
 import { projectStateDir } from "../adapters/profile";
-import { NATIVE_SKILL_DIRECTORIES, type SkillTool } from "../adapters/skills";
+import { nativeSkillDirectory, type SkillTool } from "../adapters/skills";
+import { CAPABILITY_PROVIDERS } from "../schemas";
 import { getHiveHome } from "../daemon/db";
 import { shippedSkillsFor } from "../skills/shipped";
 import { binLink, detectInstallMethod, installRoot } from "../update/paths";
@@ -99,7 +100,8 @@ async function removeShippedSkills(
   tool: SkillTool,
   log: (line: string) => void,
 ): Promise<void> {
-  const nativeRoot = join(root, NATIVE_SKILL_DIRECTORIES[tool]);
+  const nativeDirectory = nativeSkillDirectory(tool);
+  const nativeRoot = join(root, nativeDirectory);
   if (!existsSync(nativeRoot)) return;
   for (const skill of shippedSkillsFor(tool)) {
     const directory = join(nativeRoot, skill.name);
@@ -108,16 +110,16 @@ async function removeShippedSkills(
     if (current === null) continue;
     if (current === skill.content) {
       await rm(directory, { recursive: true, force: true });
-      log(`Removed ${join(NATIVE_SKILL_DIRECTORIES[tool], skill.name)}.`);
+      log(`Removed ${join(nativeDirectory, skill.name)}.`);
     } else {
       log(
-        `Left ${join(NATIVE_SKILL_DIRECTORIES[tool], skill.name)}: it differs from what Hive ships, so it is yours.`,
+        `Left ${join(nativeDirectory, skill.name)}: it differs from what Hive ships, so it is yours.`,
       );
     }
   }
   // Directories Hive may have created, removed only when now empty — an
   // empty vendor dir in a stranger's repo is litter either way.
-  for (const dir of [nativeRoot, join(root, dirname(NATIVE_SKILL_DIRECTORIES[tool]))]) {
+  for (const dir of [nativeRoot, join(root, dirname(nativeDirectory))]) {
     await rmdir(dir).catch(() => {});
   }
 }
@@ -187,7 +189,7 @@ export async function runUninstallRepo(
     // No daemon (or no tmux) is fine: there is nothing to stop.
   });
   await removeWorktreesAndBranches(root, deps.run, deps.log);
-  for (const tool of ["claude", "codex"] as const) {
+  for (const tool of CAPABILITY_PROVIDERS) {
     await removeShippedSkills(root, tool, deps.log);
   }
   const repaired = await repairLeakedProjectConfig(root);
