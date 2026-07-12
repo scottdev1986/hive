@@ -36,8 +36,11 @@ enum MainMenuBuilder {
         mainMenu.addItem(paneItem)
         let paneMenu = NSMenu(title: "Pane")
         paneItem.submenu = paneMenu
-        paneMenu.addItem(withTitle: "Promote to Master",
-                         action: #selector(ProjectWindowController.promoteFocusedPane(_:)), keyEquivalent: "\r")
+        let promoteItem = NSMenuItem(title: "Promote to Master",
+                                     action: #selector(ProjectWindowController.promoteFocusedPane(_:)),
+                                     keyEquivalent: "\r")
+        promoteItem.keyEquivalentModifierMask = [.command]
+        paneMenu.addItem(promoteItem)
         let returnItem = NSMenuItem(title: "Return Orchestrator to Master",
                                     action: #selector(ProjectWindowController.returnOrchestratorToMaster(_:)),
                                     keyEquivalent: "\r")

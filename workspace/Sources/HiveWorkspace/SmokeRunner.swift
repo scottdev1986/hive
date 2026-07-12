@@ -158,7 +158,30 @@ final class SmokeRunner {
             if let paneMenu,
                let promoteIndex = paneMenu.items.firstIndex(where: { $0.title == "Promote to Master" }),
                let returnIndex = paneMenu.items.firstIndex(where: { $0.title == "Return Orchestrator to Master" }) {
+                let promoteItem = paneMenu.items[promoteIndex]
+                let returnItem = paneMenu.items[returnIndex]
+                check(paneMenu.autoenablesItems, "Pane menu uses automatic item validation")
+                check(promoteItem.target === controller && returnItem.target === controller,
+                      "Pane layout actions explicitly target the project controller")
+                check((NSApp.target(forAction: promoteItem.action!,
+                                    to: promoteItem.target as AnyObject?,
+                                    from: promoteItem) as AnyObject?) === controller,
+                      "AppKit resolves the Promote target")
+                check((NSApp.target(forAction: returnItem.action!,
+                                    to: returnItem.target as AnyObject?,
+                                    from: returnItem) as AnyObject?) === controller,
+                      "AppKit resolves the Return target")
+                check(promoteItem.keyEquivalent == "\r"
+                      && promoteItem.keyEquivalentModifierMask == [.command],
+                      "Promote shortcut is Command-Return")
+                check(returnItem.keyEquivalent == "\r"
+                      && returnItem.keyEquivalentModifierMask == [.command, .shift],
+                      "Return shortcut is Shift-Command-Return")
+
                 controller.dispatch(.focusPane(paneID))
+                paneMenu.update()
+                check(promoteItem.isEnabled, "Promote is enabled for a focused satellite")
+                check(!returnItem.isEnabled, "Return is disabled while orchestrator is master")
                 paneMenu.performActionForItem(at: promoteIndex)
                 check(waitUntil(2) { self.controller.state.layout.master == paneID },
                       "Pane > Promote to Master swaps the focused agent")
@@ -169,6 +192,9 @@ final class SmokeRunner {
                 check(controller.terminalChildRunning(pane: paneID),
                       "promoted agent terminal remains live after PTY resize")
 
+                paneMenu.update()
+                check(!promoteItem.isEnabled, "Promote is disabled for the current master")
+                check(returnItem.isEnabled, "Return is enabled after promoting an agent")
                 paneMenu.performActionForItem(at: returnIndex)
                 check(waitUntil(2) {
                     self.controller.state.layout.master == ProjectState.orchestratorPaneID
@@ -177,6 +203,9 @@ final class SmokeRunner {
                 waitUntil(LayoutTransition.duration + 0.1) { false }
                 check(controller.terminalChildRunning(pane: ProjectState.orchestratorPaneID),
                       "orchestrator terminal remains live after PTY resize")
+                paneMenu.update()
+                check(promoteItem.isEnabled, "Promote re-enables after returning orchestrator")
+                check(!returnItem.isEnabled, "Return disables after restoring orchestrator")
             } else {
                 failures.append("Pane menu exposes promote and return actions")
             }
