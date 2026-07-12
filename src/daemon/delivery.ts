@@ -80,6 +80,54 @@ export interface SendOptions {
   deadlineMs?: number;
 }
 
+/**
+ * What "queued" means for THIS recipient right now — measured, not implied.
+ *
+ * A sender reading state "queued" has taken it as "will arrive shortly", told
+ * the user an agent was directed, and been wrong: a normal message to a
+ * channel-less recipient mid-turn is delivered only at its next turn boundary,
+ * and a deep agent's next boundary routinely falls AFTER the work the message
+ * was trying to steer. That is how a migration shipped without the three
+ * safety requirements sent nine minutes earlier (aurora, 2026-07-12 16:55Z —
+ * queued mid-turn, delivered at her turn boundary 17:04:45, seconds after she
+ * landed). The note rides the send result so the sender learns the recipient's
+ * real state at the only moment it can still act, not from a post-mortem.
+ */
+export function queuedDeliveryNote(
+  message: AgentMessage,
+  recipient: AgentRecord | null,
+): string | undefined {
+  if (message.state !== "queued" || recipient === null) return undefined;
+  // A critical control left queued has already raised its own loud alert
+  // through the restart-failure path.
+  if (message.priority === "critical") return undefined;
+  const name = recipient.name;
+  switch (recipient.status) {
+    case "dead":
+    case "failed":
+    case "done":
+      return `NOT received: ${name} is ${recipient.status}, so this message will never be delivered.`;
+    case "spawning":
+      return `NOT received yet: ${name} is still spawning; the message is delivered when its session starts.`;
+    case "idle":
+      return `NOT received: the paste into ${name}'s pane was never submitted (no turn started), ` +
+        `so the message stays queued and is retried at ${name}'s turn boundaries. ` +
+        "Treat it as unheard until a turn confirms it.";
+    case "awaiting-approval":
+      return `NOT received yet: ${name} is blocked on a pending approval and hears nothing until it resolves; ` +
+        "the message is delivered at the next turn boundary after that.";
+    default:
+      // working, control-paused, stuck: mid-turn shapes.
+      return message.priority === "urgent"
+        ? `NOT received yet: ${name} is mid-turn; urgent traffic is injected at its next tool call, ` +
+          "and the acknowledgement deadline alerts if that never happens."
+        : `NOT received yet: ${name} is mid-turn, and a normal message is delivered only when the ` +
+          "current turn ends — for a deep task that can be after the work this message means to " +
+          "steer has already shipped. If it must land mid-turn, resend with priority=urgent " +
+          "(injected at the next tool call; urgent is preemption, not a fast lane).";
+  }
+}
+
 export interface CriticalControlRuntime {
   interruptAndRestart(
     agent: AgentRecord,
@@ -792,7 +840,26 @@ export class MessageDelivery {
     for (const message of this.db.listQueuedMessages()) {
       if (message.to === ORCHESTRATOR_NAME) continue;
       if (message.createdAt < cutoff && message.alertAt === null) {
-        const reason = await this.stalledReason(message.to, now);
+        if (await this.stalledReason(message.to, now, "queued") === null) {
+          continue;
+        }
+        // The sweep runs on its own timer, and twice in one day (aubrey
+        // 16:27Z, aurora 17:04Z, 2026-07-12) it fired inside the second
+        // between a recipient's turn-end and the flush completing that very
+        // delivery — diagnosing a swallowed paste for a message that was
+        // mid-paste under the session lock, and sending the orchestrator
+        // chasing a loss that never happened. Serialize behind the
+        // recipient's delivery lane and re-judge: only a message still
+        // queued once any in-flight delivery has finished is stalled.
+        const recipient = this.db.getAgentByName(message.to);
+        if (recipient !== null) {
+          const settled = await this.withSessionLock(
+            recipient.tmuxSession,
+            async () => this.db.getMessage(message.id),
+          );
+          if (settled === null || settled.state !== "queued") continue;
+        }
+        const reason = await this.stalledReason(message.to, now, "queued");
         if (reason !== null) {
           stalled.push({ message, reason: `${reason} (never delivered)` });
         }
@@ -881,6 +948,7 @@ export class MessageDelivery {
   private async stalledReason(
     recipient: string,
     now: string,
+    phase: "injected" | "queued" = "injected",
   ): Promise<string | null> {
     const agent = recipient === ORCHESTRATOR_NAME
       ? null
@@ -893,7 +961,12 @@ export class MessageDelivery {
       return `${recipient} has emitted no turn events at all — it may be unable to hear`;
     }
     if (boundary.kind === "turn-end") {
-      return `${recipient} is idle yet never submitted it — the paste may have been swallowed`;
+      // "Swallowed paste" is a diagnosis about a paste that happened; a queued
+      // message was never pasted, and the alert that conflated the two sent
+      // the orchestrator hunting a tmux loss that never occurred.
+      return phase === "queued"
+        ? `${recipient} went idle without receiving it — delivery at its turn boundaries has not landed`
+        : `${recipient} is idle yet never submitted it — the paste may have been swallowed`;
     }
     // An open turn. Before inferring anything from silence, ask the OS: a
     // stopped or vanished process is a measured state, provable in one call,

@@ -2,10 +2,15 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AgentMessage, AgentRecord } from "../schemas";
+import {
+  AgentMessageSchema,
+  type AgentMessage,
+  type AgentRecord,
+} from "../schemas";
 import { HiveDatabase } from "./db";
 import {
   MessageDelivery,
+  queuedDeliveryNote,
   type NativeAgentControl,
   type TmuxSender,
 } from "./delivery";
@@ -1128,5 +1133,147 @@ describe("reconciling messages we handed over", () => {
     } finally {
       db.close();
     }
+  });
+
+  test("the sweep does not alert a message that is mid-delivery under the session lock", async () => {
+    const db = new HiveDatabase(join(home, "recon-queued-inflight.db"));
+    const tmux = new BlockingTmuxSender(db);
+    const delivery = new MessageDelivery(db, tmux);
+    try {
+      // The aurora incident, 2026-07-12 17:04Z: her turn ended, the flush was
+      // pasting the queued message under the session lock, and the 30s sweep
+      // fired in that one-second window — alerting a "swallowed paste" 350ms
+      // before the delivery it raced completed and was confirmed.
+      db.insertAgent({ ...agent("working") });
+      db.insertEvent({
+        kind: "turn-start",
+        agentName: "maya",
+        timestamp: "2026-07-09T12:25:00.000Z",
+      });
+      const message = await delivery.send("sam", "maya", "three requirements");
+      expect(message.state).toEqual("queued");
+      backdateCreation(
+        db,
+        message.id,
+        new Date(Date.now() - 10 * 60_000).toISOString(),
+      );
+
+      // The turn ends and the recipient goes idle; the flush begins pasting.
+      db.insertEvent({
+        kind: "turn-end",
+        agentName: "maya",
+        timestamp: "2026-07-09T12:29:00.000Z",
+      });
+      db.upsertAgent(agent("idle"));
+      const flush = delivery.flushQueued("maya");
+      while (tmux.calls.length === 0) {
+        await Bun.sleep(1);
+      }
+
+      // The sweep runs while the paste is in flight. It must wait behind the
+      // delivery lane and judge the settled state, not the racing one.
+      const sweep = delivery.reconcileInjected();
+      await Bun.sleep(10);
+      tmux.releaseNext();
+      await flush;
+      await sweep;
+
+      expect(unconfirmedAlerts(db)).toHaveLength(0);
+      expect(db.getMessage(message.id)?.state).toEqual("injected");
+    } finally {
+      db.close();
+    }
+  });
+
+  test("a message still queued after its recipient went idle rings as never-delivered, not as a swallowed paste", async () => {
+    const db = new HiveDatabase(join(home, "recon-queued-idle-stall.db"));
+    // A broken TUI: the paste lands, nothing submits, and the send's own
+    // submit probe (shortened to zero here) honestly leaves the row queued.
+    const delivery = new MessageDelivery(
+      db,
+      new RecordingTmuxSender(),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { submitConfirmMs: 0 },
+    );
+    try {
+      db.insertAgent(agent("idle"));
+      db.insertEvent({
+        kind: "turn-start",
+        agentName: "maya",
+        timestamp: "2026-07-09T12:25:00.000Z",
+      });
+      db.insertEvent({
+        kind: "turn-end",
+        agentName: "maya",
+        timestamp: "2026-07-09T12:26:00.000Z",
+      });
+      const message = await delivery.send("sam", "maya", "hello?");
+      expect(message.state).toEqual("queued");
+      backdateCreation(
+        db,
+        message.id,
+        new Date(Date.now() - 10 * 60_000).toISOString(),
+      );
+
+      await delivery.reconcileInjected();
+      const alerts = unconfirmedAlerts(db);
+      expect(alerts).toHaveLength(1);
+      // A queued message was never pasted-and-submitted, so the alert must
+      // not diagnose a swallowed paste — that wording sent the orchestrator
+      // hunting a tmux loss that never happened.
+      expect(alerts[0]?.body).toContain("went idle without receiving it");
+      expect(alerts[0]?.body).toContain("never delivered");
+      expect(alerts[0]?.body).not.toContain("swallowed");
+    } finally {
+      db.close();
+    }
+  });
+});
+
+describe("queuedDeliveryNote", () => {
+  const queuedMessage = (priority: "normal" | "urgent" = "normal") =>
+    AgentMessageSchema.parse({
+      id: "m-1",
+      from: "orchestrator",
+      to: "maya",
+      body: "three safety requirements",
+      createdAt: timestamp,
+      deliveredAt: null,
+      priority,
+    });
+
+  test("a mid-turn recipient earns the full warning: not received, boundary-delivered, urgent escapes", () => {
+    const note = queuedDeliveryNote(queuedMessage(), agent("working"));
+    expect(note).toContain("NOT received");
+    expect(note).toContain("mid-turn");
+    expect(note).toContain("priority=urgent");
+  });
+
+  test("an urgent message mid-turn names the tool-boundary injection instead", () => {
+    const note = queuedDeliveryNote(queuedMessage("urgent"), agent("working"));
+    expect(note).toContain("next tool call");
+    expect(note).not.toContain("resend");
+  });
+
+  test("an idle recipient with a queued message means the paste never submitted", () => {
+    const note = queuedDeliveryNote(queuedMessage(), agent("idle"));
+    expect(note).toContain("never submitted");
+  });
+
+  test("a dead recipient is named as one the message will never reach", () => {
+    const note = queuedDeliveryNote(queuedMessage(), agent("dead"));
+    expect(note).toContain("never be delivered");
+  });
+
+  test("a delivered message carries no note, and neither does the root's inbox queue", () => {
+    const injected = {
+      ...queuedMessage(),
+      state: "injected" as const,
+    };
+    expect(queuedDeliveryNote(injected, agent("working"))).toBeUndefined();
+    expect(queuedDeliveryNote(queuedMessage(), null)).toBeUndefined();
   });
 });

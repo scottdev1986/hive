@@ -74,6 +74,7 @@ import { MemoryIndex } from "./memory-index";
 import {
   BunTmuxSender,
   MessageDelivery,
+  queuedDeliveryNote,
   type RootProtocolDeliverer,
   type TmuxSender,
 } from "./delivery";
@@ -2767,7 +2768,7 @@ export class HiveDaemon {
     server.registerTool("hive_send", {
       title: "Send agent message",
       description:
-        'Send a durable message and return its real lifecycle state. normal waits for an ordinary boundary — use it for ordinary guidance. urgent and critical CANCEL the recipient\'s in-flight turn, which is never resumed: its reasoning so far is discarded, so this is preemption, not a fast lane. critical additionally revokes write/landing authority and restarts the target read-only. The returned state is the truth: "queued"/"injected" means SENT, which is not RECEIVED and not STOPPED — there is no preemption inside a running tool call, so an agent inside a long command holds even a critical until that call returns. Never report a target as stopped or informed until it has acknowledged. Recipient "orchestrator" wakes the root. The returned body is a short preview (truncated is true when it was cut) of the message you just wrote, not an echo of the whole thing — the recipient reads it in full via hive_inbox/hive_read_message.',
+        'Send a durable message and return its real lifecycle state. normal waits for an ordinary boundary — use it for ordinary guidance. urgent and critical CANCEL the recipient\'s in-flight turn, which is never resumed: its reasoning so far is discarded, so this is preemption, not a fast lane. critical additionally revokes write/landing authority and restarts the target read-only. The returned state is the truth: "queued"/"injected" means SENT, which is not RECEIVED and not STOPPED — there is no preemption inside a running tool call, so an agent inside a long command holds even a critical until that call returns. Never report a target as stopped or informed until it has acknowledged. When the result carries a "delivery" note, read it: it is the recipient\'s measured state and says when — or whether — the message can be heard. Recipient "orchestrator" wakes the root. The returned body is a short preview (truncated is true when it was cut) of the message you just wrote, not an echo of the whole thing — the recipient reads it in full via hive_inbox/hive_read_message.',
       inputSchema: SendRequestSchema,
     }, async ({ from, to, body, ...requested }) => {
       // `from` is a claim about identity, so it is checked against the bound
@@ -2781,7 +2782,20 @@ export class HiveDaemon {
         ...requested,
         ...(inferred ?? {}),
       });
-      return toolResult(compactSendResult(message), "message");
+      // A send that left the message queued tells the sender what queued means
+      // for THIS recipient right now — measured from its row, not implied by
+      // the state name. "Queued" read as "delivered" is how an agent shipped a
+      // migration without the safety requirements sent nine minutes earlier.
+      const note = queuedDeliveryNote(
+        message,
+        to === ORCHESTRATOR_NAME ? null : this.db.getAgentByName(to),
+      );
+      return toolResult(
+        note === undefined
+          ? compactSendResult(message)
+          : { ...compactSendResult(message), delivery: note },
+        "message",
+      );
     });
 
     server.registerTool("hive_escalate", {

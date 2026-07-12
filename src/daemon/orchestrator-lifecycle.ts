@@ -171,6 +171,10 @@ export interface SendResultSummary {
   deliveredAt: string | null;
   body: string;
   truncated: boolean;
+  /** Present exactly when the send left the message queued at a live agent:
+   * the recipient's measured state and what it means for when — or whether —
+   * this message can be heard (queuedDeliveryNote). */
+  delivery?: string;
 }
 
 // hive_send's caller just wrote body itself; echoing it back in full doubles
