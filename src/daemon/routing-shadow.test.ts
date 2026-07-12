@@ -1,6 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import {
+  known,
+  unknown,
+  type CapabilityRecord,
+  type DerivedTier,
+} from "../schemas";
+import type { BenchmarkCatalog } from "./benchmarks";
+import {
   MIN_JUDGED_SPAWNS,
+  shadowBenchmark,
   ShadowObservationSchema,
   summarizeShadow,
   type ShadowObservation,
@@ -71,6 +79,113 @@ describe("the comparison", () => {
     });
     expect(measured.derived).toEqual(base.derived);
     expect(measured.benchmark?.matched[0]?.scores).toEqual({ code_generation: 85.5 });
+  });
+
+  // Ruling: a model live discovery shows as available, and any effort level it
+  // advertises, MUST be routable. Benchmarks refine selection when data exists;
+  // their absence never excludes. These tests pin that as a structural fact:
+  // shadowBenchmark returns evidence beside a route already chosen — it has no
+  // way to unchoose it — and an uncovered model or effort yields an empty match,
+  // never an objection.
+  const shadowAt = "2026-07-11T12:00:00.000Z";
+  const fable: CapabilityRecord = {
+    provider: "claude",
+    accountFingerprint: "claude:test",
+    cliVersion: "2.1.207",
+    canonicalId: "claude-fable-5",
+    variant: null,
+    launchToken: "claude-fable-5",
+    displayName: "claude-fable-5",
+    aliases: [],
+    entitled: known(true, "claude.initialize", shadowAt),
+    hidden: known(false, "claude.initialize", shadowAt),
+    supportsEffort: known(true, "claude.initialize", shadowAt),
+    supportedEffortLevels: known(["high", "xhigh"], "claude.initialize", shadowAt),
+    defaultEffort: unknown("surface-silent", "claude.initialize", shadowAt),
+    observedAt: shadowAt,
+  };
+  const shadowDiscovery = {
+    claude: {
+      status: "ok" as const,
+      records: [fable],
+      effectiveDefault: {
+        provider: "claude" as const,
+        model: known("claude-fable-5", "claude.initialize", shadowAt),
+        effort: unknown<string>("surface-silent", "claude.initialize", shadowAt),
+      },
+    },
+    codex: { status: "unavailable" as const, reason: "not needed" },
+  };
+  const tierRoutedAt = (effort: string): DerivedTier => ({
+    tier: "deep",
+    kind: "coding",
+    tool: { value: "claude", layer: "derived", reason: "test" },
+    claude: {
+      provider: "claude",
+      model: { value: "claude-fable-5", layer: "derived", reason: "vendor facts" },
+      effort: { value: effort, layer: "derived", reason: "tier policy" },
+      chain: [],
+      notes: [],
+    },
+    codex: {
+      provider: "codex",
+      model: { value: null, layer: "unknown", reason: "not needed" },
+      effort: { value: null, layer: "unknown", reason: "not needed" },
+      chain: [],
+      notes: [],
+    },
+  });
+  const liveBenchCatalog = (
+    models: BenchmarkCatalog["models"],
+  ): BenchmarkCatalog => ({
+    status: "current",
+    detail: "1 current, 0 last-good, 0 unavailable source(s).",
+    sources: [{
+      sourceId: "livebench",
+      status: "current",
+      detail: "livebench current",
+      releaseDate: "2026-06-25",
+      fetchedAt: shadowAt,
+    }],
+    models,
+  });
+
+  test("a model with zero benchmark coverage still routes, its gap visible as an empty match", () => {
+    const result = shadowBenchmark(
+      liveBenchCatalog(new Map()),
+      shadowDiscovery,
+      tierRoutedAt("xhigh"),
+    );
+    expect(result.matched).toEqual([]);
+    expect(result.status).toBe("current");
+    expect(result.wouldChange).toBeNull();
+    expect(result.influenceDetail).toContain("cannot change the live route");
+  });
+
+  test("an advertised effort level with no benchmark row still routes", () => {
+    // LiveBench only publishes some effort rows; "high" is advertised by the
+    // vendor but uncovered. The route at "high" stands; the evidence is empty.
+    const covered = new Map([["claude\0claude-fable-5", [{
+      sourceId: "livebench",
+      effort: "xhigh",
+      scores: { code_generation: 85.5 },
+      source: "https://livebench.ai/table_2026_06_25.csv",
+      releaseDate: "2026-06-25",
+      fetchedAt: shadowAt,
+    }]]]);
+    const uncoveredEffort = shadowBenchmark(
+      liveBenchCatalog(covered),
+      shadowDiscovery,
+      tierRoutedAt("high"),
+    );
+    expect(uncoveredEffort.matched).toEqual([]);
+    expect(uncoveredEffort.influenceDetail).toContain("cannot change the live route");
+    const coveredEffort = shadowBenchmark(
+      liveBenchCatalog(covered),
+      shadowDiscovery,
+      tierRoutedAt("xhigh"),
+    );
+    expect(coveredEffort.matched).toHaveLength(1);
   });
 
   test("agreement and divergence are counted per field, with the reason", () => {

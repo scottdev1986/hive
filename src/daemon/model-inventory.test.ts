@@ -184,4 +184,28 @@ describe("model inventory", () => {
     expect(model.benchmarkComparison).toMatchObject({ status: "unassessed" });
     expect(model.benchmarkComparison.detail).toContain("does not average");
   });
+
+  test("zero benchmark coverage never gates: an uncovered model keeps its routes and advertised efforts", () => {
+    // Ruling: a discovered, entitled model — and every effort level it
+    // advertises — must be routable. Benchmarks refine among capable
+    // candidates when data exists; absence of data stays a visible "unknown"
+    // and never excludes. No benchmarks are passed here at all.
+    const inventory = buildModelInventory({ discovery, routing, now: new Date(AT) });
+    const uncovered = inventory.models.find(
+      (model) => model.canonicalId === "claude-fable-5",
+    )!;
+    expect(uncovered.benchmarks).toEqual([]);
+    expect(uncovered.benchmarkComparison.status).toBe("unknown");
+    expect(uncovered.routedCandidate).toBeTrue();
+    expect(uncovered.roles).toContainEqual(
+      expect.objectContaining({ tier: "deep", use: "primary" }),
+    );
+    expect(uncovered.effortLevels).toEqual({
+      state: "known",
+      values: ["high", "xhigh"],
+    });
+    expect(formatModelInventory(inventory)).toContain(
+      "benchmark   unknown — no matching published result",
+    );
+  });
 });
