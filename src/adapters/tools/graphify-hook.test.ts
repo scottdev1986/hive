@@ -73,6 +73,31 @@ describe("graphify PreToolUse hook", () => {
       .toBe(0);
   });
 
+  // The native Grep tool was in NO matcher: `Bash` caught only shelled-out
+  // search, which is the route the harness steers models away from. Measured on
+  // bailey's own transcript, 2026-07-12: 53 nudges delivered, all from Bash and
+  // Read, zero graph calls made — and the searches that did the work went
+  // through Bash. Grep is now on the read branch, whose only suppression is
+  // graph output. It cannot go on the search branch: that filter is
+  // case-sensitive lowercase (*grep*), and Grep's hook input carries
+  // `"tool_name":"Grep"`, so it would fall through and exit silent.
+  test("a native Grep call is nudged; a Grep of graph output is not", async () => {
+    const grep = await run(
+      "claude-read",
+      '{"tool_name":"Grep","tool_input":{"pattern":"reserveQuota","path":"src"}}',
+    );
+    expect(grep.exitCode).toBe(0);
+    expect(JSON.parse(grep.stdout).hookSpecificOutput.additionalContext)
+      .toContain("graph_locate");
+
+    expect(
+      (await run(
+        "claude-read",
+        '{"tool_name":"Grep","tool_input":{"pattern":"x","path":"graphify-out/graph.json"}}',
+      )).stdout.length,
+    ).toBe(0);
+  });
+
   test("a dead server is a fast, successful no-op", async () => {
     server.stop(true);
     const started = performance.now();

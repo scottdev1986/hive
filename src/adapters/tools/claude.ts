@@ -527,8 +527,19 @@ export async function writeClaudeAgentConfig(
                 matcher: "Bash",
                 hooks: [{ type: "command", command: graphifyCommand("search") }],
               },
+              // Grep belongs HERE, not on the Bash matcher. The `search` branch
+              // filters shell commands with case-sensitive lowercase patterns
+              // (*grep*, *"rg "*), and a native Grep call's hook input says
+              // `"tool_name":"Grep"` — capital G, no shell command at all — so
+              // it would fall straight through that filter and exit silent. The
+              // gap that mattered: `Bash` only ever caught SHELLED-OUT search,
+              // which is the route the harness steers models away from, while
+              // the native Grep tool — the likeliest search of all — was in no
+              // matcher whatsoever. This branch suppresses nothing but reads of
+              // graph output, which is the correct rule for Grep too: an agent
+              // already grepping inside graphify-out/ needs no nudge.
               {
-                matcher: "Read|Glob",
+                matcher: "Read|Glob|Grep",
                 hooks: [{ type: "command", command: graphifyCommand("read") }],
               },
             ],

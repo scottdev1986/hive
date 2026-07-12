@@ -445,7 +445,20 @@ describe("Claude adapter", () => {
       url: "http://127.0.0.1:7799/mcp",
     });
     expect(withGraphSettings.hooks.PreToolUse?.map((entry) => entry.matcher))
-      .toEqual(["Bash", "Read|Glob"]);
+      .toEqual(["Bash", "Read|Glob|Grep"]);
+    // The gap that let a whole agent run search the repo without one nudge:
+    // Claude Code's NATIVE Grep tool was in no matcher, and Bash only ever saw
+    // shelled-out search — the route the harness steers models away from. Assert
+    // coverage the way the harness resolves it, as a regex against the tool
+    // name, so a matcher string that no longer matches "Grep" fails here rather
+    // than reading as covered.
+    const matchers = withGraphSettings.hooks.PreToolUse?.map((entry) =>
+      entry.matcher
+    ) ?? [];
+    for (const tool of ["Bash", "Read", "Glob", "Grep"]) {
+      expect(matchers.some((matcher) => new RegExp(`^(${matcher})$`).test(tool)))
+        .toBe(true);
+    }
     expect(
       await readFile(join(worktreePath, ".claude", GRAPHIFY_HOOK_SCRIPT), "utf8"),
     ).toContain("127.0.0.1:7799/mcp");
