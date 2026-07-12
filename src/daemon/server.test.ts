@@ -865,6 +865,12 @@ describe("HiveDaemon HTTP server", () => {
           claude: { status: "ok", count: 0 },
           codex: { status: "unavailable", reason: "not installed" },
         },
+        benchmark: {
+          status: "off",
+          detail: "disabled in test",
+          releaseDate: null,
+          fetchedAt: null,
+        },
         models: [],
         warnings: [],
       }),

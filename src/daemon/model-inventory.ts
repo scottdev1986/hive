@@ -1,7 +1,11 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { CLAUDE_BEST_MODEL } from "../adapters/tools/models";
-import { loadHiveConfig, loadRoutingPins } from "../config/load";
+import {
+  loadHiveConfig,
+  loadRoutingPins,
+  loadRoutingTable,
+} from "../config/load";
 import { loadTrustedRoutingManifest } from "../config/routing-manifest";
 import type {
   CapabilityProvider,
@@ -9,6 +13,7 @@ import type {
   DerivedRouting,
   ProviderDiscovery,
   RoutingTier,
+  RoutingTable,
 } from "../schemas";
 import {
   defaultRoutingTable,
@@ -26,6 +31,12 @@ import {
   spendRisk,
   type AccountBillings,
 } from "./usage-credits";
+import {
+  liveBenchInventoryBenchmarks,
+  readLiveBench,
+  type LiveBenchRead,
+} from "./livebench";
+import { whatGoverns } from "./routing-resolve";
 
 const hiveHome = (): string => Bun.env.HIVE_HOME ?? join(homedir(), ".hive");
 
@@ -79,6 +90,12 @@ export type ModelInventory = {
     CapabilityProvider,
     { status: "ok"; count: number } | { status: "unavailable"; reason: string }
   >;
+  benchmark: {
+    status: LiveBenchRead["status"] | "not-inspected";
+    detail: string;
+    releaseDate: string | null;
+    fetchedAt: string | null;
+  };
   models: InventoryModel[];
   warnings: string[];
 };
@@ -88,6 +105,8 @@ export type ModelInventoryInput = {
   routing: DerivedRouting;
   billing?: AccountBillings | null;
   benchmarks?: ReadonlyMap<string, InventoryBenchmark[]>;
+  benchmark?: ModelInventory["benchmark"];
+  routes?: RoutingTable;
   now?: Date;
 };
 
@@ -99,6 +118,7 @@ export type ModelInventoryReaderOptions = {
   readConsent?: (canonicalId: string) => "approved" | "denied" | "pending" | "none";
   now?: () => Date;
   benchmarks?: ReadonlyMap<string, InventoryBenchmark[]>;
+  readBenchmarks?: (mode: "auto" | "off") => Promise<LiveBenchRead>;
 };
 
 async function readSnapshot() {
@@ -121,14 +141,17 @@ export async function readModelInventory(
   const readBilling = options.readBilling ?? readBillingWithMemory;
   const config = await loadHiveConfig();
   const trusted = await loadTrustedRoutingManifest(config);
-  const [pins, snapshot, claude, codex, claudeBilling, codexBilling] =
+  const [pins, routes, snapshot, claude, codex, claudeBilling, codexBilling, livebench] =
     await Promise.all([
       loadRoutingPins(),
+      loadRoutingTable(),
       trusted.origin === "kill-switch" ? null : readSnapshot(),
       discover("claude"),
       discover("codex"),
       readBilling("claude"),
       readBilling("codex"),
+      options.readBenchmarks?.(config.benchmarks.livebench) ??
+        readLiveBench({ mode: config.benchmarks.livebench }),
     ]);
   const discovery = { claude, codex };
   const billing: AccountBillings = {
@@ -146,16 +169,32 @@ export async function readModelInventory(
     costConsent: options.readConsent,
     now,
   });
+  const benchmark = {
+    status: livebench.status,
+    detail: livebench.detail,
+    releaseDate: livebench.snapshot?.releaseDate ?? null,
+    fetchedAt: livebench.snapshot?.fetchedAt ?? null,
+  } satisfies ModelInventory["benchmark"];
   const inventory = buildModelInventory({
     discovery,
     routing,
     billing,
-    benchmarks: options.benchmarks,
+    benchmarks: options.benchmarks ??
+      liveBenchInventoryBenchmarks(livebench.snapshot, discovery),
+    benchmark,
+    ...(whatGoverns(config, trusted.origin) === "shipped" ? { routes } : {}),
     now,
   });
   return {
     ...inventory,
-    warnings: [...trusted.warnings, ...routing.warnings, ...inventory.warnings],
+    warnings: [
+      ...trusted.warnings,
+      ...routing.warnings,
+      ...(livebench.status === "last-good" || livebench.status === "unavailable"
+        ? [livebench.detail]
+        : []),
+      ...inventory.warnings,
+    ],
   };
 }
 
@@ -177,13 +216,25 @@ function concreteModel(
     : null;
 }
 
-function rolesFor(
-  record: CapabilityRecord,
-  routing: DerivedRouting,
-): InventoryRole[] {
+function rolesFor(record: CapabilityRecord, input: ModelInventoryInput): InventoryRole[] {
   const roles: InventoryRole[] = [];
-  const discovery = routing.discovery[record.provider];
-  for (const tier of routing.tiers) {
+  const discovery = input.discovery[record.provider];
+  if (input.routes !== undefined) {
+    for (const [tierName, route] of Object.entries(input.routes)) {
+      const cell = route[record.provider];
+      const primary = concreteModel(record.provider, cell.model, discovery);
+      if (primary !== null && recordMatches(record, primary)) {
+        roles.push({
+          tier: tierName as RoutingTier,
+          use: "primary",
+          preferredProvider: route.tool === record.provider,
+          effort: cell.effort ?? null,
+        });
+      }
+    }
+    return roles;
+  }
+  for (const tier of input.routing.tiers) {
     const cell = tier[record.provider];
     const primary = concreteModel(record.provider, cell.model.value, discovery);
     if (primary !== null && recordMatches(record, primary)) {
@@ -254,7 +305,7 @@ export function buildModelInventory(input: ModelInventoryInput): ModelInventory 
     return discovery.status === "ok" ? discovery.records : [];
   });
   const models = records.map((record): InventoryModel => {
-    const roles = rolesFor(record, input.routing);
+    const roles = rolesFor(record, input);
     const benchmarkKey = `${record.provider}\0${record.canonicalId}`;
     return {
       vendor: record.provider,
@@ -314,6 +365,12 @@ export function buildModelInventory(input: ModelInventoryInput): ModelInventory 
     discoveredCount: records.length,
     renderedCount: models.length,
     providers,
+    benchmark: input.benchmark ?? {
+      status: "not-inspected",
+      detail: "Benchmark source was not inspected for this inventory.",
+      releaseDate: null,
+      fetchedAt: null,
+    },
     models,
     warnings,
   };
@@ -324,6 +381,7 @@ export function formatModelInventory(inventory: ModelInventory): string {
     `Model inventory — ALL DISCOVERED MODELS (${inventory.renderedCount}/${inventory.discoveredCount}, ${
       inventory.complete ? "complete" : "INCOMPLETE"
     })`,
+    `LiveBench — ${inventory.benchmark.status}: ${inventory.benchmark.detail}`,
   ];
   for (const provider of ["claude", "codex"] as const) {
     const status = inventory.providers[provider];

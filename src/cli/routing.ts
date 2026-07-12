@@ -1,6 +1,10 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { loadHiveConfig, loadRoutingPins } from "../config/load";
+import {
+  loadHiveConfig,
+  loadRoutingPins,
+  loadRoutingTable,
+} from "../config/load";
 import { whatGoverns } from "../daemon/routing-resolve";
 import {
   loadTrustedRoutingManifest,
@@ -40,6 +44,10 @@ import {
   buildModelInventory,
   formatModelInventory,
 } from "../daemon/model-inventory";
+import {
+  liveBenchInventoryBenchmarks,
+  readLiveBench,
+} from "../daemon/livebench";
 
 /**
  * `hive routing` — the derived table, with per-cell provenance.
@@ -238,22 +246,25 @@ export async function printRouting(): Promise<void> {
     status: "unavailable",
     reason: "not probed — the routing manifest kill switch is engaged",
   };
-  const [pins, claude, codex, snapshot, billing] = await Promise.all([
+  const [pins, routes, liveClaude, liveCodex, snapshot, liveBilling, livebench] = await Promise.all([
     loadRoutingPins(),
-    killed ? unprobed : new ClaudeCapabilityProbe().read(),
-    killed ? unprobed : new CodexCapabilityProbe().read(),
+    loadRoutingTable(),
+    new ClaudeCapabilityProbe().read(),
+    new CodexCapabilityProbe().read(),
     killed ? null : readSnapshot(),
     // What the account is actually charged. Measured, not dated.
-    killed
-      ? null
-      : Promise.all([
-        readBillingWithMemory("claude"),
-        readBillingWithMemory("codex"),
-      ]).then(([claudeBilling, codexBilling]): AccountBillings => ({
-        ...(claudeBilling === null ? {} : { claude: claudeBilling }),
-        ...(codexBilling === null ? {} : { codex: codexBilling }),
-      })),
+    Promise.all([
+      readBillingWithMemory("claude"),
+      readBillingWithMemory("codex"),
+    ]).then(([claudeBilling, codexBilling]): AccountBillings => ({
+      ...(claudeBilling === null ? {} : { claude: claudeBilling }),
+      ...(codexBilling === null ? {} : { codex: codexBilling }),
+    })),
+    readLiveBench({ mode: config.benchmarks.livebench }),
   ]);
+  const claude = killed ? unprobed : liveClaude;
+  const codex = killed ? unprobed : liveCodex;
+  const billing = killed ? null : liveBilling;
 
   // The consent ledger is the approvals queue Hive already has. Opened read-only
   // here; the only write is filing a question nobody has been asked yet.
@@ -285,9 +296,20 @@ export async function printRouting(): Promise<void> {
 
   console.log(formatDerivedRouting(derived, now, trusted, billing, governs));
   console.log("\n" + formatModelInventory(buildModelInventory({
-    discovery: { claude, codex },
+    discovery: { claude: liveClaude, codex: liveCodex },
     routing: derived,
-    billing,
+    billing: liveBilling,
+    benchmarks: liveBenchInventoryBenchmarks(livebench.snapshot, {
+      claude: liveClaude,
+      codex: liveCodex,
+    }),
+    benchmark: {
+      status: livebench.status,
+      detail: livebench.detail,
+      releaseDate: livebench.snapshot?.releaseDate ?? null,
+      fetchedAt: livebench.snapshot?.fetchedAt ?? null,
+    },
+    ...(governs === "shipped" ? { routes } : {}),
     now,
   })));
 

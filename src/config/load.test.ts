@@ -51,6 +51,7 @@ describe("config loading", () => {
       autonomy: "sandboxed",
       routingManifest: "auto",
       router: "derived",
+      benchmarks: { livebench: "auto" },
       resources: {
         enabled: true,
         perProcessMemoryMb: 12_288,
@@ -80,6 +81,15 @@ describe("config loading", () => {
       'autonomy = "dangerous"\n',
     );
     expect((await loadHiveConfig()).autonomy).toEqual("dangerous");
+  });
+
+  test("the LiveBench kill switch is explicit and defaults back to auto", async () => {
+    await resetHome();
+    await writeFile(
+      join(hiveHome, "config.toml"),
+      '[benchmarks]\nlivebench = "off"\n',
+    );
+    expect((await loadHiveConfig()).benchmarks.livebench).toBe("off");
   });
 
   test("parses model-specific quota pools and rejects invalid timezone configuration", async () => {
@@ -166,6 +176,7 @@ describe("config loading", () => {
       autonomy: "sandboxed",
       routingManifest: "auto",
       router: "derived",
+      benchmarks: { livebench: "auto" },
       resources: {
         enabled: true,
         perProcessMemoryMb: 12_288,

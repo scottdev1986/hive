@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { known, unknown, type CapabilityRecord, type DerivedRouting } from "../schemas";
+import {
+  DEFAULT_ROUTING,
+  known,
+  unknown,
+  type CapabilityRecord,
+  type DerivedRouting,
+} from "../schemas";
 import { buildModelInventory, formatModelInventory } from "./model-inventory";
 
 const AT = "2026-07-11T12:00:00.000Z";
@@ -126,5 +132,28 @@ describe("model inventory", () => {
     expect(text).toContain("Quota fallback for deep work");
     expect(text).toContain("CLI 0.144.1");
     expect(text).toContain("benchmark   unknown");
+  });
+
+  test("reports the shipped table rather than derived counterfactuals when it governs", () => {
+    const inventory = buildModelInventory({
+      discovery,
+      routing,
+      routes: {
+        ...DEFAULT_ROUTING,
+        deep: {
+          tool: "codex",
+          claude: { model: "claude-fable-5" },
+          codex: { model: "gpt-spare", effort: "low" },
+        },
+      },
+    });
+    expect(inventory.models.find((model) => model.canonicalId === "gpt-hidden"))
+      .toMatchObject({ routedCandidate: false, roles: [] });
+    expect(inventory.models.find((model) => model.canonicalId === "gpt-spare"))
+      .toMatchObject({
+        roles: expect.arrayContaining([
+          { tier: "deep", use: "primary", preferredProvider: true, effort: "low" },
+        ]),
+      });
   });
 });

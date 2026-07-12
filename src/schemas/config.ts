@@ -22,6 +22,13 @@ export const LifecycleConfigSchema = z.strictObject({
   idleReapMinutes: z.number().int().positive().default(10),
 });
 
+export const BenchmarkConfigSchema = z.strictObject({
+  // "off" is a hard network and data-use kill switch. Cached measurements are
+  // not surfaced while it is engaged, so disabling the source means disabling
+  // its influence even in shadow and inspection output.
+  livebench: z.enum(["auto", "off"]).default("auto"),
+});
+
 export const HiveConfigSchema = z.strictObject({
   terminal: z.enum(["iterm2", "terminal", "auto"]).default("auto"),
   headless: z.boolean().default(false),
@@ -76,10 +83,12 @@ export const HiveConfigSchema = z.strictObject({
   // stops it governing, which is the hammer for "the ROUTER is wrong". Escaping a
   // bad router should not also blind the instrument that would show why.
   router: z.enum(["derived", "shipped"]).default("derived"),
+  benchmarks: BenchmarkConfigSchema.prefault({}),
   resources: ResourceLimitsSchema.prefault({}),
   lifecycle: LifecycleConfigSchema.prefault({}),
 });
 
 export type ResourceLimits = z.infer<typeof ResourceLimitsSchema>;
 export type LifecycleConfig = z.infer<typeof LifecycleConfigSchema>;
+export type BenchmarkConfig = z.infer<typeof BenchmarkConfigSchema>;
 export type HiveConfig = z.infer<typeof HiveConfigSchema>;

@@ -24,6 +24,11 @@ import {
   type AccountBilling,
   type AccountBillings,
 } from "./usage-credits";
+import {
+  liveBenchInventoryBenchmarks,
+  readLiveBench,
+  type LiveBenchRead,
+} from "./livebench";
 
 /**
  * Shadow mode: derive what the router *would* have chosen, record it beside what
@@ -106,6 +111,18 @@ export const ShadowObservationSchema = z.strictObject({
   /** A user-pinned spawn model. The router did not choose it, so it is excluded. */
   userPinned: z.boolean(),
   manifestRevision: z.string().nullable(),
+  /** Published measurements beside the route Hive derived. Shadow evidence only. */
+  benchmark: z.strictObject({
+    status: z.enum(["off", "current", "last-good", "unavailable"]),
+    releaseDate: z.string().nullable(),
+    fetchedAt: z.string().nullable(),
+    matched: z.strictObject({
+      model: z.string().min(1),
+      effort: z.string().min(1),
+      scores: z.record(z.string(), z.number().finite()),
+      source: z.string().url(),
+    }).nullable(),
+  }).nullable().default(null),
   /** The model's answer, past the transport. */
   outcome: z.enum(["launched", "failed"]),
   failureReason: z.string().nullable(),
@@ -135,6 +152,7 @@ export interface ShadowDependencies {
   readBilling?: (
     provider: CapabilityProvider,
   ) => Promise<AccountBilling | null>;
+  readBenchmarks?: (mode: "auto" | "off") => Promise<LiveBenchRead>;
 }
 
 const ladderLayers: ReadonlySet<ResolutionLayer> = new Set([
@@ -182,6 +200,10 @@ export async function recordShadowObservation(
       dependencies.readBilling?.("codex") ?? readBillingWithMemory("codex"),
     ]);
     const trusted = await loadTrustedRoutingManifest(config);
+    const livebench = await (
+      dependencies.readBenchmarks?.(config.benchmarks.livebench) ??
+        readLiveBench({ mode: config.benchmarks.livebench })
+    );
 
     const derivation = deriveRouting({
       manifest: trusted.manifest,
@@ -210,6 +232,7 @@ export async function recordShadowObservation(
       now,
       whatGoverns(config, trusted.origin),
       await shippedChoice(spawn.tier, { claude, codex }),
+      shadowBenchmark(livebench, { claude, codex }, tier),
     );
     const line = `${JSON.stringify(observation)}\n`;
     if (dependencies.append !== undefined) {
@@ -266,6 +289,7 @@ function compare(
   now: Date,
   governedBy: "derived" | "shipped",
   shipped: { tool: CapabilityProvider; model: string; effort: string | null },
+  benchmark: ShadowObservation["benchmark"],
 ): ShadowObservation {
   // The derived route is read from the tool the derivation itself chose, not from
   // the tool that actually launched: comparing the derived model of one vendor
@@ -309,8 +333,50 @@ function compare(
     floorViolation,
     userPinned: spawn.userPinned,
     manifestRevision,
+    benchmark,
     outcome: spawn.outcome,
     failureReason: spawn.failureReason,
+  };
+}
+
+export function shadowBenchmark(
+  read: LiveBenchRead,
+  discovery: Record<CapabilityProvider, CapabilityDiscoveryResult>,
+  tier: DerivedTier,
+): NonNullable<ShadowObservation["benchmark"]> {
+  const tool = tier.tool.value ?? "claude";
+  const cell = tier[tool];
+  const provider = discovery[tool];
+  const records = provider.status === "ok" ? provider.records : [];
+  const record = cell.model.value === null
+    ? undefined
+    : records.find((candidate) =>
+        candidate.canonicalId === cell.model.value ||
+        candidate.launchToken === cell.model.value ||
+        candidate.aliases.includes(cell.model.value!)
+      );
+  const effort = cell.effort.value;
+  const benchmarks = liveBenchInventoryBenchmarks(read.snapshot, {
+    claude: discovery.claude as ProviderDiscovery,
+    codex: discovery.codex as ProviderDiscovery,
+  });
+  const match = record === undefined || effort === null
+    ? undefined
+    : benchmarks.get(`${tool}\0${record.canonicalId}`)?.find((row) =>
+        row.effort === effort
+      );
+  return {
+    status: read.status,
+    releaseDate: read.snapshot?.releaseDate ?? null,
+    fetchedAt: read.snapshot?.fetchedAt ?? null,
+    matched: match === undefined || record === undefined
+      ? null
+      : {
+          model: record.canonicalId,
+          effort: match.effort,
+          scores: { ...match.scores },
+          source: match.source,
+        },
   };
 }
 

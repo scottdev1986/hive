@@ -43,6 +43,26 @@ const rollback = (
 ) => summary.rollback.find((entry) => entry.id === id)!;
 
 describe("the comparison", () => {
+  test("keeps benchmark measurements beside the derived route without changing it", () => {
+    expect(base.benchmark).toBeNull();
+    const measured = ShadowObservationSchema.parse({
+      ...base,
+      benchmark: {
+        status: "current",
+        releaseDate: "2026-06-25",
+        fetchedAt: "2026-07-11T12:00:00.000Z",
+        matched: {
+          model: "claude-fable-5",
+          effort: "xhigh",
+          scores: { code_generation: 85.5 },
+          source: "https://livebench.ai/table_2026_06_25.csv",
+        },
+      },
+    });
+    expect(measured.derived).toEqual(base.derived);
+    expect(measured.benchmark?.matched?.scores).toEqual({ code_generation: 85.5 });
+  });
+
   test("agreement and divergence are counted per field, with the reason", () => {
     const summary = summarizeShadow([
       ...many(2),
