@@ -160,6 +160,25 @@ describe("the flip: derived routes govern live spawns", () => {
   });
 });
 
+describe("manifest expiry degrades loudly, never silently", () => {
+  test("a spawn past validUntil resolves by ladder and names the expiry", async () => {
+    // Nothing else changes: same discovery, same account, only the clock. The
+    // compiled-in manifest has expired, so no cell derives from it — and the
+    // route that governs this spawn must say so instead of quietly becoming
+    // whatever the ladder found.
+    const after = new Date("2026-09-01T00:00:00Z");
+    const governing = await resolveGoverningRoute("deep", {
+      ...io(),
+      now: () => after,
+    });
+    expect(governing).not.toBeNull();
+    expect(governing!.notes.join(" ")).toContain("EXPIRED");
+    // The engine still governs (no null revert): expiry is a degraded
+    // derivation, not the shipped-table escape hatch.
+    expect(governing!.route.claude.model).not.toBe("best");
+  });
+});
+
 describe("the escape hatches, and they are config, not code", () => {
   test('router = "shipped" reverts to the shipped table, live', async () => {
     await config('router = "shipped"\n');

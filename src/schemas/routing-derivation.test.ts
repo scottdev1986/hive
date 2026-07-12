@@ -322,6 +322,24 @@ describe("the fallback ladder, rung by rung", () => {
     expect(derived.manifest?.expired).toBe(true);
     expect(derived.warnings.join(" ")).toContain("expired");
   });
+
+  test("expiry is loud on its own, and cells ride last-known-good, not shipped", () => {
+    const later = new Date("2026-09-01T00:00:00Z");
+    const derived = deriveRouting(
+      input({ now: later, discovery: blind, snapshot: SNAPSHOT }),
+    );
+    // One top-level warning names the expiry itself, before any cell bottoms out.
+    expect(derived.warnings.some((warning) =>
+      warning.includes("EXPIRED") && warning.includes("Update hive")
+    )).toBe(true);
+    // The deep cells fall to the snapshot — degraded, honest, and NOT the
+    // compiled-in table.
+    const deep = tierOf(derived, "deep");
+    expect(deep.claude.model.value).toBe("claude-fable-5");
+    expect(deep.claude.model.layer).toBe("ladder:last-known-good");
+    expect(deep.codex.effort.value).toBe("medium");
+    expect(deep.codex.effort.layer).toBe("ladder:last-known-good");
+  });
 });
 
 describe("the spend guard: consent attaches to money, not to a model", () => {

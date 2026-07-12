@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   loadTrustedRoutingManifest,
+  manifestExpiryAlert,
   ROUTING_MANIFEST_FILE,
   ROUTING_SIGNATURE_FILE,
 } from "./routing-manifest";
@@ -165,5 +166,22 @@ describe("the kill switch", () => {
     expect(trusted.origin).toBe("kill-switch");
     expect(trusted.manifest).toBeNull();
     expect(trusted.warnings[0]).toContain("KILL SWITCH");
+  });
+});
+
+describe("the expiry alert the maintenance tick sends", () => {
+  test("a current manifest alerts nothing", () => {
+    const before = new Date(Date.parse(FIRST_ROUTING_MANIFEST.validUntil) - 1);
+    expect(manifestExpiryAlert(FIRST_ROUTING_MANIFEST, before)).toBeNull();
+    expect(manifestExpiryAlert(null, before)).toBeNull();
+  });
+
+  test("an expired one names the revision, the date, and the remedy", () => {
+    const after = new Date(Date.parse(FIRST_ROUTING_MANIFEST.validUntil) + 1);
+    const alert = manifestExpiryAlert(FIRST_ROUTING_MANIFEST, after)!;
+    expect(alert).toContain(FIRST_ROUTING_MANIFEST.revision);
+    expect(alert).toContain(FIRST_ROUTING_MANIFEST.validUntil);
+    expect(alert).toContain("last-known-good");
+    expect(alert).toContain("update hive");
   });
 });

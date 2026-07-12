@@ -164,3 +164,21 @@ export async function loadTrustedRoutingManifest(
     warnings: [],
   };
 }
+
+/**
+ * The user-facing expiry alert, or `null` while the manifest is current. Pure so
+ * the clock is the caller's: the daemon sends it from maintenance (deduplicated
+ * per revision), and a test can drive the boundary without waiting for it.
+ */
+export function manifestExpiryAlert(
+  manifest: RoutingManifest | null,
+  now: Date,
+): string | null {
+  if (manifest === null) return null;
+  if (now.getTime() < Date.parse(manifest.validUntil)) return null;
+  return `The routing manifest ${manifest.revision} EXPIRED at ` +
+    `${manifest.validUntil}. It supplies no candidates: spawns continue on ` +
+    "last-known-good derivations where a snapshot exists and fall to the " +
+    "provider default or the compiled-in table where none does. Routing is " +
+    "degraded, not broken — update hive to install a current manifest.";
+}

@@ -260,10 +260,24 @@ export function deriveRouting(input: DerivationInput): DerivedRouting {
       consentRequired.push({ canonicalId, detail });
     }
   };
+  const manifest = input.manifest;
+  // Expiry is loud the moment it happens, not just when a cell finally hits the
+  // compiled-in table. An expired manifest supplies no candidates, so every cell
+  // is already living on the ladder — the user should hear that once, plainly,
+  // rather than discover it tier by tier as snapshots age out.
+  if (manifest !== null && manifestExpired(input)) {
+    warn(
+      `manifest ${manifest.revision} EXPIRED at ${manifest.validUntil}: it ` +
+        "supplies no candidates. Cells continue on last-known-good derivations " +
+        "where a snapshot exists and fall to the provider default or the " +
+        "compiled-in table where none does. Update hive to install a current " +
+        "manifest — expiry degrades loudly, it never quietly becomes the " +
+        "shipped table.",
+    );
+  }
   const tiers = ROUTING_TIERS.map((tier) =>
     deriveTier(tier, input, warn, needConsent)
   );
-  const manifest = input.manifest;
   return {
     derivedAt: input.now.toISOString(),
     manifest: manifest === null ? null : {

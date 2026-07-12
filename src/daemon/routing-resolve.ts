@@ -181,6 +181,19 @@ export async function resolveGoverningRoute(
   const chainOf = (column: DerivedCell): string[] =>
     column.model.layer === "pinned" ? [] : column.chain;
 
+  const notes = [...cell.claude.notes, ...cell.codex.notes];
+  // An expired manifest is named on every spawn it fails to govern, not only in
+  // `hive routing` for whoever thinks to look: this launch resolved through the
+  // ladder, and a route that silently stopped being derived is the exact silence
+  // the derivation engine exists to end.
+  if (derived.manifest?.expired === true) {
+    notes.unshift(
+      `manifest ${derived.manifest.revision} EXPIRED at ` +
+        `${derived.manifest.validUntil}; this spawn resolved without it ` +
+        "(last-known-good → provider default → compiled-in table). Update hive.",
+    );
+  }
+
   return {
     route: {
       tool: cell.tool.value ?? shipped!.tool,
@@ -194,6 +207,6 @@ export async function resolveGoverningRoute(
       },
     },
     chain: { claude: chainOf(cell.claude), codex: chainOf(cell.codex) },
-    notes: [...cell.claude.notes, ...cell.codex.notes],
+    notes,
   };
 }
