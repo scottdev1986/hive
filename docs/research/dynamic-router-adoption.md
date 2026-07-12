@@ -68,14 +68,17 @@ Build on what exists: abel's quota work already quarantines auto-adoption on a p
 
 ## 6. What Hive asks him, and what it never decides
 
-**Hive is not in the business of model judgment.** It does not score models, rank them, consult the internet, read benchmarks, or form an opinion about which model is better. It cannot do that job well, and every attempt would be a claim wearing a measurement's clothes — the exact failure this whole line of work exists to end.
+**Hive is not in the business of model judgment.** His ruling, in his own words, and the words matter: *"hive is not the judge as in hive does not self benchmark models we find reputable sources that do that for us."* So the ban is on Hive **producing** judgment — running its own evaluations, scoring models itself, or letting any LLM's training-time memory, prose verdict, or name-based hunch near a route. Every one of those would be a claim wearing a measurement's clothes, the exact failure this whole line of work exists to end. What the ban never covered is Hive **consuming** a measurement someone reputable already took. **Hive is a consumer of benchmarks, never a producer of them.**
 
-There are **two sources of truth, and no third**:
+(An earlier revision of this section read the ruling wider than he meant it — "does not consult the internet, read benchmarks" — and this paragraph exists so the narrowing is on the record rather than silently rewritten: the ban was always on Hive's *opinion*, and a fetched, dated, third-party number is not an opinion. It is data, exactly as a quota percentage read off the provider is data.)
+
+There are **three sources of truth, and no fourth**:
 
 1. **What the vendor declares**, read live off the surface. Facts. No judgment required to read them.
-2. **What the user decides.** He is the judge of models. Hive is not.
+2. **What reputable external benchmarks measured** — published results from sources that are not model vendors, score against ground truth rather than an LLM's or a crowd's taste, and refresh against contamination. Always carried with source, release, and fetch date; a model without published numbers says "no published numbers", which per this repo's standing rule (accurate numbers only) is a first-class answer, never a blank to fill.
+3. **What the user decides.** He is the judge of what the numbers *mean* — thresholds, placements, floors. Hive relays measurements; he sets policy; Hive executes his policy. Hive still never grades anything itself.
 
-So the whole of adoption is: **Hive detects the model, shows him what the vendor declares, and asks where it belongs. He answers once. Hive remembers it and routes on it forever** — no re-release, no manifest publish, no rebuild. The detection and the plumbing are Hive's; the judgment is his. That is fully dynamic, and Hive never grades anything.
+So the whole of adoption is: **Hive detects the model, shows him what the vendor declares and what the benchmarks measured, and asks where it belongs. He answers once. Hive remembers it and routes on it forever** — no re-release, no manifest publish, no rebuild. Benchmarks may *propose*; only he (or a standing policy he approved) *places*.
 
 ```
 NEW MODEL DETECTED — gpt-5.7 (Codex), first seen 2026-07-13 09:14.
@@ -86,16 +89,25 @@ WHAT THE VENDOR DECLARES (read from your account just now):
   effort levels       low, medium, high, xhigh, max, ultra
   metered separately  YES — the vendor gives it its own pool, so it meters it as heavy
   vendor default      no  (your unflagged launch is still gpt-5.6-sol)
-  coding-capable      the vendor does not publish this. Nobody has said. That is why you are being asked.
+  coding-capable      the vendor does not publish this. Nobody has said.
+
+WHAT THE BENCHMARKS MEASURED (source: LiveBench, the set you approved
+2026-07-12; each number carries its source, release, and fetch date):
+  agentic coding      no published numbers yet for this model
+  (numbers appear here as the sources publish them; Hive never fills the gap)
 
 WHERE DOES IT BELONG?   [deep] [standard] [cheap] [review] [never] [not yet — ask me again later]
 ```
 
-No score. No recommendation. No prose from Hive about whether the model is any good. The card is the vendor's facts and one question.
+No score *from Hive*. No recommendation *from Hive*. The card is the vendor's facts, the sources' measurements with their dates, and one question.
 
-**The one thing Hive may adopt without asking is a rank the VENDOR declares.** An alias like `best`, an `isDefault`, an explicit ordering, or the account's effective default (`config/read`; the menu's `default` entry) is *the vendor's judgment*, and passing it through is honest reporting rather than Hive opining. So when the vendor promotes a new model to be the account's default, Hive may take it into the cells the previous default occupied — like for like — and tell him after the fact. When the vendor declares nothing that places a model, **Hive asks. It does not guess, it does not score, and it does not consult the internet.**
+**The one thing Hive may adopt without asking is a rank the VENDOR declares.** An alias like `best`, an `isDefault`, an explicit ordering, or the account's effective default (`config/read`; the menu's `default` entry) is *the vendor's judgment*, and passing it through is honest reporting rather than Hive opining. So when the vendor promotes a new model to be the account's default, Hive may take it into the cells the previous default occupied — like for like — and tell him after the fact. When neither the vendor nor his standing policy places a model, **Hive asks. It does not guess, it does not score, and it does not invent a number no source published.**
 
-And because nothing in the routing path ever fetches a web page, **there is no prompt-injection surface here to defend.** A feature that cannot be attacked beats one that is defended.
+**The fetch is an attack surface now, and it is defended by its shape.** The old comfort — "nothing in the routing path ever fetches a web page, so there is no prompt-injection surface" — is repealed along with the wider reading that produced it. What replaces it: the daemon fetches **schema-validated numbers only**; no fetched prose ever reaches an LLM prompt or a routing decision as text; a payload that does not parse as the numbers it claims to be is discarded in favour of the last good one, with its age shown. A compromised source can at worst mis-*propose* — and a proposal still crosses his desk.
+
+**And the manifest is gone.** The hand-authored, compiled-in candidate manifest (`FIRST_ROUTING_MANIFEST`), the shipped alias table, and the model-name constants were removed as route sources on 2026-07-12, by his directive: the binary ships with no model knowledge, and on a rebuild he can watch Hive build its model data from nothing. Routes now derive from live discovery (the account's own effective default, vouched by a fresh record), his `routing.toml`, and the last-known-good derivation when discovery is down; where none of those can author a cell, Hive **refuses the spawn and names the vendor CLI it needs** — never a baked-in list, because there is none. What still ships is policy that names no model: tier→vendor preference and tier→effort, both user-overridable. The capability floor currently has no declarer — every unpinned coding cell says "no capability evidence" out loud — until the benchmark surface or his policy supplies one.
+
+**The philosophy, in ten pillars** (his, normalized; the README gets these once the machinery is finished): (1) the correct agent at the correct effort for the job; (2) the router ships EMPTY — no predetermined model knowledge; Hive learns the catalog from the vendors at runtime, and humans never hand-update a list; (3) benchmarks are consumed from reputable, unbiased external sources as new models appear — the registered set (user-ruled 2026-07-12) is LiveBench alone, after sources requiring API keys or terms-of-service acceptance were ruled out; the set is user-changeable policy, never code; (4) fit outranks rank — an easier task goes to the cheapest agent capable of it; (5) selection respects measured quota state; (6) off-plan models run only with usage-credits enabled AND permission; (7) effort is chosen, not just the model; (8) the orchestrator can answer "what models are available, and when would Hive use each?" at runtime without reading code (`hive_models`), and the surface lists ALL of them; (9) the docs and memories word this philosophy, and once built it goes in the README; (10) an agent that discovers mid-task it is the wrong model for the job escalates with evidence and is re-routed by handoff (`hive_escalate`), rather than grinding on under-powered or quietly lowering its quality bar.
 
 ## 7. What Hive may still report: what it saw, never what it thinks
 
@@ -106,9 +118,11 @@ That is **measurement, not judgment** — Hive reporting what happened, not deci
 - It is **shown to him**, never acted on. It must never silently re-rank his routing. Even here, he decides.
 - It is reported as **what happened**, not as a verdict: *"3 of 4 deep spawns on this model failed to launch"*, never *"this model is unreliable"*.
 
-**And be honest about what it does and does not measure.** These signals capture **reliability**, not **quality**. They can tell him a model crashed, hung, or needed rescuing. They cannot tell him the model produced **wrong code**, which is the failure he actually fears — *"a cheap model that produces wrong work is not a saving; it costs him a whole task and he may not notice."* Nothing counts an escalation; nothing records whether the work **landed**, was **reverted**, or was **redone**.
+**And be honest about what it does and does not measure.** These signals capture **reliability**, not **quality**. They can tell him a model crashed, hung, or needed rescuing. They cannot tell him the model produced **wrong code**, which is the failure he actually fears — *"a cheap model that produces wrong work is not a saving; it costs him a whole task and he may not notice."* One quality-adjacent signal is now counted: **tier escalations** (`hive_escalate` writes a row per claim, keyed to the launch model and tier), so "this tier on this model keeps telling us it is under-powered" is a measured fact the routing surfaces show him — measured and shown, exactly like everything else here, never a silent re-ranker. But nothing yet records whether the work **landed**, was **reverted**, or was **redone**.
 
 That missing signal is one join away: `hive_land` already performs the merge and knows the agent, and therefore the model. Recording *landed / abandoned / reverted* per agent would turn reliability telemetry into quality telemetry. Not to be built now, and not to be designed out — but note that even then it stays a **report to him**, never an input that re-ranks his routes behind his back.
+
+The same two rules govern the **external** numbers §6 admits: a benchmark score is shown beside the vendor's facts and his placements, with its source and dates; it proposes, he decides. Hive's own telemetry and the sources' published measurements differ in who took them, not in who judges them.
 
 ## Open, and I am not closing them by guessing
 
