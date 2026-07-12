@@ -6,7 +6,14 @@ import {
   expect,
   test,
 } from "bun:test";
-import { mkdtemp, mkdir, readFile, realpath, rm } from "node:fs/promises";
+import {
+  mkdtemp,
+  mkdir,
+  readFile,
+  realpath,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { TerminalAdapter } from "../adapters/terminal";
@@ -26,6 +33,7 @@ import type {
   AgentRecord,
   AgentMessage,
   CapabilityRecord,
+  QuotaPoolStatus,
   Route,
   RoutingTier,
   TerminalHandle,
@@ -1271,6 +1279,172 @@ describe("HiveSpawner wiring", () => {
     expect(
       quota.ledger.getReservation(spawned.quotaReservationId!)?.startedAt,
     ).not.toEqual(null);
+    quotaDb.close();
+  });
+
+  /**
+   * The window between the quota booking and the agent row.
+   *
+   * A spawn books capacity before it writes the row that remembers the booking,
+   * so a throw in between leaves a reservation no agent owns — and the
+   * dead-agent sweep deliberately skips a reservation with no row, reading it as
+   * a spawn still in flight. Nothing then reclaims it until its six-hour TTL,
+   * while `reserved` counts it the whole time and can refuse a spawn Hive has
+   * room for.
+   *
+   * These assert the EFFECT, through the same surface the daemon and the CLI
+   * read: `statuses()`. A cancel that was called but settled nothing would pass
+   * a "was cancel invoked" test and fail these.
+   */
+  function strandingQuota(root: string): { db: HiveDatabase; quota: QuotaService } {
+    const db = new HiveDatabase(join(root, "quota.db"));
+    return {
+      db,
+      quota: new QuotaService(
+        new QuotaLedger(db),
+        QuotaConfigSchema.parse({
+          discovery: false,
+          reserveFiveHourPct: 0,
+          reserveWeeklyPct: 0,
+          limits: [
+            {
+              provider: "claude",
+              account: "default",
+              pool: "claude",
+              models: ["claude-fable-5"],
+              fiveHourAllowance: 20,
+              weeklyAllowance: 20,
+            },
+            {
+              provider: "codex",
+              account: "default",
+              pool: "codex",
+              models: ["gpt-5.6-sol"],
+              fiveHourAllowance: 100,
+              weeklyAllowance: 100,
+            },
+          ],
+        }),
+        () => new Date(timestamp),
+      ),
+    };
+  }
+
+  /** What a reader of `hive quota` would see held against the routed pool. */
+  function reservedOnCodex(quota: QuotaService): number {
+    const status = quota.statuses().find((entry): entry is QuotaPoolStatus =>
+      "pool" in entry && entry.pool === "codex"
+    );
+    if (status === undefined) {
+      throw new Error("codex pool is absent from statuses() — the reader is blind");
+    }
+    return status.fiveHour.reserved;
+  }
+
+  test("a live spawn's booking is visible as reserved capacity", async () => {
+    // The positive control. Every assertion below is that `reserved` came back
+    // to 0; that is only evidence if this reader can show a booking it is
+    // holding. An all-zero reader would pass the leak tests while blind.
+    const root = await mkdtemp(join(tmpdir(), "hive-spawner-reserved-seen-"));
+    tempRoots.push(root);
+    const { db: quotaDb, quota } = strandingQuota(root);
+    const store = new FakeStore();
+    const spawner = new HiveSpawner({
+      db: store,
+      repoRoot: root,
+      port: 4317,
+      config: { terminal: "auto", headless: true },
+      routing: async () => DEFAULT_ROUTING.deep,
+      tmux: new FakeTmux(),
+      terminal: new FakeTerminal(),
+      createWorktree: async (_repoRoot, name, slug) => {
+        const path = join(root, name);
+        await mkdir(path, { recursive: true });
+        return { path, branch: `hive/${name}-${slug}` };
+      },
+      sleep: signalReadiness(store),
+      resolveModel: fakeResolveModel,
+      quota,
+    });
+
+    await spawner.spawn({ task: "Deep task", tier: "deep" });
+    expect(reservedOnCodex(quota)).toBeGreaterThan(0);
+    expect(quota.ledger.activeReservations()).toHaveLength(1);
+    quotaDb.close();
+  });
+
+  test("a spawn whose memory index fails after booking holds no quota", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-spawner-strand-memory-"));
+    tempRoots.push(root);
+    const { db: quotaDb, quota } = strandingQuota(root);
+    const store = new FakeStore();
+    const spawner = new HiveSpawner({
+      db: store,
+      repoRoot: root,
+      port: 4317,
+      config: { terminal: "auto", headless: true },
+      routing: async () => DEFAULT_ROUTING.deep,
+      tmux: new FakeTmux(),
+      terminal: new FakeTerminal(),
+      // A worktree path that is a regular file, not a directory. buildMemoryIndex
+      // walks it and dies on ENOTDIR — the real rejection, not a mocked one, and
+      // the one promise in that Promise.all with no `.catch` of its own.
+      createWorktree: async (_repoRoot, name, slug) => {
+        const path = join(root, `${name}-not-a-directory`);
+        await writeFile(path, "worktree path is a file");
+        return { path, branch: `hive/${name}-${slug}` };
+      },
+      sleep: signalReadiness(store),
+      resolveModel: fakeResolveModel,
+      quota,
+    });
+
+    await expect(spawner.spawn({ task: "Deep task", tier: "deep" })).rejects
+      .toThrow();
+    expect(store.listAgents()).toEqual([]);
+    expect(reservedOnCodex(quota)).toEqual(0);
+    expect(quota.ledger.activeReservations()).toEqual([]);
+    quotaDb.close();
+  });
+
+  test("a spawn whose agent-row write fails after booking holds no quota", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-spawner-strand-insert-"));
+    tempRoots.push(root);
+    const { db: quotaDb, quota } = strandingQuota(root);
+    // The second throw site in the same window, and the one a `.catch` on
+    // buildMemoryIndex would have left leaking.
+    class RefusingStore extends FakeStore {
+      override insertAgent(record: AgentRecord): AgentRecord {
+        if (record.status === "spawning") {
+          throw new Error("agents table write failed");
+        }
+        return super.insertAgent(record);
+      }
+    }
+    const store = new RefusingStore();
+    const spawner = new HiveSpawner({
+      db: store,
+      repoRoot: root,
+      port: 4317,
+      config: { terminal: "auto", headless: true },
+      routing: async () => DEFAULT_ROUTING.deep,
+      tmux: new FakeTmux(),
+      terminal: new FakeTerminal(),
+      createWorktree: async (_repoRoot, name, slug) => {
+        const path = join(root, name);
+        await mkdir(path, { recursive: true });
+        return { path, branch: `hive/${name}-${slug}` };
+      },
+      sleep: signalReadiness(store),
+      resolveModel: fakeResolveModel,
+      quota,
+    });
+
+    await expect(spawner.spawn({ task: "Deep task", tier: "deep" })).rejects
+      .toThrow("agents table write failed");
+    expect(store.listAgents()).toEqual([]);
+    expect(reservedOnCodex(quota)).toEqual(0);
+    expect(quota.ledger.activeReservations()).toEqual([]);
     quotaDb.close();
   });
 

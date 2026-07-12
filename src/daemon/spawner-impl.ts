@@ -1383,9 +1383,48 @@ export class HiveSpawner implements Spawner {
     const name = this.claimAgentName(request.name);
     try {
       return await this.spawnReserved(request, name);
+    } catch (error) {
+      await this.settleStrandedReservation(name);
+      throw error;
     } finally {
       this.dependencies.db.releaseAgentName(name);
     }
+  }
+
+  /**
+   * A spawn that threw may not walk away still holding capacity.
+   *
+   * The booking is made before the agent row is written, and every throw in
+   * between stranded it: with no row, the dead-agent sweep reads the
+   * reservation as a spawn still in flight and skips it, so nothing reclaimed
+   * it until its six-hour TTL — long enough for a phantom to refuse a spawn
+   * Hive had room for. The old defence was a cancel at each throw site we had
+   * thought of, which is a defence that only ever covers the sites we had
+   * thought of: a `buildMemoryIndex` that rejected on a bad worktree, and an
+   * `insertAgent` that hit the database, both walked straight past it.
+   *
+   * So the guard is asked at the one place every failure must pass — and it
+   * asks the LEDGER what the name is still holding rather than trusting a
+   * pointer the caller threaded down, which is the same question
+   * `settleReservationsOfDeadAgents` asks, and for the same reason. A statement
+   * added to that window later cannot reintroduce the leak.
+   *
+   * `cancel` is the honest settle either way: a booking that never started is
+   * released, and one that had already proved life is reconciled at its
+   * estimate rather than silently refunded.
+   */
+  private async settleStrandedReservation(name: string): Promise<void> {
+    const quota = this.dependencies.quota;
+    if (quota === undefined) return;
+    const held = quota.ledger.getActiveReservationForAgent(name);
+    if (held === null) return;
+    await quota.cancel(held.id).catch((error: unknown) => {
+      console.error(
+        `Hive failed to settle the stranded quota reservation for ${name}: ${
+          error instanceof Error ? error.message : "unknown error"
+        }`,
+      );
+    });
   }
 
   /**
@@ -1700,21 +1739,11 @@ export class HiveSpawner implements Spawner {
     {
       const refusal = await this.spendRefusal(tool, model);
       if (refusal !== null) {
-        if (quotaReservationId !== undefined) {
-          await this.dependencies.quota?.cancel(quotaReservationId);
-        }
         throw new Error(`Cannot spawn ${name}: ${refusal}`);
       }
     }
     if (!effortResolved) {
-      try {
-        effort = await resolveEffort(tool, model);
-      } catch (error) {
-        if (quotaReservationId !== undefined) {
-          await this.dependencies.quota?.cancel(quotaReservationId);
-        }
-        throw error;
-      }
+      effort = await resolveEffort(tool, model);
     }
     if (model !== "default") {
       executionIdentity = tool === "claude"
@@ -1729,19 +1758,11 @@ export class HiveSpawner implements Spawner {
             effort: effort ?? "medium",
           };
     }
-    let worktree: CreatedWorktree;
-    try {
-      worktree = await this.makeWorktree(
-        this.dependencies.repoRoot,
-        name,
-        slugify(request.task),
-      );
-    } catch (error) {
-      if (quotaReservationId !== undefined) {
-        await this.dependencies.quota?.cancel(quotaReservationId);
-      }
-      throw error;
-    }
+    const worktree: CreatedWorktree = await this.makeWorktree(
+      this.dependencies.repoRoot,
+      name,
+      slugify(request.task),
+    );
     // The profile is a property of the *project*, not of the branch an agent
     // happens to be on, so it is read from the repo root and generated on demand
     // (SPEC §14) — a fresh clone's first spawn is briefed like any other. A repo
