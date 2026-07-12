@@ -38,10 +38,15 @@ export const RoutingManifestTierSchema = z.looseObject({
   /**
    * The tier's effort default: the knob that makes a cheap tier actually reason
    * cheaply. It is a raw vendor string, validated against the *resolved* model's
-   * advertised levels rather than a Hive enum, and it is optional because no
-   * manifest should ship one yet: nothing measures whether an effort step pays
-   * for itself, so automatic effort stays at the provider's default until
-   * effort-sensitive telemetry exists to justify anything else.
+   * advertised levels rather than a Hive enum. The first manifest deliberately
+   * shipped none — "wait for effort-sensitive telemetry" — and the wait had a
+   * cost nobody priced: with this field absent, a derived cell's effort fell to
+   * the model's own vendor default, so a cheap-tier spawn reasoned at whatever
+   * the vendor felt like while the shipped table's low/medium/high steering sat
+   * bypassed. Effort is CHOSEN per tier, not defaulted: the manifest names the
+   * choice, the engine passes it only when the resolved model's live record
+   * advertises that level, and the discovered per-model default may inform a
+   * human editing this file but never silently governs a derived cell.
    */
   defaultEffort: z.string().min(1).optional(),
 });
@@ -165,8 +170,8 @@ export function manifestCandidates(
 export const FIRST_ROUTING_MANIFEST: RoutingManifest =
   RoutingManifestSchema.parse({
     schema: { major: 1, minor: 0 },
-    revision: "initial",
-    publishedAt: "2026-07-11T00:00:00Z",
+    revision: "2026-07-12-tier-effort",
+    publishedAt: "2026-07-12T00:00:00Z",
     validUntil: "2026-08-11T00:00:00Z",
     models: Object.fromEntries(
       [
@@ -245,11 +250,19 @@ export const FIRST_ROUTING_MANIFEST: RoutingManifest =
           { canonicalId: "claude-opus-4-8" },
         ],
         codex: [{ canonicalId: "gpt-5.6-sol" }],
+        // The tier efforts restore the steering the shipped table always had
+        // (deep=high, standard/review=medium, cheap=low) on the derived path,
+        // which bypassed it: without them a cheap-tier codex cell launched the
+        // manifest's only codex candidate at the vendor's own default effort.
+        // Each value is passed only when the resolved model's live record
+        // advertises it; a model that publishes no levels gets no flag.
+        defaultEffort: "high",
       },
       standard: {
         preferredProvider: "codex",
         claude: [{ canonicalId: "claude-sonnet-5" }],
         codex: [{ canonicalId: "gpt-5.6-sol" }],
+        defaultEffort: "medium",
       },
       cheap: {
         preferredProvider: "codex",
@@ -259,11 +272,13 @@ export const FIRST_ROUTING_MANIFEST: RoutingManifest =
           },
         ],
         codex: [{ canonicalId: "gpt-5.6-sol" }],
+        defaultEffort: "low",
       },
       review: {
         preferredProvider: "claude",
         claude: [{ canonicalId: "claude-sonnet-5" }],
         codex: [{ canonicalId: "gpt-5.6-sol" }],
+        defaultEffort: "medium",
       },
     },
   });

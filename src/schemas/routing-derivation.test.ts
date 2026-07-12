@@ -136,7 +136,7 @@ describe("the resolution order: pin → derived → ladder", () => {
     const deep = tierOf(deriveRouting(input()), "deep");
     expect(deep.claude.model.value).toBe("claude-fable-5");
     expect(deep.claude.model.layer).toBe("derived");
-    expect(deep.claude.model.reason).toContain("initial");
+    expect(deep.claude.model.reason).toContain(FIRST_ROUTING_MANIFEST.revision);
     // The list remainder is the downshift chain, as data instead of a hardcoded
     // Fable→Opus splice.
     expect(deep.claude.chain).toEqual(["claude-opus-4-8"]);
@@ -452,16 +452,79 @@ describe("the spend guard: consent attaches to money, not to a model", () => {
   });
 });
 
+/** FIRST_ROUTING_MANIFEST with every tier's chosen effort stripped, for tests
+ * that exercise the rungs below the tier default. */
+const manifestWithoutTierEfforts = (): RoutingManifest => ({
+  ...FIRST_ROUTING_MANIFEST,
+  tiers: Object.fromEntries(
+    Object.entries(FIRST_ROUTING_MANIFEST.tiers).map((
+      [tier, { defaultEffort: _, ...rest }],
+    ) => [tier, rest]),
+  ) as RoutingManifest["tiers"],
+});
+
 describe("effort resolves against the resolved model, never in parallel", () => {
-  test("codex effort comes from the model's own advertised default", () => {
+  test("the manifest's tier effort governs a derived codex cell", () => {
+    // The tier CHOOSES the effort (deep=high); the model's own advertised
+    // default (medium) informs a human editing the manifest, never the cell.
     const deep = tierOf(deriveRouting(input()), "deep");
+    expect(deep.codex.effort.value).toBe("high");
+    expect(deep.codex.effort.layer).toBe("derived");
+    expect(deep.codex.effort.reason).toContain("[deep].defaultEffort");
+  });
+
+  test("without a tier effort, codex falls to the model's advertised default", () => {
+    const deep = tierOf(
+      deriveRouting(input({ manifest: manifestWithoutTierEfforts() })),
+      "deep",
+    );
     expect(deep.codex.effort.value).toBe("medium");
     expect(deep.codex.effort.layer).toBe("derived");
     expect(deep.codex.effort.reason).toContain("codex.model/list");
   });
 
-  test("claude effort is unknown, and no shipped constant fills the gap", () => {
+  test("a tier effort the model's record cannot ground is refused, not passed", () => {
+    // The test claude records advertise no effort levels, so the tier's chosen
+    // "high" has no vendor evidence behind it: a derived effort is refused
+    // rather than guessed, and the refusal is named on the cell.
     const deep = tierOf(deriveRouting(input()), "deep");
+    expect(deep.claude.effort.value).toBeNull();
+    expect(deep.claude.effort.layer).toBe("unknown");
+    expect(deep.claude.notes.join(" ")).toContain("advertises no effort levels");
+  });
+
+  test("a claude record that advertises the level gets the tier effort", () => {
+    const records = [
+      record("claude", "claude-fable-5", {
+        displayName: "Fable",
+        supportedEffortLevels: known(
+          ["low", "medium", "high", "xhigh", "max"],
+          "claude.initialize",
+          FRESH,
+        ),
+      }),
+      ...CLAUDE_RECORDS.slice(1),
+    ];
+    const deep = tierOf(
+      deriveRouting(
+        input({
+          discovery: {
+            claude: ok(records, CLAUDE_DEFAULT),
+            codex: ok(CODEX_RECORDS, CODEX_DEFAULT),
+          },
+        }),
+      ),
+      "deep",
+    );
+    expect(deep.claude.effort.value).toBe("high");
+    expect(deep.claude.effort.layer).toBe("derived");
+  });
+
+  test("with neither tier effort nor a claude default, nothing fills the gap", () => {
+    const deep = tierOf(
+      deriveRouting(input({ manifest: manifestWithoutTierEfforts() })),
+      "deep",
+    );
     expect(deep.claude.effort.value).toBeNull();
     expect(deep.claude.effort.layer).toBe("unknown");
     expect(deep.claude.effort.reason).toContain("awaits the live statusLine");
@@ -540,9 +603,9 @@ describe("the snapshot records only what was actually derived", () => {
     expect(snapshot.tiers.deep?.claude).toBeNull();
     expect(snapshot.tiers.deep?.codex).toEqual({
       model: "gpt-5.6-sol",
-      effort: "medium",
+      effort: "high",
       derivedAt: NOW.toISOString(),
-      manifestRevision: "initial",
+      manifestRevision: FIRST_ROUTING_MANIFEST.revision,
     });
   });
 
@@ -585,9 +648,9 @@ describe("the snapshot records only what was actually derived", () => {
     )!;
     expect(degraded.tiers.deep?.codex).toEqual({
       model: "gpt-5.6-sol",
-      effort: "medium",
+      effort: "high",
       derivedAt: NOW.toISOString(),
-      manifestRevision: "initial",
+      manifestRevision: FIRST_ROUTING_MANIFEST.revision,
     });
     // Claude was healthy in the degraded run, so its cell is restamped.
     expect(degraded.tiers.review?.claude?.derivedAt).toBe(

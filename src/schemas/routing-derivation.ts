@@ -720,26 +720,59 @@ function resolveEffort(
   // the `supportsEffort` boolean, which only Claude sends: gating on the boolean
   // would refuse an effort flag to every Codex spawn.
   const levels = record?.supportedEffortLevels;
-  if (levels?.state !== "known" || levels.value.includes(resolved.value)) {
+  if (levels?.state === "known" && levels.value.includes(resolved.value)) {
     return resolved;
   }
-  const advertised = levels.value.join(", ") || "none";
   if (resolved.layer === "pinned") {
-    notes.push(
-      `pinned effort ${resolved.value} is not among the levels ${model.value} ` +
-        `advertises (${advertised}); the pin is honoured and the conflict reported`,
-    );
+    // A pin is honoured whatever the record says, and any disagreement is named.
+    if (levels?.state === "known") {
+      notes.push(
+        `pinned effort ${resolved.value} is not among the levels ${model.value} ` +
+          `advertises (${levels.value.join(", ") || "none"}); the pin is ` +
+          "honoured and the conflict reported",
+      );
+    }
     return resolved;
   }
-  notes.push(
-    `refused effort ${resolved.value} (${resolved.layer}): ${model.value} ` +
-      `advertises ${advertised}. Hive does not pass a level the vendor never offered`,
-  );
-  return {
-    value: null,
-    layer: "unknown",
-    reason: `no valid effort for ${model.value}; no flag is passed`,
-  };
+  // A DERIVED effort is a route Hive chose, so it holds itself to a stricter
+  // standard than a pin or a ladder replay: it is passed only when the model's
+  // live record advertises that exact level. An unadvertised level is refused,
+  // and an *unpublished* levels list refuses too — the manifest's choice is not
+  // evidence about what this model accepts, and guessing that it is would be a
+  // Hive belief wearing the vendor's authority.
+  if (resolved.layer === "derived") {
+    notes.push(
+      levels?.state === "known"
+        ? `refused effort ${resolved.value} (${resolved.layer}): ${model.value} ` +
+          `advertises ${levels.value.join(", ") || "none"}. Hive does not pass ` +
+          "a level the vendor never offered"
+        : `refused effort ${resolved.value} (${resolved.layer}): ${model.value} ` +
+          "advertises no effort levels on its live record, so Hive cannot " +
+          "ground the choice and passes no flag",
+    );
+    return {
+      value: null,
+      layer: "unknown",
+      reason: `no valid effort for ${model.value}; no flag is passed`,
+    };
+  }
+  // A ladder effort was established together with its model (a replayed
+  // derivation, or the account's own unflagged-launch config) and survives an
+  // absent record — refusing it during a provider outage would strip the very
+  // replay the ladder exists for. Only a positive vendor exclusion refuses it.
+  if (levels?.state === "known") {
+    notes.push(
+      `refused effort ${resolved.value} (${resolved.layer}): ${model.value} ` +
+        `advertises ${levels.value.join(", ") || "none"}. Hive does not pass ` +
+        "a level the vendor never offered",
+    );
+    return {
+      value: null,
+      layer: "unknown",
+      reason: `no valid effort for ${model.value}; no flag is passed`,
+    };
+  }
+  return resolved;
 }
 
 function effortLadder(
@@ -761,9 +794,12 @@ function effortLadder(
   }
 
   // 2. The manifest's per-tier default: the knob that makes a cheap tier reason
-  //    cheaply. No manifest ships one yet, deliberately.
+  //    cheaply — but only for a model the manifest itself resolved. A pinned
+  //    model keeps its own advertised default (the engine does not layer its
+  //    tier economy onto a choice the user made), and a ladder model replays
+  //    the effort established with it, per the pairing rule below.
   const tierDefault = input.manifest?.tiers[tier]?.defaultEffort;
-  if (tierDefault !== undefined) {
+  if (tierDefault !== undefined && model.layer === "derived") {
     return {
       value: tierDefault,
       layer: "derived",

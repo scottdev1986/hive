@@ -126,12 +126,37 @@ describe("the flip: derived routes govern live spawns", () => {
     expect(governing!.route.claude.model).not.toBe("best");
   });
 
-  test("the codex effort is the engine's, not the shipped column's", async () => {
-    // The shipped table says deep=high. The model itself advertises medium, and
-    // the engine's ladder prefers what the vendor says about the model it picked.
+  test("the codex effort is the tier's chosen one, grounded in the record", async () => {
+    // The manifest chooses deep=high; the record advertises high, so the choice
+    // is grounded and passes. The model's own default (medium) informs a human
+    // editing the manifest — it does not silently govern the cell.
     const governing = await resolveGoverningRoute("deep", io());
     expect(governing!.route.codex.model).toBe("gpt-5.6-sol");
-    expect(governing!.route.codex.effort).toBe("medium");
+    expect(governing!.route.codex.effort).toBe("high");
+  });
+
+  test("a tier effort the record cannot ground is refused, not the shipped column's", async () => {
+    // The shipped table's deep codex column also says high — but if the record
+    // stopped advertising it, the engine must pass NO effort rather than let the
+    // compiled-in column smuggle the same value through unvouched.
+    const codex: CapabilityDiscoveryResult = {
+      ...CODEX,
+      records: [{
+        ...CODEX.records[0]!,
+        supportedEffortLevels: known(
+          ["low", "medium"],
+          "codex.model/list",
+          OBSERVED,
+        ),
+      }],
+    };
+    const governing = await resolveGoverningRoute("deep", {
+      ...io(),
+      discover: async (provider) => provider === "claude" ? CLAUDE : codex,
+    });
+    expect(governing!.route.codex.model).toBe("gpt-5.6-sol");
+    expect(governing!.route.codex.effort).toBeUndefined();
+    expect(governing!.notes.join(" ")).toContain("refused effort high");
   });
 });
 

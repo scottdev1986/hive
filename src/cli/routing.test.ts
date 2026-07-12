@@ -85,9 +85,12 @@ describe("the routing surface prints only what it derived", () => {
     expect(output).toContain("claude: UNAVAILABLE (claude is not signed in)");
     // Codex's effort was really derived, so it prints its value AND its source.
     expect(output).toContain("medium");
-    expect(output).toContain("codex.model/list");
-    // Claude's effort was not. It prints the em dash, and never a `medium` that
-    // no vendor surface ever recommended.
+    expect(output).toContain("[standard].defaultEffort");
+    // The deep tier's chosen effort is one this record never advertised, and the
+    // surface prints the refusal rather than a value smuggled past the record.
+    expect(output).toContain("refused effort high");
+    // Claude's effort was not derived. It prints the em dash, and never a
+    // `medium` that no vendor surface ever recommended.
     expect(output).toContain("—");
   });
 
