@@ -28,9 +28,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     /// works.
     private var feedRestartDelay: TimeInterval = 1
     private static let feedRestartCeiling: TimeInterval = 15
+    /// Restarts are capped so a feed that can never run — a missing binary, a
+    /// daemon that is gone for good — stops thrashing and says so instead.
+    private static let feedRestartLimit = 5
+    private var feedRestartsLeft = AppDelegate.feedRestartLimit
     /// Set once the app has decided the feed should stay dead (window closing,
     /// app quitting), so a restart already in flight cannot resurrect it.
     private var feedRetired = false
+    /// The unrecoverable-feed alert is shown once, not once per retry.
+    private var feedFailureAnnounced = false
 
     init(config: LaunchConfig) {
         self.config = config
@@ -97,7 +103,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         guard let invocation = config.feedInvocation else { return }
         let feed = FeedClient(executable: invocation.executable, arguments: invocation.arguments)
         feed.onSnapshot = { [weak self] agents in
+            // A snapshot is the feed proving it works: the budget is for a feed
+            // that cannot run, not for one that was killed five times.
             self?.feedRestartDelay = 1
+            self?.feedRestartsLeft = AppDelegate.feedRestartLimit
             self?.controller?.applyFeed(agents)
         }
         feed.onAutonomy = { [weak self] autonomy in
@@ -123,13 +132,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
     /// A feed that exited is an event, not the state "no workspace is present".
     ///
-    /// The feed is an ordinary child process: it can be killed (a stray
-    /// `pkill -f workspace-feed` aimed at someone else's test run matches it
-    /// exactly), crash, or be dropped by a daemon restart. It used to stay
-    /// dead, and the app went on sitting there — attached, visible, panes
-    /// live — while the daemon watched the lease lapse, concluded nobody was
-    /// watching, and reopened external Terminal.app windows over those panes.
-    /// So the live app restarts its own feed.
+    /// This class used to carry the opposite contract — "there is deliberately
+    /// no auto-restart: if the feed dies the workspace marks agent panes
+    /// disconnected and the user relaunches via `hive`" — and it failed in the
+    /// field on 2026-07-12. An agent verifying UI work ran
+    /// `pkill -9 -f "workspace-feed --port 4483"` against the *user's real
+    /// daemon*; his app's feed has exactly that command line, so it died. The
+    /// app went on sitting there, attached and normal-looking, while the daemon
+    /// watched the lease lapse, concluded nobody was watching, and opened
+    /// Terminal.app windows over live panes for 39 minutes. The old contract
+    /// outsourced recovery to a human who was never told he had to recover
+    /// anything: it required him to notice a failure that is, by construction,
+    /// invisible — a blind workspace looks exactly like a healthy one. Do not
+    /// restore it out of respect for the comment that used to be here. Hive
+    /// heals itself, and when it cannot, it says so.
     ///
     /// The fallback survives because the app is the supervisor: a crashed or
     /// force-quit app has nobody left to restart the feed, its lease lapses on
@@ -137,6 +153,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     /// whole reason presence is a lease. Only a *live* app reclaims it.
     private func scheduleFeedRestart() {
         guard !feedRetired, config.feedInvocation != nil else { return }
+        guard feedRestartsLeft > 0 else {
+            announceFeedFailure()
+            return
+        }
+        feedRestartsLeft -= 1
         let delay = feedRestartDelay
         feedRestartDelay = min(feedRestartDelay * 2, Self.feedRestartCeiling)
         NSLog("restarting workspace-feed in %.0fs", delay)
@@ -144,6 +165,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             guard let self, !self.feedRetired else { return }
             self.startFeed()
         }
+    }
+
+    /// Healing quietly is fine; failing quietly is what caused the incident.
+    /// A feed we cannot restart means the app is blind — agent status is frozen
+    /// and the daemon is about to start opening its own windows — and the user
+    /// must not have to deduce that from a stray Terminal window half an hour
+    /// later. So say it, unmissably, once.
+    private func announceFeedFailure() {
+        guard !feedFailureAnnounced, !config.smoke else { return }
+        feedFailureAnnounced = true
+        NSLog("workspace-feed could not be restarted; the workspace is blind")
+        let alert = NSAlert()
+        alert.alertStyle = .critical
+        alert.messageText = "Hive lost its status feed"
+        alert.informativeText = """
+            This workspace can no longer see your agents: their status is frozen \
+            and Hive will start opening separate Terminal windows for new agents.
+
+            Your agents are still running — they live in the daemon's tmux \
+            sessions, not in this app. Quit and relaunch the workspace with \
+            `hive` to reconnect.
+            """
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
     }
 
     /// Stop the feed and keep it stopped: the workspace is going away, so the

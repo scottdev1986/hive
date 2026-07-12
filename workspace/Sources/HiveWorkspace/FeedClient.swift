@@ -9,9 +9,12 @@ import WorkspaceCore
 /// called when the window closes or the app quits.
 ///
 /// `onExit` fires only for an exit the app did not ask for (a kill, a crash, a
-/// daemon that went away); `stop()` silences it. The app treats that as a
-/// signal to restart the feed, not as proof the workspace is gone — see
-/// `AppDelegate.scheduleFeedRestart()`.
+/// daemon that went away); `stop()` silences it. The app RESTARTS the feed on
+/// that signal — it is an event, not proof the workspace is gone. This class
+/// used to promise the opposite ("no auto-restart; the user relaunches via
+/// `hive`") and that contract failed in the field on 2026-07-12; see
+/// `AppDelegate.scheduleFeedRestart()` for what happened and why it is not
+/// coming back.
 final class FeedClient {
 
     private let process = Process()
