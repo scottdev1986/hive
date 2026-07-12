@@ -37,6 +37,7 @@ import {
   HIVE_PROTOCOL_RULES,
   HiveSpawner,
   LANDING_MAX_ATTEMPTS,
+  SEARCH_HYGIENE,
   NAME_POOL,
   resolveAgentName,
   selectAgentName,
@@ -2925,6 +2926,9 @@ describe("coding guidelines are guaranteed in context at spawn", () => {
     "Sent is not stopped",
     "An absent field is unknown, never false",
     "Measure, do not infer",
+    // search hygiene — the 2026-07-12 OOM loop: warned by hand, per-brief, until now
+    "Search hygiene",
+    "never re-run it wider",
   ];
 
   const worktree = { path: "/tmp/wt", branch: "hive/maya-build-auth" };
@@ -3029,8 +3033,8 @@ describe("coding guidelines are guaranteed in context at spawn", () => {
     for (const rule of RULES) expect(starts[0]).toContain(rule);
   });
 
-  test("the two blocks between them carry every rule (they are what the prompt splices in)", () => {
-    const blocks = `${CODING_GUIDELINES}\n${HIVE_PROTOCOL_RULES}`;
+  test("the blocks between them carry every rule (they are what the prompt splices in)", () => {
+    const blocks = `${CODING_GUIDELINES}\n${HIVE_PROTOCOL_RULES}\n${SEARCH_HYGIENE}`;
     for (const rule of RULES) expect(blocks).toContain(rule);
   });
 });

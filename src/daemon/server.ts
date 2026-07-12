@@ -1196,6 +1196,27 @@ export class HiveDaemon {
             `check whether its work needs to be retried.`,
           { idempotencyKey: `resource-kill:${kill.process.pid}` },
         ).catch(logAlertDeliveryFailure);
+        // The agent whose child died sees only an opaque failed command, so it
+        // reads the death as "my command was wrong" and retries — the 2026-07-12
+        // incident was three escalating OOM kills in 90 seconds, each a wider
+        // search than the last. A killed process cannot report its own cause of
+        // death; only the killer can, and it must tell the agent, not just the
+        // orchestrator watching it.
+        if (kill.owner !== ORCHESTRATOR_NAME) {
+          await this.delivery.send(
+            "hive-resources",
+            kill.owner,
+            `Hive's memory watchdog KILLED a process you started — the command did not fail on its own. ` +
+              `pid ${kill.process.pid} reached ${Math.round(kill.process.rssMb)} MB resident, ` +
+              `past the ${limits.perProcessMemoryMb} MB per-process ceiling that keeps this machine alive: ` +
+              `${kill.process.command.slice(0, 160)}. Do NOT retry it as written, and do not widen it — ` +
+              `a bigger version of the same command hits the same ceiling faster. Make it cheaper: ` +
+              `narrow the input (scope a search to a subdirectory), anchor patterns on real literals ` +
+              `instead of leading with \`.*\` or \`.{0,N}\`, or use a different tool. Your session is fine; ` +
+              `only that process was killed.`,
+            { idempotencyKey: `resource-kill-owner:${kill.process.pid}` },
+          ).catch(logAlertDeliveryFailure);
+        }
       }
       if (assessment.memoryPressure && assessment.availableMb !== null) {
         await this.delivery.send(

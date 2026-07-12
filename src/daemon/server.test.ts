@@ -2228,16 +2228,28 @@ describe("resource watchdog", () => {
       expect(killed).toEqual([11]);
       const reports = db.listMessages()
         .filter((message) => message.from === "hive-resources");
-      expect(reports).toHaveLength(1);
-      expect(reports[0]?.body).toContain("killed pid 11 under maya");
-      expect(reports[0]?.body).toContain("bun test");
+      const toOrchestrator = reports.filter((message) => message.to === "orchestrator");
+      expect(toOrchestrator).toHaveLength(1);
+      expect(toOrchestrator[0]?.body).toContain("killed pid 11 under maya");
+      expect(toOrchestrator[0]?.body).toContain("bun test");
+
+      // maya is told WHY her command died. Without this she reads the opaque
+      // death as a bad command and retries it, wider each time.
+      const toMaya = reports.filter((message) => message.to === "maya");
+      expect(toMaya).toHaveLength(1);
+      expect(toMaya[0]?.body).toContain("KILLED");
+      expect(toMaya[0]?.body).toContain("12288 MB per-process ceiling");
+      expect(toMaya[0]?.body).toContain("bun test");
+      expect(toMaya[0]?.body).toContain("do not widen it");
+      // sam's process was healthy; she hears nothing.
+      expect(reports.filter((message) => message.to === "sam")).toHaveLength(0);
 
       // The same runaway is never re-reported on the next sweep.
       await daemon.sweepResources();
       expect(killed).toEqual([11, 11]);
       expect(db.listMessages()
         .filter((message) => message.from === "hive-resources"))
-        .toHaveLength(1);
+        .toHaveLength(2);
     } finally {
       await daemon.stop();
       db.close();

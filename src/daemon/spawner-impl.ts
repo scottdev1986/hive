@@ -592,6 +592,21 @@ const GRAPHIFY_DIRECTIVE =
   "no strong leads, or a graph lead that turned out empty when you verified it. " +
   "Every graph answer is a lead — confirm it in source before building on it.";
 
+/** Measured 2026-07-12: an agent's three repo-wide searches allocated 13-14 GB
+ * each and were killed by the watchdog; it read each opaque death as "too
+ * narrow" and widened the pattern, walking back into the wall twice. The
+ * allocation lives in the CLI's own bundled search binary, so Hive cannot patch
+ * it — the only lever is telling every agent the rule before it searches, in
+ * the prompt they demonstrably read rather than a skill (22% adoption). */
+export const SEARCH_HYGIENE =
+  "Search hygiene: a repo-wide search with an unanchored pattern — one leading " +
+  "with `.*` or `.{0,N}` — can allocate tens of GB on a large tree, and Hive's " +
+  "memory watchdog will kill it. Anchor patterns on a real literal, scope the " +
+  "search to the directory that can hold the answer (src/, not the repo root), " +
+  "and stay out of build, vendor, and dependency trees. If a search is killed " +
+  "for memory, never re-run it wider: a wider pattern is a bigger allocation, " +
+  "not a better search.";
+
 export function buildAgentPrompt(
   name: string,
   task: string,
@@ -628,6 +643,7 @@ export function buildAgentPrompt(
     // rule, and a small model is the one that can least afford to infer these.
     CODING_GUIDELINES,
     HIVE_PROTOCOL_RULES,
+    SEARCH_HYGIENE,
     buildLandingProtocol(
       worktree.branch, repoRoot, "main", name, 0, concise, options.landingCommands,
     ),
