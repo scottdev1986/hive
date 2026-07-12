@@ -13,7 +13,7 @@ import {
   type RoutingSnapshot,
 } from "./routing-derivation";
 import { FIRST_ROUTING_MANIFEST, type RoutingManifest } from "./routing-manifest";
-import { DEFAULT_ROUTING } from "./routing";
+import { DEFAULT_ROUTING, defaultRoutingTable } from "./routing";
 
 const NOW = new Date("2026-07-11T12:00:00Z");
 const FRESH = "2026-07-11T11:59:00Z";
@@ -291,6 +291,54 @@ describe("the fallback ladder, rung by rung", () => {
     );
     expect(derived.manifest?.expired).toBe(true);
     expect(derived.warnings.join(" ")).toContain("expired");
+  });
+});
+
+describe("the shipped manifest reproduces the shipped table across the cutoff", () => {
+  // Shadow mode caught this for real, minutes after the cutoff passed: the table
+  // had moved off Fable and the manifest had not, because the cutoff was a code
+  // constant the manifest could not see. Had routing been flipped, every deep
+  // Claude spawn would have kept landing on a model that had just moved to
+  // usage-only billing off the user's plan. The effective window in the manifest
+  // is the fix; this is what keeps the two from drifting apart again.
+  const deepAt = (iso: string) => {
+    const now = new Date(iso);
+    const observedAt = new Date(now.getTime() - 60_000).toISOString();
+    const fresh = (records: CapabilityRecord[]) =>
+      records.map((entry) => ({ ...entry, observedAt }));
+    return tierOf(
+      deriveRouting(
+        input({
+          now,
+          discovery: {
+            claude: ok(fresh(CLAUDE_RECORDS), CLAUDE_DEFAULT),
+            codex: ok(fresh(CODEX_RECORDS), CODEX_DEFAULT),
+          },
+        }),
+      ),
+      "deep",
+    );
+  };
+
+  test("before the cutoff the deep tier derives Fable, with Opus behind it", () => {
+    const deep = deepAt("2026-07-11T12:00:00Z");
+    expect(deep.claude.model.value).toBe("claude-fable-5");
+    expect(deep.claude.chain).toEqual(["claude-opus-4-8"]);
+  });
+
+  test("after it, Fable's window has closed and Opus is the primary", () => {
+    const deep = deepAt("2026-07-12T00:00:01Z");
+    expect(deep.claude.model.value).toBe("claude-opus-4-8");
+    expect(deep.claude.model.layer).toBe("derived");
+    // Fable is gone from the chain as well: an expired entry is not a downshift
+    // target, it is not a candidate at all.
+    expect(deep.claude.chain).toEqual([]);
+    // Which is exactly what the shipped table says at the same instant. The
+    // manifest reproduces the table as data, and the two read the same constant,
+    // so they cannot disagree about the date.
+    expect(
+      defaultRoutingTable(new Date("2026-07-12T00:00:01Z")).deep!.claude.model,
+    ).toBe("claude-opus-4-8");
   });
 });
 

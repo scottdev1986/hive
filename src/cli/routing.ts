@@ -11,6 +11,12 @@ import {
   CodexCapabilityProbe,
 } from "../daemon/capability-discovery";
 import {
+  readShadowObservations,
+  summarizeShadow,
+  type ShadowSummary,
+  type Verdict,
+} from "../daemon/routing-shadow";
+import {
   deriveRouting,
   describeAge,
   defaultRoutingTable,
@@ -216,4 +222,80 @@ export async function printRouting(): Promise<void> {
   if (next !== null) {
     await Bun.write(snapshotPath(), `${JSON.stringify(next, null, 2)}\n`);
   }
+}
+
+// --------------------------------------------------------------------------
+// `hive routing shadow` — derived vs. actual, and the flip criteria.
+// --------------------------------------------------------------------------
+
+const VERDICT_MARK: Record<Verdict, string> = {
+  pass: "PASS",
+  fail: "FAIL",
+  unknown: "????",
+};
+
+export function formatShadowSummary(summary: ShadowSummary): string {
+  if (summary.spawns === 0) {
+    return "No shadow observations yet. Spawn an agent: every spawn records what " +
+      "the derived router would have chosen beside what actually launched.";
+  }
+
+  const pct = (count: number) =>
+    summary.judged === 0
+      ? "—"
+      : `${((count / summary.judged) * 100).toFixed(1)}%`;
+
+  const lines = [
+    `Shadow routing — ${summary.spawns} spawns observed, ${summary.judged} of them ` +
+    "router-chosen (user-pinned models are the user's judgment, not the router's,",
+    "and are excluded from every criterion below).",
+    "",
+    "AGREEMENT between the derived route and the table that actually decided",
+    `  tool    ${summary.agreement.tool}/${summary.judged} (${pct(summary.agreement.tool)})`,
+    `  model   ${summary.agreement.model}/${summary.judged} (${pct(summary.agreement.model)})`,
+    `  effort  ${summary.agreement.effort}/${summary.judged} (${pct(summary.agreement.effort)})`,
+    "",
+  ];
+
+  if (summary.divergences.length === 0) {
+    lines.push(
+      "DIVERGENCES: none. Derived and actual agree on every observed spawn.",
+      "",
+    );
+  } else {
+    lines.push("DIVERGENCES — what the router would have done differently, and why");
+    for (const divergence of summary.divergences) {
+      lines.push(
+        `  ${divergence.tier}.${divergence.field} ×${divergence.count}: ` +
+          `actual ${divergence.actual} → derived ${divergence.derived} ` +
+          `[${divergence.layer}]`,
+        `      ${divergence.reason}`,
+      );
+    }
+    lines.push("");
+  }
+
+  lines.push("FLIP CRITERIA (every one must PASS; an unknown is not a pass)");
+  for (const criterion of summary.criteria) {
+    lines.push(`  [${VERDICT_MARK[criterion.verdict]}] ${criterion.question}`);
+    lines.push(`         ${criterion.detail}`);
+  }
+  lines.push("");
+  lines.push("ROLLBACK TRIGGER — the baselines a post-flip regression is measured against");
+  for (const criterion of summary.rollback) {
+    lines.push(`  [${VERDICT_MARK[criterion.verdict]}] ${criterion.question}`);
+    lines.push(`         ${criterion.detail}`);
+  }
+  lines.push("");
+  lines.push(
+    summary.flipReady
+      ? "FLIP: every criterion passes. The flip is defensible on this evidence."
+      : "FLIP: NOT READY. Routing stays on the shipped table.",
+  );
+  return lines.join("\n");
+}
+
+export async function printShadowRouting(): Promise<void> {
+  const observations = await readShadowObservations();
+  console.log(formatShadowSummary(summarizeShadow(observations)));
 }

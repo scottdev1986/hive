@@ -168,6 +168,9 @@ describe("config loading", () => {
     const routing = await loadRoutingTable(BEFORE_FABLE_CUTOFF);
     expect(routing.deep).toEqual({
       tool: "codex",
+      // The table is loaded at BEFORE_FABLE_CUTOFF, so the pre-cutoff constant is
+      // what it says. Pinning the clock is the better fix — it keeps the
+      // assertion true on both sides of the cutoff rather than only until it.
       claude: DEFAULT_ROUTING.deep.claude,
       codex: {
         model: "gpt-deep",

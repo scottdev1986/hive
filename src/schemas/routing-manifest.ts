@@ -1,6 +1,10 @@
 import { z } from "zod";
 import { capabilityFreshness, type CapabilityRecord } from "./capability";
-import { RoutingTierSchema, type RoutingTier } from "./routing";
+import {
+  FABLE_AUTO_ROUTING_CUTOFF,
+  RoutingTierSchema,
+  type RoutingTier,
+} from "./routing";
 
 export const TaskKindSchema = z.enum([
   "coding",
@@ -229,6 +233,19 @@ export const FIRST_ROUTING_MANIFEST: RoutingManifest =
         claude: [
           {
             canonicalId: "claude-fable-5",
+            // The Fable auto-routing cutoff, as *data* rather than as a branch in
+            // the code — which is the whole point of the effective window, and
+            // the design's own example of one. Without this the manifest would go
+            // on deriving Fable for the deep tier after the shipped table had
+            // stopped, and shadow mode caught exactly that divergence minutes
+            // after the cutoff passed: a derived route that, had it governed,
+            // would have kept sending deep spawns to a model that moved to
+            // usage-only billing off the user's plan.
+            //
+            // It reads the same constant the shipped table branches on, so the
+            // two cannot disagree about the date. When the constant is retired,
+            // this becomes a literal and nothing else changes.
+            validUntil: FABLE_AUTO_ROUTING_CUTOFF,
           },
           { canonicalId: "claude-opus-4-8" },
         ],

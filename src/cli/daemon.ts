@@ -27,6 +27,7 @@ import {
   ClaudeCapabilityProbe,
   CodexCapabilityProbe,
 } from "../daemon/capability-discovery";
+import { recordShadowObservation } from "../daemon/routing-shadow";
 
 export async function runDaemon(): Promise<void> {
   const repoRoot = process.env.HIVE_PROJECT_ROOT ?? process.cwd();
@@ -89,6 +90,16 @@ export async function runDaemon(): Promise<void> {
       provider === "claude"
         ? await new ClaudeCapabilityProbe().read()
         : await new CodexCapabilityProbe().read(),
+    // Shadow mode. It derives what the router would have chosen and writes it to
+    // the shadow log; the spawner reads nothing back. This is the evidence that
+    // earns the flip, and it is not the flip.
+    recordShadowRoute: async (spawn) =>
+      await recordShadowObservation(spawn, {
+        discoverCapabilities: async (provider) =>
+          provider === "claude"
+            ? await new ClaudeCapabilityProbe().read()
+            : await new CodexCapabilityProbe().read(),
+      }),
     tmux,
     terminal,
     workspacePresent: () => workspacePresence.isPresent(),
