@@ -42,6 +42,7 @@ import {
   setModelPolicy,
   setProviderPolicy,
 } from "./cli/routing-policy";
+import { printModelControlSnapshot } from "./cli/model-control";
 import { runStart } from "./cli/start";
 import { runStatusline } from "./cli/statusline";
 import { runUninstall } from "./cli/uninstall";
@@ -691,6 +692,13 @@ export function createProgram(): Command {
     .command("daemon")
     .description("Run the Hive daemon in the foreground")
     .action(runDaemon);
+
+  // The Workspace app's Model Control Center read surface: one JSON document
+  // of capability catalogs, billing guard state, and quota statuses. Hidden
+  // because only the app spawns it.
+  program
+    .command("model-control-snapshot", { hidden: true })
+    .action(printModelControlSnapshot);
 
   // The Workspace app's status wire: NDJSON agent snapshots on stdout plus the
   // daemon-side viewer lease. Hidden because only the app spawns it.

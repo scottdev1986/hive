@@ -1,0 +1,322 @@
+import Foundation
+
+/// User policy for the Model Control Center: what is enabled, at what effort,
+/// and which ordered chain serves each task category.
+///
+/// The durable store for this policy is the daemon's SQLite (`hive.db`,
+/// governing doc §2.3) — a LATER PR. Until it exists, `ProvisionalPolicyStore`
+/// below seeds an in-memory policy from the live catalog. Policy here is
+/// *preference* data, so defaulting it is honest; capacity numbers are never
+/// defaulted anywhere.
+
+// MARK: - Task categories
+
+/// The settled category vocabulary (governing doc §2.4). `long_context` is
+/// deliberately NOT here — it is a requirement modifier, not a category.
+public enum TaskCategory: String, CaseIterable, Codable, Sendable {
+    case lightResearch = "light_research"
+    case heavyResearch = "heavy_research"
+    case simpleCoding = "simple_coding"
+    case complexCoding = "complex_coding"
+    case codeReview = "code_review"
+    case planning = "planning"
+    case debugging = "debugging"
+    case summarization = "summarization"
+
+    public var label: String {
+        switch self {
+        case .lightResearch: return "Light research"
+        case .heavyResearch: return "Heavy research / synthesis"
+        case .simpleCoding: return "Simple coding"
+        case .complexCoding: return "Complex coding"
+        case .codeReview: return "Code review"
+        case .planning: return "Planning"
+        case .debugging: return "Debugging"
+        case .summarization: return "Summarization"
+        }
+    }
+}
+
+// MARK: - Effort target
+
+/// What the user asked Hive to send for effort. `providerControlled` means
+/// "omit the flag" — it does NOT claim to know the vendor's default.
+public enum EffortTarget: Equatable, Codable, Sendable {
+    case exact(String)
+    /// The model stated it has no effort axis; there is nothing to set.
+    case none
+    case providerControlled
+}
+
+// MARK: - Chain entries
+
+/// One link in an ordered fallback chain. `exact` is what almost every edit
+/// produces. `vendorDefault` is the labeled, opt-in "track this vendor's
+/// current default" mode — volatile, re-resolved at spawn, never cached as an
+/// identity. There is no bare "default" string that could pass for a model id
+/// (governing doc §2.6).
+public struct ChainEntry: Equatable, Codable, Sendable {
+    public enum Target: Equatable, Codable, Sendable {
+        case exact(provider: String, model: String, variant: String?)
+        case vendorDefault(provider: String)
+    }
+
+    public var target: Target
+    /// Effort is per chain LINK, not only per model: the same model may run
+    /// `high` in complex coding and `medium` in summarization (§8.2).
+    public var effort: EffortTarget
+
+    public init(target: Target, effort: EffortTarget) {
+        self.target = target
+        self.effort = effort
+    }
+
+    public var provider: String {
+        switch target {
+        case .exact(let provider, _, _), .vendorDefault(let provider): return provider
+        }
+    }
+}
+
+/// What a category does when its deliberate chain exists but every link gated
+/// out. Default is REFUSE; widening to the global chain is per-category opt-in.
+/// An *empty* chain is a different thing — it quietly uses the Default chain.
+public enum ExhaustionBehavior: String, Codable, Sendable {
+    case refuse
+    case useGlobalFallback = "use_global_fallback"
+}
+
+public struct CategoryPolicy: Equatable, Codable, Sendable {
+    public var chain: [ChainEntry]
+    public var exhaustionBehavior: ExhaustionBehavior
+
+    public init(chain: [ChainEntry] = [], exhaustionBehavior: ExhaustionBehavior = .refuse) {
+        self.chain = chain
+        self.exhaustionBehavior = exhaustionBehavior
+    }
+}
+
+// MARK: - Policy
+
+public struct ModelPolicy: Equatable, Codable, Sendable {
+    public var enabled: Bool
+    public var effort: EffortTarget
+
+    public init(enabled: Bool = true, effort: EffortTarget = .providerControlled) {
+        self.enabled = enabled
+        self.effort = effort
+    }
+}
+
+public struct ProviderPolicy: Equatable, Codable, Sendable {
+    /// The master toggle. Off = Hive will not invoke this CLI at all, and
+    /// every model row beneath it is overridden (§7.4).
+    public var enabled: Bool
+    /// Keyed by display id (canonical id + variant). A model with no entry
+    /// inherits the provider state — newly discovered models are reachable.
+    public var models: [String: ModelPolicy]
+
+    public init(enabled: Bool = true, models: [String: ModelPolicy] = [:]) {
+        self.enabled = enabled
+        self.models = models
+    }
+}
+
+public struct ModelControlPolicy: Equatable, Codable, Sendable {
+    public var providers: [String: ProviderPolicy]
+    public var categories: [String: CategoryPolicy]
+    /// The global fallback chain. Never deletable; the one chain that must
+    /// not be empty.
+    public var defaultChain: [ChainEntry]
+    /// True until the user edits — drives the provisional banner (§8.5).
+    public var provisional: Bool
+
+    public init(
+        providers: [String: ProviderPolicy] = [:],
+        categories: [String: CategoryPolicy] = [:],
+        defaultChain: [ChainEntry] = [],
+        provisional: Bool = true
+    ) {
+        self.providers = providers
+        self.categories = categories
+        self.defaultChain = defaultChain
+        self.provisional = provisional
+    }
+
+    // MARK: Reads
+
+    public func providerEnabled(_ provider: ProviderID) -> Bool {
+        providers[provider.rawValue]?.enabled ?? true
+    }
+
+    public func modelPolicy(provider: ProviderID, modelId: String) -> ModelPolicy {
+        providers[provider.rawValue]?.models[modelId] ?? ModelPolicy()
+    }
+
+    /// The non-negotiable override rule:
+    /// effectiveEnabled = providerEnabled && modelSelfEnabled && available.
+    public func rowState(
+        provider: ProviderID, modelId: String, available: Bool
+    ) -> ModelRowState {
+        ModelRowState.derive(
+            providerEnabled: providerEnabled(provider),
+            modelSelfEnabled: modelPolicy(provider: provider, modelId: modelId).enabled,
+            modelAvailable: available)
+    }
+
+    public func categoryPolicy(_ category: TaskCategory) -> CategoryPolicy {
+        categories[category.rawValue] ?? CategoryPolicy()
+    }
+
+    // MARK: Mutations (all mark the policy user-edited)
+
+    public mutating func setProviderEnabled(_ provider: ProviderID, _ enabled: Bool) {
+        var policy = providers[provider.rawValue] ?? ProviderPolicy()
+        policy.enabled = enabled
+        providers[provider.rawValue] = policy
+        provisional = false
+    }
+
+    public mutating func setModelEnabled(provider: ProviderID, modelId: String, _ enabled: Bool) {
+        var providerPolicy = providers[provider.rawValue] ?? ProviderPolicy()
+        var modelPolicy = providerPolicy.models[modelId] ?? ModelPolicy()
+        modelPolicy.enabled = enabled
+        providerPolicy.models[modelId] = modelPolicy
+        providers[provider.rawValue] = providerPolicy
+        provisional = false
+    }
+
+    public mutating func setModelEffort(provider: ProviderID, modelId: String, _ effort: EffortTarget) {
+        var providerPolicy = providers[provider.rawValue] ?? ProviderPolicy()
+        var modelPolicy = providerPolicy.models[modelId] ?? ModelPolicy()
+        modelPolicy.effort = effort
+        providerPolicy.models[modelId] = modelPolicy
+        providers[provider.rawValue] = providerPolicy
+        provisional = false
+    }
+
+    public mutating func setCategoryChain(_ category: TaskCategory, chain: [ChainEntry]) {
+        var policy = categories[category.rawValue] ?? CategoryPolicy()
+        policy.chain = chain
+        categories[category.rawValue] = policy
+        provisional = false
+    }
+
+    public mutating func setExhaustionBehavior(_ category: TaskCategory, _ behavior: ExhaustionBehavior) {
+        var policy = categories[category.rawValue] ?? CategoryPolicy()
+        policy.exhaustionBehavior = behavior
+        categories[category.rawValue] = policy
+        provisional = false
+    }
+
+    /// Move a chain link. Primary is index 0; order is the policy.
+    public static func move(_ chain: [ChainEntry], from source: Int, to destination: Int) -> [ChainEntry] {
+        guard chain.indices.contains(source), destination >= 0, destination < chain.count,
+              source != destination else { return chain }
+        var next = chain
+        let entry = next.remove(at: source)
+        next.insert(entry, at: destination)
+        return next
+    }
+}
+
+// MARK: - Chain effectiveness
+
+/// Whether a chain link can actually run right now, and if not, why — so a
+/// struck row can say what is true instead of just looking sad.
+public enum ChainLinkStatus: Equatable, Sendable {
+    case effective
+    case providerOff
+    case modelDisabled
+    /// The model left the live catalog. Stays in policy, marked, never
+    /// silently dropped and never launched.
+    case unresolvable
+
+    public static func derive(
+        entry: ChainEntry,
+        policy: ModelControlPolicy,
+        snapshot: ModelControlSnapshot
+    ) -> ChainLinkStatus {
+        let provider = ProviderID(entry.provider)
+        if !policy.providerEnabled(provider) { return .providerOff }
+        switch entry.target {
+        case .vendorDefault:
+            // Tracks the vendor's moving default; resolvable while the
+            // provider's catalog is readable.
+            if case .available = snapshot.providers[entry.provider] { return .effective }
+            return .unresolvable
+        case .exact(_, let model, let variant):
+            guard case .available(let models, _) = snapshot.providers[entry.provider] else {
+                return .unresolvable
+            }
+            guard let record = models.first(where: {
+                $0.canonicalId == model && $0.variant == variant
+            }) else {
+                return .unresolvable
+            }
+            let displayId = record.displayId
+            if !policy.modelPolicy(provider: provider, modelId: displayId).enabled {
+                return .modelDisabled
+            }
+            return .effective
+        }
+    }
+}
+
+// MARK: - Global warnings
+
+public enum PolicyWarning: Equatable, Sendable {
+    /// "No providers enabled — Hive cannot spawn agents…"
+    case noProvidersEnabled
+    /// "Your Default chain is empty. Categories with no chain of their own
+    /// have nowhere to go."
+    case defaultChainEmpty
+
+    public static func derive(
+        policy: ModelControlPolicy, snapshot: ModelControlSnapshot
+    ) -> [PolicyWarning] {
+        var warnings: [PolicyWarning] = []
+        let ids = snapshot.providerIDs
+        if !ids.isEmpty, ids.allSatisfy({ !policy.providerEnabled($0) }) {
+            warnings.append(.noProvidersEnabled)
+        }
+        if policy.defaultChain.isEmpty {
+            warnings.append(.defaultChainEmpty)
+        }
+        return warnings
+    }
+}
+
+// MARK: - Provisional store (PLACEHOLDER)
+
+/// PLACEHOLDER POLICY SOURCE — NOT the durable store.
+///
+/// The daemon-side SQLite policy store (governing doc §2.3, PR4) does not
+/// exist yet. This seeds an in-memory policy from the LIVE discovery catalog:
+/// every discovered provider and model enabled, efforts provider-controlled,
+/// categories empty (they use the Default chain), and a Default chain of
+/// labeled vendor-default links — one per available provider — so the screen
+/// is honest about what it is: user-editable policy with provisional Hive
+/// suggestions, no outcome data, nothing persisted across launches.
+///
+/// It never invents a measurement. Swapping it for the daemon store is a
+/// one-call replacement at the data-source seam.
+public enum ProvisionalPolicyStore {
+    public static func seed(from snapshot: ModelControlSnapshot) -> ModelControlPolicy {
+        var providers: [String: ProviderPolicy] = [:]
+        var defaultChain: [ChainEntry] = []
+        for id in snapshot.providerIDs {
+            providers[id.rawValue] = ProviderPolicy(enabled: true)
+            if case .available = snapshot.providers[id.rawValue] {
+                defaultChain.append(ChainEntry(
+                    target: .vendorDefault(provider: id.rawValue),
+                    effort: .providerControlled))
+            }
+        }
+        return ModelControlPolicy(
+            providers: providers,
+            categories: [:],
+            defaultChain: defaultChain,
+            provisional: true)
+    }
+}
