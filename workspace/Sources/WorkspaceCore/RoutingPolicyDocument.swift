@@ -110,6 +110,10 @@ public struct RoutingPolicyDocument: Codable, Equatable, Sendable {
     public var models: [ModelRow]
     public var chains: [String: [WireChainEntry]]
     public var selection: Selection
+    /// Whether the daemon actually SENT the selection field. False means the
+    /// running daemon predates selection modes: the UI must not offer a
+    /// control whose persist would always fail.
+    public var selectionOnWire: Bool = false
 
     private enum CodingKeys: String, CodingKey {
         case schemaVersion, revision, updatedAt, provisional
@@ -127,8 +131,9 @@ public struct RoutingPolicyDocument: Codable, Equatable, Sendable {
         chains = try container.decode([String: [WireChainEntry]].self, forKey: .chains)
         // Prefaulted, like the daemon's parse: an older document without the
         // field reads as global spread with no overrides.
-        selection = try container.decodeIfPresent(Selection.self, forKey: .selection)
-            ?? Selection()
+        let sent = try container.decodeIfPresent(Selection.self, forKey: .selection)
+        selection = sent ?? Selection()
+        selectionOnWire = sent != nil
     }
 
     public static func decode(from data: Data) throws -> RoutingPolicyDocument {

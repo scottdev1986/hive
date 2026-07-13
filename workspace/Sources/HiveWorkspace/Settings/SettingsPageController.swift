@@ -320,11 +320,13 @@ final class TasksSettingsController: SettingsPageController {
         popup.target = self
         popup.action = #selector(globalSpreadChanged(_:))
         popup.setAccessibilityLabel("How Hive picks among a category's models")
+        popup.isEnabled = dataSource.canEditSelection
 
         let overrides = NSPopUpButton(frame: .zero, pullsDown: true)
         overrides.controlSize = .small
         overrides.font = NSFont.systemFont(ofSize: 11)
         overrides.addItem(withTitle: "Category override…")
+        overrides.isEnabled = dataSource.canEditSelection
         for category in TaskCategory.allCases {
             let item = NSMenuItem(title: category.label, action: nil, keyEquivalent: "")
             let submenu = NSMenu(title: category.label)
@@ -358,9 +360,12 @@ final class TasksSettingsController: SettingsPageController {
         contentStack.addArrangedSubview(row)
         pinToContent(row)
 
-        let caption = NSTextField(wrappingLabelWithString:
-            dataSource.globalSpread == .spreadByCapacity
-                ? MCCCopy.spreadByCapacityCaption : MCCCopy.spreadStrictCaption)
+        var captionText = dataSource.globalSpread == .spreadByCapacity
+            ? MCCCopy.spreadByCapacityCaption : MCCCopy.spreadStrictCaption
+        if !dataSource.canEditSelection {
+            captionText += " The running daemon does not support changing this yet — restart Hive after updating."
+        }
+        let caption = NSTextField(wrappingLabelWithString: captionText)
         caption.font = Theme.Font.caption
         caption.textColor = .tertiaryLabelColor
         contentStack.addArrangedSubview(caption)

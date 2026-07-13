@@ -184,6 +184,17 @@ final class ModelControlDataSource {
         spreadOverride(category) ?? globalSpread
     }
 
+    /// Whether the backend can PERSIST selection modes. A daemon that never
+    /// sent the field would reject the mutation — the control disables with a
+    /// reason instead of failing on every use.
+    var canEditSelection: Bool {
+        switch backend {
+        case .daemon(let document): return document.selectionOnWire
+        case .placeholder: return true
+        case nil: return false
+        }
+    }
+
     /// The exhaustion control persists only in the placeholder store today —
     /// the daemon document has no field for it yet, and a control that
     /// silently does not persist is a lie, so the UI hides it on the daemon
