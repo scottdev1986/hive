@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { QuotaConfigSchema, type QuotaLimit, type QuotaPoolStatus } from "../schemas";
@@ -107,6 +108,43 @@ const pool = (quota: QuotaService, name: string, at = now): QuotaPoolStatus => {
   }
   return status;
 };
+
+// The parse is pinned against BYTES, not against a struct we typed by hand. A
+// fixture we hand-author agrees with whatever keys the code happens to read, so
+// it would keep passing after the vendor renamed one and every window went null.
+// This payload is the verbatim `account/rateLimits/read` reply from codex-cli
+// 0.144.1 on a `prolite` account, captured off the wire on 2026-07-13.
+describe("the real Codex payload, verbatim off the wire", () => {
+  const raw = JSON.parse(
+    readFileSync(join(import.meta.dir, "fixtures/codex-rate-limits-prolite.json"), "utf8"),
+  ) as CodexRateLimitsResponse;
+
+  // Reading the weekly at all is the positive control: it proves this parser can
+  // see a value the vendor really sent. Without it, the null five-hour below
+  // would be indistinguishable from a misspelled key reading back as absent.
+  test("reads the weekly window the vendor actually sent", () => {
+    const [routable] = readingsFromCodexResponse(raw, "default", now.toISOString());
+    expect(routable?.weekly?.usedPct).toBe(31);
+    expect(routable?.weekly?.windowMinutes).toBe(10_080);
+    expect(routable?.label).toBe("prolite");
+  });
+
+  // This plan meters ONE window. `secondary` is null on the wire and `primary`
+  // carries the weekly bucket, so there is no five-hour reading to be had — and
+  // Hive must not manufacture one. The UI's job is to not mount a meter for it
+  // (MeterDerivation.usage), never to fill it with a guess.
+  test("reports no five-hour window, because the payload has none", () => {
+    const [routable] = readingsFromCodexResponse(raw, "default", now.toISOString());
+    expect(raw.rateLimits.secondary).toBeNull();
+    expect(routable?.fiveHour).toBeNull();
+  });
+
+  test("keeps the reading authoritative — an absent window is not a failed probe", () => {
+    const [routable] = readingsFromCodexResponse(raw, "default", now.toISOString());
+    expect(routable?.confidence).toBe("authoritative");
+    expect(routable?.source).toBe("provider");
+  });
+});
 
 describe("window ordering", () => {
   test("identifies windows by duration, not by the name the provider gave them", () => {

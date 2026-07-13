@@ -133,10 +133,34 @@ public enum MeterDerivation {
         // The card meters the ACCOUNT pool (models == ["*"]). Model-scoped
         // pools (a per-model ceiling) surface as row badges, not card meters.
         if let pool = pools.first(where: { $0.models == ["*"] }) ?? pools.first {
-            return .metered([
-                MeterWindow(label: "5 hour window", state: meterState(for: pool.fiveHour, parseDate: parseDate)),
-                MeterWindow(label: "7 day window", state: meterState(for: pool.weekly, parseDate: parseDate)),
-            ])
+            // Not every plan meters both windows. Codex's `prolite` reports a
+            // single weekly window (`secondary` is null on the wire), so its
+            // five-hour slot is empty because the vendor HAS no five-hour
+            // window — not because a read failed. Mounting a hollow meter there
+            // says "no reading for this window", which is the copy §7.4 reserves
+            // for a probe that failed closed, and the probe did not fail. A
+            // window the provider does not meter gets no component at all (§7.6).
+            //
+            // `windowMinutes == nil` only proves that when the pool demonstrably
+            // ANSWERED: a reading on the other window is the positive control. A
+            // pool with no reading anywhere is genuinely unknown, and both
+            // windows stay mounted so the silence still shows.
+            let answered = pool.fiveHour.used != nil || pool.weekly.used != nil
+            let metered = { (window: QuotaWindow) in
+                !(answered && window.windowMinutes == nil)
+            }
+            var windows: [MeterWindow] = []
+            if metered(pool.fiveHour) {
+                windows.append(MeterWindow(
+                    label: "5 hour window",
+                    state: meterState(for: pool.fiveHour, parseDate: parseDate)))
+            }
+            if metered(pool.weekly) {
+                windows.append(MeterWindow(
+                    label: "7 day window",
+                    state: meterState(for: pool.weekly, parseDate: parseDate)))
+            }
+            return .metered(windows)
         }
         let unconfigured = quota.compactMap { entry -> QuotaUnconfigured? in
             if case .unconfigured(let status) = entry, status.provider == provider.rawValue {

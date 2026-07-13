@@ -30,11 +30,13 @@ final class ModelControlTests: XCTestCase {
 
     private func window(
         used: Double? = nil, remainingPct: Double? = nil, allowance: Double? = nil,
-        unit: String = "percent", confidence: String = "reported"
+        unit: String = "percent", confidence: String = "reported",
+        windowMinutes: Double? = nil
     ) -> QuotaWindow {
         QuotaWindow(
             unit: unit, allowance: allowance, used: used,
-            remainingPct: remainingPct, confidence: confidence, source: "provider")
+            remainingPct: remainingPct, confidence: confidence, source: "provider",
+            windowMinutes: windowMinutes)
     }
 
     func testNoReadingDerivesUnknownNeverZero() {
@@ -85,12 +87,30 @@ final class ModelControlTests: XCTestCase {
 
     // MARK: Provider usage — unmetered vs silent vs unknown
 
+    // Claude meters BOTH windows, so a discovered Claude pool carries both
+    // durations even when a window's reading is momentarily absent — the silent
+    // feed of §2.2 drops the reading, never the window. The durations are what
+    // tell a silent window apart from one the plan does not have at all.
     private func claudePool(fiveHourUsed: Double?) -> QuotaEntry {
         .pool(QuotaPool(
             provider: "claude", pool: "plan", origin: "discovered",
             confidence: "reported", freshness: "fresh", source: "provider",
-            fiveHour: window(used: fiveHourUsed, allowance: 100),
-            weekly: window(used: nil)))
+            fiveHour: window(used: fiveHourUsed, allowance: 100, windowMinutes: 300),
+            weekly: window(used: nil, windowMinutes: 10_080)))
+    }
+
+    /// Codex's `prolite` plan, as captured off the wire on 2026-07-13: ONE
+    /// weekly window at 31%, and no five-hour window at all (`secondary` is null
+    /// in the payload). See src/daemon/fixtures/codex-rate-limits-prolite.json.
+    private func codexProlitePool() -> QuotaEntry {
+        .pool(QuotaPool(
+            provider: "codex", pool: "codex", origin: "discovered",
+            label: "prolite",
+            confidence: "authoritative", freshness: "fresh", source: "provider",
+            fiveHour: window(used: nil, confidence: "missing"),
+            weekly: window(
+                used: 31, allowance: 100,
+                confidence: "authoritative", windowMinutes: 10_080)))
     }
 
     func testUnmeteredSurfaceNeverGetsMeters() {
@@ -118,6 +138,63 @@ final class ModelControlTests: XCTestCase {
         guard case .unknown = windows[1].state else {
             return XCTFail("weekly window without a reading must be unknown")
         }
+    }
+
+    // The bug: Codex's five-hour slot was rendered "no reading for this window"
+    // — the copy §7.4 reserves for a probe that failed closed — when the probe
+    // had in fact succeeded and reported, authoritatively, that this plan has no
+    // five-hour window. A window the vendor does not meter gets no meter (§7.6),
+    // exactly as an unmetered provider gets no gauge.
+    func testPlanWithNoFiveHourWindowMountsNoFiveHourMeter() {
+        let usage = MeterDerivation.usage(
+            provider: .codex, surface: .metered,
+            quota: [codexProlitePool()], quotaError: nil)
+        guard case .metered(let windows) = usage else {
+            return XCTFail("expected meters, got \(usage)")
+        }
+        XCTAssertEqual(
+            windows.map(\.label), ["7 day window"],
+            "a plan that meters one window must mount one meter — a hollow "
+                + "five-hour meter claims a read failure that never happened")
+        guard case .measured(let percent, _, _, let confidence) = windows[0].state else {
+            return XCTFail("the weekly window IS measured, got \(windows[0].state)")
+        }
+        XCTAssertEqual(percent, 31)
+        XCTAssertEqual(confidence, "authoritative")
+    }
+
+    // The other half of the distinction, and the one that must not regress: a
+    // window the provider DOES meter, whose reading is merely absent, still
+    // mounts and still says unknown. Suppressing that would hide Claude's silent
+    // feed instead of showing it.
+    func testMeteredWindowWithNoReadingStaysMountedAsUnknown() {
+        let usage = MeterDerivation.usage(
+            provider: .claude, surface: .metered,
+            quota: [claudePool(fiveHourUsed: 63)], quotaError: nil)
+        guard case .metered(let windows) = usage else {
+            return XCTFail("expected meters, got \(usage)")
+        }
+        XCTAssertEqual(windows.map(\.label), ["5 hour window", "7 day window"])
+        guard case .unknown = windows[1].state else {
+            return XCTFail("a metered window with no reading must stay unknown")
+        }
+    }
+
+    // A pool that answered nothing at all is not evidence that its windows do
+    // not exist. Without a reading anywhere, both windows stay mounted and the
+    // silence shows — "we could not read" is not "there is nothing to read".
+    func testPoolWithNoReadingAnywhereKeepsBothWindows() {
+        let silent = QuotaEntry.pool(QuotaPool(
+            provider: "codex", pool: "codex", origin: "discovered",
+            confidence: "missing", freshness: "missing", source: "none",
+            fiveHour: window(used: nil, confidence: "missing"),
+            weekly: window(used: nil, confidence: "missing")))
+        let usage = MeterDerivation.usage(
+            provider: .codex, surface: .metered, quota: [silent], quotaError: nil)
+        guard case .metered(let windows) = usage else {
+            return XCTFail("expected meters, got \(usage)")
+        }
+        XCTAssertEqual(windows.map(\.label), ["5 hour window", "7 day window"])
     }
 
     func testSilentFeedDerivesSilentWithMeasuredReason() {
