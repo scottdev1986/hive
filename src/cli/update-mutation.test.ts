@@ -1,4 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { MachineMutationCoordinator } from "../daemon/mutation-lease";
 import { activateStagedUpdate, rollbackWhenIdle } from "./update";
 
 const blocker = {
@@ -66,25 +70,44 @@ describe("machine mutation leases in update commands", () => {
     ]);
   });
 
-  test("a landing that wins the lease race prevents every update mutation", async () => {
+  test("a real landing operation that wins the race prevents every update mutation", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-update-landing-race-"));
+    const mutationPath = join(root, "mutation.db");
+    const landingCoordinator = new MachineMutationCoordinator({
+      path: mutationPath,
+      instanceId: "review",
+      instanceHome: root,
+    });
+    const updateCoordinator = new MachineMutationCoordinator({
+      path: mutationPath,
+      instanceId: "default",
+      instanceHome: root,
+      instanceLiveness: async () => "live",
+    });
+    const landing = await landingCoordinator.beginOperation("landing");
     let mutated = false;
-    await expect(activateStagedUpdate("0.0.8", {
-      acquireLease: async () => {
-        throw new Error("landing in Hive instance review is in progress");
-      },
-      blockers: async () => [],
-      inspectDaemon: async () => ({ state: "absent" }),
-      activate: async () => {
-        mutated = true;
-        return { activated: true, version: "0.0.8", previous: "0.0.7" };
-      },
-      ensureBinLink: async () => {
-        mutated = true;
-      },
-      stopStaleDaemon: async () => {},
-      log: () => {},
-    })).rejects.toThrow(/landing .* in progress/);
-    expect(mutated).toBe(false);
+    try {
+      await expect(activateStagedUpdate("0.0.8", {
+        acquireLease: (purpose) => updateCoordinator.acquireLease(purpose),
+        blockers: async () => [],
+        inspectDaemon: async () => ({ state: "absent" }),
+        activate: async () => {
+          mutated = true;
+          return { activated: true, version: "0.0.8", previous: "0.0.7" };
+        },
+        ensureBinLink: async () => {
+          mutated = true;
+        },
+        stopStaleDaemon: async () => {},
+        log: () => {},
+      })).rejects.toThrow(/landing .* in progress/);
+      expect(mutated).toBe(false);
+    } finally {
+      landing.release();
+      updateCoordinator.close();
+      landingCoordinator.close();
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   test("a team appearing after staging blocks activation and releases the lease", async () => {
