@@ -39,7 +39,7 @@ afterAll(async () => {
 /** Init's real dependencies, minus the one that would talk to a daemon. */
 const testDeps = (): typeof defaultInitDeps => ({
   ...defaultInitDeps,
-  reindexMemory: async () => {},
+  reindexMemory: async () => "indexed",
 });
 
 function git(root: string, args: string[]): void {
@@ -212,13 +212,59 @@ describe("runInit", () => {
       const result = await runInit(
         root,
         { facts: [{ title: "A gotcha", body: "x" }], today: "2026-07-11" },
-        { ...testDeps(), reindexMemory: async () => { reindexed += 1; } },
+        {
+          ...testDeps(),
+          reindexMemory: async () => {
+            reindexed += 1;
+            return "indexed";
+          },
+        },
       );
       expect(result.factsSeeded).toEqual(["a-gotcha"]);
       expect(reindexed).toBe(1);
       // The old init printed "Run `hive memory reindex` ... to index the seeded
       // facts", which is Hive asking to be finished by hand.
       expect(result.messages.every((m) => !m.includes("hive memory reindex"))).toBe(true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("does not claim seeded facts were indexed when no daemon was available", async () => {
+    const root = await tsRepo();
+    try {
+      const result = await runInit(
+        root,
+        { facts: [{ title: "Deferred fact", body: "x" }], today: "2026-07-11" },
+        { ...testDeps(), reindexMemory: async () => "deferred" },
+      );
+
+      expect(result.messages.join("\n")).not.toContain("Seeded and indexed");
+      expect(result.messages.join("\n")).toContain("rebuild the memory index");
+      expect(result.messages.join("\n")).toContain("when it starts");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("reports a failed memory reindex with a recovery command", async () => {
+    const root = await tsRepo();
+    try {
+      const result = await runInit(
+        root,
+        { facts: [{ title: "Unindexed fact", body: "x" }], today: "2026-07-11" },
+        {
+          ...testDeps(),
+          reindexMemory: async () => {
+            throw new Error("daemon refused reindex");
+          },
+        },
+      );
+
+      const report = result.messages.join("\n");
+      expect(report).not.toContain("Seeded and indexed");
+      expect(report).toContain("daemon refused reindex");
+      expect(report).toContain("hive memory reindex");
     } finally {
       await rm(root, { recursive: true, force: true });
     }

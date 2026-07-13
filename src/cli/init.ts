@@ -15,9 +15,9 @@
  *     become memory; they are already in the profile.
  *
  * Running the command is the authorization, and every action it takes is
- * printed — but it never ends by asking for another command. Anything Hive can
- * finish itself, it finishes here (the memory index below is the example: seeded
- * facts are indexed on the spot, not left with a note to go reindex them).
+ * printed. Seeded facts are indexed immediately when a daemon is available;
+ * otherwise the report names the startup rebuild instead of claiming the index
+ * already changed.
  * Graphify is the one decision that is the human's, and init is where it gets
  * made: `--graphify`/`--no-graphify` always win and never prompt; with no flag
  * a TTY is asked once (recommended, default yes) and a non-TTY safely declines
@@ -125,9 +125,8 @@ export interface InitDeps {
   listMemoryFacts: (root: string) => Promise<Array<{ id: string; scope: string }>>;
   fileExists: (path: string) => Promise<boolean>;
   writeFile: (path: string, contents: string) => Promise<void>;
-  /** Index freshly seeded facts. Best-effort: with no daemon up there is nothing
-   * to tell, because the next one rebuilds the index when it starts. */
-  reindexMemory: () => Promise<void>;
+  /** The next daemon rebuilds the index when no daemon is available yet. */
+  reindexMemory: () => Promise<"indexed" | "deferred">;
   /** Is this CLI installed on the machine? A dependency so a test can decide
    * what the machine has without a real `claude` on PATH. */
   hasCli: (command: string) => boolean;
@@ -173,8 +172,9 @@ export const defaultInitDeps: InitDeps = {
   },
   reindexMemory: async () => {
     const port = readDaemonPort();
-    if (port === null) return;
+    if (port === null) return "deferred";
     await reindexMemory(port);
+    return "indexed";
   },
   hasCli: (command) => Bun.which(command) !== null,
   installShippedSkills,
@@ -407,21 +407,29 @@ export async function runInit(
   }
 
   // 4. Seed narrative facts (source: init). Structured truth stays in the
-  //    profile; only genuinely narrative knowledge is seeded here. A seeded fact
-  //    that is not in the search index is not yet a fact anyone can find, so we
-  //    index it now rather than printing the reindex command at someone.
+  //    profile; only genuinely narrative knowledge is seeded here.
   const facts = options.facts ?? [];
   const factsSeeded = facts.length === 0
     ? []
     : await seedInitFacts(cwd, facts, today, deps);
   if (factsSeeded.length > 0) {
-    await deps.reindexMemory().catch(() => {
-      // No daemon, or one that would not answer: the next daemon to start
-      // rebuilds the index from the files on disk anyway.
-    });
-    messages.push(
-      `Seeded and indexed ${factsSeeded.length} narrative memory article${factsSeeded.length === 1 ? "" : "s"} (source: init).`,
-    );
+    const articles = `${factsSeeded.length} narrative memory article${
+      factsSeeded.length === 1 ? "" : "s"
+    }`;
+    try {
+      const indexing = await deps.reindexMemory();
+      messages.push(
+        indexing === "indexed"
+          ? `Seeded and indexed ${articles} (source: init).`
+          : `Seeded ${articles} (source: init); the daemon will rebuild the memory index when it starts.`,
+      );
+    } catch (error) {
+      messages.push(
+        `Seeded ${articles} (source: init), but memory indexing failed: ${
+          error instanceof Error ? error.message : String(error)
+        }\nFix: after the daemon starts, run \`hive memory reindex\`.`,
+      );
+    }
   }
 
   // 5. Graphify. The choice is the human's, and init is where it gets made:
@@ -514,8 +522,7 @@ export async function readSeedFactsFile(path: string): Promise<InitFact[]> {
 }
 
 /** CLI entry: `hive init [--refresh] [--scaffold-agents] [--seed-facts <path>]`.
- * Prints what it did and stops. It never ends by naming another command: the
- * profile needs no maintenance and seeded facts are indexed on the way out. */
+ * Prints what it did and stops. */
 export async function runInitCli(options: {
   /** The project root; defaults to the git toplevel of process.cwd(), so
    * `hive init` from a repo subdirectory profiles the repo, not the
