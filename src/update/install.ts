@@ -115,6 +115,11 @@ export async function stageRelease(deps: StageDeps): Promise<StageResult> {
 
   const trust = verifyManifest(deps.manifestBytes, deps.signature, publicKey);
   if (!trust.verified) throw new UpdateError(`Refusing update: ${trust.reason}`);
+  if (!trust.signed) {
+    throw new UpdateError(
+      "Refusing update: manifest is not signed by an embedded Hive release key",
+    );
+  }
 
   const cli = selectArtifact(deps.manifest, "cli", deps.arch);
   if (cli === null) {
@@ -194,8 +199,8 @@ export async function stageRelease(deps: StageDeps): Promise<StageResult> {
   return {
     version,
     directory: target,
-    signed: trust.signed,
-    warning: trust.signed ? null : trust.warning,
+    signed: true,
+    warning: null,
     cliSha256: cli.sha256,
   };
 }
@@ -277,9 +282,14 @@ export async function ensureStaged(deps: StageDeps): Promise<StageOutcome> {
 
   const trust = verifyManifest(deps.manifestBytes, deps.signature, publicKey);
   if (!trust.verified) throw new UpdateError(`Refusing update: ${trust.reason}`);
+  if (!trust.signed) {
+    throw new UpdateError(
+      "Refusing update: manifest is not signed by an embedded Hive release key",
+    );
+  }
   const summary = {
-    signed: trust.signed,
-    warning: trust.signed ? null : trust.warning,
+    signed: true,
+    warning: null,
   };
 
   const version = deps.manifest.version;

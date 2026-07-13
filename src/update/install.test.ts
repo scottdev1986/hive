@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { generateKeyPairSync, sign } from "node:crypto";
 import {
   chmodSync,
   existsSync,
@@ -34,6 +35,13 @@ beforeEach(() => {
 afterEach(() => rmSync(root, { recursive: true, force: true }));
 
 const CLI_BYTES = new TextEncoder().encode("#!/bin/sh\necho hive 0.0.7\n");
+const RELEASE_KEY = (() => {
+  const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+  return {
+    publicKey: publicKey.export({ format: "der", type: "spki" }).toString("base64"),
+    sign: (bytes: Uint8Array) => sign(null, bytes, privateKey).toString("base64"),
+  };
+})();
 
 const manifestFor = (version: string, bytes: Uint8Array): ReleaseManifest => ({
   schema: 1,
@@ -61,13 +69,14 @@ const stageDeps = (
   over: Partial<Parameters<typeof stageRelease>[0]> = {},
 ) => {
   const manifest = manifestFor(version, CLI_BYTES);
+  const manifestBytes = new TextEncoder().encode(JSON.stringify(manifest));
   return {
     manifest,
-    manifestBytes: new TextEncoder().encode(JSON.stringify(manifest)),
-    signature: null,
+    manifestBytes,
+    signature: RELEASE_KEY.sign(manifestBytes),
     arch: "arm64" as const,
     root,
-    publicKey: null,
+    publicKey: RELEASE_KEY.publicKey,
     download: async () => CLI_BYTES,
     probeVersion: async () => `hive ${version} (abc1234)`,
     ...over,
@@ -86,9 +95,18 @@ describe("staging a release", () => {
   test("verifies, stages, and leaves an immutable version directory", async () => {
     const result = await stageRelease(stageDeps("0.0.7"));
     expect(result.version).toEqual("0.0.7");
-    expect(result.signed).toEqual(false);
-    expect(result.warning).toContain("not signed");
+    expect(result.signed).toEqual(true);
+    expect(result.warning).toBeNull();
     expect(isStaged("0.0.7", root)).toEqual(true);
+  });
+
+  test("refuses an unsigned release when no release key is available", async () => {
+    const promise = stageRelease(stageDeps("0.0.7", {
+      publicKey: null,
+      signature: null,
+    }));
+    await expect(promise).rejects.toThrow(UpdateError);
+    await expect(promise).rejects.toThrow(/not signed by an embedded Hive release key/);
   });
 
   test("refuses bytes whose digest the manifest did not name", async () => {
@@ -144,6 +162,14 @@ describe("staging a release", () => {
  * through, and "it is already on disk" is not evidence about what is on disk.
  */
 describe("ensureStaged: an already-staged version is re-proved, never assumed", () => {
+  test("refuses an unsigned manifest before using staged bytes", async () => {
+    fakeVersion("0.0.7");
+    await expect(ensureStaged(stageDeps("0.0.7", {
+      publicKey: null,
+      signature: null,
+    }))).rejects.toThrow(/not signed by an embedded Hive release key/);
+  });
+
   test("downloads when nothing is staged", async () => {
     const result = await ensureStaged(stageDeps("0.0.7"));
     expect(result.reused).toBe(false);
