@@ -27,6 +27,15 @@ if (repoRoot === undefined || quotaPath === undefined) {
 
 class FakeTmux {
   readonly sessions = new Set<string>();
+  private readonly panes = new Map<string, Bun.Subprocess>();
+
+  addSession(session: string): void {
+    this.sessions.add(session);
+    this.panes.set(session, Bun.spawn(["sleep", "60"], {
+      stdout: "ignore",
+      stderr: "ignore",
+    }));
+  }
 
   async hasSession(session: string): Promise<boolean> {
     return this.sessions.has(session);
@@ -38,10 +47,16 @@ class FakeTmux {
 
   async killSession(session: string): Promise<void> {
     this.sessions.delete(session);
+    this.panes.delete(session);
   }
 
   async newSession(name: string): Promise<void> {
-    this.sessions.add(name);
+    this.addSession(name);
+  }
+
+  async listPanePids(session: string): Promise<number[]> {
+    const pane = this.panes.get(session);
+    return pane === undefined || pane.exitCode !== null ? [] : [pane.pid];
   }
 }
 
@@ -81,7 +96,7 @@ class AcceptanceSpawner implements Spawner {
       writeRevoked: false,
       channelsEnabled: false,
     };
-    this.tmux.sessions.add(record.tmuxSession);
+    this.tmux.addSession(record.tmuxSession);
     return record;
   }
 
@@ -117,7 +132,7 @@ const quota = new QuotaService(
   QuotaConfigSchema.parse({ enabled: false }),
 );
 const tmux = new FakeTmux();
-tmux.sessions.add(orchestratorTmuxSession());
+tmux.addSession(orchestratorTmuxSession());
 const daemon = new HiveDaemon({
   db,
   repoRoot,
@@ -129,7 +144,7 @@ const daemon = new HiveDaemon({
   quota,
   tokenUsage: new TokenUsageStore(db, []),
   resourceRunners: {
-    panePids: async () => [],
+    panePids: (session) => tmux.listPanePids(session),
   },
 });
 daemon.start();

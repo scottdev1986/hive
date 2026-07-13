@@ -140,6 +140,7 @@ import {
   captureProcessTree,
   defaultReapDependencies,
   reapCapturedTree,
+  type CapturedTree,
   type ReapDependencies,
   type ReapOutcome,
 } from "./teardown";
@@ -1729,24 +1730,66 @@ export class HiveDaemon {
    * reach it. It is found by the pidfile it drops beside its socket.
    */
   private async agentProcessRoots(agent: AgentRecord): Promise<number[]> {
-    const roots: number[] = [];
+    const roots = await this.sessionProcessRoots(agent.tmuxSession);
     try {
-      roots.push(...await this.panePids(agent.tmuxSession));
-    } catch {
-      // A session that is already gone contributes no pids, which is correct:
-      // there is nothing left in it to kill.
-    }
-    try {
-      const pid = Number.parseInt(
-        (await readFile(codexAgentHostPidfile(agent), "utf8")).trim(),
-        10,
-      );
-      if (Number.isSafeInteger(pid) && pid > 1) roots.push(pid);
-    } catch {
-      // No pidfile: this agent never ran a Codex host, or it cleaned up after
-      // itself. Either way there is nothing to reap.
+      const path = codexAgentHostPidfile(agent);
+      const value = (await readFile(path, "utf8")).trim();
+      if (!/^\d+$/.test(value)) {
+        throw new Error(`Invalid Codex host pidfile for ${agent.name}: ${path}`);
+      }
+      roots.push(Number(value));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
     return roots;
+  }
+
+  private async sessionProcessRoots(session: string): Promise<number[]> {
+    if (!await this.tmux.hasSession(session)) return [];
+    const roots = await this.panePids(session);
+    if (roots.length === 0) {
+      throw new Error(
+        `Process-root probe returned no panes for live tmux session ${session}`,
+      );
+    }
+    return roots;
+  }
+
+  private async killSessionAndReap(
+    session: string,
+    captured: CapturedTree,
+  ): Promise<ReapOutcome> {
+    let killError: unknown;
+    try {
+      await this.tmux.killSession(session, { ignoreMissing: true });
+    } catch (error) {
+      killError = error;
+    }
+
+    let sessionError: unknown;
+    try {
+      if (await this.tmux.hasSession(session)) {
+        sessionError = killError ??
+          new Error(`Tmux session ${session} survived kill-session`);
+      }
+    } catch (error) {
+      sessionError = error;
+    }
+
+    let reaped: ReapOutcome;
+    try {
+      reaped = await reapCapturedTree(captured, this.reapDependencies);
+    } catch (error) {
+      if (sessionError === undefined) throw error;
+      throw new Error(
+        `Tmux and process readback both failed for ${session}: ${
+          error instanceof Error ? error.message : "unknown process error"
+        }`,
+        { cause: sessionError },
+      );
+    }
+    if (sessionError !== undefined) throw sessionError;
+    return reaped;
   }
 
   /**
@@ -1798,9 +1841,6 @@ export class HiveDaemon {
       note: string;
     } | null;
   }> {
-    this.capabilities.revokeSubject(agent.name);
-    removeCredential(agent.name);
-
     // Capture the TREE, not just the roots, and do it before the session dies:
     // a detached child outlives the pane and is reparented to init, which
     // destroys the very parent links a later walk would need to find it.
@@ -1808,8 +1848,12 @@ export class HiveDaemon {
       await this.agentProcessRoots(agent),
       this.reapDependencies,
     );
-    await this.tmux.killSession(agent.tmuxSession, { ignoreMissing: true });
-    const reaped = await reapCapturedTree(captured, this.reapDependencies);
+    this.capabilities.revokeSubject(agent.name);
+    removeCredential(agent.name);
+    const reaped = await this.killSessionAndReap(
+      agent.tmuxSession,
+      captured,
+    );
     const timestamp = options.at ?? new Date().toISOString();
     const killed = this.db.markAgentDeadAndDetachTerminal(
       agent.id,
@@ -2002,17 +2046,25 @@ export class HiveDaemon {
    * machine whose remaining agents nobody ever asked to close.
    */
   private async killAllAgents(): Promise<void> {
+    const failures: string[] = [];
     for (const agent of this.db.listAgents()) {
       if (!LIVE_STATUSES.includes(agent.status)) continue;
       try {
         await this.killAgentTeardown(agent);
       } catch (error) {
-        console.error(
-          `Hive could not cleanly close ${agent.name} during shutdown: ${
+        failures.push(
+          `${agent.name}: ${
             error instanceof Error ? error.message : "unknown error"
           }`,
         );
       }
+    }
+    if (failures.length > 0) {
+      throw new Error(
+        `Hive refused shutdown because agent teardown failed: ${
+          failures.join("; ")
+        }`,
+      );
     }
   }
 
@@ -2032,6 +2084,17 @@ export class HiveDaemon {
   async stop(): Promise<void> {
     if (this.manageLifecycle) {
       await this.killAllAgents();
+      const session = orchestratorTmuxSession();
+      const captured = await captureProcessTree(
+        await this.sessionProcessRoots(session),
+        this.reapDependencies,
+      );
+      const reaped = await this.killSessionAndReap(session, captured);
+      if (reaped.survivors.length > 0) {
+        throw new Error(
+          `Hive refused shutdown because ${reaped.survivors.length} orchestrator process(es) survived SIGKILL`,
+        );
+      }
     }
     if (this.reconciliationTimer !== null) {
       clearInterval(this.reconciliationTimer);
@@ -2042,18 +2105,6 @@ export class HiveDaemon {
     this.codexControl?.close();
     await this.graphify?.stop();
     if (this.manageLifecycle) {
-      // The orchestrator has no agents row, so it is not in killAllAgents. Its
-      // pane holds a vendor CLI and that CLI's MCP children exactly like an
-      // agent's does, and killing the session alone would leave them behind.
-      const captured = await captureProcessTree(
-        await this.panePids(orchestratorTmuxSession())
-          .catch(() => [] as number[]),
-        this.reapDependencies,
-      );
-      await this.tmux.killSession(orchestratorTmuxSession(), {
-        ignoreMissing: true,
-      });
-      await reapCapturedTree(captured, this.reapDependencies);
       cleanupLifecycleFiles();
     }
     if (this.ownsDatabase) {

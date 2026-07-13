@@ -85,11 +85,20 @@ export async function captureProcessTree(
   dependencies: ReapDependencies = defaultReapDependencies(),
   selfPid: number = process.pid,
 ): Promise<CapturedTree> {
-  const roots = rootPids.filter((pid) =>
-    Number.isSafeInteger(pid) && pid > 1 && pid !== selfPid
-  );
-  if (roots.length === 0) return [];
-  return descendantsOf(parseProcessTable(await dependencies.ps()), [...roots])
+  if (rootPids.length === 0) return [];
+  const roots = [...new Set(rootPids)];
+  for (const pid of roots) {
+    if (!Number.isSafeInteger(pid) || pid <= 1 || pid === selfPid) {
+      throw new Error(`Refusing process-tree capture for invalid root pid ${pid}`);
+    }
+  }
+  const processes = parseProcessTable(await dependencies.ps());
+  for (const pid of roots) {
+    if (!processes.some((process) => process.pid === pid)) {
+      throw new Error(`Process-tree probe did not contain root pid ${pid}`);
+    }
+  }
+  return descendantsOf(processes, roots)
     .filter((sample) => sample.pid > 1 && sample.pid !== selfPid)
     .map((sample) => ({ pid: sample.pid, command: sample.command }));
 }
@@ -109,6 +118,7 @@ export async function captureProcessTree(
 export async function reapCapturedTree(
   captured: CapturedTree,
   dependencies: ReapDependencies = defaultReapDependencies(),
+  verificationPid: number = process.pid,
 ): Promise<ReapOutcome> {
   if (captured.length === 0) return { killed: [], survivors: [] };
 
@@ -124,8 +134,14 @@ export async function reapCapturedTree(
 
   // A zombie is an exit its parent has not reaped, so it counts as dead — the
   // process is not running anyone's code.
+  const states = parseStateTable(await dependencies.psState());
+  if (!states.some((sample) => sample.pid === verificationPid)) {
+    throw new Error(
+      `Process-state verification did not contain verification pid ${verificationPid}`,
+    );
+  }
   const alive = new Set(
-    parseStateTable(await dependencies.psState())
+    states
       .filter((sample) => !sample.stat.startsWith("Z"))
       .map((sample) => sample.pid),
   );

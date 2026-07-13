@@ -140,6 +140,149 @@ test("managed daemon shutdown reaps the orchestrator session", async () => {
   }
 });
 
+test("agent kill refuses when a live session's process roots are unreadable", async () => {
+  const db = new HiveDatabase(join(home, "unreadable-kill-roots.db"));
+  const tmux = new FakeDaemonTmux();
+  tmux.sessions.add("hive-maya");
+  const daemon = new HiveDaemon({
+    db,
+    spawner: new StubSpawner(),
+    tmux,
+    resourceRunners: {
+      panePids: async () => {
+        throw new Error("tmux pane probe failed");
+      },
+      orphans: null,
+    },
+  });
+  db.insertAgent(agent());
+  const agentFetch = actingAs(daemon, "maya", "writer");
+  try {
+    const response = await actingAs(daemon, "operator")(
+      "http://hive/agents/maya/kill",
+      { method: "POST" },
+    );
+    expect(response.status).toEqual(500);
+    expect(await response.json()).toEqual({
+      error: "tmux pane probe failed",
+    });
+    expect(tmux.killed).toEqual([]);
+    expect(db.getAgentByName("maya")).toMatchObject({
+      status: "working",
+      writeRevoked: false,
+    });
+    expect((await agentFetch("http://hive/workspace")).status).toEqual(200);
+  } finally {
+    await daemon.stop();
+    db.close();
+  }
+});
+
+test("agent kill refuses when tmux reports success but leaves the session", async () => {
+  const db = new HiveDatabase(join(home, "surviving-kill-session.db"));
+  const owned = Bun.spawn(["sleep", "60"], {
+    stdout: "ignore",
+    stderr: "ignore",
+  });
+  const tmux = new class extends FakeDaemonTmux {
+    override async killSession(session: string): Promise<void> {
+      this.killed.push(session);
+    }
+  }();
+  tmux.sessions.add("hive-maya");
+  const daemon = new HiveDaemon({
+    db,
+    spawner: new StubSpawner(),
+    tmux,
+    resourceRunners: {
+      panePids: async () => [owned.pid],
+      orphans: null,
+    },
+  });
+  db.insertAgent(agent());
+  const agentFetch = actingAs(daemon, "maya", "writer");
+  try {
+    const response = await actingAs(daemon, "operator")(
+      "http://hive/agents/maya/kill",
+      { method: "POST" },
+    );
+    expect(response.status).toEqual(500);
+    expect(await response.json()).toEqual({
+      error: "Tmux session hive-maya survived kill-session",
+    });
+    expect(await Promise.race([
+      owned.exited,
+      Bun.sleep(1_000).then(() => null),
+    ])).not.toBeNull();
+    expect(db.getAgentByName("maya")).toMatchObject({
+      status: "working",
+      writeRevoked: false,
+    });
+    expect((await agentFetch("http://hive/workspace")).status).toEqual(403);
+  } finally {
+    tmux.sessions.clear();
+    owned.kill("SIGKILL");
+    await owned.exited;
+    await daemon.stop();
+    db.close();
+  }
+});
+
+test("managed shutdown refuses to exit after an agent teardown probe fails", async () => {
+  const db = new HiveDatabase(join(home, "unreadable-shutdown-roots.db"));
+  const tmux = new FakeDaemonTmux();
+  tmux.sessions.add("hive-maya");
+  tmux.sessions.add(orchestratorTmuxSession());
+  const daemon = new HiveDaemon({
+    db,
+    spawner: new StubSpawner(),
+    tmux,
+    manageLifecycle: true,
+    resourceRunners: {
+      panePids: async () => {
+        throw new Error("tmux pane probe failed");
+      },
+      orphans: null,
+    },
+  });
+  db.insertAgent(agent());
+  try {
+    await expect(daemon.stop()).rejects.toThrow("refused shutdown");
+    expect(tmux.killed).toEqual([]);
+    expect(db.getAgentByName("maya")?.status).toEqual("working");
+  } finally {
+    tmux.sessions.clear();
+    await daemon.stop();
+    db.close();
+  }
+});
+
+test("managed shutdown refuses unreadable orchestrator process roots", async () => {
+  const db = new HiveDatabase(join(home, "unreadable-root-roots.db"));
+  const tmux = new FakeDaemonTmux();
+  tmux.sessions.add(orchestratorTmuxSession());
+  const daemon = new HiveDaemon({
+    db,
+    spawner: new StubSpawner(),
+    tmux,
+    manageLifecycle: true,
+    resourceRunners: {
+      panePids: async () => {
+        throw new Error("root pane probe failed");
+      },
+      orphans: null,
+    },
+  });
+  try {
+    await expect(daemon.stop()).rejects.toThrow("root pane probe failed");
+    expect(tmux.killed).toEqual([]);
+  } finally {
+    tmux.sessions.clear();
+    await daemon.stop();
+    db.close();
+  }
+});
+
 class StubSpawner implements Spawner {
   readonly requests: SpawnRequest[] = [];
 
@@ -614,7 +757,7 @@ describe("HiveDaemon HTTP server", () => {
         controlMessageId: `${name}-control`,
         controlQuotaReservationId: reservation.id,
       }));
-      if (name !== "reconcile") tmux.sessions.add(`hive-${name}`);
+      if (name === "complete") tmux.sessions.add(`hive-${name}`);
     }
     try {
       await daemon.processEvent({
@@ -3244,7 +3387,6 @@ describe("the model an agent is actually running", () => {
         toolSessionId: "session",
         quotaReservationId: decision.reservation.id,
       }));
-      tmux.sessions.add("hive-probe");
       const held = reserved();
       expect(held).toBeGreaterThan(before);
 

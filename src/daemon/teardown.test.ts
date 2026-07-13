@@ -15,6 +15,7 @@ const reapProcessTree = async (
   reapCapturedTree(
     await captureProcessTree(roots, dependencies, selfPid),
     dependencies,
+    selfPid,
   );
 
 /** The fake world covers states the kernel cannot safely produce on demand. */
@@ -36,7 +37,7 @@ function world(processes: FakeProcess[]) {
         .map((p) => `${p.pid} ${p.ppid} 1024 ${p.command}`)
         .join("\n"),
     psState: async () =>
-      [...alive.values()]
+      [{ pid: 1, ppid: 0, command: "init", stat: "S" }, ...alive.values()]
         .map((p) => `${p.pid} ${p.ppid} ${p.stat ?? "S"}`)
         .join("\n"),
     kill: (pid) => {
@@ -91,7 +92,7 @@ describe("reapProcessTree", () => {
       { pid: 500, ppid: 7, command: "codex app-server --listen unix://..." },
     ]);
 
-    const outcome = await reapProcessTree([100, 500], dependencies, 7);
+    const outcome = await reapProcessTree([100, 500], dependencies, 1);
 
     expect(outcome.killed.map((p) => p.pid).sort()).toEqual([100, 500]);
   });
@@ -119,17 +120,17 @@ describe("reapProcessTree", () => {
     expect(outcome.killed.map((p) => p.pid)).toEqual([100]);
   });
 
-  test("never signals the daemon itself, even if it appears in the tree", async () => {
+  test("refuses the daemon itself as a process-tree root", async () => {
     const { dependencies, signalled } = world([
       { pid: 7, ppid: 1, command: "hive daemon" },
       { pid: 100, ppid: 7, command: "-zsh" },
     ]);
 
-    // pid 7 is the daemon and is handed in as a root by a bad tmux read.
-    const outcome = await reapProcessTree([7], dependencies, 7);
+    await expect(reapProcessTree([7], dependencies, 7)).rejects.toThrow(
+      "invalid root pid 7",
+    );
 
     expect(signalled).not.toContain(7);
-    expect(outcome.killed).toEqual([]);
   });
 
   test("kills a detached child that tmux reparented to init", async () => {
@@ -153,7 +154,7 @@ describe("reapProcessTree", () => {
     const orphan = alive.get(101)!;
     orphan.ppid = 1;
 
-    const outcome = await reapCapturedTree(captured, dependencies);
+    const outcome = await reapCapturedTree(captured, dependencies, 1);
 
     expect(outcome.killed.map((p) => p.pid).sort()).toEqual([100, 101]);
     expect(outcome.survivors).toEqual([]);
@@ -216,7 +217,7 @@ describe("reapProcessTree", () => {
     }
   });
 
-  test("a tree walked AFTER the session dies misses the orphan entirely", async () => {
+  test("refuses capture after the root has vanished", async () => {
     // The negative control for the test above: this is what the broken version
     // did, and it is why "the tests passed" was not "the process is dead".
     const { dependencies, alive } = world([
@@ -227,8 +228,20 @@ describe("reapProcessTree", () => {
     alive.delete(100);
     alive.get(101)!.ppid = 1;
 
-    // Capturing from the roots only now, after the pane is gone, finds nothing.
-    expect(await captureProcessTree([100], dependencies, 1)).toEqual([]);
+    await expect(captureProcessTree([100], dependencies, 1)).rejects.toThrow(
+      "did not contain root pid 100",
+    );
+  });
+
+  test("refuses to report reaping when the verification probe sees no positive control", async () => {
+    const { dependencies } = world([
+      { pid: 100, ppid: 1, command: "-zsh" },
+    ]);
+    dependencies.psState = async () => "";
+
+    await expect(reapProcessTree([100], dependencies, 1)).rejects.toThrow(
+      "did not contain verification pid 1",
+    );
   });
 
   test("no roots is a no-op, not a sweep of everything", async () => {

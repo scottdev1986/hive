@@ -55,7 +55,7 @@ class FakeDaemonTmux {
   readonly killed: string[] = [];
 
   async hasSession(): Promise<boolean> {
-    return true;
+    return false;
   }
 
   async capturePane(): Promise<string> {
