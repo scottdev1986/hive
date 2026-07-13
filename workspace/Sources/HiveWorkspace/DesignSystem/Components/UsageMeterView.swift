@@ -32,15 +32,21 @@ final class UsageMeterView: NSView {
 
         titleLabel.font = Theme.Font.caption
         titleLabel.textColor = .secondaryLabelColor
+        titleLabel.lineBreakMode = .byTruncatingTail
         valueLabel.font = Theme.Font.monoDigits
         valueLabel.textColor = .labelColor
         valueLabel.alignment = .right
+        valueLabel.lineBreakMode = .byTruncatingTail
         captionLabel.font = Theme.Font.caption
         captionLabel.textColor = .tertiaryLabelColor
         captionLabel.lineBreakMode = .byWordWrapping
         captionLabel.maximumNumberOfLines = 3
 
-        titleLabel.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
+        // AppKit may grow the window instead of truncating a label at 500 or
+        // higher. Every label in this width-constrained component stays below it.
+        titleLabel.setContentCompressionResistancePriority(.init(490), for: .horizontal)
+        valueLabel.setContentCompressionResistancePriority(.init(490), for: .horizontal)
+        captionLabel.setContentCompressionResistancePriority(.init(200), for: .horizontal)
         valueLabel.setContentHuggingPriority(.defaultHigh, for: .horizontal)
 
         topRow.orientation = .horizontal
@@ -141,6 +147,9 @@ final class UsageMeterView: NSView {
             captionLabel.isHidden = false
             setAccessibilityLabel("\(window.label), not metered on this plan")
         }
+        titleLabel.toolTip = titleLabel.stringValue
+        valueLabel.toolTip = valueLabel.stringValue
+        captionLabel.toolTip = captionLabel.stringValue
     }
 
     private func fillColor(usedPercent: Double) -> NSColor {
