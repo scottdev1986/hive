@@ -1666,6 +1666,68 @@ describe("HiveDaemon HTTP server", () => {
     }
   });
 
+  test("the Workspace kill path cleans residual resources for a terminal agent", async () => {
+    const owned = Bun.spawn(["sleep", "60"], {
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    const unrelated = Bun.spawn(["sleep", "60"], {
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    const db = new HiveDatabase(join(home, "terminal-http-kill.db"));
+    const tmux = new FakeDaemonTmux();
+    tmux.sessions.add("hive-maya");
+    const closed: AgentRecord["terminalHandle"][] = [];
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new StubSpawner(),
+      tmux,
+      tmuxSender: new SilentTmuxSender(db),
+      closeTerminal: async (handle) => { closed.push(handle); },
+      resourceRunners: {
+        panePids: async (session) => session === "hive-maya" ? [owned.pid] : [],
+        orphans: null,
+      },
+    });
+    const handle = { app: "iterm2", sessionId: "residual-viewer" } as const;
+    db.insertAgent(agent({
+      status: "dead",
+      worktreePath: null,
+      branch: null,
+      terminalHandle: handle,
+    }));
+    try {
+      expect(() => process.kill(owned.pid, 0)).not.toThrow();
+      expect(() => process.kill(unrelated.pid, 0)).not.toThrow();
+
+      const response = await actingAs(daemon, "operator")(
+        "http://hive/agents/maya/kill",
+        { method: "POST" },
+      );
+      expect(response.status).toEqual(200);
+      const result = await response.json() as {
+        reaped: { killed: Array<{ pid: number }>; survivors: unknown[] };
+      };
+      expect(result.reaped.killed.map(({ pid }) => pid)).toContain(owned.pid);
+      expect(result.reaped.survivors).toEqual([]);
+      expect(await Promise.race([
+        owned.exited,
+        Bun.sleep(1_000).then(() => null),
+      ])).not.toBeNull();
+      expect(() => process.kill(unrelated.pid, 0)).not.toThrow();
+      expect(tmux.killed).toEqual(["hive-maya"]);
+      expect(closed).toEqual([handle]);
+      expect(db.getAgentByName("maya")?.terminalHandle).toBeUndefined();
+    } finally {
+      owned.kill("SIGKILL");
+      unrelated.kill("SIGKILL");
+      await Promise.all([owned.exited, unrelated.exited]);
+      await daemon.stop();
+      db.close();
+    }
+  });
+
   test("hive_approvals trims by kind: boilerplate is cut, a tool permission never is", async () => {
     // The trim exists to stop re-sending the same boilerplate on every poll.
     // It must never reach a tool-permission description, because THAT text is

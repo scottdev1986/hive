@@ -3339,20 +3339,6 @@ export class HiveDaemon {
     if (agent === null) {
       return json({ error: `Hive agent not found: ${name}` }, { status: 404 });
     }
-    if (!LIVE_STATUSES.includes(agent.status)) {
-      return json({
-        agent,
-        cleaned: {
-          tmuxSession: agent.tmuxSession,
-          worktreePath: null,
-          branch: null,
-        },
-        reaped: { killed: [], survivors: [] },
-        preserved: null,
-        stranded: null,
-        alreadyDead: true,
-      });
-    }
     try {
       return json(await this.killAgentTeardown(agent));
     } catch (error) {
