@@ -70,7 +70,7 @@ export async function fetchAgentStatus(
   fetcher?: McpFetcher,
 ): Promise<AgentRecord[]> {
   return AgentRecordSchema.array().parse(
-    await callHiveTool(port, "hive_status", {}, "agents", fetcher),
+    await callHiveTool(port, "hive_status", { detail: "full" }, "agents", fetcher),
   );
 }
 
