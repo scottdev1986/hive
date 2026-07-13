@@ -2,12 +2,19 @@
 
 Hive should choose a model in two distinct steps: first prove which enabled
 models are capable and safe for the task, then spread assignments among the
-survivors. Quota is part of the proof that a candidate may run. It is not a
-common currency for balancing vendors, because Claude's five-hour and weekly
-percentages, Codex's plan-dependent windows, and Grok's absent capacity gauge do
-not measure the same thing. Cross-vendor distribution therefore uses Hive's own
-measured assignment history, never a made-up conversion between provider
-windows.
+survivors. Quota state may prove that an AUTO candidate fits or does not fit its
+own provider's real windows. It is not a common currency for balancing vendors,
+because five-hour, weekly, plan-dependent, and genuinely unmetered surfaces do
+not measure the same thing.
+
+The common measurement is the work Hive assigned. Hive can always count a
+dispatch to Claude, Codex, Grok, or any future vendor, including one whose
+provider quota is unmeasurable. Cross-vendor distribution therefore uses Hive's
+observed assignment history. It never converts unlike quota windows, and it
+never invents a headroom score for a vendor that publishes no gauge. This is the
+center of the design: provider quota answers “may this AUTO candidate run?”;
+Hive-observed assigned work answers “which capable candidate should receive the
+next automatic assignment?”
 
 The other half of this design is explicit intent. “Let Hive decide” is a value,
 not a missing value. Model preference, effort, and coding tier each preserve
@@ -105,8 +112,10 @@ For a coding task, Hive resolves one of `simple_coding`, `standard_coding`, or
    `benchmark-fit-policy-proposal.md` “Hard constraints.”
 4. Resolve effort and validate the selected level against that exact model's
    fresh capability record.
-5. Prove affordability from each candidate's own quota and billing surfaces.
-   Only candidates that survive become inputs to distribution.
+5. Apply the candidate's per-window meter classifications and billing state.
+   METERED windows must fit; NOT_METERED windows impose no fictional quota
+   check; READ_FAILED excludes an AUTO candidate but does not revoke an exact
+   user choice. Only AUTO candidates that survive become inputs to distribution.
 
 The router never balances before this funnel. In particular, recent low use
 cannot make a simple-only model eligible for standard or complex work. A
@@ -125,14 +134,36 @@ second launch path or temporarily remove the spawner net.
 
 “Load” has two meanings that must stay separate.
 
-**Provider pressure** is the provider's report about its own pool. Hive evaluates
-every reported window independently, after subtracting that window's task
-estimate and outstanding reservations. Claude must fit both its five-hour and
-weekly windows. A Codex account is evaluated against exactly the windows its
-payload reports; this account reports one 10,080-minute weekly window, and Hive
-must not manufacture a five-hour window. A window marked `not-metered` is not
-checked. A window marked `read-failed` is an expected fact Hive could not read,
-so AUTO cannot prove affordability and excludes the candidate with that reason.
+**Provider pressure** is the provider's report about its own pool. Meter
+classification is an explicit, provenance-bearing input for each window:
+
+```ts
+type WindowMetering =
+  | { state: "METERED"; reading: QuotaWindowReading }
+  | { state: "NOT_METERED"; evidence: ParserConfirmedAbsence }
+  | { state: "READ_FAILED"; reason: string; lastKnownDurationMins: number | null };
+```
+
+No missing field means any member of this union. The provider parser produces
+the classification from positive wire evidence; the router consumes it. A
+provider can have mixed states, such as a real weekly gauge and no five-hour
+window.
+
+Hive evaluates every METERED window independently, after subtracting that
+window's task estimate and outstanding reservations. Claude must fit both of its
+reported windows. A Codex or Grok account is evaluated against exactly the
+windows its payload reports; a plan with one 10,080-minute weekly window does
+not acquire a five-hour window. NOT_METERED means the readable provider surface
+proves that this plan/vendor publishes no such gauge. It is a normal state and
+imposes no quota check. READ_FAILED means Hive expected a gauge and could not
+read it; preserved duration describes the window but supplies no headroom.
+
+For AUTO, a READ_FAILED window excludes that candidate with the measured reason
+after any explicit last-known-good freshness allowance expires. For
+CHOICE, the read failure is a warning, not a capability revocation: Hive honors
+the exact provider/model, subject to the ordinary consent, capability, and money
+safety gates. If spend safety is itself unreadable, the existing approval path
+asks the user; Hive does not substitute another model.
 
 There is no cross-provider arithmetic on these percentages. “18% five-hour
 remaining” and “18% weekly remaining” are not equal supplies. The losing
@@ -141,18 +172,34 @@ remainder is useful for finding a candidate's own binding constraint, but
 sorting vendors by that minimum asserts equivalence between different time
 horizons. No such equivalence was measured.
 
-**Dispatch share** is what Hive itself assigned. It is measured in routed
-assignments, independent of vendor quota. For each provider Hive records active
-AUTO assignments and recently completed AUTO assignment opportunities in a
-bounded rolling window. Explicit model choices and control restarts are recorded
-for audit but do not create or repay fairness debt: direct user instructions
-must not distort the next automatic choice.
+The live implementation contains the sharper failure. `src/daemon/quota.ts:61–64`
+assigns every fully unmeasured candidate `UNKNOWN_HEADROOM_SCORE = 0.15`, and
+`src/daemon/quota.ts:1586–1597` uses that invented number in real dispatch. The
+comment correctly rejects “unknown means infinite,” but the replacement still
+turns absence into a convenient answer: unknown means exactly 15% headroom. It
+then competes against measured vendors as though 15% came from a provider.
+Choosing zero would starve the vendor and choosing one would slam it; choosing
+0.15 merely hides the same unsupported decision in the middle. This is a live
+instance of the bug class in `database-resilience.md` §0—absence read as the
+permissive or convenient answer—and the strongest reason quota cannot be the
+cross-vendor distribution currency.
+
+**Weighted fair dispatch** balances what Hive itself assigned. Unlike provider quota, this
+measurement exists for every vendor: Hive can always count the work it sent to
+Grok even if Grok publishes no remaining-capacity number. For each provider Hive
+records active AUTO assignments and recently completed AUTO assignment
+opportunities in a bounded rolling window. Explicit model choices and control
+restarts are recorded for audit but do not create or repay fairness debt: direct
+user instructions must not distort the next automatic choice.
 
 Among providers that have candidates in the same sufficient capability band,
 AUTO chooses the provider furthest below its earned share, with active
-assignments counted first so concurrent spawns see one another. Each prior AUTO
-decision gives every provider that was eligible for that decision an opportunity
-credit of `1 / eligible_provider_count`, and charges the selected provider one
+assignments counted first so concurrent spawns see one another. Each eligible
+provider has a positive scheduling weight; AUTO with no distribution preference
+uses weight 1 for every provider. An optional user-authored weight changes work
+share, not claimed quota capacity, and is shown as policy in every decision.
+Each prior AUTO decision gives eligible provider `p` opportunity credit
+`weight[p] / sum(eligible weights)` and charges the selected provider one
 assignment. The rolling deficit is credits minus charges; the largest deficit
 wins. A provider earns no credit for a task it could not perform, so a
 simple-only provider does not accumulate a claim on later complex work. Ties go
@@ -168,10 +215,10 @@ assignment count is too coarse for long complex work, category weights may be
 proposed as scheduling policy, but v1 does not label guessed cost as measured
 load.
 
-CHOICE bypasses this fair-share step. Hive walks the user's exact list in order
-and launches the first candidate that survives every gate. Distribution is the
-meaning of AUTO; reordering an explicit preference for balance would make the
-preference untrue.
+CHOICE bypasses weighted fair dispatch. Hive walks the user's exact list in
+order and launches the first candidate that survives every applicable gate.
+Distribution is the meaning of AUTO; reordering an explicit preference for
+balance would make the preference untrue.
 
 We considered three alternatives:
 
@@ -179,49 +226,64 @@ We considered three alternatives:
   capability bands and provider aggregation. A vendor with four models would
   receive four times the work, and a weak model could receive a hard task.
 - Headroom sorting reacts to real pressure within one pool but cannot compare
-  unlike windows and has no honest Grok input.
-- A user-authored Grok percentage is explicit, but it adds required setup to
-  express “no preference” and still says nothing about actual capacity.
+  unlike windows and has no honest input for any NOT_METERED provider.
+- A user-authored capacity percentage for an unmetered vendor is explicit, but
+  it adds required setup to express “no preference” and still says nothing about
+  actual capacity. A scheduling weight is honest because it claims only desired
+  work share, and equal weights require no setup.
 
-Provider-level fair share wins because it measures the thing it claims to
-balance—Hive assignments—and only after capability and safety have settled
-eligibility. Its cost is that it does not optimize consumption near a reset.
-That is deliberate: quota gates prevent unsafe work, while distribution avoids
-pretending that incompatible meters form one market.
+Provider-level weighted fair dispatch wins because it measures the thing it
+claims to balance—Hive assignments—and only after capability and safety have
+settled eligibility. Its cost is that it does not optimize consumption near a
+reset. That is deliberate: quota gates prevent unsafe work, while distribution
+avoids pretending that incompatible meters form one market.
 
-## Grok: eligible without a fictional gauge
+## Grok works under every metering classification
 
-Grok's `_x.ai/billing` money guard is not a capacity gauge. Its unmeasurable
-weekly pool therefore has an explicit `not-metered`/unmeasurable policy:
+Whether Grok exposes a real usage gauge is a provider fact, not a router design
+choice. The quota driver must establish it from a positive control on the live
+wire surface and pass a per-window classification to the router. This design is
+correct under either result and does not bake a belief about Grok into
+distribution:
 
-- Grok may enter AUTO only when its provider and exact model carry explicit
-  consent, capability evidence clears the task tier, the billing probe proves
-  the no-paid-spill guard required by `grok-routing-fit.md` §3, and the pool is
-  not latched exhausted from a measured limit-shaped failure.
-- Grok contributes no headroom number and receives no headroom rank. It
-  competes through the same provider dispatch-share ledger as the measurable
-  vendors. Equal default share bounds it from being slammed and prevents it
-  from disappearing merely because its denominator is unknowable.
-- A billing probe failure is `read-failed`, not unmeasurable-by-design. Grok is
-  excluded from AUTO until the money guard is readable. A successful probe that
-  proves the vendor publishes no capacity level remains `not-metered` and fully
-  eligible under fair share.
-- A measured limit-shaped failure closes the vendor until the reported period
-  boundary, as specified in `grok-routing-fit.md` §3.2–§3.3. Re-arm returns it
-  to eligible/unmeasurable, never “100% free.”
+- **A real gauge is established.** That window is METERED. Grok must fit it like
+  any other provider before entering AUTO. A separately absent five-hour window
+  can still be NOT_METERED; provider classification is not all-or-nothing.
+  Measured Grok pressure never becomes a cross-vendor score—fair dispatch still
+  spreads work from Hive's assignment ledger.
+- **A readable surface proves that no gauge exists.** That window is
+  NOT_METERED. Grok remains fully eligible for AUTO after consent, capability,
+  availability, and spend-safety checks. It receives assignments through fair
+  dispatch with no headroom number. NOT_METERED is not degraded, unavailable,
+  or read-failed. Excluding it would turn “no gauge” into “cannot work,” the
+  absence bug wearing its opposite mask.
+- **A gauge is expected but the read fails.** That window is READ_FAILED. Grok
+  is excluded from AUTO after the last-known-good freshness bound, with the
+  failure visible. This is a temporary inability to make an automatic quota
+  judgment, not a model capability decision.
 
-This replaces the “Grok as pressure valve” recommendation in
-`grok-routing-fit.md` §4. Leaning on Grok whenever measured providers are low is
-defensible as a bounded failure experiment, but it still systematically assigns
-work from an unobserved shared pool at the moment the other pools become scarce.
-Fair share is less opportunistic and more auditable. It gives up speculative
-reset optimization in exchange for a hard bound on how much automatic work an
-unmeasurable provider receives.
+In all three branches, an explicit Grok CHOICE works. Meter classification alone
+never revokes an enabled model the user deliberately selected. The launch still
+passes exact consent and capability checks, never substitutes another model,
+and applies the separate money guard. A READ_FAILED capacity gauge produces a
+warning; an unreadable spend rail uses the existing approval path rather than
+quietly refusing or rerouting the user's choice.
 
-The distinction being landed in the quota parser is load-bearing:
-`not-metered` says the provider/plan does not expose that window;
-`read-failed` says Hive failed to obtain an expected fact. The router never
-turns either into zero or full headroom, and never treats them as synonyms.
+If Grok is NOT_METERED, the assignment ledger is load-bearing: it is the only
+honest signal that can spread work to Grok without treating unknown capacity as
+free or empty. Hive cannot read the vendor's remaining allowance, but Hive can
+always count every task it dispatched there. If Grok is METERED, the same ledger
+still prevents cross-vendor arithmetic; the real gauge adds an affordability
+gate, not a different distribution algorithm.
+
+For a NOT_METERED weekly pool, the no-paid-spill guard and measured exhaustion
+latch in `grok-routing-fit.md` §3 remain relevant. A limit-shaped failure closes
+the pool until its observed boundary; re-arm returns it to NOT_METERED, never
+“100% free.” For a METERED pool, the ordinary measured exhaustion machinery
+supersedes that inference. In neither case should Grok become the pressure valve
+from `grok-routing-fit.md` §4: leaning on one vendor whenever other meters are
+low is not distribution, and it recreates a special router around the one
+surface that was hardest to reason about.
 
 ## Selection outcomes
 
@@ -233,21 +295,25 @@ The algorithm has explicit terminal cases:
   last gate refusal, including NEVER_CONFIGURED controls, missing consent,
   insufficient/unknown capability, unsupported effort, read-failed quota, and
   measured exhaustion. Do not consult a legacy router.
-- **Measured and unmeasurable candidates together:** measured candidates must
-  fit every real window; unmeasurable candidates must pass their spend guard and
-  exhaustion latch. Then fair share chooses among their providers without a
-  quota comparison.
+- **METERED and NOT_METERED candidates together:** measured candidates must fit
+  every real window; NOT_METERED candidates must pass capability, availability,
+  and spend safety without a fictional quota check. Then fair share chooses
+  among their providers without a quota comparison.
 - **A normally metered candidate with an unreadable feed:** exclude it from
   AUTO. A last-known reading may remain visible as stale evidence, but after its
   explicit freshness bound it cannot prove current affordability.
-- **A user CHOICE that cannot pass:** refuse that choice, listing the exact
-  reason. Automatic widening would turn “preference wins” into “preference is a
-  suggestion.”
+- **A user CHOICE with READ_FAILED capacity:** launch the exact choice with a
+  visible warning, subject to consent, capability, availability, and the
+  separate money-safety/approval gate. Do not widen to AUTO or reinterpret a
+  quota heuristic as capability revocation.
+- **A user CHOICE that fails a real gate:** refuse that choice, listing the
+  exact reason. Automatic widening would turn “preference wins” into
+  “preference is a suggestion.”
 
 An explicit one-off user pin retains its existing no-substitution contract. It
-still passes consent, capability, and billing gates. Any separately approved
-operator override for unreadable capacity must remain a named, audited override;
-AUTO never inherits it.
+still passes consent, capability, availability, and billing gates. Capacity
+READ_FAILED is reported and audited but requires no separate override merely to
+honor the user's direct route; AUTO never inherits that permission.
 
 ## The standard coding tier
 
@@ -364,9 +430,11 @@ The provider cards retain the distinction in
 `model-control-center-settings-ui.md` §7.4 and §7.6:
 
 - **Not metered on this plan/provider** has no bar and participates under fair
-  share if its money guard is safe.
-- **Could not read usage** has no determinate bar and is excluded from AUTO,
-  with the probe error and last-good age.
+  share if its money guard is safe. It is a normal, eligible state, not degraded
+  chrome.
+- **Could not read usage** has no determinate bar and is excluded from AUTO
+  after the freshness bound, with the probe error and last-good age. An exact
+  user choice remains launchable and displays the warning.
 - A real measured zero is still 0%; absence is never drawn as zero.
 
 Every spawn exposes a “Why this agent?” decision record in the MCC and CLI. It
@@ -379,19 +447,22 @@ shows, in order:
 3. every candidate considered and the exact stage at which it survived or was
    refused;
 4. capability evidence and provenance for the resolved tier;
-5. each real quota window separately, including duration, meter state,
-   freshness, post-reservation fit, and billing/spend guard—never a composite
-   cross-vendor headroom number;
-6. provider dispatch shares before the choice, active assignments, target
-   shares, tie-breaks, and the selected provider;
+5. each quota window separately, including the METERED / NOT_METERED /
+   READ_FAILED classification, its positive evidence, duration, freshness,
+   post-reservation fit when measurable, and billing/spend guard—never a
+   composite cross-vendor headroom number;
+6. provider dispatch weights and earned shares before the choice, active
+   assignments, opportunity credits, tie-breaks, and the selected provider;
 7. exact provider, model, effort, reservation, and immutable execution identity;
 8. warnings, explicit overrides, and later capability escalation lineage.
 
-The summary sentence should be concrete: “Standard coding; AUTO; Claude and
-Codex cleared capability and quota, Grok was excluded because its billing guard
-could not be read; Codex had the largest earned AUTO-share deficit; selected
-codex/model-x at high.” A user should not need logs to discover that another
-model was considered or why one disappeared.
+The summary sentence should be concrete: “Standard coding; AUTO; Claude's two
+meters fit, Codex weekly READ_FAILED, Grok weekly NOT_METERED with safe spend
+rails; Claude and Grok entered fair dispatch; Grok had the largest earned
+AUTO-share deficit; selected grok/model-x at high.” If a Grok gauge is
+established, the same sentence says METERED and prints its own-window fit. A
+user should not need logs to discover that another model was considered or why
+one disappeared.
 
 Decision records are append-only audit facts tied to the policy revision,
 catalog observations, quota observation ids, and fairness snapshot used. The
@@ -415,11 +486,13 @@ old router” path.
    explicit model consent; do not auto-consent newly discovered models. Test
    zero rows, disabled provider, absent model row, unreadable policy, and partial
    migration at the real process boundary.
-3. **Ship the decision record and read-only MCC explanation.** Record candidate
-   funnels, per-window meter states, and refusal reasons before changing which
-   model wins. Add positive-control tests for both `not-metered` and
-   `read-failed`; an all-empty explanation is a broken reader, not an empty
-   world. This makes the behavioral cutover auditable from its first spawn.
+3. **Ship meter classification and the decision record.** Record candidate
+   funnels, per-window METERED / NOT_METERED / READ_FAILED evidence, and refusal
+   reasons before changing which model wins. Add a positive-control fixture for
+   every state and mixed-window provider; an all-empty explanation is a broken
+   reader, not an empty world. Prove that READ_FAILED excludes AUTO but not an
+   exact CHOICE. This makes the behavioral cutover auditable from its first
+   spawn.
 4. **Add `standard_coding` and the classifier contract.** Extend every closed
    category enum, spawn schema, policy chain, quota estimate table, prompt,
    fixture, status surface, and escalation query. The orchestrator sends
@@ -434,13 +507,15 @@ old router” path.
    transaction, read active/recent AUTO assignment counts, choose the
    under-share eligible provider, reserve its quota, and append the decision.
    A concurrent spawn must see the reservation/assignment. Delete the fixed
-   unknown-headroom score in the same cutover; do not leave dual selection
-   semantics behind a fallback.
-7. **Enable Grok AUTO only through the explicit unmeasurable policy.** Require
-   readable no-paid-spill rails and the exhaustion latch; feed it into the same
-   provider fair-share ledger with no capacity score. Test not-metered,
-   read-failed, money-rail change, limit failure, reset re-arm, mixed pools, one
-   candidate, and empty pool.
+   unknown-headroom score at `src/daemon/quota.ts:61–64` in the same cutover; do
+   not leave dual selection semantics behind a fallback.
+7. **Wire Grok through the measured classification, whichever it is.** If the
+   driver establishes a real gauge, mark that window METERED and use its
+   ordinary affordability gate. If a readable surface establishes no gauge,
+   mark it NOT_METERED and keep Grok fully AUTO-eligible through fair dispatch.
+   If an expected read fails, mark READ_FAILED and exclude only AUTO. Test both
+   gauge verdicts, mixed windows, exact choice under READ_FAILED, money-rail
+   change, limit failure, reset re-arm, one candidate, and empty pool.
 8. **Turn on the controls and watch measured outcomes.** MCC writes AUTO only
    after an affirmative user action. Compare assignment share, launch failure,
    first-attempt landing, and escalation rates by tier/model/provider. Evidence
@@ -463,6 +538,11 @@ concurrent spawns cannot both observe the same provider as under-share.
 - Never treat unknown quota as free quota, zero usage, full headroom, or a fixed
   synthetic percentage. Never treat a normally metered read failure as
   unmeasurable-by-design.
+- Never treat NOT_METERED as degraded or unavailable. A capable, consented
+  vendor without a gauge remains eligible through fair dispatch.
+- Never let READ_FAILED's AUTO exclusion override an exact user choice. Meter
+  uncertainty is not capability revocation; warn, apply money safety, and honor
+  the route.
 - Never compare a five-hour percentage with a weekly percentage to rank
   providers. Evaluate each real window as its own affordability gate.
 - Never let distribution make an incapable or insufficiently evidenced model a
@@ -489,7 +569,9 @@ reason and escalation feedback make it inspectable, but a consistently bad
 classifier remains a quality risk. Moving classification into the daemon would
 duplicate the judgment with less context, not remove that risk.
 
-Grok can still exhaust mid-task because no preflight can measure its pool. Fair
-share bounds exposure; the spend guard prevents silent paid overflow; the
-limit-failure latch and handoff contain recovery. None of those turn the pool
-into measurable capacity, and the UI must never imply otherwise.
+Any NOT_METERED provider can still exhaust mid-task because no preflight can
+measure its pool. Fair share bounds exposure; the spend guard prevents silent
+paid overflow; the limit-failure latch and handoff contain recovery. If the
+provider later establishes a gauge, the driver changes that window to METERED
+and the ordinary gate takes over. The UI renders the recorded classification;
+it never infers one from the presence or absence of a number.
