@@ -4,26 +4,16 @@ import WorkspaceCore
 /// Runs `hive workspace-feed --port <n>` (or the `--feed` override) as a
 /// long-lived subprocess and turns its NDJSON stdout into agent snapshots.
 ///
-/// Keeping this process alive is also what tells the daemon a workspace is
-/// attached (so it stops opening external terminal windows); `stop()` is
-/// called when the window closes or the app quits.
-///
 /// `onExit` fires only for an exit the app did not ask for (a kill, a crash, a
-/// daemon that went away); `stop()` silences it. The app RESTARTS the feed on
-/// that signal — it is an event, not proof the workspace is gone. This class
-/// used to promise the opposite ("no auto-restart; the user relaunches via
-/// `hive`") and that contract failed in the field on 2026-07-12; see
-/// `AppDelegate.scheduleFeedRestart()` for what happened and why it is not
-/// coming back.
+/// daemon that went away); `stop()` silences it. The app restarts the feed on
+/// that signal because the last rendered statuses are stale after an exit.
 final class FeedClient {
 
     private let process = Process()
     private let stdout = Pipe()
-    // The feed treats end-of-stdin as its clean-shutdown signal (it surrenders
-    // the daemon's viewer lease before exiting). The app therefore holds this
-    // pipe's write end open for the feed's whole life; inheriting the app's
-    // own stdin would hand the feed /dev/null under LaunchServices and stop it
-    // the moment it starts.
+    // The feed treats end-of-stdin as its clean-shutdown signal. The app holds
+    // this pipe's write end open because LaunchServices otherwise supplies
+    // /dev/null and the feed exits as soon as it starts.
     private let stdinPipe = Pipe()
     private var buffer = Data()
     private var stopped = false
@@ -68,9 +58,8 @@ final class FeedClient {
         stopped = true
         stdout.fileHandleForReading.readabilityHandler = nil
         process.terminationHandler = nil
-        // Closing stdin is the polite shutdown: the feed surrenders the viewer
-        // lease and exits 0. SIGTERM stays as the backstop for a wedged feed;
-        // its handler surrenders the lease too.
+        // Closing stdin requests a clean exit; SIGTERM is the backstop for a
+        // feed that does not respond.
         try? stdinPipe.fileHandleForWriting.close()
         if process.isRunning {
             process.terminate()

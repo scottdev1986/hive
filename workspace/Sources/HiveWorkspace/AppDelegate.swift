@@ -137,9 +137,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         }
     }
 
-    /// The feed is a long-lived subprocess printing NDJSON snapshots; while it
-    /// runs, the daemon knows a workspace is attached and stops opening
-    /// external terminal windows. It dies with the app (`retireFeed()` below).
+    /// The feed is a long-lived subprocess printing status snapshots. It dies
+    /// with the app (`retireFeed()` below).
     private func startFeed() {
         guard let invocation = config.feedInvocation else { return }
         let feed = FeedClient(executable: invocation.executable,
@@ -173,27 +172,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         }
     }
 
-    /// A feed that exited is an event, not the state "no workspace is present".
-    ///
-    /// This class used to carry the opposite contract — "there is deliberately
-    /// no auto-restart: if the feed dies the workspace marks agent panes
-    /// disconnected and the user relaunches via `hive`" — and it failed in the
-    /// field on 2026-07-12. An agent verifying UI work ran
-    /// `pkill -9 -f "workspace-feed --port 4483"` against the *user's real
-    /// daemon*; his app's feed has exactly that command line, so it died. The
-    /// app went on sitting there, attached and normal-looking, while the daemon
-    /// watched the lease lapse, concluded nobody was watching, and opened
-    /// Terminal.app windows over live panes for 39 minutes. The old contract
-    /// outsourced recovery to a human who was never told he had to recover
-    /// anything: it required him to notice a failure that is, by construction,
-    /// invisible — a blind workspace looks exactly like a healthy one. Do not
-    /// restore it out of respect for the comment that used to be here. Hive
-    /// heals itself, and when it cannot, it says so.
-    ///
-    /// The fallback survives because the app is the supervisor: a crashed or
-    /// force-quit app has nobody left to restart the feed, its lease lapses on
-    /// the TTL, and the daemon goes back to external viewers — which is the
-    /// whole reason presence is a lease. Only a *live* app reclaims it.
+    /// A live workspace must not retain stale status after a transient feed
+    /// exit. Retries are bounded so a persistent failure becomes visible.
     private func scheduleFeedRestart() {
         guard !feedRetired, config.feedInvocation != nil else { return }
         guard feedRestartsLeft > 0 else {
@@ -210,11 +190,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         }
     }
 
-    /// Healing quietly is fine; failing quietly is what caused the incident.
-    /// A feed we cannot restart means the app is blind — agent status is frozen
-    /// and the daemon is about to start opening its own windows — and the user
-    /// must not have to deduce that from a stray Terminal window half an hour
-    /// later. So say it, unmissably, once.
+    /// A feed that cannot restart leaves every agent status frozen. Announce
+    /// that loss once rather than leaving a healthy-looking stale screen.
     private func announceFeedFailure() {
         guard !feedFailureAnnounced, !config.smoke else { return }
         feedFailureAnnounced = true
@@ -223,19 +200,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         alert.alertStyle = .critical
         alert.messageText = "Hive lost its status feed"
         alert.informativeText = """
-            This workspace can no longer see your agents: their status is frozen \
-            and Hive will start opening separate Terminal windows for new agents.
+            This workspace can no longer see your agents, so their status is frozen.
 
-            Your agents are still running — they live in the daemon's tmux \
-            sessions, not in this app. Quit and relaunch the workspace with \
-            `hive` to reconnect.
+            Quit Hive to end this instance, then relaunch it to restore live status.
             """
         alert.addButton(withTitle: "OK")
         alert.runModal()
     }
 
-    /// Stop the feed and keep it stopped: the workspace is going away, so the
-    /// daemon should get its external viewers back.
+    /// Stop the feed and suppress restart callbacks once its workspace closes.
     private func retireFeed() {
         feedRetired = true
         feedClient?.stop()
@@ -331,11 +304,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        // One launch invocation == one project window. Once it closes there is
-        // nothing left to show, and quitting tears down the feed (so the
-        // daemon resumes opening external terminals) and detaches the tmux
-        // clients. Agents keep running either way — they live in daemon-owned
-        // tmux sessions, never in this process.
+        // One launch invocation owns one project window. Once it closes, no UI
+        // surface remains to own this Hive instance.
         true
     }
 

@@ -23,8 +23,7 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
 
     /// Set by the app delegate to tear the feed down with the window (the
     /// app usually quits on last-window-close, but a floating panel can keep
-    /// it alive — the feed must die with the window regardless, so the daemon
-    /// gets its external viewers back).
+    /// it alive, and the status reader must not outlive its project surface).
     var onWindowWillClose: (() -> Void)?
     var onStateChange: (() -> Void)?
 
