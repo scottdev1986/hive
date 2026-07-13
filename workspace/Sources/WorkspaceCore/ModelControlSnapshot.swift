@@ -73,21 +73,26 @@ extension DiscoveredFact: Codable {
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        let state = try container.decode(String.self, forKey: .state)
-        let surface = try container.decodeIfPresent(String.self, forKey: .surface) ?? ""
-        let observedAt = try container.decodeIfPresent(String.self, forKey: .observedAt) ?? ""
+        let state = (try? container.decode(String.self, forKey: .state)) ?? "missing"
+        let surface = (try? container.decodeIfPresent(String.self, forKey: .surface)) ?? ""
+        let observedAt =
+            (try? container.decodeIfPresent(String.self, forKey: .observedAt)) ?? ""
         switch state {
         case "known":
-            self = .known(
-                try container.decode(Value.self, forKey: .value),
-                surface: surface, observedAt: observedAt)
+            if let value = try? container.decode(Value.self, forKey: .value) {
+                self = .known(value, surface: surface, observedAt: observedAt)
+            } else {
+                self = .unknown(
+                    reason: "could not read known value",
+                    surface: surface, observedAt: observedAt)
+            }
         case "unknown":
-            let reason = try container.decodeIfPresent(String.self, forKey: .reason)
+            let reason = try? container.decodeIfPresent(String.self, forKey: .reason)
             self = .unknown(reason: reason ?? "unspecified", surface: surface, observedAt: observedAt)
         default:
-            throw DecodingError.dataCorruptedError(
-                forKey: .state, in: container,
-                debugDescription: "discovered fact state must be known or unknown, got \(state)")
+            self = .unknown(
+                reason: "unsupported discovered fact state \(state)",
+                surface: surface, observedAt: observedAt)
         }
     }
 
@@ -420,12 +425,33 @@ extension QuotaEntry: Codable {
 // MARK: - The snapshot
 
 /// Whether Hive has any capacity-reading source for a provider at all.
-/// `none` is a structural fact about the vendor (Grok publishes no capacity
-/// surface — §2.3), not a failed read: a metered provider with no reading is
-/// SILENT, which is a different state with different copy.
-public enum UsageSurface: String, Codable, Sendable {
+/// `none` is a structural fact about a vendor, not a failed read: a metered
+/// provider with no reading is SILENT, which is a different state with
+/// different copy.
+public enum UsageSurface: Codable, Equatable, Sendable {
     case metered
     case none
+    case unknown(String)
+
+    public init(from decoder: Decoder) throws {
+        let value = try decoder.singleValueContainer().decode(String.self)
+        switch value {
+        case "metered": self = .metered
+        case "none": self = .none
+        default: self = .unknown(value)
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        let value: String
+        switch self {
+        case .metered: value = "metered"
+        case .none: value = "none"
+        case .unknown(let rawValue): value = rawValue
+        }
+        var container = encoder.singleValueContainer()
+        try container.encode(value)
+    }
 }
 
 // MARK: - Session token accounting
@@ -451,18 +477,22 @@ extension TokenUsageReading: Codable {
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        switch try container.decode(String.self, forKey: .state) {
+        let state = (try? container.decode(String.self, forKey: .state)) ?? "missing"
+        switch state {
         case "measured":
-            self = .measured(
-                counts: try container.decode(TokenCounts.self, forKey: .counts),
-                source: try container.decode(String.self, forKey: .source),
-                observedAt: try container.decode(String.self, forKey: .observedAt))
+            do {
+                self = .measured(
+                    counts: try container.decode(TokenCounts.self, forKey: .counts),
+                    source: try container.decode(String.self, forKey: .source),
+                    observedAt: try container.decode(String.self, forKey: .observedAt))
+            } catch {
+                self = .unknown(reason: "could not read measured token usage")
+            }
         case "unknown":
-            self = .unknown(reason: try container.decode(String.self, forKey: .reason))
+            self = .unknown(
+                reason: (try? container.decode(String.self, forKey: .reason)) ?? "unspecified")
         default:
-            throw DecodingError.dataCorruptedError(
-                forKey: .state, in: container,
-                debugDescription: "token usage state must be measured or unknown")
+            self = .unknown(reason: "unsupported token usage state \(state)")
         }
     }
 
@@ -551,6 +581,77 @@ public struct ModelControlSnapshot: Codable, Equatable, Sendable {
         self.tokenUsageError = tokenUsageError
     }
 
+    private enum CodingKeys: String, CodingKey {
+        case generatedAt, providers, billing, usageSurfaces
+        case quota, quotaError, tokenUsage, tokenUsageError
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        generatedAt = try container.decode(String.self, forKey: .generatedAt)
+
+        let providerContainer = try container.nestedContainer(
+            keyedBy: ModelControlCodingKey.self, forKey: .providers)
+        providers = [:]
+        for key in providerContainer.allKeys {
+            do {
+                providers[key.stringValue] = try providerContainer.decode(
+                    ProviderCatalog.self, forKey: key)
+            } catch {
+                providers[key.stringValue] = .unavailable(
+                    reason: "This app could not read this provider snapshot: "
+                        + error.localizedDescription)
+            }
+        }
+
+        billing = [:]
+        if let billingContainer = try? container.nestedContainer(
+            keyedBy: ModelControlCodingKey.self, forKey: .billing)
+        {
+            for key in billingContainer.allKeys {
+                if (try? billingContainer.decodeNil(forKey: key)) == true {
+                    billing.updateValue(nil, forKey: key.stringValue)
+                } else if let value = try? billingContainer.decode(
+                    BillingSnapshot.self, forKey: key)
+                {
+                    billing[key.stringValue] = value
+                } else {
+                    billing.updateValue(nil, forKey: key.stringValue)
+                }
+            }
+        }
+
+        usageSurfaces = [:]
+        if let usageContainer = try? container.nestedContainer(
+            keyedBy: ModelControlCodingKey.self, forKey: .usageSurfaces)
+        {
+            for key in usageContainer.allKeys {
+                usageSurfaces[key.stringValue] =
+                    (try? usageContainer.decode(UsageSurface.self, forKey: key))
+                    ?? .unknown("unreadable value")
+            }
+        }
+
+        quotaError = (try? container.decodeIfPresent(String.self, forKey: .quotaError)) ?? nil
+        do {
+            quota = try container.decodeIfPresent([QuotaEntry].self, forKey: .quota)
+        } catch {
+            quota = nil
+            quotaError = "This app could not read quota data: \(error.localizedDescription)"
+        }
+
+        tokenUsageError =
+            (try? container.decodeIfPresent(String.self, forKey: .tokenUsageError)) ?? nil
+        do {
+            tokenUsage = try container.decodeIfPresent(
+                TokenUsageSnapshot.self, forKey: .tokenUsage)
+        } catch {
+            tokenUsage = nil
+            tokenUsageError =
+                "This app could not read token usage data: \(error.localizedDescription)"
+        }
+    }
+
     public static func decode(from data: Data) throws -> ModelControlSnapshot {
         try JSONDecoder().decode(ModelControlSnapshot.self, from: data)
     }
@@ -562,5 +663,18 @@ public struct ModelControlSnapshot: Codable, Equatable, Sendable {
         ids.formUnion(billing.keys)
         ids.formUnion(usageSurfaces.keys)
         return ids.map { ProviderID($0) }.sorted()
+    }
+}
+
+private struct ModelControlCodingKey: CodingKey {
+    let stringValue: String
+    let intValue: Int? = nil
+
+    init?(stringValue: String) {
+        self.stringValue = stringValue
+    }
+
+    init?(intValue: Int) {
+        return nil
     }
 }

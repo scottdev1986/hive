@@ -127,6 +127,9 @@ public enum MeterDerivation {
         if surface == UsageSurface.none {
             return .unmetered
         }
+        if case .unknown(let rawValue) = surface {
+            return .unknown(reason: "unsupported usage surface \(rawValue)")
+        }
         guard let quota else {
             return .unknown(reason: quotaError ?? "the Hive daemon could not be reached")
         }

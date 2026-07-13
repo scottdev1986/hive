@@ -370,6 +370,20 @@ final class ProjectStateTests: XCTestCase {
         XCTAssertEqual(agent.tmuxSession, "hive-idx")
         XCTAssertEqual(agent.contextPct, 41.5)
         XCTAssertNil(agent.closedAt)
+        XCTAssertEqual(agent.status, "working")
+        XCTAssertEqual(FeedStatusMap.paneStatus(for: agent.status), .running)
+    }
+
+    func testMissingAndWrongTypedAgentStatusStayUnknown() throws {
+        let missing = try XCTUnwrap(FeedLine.parse(#"{"v":1,"agents":[{"name":"missing"}]}"#))
+        let wrongType = try XCTUnwrap(FeedLine.parse(#"{"v":1,"agents":[{"name":"wrong","status":17}]}"#))
+
+        for snapshot in [missing, wrongType] {
+            let agent = try XCTUnwrap(snapshot.agents?.first)
+            XCTAssertEqual(agent.status, "unknown")
+            XCTAssertEqual(FeedStatusMap.paneStatus(for: agent.status), .unknown)
+            XCTAssertNotEqual(FeedStatusMap.paneStatus(for: agent.status), .running)
+        }
     }
 
     func testFeedLineDecodesErrorAndToleratesGarbage() throws {
@@ -377,5 +391,21 @@ final class ProjectStateTests: XCTestCase {
         XCTAssertEqual(error.error, "daemon unreachable")
         XCTAssertNil(FeedLine.parse("not json"))
         XCTAssertNil(FeedLine.parse(""))
+    }
+
+    func testFeedLineKeepsAgentsWhenOptionalSiblingFieldsAreMalformed() throws {
+        let line = #"{"v":1,"agents":[{"name":"good","status":"working"}],"autonomy":17,"orchestrator":{"status":17}}"#
+
+        let decoded = try XCTUnwrap(FeedLine.parse(line))
+        XCTAssertEqual(decoded.agents, [AgentSnapshot(name: "good")])
+        XCTAssertNil(decoded.autonomy)
+        XCTAssertNil(decoded.orchestrator)
+    }
+
+    func testFeedLineRejectsOnlyTheAgentFieldWhenAnyIdentityIsMalformed() throws {
+        let line = #"{"v":1,"agents":[{"name":"good"},{"name":17}]}"#
+
+        let decoded = try XCTUnwrap(FeedLine.parse(line))
+        XCTAssertNil(decoded.agents, "a partial snapshot could falsely close the omitted agent")
     }
 }

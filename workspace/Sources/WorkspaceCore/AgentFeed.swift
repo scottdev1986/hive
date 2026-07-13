@@ -2,9 +2,9 @@ import Foundation
 
 /// One agent as reported by `hive workspace-feed` (NDJSON, one snapshot per
 /// line: `{"v":1,"agents":[...]}`). Decoding is deliberately tolerant: only
-/// `name` is required, unknown fields are ignored, and unknown status words
-/// degrade to a safe default — the feed contract may grow without breaking
-/// the app.
+/// `name` is required, unknown fields are ignored, and an absent or unreadable
+/// status stays `unknown` — the feed contract may grow without making an agent
+/// look healthy without evidence.
 public struct AgentSnapshot: Equatable, Decodable {
     public let name: String
     public let tool: String?
@@ -39,7 +39,7 @@ public struct AgentSnapshot: Equatable, Decodable {
         name = try container.decode(String.self, forKey: .name)
         tool = try? container.decodeIfPresent(String.self, forKey: .tool)
         model = try? container.decodeIfPresent(String.self, forKey: .model)
-        status = (try? container.decodeIfPresent(String.self, forKey: .status)) ?? "working"
+        status = (try? container.decodeIfPresent(String.self, forKey: .status)) ?? "unknown"
         taskDescription = try? container.decodeIfPresent(String.self, forKey: .taskDescription)
         tmuxSession = try? container.decodeIfPresent(String.self, forKey: .tmuxSession)
         contextPct = try? container.decodeIfPresent(Double.self, forKey: .contextPct)
@@ -76,12 +76,41 @@ public struct FeedLine: Decodable {
     public let orchestrator: OrchestratorSnapshot?
     public let error: String?
 
+    private enum CodingKeys: String, CodingKey {
+        case v, agents, autonomy, orchestrator, error
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        v = (try? container.decodeIfPresent(Int.self, forKey: .v)) ?? nil
+        if let decodedAgents = try? container.decodeIfPresent(
+            [LossyAgentSnapshot].self, forKey: .agents)
+        {
+            let validAgents = decodedAgents.compactMap(\.value)
+            agents = validAgents.count == decodedAgents.count ? validAgents : nil
+        } else {
+            agents = nil
+        }
+        autonomy = (try? container.decodeIfPresent(String.self, forKey: .autonomy)) ?? nil
+        orchestrator = (try? container.decodeIfPresent(
+            OrchestratorSnapshot.self, forKey: .orchestrator)) ?? nil
+        error = (try? container.decodeIfPresent(String.self, forKey: .error)) ?? nil
+    }
+
     /// Parses one line of feed output; returns nil for blank/undecodable lines
     /// (the feed may interleave diagnostics; the app must never crash on them).
     public static func parse(_ line: String) -> FeedLine? {
         let trimmed = line.trimmingCharacters(in: .whitespaces)
         guard trimmed.hasPrefix("{"), let data = trimmed.data(using: .utf8) else { return nil }
         return try? JSONDecoder().decode(FeedLine.self, from: data)
+    }
+}
+
+private struct LossyAgentSnapshot: Decodable {
+    let value: AgentSnapshot?
+
+    init(from decoder: Decoder) throws {
+        value = try? AgentSnapshot(from: decoder)
     }
 }
 

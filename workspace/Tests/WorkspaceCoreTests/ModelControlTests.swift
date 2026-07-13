@@ -1001,7 +1001,7 @@ final class ModelControlTests: XCTestCase {
             "newvendor": {"status": "unavailable", "reason": "no driver signed in"}
           },
           "billing": {"grok": null},
-          "usageSurfaces": {"grok": "none", "newvendor": "metered"},
+          "usageSurfaces": {"grok": "metered", "newvendor": "metered"},
           "quota": null,
           "quotaError": "daemon not running"
         }
@@ -1015,7 +1015,7 @@ final class ModelControlTests: XCTestCase {
         }
         XCTAssertEqual(EffortAxis.derive(from: models[0]), .none,
                        "supports_reasoning_effort=false must decode to known-none")
-        XCTAssertEqual(snapshot.usageSurfaces["grok"], UsageSurface.none)
+        XCTAssertEqual(snapshot.usageSurfaces["grok"], .metered)
         XCTAssertNil(snapshot.quota, "an unreachable daemon decodes as unknown quota, not empty")
     }
 }
