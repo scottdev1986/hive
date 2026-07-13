@@ -4,6 +4,7 @@ import {
   reapCapturedTree,
   type ReapDependencies,
 } from "./teardown";
+import { parseProcessTable, runPs } from "./resources";
 
 /** capture + reap, the way every caller uses them when nothing reparents. */
 const reapProcessTree = async (
@@ -16,12 +17,7 @@ const reapProcessTree = async (
     dependencies,
   );
 
-/**
- * A fake process table. `ps` output is the only thing the reaper reads, so the
- * whole policy is testable without spawning anything — and the interesting
- * cases (a process that ignores SIGKILL, a zombie, the daemon appearing in its
- * own tree) cannot be produced on demand with real processes anyway.
- */
+/** The fake world covers states the kernel cannot safely produce on demand. */
 interface FakeProcess {
   pid: number;
   ppid: number;
@@ -51,6 +47,21 @@ function world(processes: FakeProcess[]) {
     wait: async () => undefined,
   };
   return { dependencies, signalled, alive };
+}
+
+async function realProcesses() {
+  return parseProcessTable(await runPs());
+}
+
+async function waitForProcess(
+  predicate: (processes: Awaited<ReturnType<typeof realProcesses>>) => boolean,
+): Promise<boolean> {
+  const deadline = Date.now() + 2_000;
+  do {
+    if (predicate(await realProcesses())) return true;
+    await Bun.sleep(20);
+  } while (Date.now() < deadline);
+  return false;
 }
 
 describe("reapProcessTree", () => {
@@ -147,6 +158,62 @@ describe("reapProcessTree", () => {
     expect(outcome.killed.map((p) => p.pid).sort()).toEqual([100, 101]);
     expect(outcome.survivors).toEqual([]);
     expect(alive.has(101)).toBe(false);
+  });
+
+  test("real ps capture survives reparenting and reaps only the captured tree", async () => {
+    const shell = Bun.spawn(["sh", "-c", "sleep 60 & wait"], {
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    const unrelated = Bun.spawn(["sleep", "60"], {
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    let childPid: number | undefined;
+    try {
+      expect(await waitForProcess((processes) => {
+        childPid = processes.find((entry) => entry.ppid === shell.pid)?.pid;
+        return childPid !== undefined;
+      })).toBe(true);
+      expect(childPid).toBeDefined();
+      expect(await waitForProcess((processes) =>
+        processes.some((entry) => entry.pid === unrelated.pid)
+      )).toBe(true);
+
+      const captured = await captureProcessTree([shell.pid]);
+      expect(captured.map((entry) => entry.pid)).toContain(shell.pid);
+      expect(captured.map((entry) => entry.pid)).toContain(childPid!);
+
+      shell.kill("SIGKILL");
+      await shell.exited;
+      expect(await waitForProcess((processes) =>
+        processes.some((entry) =>
+          entry.pid === childPid && entry.ppid !== shell.pid
+        )
+      )).toBe(true);
+
+      const outcome = await reapCapturedTree(captured);
+
+      expect(outcome.survivors).toEqual([]);
+      expect(outcome.killed.map((entry) => entry.pid)).toContain(childPid!);
+      expect(await waitForProcess((processes) =>
+        !processes.some((entry) => entry.pid === childPid)
+      )).toBe(true);
+      expect((await realProcesses()).some((entry) =>
+        entry.pid === unrelated.pid
+      )).toBe(true);
+    } finally {
+      if (childPid !== undefined) {
+        try {
+          process.kill(childPid, "SIGKILL");
+        } catch {
+          // The reaper already removed it.
+        }
+      }
+      shell.kill("SIGKILL");
+      unrelated.kill("SIGKILL");
+      await Promise.all([shell.exited, unrelated.exited]);
+    }
   });
 
   test("a tree walked AFTER the session dies misses the orphan entirely", async () => {
