@@ -1740,6 +1740,7 @@ export class HiveDaemon {
       removeWorktree?: boolean;
       discardWork?: boolean;
       failureReason?: string;
+      at?: string;
     } = {},
   ): Promise<{
     agent: AgentRecord;
@@ -1770,7 +1771,7 @@ export class HiveDaemon {
     );
     await this.tmux.killSession(agent.tmuxSession, { ignoreMissing: true });
     const reaped = await reapCapturedTree(captured, this.reapDependencies);
-    const timestamp = new Date().toISOString();
+    const timestamp = options.at ?? new Date().toISOString();
     const killed = this.db.markAgentDeadAndDetachTerminal(
       agent.id,
       timestamp,
@@ -3503,6 +3504,13 @@ export class HiveDaemon {
         });
       }
     });
+
+    if (value.kind === "dead") {
+      const dead = this.db.getAgentByName(value.agentName);
+      if (dead !== null) {
+        await this.killAgentTeardown(dead, { at: value.timestamp });
+      }
+    }
 
     const agent = this.db.getAgentByName(value.agentName);
     const eventReservationId = agent?.controlQuotaReservationId ??

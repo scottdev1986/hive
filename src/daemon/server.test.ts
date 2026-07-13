@@ -1837,6 +1837,56 @@ describe("HiveDaemon HTTP server", () => {
     }
   });
 
+  test("a dead hook reaps the process tree and closes its viewer", async () => {
+    const db = new HiveDatabase(join(home, "dead-hook-teardown.db"));
+    const tmux = new FakeDaemonTmux();
+    tmux.sessions.add("hive-maya");
+    const owned = Bun.spawn(["sh", "-c", "sleep 60 & wait"], {
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    const closed: AgentRecord["terminalHandle"][] = [];
+    let layouts = 0;
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new StubSpawner(),
+      tmux,
+      tmuxSender: new SilentTmuxSender(db),
+      closeTerminal: async (handle) => { closed.push(handle); },
+      layout: { requestLayout: () => layouts += 1 },
+      resourceRunners: {
+        panePids: async (session) =>
+          session === "hive-maya" ? [owned.pid] : [],
+      },
+    });
+    const handle = { app: "iterm2", sessionId: "dead-hook-viewer" } as const;
+    db.insertAgent(agent({ terminalHandle: handle }));
+    try {
+      await daemon.processEvent({
+        kind: "dead",
+        agentName: "maya",
+        timestamp: "2026-07-10T10:07:00.000Z",
+      });
+
+      expect(db.getAgentByName("maya")).toMatchObject({
+        status: "dead",
+        terminalHandle: undefined,
+      });
+      expect(tmux.killed).toEqual(["hive-maya"]);
+      expect(closed).toEqual([handle]);
+      expect(layouts).toEqual(1);
+      const exitCode = await Promise.race([
+        owned.exited,
+        Bun.sleep(1_000).then(() => null),
+      ]);
+      expect(exitCode).not.toBeNull();
+    } finally {
+      owned.kill("SIGKILL");
+      await daemon.stop();
+      db.close();
+    }
+  });
+
   test("hive_recover resumes a crashed agent over MCP and reports the outcome", async () => {
     const db = new HiveDatabase(join(home, "recover-mcp.db"));
     const tmux = new FakeDaemonTmux();
