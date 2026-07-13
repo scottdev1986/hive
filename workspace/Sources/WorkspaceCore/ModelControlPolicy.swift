@@ -67,8 +67,9 @@ public enum ChainConfidence: String, Equatable, Codable, Sendable {
 /// which model runs, at which effort.
 public struct ChainEntry: Equatable, Codable, Sendable {
     public var provider: String
+    /// The canonical model id — the daemon store's grain (no variant; a
+    /// context-window entitlement is not a different routing target).
     public var model: String
-    public var variant: String?
     /// Effort is per chain LINK, not per model (§8.2).
     public var effort: EffortTarget
     /// Why this entry sits where it does — shown in the task view so the
@@ -78,13 +79,12 @@ public struct ChainEntry: Equatable, Codable, Sendable {
     public var confidence: ChainConfidence?
 
     public init(
-        provider: String, model: String, variant: String? = nil,
+        provider: String, model: String,
         effort: EffortTarget,
         note: String? = nil, confidence: ChainConfidence? = nil
     ) {
         self.provider = provider
         self.model = model
-        self.variant = variant
         self.effort = effort
         self.note = note
         self.confidence = confidence
@@ -92,7 +92,7 @@ public struct ChainEntry: Equatable, Codable, Sendable {
 
     /// The identity the no-duplicates rule compares.
     public var targetKey: String {
-        [provider, model, variant ?? ""].joined(separator: "\u{0}")
+        [provider, model].joined(separator: "\u{0}")
     }
 }
 
@@ -104,13 +104,31 @@ public enum ExhaustionBehavior: String, Codable, Sendable {
     case useGlobalFallback = "use_global_fallback"
 }
 
+/// How work is distributed among a chain's capable models (user decision
+/// 2026-07-13): a strict walk burns the top model's pool to zero while the
+/// others idle, so the DEFAULT spreads — among the models that pass the
+/// gates, the one with the most remaining quota headroom runs the task,
+/// weighted by rank so the preferred model still wins when pools are even.
+/// Strict order remains available where consistency matters more than load.
+public enum SpreadMode: String, Codable, Sendable {
+    case spreadByCapacity = "spread_by_capacity"
+    case strictOrder = "strict_order"
+}
+
 public struct CategoryPolicy: Equatable, Codable, Sendable {
     public var chain: [ChainEntry]
     public var exhaustionBehavior: ExhaustionBehavior
+    /// Per-category override of the global spread mode; nil = use global.
+    public var spreadOverride: SpreadMode?
 
-    public init(chain: [ChainEntry] = [], exhaustionBehavior: ExhaustionBehavior = .refuse) {
+    public init(
+        chain: [ChainEntry] = [],
+        exhaustionBehavior: ExhaustionBehavior = .refuse,
+        spreadOverride: SpreadMode? = nil
+    ) {
         self.chain = chain
         self.exhaustionBehavior = exhaustionBehavior
+        self.spreadOverride = spreadOverride
     }
 }
 
@@ -178,17 +196,23 @@ public struct ModelControlPolicy: Equatable, Codable, Sendable {
     public var defaultChain: [ChainEntry]
     /// True until the user edits — drives the provisional banner (§8.5).
     public var provisional: Bool
+    /// How work distributes among a chain's capable models, app-wide;
+    /// categories may override. Spread is the default — the point is to
+    /// drain pools evenly, not to hammer the preferred model.
+    public var globalSpread: SpreadMode
 
     public init(
         providers: [String: ProviderPolicy] = [:],
         categories: [String: CategoryPolicy] = [:],
         defaultChain: [ChainEntry] = [],
-        provisional: Bool = true
+        provisional: Bool = true,
+        globalSpread: SpreadMode = .spreadByCapacity
     ) {
         self.providers = providers
         self.categories = categories
         self.defaultChain = defaultChain
         self.provisional = provisional
+        self.globalSpread = globalSpread
     }
 
     // MARK: Reads

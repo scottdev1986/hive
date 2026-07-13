@@ -92,7 +92,24 @@ enum MCCCopy {
     }
     static let modelPreferenceOnOverridden = "Your preference: on (not effective)"
     static let modelDisabledSelf = "Disabled"
-    static let subtitleFallback = "Ordered fallback — one model at a time. Not an ensemble."
+    /// The distribution semantics (user decision 2026-07-13): the chain is
+    /// capability + preference, NOT a strict walk. One model per task, chosen
+    /// by remaining capacity weighted by rank.
+    static let subtitleSpread =
+        "Each task runs on ONE of these models — never several at once. Hive favours " +
+        "whichever has the most capacity left, weighted by rank, so work spreads across " +
+        "your plans instead of draining the top one. Rank sets preference and breaks ties."
+    static let rankTooltip =
+        "Rank is preference and tie-break, not a strict order — the model with the most " +
+        "remaining capacity is favoured."
+    static let spreadControlLabel = "Distribute work:"
+    static let spreadByCapacity = "Spread by remaining capacity"
+    static let spreadStrictOrder = "Strict order"
+    static let spreadUseGlobal = "Use global setting"
+    static let spreadStrictCaption =
+        "Strict order: Hive always tries these models top to bottom, regardless of capacity."
+    static let spreadByCapacityCaption =
+        "Spread: among these models, the one with the most remaining capacity runs the task."
     static let chainEmptyUsesDefault = "No chain of its own — uses your Global fallback chain."
     static let chainAllIneffective = "Every model in this chain is off or unavailable."
     static let chainExhaustionRefuse =
@@ -120,14 +137,15 @@ enum MCCCopy {
         "\(windowLabel): usage unknown"
     }
     static func a11yChainRank(_ model: String, _ n: Int, _ total: Int) -> String {
-        "\(model), fallback position \(n) of \(total)"
+        "\(model), rank \(n) of \(total). Rank is preference and tie-break, not a strict order."
     }
 
-    // Rank labels
+    // Rank labels. "Preferred", not "Primary": rank is preference and
+    // tie-break under the capacity spread, never "this one always goes first".
 
     static func rankLabel(_ index: Int) -> String {
         switch index {
-        case 0: return "Primary"
+        case 0: return "Preferred"
         case 1: return "2nd"
         case 2: return "3rd"
         default: return "\(index + 1)th"
