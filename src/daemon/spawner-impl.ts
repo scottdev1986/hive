@@ -1750,7 +1750,8 @@ export class HiveSpawner implements Spawner {
       // eligible: `spread` (default) by remaining headroom, rank-biased;
       // `strict` in rank order. A chain whose links all refuse falls back to
       // the user's global default chain, walked the same way; when that too
-      // is exhausted the spawn REFUSES with every link's reason.
+      // is exhausted, `choice` spreads over the remaining enabled models;
+      // only when those also refuse does the spawn REFUSE with every reason.
       const policy = readPolicy();
       const category = request.category;
       const selection = selectionModeFor(policy, category);
@@ -1800,6 +1801,7 @@ export class HiveSpawner implements Spawner {
       };
       const selectFrom = async (
         eligible: AuthorizedLaunch[],
+        quotaSelection = selection === "auto" ? "spread" as const : "strict" as const,
       ): Promise<{ authorized: AuthorizedLaunch; reservationId?: string } | null> => {
         if (eligible.length === 0) return null;
         if (this.dependencies.quota?.config.enabled !== true) {
@@ -1811,7 +1813,7 @@ export class HiveSpawner implements Spawner {
           const decision = await this.dependencies.quota.routeAndReserve({
             agentName: name,
             category,
-            selection: selection === "auto" ? "spread" : "strict",
+            selection: quotaSelection,
             ...(request.tool === undefined ? {} : { explicitTool: request.tool }),
             ...(request.reviewOfTool === undefined
               ? {}
@@ -1850,12 +1852,21 @@ export class HiveSpawner implements Spawner {
             "Control Center.",
         );
       }
+      const fallbackChain: ChainEntry[] = selection === "choice"
+        ? policy.models.flatMap((row) =>
+          row.state === "enabled"
+            ? [{ provider: row.provider, model: row.model, effort: row.effort }]
+            : []
+        )
+        : [];
       let chosen = await selectFrom(await gateChain(categoryChain, category));
       chosen ??= await selectFrom(await gateChain(defaultChain, "default"));
+      chosen ??= await selectFrom(await gateChain(fallbackChain, "fallback"), "spread");
       if (chosen === null) {
         throw new Error(
           `Cannot spawn ${name}: every link of the ${category} chain` +
             `${defaultChain.length > 0 ? " and the global default chain" : ""} ` +
+            `${fallbackChain.length > 0 ? "and the remaining enabled models " : ""}` +
             `was refused:\n  ${attempts.join("\n  ")}\n` +
             "Enable a model or edit the chain in the Model Control Center.",
         );

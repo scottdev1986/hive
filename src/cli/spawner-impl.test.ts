@@ -3543,6 +3543,19 @@ describe("a refusal names the reason it actually refused for", () => {
     },
   });
 
+  const codexDiscovery = (): CapabilityDiscoveryResult => ({
+    status: "ok",
+    records: [{
+      ...capabilityRecord("codex", "gpt-5.6-sol", ["low", "medium", "high"]),
+      displayName: "GPT-5.6 Sol",
+    }],
+    effectiveDefault: {
+      provider: "codex",
+      model: known("gpt-5.6-sol", "codex.model/list", timestamp),
+      effort: known("medium", "codex.model/list", timestamp),
+    },
+  });
+
   const claudeBilling = (): AccountBilling => ({
     creditsEnabled: known(false, "claude.get_usage", timestamp),
     disabledReason: null,
@@ -3599,7 +3612,11 @@ describe("a refusal names the reason it actually refused for", () => {
       },
       sleep: signalReadiness(store),
       discoverCapabilities: async (provider) =>
-        provider === "grok" ? grokDiscovery() : claudeDiscovery(),
+        provider === "grok"
+          ? grokDiscovery()
+          : provider === "codex"
+            ? codexDiscovery()
+            : claudeDiscovery(),
       // Grok's billing surface is unreadable. Enablement is the user's standing
       // consent now, so billing never opens an approval prompt.
       readBilling: async (provider) =>
@@ -3681,6 +3698,156 @@ describe("a refusal names the reason it actually refused for", () => {
     expect(failure).toBe("");
     expect(store.listAgents()[0]).toMatchObject({ tool: "grok", model: "grok-4.5" });
     expect(tmux.sessions[0]?.[2]).toContain("'grok' '-m' 'grok-4.5'");
+  });
+
+  test("choice honors the authored order while the first link is launchable", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-choice-first-link-"));
+    tempRoots.push(root);
+    const authored: ChainEntry[] = [
+      { provider: "grok", model: "grok-4.5", effort: { mode: "provider-controlled" } },
+      { provider: "claude", model: "claude-opus-4-8", effort: { mode: "provider-controlled" } },
+    ];
+    const policy = {
+      ...policyWithChain([...authored, {
+        provider: "codex",
+        model: "gpt-5.6-sol",
+        effort: { mode: "provider-controlled" },
+      }]),
+      chains: { simple_coding: authored },
+    } satisfies RoutingPolicy;
+    const { failure, store } = await spawnGrok(root, "grok-4.5", true, { policy });
+
+    expect(failure).toBe("");
+    expect(store.listAgents()[0]).toMatchObject({ tool: "grok", model: "grok-4.5" });
+  });
+
+  test("choice tries the next authored link before an unranked model", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-choice-next-link-"));
+    tempRoots.push(root);
+    const authored: ChainEntry[] = [
+      { provider: "claude", model: "claude-opus-4-8", effort: { mode: "provider-controlled" } },
+      { provider: "codex", model: "gpt-5.6-sol", effort: { mode: "provider-controlled" } },
+    ];
+    const policy = {
+      ...policyWithChain([...authored, {
+        provider: "grok",
+        model: "grok-4.5",
+        effort: { mode: "provider-controlled" },
+      }]),
+      chains: { simple_coding: authored },
+    } satisfies RoutingPolicy;
+    const { failure, store } = await spawnGrok(
+      root,
+      "grok-4.5",
+      true,
+      { policy, claudeAllowance: 1 },
+    );
+
+    expect(failure).toBe("");
+    expect(store.listAgents()[0]).toMatchObject({ tool: "codex", model: "gpt-5.6-sol" });
+  });
+
+  test("choice falls through exhausted authored chains to remaining enabled models", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-choice-enabled-fallback-"));
+    tempRoots.push(root);
+    const category: ChainEntry = {
+      provider: "grok",
+      model: "grok-4.5",
+      effort: { mode: "provider-controlled" },
+    };
+    const globalDefault: ChainEntry = {
+      provider: "codex",
+      model: "gpt-5.6-sol",
+      effort: { mode: "provider-controlled" },
+    };
+    const fallback: ChainEntry = {
+      provider: "claude",
+      model: "claude-opus-4-8",
+      effort: { mode: "provider-controlled" },
+    };
+    const policy = {
+      ...policyWithChain([category, globalDefault, fallback]),
+      chains: { simple_coding: [category], default: [globalDefault] },
+    } satisfies RoutingPolicy;
+    const { failure, store } = await spawnGrok(
+      root,
+      "grok-4.5",
+      (provider) => provider === "claude",
+      { policy },
+    );
+
+    expect(failure).toBe("");
+    expect(store.listAgents()[0]).toMatchObject({ tool: "claude", model: "claude-opus-4-8" });
+  });
+
+  test("choice fallback never reaches a disabled model even when it is all that remains", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-choice-disabled-fallback-"));
+    tempRoots.push(root);
+    const authored: ChainEntry = {
+      provider: "codex",
+      model: "gpt-5.6-sol",
+      effort: { mode: "provider-controlled" },
+    };
+    const disabled: ChainEntry = {
+      provider: "claude",
+      model: "claude-opus-4-8",
+      effort: { mode: "provider-controlled" },
+    };
+    const base = policyWithChain([authored, disabled]);
+    const policy = {
+      ...base,
+      models: base.models.map((row) =>
+        row.provider === "claude" ? { ...row, state: "disabled" as const } : row
+      ),
+      chains: { simple_coding: [authored] },
+    } satisfies RoutingPolicy;
+    const checked: string[] = [];
+    const { failure, tmux } = await spawnGrok(
+      root,
+      "grok-4.5",
+      (provider, model) => {
+        checked.push(`${provider}/${model}`);
+        return provider === "claude";
+      },
+      { policy },
+    );
+
+    expect(failure).toContain("every link");
+    expect(checked).not.toContain("claude/claude-opus-4-8");
+    expect(tmux.sessions).toEqual([]);
+  });
+
+  test("choice fallback excludes unknown quota instead of reading it as permission", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-choice-unknown-fallback-"));
+    tempRoots.push(root);
+    const authored: ChainEntry = {
+      provider: "codex",
+      model: "gpt-5.6-sol",
+      effort: { mode: "provider-controlled" },
+    };
+    const unknownQuota: ChainEntry = {
+      provider: "grok",
+      model: "grok-4.5",
+      effort: { mode: "provider-controlled" },
+    };
+    const knownQuota: ChainEntry = {
+      provider: "claude",
+      model: "claude-opus-4-8",
+      effort: { mode: "provider-controlled" },
+    };
+    const policy = {
+      ...policyWithChain([authored, unknownQuota, knownQuota]),
+      chains: { simple_coding: [authored] },
+    } satisfies RoutingPolicy;
+    const { failure, store } = await spawnGrok(
+      root,
+      "grok-4.5",
+      (provider) => provider !== "codex",
+      { policy },
+    );
+
+    expect(failure).toBe("");
+    expect(store.listAgents()[0]).toMatchObject({ tool: "claude", model: "claude-opus-4-8" });
   });
 
   test("a fully refused category and default name every link and the remedy", async () => {
