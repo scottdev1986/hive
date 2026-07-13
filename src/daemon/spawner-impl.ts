@@ -446,11 +446,11 @@ export function resolveAgentName(
 
 export const LANDING_MAX_ATTEMPTS = 3;
 
-/** Tiers whose prompt is trimmed to essentials. A `cheap` agent runs mechanical
+/** Categories whose prompt is trimmed to essentials. A summarization agent runs mechanical
  * work on a small model: it needs every *rule* the full prompt carries, but
  * none of the narration that justifies them. The trimmed text below is a
  * rewrite, not a subset — no step, bound, or prohibition is dropped, because
- * the landing protocol is Hive's safety stack and a cheap model is exactly the
+ * the landing protocol is Hive's safety stack and a small model is exactly the
  * one that must not have to infer a missing step. */
 const CONCISE_CATEGORIES: readonly RoutingCategory[] = [
   "summarization",
@@ -679,7 +679,7 @@ export function buildAgentPrompt(
       ];
   return [
     ...preamble,
-    // Every tier, including `cheap`: the trimmed prompt drops narration, never a
+    // Every category: the trimmed prompt drops narration, never a
     // rule, and a small model is the one that can least afford to infer these.
     CODING_GUIDELINES,
     HIVE_PROTOCOL_RULES,

@@ -1917,7 +1917,7 @@ describe("HiveSpawner wiring", () => {
     )).exists()).toBe(true);
   });
 
-  test("an explicit claude model forces the claude tool off a codex-routed tier", async () => {
+  test("an explicit claude model forces the claude tool off a codex-routed category", async () => {
     const root = await mkdtemp(join(tmpdir(), "hive-spawner-vendor-force-"));
     tempRoots.push(root);
     const store = new FakeStore();
@@ -1928,7 +1928,7 @@ describe("HiveSpawner wiring", () => {
       repoRoot: root,
       port: 4317,
       config: { terminal: "auto", headless: true },
-      // The field failure: tier=standard routes tool=codex, and the explicit
+      // The field failure: the category routes to Codex, and the explicit
       // claude model used to ride onto the Codex TUI verbatim.
       readRoutingPolicy: () => policyFromRoute(CODEX_ROUTE),
       tmux,
@@ -1996,7 +1996,7 @@ describe("HiveSpawner wiring", () => {
         reserveWeeklyPct: 0,
         limits: [
           {
-            // Deliberately under the deep-tier estimate (20): the explicit
+            // Deliberately under the complex-coding estimate (20): the explicit
             // Fable request cannot be reserved.
             provider: "claude",
             account: "default",
@@ -2383,7 +2383,7 @@ describe("HiveSpawner wiring", () => {
     expect(tmux.sessions[0]?.[2]).toContain("'--model' 'haiku'");
   });
 
-  test("uses the tier's configured tool and its model without an override", async () => {
+  test("uses the category's configured tool and model without an override", async () => {
     const root = await mkdtemp(join(tmpdir(), "hive-spawner-configured-route-"));
     tempRoots.push(root);
     const tmux = new FakeTmux();
@@ -3152,7 +3152,7 @@ describe("scoped brief in the spawn prompt", () => {
  * spawned on 2026-07-11 that was offered it, only 5 of 23 did (21% claude, 22%
  * codex). An agent that declined never learned the rules and nothing failed.
  * These tests are what makes the silence loud: they assert the rules are in the
- * prompt Hive actually hands the vendor, on every launch path and every tier, so
+ * prompt Hive actually hands the vendor, on every launch path and category, so
  * no agent can start without them.
  */
 describe("coding guidelines are guaranteed in context at spawn", () => {
@@ -3180,7 +3180,7 @@ describe("coding guidelines are guaranteed in context at spawn", () => {
     expect(prompt).toContain("these are not optional");
   });
 
-  test("the cheap tier is not exempt — a small model needs the rules most", () => {
+  test("a concise category is not exempt — a small model needs the rules most", () => {
     const prompt = buildAgentPrompt("maya", "Build auth API", worktree, "/repo", "", {
       category: "summarization",
     });
@@ -3528,7 +3528,8 @@ describe("a refusal names the reason it actually refused for", () => {
   async function spawnGrok(
     root: string,
     grokModel: string | null,
-    enabled: boolean | null | undefined,
+    enabled: boolean | null | undefined | ((provider: "claude" | "codex" | "grok", model: string) => boolean | null),
+    options: { policy?: RoutingPolicy; claudeAllowance?: number } = {},
   ): Promise<{ failure: string; store: FakeStore; tmux: FakeTmux }> {
     const store = new FakeStore();
     const db = new HiveDatabase(join(root, "refusal-quota.db"));
@@ -3536,14 +3537,17 @@ describe("a refusal names the reason it actually refused for", () => {
     const spawner = new HiveSpawner({
       ...(enabled === undefined
         ? {}
-        : { isModelEnabled: async () => enabled }),
+        : {
+          isModelEnabled: async (provider: "claude" | "codex" | "grok", model: string) =>
+            typeof enabled === "function" ? enabled(provider, model) : enabled,
+        }),
       db: store,
       repoRoot: root,
       port: 4317,
       config: { terminal: "auto", headless: true },
-      readRoutingPolicy: () => grokModel === null
+      readRoutingPolicy: () => options.policy ?? (grokModel === null
         ? { ...policyFromRoute(CLAUDE_ROUTE), chains: {} }
-        : policyFromRoute({ tool: "grok", grok: { model: grokModel } }),
+        : policyFromRoute({ tool: "grok", grok: { model: grokModel } })),
       quota: new QuotaService(
         new QuotaLedger(db),
         QuotaConfigSchema.parse({
@@ -3552,8 +3556,8 @@ describe("a refusal names the reason it actually refused for", () => {
             provider: "claude",
             pool: "claude",
             models: ["claude-opus-4-8"],
-            fiveHourAllowance: 500,
-            weeklyAllowance: 500,
+            fiveHourAllowance: options.claudeAllowance ?? 500,
+            weeklyAllowance: options.claudeAllowance ?? 500,
           }],
         }),
         () => new Date(timestamp),
@@ -3583,7 +3587,6 @@ describe("a refusal names the reason it actually refused for", () => {
       await spawner.spawn({
         task: "the spawn that was refused for a route that existed",
         category: "simple_coding",
-        tool: "grok",
       });
     } catch (error) {
       failure = error instanceof Error ? error.message : String(error);
@@ -3629,6 +3632,74 @@ describe("a refusal names the reason it actually refused for", () => {
     expect(failure).toBe("");
     expect([...store.approvals.values()]).toEqual([]);
     expect(tmux.sessions).toHaveLength(1);
+  });
+
+  test("an exhausted category falls through to the global default chain", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-category-global-fallback-"));
+    tempRoots.push(root);
+    const policy = {
+      ...policyFromRoute(CLAUDE_ROUTE),
+      chains: {
+        simple_coding: [{ provider: "claude", model: "claude-opus-4-8", effort: { mode: "provider-controlled" } }],
+        default: [{ provider: "grok", model: "grok-4.5", effort: { mode: "provider-controlled" } }],
+      },
+    } satisfies RoutingPolicy;
+    const { failure, store, tmux } = await spawnGrok(
+      root,
+      "grok-4.5",
+      true,
+      { policy, claudeAllowance: 1 },
+    );
+    expect(failure).toBe("");
+    expect(store.listAgents()[0]).toMatchObject({ tool: "grok", model: "grok-4.5" });
+    expect(tmux.sessions[0]?.[2]).toContain("'grok' '-m' 'grok-4.5'");
+  });
+
+  test("a fully refused category and default name every link and the remedy", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-chain-all-refused-"));
+    tempRoots.push(root);
+    const policy = {
+      ...policyFromRoute(CLAUDE_ROUTE),
+      chains: {
+        simple_coding: [{ provider: "grok", model: "grok-4.5", effort: { mode: "provider-controlled" } }],
+        default: [{ provider: "claude", model: "claude-opus-4-8", effort: { mode: "provider-controlled" } }],
+      },
+    } satisfies RoutingPolicy;
+    const { failure, tmux } = await spawnGrok(root, "grok-4.5", false, { policy });
+    expect(failure).toContain("simple_coding: grok/grok-4.5 — enablement");
+    expect(failure).toContain("default: claude/claude-opus-4-8 — enablement");
+    expect(failure).toContain("Model Control Center");
+    expect(tmux.sessions).toEqual([]);
+  });
+
+  test("a disabled chain link is skipped and never reaches launch", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-chain-disabled-skip-"));
+    tempRoots.push(root);
+    const checked: string[] = [];
+    const policy = {
+      ...policyFromRoute(CLAUDE_ROUTE),
+      chains: {
+        simple_coding: [
+          { provider: "grok", model: "grok-4.5", effort: { mode: "provider-controlled" } },
+          { provider: "claude", model: "claude-opus-4-8", effort: { mode: "provider-controlled" } },
+        ],
+      },
+    } satisfies RoutingPolicy;
+    const { failure, store, tmux } = await spawnGrok(
+      root,
+      "grok-4.5",
+      (provider, model) => {
+        checked.push(`${provider}/${model}`);
+        return provider !== "grok";
+      },
+      { policy },
+    );
+    expect(failure).toBe("");
+    expect(store.listAgents()[0]).toMatchObject({ tool: "claude", model: "claude-opus-4-8" });
+    expect(checked[0]).toBe("grok/grok-4.5");
+    expect(checked.filter((entry) => entry === "grok/grok-4.5")).toHaveLength(1);
+    expect(checked).toContain("claude/claude-opus-4-8");
+    expect(tmux.sessions[0]?.[2]).not.toContain("grok-4.5");
   });
 
   test("a route that is genuinely missing still reports a missing route", async () => {

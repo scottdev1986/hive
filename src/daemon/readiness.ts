@@ -4,7 +4,7 @@
  * The old answer measured time-to-first-tool-call: fifteen one-second polls,
  * and a launch that had not produced a hook event or a fresh rollout write by
  * then was killed. That is a proxy for *acting*, and a high-effort model does
- * not act for a long time — it thinks first. So deep-tier Codex was
+ * not act for a long time — it thinks first. So complex-coding Codex was
  * indistinguishable from a corpse and could not be spawned at all, while
  * low-effort Codex, which greps within a second, sailed through. The variable
  * was never health. It was reasoning effort.

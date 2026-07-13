@@ -8,7 +8,7 @@ import {
 } from "../schemas";
 import type { AuthorizedLaunch } from "./authorized-launch";
 
-export const SpawnRequestSchema = z.object({
+export const SpawnRequestSchema = z.strictObject({
   task: z.string().min(1),
   /** The task category. The user's policy maps it to an ordered fallback
    * chain of exact models; the first link that clears the launch gate runs. */

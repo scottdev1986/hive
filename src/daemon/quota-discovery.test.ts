@@ -1086,6 +1086,42 @@ describe("a route that cannot start is not a route", () => {
     expect(decision.tool).toBe("codex");
   });
 
+  test("a stale measured feed becomes fixed unknown headroom and loses to a healthy pool", async () => {
+    let clock = now;
+    const codexLimit: QuotaLimit = {
+      provider: "codex",
+      account: "default",
+      pool: "codex-manual",
+      models: ["gpt-5.6-sol"],
+      fiveHourAllowance: 100,
+      weeklyAllowance: 1_000,
+      weeklyWindow: "rolling",
+      timezone: "UTC",
+      resetWeekday: 1,
+      resetHour: 0,
+      resetMinute: 0,
+      observationMaxAgeMinutes: 360,
+    };
+    const { quota } = await service([
+      new StubProbe("claude", {
+        status: "ok",
+        pools: [generalPool("claude", "subscription", 0, 0)],
+        catalog: [],
+      }),
+    ], [codexLimit], () => clock);
+    await quota.refreshFromProviders(now, { force: true });
+    clock = new Date(now.getTime() + 31 * 60_000);
+
+    const decision = await quota.routeAndReserve({
+      agentName: "stale-feed",
+      category: "complex_coding",
+      selection: "spread",
+      candidates: both,
+    });
+    expect(pool(quota, "subscription", clock).freshness).toBe("stale");
+    expect(decision.tool).toBe("codex");
+  });
+
   test("a launch that never proved life takes its route out of the running", async () => {
     const { quota } = await healthy();
     const first = await quota.routeAndReserve({

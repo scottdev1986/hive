@@ -94,7 +94,7 @@ const EstimateSchema = z.partialRecord(
 }));
 
 /**
- * How much of each window one run of a tier is expected to consume, as a percent
+ * How much of each window one run of a category is expected to consume, as a percent
  * of that window. This is Hive's own workload guess — never a provider number —
  * so every reservation built from it is surfaced as `estimated`. It is separate
  * from `estimates` because a discovered pool is percent-denominated, and a run

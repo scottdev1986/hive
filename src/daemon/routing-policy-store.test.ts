@@ -44,6 +44,15 @@ describe("fail-closed reading", () => {
       .toEqual({ state: "unconfigured", source: "none" });
   });
 
+  test("a pre-selection policy document defaults to spread", () => {
+    const { selection: _selection, ...legacy } = store.read(NOW);
+    db.database.run(
+      "INSERT INTO routing_policy (id, revision, updatedAt, document) VALUES (1, 0, ?, ?)",
+      [NOW.toISOString(), JSON.stringify(legacy)],
+    );
+    expect(store.read(NOW).selection).toEqual({ global: "spread", categories: {} });
+  });
+
   test("a corrupt policy row THROWS — it never degrades to an empty, permissive-looking document", () => {
     db.database.run(
       "INSERT INTO routing_policy (id, revision, updatedAt, document) VALUES (1, 3, ?, ?)",
@@ -98,6 +107,41 @@ describe("fail-closed reading", () => {
 });
 
 describe("mutations and compare-and-set", () => {
+  test("selection mutations set global and category modes and unset only the override", () => {
+    let policy = store.apply(
+      { op: "set-selection", expectedRevision: 0, mode: "strict" },
+      "test",
+      NOW,
+    );
+    expect(policy.selection).toEqual({ global: "strict", categories: {} });
+    policy = store.apply(
+      {
+        op: "set-selection",
+        expectedRevision: 1,
+        category: "complex_coding",
+        mode: "spread",
+      },
+      "test",
+      NOW,
+    );
+    expect(policy.selection).toEqual({
+      global: "strict",
+      categories: { complex_coding: "spread" },
+    });
+    policy = store.apply(
+      {
+        op: "set-selection",
+        expectedRevision: 2,
+        category: "complex_coding",
+        mode: "unset",
+      },
+      "test",
+      NOW,
+    );
+    expect(policy.selection).toEqual({ global: "strict", categories: {} });
+    expect(policy.revision).toBe(3);
+  });
+
   test("every accepted write increments the revision and clears the provisional flag", () => {
     const seeded = store.seedProvisionalBaseline(
       { coveredModels: [], vendorDefaults: {} },

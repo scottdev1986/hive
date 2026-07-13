@@ -1449,6 +1449,9 @@ export class QuotaService {
     status: QuotaPoolStatus,
     limit?: ResolvedQuotaLimit,
   ): { fiveRemaining: number; weekRemaining: number } | null {
+    if (status.origin === "discovered" && status.freshness !== "fresh") {
+      return null;
+    }
     const unbounded = Number.POSITIVE_INFINITY;
     const read = (window: "fiveHour" | "weekly"): number | null => {
       if (limit !== undefined && !this.meters(limit, status, window)) {
@@ -1571,11 +1574,12 @@ export class QuotaService {
     // user's preferred link wins, which is also what stops per-spawn
     // flip-flopping between near-equal pools.
     if (request.selection === "spread") {
-      evaluated.sort((left, right) =>
-        Math.round(right.score / SPREAD_DEADBAND) -
-          Math.round(left.score / SPREAD_DEADBAND) ||
-        left.rank - right.rank
-      );
+      evaluated.sort((left, right) => {
+        const difference = right.score - left.score;
+        return Math.abs(difference) <= SPREAD_DEADBAND
+          ? left.rank - right.rank
+          : difference;
+      });
     }
 
     // Viability, before headroom gets a vote. A route Hive has just watched fail

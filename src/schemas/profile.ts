@@ -25,7 +25,7 @@ export const ProfileDocsSchema = z.object({
 });
 export type ProfileDocs = z.infer<typeof ProfileDocsSchema>;
 
-// The concrete commands the landing gate, tier router, and `hive init` need in
+// The concrete commands the landing gate, category router, and `hive init` need in
 // an arbitrary repo. Any command Hive could not discover is null (its TOML key
 // is omitted), never an invented default — an unknown command is unknown.
 export const ProfileCommandsSchema = z.object({

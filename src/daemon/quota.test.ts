@@ -461,7 +461,7 @@ describe("quota persistence and reservations", () => {
 });
 
 describe("quota-aware routing", () => {
-  test("chooses the candidate with the strongest worst-window headroom", async () => {
+  test("spread chooses more headroom even when that model is not primary", async () => {
     const { db } = await fileDatabase("routing");
     const ledger = new QuotaLedger(db);
     const now = new Date("2026-07-09T12:00:00.000Z");
@@ -477,6 +477,84 @@ describe("quota-aware routing", () => {
       candidates: candidates(),
     });
     expect(decision.tool).toEqual("codex");
+    db.close();
+  });
+
+  test("spread keeps the primary when headroom is inside the deadband", async () => {
+    const { db } = await fileDatabase("deadband-primary");
+    const service = new QuotaService(
+      new QuotaLedger(db),
+      config([limit("claude", 88.5), limit("codex", 89.3)]),
+      () => new Date("2026-07-09T12:00:00.000Z"),
+    );
+    const decision = await service.routeAndReserve({
+      agentName: "primary-wins",
+      category: "complex_coding",
+      selection: "spread",
+      candidates: candidates(),
+    });
+    expect(decision.tool).toBe("claude");
+    db.close();
+  });
+
+  test("unknown headroom participates but never beats a healthy measured pool", async () => {
+    const { db } = await fileDatabase("unknown-headroom");
+    const service = new QuotaService(
+      new QuotaLedger(db),
+      config([limit("claude", 100)]),
+      () => new Date("2026-07-09T12:00:00.000Z"),
+    );
+    const [grok, claude] = await authorizeForQuotaTest([
+      { tool: "grok", model: "grok-4.5" },
+      { tool: "claude", model: "claude-model" },
+    ]);
+    const decision = await service.routeAndReserve({
+      agentName: "measured-wins",
+      category: "complex_coding",
+      selection: "spread",
+      candidates: [grok!, claude!],
+    });
+    expect(decision.tool).toBe("claude");
+    db.close();
+  });
+
+  test("outstanding reservations make the next concurrent spawn spread", async () => {
+    const { db } = await fileDatabase("reservations-spread");
+    const service = new QuotaService(
+      new QuotaLedger(db),
+      config([limit("claude"), limit("codex")]),
+      () => new Date("2026-07-09T12:00:00.000Z"),
+    );
+    const first = await service.routeAndReserve({
+      agentName: "first",
+      category: "complex_coding",
+      selection: "spread",
+      candidates: candidates(),
+    });
+    const second = await service.routeAndReserve({
+      agentName: "second",
+      category: "complex_coding",
+      selection: "spread",
+      candidates: candidates(),
+    });
+    expect([first.tool, second.tool]).toEqual(["claude", "codex"]);
+    db.close();
+  });
+
+  test("strict mode preserves chain order despite unequal headroom", async () => {
+    const { db } = await fileDatabase("strict-order");
+    const service = new QuotaService(
+      new QuotaLedger(db),
+      config([limit("claude", 25), limit("codex", 100)]),
+      () => new Date("2026-07-09T12:00:00.000Z"),
+    );
+    const decision = await service.routeAndReserve({
+      agentName: "strict",
+      category: "complex_coding",
+      selection: "strict",
+      candidates: candidates(),
+    });
+    expect(decision.tool).toBe("claude");
     db.close();
   });
 

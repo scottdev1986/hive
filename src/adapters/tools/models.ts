@@ -13,7 +13,7 @@ import {
 // Which vendor's CLI can actually run a user-named model. An explicit model
 // launches verbatim (never substituted), so launching it on the other
 // vendor's tool produces a vendor-impossible execution identity — the field
-// failure was tier routing picking tool=codex while the caller pinned
+// failure was routing picking tool=codex while the caller pinned
 // model="claude-opus-4-8", opening a Codex TUI that can never run it. Null
 // means the name matches no known vendor family and cannot be validated.
 export function modelVendor(model: string): "claude" | "codex" | null {
@@ -32,5 +32,4 @@ export function modelVendor(model: string): "claude" | "codex" | null {
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
-
 
