@@ -170,7 +170,9 @@ test("agent kill refuses when a live session's process roots are unreadable", as
       status: "working",
       writeRevoked: false,
     });
-    expect((await agentFetch("http://hive/workspace")).status).toEqual(200);
+    expect((await agentFetch("http://hive/orchestrator-status")).status).toEqual(
+      200,
+    );
   } finally {
     await daemon.stop();
     db.close();
@@ -217,7 +219,9 @@ test("agent kill refuses when tmux reports success but leaves the session", asyn
       status: "working",
       writeRevoked: false,
     });
-    expect((await agentFetch("http://hive/workspace")).status).toEqual(403);
+    expect((await agentFetch("http://hive/orchestrator-status")).status).toEqual(
+      403,
+    );
   } finally {
     tmux.sessions.clear();
     owned.kill("SIGKILL");
