@@ -121,6 +121,11 @@ enum MCCCopy {
         "Strict order: Hive always tries these models top to bottom, regardless of capacity."
     static let spreadByCapacityCaption =
         "Spread: among these models, the one with the most remaining capacity runs the task."
+    /// The daemon stores a selection setting this version of Hive cannot read
+    /// or write. Say exactly that — do not render a mode we did not read.
+    static let spreadUnreadable =
+        "This version of Hive cannot read how the daemon distributes work — update Hive to "
+        + "see and change this. Your other settings still save normally."
     static let chainEmptyUsesDefault = "No chain of its own — uses your Global fallback chain."
     static let chainAllIneffective = "Every model in this chain is off or unavailable."
     static let chainExhaustionRefuse =

@@ -70,8 +70,11 @@ public struct ChainEntry: Equatable, Codable, Sendable {
     /// The canonical model id — the daemon store's grain (no variant; a
     /// context-window entitlement is not a different routing target).
     public var model: String
-    /// Effort is per chain LINK, not per model (§8.2).
-    public var effort: EffortTarget
+    /// Effort is per chain LINK, not per model (§8.2). NIL = no effort choice
+    /// this build can name — the wire's never-configured/hive-decides, or a
+    /// mode a newer daemon added. It renders as unchosen; it is never
+    /// silently promoted to an effort the user did not pick.
+    public var effort: EffortTarget?
     /// Why this entry sits where it does — shown in the task view so the
     /// user can make informed overrides instead of guessing. Provisional
     /// seeds always say "assumed"; nothing wears authority it lacks.
@@ -80,7 +83,7 @@ public struct ChainEntry: Equatable, Codable, Sendable {
 
     public init(
         provider: String, model: String,
-        effort: EffortTarget,
+        effort: EffortTarget?,
         note: String? = nil, confidence: ChainConfidence? = nil
     ) {
         self.provider = provider

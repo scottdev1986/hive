@@ -12,22 +12,44 @@ import Foundation
 /// re-derive it by hand.
 public struct RoutingPolicyDocument: Codable, Equatable, Sendable {
 
-    /// Effort as the wire spells it: `{mode: "exact", value}` /
-    /// `{mode: "none"}` / `{mode: "provider-controlled"}`.
+    /// Effort as the wire spells it, mirroring `EffortTargetSchema`:
+    /// `{mode: "never-configured"}` / `{mode: "hive-decides"}` /
+    /// `{mode: "exact", value}` / `{mode: "none"}` /
+    /// `{mode: "provider-controlled"}`.
     public enum WireEffort: Equatable, Sendable {
+        /// The user has not answered. NOT a synonym for any effort we would
+        /// send — it is the absence of a choice.
+        case neverConfigured
+        /// Hive picks from the model's advertised levels; not a standing user
+        /// preference, so the control shows no selection.
+        case hiveDecides
         case exact(String)
         case none
         case providerControlled
+        /// A mode a NEWER daemon added. Kept verbatim: an effort this build
+        /// cannot name must cost that one row its effort reading — never the
+        /// whole document, and never a value the user did not choose.
+        case unknown(String)
 
-        public var asEffortTarget: EffortTarget {
+        /// The user's standing choice, or nil when the wire says there isn't
+        /// one this build can name. Nil renders as unchosen; nothing here
+        /// invents an effort.
+        public var asEffortTarget: EffortTarget? {
             switch self {
             case .exact(let value): return .exact(value)
             case .none: return EffortTarget.none
             case .providerControlled: return .providerControlled
+            case .neverConfigured, .hiveDecides, .unknown: return nil
             }
         }
 
-        public init(_ target: EffortTarget) {
+        /// No choice (nil) is `never-configured` on the wire — the daemon's own
+        /// spelling for unanswered.
+        public init(_ target: EffortTarget?) {
+            guard let target else {
+                self = .neverConfigured
+                return
+            }
             switch target {
             case .exact(let value): self = .exact(value)
             case .none: self = .none
@@ -35,12 +57,17 @@ public struct RoutingPolicyDocument: Codable, Equatable, Sendable {
             }
         }
 
-        /// The CLI argument spelling (`parseEffortTargetArg`).
+        /// The CLI argument spelling (`parseEffortTargetArg`). An unknown mode
+        /// is passed through as-is: the daemon refuses what it does not know,
+        /// which is the loud failure we want — far better than guessing.
         public var cliArgument: String {
             switch self {
+            case .neverConfigured: return "never-configured"
+            case .hiveDecides: return "hive-decides"
             case .exact(let value): return "exact:\(value)"
             case .none: return "none"
             case .providerControlled: return "provider-controlled"
+            case .unknown(let mode): return mode
             }
         }
     }
@@ -58,11 +85,18 @@ public struct RoutingPolicyDocument: Codable, Equatable, Sendable {
 
         /// The CLI chain-link spelling (`parseChainEntryArg`):
         /// `provider/model`, `provider/model@LEVEL`, or `provider/model@none`.
-        public var cliArgument: String {
+        ///
+        /// NIL when the link's effort has no chain spelling at all — the chain
+        /// CLI cannot express never-configured, hive-decides, or a mode this
+        /// build has never heard of. The caller must REFUSE the write rather
+        /// than pick the nearest spelling: silently rewriting one link's effort
+        /// is a routing change the user never made.
+        public var cliArgument: String? {
             switch effort {
             case .providerControlled: return "\(provider)/\(model)"
             case .none: return "\(provider)/\(model)@none"
             case .exact(let value): return "\(provider)/\(model)@\(value)"
+            case .neverConfigured, .hiveDecides, .unknown: return nil
             }
         }
     }
@@ -198,9 +232,24 @@ public struct RoutingPolicyDocument: Codable, Equatable, Sendable {
         models.first { $0.provider == provider.rawValue && $0.model == model }
     }
 
-    /// The user's standing effort choice for a model, if they made one.
+    /// The user's standing effort choice for a model, if they made one. An
+    /// unanswered (never-configured) or unnameable effort is NOT a choice.
     public func modelEffort(provider: ProviderID, model: String) -> EffortTarget? {
         modelRow(provider: provider, model: model)?.effort?.asEffortTarget
+    }
+
+    /// Whether this build can actually WRITE the daemon's selection setting.
+    ///
+    /// The daemon's selection vocabulary changed with capability-first routing
+    /// (never-configured / auto / choice); `SpreadMode` here still speaks the
+    /// older spread/strict. Reading a mode we cannot name would render as a
+    /// setting the user never chose, and writing ours back would be refused by
+    /// the daemon on every click — so the UI disables the control and says why.
+    public var selectionWritable: Bool {
+        guard selectionOnWire, SpreadMode(rawValue: selection.global) != nil else {
+            return false
+        }
+        return selection.categories.values.allSatisfy { SpreadMode(rawValue: $0) != nil }
     }
 
     public func chain(for category: TaskCategory) -> [WireChainEntry] {
@@ -243,9 +292,18 @@ public struct RoutingPolicyDocument: Codable, Equatable, Sendable {
 extension RoutingPolicyDocument.WireEffort: Codable {
     private enum CodingKeys: String, CodingKey { case mode, value }
 
+    /// FORWARD COMPATIBLE, NARROWLY. `mode` is genuinely required, and an
+    /// "exact" effort without its level is a broken row — those still throw.
+    /// An unrecognised mode does NOT: it decodes as `.unknown`, because one
+    /// enum value the daemon learned before this app did must never blank the
+    /// Settings screen and turn persistence off.
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         switch try container.decode(String.self, forKey: .mode) {
+        case "never-configured":
+            self = .neverConfigured
+        case "hive-decides":
+            self = .hiveDecides
         case "exact":
             self = .exact(try container.decode(String.self, forKey: .value))
         case "none":
@@ -253,15 +311,17 @@ extension RoutingPolicyDocument.WireEffort: Codable {
         case "provider-controlled":
             self = .providerControlled
         case let other:
-            throw DecodingError.dataCorruptedError(
-                forKey: .mode, in: container,
-                debugDescription: "unknown effort mode \(other)")
+            self = .unknown(other)
         }
     }
 
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         switch self {
+        case .neverConfigured:
+            try container.encode("never-configured", forKey: .mode)
+        case .hiveDecides:
+            try container.encode("hive-decides", forKey: .mode)
         case .exact(let value):
             try container.encode("exact", forKey: .mode)
             try container.encode(value, forKey: .value)
@@ -269,6 +329,8 @@ extension RoutingPolicyDocument.WireEffort: Codable {
             try container.encode("none", forKey: .mode)
         case .providerControlled:
             try container.encode("provider-controlled", forKey: .mode)
+        case .unknown(let mode):
+            try container.encode(mode, forKey: .mode)
         }
     }
 }

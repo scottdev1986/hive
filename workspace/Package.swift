@@ -34,7 +34,11 @@ let package = Package(
         ),
         .testTarget(
             name: "WorkspaceCoreTests",
-            dependencies: ["WorkspaceCore"]
+            dependencies: ["WorkspaceCore"],
+            // The daemon's real wire document, shared with the daemon-side
+            // contract test (src/schemas/routing-policy.wire-contract.test.ts)
+            // so one file pins both halves of the schema.
+            resources: [.copy("Fixtures")]
         ),
     ]
 )

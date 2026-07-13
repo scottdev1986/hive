@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 2,
+  "revision": 6,
+  "updatedAt": "2026-07-13T16:05:40.344Z",
+  "provisional": false,
+  "providers": {
+    "claude": "enabled",
+    "codex": "enabled",
+    "grok": "disabled"
+  },
+  "models": [
+    {
+      "provider": "claude",
+      "model": "claude-opus-4-8",
+      "state": "enabled",
+      "effort": { "mode": "never-configured" }
+    },
+    {
+      "provider": "claude",
+      "model": "claude-fable-5",
+      "state": "enabled",
+      "effort": { "mode": "hive-decides" }
+    },
+    {
+      "provider": "claude",
+      "model": "claude-sonnet-5",
+      "state": "disabled",
+      "effort": { "mode": "exact", "value": "high" }
+    },
+    {
+      "provider": "codex",
+      "model": "gpt-5.6-sol",
+      "effort": { "mode": "provider-controlled" }
+    },
+    {
+      "provider": "grok",
+      "model": "grok-4.5",
+      "state": "enabled",
+      "effort": { "mode": "none" }
+    }
+  ],
+  "chains": {
+    "complex_coding": [
+      {
+        "provider": "claude",
+        "model": "claude-opus-4-8",
+        "effort": { "mode": "exact", "value": "high" }
+      },
+      {
+        "provider": "codex",
+        "model": "gpt-5.6-sol",
+        "effort": { "mode": "never-configured" }
+      }
+    ],
+    "default": [
+      {
+        "provider": "claude",
+        "model": "claude-opus-4-8",
+        "effort": { "mode": "provider-controlled" }
+      }
+    ]
+  },
+  "selection": {
+    "global": "never-configured",
+    "categories": {
+      "complex_coding": "choice",
+      "light_research": "auto"
+    }
+  }
+}

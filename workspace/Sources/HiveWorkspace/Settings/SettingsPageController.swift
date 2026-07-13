@@ -360,11 +360,14 @@ final class TasksSettingsController: SettingsPageController {
         contentStack.addArrangedSubview(row)
         pinToContent(row)
 
-        var captionText = dataSource.globalSpread == .spreadByCapacity
-            ? MCCCopy.spreadByCapacityCaption : MCCCopy.spreadStrictCaption
-        if !dataSource.canEditSelection {
-            captionText += " The running daemon does not support changing this yet — restart Hive after updating."
-        }
+        // When the daemon's selection setting is one this build cannot read or
+        // write, the caption must not ASSERT a mode — the popup's selection is
+        // a fallback, not the stored truth, and claiming it would be the same
+        // silent lie as the placeholder store.
+        let captionText = dataSource.canEditSelection
+            ? (dataSource.globalSpread == .spreadByCapacity
+                ? MCCCopy.spreadByCapacityCaption : MCCCopy.spreadStrictCaption)
+            : MCCCopy.spreadUnreadable
         let caption = NSTextField(wrappingLabelWithString: captionText)
         caption.font = Theme.Font.caption
         caption.textColor = .tertiaryLabelColor

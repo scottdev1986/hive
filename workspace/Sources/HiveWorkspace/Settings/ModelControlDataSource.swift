@@ -187,11 +187,12 @@ final class ModelControlDataSource {
     }
 
     /// Whether the backend can PERSIST selection modes. A daemon that never
-    /// sent the field would reject the mutation — the control disables with a
-    /// reason instead of failing on every use.
+    /// sent the field — or one speaking a selection vocabulary this build
+    /// cannot write — would reject the mutation, so the control disables with
+    /// a reason instead of failing on every use.
     var canEditSelection: Bool {
         switch backend {
-        case .daemon(let document): return document.selectionOnWire
+        case .daemon(let document): return document.selectionWritable
         case .placeholder: return true
         case nil: return false
         }
@@ -272,6 +273,18 @@ final class ModelControlDataSource {
                 provider: $0.provider, model: $0.model,
                 effort: RoutingPolicyDocument.WireEffort($0.effort))
         }
+        // The chain CLI has no spelling for never-configured, hive-decides, or
+        // a mode a newer daemon added. Rewriting such a link to the nearest
+        // spelling would change routing the user never touched, so refuse the
+        // whole write and say so.
+        let arguments = wire.map(\.cliArgument)
+        guard arguments.allSatisfy({ $0 != nil }) else {
+            policyWriteError =
+                "This chain contains an effort setting this version of Hive cannot write. "
+                + "Update Hive to edit it — nothing was changed."
+            notify()
+            return
+        }
         let key = category?.rawValue ?? "default"
         mutate(applyToDocument: { document in
             document.chains[key] = wire
@@ -282,7 +295,7 @@ final class ModelControlDataSource {
                 policy.defaultChain = entries
                 policy.provisional = false
             }
-        }, persist: ["routing", "set-chain", key] + wire.map(\.cliArgument))
+        }, persist: ["routing", "set-chain", key] + arguments.compactMap { $0 })
     }
 
     func setGlobalSpread(_ mode: SpreadMode) {
