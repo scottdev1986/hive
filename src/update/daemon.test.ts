@@ -1,9 +1,13 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
  
-import { writeLifecycleFiles } from "../daemon/lifecycle";
+import {
+  getPidFilePath,
+  getPortFilePath,
+  writeLifecycleFiles,
+} from "../daemon/lifecycle";
 import type { DaemonHandshake } from "../daemon/handshake";
 import {
   explainRefusal,
@@ -67,6 +71,35 @@ afterEach(() => {
 });
 
 const noAgents = async (): Promise<readonly string[]> => [];
+
+function processIsAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function spawnLongLivedChild() {
+  const child = Bun.spawn([
+    process.execPath,
+    "-e",
+    'process.on("SIGTERM", () => process.exit(0)); console.log("ready"); setInterval(() => {}, 1000);',
+  ], { stdout: "pipe", stderr: "pipe" });
+  const reader = child.stdout.getReader();
+  const ready = await reader.read();
+  reader.releaseLock();
+  if (ready.done || new TextDecoder().decode(ready.value).trim() !== "ready") {
+    throw new Error("child process did not become ready");
+  }
+  return child;
+}
+
+async function stopChild(child: Awaited<ReturnType<typeof spawnLongLivedChild>>): Promise<void> {
+  if (processIsAlive(child.pid)) process.kill(child.pid, "SIGKILL");
+  await child.exited;
+}
 
 describe("the daemon left behind by an update", () => {
   test("a daemon running the previous build is stale, not current", async () => {
@@ -187,6 +220,34 @@ describe("the daemon left behind by an update", () => {
     });
     expect(signals).toEqual([[4242, "SIGTERM"]]);
     expect(outcome).toEqual({ stopped: true, pid: 4242 });
+  });
+
+  test("SIGTERM stops only the recorded process and removes its lifecycle files", async () => {
+    const target = await spawnLongLivedChild();
+    const unrelated = await spawnLongLivedChild();
+    const port = 45_123;
+    writeLifecycleFiles(port, target.pid);
+
+    try {
+      const outcome = await restartStaleDaemon(
+        { state: "stale", port, pid: target.pid, reason: "build hash" },
+        {
+          kill: (pid, signal) => process.kill(pid, signal),
+          isRunning: async () => processIsAlive(target.pid),
+          timeoutMs: 2_000,
+        },
+      );
+
+      await target.exited;
+      expect(outcome).toEqual({ stopped: true, pid: target.pid });
+      expect(processIsAlive(target.pid)).toBe(false);
+      expect(existsSync(getPidFilePath())).toBe(false);
+      expect(existsSync(getPortFilePath())).toBe(false);
+      expect(processIsAlive(unrelated.pid)).toBe(true);
+    } finally {
+      await stopChild(target);
+      await stopChild(unrelated);
+    }
   });
 
   test("a daemon that will not exit is reported, not assumed dead", async () => {
