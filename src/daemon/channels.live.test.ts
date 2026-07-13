@@ -28,16 +28,17 @@ import { QuotaLedger } from "./quota-ledger";
 import { QuotaService } from "./quota";
 import { HiveDaemon } from "./server";
 import type { SpawnRequest, Spawner } from "./spawner";
+import { agentTmuxSession } from "./tmux-sessions";
 
 const live = process.env.HIVE_LIVE_CHANNELS === "1";
 const suite = live ? describe : describe.skip;
 
-const SESSION = "hive-live-channels";
 const PORT = Number(process.env.HIVE_LIVE_PORT ?? 44831);
 const CLI = resolve(import.meta.dir, "../cli.ts");
 
 const root = mkdtempSync(join(tmpdir(), "hive-live-channels-"));
 const hiveHome = join(root, "home");
+const SESSION = agentTmuxSession("live-channels", hiveHome);
 const agentWorktree = join(root, "agent");
 const binDir = join(root, "bin");
 
