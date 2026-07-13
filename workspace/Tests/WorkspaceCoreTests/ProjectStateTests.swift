@@ -91,6 +91,41 @@ final class ProjectStateTests: XCTestCase {
         return state
     }
 
+    // The X kills the agent, but the daemon needs a moment: until the kill
+    // lands, the feed still lists that agent as live. A pane rebuilt from those
+    // snapshots is exactly why the X looked broken.
+    func testUserClosedAgentIsNotRebuiltByAFeedThatStillListsItAsLive() {
+        let state = drivenState()
+        let paneID = ProjectState.paneID(forAgent: "indexer")
+
+        state.markUserClosed(paneID)
+        state.apply(.closePane(paneID))
+        XCTAssertNil(state.panes[paneID])
+
+        // The kill is in flight; the daemon still reports the agent as working.
+        state.apply(feed: [agent("indexer"), agent("migrator"), agent("flaky-e2e")], now: 2)
+        XCTAssertNil(state.panes[paneID], "a closed agent's pane must not come back")
+
+        // The agent is dead: the daemon stops reporting it, and the suppression
+        // is forgotten so a future agent of the same name gets a pane again.
+        state.apply(feed: [agent("migrator"), agent("flaky-e2e")], now: 3)
+        state.apply(feed: [agent("indexer"), agent("migrator"), agent("flaky-e2e")], now: 4)
+        XCTAssertNotNil(state.panes[paneID], "a new agent by that name gets its pane")
+    }
+
+    // A kill that failed leaves the agent alive, and the user has to see that.
+    func testClearingTheSuppressionBringsALiveAgentBack() {
+        let state = drivenState()
+        let paneID = ProjectState.paneID(forAgent: "indexer")
+
+        state.markUserClosed(paneID)
+        state.apply(.closePane(paneID))
+        state.clearUserClosed(paneID)
+
+        state.apply(feed: [agent("indexer"), agent("migrator"), agent("flaky-e2e")], now: 2)
+        XCTAssertNotNil(state.panes[paneID], "an agent that survived its kill is shown again")
+    }
+
     func testOrchestratorIsMasterAndFeedAgentsGetPanes() {
         let state = drivenState()
         XCTAssertEqual(Set(state.panes.keys), Set([
