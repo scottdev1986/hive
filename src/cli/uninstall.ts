@@ -75,13 +75,13 @@ export interface UninstallDeps {
   run: CommandRunner;
   confirm: ConfirmFn;
   log: (line: string) => void;
-  /** Best-effort daemon/agent stop; injectable so tests never touch tmux. */
-  stop: () => Promise<void>;
+  /** Clean up this instance's sessions after every daemon has exited. */
+  stopCurrentInstance: () => Promise<void>;
   liveTeams: () => Promise<readonly InstanceMutationBlocker[]>;
-  stopOtherInstances: () => Promise<void>;
+  stopInstances: () => Promise<void>;
 }
 
-async function stopOtherInstances(): Promise<void> {
+async function stopInstances(): Promise<void> {
   const instances = await listInstances();
   for (const instance of instances) {
     if (!instance.running) continue;
@@ -104,14 +104,14 @@ export const defaultUninstallDeps: UninstallDeps = {
   run: runCommand,
   confirm: confirmOnTty,
   log: console.log,
-  stop: stopHive,
+  stopCurrentInstance: stopHive,
   liveTeams: () => instanceMutationBlockers(async (port) => {
     const agents = await fetchAgentStatus(port);
     return agents
       .filter((agent) => agent.status !== "dead" && agent.status !== "done")
       .map((agent) => agent.name);
   }),
-  stopOtherInstances,
+  stopInstances,
 };
 
 function errorMessage(error: unknown): string {
@@ -266,7 +266,7 @@ export async function runUninstallRepo(
   }
 
   try {
-    await deps.stop();
+    await deps.stopCurrentInstance();
   } catch (error) {
     deps.log(
       `Refusing repo uninstall because this instance did not stop: ${errorMessage(error)}\n` +
@@ -312,7 +312,7 @@ export async function runUninstallMachine(
   }
   const plan = [
     "This removes Hive from this machine:",
-    `  - stops running agents and the daemon`,
+    "  - stops every idle daemon and this instance's leftover sessions",
     `  - deletes ${hiveHome} — all Hive state, memory, the graphify tool, and any skills you authored under ${join(hiveHome, "skills")}`,
     ...(method === "native"
       ? [`  - deletes the installed releases (${installRoot()}) and the \`hive\` command (${binLink()})`]
@@ -331,17 +331,17 @@ export async function runUninstallMachine(
     return 1;
   }
   try {
-    await deps.stopOtherInstances();
+    await deps.stopInstances();
   } catch (error) {
     deps.log(
-      `Refusing to remove the machine-wide binary because another instance did not stop: ${
+      `Refusing to remove the machine-wide binary because a Hive instance did not stop: ${
         errorMessage(error)
       }\nFix: stop every Hive daemon, then rerun \`hive uninstall\`.`,
     );
     return 1;
   }
   try {
-    await deps.stop();
+    await deps.stopCurrentInstance();
   } catch (error) {
     deps.log(
       `Refusing machine uninstall because this instance's sessions did not stop: ${

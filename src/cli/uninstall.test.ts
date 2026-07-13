@@ -64,11 +64,11 @@ function probe(confirm: boolean | null, overrides: Partial<UninstallDeps> = {}):
     run: runCommand,
     confirm: async () => confirm,
     log: (line) => lines.push(line),
-    stop: async () => {
+    stopCurrentInstance: async () => {
       stops.push(1);
     },
     liveTeams: async () => [],
-    stopOtherInstances: async () => {},
+    stopInstances: async () => {},
     ...overrides,
   };
   return { deps, lines, stops };
@@ -106,7 +106,7 @@ describe("hive uninstall --repo", () => {
     try {
       await mkdir(join(root, "graphify-out"), { recursive: true });
       const { deps, lines } = probe(true, {
-        stop: async () => {
+        stopCurrentInstance: async () => {
           throw new Error("tmux refused the stop");
         },
       });
@@ -321,10 +321,10 @@ describe("hive uninstall", () => {
     try {
       const order: string[] = [];
       const { deps } = probe(true, {
-        stopOtherInstances: async () => {
+        stopInstances: async () => {
           order.push("daemons");
         },
-        stop: async () => {
+        stopCurrentInstance: async () => {
           order.push("sessions");
         },
       });
@@ -344,7 +344,7 @@ describe("hive uninstall", () => {
     try {
       await writeFile(join(home, "hive.db"), "");
       const { deps, lines, stops } = probe(true, {
-        stopOtherInstances: async () => {
+        stopInstances: async () => {
           throw new Error("review instance is still alive");
         },
       });
@@ -367,7 +367,7 @@ describe("hive uninstall", () => {
     try {
       await writeFile(join(home, "hive.db"), "");
       const { deps, lines } = probe(true, {
-        stop: async () => {
+        stopCurrentInstance: async () => {
           throw new Error("tmux is unavailable");
         },
       });
