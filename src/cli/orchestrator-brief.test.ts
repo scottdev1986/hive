@@ -68,8 +68,8 @@ describe("orchestrator brief", () => {
     }
     expect(ORCHESTRATOR_BRIEF).toContain("never write");
     expect(ORCHESTRATOR_BRIEF).toContain("integrator");
-    expect(ORCHESTRATOR_BRIEF).toContain("quota pressure");
-    expect(ORCHESTRATOR_BRIEF).toContain("silently changing vendors");
+    expect(ORCHESTRATOR_BRIEF).toContain("every chain link refused");
+    expect(ORCHESTRATOR_BRIEF).toContain("Never pick models from your own knowledge");
   });
 
   test("makes agents land their own work and reserves integrators for escalations", () => {
