@@ -7,19 +7,19 @@ import {
 } from "./authorized-launch";
 import {
   buildClaudeResumeCommand,
-  findLatestClaudeSessionId,
+  discoverClaudeRecoverySessionId,
   resolveWorkingClaudeExecutable,
   seedClaudeWorktreeTrust,
   writeClaudeAgentConfig,
 } from "../adapters/tools/claude";
 import {
   buildCodexResumeCommand,
-  findLatestCodexSessionId,
+  discoverCodexRecoverySessionId,
   writeCodexAgentConfig,
 } from "../adapters/tools/codex";
 import {
   buildGrokResumeCommand,
-  findLatestGrokSessionId,
+  discoverGrokRecoverySessionId,
   wrapGrokSpawnWithCompatibilityEnv,
   writeGrokAgentConfig,
 } from "../adapters/tools/grok";
@@ -32,6 +32,7 @@ import {
   type HiveConfig,
 } from "../schemas";
 import type { HiveDatabase } from "./db";
+import type { StopAgentSession } from "./teardown";
 import { readCodexTelemetry } from "./tool-telemetry";
 
 // Three auto-resumes for one agent means the process is dying on its own,
@@ -55,7 +56,10 @@ export type RecoveryOutcome =
   | { agent: string; action: "marked-dead"; reason: string }
   | { agent: string; action: "skipped"; reason: string };
 
-export type SessionResolver = (worktreePath: string) => Promise<string | null>;
+export type SessionResolver = (
+  worktreePath: string,
+  agentCreatedAt: string,
+) => Promise<string | null>;
 
 type RecoveryStore = Pick<
   HiveDatabase,
@@ -88,6 +92,7 @@ export interface CrashRecoveryDependencies {
     options?: { idempotencyKey?: string },
   ) => Promise<unknown>;
   settleQuota: (agent: AgentRecord) => Promise<void>;
+  stopSession?: StopAgentSession;
   /** PR5 wires the policy-backed full gate. Missing/unreadable refuses resume. */
   authorizeLaunch?: (
     identity: ExecutionIdentity,
@@ -174,11 +179,14 @@ export class CrashRecovery {
 
   constructor(private readonly deps: CrashRecoveryDependencies) {
     this.resolveClaude = deps.resolveClaudeSessionId ??
-      ((worktreePath) => findLatestClaudeSessionId(worktreePath));
+      ((worktreePath, agentCreatedAt) =>
+        discoverClaudeRecoverySessionId(worktreePath, agentCreatedAt));
     this.resolveCodex = deps.resolveCodexSessionId ??
-      ((worktreePath) => findLatestCodexSessionId(worktreePath));
+      ((worktreePath, agentCreatedAt) =>
+        discoverCodexRecoverySessionId(worktreePath, agentCreatedAt));
     this.resolveGrok = deps.resolveGrokSessionId ??
-      ((worktreePath) => findLatestGrokSessionId(worktreePath));
+      ((worktreePath, agentCreatedAt) =>
+        discoverGrokRecoverySessionId(worktreePath, agentCreatedAt));
     this.worktreeExists = deps.worktreeExists ?? existsSync;
     this.wait = deps.sleep ?? defaultSleep;
     this.claudeExecutable = deps.claudeExecutable ?? resolveWorkingClaudeExecutable().path;
@@ -233,6 +241,14 @@ export class CrashRecovery {
         );
         continue;
       }
+      if (agent.writeRevoked) {
+        outcomes.push({
+          agent: agent.name,
+          action: "skipped",
+          reason: "write authority is revoked; recovery requires explicit cleanup",
+        });
+        continue;
+      }
       if (isSpawning) {
         // The agent died before its tool session produced anything worth
         // resuming; the orchestrator respawns from the stored task instead.
@@ -267,6 +283,13 @@ export class CrashRecovery {
         agent: name,
         action: "skipped",
         reason: "write authority is revoked; control recovery owns this agent",
+      };
+    }
+    if (agent.writeRevoked) {
+      return {
+        agent: name,
+        action: "skipped",
+        reason: "write authority is revoked; recovery requires explicit cleanup",
       };
     }
     if (await this.deps.tmux.hasSession(agent.tmuxSession)) {
@@ -323,17 +346,18 @@ export class CrashRecovery {
     }
     let sessionId: string | null;
     try {
-      // `.catch` turns a failed *lookup* into "no session"; the surrounding
-      // try is for the vendor itself being unknown, which is not the same
-      // thing and must not be reported as a missing session.
       sessionId = agent.toolSessionId ??
-        await this.resolveSession(agent.tool, agent.worktreePath).catch(() =>
-          null
+        await this.resolveSession(
+          agent.tool,
+          agent.worktreePath,
+          agent.createdAt,
         );
     } catch (error) {
-      return this.markDead(
+      return this.preserveUnverifiedRecovery(
         agent,
-        error instanceof Error ? error.message : "unknown error",
+        `session discovery refused: ${
+          error instanceof Error ? error.message : "unknown error"
+        }`,
       );
     }
     if (sessionId === null) {
@@ -350,23 +374,19 @@ export class CrashRecovery {
    * here, and one that slipped past the types throws rather than hunting a
    * Codex rollout in a worktree that never held one — which would resolve
    * nothing, or worse, a stale predecessor's id.
-   *
-   * Deliberately not `async`: the caller's `.catch(() => null)` is there to
-   * turn a failed *lookup* into "no session", and an unknown vendor is not a
-   * failed lookup. A rejected promise would be swallowed into a markDead that
-   * blames the worktree and never names the vendor.
    */
   private resolveSession(
     tool: AgentRecord["tool"],
     worktreePath: string,
+    agentCreatedAt: string,
   ): Promise<string | null> {
     switch (tool) {
       case "claude":
-        return this.resolveClaude(worktreePath);
+        return this.resolveClaude(worktreePath, agentCreatedAt);
       case "codex":
-        return this.resolveCodex(worktreePath);
+        return this.resolveCodex(worktreePath, agentCreatedAt);
       case "grok":
-        return this.resolveGrok(worktreePath);
+        return this.resolveGrok(worktreePath, agentCreatedAt);
       default:
         return unknownVendor(tool, "crash recovery session resolver");
     }
@@ -513,20 +533,15 @@ export class CrashRecovery {
       );
       const failure = await this.monitorResume(record);
       if (failure !== null) {
-        await this.deps.tmux.killSession(record.tmuxSession, {
-          ignoreMissing: true,
-        }).catch(() => undefined);
-        return await this.markDead(
+        return await this.failResume(
           this.deps.db.getAgentById(record.id) ?? record,
-          `resume launch failed: ${failure}`,
+          failure,
         );
       }
     } catch (error) {
-      return await this.markDead(
+      return await this.failResume(
         this.deps.db.getAgentById(record.id) ?? record,
-        `resume launch failed: ${
-          error instanceof Error ? error.message : "unknown error"
-        }`,
+        error instanceof Error ? error.message : "unknown error",
       );
     }
 
@@ -555,6 +570,36 @@ export class CrashRecovery {
       { idempotencyKey: `crash-resume:${record.id}:${record.recoveryAttempts}` },
     ).catch(() => undefined);
     return { agent: record.name, action: "resumed", sessionId };
+  }
+
+  private async failResume(
+    agent: AgentRecord,
+    failure: string,
+  ): Promise<RecoveryOutcome> {
+    const reason = `resume launch failed: ${failure}`;
+    if (this.deps.stopSession === undefined) {
+      return this.preserveUnverifiedRecovery(
+        agent,
+        `${reason}; verified teardown is unavailable`,
+      );
+    }
+    try {
+      const stopped = await this.deps.stopSession(agent);
+      if (stopped.survivors.length > 0) {
+        return this.preserveUnverifiedRecovery(
+          agent,
+          `${reason}; ${stopped.survivors.length} process(es) survived teardown`,
+        );
+      }
+    } catch (error) {
+      return this.preserveUnverifiedRecovery(
+        agent,
+        `${reason}; teardown could not be verified: ${
+          error instanceof Error ? error.message : "unknown error"
+        }`,
+      );
+    }
+    return await this.markDead(agent, reason);
   }
 
   private async monitorResume(record: AgentRecord): Promise<string | null> {
@@ -592,6 +637,36 @@ export class CrashRecovery {
     const base = `no proof of life within ${seconds}s ` +
       "(no hook event and no fresh tool activity)";
     return lastPaneTail === "" ? base : `${base}; last pane output:\n${lastPaneTail}`;
+  }
+
+  private async preserveUnverifiedRecovery(
+    agent: AgentRecord,
+    reason: string,
+  ): Promise<RecoveryOutcome> {
+    const now = new Date().toISOString();
+    const current = this.deps.db.getAgentById(agent.id) ?? agent;
+    this.deps.db.upsertAgent({
+      ...current,
+      status: "stuck",
+      writeRevoked: true,
+      failureReason: reason,
+      lastEventAt: now,
+    });
+    this.deps.revokeCapabilities?.(agent.name);
+    this.deps.dropChannel?.(agent.name);
+    this.denyPendingApprovals(agent.name);
+    await this.deps.send(
+      "hive-recovery",
+      ORCHESTRATOR_NAME,
+      `${agent.name} could not be recovered safely: ${reason}. Hive preserved ` +
+        "the agent record, worktree, quota reservation, and queued messages; " +
+        "retry cleanup or recovery explicitly after verifying process state.",
+      {
+        idempotencyKey:
+          `crash-recovery-preserved:${agent.id}:${current.recoveryAttempts}`,
+      },
+    ).catch(() => undefined);
+    return { agent: agent.name, action: "skipped", reason };
   }
 
   /** True when a codex agent's rollout file gained activity after this resume

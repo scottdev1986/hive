@@ -2,9 +2,11 @@ import { describe, expect, test } from "bun:test";
 import {
   captureProcessTree,
   reapCapturedTree,
+  stopAgentSession,
   type ReapDependencies,
 } from "./teardown";
 import { parseProcessTable, runPs } from "./resources";
+import type { AgentRecord } from "../schemas";
 
 /** capture + reap, the way every caller uses them when nothing reparents. */
 const reapProcessTree = async (
@@ -214,6 +216,68 @@ describe("reapProcessTree", () => {
       shell.kill("SIGKILL");
       unrelated.kill("SIGKILL");
       await Promise.all([shell.exited, unrelated.exited]);
+    }
+  });
+
+  test("reaps a real Codex host after its pane session is gone", async () => {
+    const host = Bun.spawn(["sleep", "60"], {
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    const unrelated = Bun.spawn(["sleep", "60"], {
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    const killedSessions: string[] = [];
+    const record = {
+      id: "agent-maya",
+      name: "maya",
+      tool: "codex",
+      model: "gpt-5-codex",
+      category: "simple_coding",
+      status: "working",
+      taskDescription: "test",
+      worktreePath: "/tmp/maya",
+      branch: "hive/maya-test",
+      tmuxSession: "hive-maya",
+      contextPct: null,
+      createdAt: "2026-07-13T00:00:00.000Z",
+      lastEventAt: "2026-07-13T00:00:00.000Z",
+      recoveryAttempts: 0,
+      capabilityEpoch: 0,
+      readOnly: false,
+      writeRevoked: false,
+      channelsEnabled: false,
+    } satisfies AgentRecord;
+    try {
+      expect(() => process.kill(host.pid, 0)).not.toThrow();
+      expect(() => process.kill(unrelated.pid, 0)).not.toThrow();
+
+      const outcome = await stopAgentSession(record, {
+        tmux: {
+          hasSession: async () => false,
+          listPanePids: async () => {
+            throw new Error("pane lookup must not run for a missing session");
+          },
+          killSession: async (session) => {
+            killedSessions.push(session);
+          },
+        },
+        readHostPid: async () => host.pid,
+      });
+
+      expect(outcome.survivors).toEqual([]);
+      expect(outcome.killed.map((entry) => entry.pid)).toContain(host.pid);
+      expect(killedSessions).toEqual(["hive-maya"]);
+      expect(await Promise.race([
+        host.exited,
+        Bun.sleep(1_000).then(() => null),
+      ])).not.toBeNull();
+      expect(() => process.kill(unrelated.pid, 0)).not.toThrow();
+    } finally {
+      host.kill("SIGKILL");
+      unrelated.kill("SIGKILL");
+      await Promise.all([host.exited, unrelated.exited]);
     }
   });
 

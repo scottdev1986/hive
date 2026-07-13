@@ -16,6 +16,9 @@
  * is still standing after the second look is reported as a survivor rather
  * than rounded down to success.
  */
+import { readFile } from "node:fs/promises";
+import { codexAgentHostPidfile } from "../adapters/tools/codex-app-server";
+import type { AgentRecord } from "../schemas";
 import {
   descendantsOf,
   parseProcessTable,
@@ -50,6 +53,26 @@ export interface ReapOutcome {
    * failed kill and must be surfaced, never swallowed. */
   survivors: ReapedProcess[];
 }
+
+export interface SessionStopAdapter {
+  hasSession: (session: string) => Promise<boolean>;
+  listPanePids: (session: string) => Promise<number[]>;
+  killSession: (
+    session: string,
+    options: { ignoreMissing: true },
+  ) => Promise<void>;
+}
+
+export interface VerifiedStopDependencies {
+  tmux: SessionStopAdapter;
+  reap?: ReapDependencies;
+  readHostPid?: (agent: AgentRecord) => Promise<number | null>;
+  selfPid?: number;
+}
+
+export type StopAgentSession = (
+  agent: AgentRecord,
+) => Promise<ReapOutcome>;
 
 export const defaultReapDependencies = (): ReapDependencies => ({
   ps: runPs,
@@ -152,4 +175,109 @@ export async function reapCapturedTree(
     else killed.push(entry);
   }
   return { killed, survivors };
+}
+
+async function defaultHostPid(agent: AgentRecord): Promise<number | null> {
+  const path = codexAgentHostPidfile(agent);
+  try {
+    const value = (await readFile(path, "utf8")).trim();
+    if (!/^\d+$/.test(value)) {
+      throw new Error(`Invalid Codex host pidfile for ${agent.name}: ${path}`);
+    }
+    return Number(value);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+async function sessionRoots(
+  session: string,
+  tmux: SessionStopAdapter,
+): Promise<number[]> {
+  if (!await tmux.hasSession(session)) return [];
+  const roots = await tmux.listPanePids(session);
+  if (roots.length === 0) {
+    throw new Error(
+      `Process-root probe returned no panes for live tmux session ${session}`,
+    );
+  }
+  return roots;
+}
+
+export async function stopTmuxSession(
+  session: string,
+  dependencies: VerifiedStopDependencies,
+  extraRoots: readonly number[] = [],
+  beforeKill?: () => void | Promise<void>,
+): Promise<ReapOutcome> {
+  const reap = dependencies.reap ?? defaultReapDependencies();
+  const selfPid = dependencies.selfPid ?? process.pid;
+  const captured = await captureProcessTree(
+    [...await sessionRoots(session, dependencies.tmux), ...extraRoots],
+    reap,
+    selfPid,
+  );
+  await beforeKill?.();
+
+  let killError: unknown;
+  try {
+    await dependencies.tmux.killSession(session, { ignoreMissing: true });
+  } catch (error) {
+    killError = error;
+  }
+
+  let sessionError: unknown;
+  try {
+    if (await dependencies.tmux.hasSession(session)) {
+      sessionError = killError ??
+        new Error(`Tmux session ${session} survived kill-session`);
+    }
+  } catch (error) {
+    sessionError = error;
+  }
+
+  let reaped: ReapOutcome;
+  try {
+    reaped = await reapCapturedTree(
+      captured,
+      reap,
+      selfPid,
+    );
+  } catch (error) {
+    if (sessionError === undefined) throw error;
+    throw new Error(
+      `Tmux and process readback both failed for ${session}: ${
+        error instanceof Error ? error.message : "unknown process error"
+      }`,
+      { cause: sessionError },
+    );
+  }
+  if (sessionError !== undefined) throw sessionError;
+  return reaped;
+}
+
+export async function stopAgentSession(
+  agent: AgentRecord,
+  dependencies: VerifiedStopDependencies,
+  beforeKill?: () => void | Promise<void>,
+): Promise<ReapOutcome> {
+  const hostPid = await (dependencies.readHostPid ?? defaultHostPid)(agent);
+  return await stopTmuxSession(
+    agent.tmuxSession,
+    dependencies,
+    hostPid === null ? [] : [hostPid],
+    beforeKill,
+  );
+}
+
+export function verifiedAgentStop(
+  tmux: SessionStopAdapter,
+  reap?: ReapDependencies,
+): StopAgentSession {
+  return (agent) =>
+    stopAgentSession(
+      agent,
+      { tmux, ...(reap === undefined ? {} : { reap }) },
+    );
 }

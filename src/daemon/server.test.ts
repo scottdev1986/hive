@@ -374,8 +374,16 @@ describe("HiveDaemon HTTP server", () => {
     expect(inferLegacyControl("Can you stop by the docs too?")).toEqual(null);
   });
 
-  test("critical delivery kills only the target session and restarts read-only after revocation", async () => {
+  test("critical delivery reaps only the target process and restarts read-only after revocation", async () => {
     const db = new HiveDatabase(join(home, "critical-runtime.db"));
+    const owned = Bun.spawn(["sleep", "60"], {
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    const unrelated = Bun.spawn(["sleep", "60"], {
+      stdout: "ignore",
+      stderr: "ignore",
+    });
     const tmux = new FakeDaemonTmux();
     tmux.sessions.add("hive-maya");
     tmux.sessions.add("hive-unrelated");
@@ -391,9 +399,15 @@ describe("HiveDaemon HTTP server", () => {
       tmux,
       tmuxSender: new SilentTmuxSender(db),
       quota,
+      resourceRunners: {
+        panePids: async (session) => session === "hive-maya" ? [owned.pid] : [],
+        orphans: null,
+      },
     });
     try {
       db.insertAgent(agent());
+      expect(() => process.kill(owned.pid, 0)).not.toThrow();
+      expect(() => process.kill(unrelated.pid, 0)).not.toThrow();
       const message = await daemon.delivery.send(
         "orchestrator",
         "maya",
@@ -402,6 +416,11 @@ describe("HiveDaemon HTTP server", () => {
       );
       expect(tmux.killed).toEqual(["hive-maya"]);
       expect(tmux.sessions.has("hive-unrelated")).toEqual(true);
+      expect(await Promise.race([
+        owned.exited,
+        Bun.sleep(1_000).then(() => null),
+      ])).not.toBeNull();
+      expect(() => process.kill(unrelated.pid, 0)).not.toThrow();
       expect(spawner.restarts).toHaveLength(1);
       expect(spawner.restarts[0]?.agent).toMatchObject({
         writeRevoked: true,
@@ -409,6 +428,56 @@ describe("HiveDaemon HTTP server", () => {
       });
       expect(message.state).toEqual("injected");
     } finally {
+      owned.kill("SIGKILL");
+      unrelated.kill("SIGKILL");
+      await Promise.all([owned.exited, unrelated.exited]);
+      db.close();
+    }
+  });
+
+  test("critical delivery refuses restart when process capture is unreadable", async () => {
+    const db = new HiveDatabase(join(home, "critical-unreadable-processes.db"));
+    const tmux = new FakeDaemonTmux();
+    tmux.sessions.add("hive-maya");
+    const spawner = new RestartingSpawner();
+    const quota = new QuotaService(
+      new QuotaLedger(db),
+      QuotaConfigSchema.parse({ enabled: false }),
+      () => new Date(timestamp),
+    );
+    const daemon = new HiveDaemon({
+      db,
+      spawner,
+      tmux,
+      tmuxSender: new SilentTmuxSender(db),
+      quota,
+      resourceRunners: {
+        panePids: async () => {
+          throw new Error("pane process probe failed");
+        },
+        orphans: null,
+      },
+    });
+    try {
+      db.insertAgent(agent());
+
+      const message = await daemon.delivery.send(
+        "orchestrator",
+        "maya",
+        "Do not modify files.",
+        { priority: "critical", intent: "restrict-writes" },
+      );
+
+      expect(message.state).toEqual("queued");
+      expect(spawner.restarts).toEqual([]);
+      expect(tmux.killed).toEqual([]);
+      expect(db.getAgentByName("maya")).toMatchObject({
+        status: "control-paused",
+        writeRevoked: true,
+      });
+    } finally {
+      tmux.sessions.clear();
+      await daemon.stop();
       db.close();
     }
   });
@@ -450,7 +519,6 @@ describe("HiveDaemon HTTP server", () => {
     });
     quota.markStarted(decision.reservation.id);
     const tmux = new FakeDaemonTmux();
-    tmux.sessions.add("hive-maya");
     const spawner = new RestartingSpawner();
     const daemon = new HiveDaemon({
       db,
@@ -506,7 +574,6 @@ describe("HiveDaemon HTTP server", () => {
     }
     const spawner = new ReservingFailureSpawner();
     const tmux = new FakeDaemonTmux();
-    tmux.sessions.add("hive-maya");
     const daemon = new HiveDaemon({
       db,
       spawner,
@@ -557,7 +624,6 @@ describe("HiveDaemon HTTP server", () => {
     });
     quota.markStarted(prior.id);
     const tmux = new FakeDaemonTmux();
-    tmux.sessions.add("hive-maya");
     const spawner = new RestartingSpawner();
     const daemon = new HiveDaemon({
       db,
@@ -881,7 +947,6 @@ describe("HiveDaemon HTTP server", () => {
       () => new Date(timestamp),
     );
     const tmux = new FakeDaemonTmux();
-    tmux.sessions.add("hive-maya");
     const daemon = new HiveDaemon({
       db,
       spawner: new FailingRestartSpawner(

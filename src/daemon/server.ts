@@ -123,18 +123,18 @@ import {
 } from "./spawner";
 import type { QuotaService } from "./quota";
 import {
-  codexAgentHostPidfile,
   reapOrphanCodexHosts,
   type CodexAppServerManager,
   type ReapOrphanDependencies,
 } from "../adapters/tools/codex-app-server";
 import {
-  captureProcessTree,
   defaultReapDependencies,
   reapCapturedTree,
-  type CapturedTree,
+  stopAgentSession,
+  stopTmuxSession,
   type ReapDependencies,
   type ReapOutcome,
+  type SessionStopAdapter,
 } from "./teardown";
 import {
   assessResources,
@@ -626,6 +626,13 @@ export class HiveDaemon {
   private readonly killProcess: (pid: number) => void;
   private readonly orphanDependencies: ReapOrphanDependencies | null;
   private readonly reapDependencies: ReapDependencies;
+  private readonly stopAgentProcesses: (
+    agent: AgentRecord,
+    beforeKill?: () => void | Promise<void>,
+  ) => Promise<ReapOutcome>;
+  private readonly stopTmuxProcesses: (
+    session: string,
+  ) => Promise<ReapOutcome>;
   private memoryPressure = false;
 
   constructor(options: HiveDaemonOptions) {
@@ -685,9 +692,12 @@ export class HiveDaemon {
               await this.codexControl.interrupt(agent).catch(() => undefined);
               this.codexControl.disconnect(agent.name);
             }
-            await this.tmux.killSession(agent.tmuxSession, {
-              ignoreMissing: true,
-            });
+            const stopped = await this.stopAgentProcesses(agent);
+            if (stopped.survivors.length > 0) {
+              throw new Error(
+                `${stopped.survivors.length} process(es) survived critical-control teardown for ${agent.name}`,
+              );
+            }
             await this.settleAgentQuota(agent);
           }
           if (this.quota === undefined) {
@@ -771,6 +781,23 @@ export class HiveDaemon {
       : options.resourceRunners.orphans;
     this.reapDependencies = options.resourceRunners?.reap ??
       defaultReapDependencies();
+    const teardownTmux: SessionStopAdapter = {
+      hasSession: (session) => this.tmux.hasSession(session),
+      listPanePids: (session) => this.panePids(session),
+      killSession: (session, killOptions) =>
+        this.tmux.killSession(session, killOptions),
+    };
+    this.stopAgentProcesses = (agent, beforeKill) =>
+      stopAgentSession(
+        agent,
+        { tmux: teardownTmux, reap: this.reapDependencies },
+        beforeKill,
+      );
+    this.stopTmuxProcesses = (session) =>
+      stopTmuxSession(session, {
+        tmux: teardownTmux,
+        reap: this.reapDependencies,
+      });
     this.repoRoot = options.repoRoot ?? process.cwd();
     this.readClaudeTelemetry = options.telemetryReaders?.claude ??
       readClaudeTelemetry;
@@ -809,6 +836,11 @@ export class HiveDaemon {
         this.capabilities.revokeSubject(agentName);
         removeCredential(agentName);
       },
+      stopSession: (agent) =>
+        this.stopAgentProcesses(agent, () => {
+          this.capabilities.revokeSubject(agent.name);
+          removeCredential(agent.name);
+        }),
       send: (from, to, body, sendOptions) =>
         this.delivery.send(from, to, body, sendOptions),
       settleQuota: (agent) => this.settleAgentQuota(agent),
@@ -1674,83 +1706,6 @@ export class HiveDaemon {
   }
 
   /**
-   * Every process this agent owns, gathered BEFORE anything is killed.
-   *
-   * Order is the whole point: once `tmux kill-session` returns, the panes are
-   * gone and their pids are unrecoverable, so a tree captured afterwards is
-   * empty and a reap built on it is a no-op that reports success.
-   *
-   * Two roots, because an agent's processes hang off two different parents.
-   * The pane pids anchor everything the agent's shell started — the vendor
-   * CLI and whatever it spawned, including MCP stdio children. The Codex
-   * app-server host does NOT hang off the pane at all: the daemon spawns it,
-   * so it is the daemon's child, and no signal aimed at a pane will ever
-   * reach it. It is found by the pidfile it drops beside its socket.
-   */
-  private async agentProcessRoots(agent: AgentRecord): Promise<number[]> {
-    const roots = await this.sessionProcessRoots(agent.tmuxSession);
-    try {
-      const path = codexAgentHostPidfile(agent);
-      const value = (await readFile(path, "utf8")).trim();
-      if (!/^\d+$/.test(value)) {
-        throw new Error(`Invalid Codex host pidfile for ${agent.name}: ${path}`);
-      }
-      roots.push(Number(value));
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-    }
-    return roots;
-  }
-
-  private async sessionProcessRoots(session: string): Promise<number[]> {
-    if (!await this.tmux.hasSession(session)) return [];
-    const roots = await this.panePids(session);
-    if (roots.length === 0) {
-      throw new Error(
-        `Process-root probe returned no panes for live tmux session ${session}`,
-      );
-    }
-    return roots;
-  }
-
-  private async killSessionAndReap(
-    session: string,
-    captured: CapturedTree,
-  ): Promise<ReapOutcome> {
-    let killError: unknown;
-    try {
-      await this.tmux.killSession(session, { ignoreMissing: true });
-    } catch (error) {
-      killError = error;
-    }
-
-    let sessionError: unknown;
-    try {
-      if (await this.tmux.hasSession(session)) {
-        sessionError = killError ??
-          new Error(`Tmux session ${session} survived kill-session`);
-      }
-    } catch (error) {
-      sessionError = error;
-    }
-
-    let reaped: ReapOutcome;
-    try {
-      reaped = await reapCapturedTree(captured, this.reapDependencies);
-    } catch (error) {
-      if (sessionError === undefined) throw error;
-      throw new Error(
-        `Tmux and process readback both failed for ${session}: ${
-          error instanceof Error ? error.message : "unknown process error"
-        }`,
-        { cause: sessionError },
-      );
-    }
-    if (sessionError !== undefined) throw sessionError;
-    return reaped;
-  }
-
-  /**
    * The one teardown path for closing a live agent. `hive_kill`, the pane X
    * (POST /agents/:name/kill), the idle-reap sweep, and daemon shutdown all
    * funnel through here, so there is exactly one place that can kill an agent,
@@ -1799,19 +1754,10 @@ export class HiveDaemon {
       note: string;
     } | null;
   }> {
-    // Capture the TREE, not just the roots, and do it before the session dies:
-    // a detached child outlives the pane and is reparented to init, which
-    // destroys the very parent links a later walk would need to find it.
-    const captured = await captureProcessTree(
-      await this.agentProcessRoots(agent),
-      this.reapDependencies,
-    );
-    this.capabilities.revokeSubject(agent.name);
-    removeCredential(agent.name);
-    const reaped = await this.killSessionAndReap(
-      agent.tmuxSession,
-      captured,
-    );
+    const reaped = await this.stopAgentProcesses(agent, () => {
+      this.capabilities.revokeSubject(agent.name);
+      removeCredential(agent.name);
+    });
     const timestamp = options.at ?? new Date().toISOString();
     const killed = this.db.markAgentDead(
       agent.id,
@@ -2035,11 +1981,7 @@ export class HiveDaemon {
     if (this.manageLifecycle) {
       await this.killAllAgents();
       const session = orchestratorTmuxSession();
-      const captured = await captureProcessTree(
-        await this.sessionProcessRoots(session),
-        this.reapDependencies,
-      );
-      const reaped = await this.killSessionAndReap(session, captured);
+      const reaped = await this.stopTmuxProcesses(session);
       if (reaped.survivors.length > 0) {
         throw new Error(
           `Hive refused shutdown because ${reaped.survivors.length} orchestrator process(es) survived SIGKILL`,

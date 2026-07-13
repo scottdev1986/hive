@@ -19,6 +19,7 @@ import {
   MAX_AUTO_RESUME_ATTEMPTS,
   type CrashRecoveryDependencies,
 } from "./recovery";
+import { verifiedAgentStop } from "./teardown";
 import { authorizeForQuotaTest } from "./authorized-launch.test-support";
 
 const timestamp = "2026-07-10T09:00:00.000Z";
@@ -57,6 +58,7 @@ class FakeTmux {
   readonly created: { name: string; cwd: string; command: string }[] = [];
   readonly killed: string[] = [];
   panes = new Map<string, string>();
+  panePids = new Map<string, number[]>();
   failNewSession = false;
 
   async hasSession(session: string): Promise<boolean> {
@@ -80,8 +82,8 @@ class FakeTmux {
     return this.panes.get(session) ?? "";
   }
 
-  async listPanePids(_session: string): Promise<number[]> {
-    return [];
+  async listPanePids(session: string): Promise<number[]> {
+    return this.panePids.get(session) ?? [];
   }
 }
 
@@ -138,6 +140,10 @@ function harness(
     send: (from, to, body, options) => delivery.send(from, to, body, options),
     settleQuota: async (record) => {
       settled.push(record.name);
+    },
+    stopSession: async (record) => {
+      await tmux.killSession(record.tmuxSession);
+      return { killed: [], survivors: [] };
     },
     flushQueued: (name) => delivery.flushQueued(name),
     revokeCapabilities: (name) => {
@@ -455,6 +461,38 @@ describe("crash resume", () => {
     expect(h.db.getAgentByName("maya")?.toolSessionId).toEqual("disk-session");
   });
 
+  test("ambiguous session evidence preserves the agent without declaring its state dead", async () => {
+    let observedCreatedAt: string | undefined;
+    const h = harness({
+      resolveClaudeSessionId: async (_worktreePath, agentCreatedAt) => {
+        observedCreatedAt = agentCreatedAt;
+        throw new Error("ambiguous recovery artifacts");
+      },
+    });
+    h.db.insertAgent(agent({ status: "working" }));
+
+    const outcomes = await h.recovery.sweep();
+
+    expect(observedCreatedAt).toEqual(timestamp);
+    expect(outcomes).toEqual([{
+      agent: "maya",
+      action: "skipped",
+      reason: "session discovery refused: ambiguous recovery artifacts",
+    }]);
+    expect(h.db.getAgentByName("maya")).toMatchObject({
+      status: "stuck",
+      writeRevoked: true,
+      failureReason: "session discovery refused: ambiguous recovery artifacts",
+    });
+    expect(h.settled).toEqual([]);
+    expect(h.revoked).toEqual(["maya"]);
+    expect(await h.recovery.sweep()).toEqual([{
+      agent: "maya",
+      action: "skipped",
+      reason: "write authority is revoked; recovery requires explicit cleanup",
+    }]);
+  });
+
   test("manual recovery resumes a read-only agent as a reader", async () => {
     let configuredReadOnly: boolean | undefined;
     const h = harness({
@@ -538,6 +576,71 @@ describe("crash resume", () => {
     expect(outcomes).toMatchObject([{ agent: "maya", action: "marked-dead" }]);
     expect(h.tmux.killed).toContain("hive-maya");
     expect(h.db.getAgentByName("maya")?.status).toEqual("dead");
+  });
+
+  test("a failed resume reaps its real process and spares an unrelated process", async () => {
+    const owned = Bun.spawn(["sleep", "60"], {
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    const unrelated = Bun.spawn(["sleep", "60"], {
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    let stopSession: CrashRecoveryDependencies["stopSession"];
+    const h = harness({
+      stopSession: (record) => stopSession!(record),
+    });
+    stopSession = verifiedAgentStop(h.tmux);
+    h.db.insertAgent(agent({ status: "working", toolSessionId: "sess-1" }));
+    h.tmux.panes.set(
+      "hive-maya",
+      "Error: No conversation found with session ID sess-1",
+    );
+    h.tmux.panePids.set("hive-maya", [owned.pid]);
+    try {
+      expect(() => process.kill(owned.pid, 0)).not.toThrow();
+      expect(() => process.kill(unrelated.pid, 0)).not.toThrow();
+
+      const outcomes = await h.recovery.sweep();
+
+      expect(outcomes).toMatchObject([{ agent: "maya", action: "marked-dead" }]);
+      expect(await Promise.race([
+        owned.exited,
+        Bun.sleep(1_000).then(() => null),
+      ])).not.toBeNull();
+      expect(() => process.kill(unrelated.pid, 0)).not.toThrow();
+    } finally {
+      owned.kill("SIGKILL");
+      unrelated.kill("SIGKILL");
+      await Promise.all([owned.exited, unrelated.exited]);
+    }
+  });
+
+  test("a failed resume stays nonterminal when teardown readback fails", async () => {
+    const h = harness({
+      stopSession: async () => {
+        throw new Error("ps verification failed");
+      },
+    });
+    h.db.insertAgent(agent({ status: "working", toolSessionId: "sess-1" }));
+    h.tmux.panes.set(
+      "hive-maya",
+      "Error: No conversation found with session ID sess-1",
+    );
+
+    const outcomes = await h.recovery.sweep();
+
+    expect(outcomes).toHaveLength(1);
+    expect(outcomes[0]).toMatchObject({ agent: "maya", action: "skipped" });
+    expect((outcomes[0] as { reason: string }).reason).toContain(
+      "teardown could not be verified: ps verification failed",
+    );
+    expect(h.db.getAgentByName("maya")).toMatchObject({
+      status: "stuck",
+      writeRevoked: true,
+    });
+    expect(h.settled).toEqual([]);
   });
 
   test("a resume that never proves life is killed and marked dead", async () => {

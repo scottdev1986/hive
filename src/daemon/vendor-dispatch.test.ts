@@ -101,7 +101,7 @@ test("crash recovery refuses to resolve an unknown vendor's session with the cod
     toolSessionId: undefined,
   });
 
-  expect(outcomes[0]?.action).toBe("marked-dead");
+  expect(outcomes[0]?.action).toBe("skipped");
   expect(outcomes[0]?.reason).toMatch(/unknown vendor "future-vendor"/);
   // The discriminating assertion: a silent fallthrough would have resolved a
   // Codex session id here and gone on to resume the agent.
@@ -129,7 +129,7 @@ test("crash recovery refuses to resume an unknown vendor with codex's config and
     toolSessionId: "session-1",
   });
 
-  expect(outcomes[0]?.action).toBe("marked-dead");
+  expect(outcomes[0]?.action).toBe("skipped");
   expect(outcomes[0]?.reason).toMatch(/unknown vendor "future-vendor"/);
   // A silent fallthrough would have written a Codex agent config and launched
   // `codex resume` in the worktree.
