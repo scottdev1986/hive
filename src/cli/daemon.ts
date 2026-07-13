@@ -30,7 +30,13 @@ import {
   CodexQuotaProbe,
   CodexStdioProbeTransport,
 } from "../daemon/quota-sources";
-import { ORCHESTRATOR_NAME, unknownVendor } from "../schemas";
+import {
+  CAPABILITY_PROVIDERS,
+  forEachProvider,
+  ORCHESTRATOR_NAME,
+  unknownVendor,
+  type CapabilityProvider,
+} from "../schemas";
 import {
   ClaudeCapabilityProbe,
   CodexCapabilityProbe,
@@ -55,20 +61,45 @@ export async function runDaemon(): Promise<void> {
   if (retiredToml !== null) {
     console.log(`routing.toml is no longer read as policy; preserved at ${retiredToml}`);
   }
-  // First boot only: seed the provisional baseline chains, enabling ONLY the
-  // models whose billing was actually READ as plan-covered. Enablement is
-  // consent now, so a failed billing read seeds chains with nothing enabled —
-  // visible in the Control Center, off until the user's own click.
+  // First boot only: seed the provisional baseline. Chain entries are EXACT
+  // model ids frozen from the vendors' live catalogs right now (an unreadable
+  // vendor is skipped, never guessed), and the seed enables ONLY the models
+  // whose billing was actually READ as plan-covered. Enablement is consent
+  // now, so a failed read seeds with nothing enabled — visible in the Control
+  // Center, off until the user's own click.
   const routingPolicy = new RoutingPolicyStore(db);
   if (routingPolicy.isEmpty()) {
-    const covered = await readModelInventory().then(
-      (inventory) =>
-        inventory.models
+    const facts = await (async () => {
+      const discovery = await forEachProvider(async (provider) => {
+        switch (provider) {
+          case "claude":
+            return await new ClaudeCapabilityProbe().read();
+          case "codex":
+            return await new CodexCapabilityProbe().read();
+          case "grok":
+            return await new GrokCapabilityProbe().read();
+          default:
+            return unknownVendor(provider, "policy baseline seeding");
+        }
+      });
+      const inventory = await readModelInventory({
+        discover: async (provider) => discovery[provider],
+      });
+      const vendorDefaults: Partial<Record<CapabilityProvider, string>> = {};
+      for (const provider of CAPABILITY_PROVIDERS) {
+        const probed = discovery[provider];
+        if (probed.status === "ok" && probed.effectiveDefault.model.state === "known") {
+          vendorDefaults[provider] = probed.effectiveDefault.model.value;
+        }
+      }
+      return {
+        coveredModels: inventory.models
           .filter((model) => model.plan.status === "covered")
           .map((model) => ({ provider: model.vendor, model: model.canonicalId })),
-      () => [],
-    );
-    routingPolicy.seedProvisionalBaseline(covered);
+        vendorDefaults,
+      };
+    })().catch(() => ({ coveredModels: [], vendorDefaults: {} }));
+    routingPolicy.seedProvisionalBaseline(facts);
   }
   // Live limits come from the providers themselves. Both probes are read-only
   // and start no model turn, so a startup refresh costs nothing but a subprocess.

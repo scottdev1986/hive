@@ -99,7 +99,10 @@ describe("fail-closed reading", () => {
 
 describe("mutations and compare-and-set", () => {
   test("every accepted write increments the revision and clears the provisional flag", () => {
-    const seeded = store.seedProvisionalBaseline([], NOW).policy;
+    const seeded = store.seedProvisionalBaseline(
+      { coveredModels: [], vendorDefaults: {} },
+      NOW,
+    ).policy;
     expect(seeded.revision).toBe(1);
     expect(seeded.provisional).toBeTrue();
     const edited = store.apply(
@@ -236,14 +239,13 @@ describe("mutations and compare-and-set", () => {
         category: "complex_coding",
         entries: [
           {
-            mode: "exact",
             provider: "claude",
             model: "claude-fable-5",
             effort: { mode: "exact", value: "xhigh" },
           },
           {
-            mode: "vendor-default",
             provider: "grok",
+            model: "grok-4.5",
             effort: { mode: "provider-controlled" },
           },
         ],
@@ -261,7 +263,7 @@ describe("mutations and compare-and-set", () => {
     expect(cleared.chains.complex_coding).toBeUndefined();
   });
 
-  test('a bare "default" model id is rejected — the labeled vendor-default mode is the only way to track a moving default', () => {
+  test('a bare "default" model id is rejected — a chain names the specific model that will run', () => {
     expect(() =>
       store.apply(
         {
@@ -269,7 +271,6 @@ describe("mutations and compare-and-set", () => {
           expectedRevision: 0,
           category: "planning",
           entries: [{
-            mode: "exact",
             provider: "grok",
             model: "default",
             effort: { mode: "provider-controlled" },
@@ -278,7 +279,7 @@ describe("mutations and compare-and-set", () => {
         "test",
         NOW,
       )
-    ).toThrow(/vendor-default/);
+    ).toThrow(/not a model/);
   });
 
   test("a chain naming the same target twice is rejected", () => {
@@ -290,13 +291,11 @@ describe("mutations and compare-and-set", () => {
           category: "planning",
           entries: [
             {
-              mode: "exact",
               provider: "claude",
               model: "claude-fable-5",
               effort: { mode: "provider-controlled" },
             },
             {
-              mode: "exact",
               provider: "claude",
               model: "claude-fable-5",
               effort: { mode: "exact", value: "high" },
@@ -334,13 +333,22 @@ describe("mutations and compare-and-set", () => {
   });
 });
 
-describe("first-boot seeding — enablement is consent", () => {
-  test("seeds every category with a labeled vendor-default chain and enables ONLY measured-covered models", () => {
+describe("first-boot seeding — enablement is consent, entries are exact ids", () => {
+  const DEFAULTS = {
+    claude: "claude-fable-5",
+    codex: "gpt-5.6-sol",
+    grok: "grok-4.5",
+  } as const;
+
+  test("seeds every category with exact frozen model ids and enables ONLY measured-covered models", () => {
     const { seeded, policy } = store.seedProvisionalBaseline(
-      [
-        { provider: "claude", model: "claude-fable-5" },
-        { provider: "codex", model: "gpt-5.6-sol" },
-      ],
+      {
+        coveredModels: [
+          { provider: "claude", model: "claude-fable-5" },
+          { provider: "codex", model: "gpt-5.6-sol" },
+        ],
+        vendorDefaults: DEFAULTS,
+      },
       NOW,
     );
     expect(seeded).toBeTrue();
@@ -349,33 +357,54 @@ describe("first-boot seeding — enablement is consent", () => {
     for (const category of ROUTING_CATEGORIES) {
       const chain = policy.chains[category];
       expect(chain).toBeDefined();
-      expect(chain!.length).toBeGreaterThan(0);
+      expect(chain!.length).toBe(3);
       for (const entry of chain!) {
-        expect(entry.mode).toBe("vendor-default");
+        // Every entry names the specific model that will run — no mode field,
+        // no indirection of any kind.
+        expect(entry.model).toBe(DEFAULTS[entry.provider]);
         expect(entry.effort).toEqual({ mode: "provider-controlled" });
       }
     }
     expect(modelPolicyState(policy, "claude", "claude-fable-5").state).toBe("enabled");
     expect(modelPolicyState(policy, "codex", "gpt-5.6-sol").state).toBe("enabled");
-    // Grok's billing is unreadable, so nothing of grok's arrives covered — it
-    // is present in every seeded chain yet NOT enabled: visible, off, waiting
-    // for the user's own click, which is the consent.
+    // Grok's billing is unreadable, so nothing of grok's arrives covered — its
+    // frozen default is named in every seeded chain yet NOT enabled: visible,
+    // off, waiting for the user's own click, which is the consent.
     expect(policy.chains.default?.some((entry) => entry.provider === "grok")).toBeTrue();
     expect(modelPolicyState(policy, "grok", "grok-4.5"))
       .toEqual({ state: "unconfigured", source: "none" });
   });
 
-  test("a caller that could not read billing seeds chains with NOTHING enabled — unknown never becomes spend", () => {
-    const { policy } = store.seedProvisionalBaseline([], NOW);
+  test("an unreadable vendor is skipped in seeded chains — never guessed from training knowledge", () => {
+    const { policy } = store.seedProvisionalBaseline(
+      {
+        coveredModels: [],
+        vendorDefaults: { claude: "claude-fable-5" },
+      },
+      NOW,
+    );
+    for (const chain of Object.values(policy.chains)) {
+      expect(chain.map((entry) => entry.provider)).toEqual(["claude"]);
+    }
+  });
+
+  test("a caller that could read nothing seeds NOTHING enabled and no chains — unknown never becomes spend or a guessed id", () => {
+    const { policy } = store.seedProvisionalBaseline(
+      { coveredModels: [], vendorDefaults: {} },
+      NOW,
+    );
     expect(policy.models).toEqual([]);
-    expect(Object.keys(policy.chains).sort())
-      .toEqual([...ROUTING_CATEGORIES].sort());
+    expect(policy.chains).toEqual({});
+    expect(policy.provisional).toBeTrue();
   });
 
   test("seeding never touches an existing policy — not even one seeded by an earlier boot", () => {
-    store.seedProvisionalBaseline([], NOW);
+    store.seedProvisionalBaseline({ coveredModels: [], vendorDefaults: {} }, NOW);
     const again = store.seedProvisionalBaseline(
-      [{ provider: "claude", model: "claude-fable-5" }],
+      {
+        coveredModels: [{ provider: "claude", model: "claude-fable-5" }],
+        vendorDefaults: DEFAULTS,
+      },
       NOW,
     );
     expect(again.seeded).toBeFalse();
@@ -386,7 +415,10 @@ describe("first-boot seeding — enablement is consent", () => {
       "test",
       NOW,
     );
-    const afterEdit = store.seedProvisionalBaseline([], NOW);
+    const afterEdit = store.seedProvisionalBaseline(
+      { coveredModels: [], vendorDefaults: {} },
+      NOW,
+    );
     expect(afterEdit.seeded).toBeFalse();
     expect(afterEdit.policy.revision).toBe(edited.revision);
   });
@@ -436,7 +468,10 @@ describe("deterministic export", () => {
 
   test("the export round-trips: canonical output is the same document", () => {
     const policy = store.seedProvisionalBaseline(
-      [{ provider: "claude", model: "claude-fable-5" }],
+      {
+        coveredModels: [{ provider: "claude", model: "claude-fable-5" }],
+        vendorDefaults: { claude: "claude-fable-5", codex: "gpt-5.6-sol" },
+      },
       NOW,
     ).policy;
     const parsed = JSON.parse(canonicalRoutingPolicyJson(policy)) as RoutingPolicy;
@@ -483,10 +518,13 @@ describe("the spawner join — policyModelEnablement answers the AuthorizedLaunc
   // gate's side is pinned in spawner-impl.test.ts.
   test("a seeded plan-covered model answers true — a first-boot spawn on claude/codex PASSES the gate", async () => {
     store.seedProvisionalBaseline(
-      [
-        { provider: "claude", model: "claude-fable-5" },
-        { provider: "codex", model: "gpt-5.6-sol" },
-      ],
+      {
+        coveredModels: [
+          { provider: "claude", model: "claude-fable-5" },
+          { provider: "codex", model: "gpt-5.6-sol" },
+        ],
+        vendorDefaults: { claude: "claude-fable-5", codex: "gpt-5.6-sol" },
+      },
       NOW,
     );
     const isModelEnabled = policyModelEnablement(store);
@@ -496,7 +534,10 @@ describe("the spawner join — policyModelEnablement answers the AuthorizedLaunc
 
   test("grok (seeded off, billing unreadable) answers null — the gate REFUSES until the user's click enables it", async () => {
     store.seedProvisionalBaseline(
-      [{ provider: "claude", model: "claude-fable-5" }],
+      {
+        coveredModels: [{ provider: "claude", model: "claude-fable-5" }],
+        vendorDefaults: { claude: "claude-fable-5", grok: "grok-4.5" },
+      },
       NOW,
     );
     const isModelEnabled = policyModelEnablement(store);

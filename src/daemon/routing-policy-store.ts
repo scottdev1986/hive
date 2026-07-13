@@ -143,10 +143,14 @@ export class RoutingPolicyStore {
 
   /**
    * First-boot seeding: when NO policy row exists, write the provisional
-   * baseline so the router ships ready to use — every category gets an
-   * ordered chain of LABELED vendor-default entries (re-resolved live at
-   * every spawn; the binary names no model), efforts provider-controlled
-   * (never invented).
+   * baseline so the router ships ready to use. Every chain entry names an
+   * EXACT model id (user ruling 2026-07-13: "we are specific on the models
+   * that we choose"): `vendorDefaults` carries each vendor's then-current
+   * default AS READ FROM ITS LIVE CATALOG by the caller — frozen here as a
+   * specific id, never re-resolved, never a training-memory guess. A vendor
+   * whose catalog could not be read is simply absent from seeded chains
+   * (skipped, not invented). Efforts seed provider-controlled — never
+   * invented either.
    *
    * ENABLEMENT IS CONSENT (user directive 2026-07-12: "no more prompting,
    * the user sets it up"), so the seed may enable ONLY what is measured safe:
@@ -160,7 +164,10 @@ export class RoutingPolicyStore {
    * an earlier boot — is left exactly alone.
    */
   seedProvisionalBaseline(
-    coveredModels: readonly { provider: CapabilityProvider; model: string }[],
+    facts: {
+      coveredModels: readonly { provider: CapabilityProvider; model: string }[];
+      vendorDefaults: Partial<Record<CapabilityProvider, string>>;
+    },
     now: Date = new Date(),
   ): { seeded: boolean; policy: RoutingPolicy } {
     return this.db.database.transaction(() => {
@@ -169,12 +176,12 @@ export class RoutingPolicyStore {
         ...emptyRoutingPolicy(now.toISOString()),
         revision: 1,
         provisional: true,
-        models: coveredModels.map(({ provider, model }) => ({
+        models: facts.coveredModels.map(({ provider, model }) => ({
           provider,
           model,
           state: "enabled" as const,
         })),
-        chains: provisionalBaselineChains(),
+        chains: provisionalBaselineChains(facts.vendorDefaults),
       });
       this.write(policy, null, "seed-provisional-baseline", "hive", now);
       return { seeded: true, policy };
@@ -307,38 +314,45 @@ const leadWith = (leader: CapabilityProvider): CapabilityProvider[] => [
   ...CAPABILITY_PROVIDERS.filter((provider) => provider !== leader),
 ];
 
-const vendorDefaultChain = (providers: CapabilityProvider[]): ChainEntry[] =>
-  providers.map((provider) => ({
-    mode: "vendor-default",
-    provider,
-    effort: { mode: "provider-controlled" },
-  }));
-
 /**
- * The provisional baseline (governing doc §2.8), expressed without shipping
- * any model id in the binary: every category tracks vendor defaults in an
- * assumed order — strong-reasoning vendor first for deep work, the coding
- * specialist first for code-shaped work, the unmetered generalist first for
- * light work to spread load off the coding pools. Assumed, labeled
- * provisional, fully editable; no outcome data backs it yet.
+ * The provisional baseline (governing doc §2.8): every entry is an EXACT
+ * model id — the vendor's own current default, read live at seed time and
+ * frozen — in an assumed order per category: strong-reasoning vendor first
+ * for deep work, the coding specialist first for code-shaped work, the
+ * unmetered generalist first for light work to spread load off the coding
+ * pools. Assumed, labeled provisional, fully editable; no outcome data backs
+ * it yet. The binary ships the ORDER only; every model id comes from the
+ * live catalog, and an unreadable vendor is skipped rather than guessed.
  */
-function provisionalBaselineChains(): Partial<
-  Record<RoutingCategory, ChainEntry[]>
-> {
-  const claudeLed = vendorDefaultChain(leadWith("claude"));
-  const codexLed = vendorDefaultChain(leadWith("codex"));
-  const grokLed = vendorDefaultChain(leadWith("grok"));
-  return {
-    light_research: grokLed,
-    heavy_research: claudeLed,
-    simple_coding: codexLed,
-    complex_coding: claudeLed,
-    code_review: codexLed,
-    planning: claudeLed,
-    debugging: claudeLed,
-    summarization: grokLed,
-    default: codexLed,
+function provisionalBaselineChains(
+  vendorDefaults: Partial<Record<CapabilityProvider, string>>,
+): Partial<Record<RoutingCategory, ChainEntry[]>> {
+  const chainOf = (providers: CapabilityProvider[]): ChainEntry[] =>
+    providers.flatMap((provider) => {
+      const model = vendorDefaults[provider];
+      return model === undefined ? [] : [{
+        provider,
+        model,
+        effort: { mode: "provider-controlled" as const },
+      }];
+    });
+  const claudeLed = chainOf(leadWith("claude"));
+  const codexLed = chainOf(leadWith("codex"));
+  const grokLed = chainOf(leadWith("grok"));
+  const chains: Partial<Record<RoutingCategory, ChainEntry[]>> = {};
+  const assign = (category: RoutingCategory, chain: ChainEntry[]): void => {
+    if (chain.length > 0) chains[category] = chain;
   };
+  assign("light_research", grokLed);
+  assign("heavy_research", claudeLed);
+  assign("simple_coding", codexLed);
+  assign("complex_coding", claudeLed);
+  assign("code_review", codexLed);
+  assign("planning", claudeLed);
+  assign("debugging", claudeLed);
+  assign("summarization", grokLed);
+  assign("default", codexLed);
+  return chains;
 }
 
 /**

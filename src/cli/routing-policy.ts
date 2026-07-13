@@ -123,39 +123,29 @@ export function parseEffortTargetArg(raw: string): EffortTarget {
 
 /**
  * One chain link: `provider/model` (effort provider-controlled),
- * `provider/model@LEVEL` (exact), `provider/model@none`, or the labeled
- * volatile form `vendor-default:provider[@LEVEL]`. A bare "default" model id
- * is rejected downstream by the schema — the labeled form is the only way to
- * follow a vendor's moving default.
+ * `provider/model@LEVEL` (exact effort), or `provider/model@none` (the
+ * vendor's stated no-effort axis). The model is always a specific id — there
+ * is deliberately no way to write "whatever the vendor picks", and a bare
+ * "default" model id is rejected downstream by the schema.
  */
 export function parseChainEntryArg(raw: string): ChainEntry {
-  const parseEffortSuffix = (target: string): {
-    body: string;
-    effort: EffortTarget;
-  } => {
-    const at = target.lastIndexOf("@");
-    if (at === -1) return { body: target, effort: { mode: "provider-controlled" } };
-    const level = target.slice(at + 1);
-    return {
-      body: target.slice(0, at),
-      effort: level === "none" ? { mode: "none" } : { mode: "exact", value: level },
-    };
-  };
-  if (raw.startsWith("vendor-default:")) {
-    const { body, effort } = parseEffortSuffix(raw.slice("vendor-default:".length));
-    return { mode: "vendor-default", provider: parseProvider(body), effort };
-  }
-  const { body, effort } = parseEffortSuffix(raw);
+  const at = raw.lastIndexOf("@");
+  const body = at === -1 ? raw : raw.slice(0, at);
+  const level = at === -1 ? null : raw.slice(at + 1);
+  const effort: EffortTarget = level === null
+    ? { mode: "provider-controlled" }
+    : level === "none"
+    ? { mode: "none" }
+    : { mode: "exact", value: level };
   const slash = body.indexOf("/");
-  if (slash === -1 || slash === body.length - 1) {
+  if (slash === -1 || slash === body.length - 1 || level === "") {
     throw new Error(
-      `a chain entry is provider/model[@effort] or vendor-default:provider[@effort]; got ${
+      `a chain entry is provider/model, provider/model@LEVEL, or provider/model@none; got ${
         JSON.stringify(raw)
       }`,
     );
   }
   return {
-    mode: "exact",
     provider: parseProvider(body.slice(0, slash)),
     model: body.slice(slash + 1),
     effort,

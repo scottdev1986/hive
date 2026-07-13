@@ -5,10 +5,10 @@ import { CapabilityProviderSchema, type CapabilityProvider } from "./capability"
  * The user's routing policy — the store behind the Model Control Center and,
  * once the AuthorizedLaunch gate lands, the router's only source of standing
  * preference. Governed by docs/architecture/router-redesign-recommended.md:
- * chains carry exact (provider, model, effort) targets or an explicitly
- * LABELED vendor-default entry; order is semantic (primary first, a fallback
- * chain, never parallel); a bare "default" string that looks like a model id
- * is illegal.
+ * chains carry exact (provider, model, effort) targets and nothing else;
+ * order is semantic (primary first, a fallback chain, never parallel); a
+ * bare "default" string that looks like a model id is illegal, and no legal
+ * form expresses "whatever the vendor picks".
  *
  * FAIL-CLOSED READING, the rule every consumer must inherit: an absent row
  * means NOT CONFIGURED, and not-configured never means allowed. The helpers
@@ -54,36 +54,28 @@ const ExactModelIdSchema = z.string().min(1).refine(
   (model) => model !== "default",
   {
     message:
-      'a chain carries exact model targets; to follow a vendor\'s moving default, use the labeled { mode: "vendor-default" } entry instead of the string "default"',
+      'a chain names the specific model that will run; "default" is not a model',
   },
 );
 
 /**
- * One link of a fallback chain. `exact` is the normal case. `vendor-default`
- * is the explicit, labeled way to say "track this vendor's current default":
- * it is re-resolved from live discovery at every spawn and NEVER cached as a
- * model identity, because vendors move their default server-side mid-session
- * (memory: vendor-default-model-moves-under-you).
+ * One link of a fallback chain: a specific (provider, model, effort). There
+ * is deliberately NO other form — no "vendor default", no moving pointer of
+ * any kind (user ruling 2026-07-13: "we are specific on the models that we
+ * choose"). A default that quietly wins is the defect this store exists to
+ * delete, and vendors move their defaults server-side mid-session (memory:
+ * vendor-default-model-moves-under-you); an indirection that cannot be
+ * written cannot bite.
  */
-export const ChainEntrySchema = z.discriminatedUnion("mode", [
-  z.strictObject({
-    mode: z.literal("exact"),
-    provider: CapabilityProviderSchema,
-    model: ExactModelIdSchema,
-    effort: EffortTargetSchema,
-  }),
-  z.strictObject({
-    mode: z.literal("vendor-default"),
-    provider: CapabilityProviderSchema,
-    effort: EffortTargetSchema,
-  }),
-]);
+export const ChainEntrySchema = z.strictObject({
+  provider: CapabilityProviderSchema,
+  model: ExactModelIdSchema,
+  effort: EffortTargetSchema,
+});
 export type ChainEntry = z.infer<typeof ChainEntrySchema>;
 
 const chainTargetKey = (entry: ChainEntry): string =>
-  entry.mode === "exact"
-    ? `exact\0${entry.provider}\0${entry.model}`
-    : `vendor-default\0${entry.provider}`;
+  `${entry.provider}\0${entry.model}`;
 
 /** An ordered fallback chain: index 0 is the primary. Duplicate targets are
  * rejected — a chain that names the same model twice is a reorder bug, not a

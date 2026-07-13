@@ -407,8 +407,8 @@ export function createProgram(): Command {
     .command("set-chain <category> [entries...]")
     .description(
       "Replace a category's ordered fallback chain (argument order is chain order; " +
-        "zero entries clears it). Entries: provider/model[@LEVEL|@none] or " +
-        "vendor-default:provider[@LEVEL].",
+        "zero entries clears it). Every entry names a specific model: " +
+        "provider/model, provider/model@LEVEL, or provider/model@none.",
     )
     .requiredOption(
       "--expect-revision <revision>",
