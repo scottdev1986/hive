@@ -1,14 +1,15 @@
 import { describe, expect, test } from "bun:test";
 import { buildModelControlSnapshot } from "./model-control";
-import type { CapabilityDiscoveryResult } from "../daemon/capability-discovery";
-import type { AccountBilling } from "../daemon/usage-credits";
 import {
   known,
   unknown,
   type CapabilityProvider,
-  type CapabilityRecord,
 } from "../schemas/capability";
-import type { QuotaStatus, TokenUsageSnapshot } from "../schemas";
+import {
+  buildModelControlSnapshotFixture,
+  MODEL_CONTROL_SNAPSHOT_FIXTURE,
+  modelControlSnapshotFixtureDependencies,
+} from "../../scripts/test-fixtures/model-control-snapshot";
 
 /**
  * Positive controls for the Model Control Center read surface. Every negative
@@ -19,138 +20,11 @@ import type { QuotaStatus, TokenUsageSnapshot } from "../schemas";
 
 const AT = "2026-07-12T22:00:00.000Z";
 
-function record(overrides: Partial<CapabilityRecord>): CapabilityRecord {
-  return {
-    provider: "claude",
-    accountFingerprint: "abc123",
-    cliVersion: "2.1.207",
-    canonicalId: "claude-opus-4-8",
-    variant: null,
-    launchToken: "claude-opus-4-8",
-    aliases: [],
-    displayName: "Opus 4.8",
-    entitled: known(true, "claude.initialize", AT),
-    hidden: unknown("surface-silent", "claude.initialize", AT),
-    supportsEffort: known(true, "claude.initialize", AT),
-    supportedEffortLevels: known(["low", "medium", "high"], "claude.initialize", AT),
-    defaultEffort: unknown("field-absent", "claude.initialize", AT),
-    observedAt: AT,
-    ...overrides,
-  };
-}
-
-const discovery: Record<CapabilityProvider, CapabilityDiscoveryResult> = {
-  claude: {
-    status: "ok",
-    records: [record({})],
-    effectiveDefault: {
-      provider: "claude",
-      model: known("claude-opus-4-8", "claude.initialize", AT),
-      effort: unknown("surface-silent", "claude.initialize", AT),
-    },
-  },
-  codex: { status: "unavailable", reason: "codex CLI not signed in" },
-  grok: {
-    status: "ok",
-    records: [
-      record({
-        provider: "grok",
-        canonicalId: "grok-composer-2.5-fast",
-        launchToken: "grok-composer-2.5-fast",
-        displayName: null,
-        // The vendor STATED there is no effort axis. This must survive to the
-        // app as known(false) — never merged into "unknown".
-        supportsEffort: known(false, "grok.models_cache", AT),
-        supportedEffortLevels: unknown("field-absent", "grok.models_cache", AT),
-      }),
-    ],
-    effectiveDefault: {
-      provider: "grok",
-      model: known("grok-4.5", "grok.models", AT),
-      effort: unknown("surface-silent", "grok.models", AT),
-    },
-  },
-};
-
-const billings: Record<CapabilityProvider, AccountBilling | null> = {
-  claude: {
-    creditsEnabled: known(false, "claude.get_usage", AT),
-    disabledReason: null,
-    generalUtilization: known(63, "claude.get_usage", AT),
-    modelUtilization: {},
-    overflowUncertainty: null,
-  },
-  codex: null,
-  grok: null,
-};
-
-const claudePool: QuotaStatus = {
-  provider: "claude",
-  account: "default",
-  pool: "plan",
-  origin: "discovered",
-  overridesDiscovered: false,
-  models: ["*"],
-  label: null,
-  routable: true,
-  confidence: "reported",
-  freshness: "fresh",
-  source: "provider",
-  fiveHour: {
-    availability: "available",
-    unit: "percent",
-    allowance: 100,
-    used: 63,
-    reserved: 0,
-    reservedIsEstimate: true,
-    remaining: 37,
-    remainingPct: 0.37,
-    resetsAt: AT,
-    confidence: "reported",
-    source: "provider",
-    observedAt: AT,
-    windowMinutes: 300,
-  },
-  weekly: {
-    availability: "unknown",
-    unit: "percent",
-    allowance: null,
-    used: null,
-    reserved: 0,
-    reservedIsEstimate: true,
-    remaining: null,
-    remainingPct: null,
-    resetsAt: null,
-    confidence: "missing",
-    source: "none",
-    observedAt: null,
-    windowMinutes: null,
-  },
-};
-
-function fakeDependencies(overrides: {
-  daemonPort?: () => number | null;
-  quota?: (port: number) => Promise<QuotaStatus[]>;
-  tokenUsage?: (port: number) => Promise<TokenUsageSnapshot>;
-} = {}) {
-  return {
-    discover: (provider: CapabilityProvider) => Promise.resolve(discovery[provider]),
-    readBilling: (provider: CapabilityProvider) => Promise.resolve(billings[provider]),
-    daemonPort: overrides.daemonPort ?? (() => 4483),
-    quota: overrides.quota ?? ((_port: number) => Promise.resolve([claudePool])),
-    tokenUsage: overrides.tokenUsage ?? ((_port: number) => Promise.resolve({
-      generatedAt: AT,
-      currentSessionId: null,
-      sessions: [],
-      attribution: "control-lower-bound",
-    })),
-    now: () => new Date(AT),
-  };
-}
-
 describe("buildModelControlSnapshot", () => {
   test("passes three-valued effort through verbatim", async () => {
-    const snapshot = await buildModelControlSnapshot(fakeDependencies());
+    const snapshot = await buildModelControlSnapshot(
+      modelControlSnapshotFixtureDependencies(),
+    );
     const grok = snapshot.providers.grok;
     if (grok.status !== "ok") throw new Error("grok discovery should be ok");
     // Positive control: the vendor's stated no-effort-axis fact survives.
@@ -169,7 +43,9 @@ describe("buildModelControlSnapshot", () => {
   });
 
   test("carries a real percent reading and a null weekly window untouched", async () => {
-    const snapshot = await buildModelControlSnapshot(fakeDependencies());
+    const snapshot = await buildModelControlSnapshot(
+      modelControlSnapshotFixtureDependencies(),
+    );
     expect(snapshot.quota).not.toBeNull();
     const pool = snapshot.quota?.[0];
     if (pool === undefined || !("origin" in pool)) throw new Error("expected a pool");
@@ -180,50 +56,60 @@ describe("buildModelControlSnapshot", () => {
 
   test("no daemon → quota is null with a reason, never an empty list", async () => {
     const snapshot = await buildModelControlSnapshot(
-      fakeDependencies({ daemonPort: () => null }),
+      modelControlSnapshotFixtureDependencies({ daemonPort: () => null }),
     );
     expect(snapshot.quota).toBeNull();
     expect(snapshot.quotaError).toContain("no daemon");
   });
 
   test("a quota fetch failure is reported, not swallowed into empty", async () => {
-    const snapshot = await buildModelControlSnapshot(fakeDependencies({
-      quota: () => Promise.reject(new Error("hive_quota_status failed")),
-    }));
+    const snapshot = await buildModelControlSnapshot(
+      modelControlSnapshotFixtureDependencies({
+        quota: () => Promise.reject(new Error("hive_quota_status failed")),
+      }),
+    );
     expect(snapshot.quota).toBeNull();
     expect(snapshot.quotaError).toContain("hive_quota_status failed");
   });
 
   test("session token totals pass through without being inferred from quota", async () => {
-    const snapshot = await buildModelControlSnapshot(fakeDependencies({
-      tokenUsage: async () => ({
-        generatedAt: AT,
-        currentSessionId: null,
-        sessions: [],
-        attribution: "control-lower-bound",
+    const snapshot = await buildModelControlSnapshot(
+      modelControlSnapshotFixtureDependencies({
+        tokenUsage: async () => ({
+          generatedAt: AT,
+          currentSessionId: null,
+          sessions: [],
+          attribution: "control-lower-bound",
+        }),
       }),
-    }));
+    );
     expect(snapshot.tokenUsage?.attribution).toBe("control-lower-bound");
     expect(snapshot.tokenUsageError).toBeNull();
   });
 
   test("a token collector failure is unknown, never an empty measured session", async () => {
-    const snapshot = await buildModelControlSnapshot(fakeDependencies({
-      tokenUsage: async () => { throw new Error("token artifact unreadable"); },
-    }));
+    const snapshot = await buildModelControlSnapshot(
+      modelControlSnapshotFixtureDependencies({
+        tokenUsage: async () => { throw new Error("token artifact unreadable"); },
+      }),
+    );
     expect(snapshot.tokenUsage).toBeNull();
     expect(snapshot.tokenUsageError).toContain("token artifact unreadable");
   });
 
   test("every known vendor is marked metered once its capacity surface is wired", async () => {
-    const snapshot = await buildModelControlSnapshot(fakeDependencies());
+    const snapshot = await buildModelControlSnapshot(
+      modelControlSnapshotFixtureDependencies(),
+    );
     expect(snapshot.usageSurfaces.grok).toBe("metered");
     expect(snapshot.usageSurfaces.claude).toBe("metered");
     expect(snapshot.usageSurfaces.codex).toBe("metered");
   });
 
   test("an unavailable provider keeps its measured reason", async () => {
-    const snapshot = await buildModelControlSnapshot(fakeDependencies());
+    const snapshot = await buildModelControlSnapshot(
+      modelControlSnapshotFixtureDependencies(),
+    );
     expect(snapshot.providers.codex).toEqual({
       status: "unavailable",
       reason: "codex CLI not signed in",
@@ -231,12 +117,15 @@ describe("buildModelControlSnapshot", () => {
   });
 
   test("a probe that throws becomes unavailable-with-reason, not a blank card", async () => {
+    const dependencies = modelControlSnapshotFixtureDependencies();
+    const discover = dependencies.discover;
+    if (discover === undefined) throw new Error("fixture discover dependency is missing");
     const snapshot = await buildModelControlSnapshot({
-      ...fakeDependencies(),
+      ...dependencies,
       discover: (provider: CapabilityProvider) =>
         provider === "claude"
           ? Promise.reject(new Error("claude CLI timed out"))
-          : Promise.resolve(discovery[provider]),
+          : discover(provider),
     });
     expect(snapshot.providers.claude).toEqual({
       status: "unavailable",
@@ -247,7 +136,9 @@ describe("buildModelControlSnapshot", () => {
   });
 
   test("billing passes through, including honest nulls", async () => {
-    const snapshot = await buildModelControlSnapshot(fakeDependencies());
+    const snapshot = await buildModelControlSnapshot(
+      modelControlSnapshotFixtureDependencies(),
+    );
     // Positive control first: a real reading survives...
     expect(snapshot.billing.claude?.creditsEnabled).toEqual(
       known(false, "claude.get_usage", AT),
@@ -257,18 +148,21 @@ describe("buildModelControlSnapshot", () => {
     expect(snapshot.billing.codex).toBeNull();
   });
 
-  test("the snapshot serializes to JSON the app contract can decode", async () => {
-    const snapshot = await buildModelControlSnapshot(fakeDependencies());
-    const roundTripped = JSON.parse(JSON.stringify(snapshot));
-    expect(roundTripped.generatedAt).toBe(AT);
-    expect(Object.keys(roundTripped.providers).sort()).toEqual(
+  test("the producer matches the checked-in app contract", async () => {
+    const snapshot = await buildModelControlSnapshotFixture();
+    const contract = await Bun.file(MODEL_CONTROL_SNAPSHOT_FIXTURE).json();
+    expect(snapshot).toEqual(contract);
+    expect(contract.generatedAt).toBe(AT);
+    expect(Object.keys(contract.providers).sort()).toEqual(
       ["claude", "codex", "grok"],
     );
     expect(
-      roundTripped.providers.grok.records[0].supportsEffort.state,
+      contract.providers.grok.records[0].supportsEffort.state,
     ).toBe("known");
     expect(
-      roundTripped.providers.grok.records[0].supportsEffort.value,
+      contract.providers.grok.records[0].supportsEffort.value,
     ).toBe(false);
+    expect(contract.usageSurfaces.grok).toBe("metered");
+    expect(contract.quota[0].fiveHour.used).toBe(63);
   });
 });
