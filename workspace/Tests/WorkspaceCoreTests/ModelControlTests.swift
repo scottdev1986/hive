@@ -267,6 +267,44 @@ final class ModelControlTests: XCTestCase {
         return windows[0].state == .notMetered
     }
 
+    // The lie this guard exists to prevent, and it was reachable: Claude's
+    // get_usage emits a pool when EITHER window parses, so a partial read
+    // (weekly present, five_hour missing) yields fiveHour: null — and the
+    // ledger's upsert overwrites the previously-known 300 with that null
+    // (ON CONFLICT DO UPDATE SET fiveHourWindowMinutes = excluded..., no
+    // coalesce). The pool then looks EXACTLY like Codex's not-metered one:
+    // used nil, windowMinutes nil, beside a readable weekly.
+    //
+    // The discriminator is authority. Claude's feed is "reported" and
+    // experimental (§2.2); it may not assert that a plan lacks a window. Telling
+    // a Max-plan user "your plan does not meter a 5 hour window" is the original
+    // bug inverted — a confident lie rather than a timid one, and worse.
+    func testPartiallySilentClaudeFeedIsUnknownNotNotMetered() {
+        let halfQuiet = QuotaEntry.pool(QuotaPool(
+            provider: "claude", pool: "subscription", origin: "discovered",
+            label: "max",
+            confidence: "reported", freshness: "fresh", source: "provider",
+            // The overwritten duration — indistinguishable from Codex's
+            // not-metered window on every field EXCEPT the pool's authority.
+            fiveHour: window(used: nil, confidence: "missing"),
+            weekly: window(
+                used: 57, allowance: 100,
+                confidence: "reported", windowMinutes: 10_080)))
+        let usage = MeterDerivation.usage(
+            provider: .claude, surface: .metered, quota: [halfQuiet], quotaError: nil)
+        guard case .metered(let windows) = usage else {
+            return XCTFail("expected meters, got \(usage)")
+        }
+        guard case .unknown = windows[0].state else {
+            return XCTFail(
+                "a merely-reported source may not claim a plan lacks a window — "
+                    + "expected .unknown, got \(windows[0].state)")
+        }
+        XCTAssertNotEqual(
+            windows[0].state, .notMetered,
+            "this is a Max plan with a five-hour window; saying otherwise is a lie")
+    }
+
     // Nothing here encodes "Codex has no five-hour window" — the decision is
     // made from what the payload reports. The SAME provider on a plan that does
     // expose a five-hour window must light it up with no code change, or we have

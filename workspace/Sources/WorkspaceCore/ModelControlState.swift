@@ -149,13 +149,37 @@ public enum MeterDerivation {
             // .notMetered instead: absent by the vendor's design, and SAID so,
             // because a deliberate absence has to look deliberate (§2.3).
             //
-            // `windowMinutes == nil` only proves that when the pool demonstrably
-            // ANSWERED: a reading on the other window is the positive control. A
-            // pool with no reading anywhere is genuinely unknown, and both
-            // windows keep saying unknown so the silence still shows.
+            // Two conditions gate that claim, and BOTH are load-bearing.
+            //
+            // 1. The pool demonstrably ANSWERED — a reading on the other window
+            //    is the positive control. A pool with no reading anywhere is
+            //    genuinely unknown, and both windows keep saying unknown so the
+            //    silence still shows.
+            //
+            // 2. The pool is AUTHORITATIVE. "Your plan has no such window" is a
+            //    confident, structural claim, and only a source that is stable
+            //    about plan structure may make it. Codex's app-server rate-limit
+            //    method is exactly that. Claude's get_usage is self-described
+            //    experimental and documented to go silent (§2.2), and it emits a
+            //    pool when EITHER window parses — so a partial read (weekly
+            //    present, five_hour missing) yields fiveHour: null, and the
+            //    ledger's upsert overwrites the previously-known 300 with it. A
+            //    window missing from a merely "reported" source means "we did not
+            //    get it", never "it does not exist". Without this gate a Max-plan
+            //    user whose feed went half-quiet would be told their plan does not
+            //    meter a five-hour window — the same lie as the original bug, in
+            //    the confident direction, which is the worse one.
+            //
+            // The strength of the claim has to match the strength of the evidence.
+            // darius is making per-window meter state explicit and persisted; once
+            // that lands, read the availability field directly and delete this
+            // inference rather than tightening it further.
             let answered = pool.fiveHour.used != nil || pool.weekly.used != nil
+            let authoritative = pool.confidence == "authoritative"
             func state(_ window: QuotaWindow) -> MeterState {
-                if answered && window.windowMinutes == nil { return .notMetered }
+                if answered && authoritative && window.windowMinutes == nil {
+                    return .notMetered
+                }
                 return meterState(for: window, parseDate: parseDate)
             }
             return .metered([
