@@ -123,10 +123,16 @@ export function queuedDeliveryNote(
       return message.priority === "urgent"
         ? `NOT received yet: ${name} is mid-turn; urgent traffic is injected at its next tool call, ` +
           "and the acknowledgement deadline alerts if that never happens."
+        : message.priority === "steer"
+          ? reportsTurnEvents(recipient.tool)
+            ? `NOT received yet: ${name} is mid-turn; steer traffic is injected without cancellation ` +
+              "at its next tool call, then confirmed by the following tool boundary."
+            : `NOT received yet: ${name}'s ${recipient.tool} session exposes no non-destructive ` +
+              "mid-turn injection boundary, so steer degrades to normal and arrives when the current turn ends."
         : `NOT received yet: ${name} is mid-turn, and a normal message is delivered only when the ` +
           "current turn ends — for a deep task that can be after the work this message means to " +
-          "steer has already shipped. If it must land mid-turn, resend with priority=urgent " +
-          "(injected at the next tool call; urgent is preemption, not a fast lane).";
+          "steer has already shipped. Use priority=steer for non-destructive mid-turn guidance, or `urgent` " +
+          "only when the current work must stop because urgent cancels the in-flight turn.";
   }
 }
 
@@ -391,10 +397,11 @@ export class MessageDelivery {
       });
     }
 
-    // A live verified channel accepts messages mid-turn (the CLI queues them
-    // for its next turn), so only a channel-less busy recipient short-circuits.
+    // Claude's channel accepts messages mid-turn but queues them for the next
+    // TURN. A steer must beat that boundary, so a busy steer waits for the
+    // tool hook and uses the TUI's non-cancelling queued-paste surface instead.
     const channelLive = this.channels?.isLive(to) ?? false;
-    if (!channelLive && recipient.status !== "idle") {
+    if (recipient.status !== "idle" && (priority === "steer" || !channelLive)) {
       return message;
     }
 
@@ -536,6 +543,55 @@ export class MessageDelivery {
       }
       return delivered;
     });
+  }
+
+  /** Deliver non-destructive guidance at a vendor-reported tool boundary. */
+  async flushSteer(agentName: string): Promise<AgentMessage[]> {
+    const recipient = this.db.getAgentByName(agentName);
+    if (!this.isDeliverable(recipient) || !reportsTurnEvents(recipient.tool)) return [];
+    const queued = this.db.getUndeliveredMessages(agentName)
+      .filter((message) => message.priority === "steer");
+    if (queued.length === 0) return [];
+    return this.withSessionLock(recipient.tmuxSession, async () => {
+      const currentRecipient = this.db.getAgentByName(agentName);
+      if (!this.isDeliverable(currentRecipient)) return [];
+      const delivered: AgentMessage[] = [];
+      for (const pending of queued) {
+        const message = this.db.getMessage(pending.id);
+        if (message === null || message.deliveredAt !== null) continue;
+        try {
+          if (this.nativeControl?.hasAgent(currentRecipient.name)) {
+            delivered.push(await this.deliverNative(message, currentRecipient));
+          } else {
+            // A channel queues for the next turn; the TUI queues for the next
+            // model step, which is the mid-turn surface this priority promises.
+            delivered.push(await this.deliver(message, currentRecipient));
+          }
+        } catch (error) {
+          console.error(
+            `Hive failed to inject steer message ${message.id} to ${agentName} at a tool boundary: ${
+              error instanceof Error ? error.message : "unknown error"
+            }`,
+          );
+        }
+      }
+      return delivered;
+    });
+  }
+
+  /** The boundary after injection is receipt on Claude/Codex's hook surface. */
+  confirmSteerAtToolBoundary(agentName: string, boundaryAt: string): number {
+    let confirmed = 0;
+    for (const message of this.db.listInjectedUnapplied()) {
+      if (
+        message.to === agentName && message.priority === "steer" &&
+        message.injectedAt !== null && message.injectedAt < boundaryAt
+      ) {
+        this.db.transitionMessage(message.id, "applied", boundaryAt);
+        confirmed += 1;
+      }
+    }
+    return confirmed;
   }
 
   /**
@@ -701,7 +757,7 @@ export class MessageDelivery {
     // reasoning, and the cost of an interrupt is that the in-flight turn is
     // cancelled and never resumed.
     await this.tmux.sendMessage(recipient.tmuxSession, text, {
-      interrupt: message.priority !== "normal",
+      interrupt: message.priority === "urgent",
     });
 
     // An idle TUI that accepts a paste submits it, and the model starts a turn

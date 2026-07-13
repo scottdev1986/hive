@@ -54,9 +54,15 @@ function agent(status: AgentRecord["status"]): AgentRecord {
  */
 class RecordingTmuxSender implements TmuxSender {
   readonly calls: Array<[string, string]> = [];
+  readonly interrupts: boolean[] = [];
 
-  async sendMessage(session: string, text: string): Promise<void> {
+  async sendMessage(
+    session: string,
+    text: string,
+    options: { interrupt?: boolean } = {},
+  ): Promise<void> {
     this.calls.push([session, text]);
+    this.interrupts.push(options.interrupt === true);
   }
 }
 
@@ -181,6 +187,12 @@ describe("MessageDelivery", () => {
         "maya",
         "Focus on the failing test.",
       );
+      const steer = await delivery.send(
+        "orchestrator",
+        "maya",
+        "Keep the current turn; check the fixture.",
+        { priority: "steer" },
+      );
       const urgent = await delivery.send(
         "orchestrator",
         "maya",
@@ -195,11 +207,17 @@ describe("MessageDelivery", () => {
         },
         {
           agent: "maya",
+          text: expect.stringContaining("STEER HIVE CONTROL"),
+          interrupt: false,
+        },
+        {
+          agent: "maya",
           text: expect.stringContaining("URGENT HIVE CONTROL"),
           interrupt: true,
         },
       ]);
       expect(normal.state).toEqual("injected");
+      expect(steer.state).toEqual("injected");
       expect(urgent.state).toEqual("injected");
       expect(tmux.calls).toEqual([]);
     } finally {
@@ -310,6 +328,57 @@ describe("MessageDelivery", () => {
       expect(
         db.listEvents().filter((event) => event.agentName === "maya"),
       ).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("steer is received mid-turn without cancelling the in-flight work", async () => {
+    const db = new HiveDatabase(join(home, "steer-mid-turn.db"));
+    const tmux = new RecordingTmuxSender();
+    const delivery = new MessageDelivery(db, tmux);
+    try {
+      db.insertAgent({ ...agent("working"), tool: "claude" });
+      const message = await delivery.send("orchestrator", "maya", "Keep the fixture minimal.", {
+        priority: "steer",
+      });
+      expect(message.state).toBe("queued");
+
+      const firstBoundary = new Date(Date.now() + 1_000).toISOString();
+      await delivery.flushSteer("maya");
+      expect(tmux.calls).toEqual([
+        ["hive-maya", expect.stringContaining("STEER HIVE CONTROL")],
+      ]);
+      expect(tmux.interrupts).toEqual([false]);
+      expect(db.getMessage(message.id)?.state).toBe("injected");
+
+      const received = delivery.confirmSteerAtToolBoundary("maya", firstBoundary);
+      expect(received).toBe(1);
+      expect(db.getMessage(message.id)?.state).toBe("applied");
+      // The receipt is mid-turn: no turn-end occurred, so the original work is
+      // still alive after hearing the steer instead of being cancelled.
+      expect(db.getAgentByName("maya")?.status).toBe("working");
+      expect(db.latestTurnBoundaryAt("maya")).toBeNull();
+    } finally {
+      db.close();
+    }
+  });
+
+  test("grok steer honestly degrades to the next turn because grok has no tool boundary", async () => {
+    const db = new HiveDatabase(join(home, "steer-grok-degrade.db"));
+    const tmux = new RecordingTmuxSender();
+    const delivery = new MessageDelivery(db, tmux);
+    try {
+      db.insertAgent({ ...agent("working"), name: "cesar", tool: "grok", tmuxSession: "hive-cesar" });
+      const message = await delivery.send("orchestrator", "cesar", "Keep the fixture minimal.", {
+        priority: "steer",
+      });
+      expect(message.state).toBe("queued");
+      expect(await delivery.flushSteer("cesar")).toEqual([]);
+      expect(tmux.calls).toEqual([]);
+      expect(queuedDeliveryNote(message, db.getAgentByName("cesar"))).toContain(
+        "degrades to normal",
+      );
     } finally {
       db.close();
     }
@@ -1234,7 +1303,7 @@ describe("reconciling messages we handed over", () => {
 });
 
 describe("queuedDeliveryNote", () => {
-  const queuedMessage = (priority: "normal" | "urgent" = "normal") =>
+  const queuedMessage = (priority: "normal" | "steer" | "urgent" = "normal") =>
     AgentMessageSchema.parse({
       id: "m-1",
       from: "orchestrator",
@@ -1249,7 +1318,7 @@ describe("queuedDeliveryNote", () => {
     const note = queuedDeliveryNote(queuedMessage(), agent("working"));
     expect(note).toContain("NOT received");
     expect(note).toContain("mid-turn");
-    expect(note).toContain("priority=urgent");
+    expect(note).toContain("priority=steer");
   });
 
   test("an urgent message mid-turn names the tool-boundary injection instead", () => {

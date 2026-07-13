@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const MessagePrioritySchema = z.enum(["normal", "urgent", "critical"]);
+export const MessagePrioritySchema = z.enum(["normal", "steer", "urgent", "critical"]);
 export type MessagePriority = z.infer<typeof MessagePrioritySchema>;
 
 export const ControlIntentSchema = z.enum([

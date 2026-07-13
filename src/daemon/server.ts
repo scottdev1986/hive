@@ -2849,7 +2849,9 @@ export class HiveDaemon {
             ? {}
             : { toolSessionId: value.toolSessionId }),
         });
+        this.delivery.confirmSteerAtToolBoundary(value.agentName, value.timestamp);
         await this.delivery.flushUrgent(value.agentName);
+        await this.delivery.flushSteer(value.agentName);
       }
       return;
     }
@@ -3107,7 +3109,7 @@ export class HiveDaemon {
     server.registerTool("hive_send", {
       title: "Send agent message",
       description:
-        'Send a durable message and return its real lifecycle state. normal waits for an ordinary boundary — use it for ordinary guidance. urgent and critical CANCEL the recipient\'s in-flight turn, which is never resumed: its reasoning so far is discarded, so this is preemption, not a fast lane. critical additionally revokes write/landing authority and restarts the target read-only. The returned state is the truth: "queued"/"injected" means SENT, which is not RECEIVED and not STOPPED — there is no preemption inside a running tool call, so an agent inside a long command holds even a critical until that call returns. Never report a target as stopped or informed until it has acknowledged. When the result carries a "delivery" note, read it: it is the recipient\'s measured state and says when — or whether — the message can be heard. Recipient "orchestrator" wakes the root. The returned body is a short preview (truncated is true when it was cut) of the message you just wrote, not an echo of the whole thing — the recipient reads it in full via hive_inbox/hive_read_message.',
+        'Send a durable message and return its real lifecycle state. normal is ordinary guidance and lands at a turn boundary. steer is prompt, NON-DESTRUCTIVE guidance: Claude and Codex receive it mid-turn at the next tool boundary without cancellation; Grok has no tool-hook or native steer surface, so it honestly degrades to the next turn. urgent CANCELS the in-flight turn, which is never resumed, and discards its reasoning; use it only when the current work must STOP. critical is unchanged: it also revokes write/landing authority and restarts the target read-only. "queued" means not delivered, "injected" means handed to the vendor, and "applied" means receipt measured on the vendor\'s own boundary/transcript surface; queued/injected is SENT, not RECEIVED and not STOPPED. Never report a target as informed from enqueue or transport silence. Recipient "orchestrator" wakes the root. The returned body is a short head-and-tail preview; read the durable message for the full body.',
       inputSchema: SendRequestSchema,
     }, async ({ from, to, body, ...requested }) => {
       // `from` is a claim about identity, so it is checked against the bound
