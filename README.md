@@ -122,7 +122,7 @@ To update later, run `hive update` — it repeats those checks and additionally 
 | `hive stop` | Stop live agents and the daemon |
 | `hive update` | Install the latest release (`check`, `status`, `rollback`, `skip`) |
 
-`hive quota` shows what routing sees — the provider windows Hive can read, plus what's already reserved for running agents. A provider that does not publish a remaining level is shown as unknown:
+`hive quota` shows what routing sees — each provider window Hive can read, plus what's already reserved for running agents. A window the provider does not meter is labeled `not metered`; a meter Hive expected but could not read is `unknown`. Those are different facts:
 
 ```
 $ hive quota
@@ -130,13 +130,14 @@ claude/default/subscription (max) [discovered, fresh]
   5h: 89.0% of 100.0% remaining, 8.0% reserved (est), reset 2026-07-12T04:20:00.000Z [reported from statusline]
   week: 91.5% of 100.0% remaining, 1.5% reserved (est), reset 2026-07-18T19:00:00.000Z [reported from statusline]
 codex/default/codex (prolite) [discovered, fresh]
-  5h: 44.0% of 100.0% remaining, 0.0% reserved (est), reset 2026-07-11T23:59:20.000Z [estimated from provider]
-  week: 88.3% of 100.0% remaining, 0.0% reserved (est), reset 2026-07-18T13:59:08.000Z [estimated from provider]
-grok/default/*: LIMITS UNKNOWN — Hive has not read live limits from grok yet; usage is unknown and routing is unconstrained
-  hive-local estimate only: 0.0 reserved, 0.0 spent by hive in 5h, 0.0 spent by hive in week (not the account's usage)
+  5h: not metered [authoritative from provider]
+  week: 64.3% of 100.0% remaining, 0.0% reserved (est), reset 2026-07-18T13:59:08.000Z [authoritative from provider]
+grok/default/subscription (SuperGrok) [discovered, fresh]
+  5h: not metered [reported from provider]
+  week: 96.0% of 100.0% remaining, 0.0% reserved (est), reset 2026-07-19T17:18:56.768Z [reported from provider]
 ```
 
-Grok's remaining quota is not measurable: the only billing surface its CLI exposes reports pay-as-you-go rails rather than subscription usage, and those rails do not move when the subscription is used. So Hive never shows a Grok percentage — it reports Grok's capacity as unknown and says so, rather than inferring a number it cannot read. Hive discovers the models available to the signed-in account with the free, session-free `grok models` command rather than keeping a model list in the binary.
+Grok's ACP `_x.ai/billing` surface reports `creditUsagePercent`, a coarse used-percentage for the shared SuperGrok weekly pool. Hive reads it without starting a model session and shows the corresponding weekly remainder and rolling reset boundary. The same payload contains no five-hour window, so Hive says `not metered` instead of inventing one. The separate on-demand and prepaid money rails remain spend guards, never usage gauges: zero means paid overflow is off, not that the weekly pool is empty or full. Hive discovers the signed-in account's models from the free ACP initialization catalog rather than keeping a Grok model list in the binary.
 
 ## Configuration
 
