@@ -118,6 +118,14 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function commandFailure(
+  action: string,
+  result: Awaited<ReturnType<CommandRunner>>,
+): Error {
+  const detail = result.stderr.trim() || result.stdout.trim() || `exit ${result.exitCode}`;
+  return new Error(`${action}: ${detail}`);
+}
+
 function liveTeamRefusal(blockers: readonly InstanceMutationBlocker[]): string {
   return "Refusing machine uninstall while a Hive instance has a live or unobservable team: " +
     blockers.map(({ instance, liveAgents }) =>
@@ -216,11 +224,7 @@ async function removeWorktreesAndBranches(
       // only safely attributable to the legacy default instance.
       await rm(path, { recursive: true, force: true });
     } else if (removed.exitCode !== 0) {
-      throw new Error(
-        `Git could not remove owned worktree ${path}: ${
-          removed.stderr.trim() || removed.stdout.trim() || `exit ${removed.exitCode}`
-        }`,
-      );
+      throw commandFailure(`Git could not remove owned worktree ${path}`, removed);
     }
     log(`Removed worktree ${path}.`);
   }
@@ -229,11 +233,7 @@ async function removeWorktreesAndBranches(
     { cwd: root, timeoutMs: 30_000 },
   );
   if (pruned.exitCode !== 0) {
-    throw new Error(
-      `Git could not prune removed worktrees: ${
-        pruned.stderr.trim() || pruned.stdout.trim() || `exit ${pruned.exitCode}`
-      }`,
-    );
+    throw commandFailure("Git could not prune removed worktrees", pruned);
   }
   await rmdir(container).catch(() => {});
   await rmdir(join(root, ".hive")).catch(() => {
@@ -245,11 +245,7 @@ async function removeWorktreesAndBranches(
     { cwd: root, timeoutMs: 30_000 },
   );
   if (branches.exitCode !== 0) {
-    throw new Error(
-      `Git could not list Hive branches: ${
-        branches.stderr.trim() || branches.stdout.trim() || `exit ${branches.exitCode}`
-      }`,
-    );
+    throw commandFailure("Git could not list Hive branches", branches);
   }
   for (const branch of branches.stdout.split("\n").map((line) => line.trim()).filter((line) => line.length > 0)) {
     const owner = await branchOwner(root, branch);
@@ -262,11 +258,7 @@ async function removeWorktreesAndBranches(
       { cwd: root, timeoutMs: 30_000 },
     );
     if (deleted.exitCode !== 0) {
-      throw new Error(
-        `Git could not delete owned branch ${branch}: ${
-          deleted.stderr.trim() || deleted.stdout.trim() || `exit ${deleted.exitCode}`
-        }`,
-      );
+      throw commandFailure(`Git could not delete owned branch ${branch}`, deleted);
     }
     await clearBranchOwnership(root, branch);
     log(`Deleted branch ${branch}.`);
