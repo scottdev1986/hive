@@ -139,7 +139,7 @@
         "status": "partial",
         "provenance": [
           "https://code.claude.com/docs/en/agent-sdk/streaming-vs-single-mode",
-          "research/cross-vendor-architecture-review.md"
+          "raw/reviews/cross-vendor-architecture-review.md"
         ],
         "note": "Interrupt is documented through the Agent SDK; the CLI control-frame receipt token is binding-observed rather than specified on the CLI page."
       },
@@ -191,7 +191,7 @@
         "status": "partial",
         "provenance": [
           "https://code.claude.com/docs/en/cli-usage",
-          "research/cross-vendor-architecture-review.md"
+          "raw/reviews/cross-vendor-architecture-review.md"
         ],
         "note": "Concrete pins and fallback configuration are documented; rejection timing and zero observed cost come from the driven binding repro."
       },
@@ -206,7 +206,7 @@
         "status": "non-billable",
         "provenance": [
           "Claude stream-json result.total_cost_usd and result.usage fields from this run.",
-          "research/cross-vendor-architecture-review.md#appendix-reproducing-the-claude-code-observations"
+          "raw/reviews/cross-vendor-architecture-review.md#appendix-reproducing-the-claude-code-observations"
         ],
         "note": "Provider-reported total_cost_usd: 0.000000."
       }

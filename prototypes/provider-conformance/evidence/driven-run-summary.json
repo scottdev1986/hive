@@ -569,7 +569,7 @@
         "observedOutputTokens": 0,
         "provenance": [
           "Claude stream-json result.total_cost_usd and result.usage fields from this run.",
-          "research/cross-vendor-architecture-review.md#appendix-reproducing-the-claude-code-observations"
+          "raw/reviews/cross-vendor-architecture-review.md#appendix-reproducing-the-claude-code-observations"
         ]
       },
       "diagnostics": []

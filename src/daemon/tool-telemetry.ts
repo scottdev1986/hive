@@ -297,7 +297,7 @@ export async function readGrokTelemetry(
 }
 
 // ---------------------------------------------------------------------------
-// Graphify adoption telemetry (docs/architecture/graphify-integration.md,
+// Graphify adoption telemetry (docs/graphify/integration.md,
 // layer 3): count the graphify MCP calls each agent actually made, from the
 // same durable artifacts the context readers use. Measured, never assumed —
 // a shipped tool nobody calls is pure context cost, and only this number can

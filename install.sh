@@ -10,7 +10,7 @@
 #
 # A signed and notarized release runs without a Gatekeeper prompt. An unsigned
 # release (none of the signing secrets configured) is quarantined on first run;
-# see docs/versioning-and-release.md.
+# see docs/release/versioning-and-release.md.
 set -eu
 
 REPO="${HIVE_REPO:-scottdev1986/hive}"

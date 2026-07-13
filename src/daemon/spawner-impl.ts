@@ -312,7 +312,7 @@ export interface HiveSpawnerDependencies {
   ) => Promise<ModelEnablementDecision>;
   /**
    * The per-repo graphify MCP server's URL, or null when there is nothing
-   * healthy to attach (docs/architecture/graphify-integration.md). Read
+   * healthy to attach (docs/graphify/integration.md). Read
    * synchronously at spawn time and never awaited: a broken graph means the
    * agent spawns without graph tools, noted, never a slower or failed spawn.
    * Absent (tests, unwired embedders), spawning is bit-identical.

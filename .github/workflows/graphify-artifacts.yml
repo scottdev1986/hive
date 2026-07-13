@@ -1,7 +1,7 @@
 name: graphify-artifacts
 
 # Builds and publishes the per-platform graphify bundles that
-# `hive graphify enable` downloads (docs/architecture/graphify-bundling.md).
+# `hive graphify enable` downloads (docs/graphify/bundling.md).
 #
 # NEVER runs automatically: a graphify bump is a deliberate act
 # (graphify-integration.md, "Rollout and version policy"), so this fires only
@@ -120,7 +120,7 @@ jobs:
           gh release create "$tag" \
             dist/graphify/*.tar.zst dist/graphify/*.sha256 \
             --title "graphify $pin (hive build ${{ inputs.build-number || '1' }})" \
-            --notes "$(printf 'Standalone graphify bundles for `hive graphify enable` (docs/architecture/graphify-bundling.md).\n\n%s\n\nLand the hashes below in `src/adapters/graphify-artifacts.ts` via a reviewed PR:\n\n```ts\n%s```\n' "$signed_line" "$(cat dist/graphify/registry.snippet.ts)")"
+            --notes "$(printf 'Standalone graphify bundles for `hive graphify enable` (docs/graphify/bundling.md).\n\n%s\n\nLand the hashes below in `src/adapters/graphify-artifacts.ts` via a reviewed PR:\n\n```ts\n%s```\n' "$signed_line" "$(cat dist/graphify/registry.snippet.ts)")"
 
       - name: Registry entries for graphify-artifacts.ts
         run: |

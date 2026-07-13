@@ -7,7 +7,7 @@
  * "running" in Swift — a word in no vocabulary here — which its dot correctly
  * degraded to "unknown", and the root's dot was therefore gray forever. The root
  * is alive by definition whenever the Workspace is running; gray was a lie of
- * omission. See docs/orchestrator-status-gray.md.
+ * omission. See docs/daemon/orchestrator-status.md.
  *
  * The root's turns ARE observable: its own hooks post `turn-start` on
  * UserPromptSubmit and `turn-end` on Stop, under the agent name "orchestrator"

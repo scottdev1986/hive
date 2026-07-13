@@ -43,33 +43,14 @@ yarn-error.log*
 !.env.example
 
 # --- hive runtime (repo-local state that must not be committed) ---
-# Ignore what is *inside* .hive/, not .hive/ itself: git cannot re-include a
-# file whose parent directory is excluded, so a bare `.hive/` would make the
-# negation below dead on arrival. The `/*` form keeps the directory walkable.
 .hive/*
-# The dev-only skills are committed by design (SPEC.md): they are instructions
-# for working on Hive's own source, and packaging.test.ts scans them to prove
-# none of them reach a user's binary. Ignored, they vanished from every clone
-# and worktree and took that guard down with them.
 !.hive/skills/
-# .hive/memory/ stays out on purpose — this repo is public and the facts in it
-# are internal. packaging.test.ts synthesizes a stand-in corpus when they are
-# absent, which is everywhere but this machine.
 
 #Coding Agents
 .claude/
 .codex/
-# hive writes the grok MCP wiring here at spawn (see writeGrokAgentConfig), the
-# same way it writes .mcp.json for claude. Nothing is tracked under .grok/, so
-# the bare-directory form is safe here — unlike .hive/, which needed .hive/*
-# because a bare rule would have deleted its committed skills from every clone.
 .grok/
-# hive writes per-worktree MCP wiring at spawn (see writeClaudeAgentConfig)
 .mcp.json
-# hive symlinks shared skills into each worktree at spawn (see
-# src/adapters/skills.ts); not anchored to .hive/worktrees/ because this
-# file is evaluated from each worktree's own root, where that path never
-# matches.
 .agents/
 
 apple

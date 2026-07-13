@@ -2,7 +2,7 @@
 
 Feasibility record for shipping graphify as a Hive-built standalone bundle
 (no uv, no Python on the user's machine). The measured findings and the chosen
-design live in `docs/architecture/graphify-bundling.md`.
+design live in `docs/graphify/bundling.md`.
 
 The build recipe that started here graduated to `scripts/graphify/`
 (`build.sh`, `graphify.spec`, `entry.py`, `graphify.in`, `entitlements.plist`)

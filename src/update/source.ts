@@ -4,7 +4,7 @@
  * GitHub Releases hold immutable bytes; a small signed channel document on a
  * CDN should hold mutable channel and rollout policy. The channel endpoint does
  * not exist yet, so this reads `releases/latest` and its manifest asset, and
- * `research/distribution-auto-update.md` records the deviation. The interface is
+ * `docs/release/distribution.md` records the deviation. The interface is
  * the seam: swapping in a channel document changes this file and nothing else.
  */
 import { z } from "zod";

@@ -135,11 +135,11 @@ describe("findTaskDocReferences", () => {
   test("finds docs in briefable directories", () => {
     expect(
       findTaskDocReferences(
-        "See docs/research/model-routing-and-token-efficiency.md",
+        "See docs/routing/rejected-approaches.md",
         CONFIG,
       ),
     ).toEqual([
-      { path: "docs/research/model-routing-and-token-efficiency.md", sections: [] },
+      { path: "docs/routing/rejected-approaches.md", sections: [] },
     ]);
   });
 

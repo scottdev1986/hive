@@ -28,7 +28,7 @@
  * one where every installation either updates or bricks. It buys nothing against
  * a *compromised* key — an attacker holding the old private half can still sign
  * for binaries that still list it, and the only answer to that is an
- * out-of-band reinstall. See docs/versioning-and-release.md.
+ * out-of-band reinstall. See docs/release/versioning-and-release.md.
  */
 import { createHash, createPublicKey, verify as verifySignature } from "node:crypto";
 import { z } from "zod";
@@ -58,7 +58,7 @@ const ManifestSchema = z.object({
   channel: z.enum(["stable", "beta"]),
   commit: z.string().min(1),
   publishedAt: z.string().min(1),
-  /** Overrides every notice rate limit. See docs/versioning-and-release.md. */
+  /** Overrides every notice rate limit. See docs/release/versioning-and-release.md. */
   securityCritical: z.boolean(),
   wireProtocol: z.object({ min: z.number().int(), max: z.number().int() }),
   schemaEpoch: z.number().int(),

@@ -285,12 +285,12 @@ jobs:
 
           These artifacts are signed with a Developer ID and notarized by Apple, so macOS
           runs them without a Gatekeeper quarantine prompt. ${manifest_line}
-          See docs/versioning-and-release.md."
+          See docs/release/versioning-and-release.md."
           else
             notes="Automated release of ${{ github.sha }}.
 
           These artifacts are **not yet signed or notarized**, so macOS quarantines them on
-          first run. ${manifest_line} See docs/versioning-and-release.md."
+          first run. ${manifest_line} See docs/release/versioning-and-release.md."
           fi
 
           gh release create "${{ steps.plan.outputs.tag }}" \

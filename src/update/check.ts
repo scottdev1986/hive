@@ -9,7 +9,7 @@
  *
  * Checks are cached for a day, jittered nowhere because the CLI check happens
  * on an explicit human command. The daemon-owned background check on a jittered
- * ~24h timer is the design in research/update-experience.md and is not built
+ * ~24h timer is the design in docs/release/update-experience.md and is not built
  * yet; this module is written so the daemon can call it unchanged.
  */
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -100,7 +100,7 @@ export interface CheckDeps {
 }
 
 /**
- * GitHub's `releases/latest` endpoint. research/distribution-auto-update.md
+ * GitHub's `releases/latest` endpoint. docs/release/distribution.md
  * argues for a signed channel document on a CDN instead, so that channel and
  * rollout policy are not inferred from a mutable API. That endpoint does not
  * exist yet; this reads the tag of the newest non-prerelease and the manifest

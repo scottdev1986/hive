@@ -129,7 +129,7 @@ export async function runDaemon(): Promise<void> {
     observeRateLimits: (model, response, observedAt) =>
       quota.observeCodexRateLimits(model, response, observedAt),
   });
-  // The per-repo graphify MCP server (docs/architecture/graphify-integration.md).
+  // The per-repo graphify MCP server (docs/graphify/integration.md).
   // Constructed unconditionally — start() reads the repo's opt-in state and is
   // a no-op for the repos that never enabled it.
   const graphify = new GraphifyService(repoRoot);

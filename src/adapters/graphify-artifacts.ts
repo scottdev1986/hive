@@ -1,6 +1,6 @@
 /**
  * The graphify bundle registry: which Hive-built artifact this Hive binary
- * trusts, per platform (docs/architecture/graphify-bundling.md).
+ * trusts, per platform (docs/graphify/bundling.md).
  *
  * Hive ships graphify as a frozen, self-contained bundle it built itself — no
  * uv, no Python, no PyPI on the user's machine. The bundle is published as a

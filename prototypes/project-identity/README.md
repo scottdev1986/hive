@@ -1,6 +1,6 @@
 # Project identity under motion
 
-This is prototype hypothesis 4 from the [Workspace blueprint](../../docs/architecture/hive-workspace-blueprint.md):
+This is prototype hypothesis 4 from the [Workspace blueprint](../../docs/workspace/blueprint.md):
 a project must keep one identity while the filesystem moves underneath it, and must never
 hand an old identity to a new directory.
 

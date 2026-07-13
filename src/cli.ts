@@ -539,7 +539,7 @@ export function createProgram(): Command {
   const graphify = program
     .command("graphify")
     .description(
-      "Opt-in local code knowledge graph for agents (docs/architecture/graphify-integration.md)",
+      "Opt-in local code knowledge graph for agents (docs/graphify/integration.md)",
     );
 
   graphify.command("enable")

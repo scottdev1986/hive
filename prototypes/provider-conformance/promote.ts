@@ -131,7 +131,7 @@ Codex dual-client is a provider-specific extension rather than a fake Claude equ
 
 The committed [driven run summary](evidence/driven-run-summary.json) contains the binding hashes, assertions, normalized event kinds, and billing observations without account identity, absolute paths, prompts, or raw model output. Raw redacted JSONL remains local and gitignored because even a redacted protocol trace contains machine-specific paths and unnecessary transcript material.
 
-Documentation provenance is attached to every fact in [the machine-readable matrix](evidence/evidence-matrix.json). The primary contracts are the [Codex app-server documentation](https://learn.chatgpt.com/docs/app-server), [Claude CLI reference](https://code.claude.com/docs/en/cli-usage), [Claude streaming-input guide](https://code.claude.com/docs/en/agent-sdk/streaming-vs-single-mode), [Claude approvals and user-input guide](https://code.claude.com/docs/en/agent-sdk/user-input), and the repository's [driven cross-vendor review](../../research/cross-vendor-architecture-review.md).
+Documentation provenance is attached to every fact in [the machine-readable matrix](evidence/evidence-matrix.json). The primary contracts are the [Codex app-server documentation](https://learn.chatgpt.com/docs/app-server), [Claude CLI reference](https://code.claude.com/docs/en/cli-usage), [Claude streaming-input guide](https://code.claude.com/docs/en/agent-sdk/streaming-vs-single-mode), [Claude approvals and user-input guide](https://code.claude.com/docs/en/agent-sdk/user-input), and the repository's [driven cross-vendor review](../../raw/reviews/cross-vendor-architecture-review.md).
 `;
 }
 

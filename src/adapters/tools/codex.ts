@@ -46,7 +46,7 @@ export interface CodexSpawnOptions {
    * disables an MCP server whose bearer_token_env_var is unset. */
   withCapabilityToken?: boolean;
   /** The per-repo graphify MCP server, when the daemon has one up and healthy
-   * (docs/architecture/graphify-integration.md). Attached through the same
+   * (docs/graphify/integration.md). Attached through the same
    * config-override channel as `hive`; absent means no entry at all. */
   graphifyUrl?: string;
 }

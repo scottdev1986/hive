@@ -23,7 +23,7 @@ import { fetchTokenUsage } from "./token-usage";
  * Model Control Center. One JSON document on stdout: the live capability
  * catalogs, the billing money-guard state, and the daemon's quota statuses.
  *
- * Honesty contract (docs/architecture/model-control-center-settings-ui.md):
+ * Honesty contract (docs/routing/model-control-center.md):
  *
  * - Everything here is a passthrough of measured facts. Capability records
  *   keep their per-field `Discovered` provenance (known/unknown-with-reason),

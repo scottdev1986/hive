@@ -1,7 +1,7 @@
 /**
  * The versioning contract, enforced by CI rather than by anyone remembering it.
  *
- * Every rule in docs/versioning-and-release.md that a human could break with a
+ * Every rule in docs/release/versioning-and-release.md that a human could break with a
  * plausible edit is asserted here. These tests run in the same `bun test` step
  * the release workflow gates on, so breaking the contract fails the release
  * instead of shipping a wrong version.

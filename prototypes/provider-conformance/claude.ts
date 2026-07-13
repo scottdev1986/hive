@@ -16,7 +16,7 @@ type JsonObject = Record<string, unknown>;
 const CLAUDE_CLI_DOCS = "https://code.claude.com/docs/en/cli-usage";
 const CLAUDE_INPUT_DOCS = "https://code.claude.com/docs/en/agent-sdk/user-input";
 const CLAUDE_STREAM_DOCS = "https://code.claude.com/docs/en/agent-sdk/streaming-vs-single-mode";
-const DRIVEN_REVIEW = "research/cross-vendor-architecture-review.md#appendix-reproducing-the-claude-code-observations";
+const DRIVEN_REVIEW = "raw/reviews/cross-vendor-architecture-review.md#appendix-reproducing-the-claude-code-observations";
 
 class Recorder {
   readonly events: NormalizedEvent[] = [];

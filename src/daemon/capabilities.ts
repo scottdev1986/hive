@@ -1,4 +1,4 @@
-// The Hive authorization boundary. See docs/architecture/capability-rights-matrix.md
+// The Hive authorization boundary. See docs/daemon/authorization.md
 // for the binding contract; this file is its implementation and must not drift
 // from it.
 //

@@ -440,7 +440,7 @@ export interface HiveDaemonOptions {
    * operator-gated `/autonomy` endpoint, which persists before it applies. */
   autonomy?: AutonomyControl;
   /** The per-repo graphify MCP server, when this repo opted in
-   * (docs/architecture/graphify-integration.md). The daemon owns its
+   * (docs/graphify/integration.md). The daemon owns its
    * lifecycle: up on start, down on stop, rebuilt-and-reloaded after each
    * landing — all fire-and-forget, never in a caller's latency. */
   graphify?: GraphifyService;

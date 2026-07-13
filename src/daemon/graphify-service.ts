@@ -1,6 +1,6 @@
 /**
  * The daemon-owned per-repo graphify MCP server
- * (docs/architecture/graphify-integration.md, "One server per repo").
+ * (docs/graphify/integration.md, "One server per repo").
  *
  * One HTTP instance per repository, held (not detached) so it dies with the
  * daemon and can never leak; restarted after each successful rebuild so every

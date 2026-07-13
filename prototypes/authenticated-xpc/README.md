@@ -1,7 +1,7 @@
 # Authenticated XPC prototype (blueprint hypothesis 3)
 
 Runnable evidence for **"Authenticated IPC and capabilities"** in
-[`docs/architecture/hive-workspace-blueprint.md`](../../docs/architecture/hive-workspace-blueprint.md).
+[`docs/workspace/blueprint.md`](../../docs/workspace/blueprint.md).
 The blueprint says authentication and authorization are separate concerns and
 makes four falsifiable claims. This prototype proves all four with real signed
 processes and a real launchd Mach service.

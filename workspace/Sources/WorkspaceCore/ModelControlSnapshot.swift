@@ -3,8 +3,8 @@ import Foundation
 /// The wire contract for `hive model-control-snapshot` — one JSON document the
 /// Workspace reads over the same CLI-subprocess transport as the feed.
 ///
-/// Honesty rules baked into these types (docs/architecture/
-/// model-control-center-settings-ui.md §2–3):
+/// Honesty rules baked into these types (docs/routing/model-control-center.md
+/// §2–3):
 ///
 /// - Every discovered fact is three-valued at the source: known(value),
 ///   or unknown(reason). A consumer must branch to read a value, so an

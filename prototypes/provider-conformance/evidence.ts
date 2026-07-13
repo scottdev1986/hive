@@ -13,7 +13,7 @@ const CLAUDE_CLI = "https://code.claude.com/docs/en/cli-usage";
 const CLAUDE_STREAM = "https://code.claude.com/docs/en/agent-sdk/streaming-vs-single-mode";
 const CLAUDE_INPUT = "https://code.claude.com/docs/en/agent-sdk/user-input";
 const CLAUDE_PERMISSIONS = "https://code.claude.com/docs/en/agent-sdk/permissions";
-const REVIEW = "research/cross-vendor-architecture-review.md";
+const REVIEW = "raw/reviews/cross-vendor-architecture-review.md";
 
 function documented(provider: Provider, scenario: Scenario): ProvenanceAxis {
   if (provider === "codex") {

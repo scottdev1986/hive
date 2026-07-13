@@ -4,7 +4,7 @@ import { CapabilityProviderSchema, type CapabilityProvider } from "./capability"
 /**
  * The user's routing policy — the store behind the Model Control Center and,
  * once the AuthorizedLaunch gate lands, the router's only source of standing
- * preference. Governed by docs/architecture/router-redesign-recommended.md:
+ * preference. Governed by docs/routing/routing-policy.md:
  * chains carry exact (provider, model, effort) targets and nothing else;
  * order is semantic (primary first, a fallback chain, never parallel); a
  * bare "default" string that looks like a model id is illegal, and no legal

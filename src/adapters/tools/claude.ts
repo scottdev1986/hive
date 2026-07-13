@@ -40,7 +40,7 @@ export interface ClaudeSpawnOptions {
    * leave this off and take tmux delivery instead. */
   channels?: boolean;
   /** The per-repo graphify MCP server, when the daemon has one up and healthy
-   * (docs/architecture/graphify-integration.md). Absent means no entry at all:
+   * (docs/graphify/integration.md). Absent means no entry at all:
    * a dead URL in the config would cost every agent a connect-timeout. */
   graphifyUrl?: string;
   /** Absolute path selected by the daemon. tmux servers can outlive the

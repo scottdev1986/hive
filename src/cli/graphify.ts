@@ -1,6 +1,6 @@
 /**
  * `hive graphify enable|disable|status` — the consent surface for the
- * graphify integration (docs/architecture/graphify-integration.md).
+ * graphify integration (docs/graphify/integration.md).
  *
  * This command never prompts: running `enable` IS the consent, in the same
  * sense that running `init` is authorization for what init prints itself

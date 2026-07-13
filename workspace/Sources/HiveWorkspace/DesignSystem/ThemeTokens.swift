@@ -3,7 +3,7 @@ import AppKit
 /// THE HIVE WORKSPACE DESIGN SYSTEM — tokens.
 ///
 /// This file, the components beside it in `DesignSystem/Components/`, and the
-/// rules in `docs/architecture/hive-workspace-design-system.md` are the one
+/// rules in `docs/workspace/ui-design-system.md` are the one
 /// visual language for the whole app: settings, terminal pane chrome, the
 /// agent feed, the attention queue, headers, and status indicators alike.
 /// Build new surfaces from these tokens; do not invent parallel ones.

@@ -1,0 +1,149 @@
+# Capability discovery
+
+Updated: 2026-07-13
+Sources: Hive source tree, 2026-07-13; docs/research/router-vendor-surfaces.md; docs/research/dynamic-model-router.md (capability-record section); raw/reviews/cross-vendor-architecture-review.md (retired)
+Raw: [Cross-vendor architecture review](../../raw/reviews/cross-vendor-architecture-review.md)
+
+## Summary
+
+Every vendor CLI Hive drives will tell you, for free and without buying an inference, which models the signed-in account can launch and which effort levels each accepts. None of them will tell you which model is *good*. This article records what the wire actually says, what it conspicuously does not, and the reading discipline that keeps an absent field from becoming a fabricated `false`.
+
+Wire behavior verified 2026-07-11 against claude 2.1.207 and codex-cli 0.144.1; the Grok surface verified 2026-07-13 against grok 0.2.99. Model ids below are **examples observed on those dates**, never things the code depends on: Hive's binary ships with no model knowledge (`src/adapters/tools/models.ts:6-11`), so vendor model ids live only in tests and fixtures. They rot. The mechanisms do not.
+
+## The probe matrix
+
+"Free" means: no user message, no thread, no turn, no inference. It does not mean stable.
+
+| Surface | Cost | What it yields |
+|---|---|---|
+| Claude control `initialize` (stream-json, stdin closed) | **free** | account identity + a model menu: `value`, `resolvedModel`, `displayName`, `supportsEffort`, `supportedEffortLevels`, `supportsAdaptiveThinking`, `supportsFastMode` |
+| Claude `statusLine` stdin payload | **free**, runtime-only | the live session's effective `effort.level` and `model.id`; tracks `/effort` and mid-session model switches |
+| Claude control `get_usage` | **free**, experimental | see [quota-surfaces.md](quota-surfaces.md) |
+| Codex app-server `model/list` (`{}`, `includeHidden: true`) | **free**, documented | `id`, `model`, display name, `hidden`, `isDefault`, `defaultReasoningEffort`, `supportedReasoningEfforts`, modalities, service tiers |
+| Codex app-server `config/read` | **free** | the effective layered model + effort an *unflagged* launch on this machine will use |
+| Codex app-server `account/read` | **free** | auth mode, plan type (e.g. `chatgpt`/`prolite`). No per-model grants. Do not log the email it carries. |
+| Codex `generate-json-schema --experimental` | **free** | the exact types the installed binary implements — version-local, not account truth |
+| Grok `grok models` + `~/.grok/models_cache.json` | **free**, two-step | `id`, `name`, `hidden`, `supports_reasoning_effort`, `reasoning_efforts[]` |
+| `<cli> --version` | **free** | the CLI identity — **carried by no catalog**; it must be read separately |
+| Trial launch / tiny prompt | **BILLABLE** | not a discovery primitive |
+
+**Probing by guessing a CLI subcommand is BILLABLE on both CLIs.** `claude models` is not a subcommand; Claude Code treats the unrecognized word as a *prompt*, runs a session, spends quota, and exits 0. Codex behaves the same way. Exit 0 is not evidence of anything. Confirm every argument against `--help`, and prefer the declared control/RPC surfaces over argv. This single fact is why the Grok probe uses only the real `grok models` subcommand and why it additionally demands a liveness signal (below) rather than trusting the exit code.
+
+## `isDefault` is not the effective default
+
+Codex's `model/list` flags exactly one catalog entry `isDefault`. On 2026-07-11 that flag sat on `gpt-5.5` — while `config/read` reported that an unflagged launch on this very machine would run `gpt-5.6-sol` at `xhigh`. Both readings were correct. They answer different questions: `isDefault` is the *vendor's catalog recommendation*; the effective default is what the *layered local config* actually resolves to.
+
+> **A router that reads the catalog flag and calls it "the default" is describing a different machine than the one it is about to spawn on.**
+
+So the effective default is read from `config/read` on Codex, from the menu's `default` entry on Claude, and from the `* <id> (default)` line of `grok models` stdout on Grok (`src/daemon/capability-discovery.ts:769-775`). Never from `isDefault`.
+
+## A guessed field name does not error — it reads as "no"
+
+The most transferable lesson in this corpus, and it cost a nearly-shipped wrong record.
+
+While building the capability records, a probe read Codex's hidden flag under the guessed key **`isHidden`**. It returned `null` for **every model in the catalog — including the one entry that is genuinely hidden.** Nothing errored. Nothing warned. The column was uniformly empty, which is *indistinguishable* from a vendor that simply does not publish the field. The near-miss was a `hidden`-is-`surface-silent` record for a provider that in fact sends `hidden` on every single entry. The real key is `hidden`.
+
+Two rules follow, and both are cheap:
+
+1. **Field names come off the live wire, never from memory or from the shape of a sibling API.** Dump the raw frame and read the keys that are there.
+2. **Prove every field with a positive control** — one entry that *must* come back non-null if the key is right. The genuinely-hidden catalog entry is the control for `hidden`: any read of that flag returning null *for it* is a wrong key, not a quiet vendor.
+
+> **An all-null column is a bug hypothesis, not a finding.**
+
+The corollary is why the unknown taxonomy below exists at all: a guessed JSON key is indistinguishable from an honest absence, and only a discipline that refuses to turn absence into `false` stops that indistinguishability from silently becoming a shipped judgment.
+
+### A related shape trap
+
+`supportedReasoningEfforts` is a list of **objects** — `{reasoningEffort, description}` — not a list of strings. A consumer that expects strings reads nothing, gets an empty effort set, and concludes the model supports no effort at all. Claude's `supportedEffortLevels`, on the other surface, *is* a list of strings. The two surfaces do not agree on shape, and neither is wrong.
+
+## The two surfaces are not symmetric
+
+| Fact | Claude control `initialize` | Codex `model/list` |
+|---|---|---|
+| effort supported | `supportsEffort` (bool per model) — **absent on the haiku-class entry** | **sent for no model** |
+| effort levels | `supportedEffortLevels` — list of **strings** | `supportedReasoningEfforts` — list of **objects** |
+| recommended effort | **sent for no model** | `defaultReasoningEffort`, per model |
+| vendor-internal | **sent for no model** | `hidden`, boolean per model |
+| entitlement | **sent by neither** — presence in the account-scoped catalog is the whole of the evidence | |
+| CLI version | **carried by neither catalog** — read from `<cli> --version` | |
+
+So `defaultEffort` is Codex-only, `supportsEffort` is Claude-only, `hidden` is Codex-only, and `entitled` is nobody's. Hive records `entitled: known(true)` for a model it *saw* in the account's catalog (`src/daemon/capability-discovery.ts:148`, `:347`, `:810`) — presence is positive evidence. No vendor will ever send `entitled: false`; unusable models are simply **absent**.
+
+Four traps, each a plausible mistake:
+
+- Defaulting a Claude model's recommended effort to `medium` invents a vendor claim. Claude recommends nothing.
+- Reconstructing Codex's `supportsEffort` from its non-empty effort list fabricates a boolean the vendor never sent — and it *looks* right, which is what makes it dangerous.
+- Reading a Claude model's `hidden` as `false` is a guess. Claude has no hidden flag; the honest value is unknown.
+- Waiting for `entitled: false` is waiting for something no vendor will send.
+
+**Claude's model menu is not exhaustive.** Models launch that the menu never lists — bare concrete ids and the `best` alias were accepted at launch while absent from the 2.1.207 menu. Absence from the menu is not proof a model cannot launch. Treat the menu as *"what exists"*, never as *"what parses"*.
+
+## Discovery is not validation: the three-state trust ladder
+
+The sharpest limit on everything above. **`--model totally-bogus-model-xyz` is ACCEPTED at launch.** Claude's `initialize` takes it, and `system/init` echoes the garbage back verbatim as the effective model. Only the **first turn** fails — `is_error: true`, `total_cost_usd: 0`, *"There's an issue with the selected model … It may not exist or you may not have access to it."*
+
+> **A model pin cannot fail closed at spawn.** A launch that looks validated can still be a dead session.
+
+So a model id has **three** states, and conflating any two of them is a bug:
+
+| state | earned by | strength |
+|---|---|---|
+| `catalogued` | some provider catalog names it | weakest — says nothing about *this account* |
+| `providerReportedSelectable` | an authenticated, account-scoped call offers it (Claude's `initialize.models[]`, Codex's `model/list`, Grok's `models_cache.json`) | **what every surface in this article yields** |
+| `launchValidated` | a real session accepted it and a real turn came back | proof — and it costs a turn |
+
+Everything discovery gives you is the **middle** state. It is stronger than anything a public catalog offers and it is *weaker than proof*. The consequence for routing is direct and load-bearing: **a route entry that "launched" is not evidence the model exists.** A validating session must accept no task until the first-turn outcome lands, and must fail closed on mismatch — never substitute. See [../routing/routing-policy.md](../routing/routing-policy.md).
+
+Hive records this honestly today: a discovered model carries `entitled: known(true)` because it was *seen in the account's catalog* — that is the middle rung asserted as exactly what it is, not as launch proof.
+
+## Two protocol facts worth keeping
+
+**Claude's `initialize` control_request is genuinely zero-cost** and returns both the account block and `models[]` in one frame — no prompt, no turn, no thread. It is the same frame Hive already awaits for the pool→model display-name join ([quota-surfaces.md](quota-surfaces.md)), so the catalog costs no extra round trip.
+
+**Re-sending `initialize` to a live Claude session returns `pending_permission_requests`** — an array of the exact `control_request`s the session is still blocked on. That is the vendor's own answer to approval-replay-on-reconnect: reconnect, re-read, re-answer, without duplicating an approval. (It resolves the *approval* leg only; no vendor offers turn-level idempotency keys, so a turn interrupted mid-flight remains an honest `UNKNOWN_OUTCOME`.) **Hive does not consume this field yet** — recorded here as available vendor surface, not as shipped behavior.
+
+**The Codex app-server has no protocol-version field.** Its `initialize` carries `clientInfo` and capability flags and nothing to negotiate against (`src/adapters/tools/codex-app-server.ts:137-142` sends exactly that), so a version assumption **cannot be checked on the wire** — versioning is by build-pinned generated schemas, and `--help` calls the whole surface experimental. The contrast is instructive: Grok's ACP `initialize` *does* send `protocolVersion: 1` (`src/daemon/quota-sources.ts:1091`), and Claude sends a `capabilities[]` array. Codex, the surface most often treated as the protocol benchmark here, is the one that cannot tell you what protocol it speaks.
+
+## The three-way unknown
+
+Three different things look identical at a call site, and collapsing them into one `null` is how a guess acquires a vendor's badge. The taxonomy survived research into the type system at `src/schemas/capability.ts:129-148`:
+
+- **`field-absent`** — the surface answered *for this model* and omitted the field. (The haiku-class entry carries no effort fields at all.) Omission may mean unsupported, rollout-gated, or missing from this protocol version. The record must not choose on the vendor's behalf.
+- **`surface-silent`** — the surface carries the field for *no* model, so its absence says nothing about this one. (Claude has no `hidden` at all; Codex has no `supportsEffort` at all.)
+- **`malformed`** — present but not the documented shape. A payload we cannot parse is not a payload that said `false`.
+
+Every discovered fact is a `Discovered<T>` (`src/schemas/capability.ts:159-172`): a discriminated union of `{state:"known", value, surface, observedAt}` and `{state:"unknown", reason, surface, observedAt}`. A consumer *must* branch on `state` to read a value, which makes the guess impossible rather than merely discouraged. `valueOr()` exists (`:205`) but takes the fallback at the call site — there is no default hidden inside the reader.
+
+> **An absent field is `unknown(surface-silent)`, never `false`. Anything that turns silence into a boolean — a schema default, a `?? false`, a `?? "medium"` — is a Hive guess wearing a vendor's badge.**
+
+Effort levels are stored as the **raw vendor strings**, never a Hive enum (`src/schemas/capability.ts:209-217`). A strict enum at the ingestion boundary recreates exactly the release dependency dynamic discovery exists to remove — and a level Hive drops at ingestion is a level a critical restart cannot replay.
+
+## Grok's catalog: two steps, and exit 0 is not evidence
+
+Grok publishes no app-server metadata RPC. Its catalog is read in two steps (`src/daemon/capability-discovery.ts:691-745`):
+
+1. run `grok models` (a **real** subcommand — see the billable-subcommand warning above),
+2. then parse the file it refreshes, `~/.grok/models_cache.json` (or `$GROK_HOME`).
+
+The cache entries the code consumes are `id`, `name`, `hidden`, `supports_reasoning_effort`, and `reasoning_efforts[]` (each `{value, default?}`) — schema at `capability-discovery.ts:661-667`. The schemas are `passthrough`, so unknown vendor keys survive; a `context_window` field is **not** among the ones Hive reads today.
+
+The code is **stricter than the research docs were**, in three ways that are all load-bearing:
+
+- **Liveness, not exit code.** `grok models` run offline prints the *cached* catalog and exits 0. So the transport runs it with `--debug --debug-file <tmp>` and requires a measured settings-fetch success line in that debug log before it will trust anything (`grokModelsProvedLive`, `capability-discovery.ts:754-758`, gated at `:736`). Exit 0 is explicitly not accepted as evidence of a live read — the same discipline the billable-subcommand rule teaches, applied to a subcommand that is real.
+- **Version-pinned trust.** `isMeasuredGrokCatalogIdentity()` (`capability-discovery.ts:761-766`) admits **only builds whose catalog behavior was actually measured** — currently 0.2.93 (`f00f96316d4b`) and 0.2.99 (`b1b49ccb71a7`). Any other build throws rather than being trusted by analogy. The identity itself comes from a `grok --version` parse whose regex is pinned verbatim in the adapter (`src/adapters/tools/grok.ts:59`).
+- **Cache/CLI coherence.** A cache whose `grok_version` does not equal the CLI's own version yields *no records at all* (`capability-discovery.ts:783-787`), and an entry whose `info.id` disagrees with its map key is dropped (`:795`). A stale cache is not a catalog.
+
+Grok's `defaultEffort` is `known` only when some entry in `reasoning_efforts[]` carries `default: true`; otherwise it is `unknown("field-absent")` (`capability-discovery.ts:817-820`) — never `"medium"`.
+
+## What no free surface gives you
+
+No vendor returns a task-quality score, a cross-vendor capability scale, expected tokens or subscription percent for a future task, or a trustworthy mapping from API dollars to subscription capacity. Codex does not publish per-model price or context size in `model/list`. Public model/pricing pages are *enrichment* — they describe the API plane, not a CLI subscription's entitlement — and a web page failing must never make spawning impossible.
+
+Those facts must remain unknown, user-configured, or learned from explicit evals. Inventing them only makes a router confidently wrong. What model judgment Hive *does* apply is user policy, not vendor truth: see [../routing/routing-policy.md](../routing/routing-policy.md) and `../../SPEC.md` §6.
+
+## See Also
+
+- [Launch mechanics](launch-mechanics.md) — what to do with a discovered model id
+- [Quota surfaces](quota-surfaces.md) — the other free wire read, and the pool→model join
+- [Grok](grok.md) — the vendor whose catalog needs a liveness proof
+- [Routing policy](../routing/routing-policy.md)

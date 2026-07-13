@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build Hive's graphify bundles: the per-platform standalone artifacts
-# `hive graphify enable` downloads (docs/architecture/graphify-bundling.md).
+# `hive graphify enable` downloads (docs/graphify/bundling.md).
 #
 #   scripts/graphify/build.sh [--build-number N]
 #
@@ -22,7 +22,7 @@
 #                         zipped and submitted to notarytool; a rejection
 #                         fails the build. Bare Mach-Os cannot staple; the
 #                         ticket is server-side (same posture as the CLI
-#                         slices, docs/versioning-and-release.md).
+#                         slices, docs/release/versioning-and-release.md).
 # With neither set the bundles are ad-hoc-signed by PyInstaller and the build
 # says so — same graceful degradation as an unsigned Hive release.
 #

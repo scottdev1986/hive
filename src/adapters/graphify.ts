@@ -1,10 +1,10 @@
 /**
  * Graphify: an opt-in, repo-local code knowledge graph agents can query.
- * Design: docs/architecture/graphify-integration.md — the hard rules live
+ * Design: docs/graphify/integration.md — the hard rules live
  * there and are enforced here:
  *
- *   - Installed as a Hive-built frozen bundle (docs/architecture/
- *     graphify-bundling.md): fetched from Hive's own release, sha256-verified
+ *   - Installed as a Hive-built frozen bundle (docs/graphify/bundling.md):
+ *     fetched from Hive's own release, sha256-verified
  *     against a constant embedded in this binary, unpacked only after the
  *     hash matches. No uv, no Python, no PyPI on the user's machine. The
  *     embedded lock remains the pin's source of truth — it is what the
