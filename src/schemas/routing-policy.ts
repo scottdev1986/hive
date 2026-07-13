@@ -148,6 +148,19 @@ export const RoutingPolicySchema = z.strictObject({
   models: z.array(ModelPolicySchema),
   chains: z.partialRecord(RoutingCategorySchema, RoutingChainSchema),
   selection: SelectionPolicySchema,
+}).superRefine((policy, context) => {
+  const targets = new Set<string>();
+  for (const [index, model] of policy.models.entries()) {
+    const target = chainTargetKey(model);
+    if (targets.has(target)) {
+      context.addIssue({
+        code: "custom",
+        path: ["models", index],
+        message: `duplicate model policy for ${model.provider}/${model.model}`,
+      });
+    }
+    targets.add(target);
+  }
 });
 export type RoutingPolicy = z.infer<typeof RoutingPolicySchema>;
 

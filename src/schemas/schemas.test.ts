@@ -7,10 +7,12 @@ import {
   HookEventSchema,
   QuotaConfigSchema,
   RepoProfileSchema,
+  RoutingPolicySchema,
   StatuslineReportSchema,
   type AgentRecord,
   type AgentMessage,
   type HookEvent,
+  emptyRoutingPolicy,
 } from ".";
 
 const timestamp = "2026-07-09T12:00:00.000Z";
@@ -336,6 +338,23 @@ describe("QuotaConfigSchema", () => {
         deep: { fiveHour: 8, weekly: 1.5 },
         complex_coding: { fiveHour: 9, weekly: 2 },
       },
+    })).toThrow();
+  });
+});
+
+describe("RoutingPolicySchema", () => {
+  test("accepts one model row and rejects contradictory duplicates", () => {
+    const row = {
+      provider: "claude" as const,
+      model: "claude-opus-4-8",
+      state: "enabled" as const,
+      effort: { mode: "never-configured" as const },
+    };
+    const policy = { ...emptyRoutingPolicy(timestamp), models: [row] };
+    expect(RoutingPolicySchema.parse(policy)).toEqual(policy);
+    expect(() => RoutingPolicySchema.parse({
+      ...policy,
+      models: [row, { ...row, state: "disabled" }],
     })).toThrow();
   });
 });
