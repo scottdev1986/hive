@@ -40,5 +40,9 @@ let package = Package(
             // so one file pins both halves of the schema.
             resources: [.copy("Fixtures")]
         ),
+        .testTarget(
+            name: "HiveWorkspaceTests",
+            dependencies: ["HiveWorkspace", "WorkspaceCore"]
+        ),
     ]
 )

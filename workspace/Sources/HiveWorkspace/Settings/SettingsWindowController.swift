@@ -10,6 +10,7 @@ final class SettingsWindowController: NSWindowController, NSToolbarDelegate {
     private var tasksController: TasksSettingsController!
     private var modelsController: ModelsSettingsController!
     private var usageController: UsageSettingsController!
+    private(set) var dataSource: ModelControlDataSource!
     private let container = NSViewController()
 
     convenience init(hivePath: String?, daemonPort: Int?, initialWidth: Double? = nil) {
@@ -32,6 +33,7 @@ final class SettingsWindowController: NSWindowController, NSToolbarDelegate {
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
         self.init(window: window)
 
+        self.dataSource = dataSource
         forcedWidth = initialWidth.map { CGFloat($0) }
 
         tasksController = tasks
@@ -106,6 +108,7 @@ final class SettingsWindowController: NSWindowController, NSToolbarDelegate {
     }
 
     func show() {
+        dataSource.refresh()
         select(section: currentSection)
         window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
