@@ -91,6 +91,18 @@ function fakeVersion(version: string, exitOk = true): void {
   chmodSync(cliPath(dir), 0o755);
 }
 
+async function signedVersion(version: string): Promise<void> {
+  await stageRelease(stageDeps(version));
+}
+
+function signedRollbackDeps(healthy = true) {
+  return {
+    root,
+    publicKey: RELEASE_KEY.publicKey,
+    healthCheck: async () => healthy,
+  };
+}
+
 describe("staging a release", () => {
   test("verifies, stages, and leaves an immutable version directory", async () => {
     const result = await stageRelease(stageDeps("0.0.7"));
@@ -113,6 +125,16 @@ describe("staging a release", () => {
     }));
     await expect(promise).rejects.toThrow(/does not match the SHA-256/);
     expect(isStaged("0.0.7", root)).toEqual(false);
+  });
+
+  test("refuses a parsed manifest that differs from the signed bytes", async () => {
+    const promise = stageRelease(stageDeps("0.0.7", {
+      manifest: manifestFor("9.9.9", CLI_BYTES),
+      probeVersion: async () => "hive 9.9.9",
+    }));
+
+    await expect(promise).rejects.toThrow(/does not match the signed manifest bytes/);
+    expect(isStaged("9.9.9", root)).toBe(false);
   });
 
   test("refuses a binary that will not say its own version", async () => {
@@ -185,6 +207,22 @@ describe("ensureStaged: an already-staged version is re-proved, never assumed", 
     }));
     expect(result.reused).toBe(true);
     expect(downloads).toBe(0);
+  });
+
+  test("a signed re-proof makes a legacy staged version safe to roll back to", async () => {
+    fakeVersion("0.0.7");
+    const result = await ensureStaged(stageDeps("0.0.7", {
+      download: async () => {
+        throw new Error("already staged bytes must not be downloaded");
+      },
+    }));
+    fakeVersion("0.0.8");
+    await activate("0.0.8", root);
+    writeInstallState({ active: "0.0.8", previous: "0.0.7" }, root);
+
+    expect(result.reused).toBe(true);
+    await expect(rollback(signedRollbackDeps()))
+      .resolves.toMatchObject({ activated: true, version: "0.0.7" });
   });
 
   test("a staged binary tampered with on disk is discarded and refetched", async () => {
@@ -300,22 +338,75 @@ describe("activation", () => {
 });
 
 describe("rollback", () => {
-  test("reactivates the retained version without a network call", async () => {
-    fakeVersion("0.0.6");
-    fakeVersion("0.0.7");
+  test("refuses retained bytes changed after install without disturbing current", async () => {
+    await signedVersion("0.0.6");
+    await signedVersion("0.0.7");
+    await activate("0.0.7", root);
+    writeInstallState({ active: "0.0.7", previous: "0.0.6" }, root);
+    writeFileSync(cliPath(versionDir("0.0.6", root)), "#!/bin/sh\necho tampered\n");
+
+    await expect(rollback(signedRollbackDeps()))
+      .rejects.toThrow(/does not match its signed release manifest/);
+    expect(readlinkSync(currentLink(root))).toEqual(join("versions", "0.0.7"));
+    expect(readInstallState(root)).toEqual({ active: "0.0.7", previous: "0.0.6" });
+  });
+
+  test("refuses verification material whose signature no longer proves it", async () => {
+    await signedVersion("0.0.6");
+    await signedVersion("0.0.7");
+    await activate("0.0.7", root);
+    writeInstallState({ active: "0.0.7", previous: "0.0.6" }, root);
+    const materialPath = join(versionDir("0.0.6", root), "release-verification.json");
+    const material = JSON.parse(readFileSync(materialPath, "utf8"));
+    writeFileSync(materialPath, JSON.stringify({
+      ...material,
+      signature: Buffer.alloc(64).toString("base64"),
+    }));
+
+    await expect(rollback(signedRollbackDeps()))
+      .rejects.toThrow(/invalid verification material/);
+    expect(readlinkSync(currentLink(root))).toEqual(join("versions", "0.0.7"));
+  });
+
+  test("refuses when this build has no embedded release key", async () => {
+    await signedVersion("0.0.6");
+    await signedVersion("0.0.7");
     await activate("0.0.7", root);
     writeInstallState({ active: "0.0.7", previous: "0.0.6" }, root);
 
-    const outcome = await rollback({ root, healthCheck: async () => true });
+    await expect(rollback({ ...signedRollbackDeps(), publicKey: null }))
+      .rejects.toThrow(/no embedded release key/);
+    expect(readlinkSync(currentLink(root))).toEqual(join("versions", "0.0.7"));
+  });
+
+  test("refuses a legacy retained version without disturbing current", async () => {
+    fakeVersion("0.0.6");
+    await signedVersion("0.0.7");
+    await activate("0.0.7", root);
+    writeInstallState({ active: "0.0.7", previous: "0.0.6" }, root);
+
+    await expect(rollback(signedRollbackDeps()))
+      .rejects.toThrow(/Reinstall it with `hive update 0\.0\.6`/);
+    expect(readlinkSync(currentLink(root))).toEqual(join("versions", "0.0.7"));
+    expect(readInstallState(root)).toEqual({ active: "0.0.7", previous: "0.0.6" });
+  });
+
+  test("re-verifies and reactivates the retained version without a network call", async () => {
+    await signedVersion("0.0.6");
+    await signedVersion("0.0.7");
+    await activate("0.0.7", root);
+    writeInstallState({ active: "0.0.7", previous: "0.0.6" }, root);
+
+    const outcome = await rollback(signedRollbackDeps());
     expect(outcome).toMatchObject({ activated: true, version: "0.0.6" });
     expect(readlinkSync(currentLink(root))).toEqual(join("versions", "0.0.6"));
   });
 
   test("a rollback is itself reversible", async () => {
-    fakeVersion("0.0.6");
-    fakeVersion("0.0.7");
+    await signedVersion("0.0.6");
+    await signedVersion("0.0.7");
     writeInstallState({ active: "0.0.7", previous: "0.0.6" }, root);
-    await rollback({ root, healthCheck: async () => true });
+    await rollback(signedRollbackDeps());
     expect(readInstallState(root)).toEqual({ active: "0.0.6", previous: "0.0.7" });
   });
 
@@ -333,12 +424,12 @@ describe("rollback", () => {
   });
 
   test("a rollback target that fails its health check is reverted, not left active", async () => {
-    fakeVersion("0.0.6");
+    await signedVersion("0.0.6");
     fakeVersion("0.0.7");
     await activate("0.0.7", root);
     writeInstallState({ active: "0.0.7", previous: "0.0.6" }, root);
 
-    const outcome = await rollback({ root, healthCheck: async () => false });
+    const outcome = await rollback(signedRollbackDeps(false));
     expect(outcome).toMatchObject({ activated: false, revertedTo: "0.0.7" });
     // `current` is back on the version that was running before the rollback
     // attempt, not stranded on the one that just failed its health check.
@@ -347,10 +438,10 @@ describe("rollback", () => {
   });
 
   test("a rollback with nothing healthy to fall back to says so rather than stranding current", async () => {
-    fakeVersion("0.0.6");
+    await signedVersion("0.0.6");
     writeInstallState({ active: null, previous: "0.0.6" }, root);
 
-    const outcome = await rollback({ root, healthCheck: async () => false });
+    const outcome = await rollback(signedRollbackDeps(false));
     expect(outcome).toMatchObject({ activated: false, revertedTo: null });
     expect(readlinkSync(currentLink(root))).toEqual(join("versions", "0.0.6"));
   });
@@ -442,11 +533,12 @@ describe("pruneOldVersions", () => {
   });
 
   test("a successful rollback prunes old versions too", async () => {
-    ["0.0.4", "0.0.5", "0.0.6", "0.0.7"].forEach((v) => fakeVersion(v));
+    ["0.0.4", "0.0.5", "0.0.7"].forEach((v) => fakeVersion(v));
+    await signedVersion("0.0.6");
     await activate("0.0.7", root);
     writeInstallState({ active: "0.0.7", previous: "0.0.6" }, root);
 
-    const outcome = await rollback({ root, healthCheck: async () => true, log: () => {} });
+    const outcome = await rollback({ ...signedRollbackDeps(), log: () => {} });
 
     expect(outcome).toMatchObject({ activated: true, version: "0.0.6", previous: "0.0.7" });
     expect(isStaged("0.0.6", root)).toEqual(true);

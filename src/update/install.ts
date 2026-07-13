@@ -16,12 +16,14 @@
  * process keeps executing its already-open image after the link moves, which is
  * useful while staging and exactly why the daemon must be restarted explicitly.
  */
+import { randomUUID } from "node:crypto";
 import { chmod, mkdir, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { z } from "zod";
 import {
   artifactMatches,
+  parseReleaseManifest,
   selectArtifact,
   verifyManifest,
   type HiveArch,
@@ -29,7 +31,7 @@ import {
   type ReleaseManifest,
 } from "../release/manifest";
 import type { ProgressCallback, ProgressReporter } from "./progress";
-import { HIVE_RELEASE_PUBLIC_KEY } from "../version";
+import { HIVE_ARCH, HIVE_RELEASE_PUBLIC_KEY } from "../version";
 import {
   binLink,
   cliPath,
@@ -48,6 +50,37 @@ const StateSchema = z.object({
   previous: z.string().nullable().default(null),
 });
 export type InstallState = z.infer<typeof StateSchema>;
+
+const VerificationMaterialSchema = z.object({
+  schema: z.literal(1),
+  manifestBase64: z.string(),
+  signature: z.string().min(1),
+}).strict();
+
+const VERIFICATION_MATERIAL_FILE = "release-verification.json";
+
+function verificationMaterialPath(directory: string): string {
+  return join(directory, VERIFICATION_MATERIAL_FILE);
+}
+
+async function writeVerificationMaterial(
+  directory: string,
+  manifestBytes: Uint8Array,
+  signature: string,
+): Promise<void> {
+  const path = verificationMaterialPath(directory);
+  const temporary = `${path}.${randomUUID()}.tmp`;
+  try {
+    await writeFile(temporary, `${JSON.stringify({
+      schema: 1,
+      manifestBase64: Buffer.from(manifestBytes).toString("base64"),
+      signature,
+    }, null, 2)}\n`);
+    await rename(temporary, path);
+  } finally {
+    await rm(temporary, { force: true });
+  }
+}
 
 export function readInstallState(root = installRoot()): InstallState {
   try {
@@ -92,6 +125,25 @@ export interface StageDeps {
 
 export class UpdateError extends Error {}
 
+function manifestFromSignedBytes(deps: StageDeps): ReleaseManifest {
+  let manifest: ReleaseManifest;
+  let supplied: ReleaseManifest;
+  try {
+    manifest = parseReleaseManifest(JSON.parse(
+      new TextDecoder("utf-8", { fatal: true }).decode(deps.manifestBytes),
+    ));
+    supplied = parseReleaseManifest(deps.manifest);
+  } catch {
+    throw new UpdateError("Refusing update: release manifest is invalid");
+  }
+  if (JSON.stringify(manifest) !== JSON.stringify(supplied)) {
+    throw new UpdateError(
+      "Refusing update: parsed release metadata does not match the signed manifest bytes",
+    );
+  }
+  return manifest;
+}
+
 export interface StageResult {
   readonly version: string;
   readonly directory: string;
@@ -111,21 +163,24 @@ export async function stageRelease(deps: StageDeps): Promise<StageResult> {
 
   const trust = verifyManifest(deps.manifestBytes, deps.signature, publicKey);
   if (!trust.verified) throw new UpdateError(`Refusing update: ${trust.reason}`);
-  if (!trust.signed) {
+  const signature = deps.signature;
+  if (!trust.signed || signature === null) {
     throw new UpdateError(
       "Refusing update: manifest is not signed by an embedded Hive release key",
     );
   }
 
-  const cli = selectArtifact(deps.manifest, "cli", deps.arch);
+  const manifest = manifestFromSignedBytes(deps);
+
+  const cli = selectArtifact(manifest, "cli", deps.arch);
   if (cli === null) {
     throw new UpdateError(
-      `Release ${deps.manifest.version} has no CLI build for darwin-${deps.arch}`,
+      `Release ${manifest.version} has no CLI build for darwin-${deps.arch}`,
     );
   }
-  const app = selectArtifact(deps.manifest, "workspace", deps.arch);
+  const app = selectArtifact(manifest, "workspace", deps.arch);
 
-  const version = deps.manifest.version;
+  const version = manifest.version;
   const staging = join(stagingDir(root), version);
   await rm(staging, { recursive: true, force: true });
   await mkdir(staging, { recursive: true });
@@ -187,6 +242,8 @@ export async function stageRelease(deps: StageDeps): Promise<StageResult> {
     await rm(tarball, { force: true });
   }
 
+  await writeVerificationMaterial(staging, deps.manifestBytes, signature);
+
   const target = versionDir(version, root);
   await mkdir(versionsDir(root), { recursive: true });
   await rm(target, { recursive: true, force: true });
@@ -218,10 +275,12 @@ export interface StageOutcome extends StageResult {
  */
 async function proveStaged(
   deps: StageDeps,
+  manifest: ReleaseManifest,
   cli: ReleaseArtifact,
   root: string,
+  signature: string,
 ): Promise<StageOutcome> {
-  const version = deps.manifest.version;
+  const version = manifest.version;
   const staged = cliPath(versionDir(version, root));
 
   const bytes = new Uint8Array(readFileSync(staged));
@@ -244,6 +303,8 @@ async function proveStaged(
       `Refusing update: the staged binary reported "${reported.trim()}", expected ${version}`,
     );
   }
+
+  await writeVerificationMaterial(versionDir(version, root), deps.manifestBytes, signature);
 
   return {
     version,
@@ -271,13 +332,15 @@ export async function ensureStaged(deps: StageDeps): Promise<StageOutcome> {
 
   const trust = verifyManifest(deps.manifestBytes, deps.signature, publicKey);
   if (!trust.verified) throw new UpdateError(`Refusing update: ${trust.reason}`);
-  if (!trust.signed) {
+  const signature = deps.signature;
+  if (!trust.signed || signature === null) {
     throw new UpdateError(
       "Refusing update: manifest is not signed by an embedded Hive release key",
     );
   }
-  const version = deps.manifest.version;
-  const cli = selectArtifact(deps.manifest, "cli", deps.arch);
+  const manifest = manifestFromSignedBytes(deps);
+  const version = manifest.version;
+  const cli = selectArtifact(manifest, "cli", deps.arch);
   if (cli === null) {
     throw new UpdateError(
       `Release ${version} has no CLI build for darwin-${deps.arch}`,
@@ -286,7 +349,7 @@ export async function ensureStaged(deps: StageDeps): Promise<StageOutcome> {
 
   if (isStaged(version, root)) {
     try {
-      return await proveStaged(deps, cli, root);
+      return await proveStaged(deps, manifest, cli, root, signature);
     } catch (error) {
       // The staged copy is not what the signed manifest describes. Discarding
       // and refetching is safe *unless* it is the version currently running:
@@ -412,6 +475,11 @@ export interface ActivationDeps {
   readonly log?: (message: string) => void;
 }
 
+export interface RollbackDeps extends ActivationDeps {
+  readonly arch?: HiveArch;
+  readonly publicKey?: string | null;
+}
+
 export type ActivationOutcome =
   | { activated: true; version: string; previous: string | null }
   | { activated: false; version: string; revertedTo: string | null; reason: string };
@@ -465,7 +533,76 @@ export async function activateWithHealthCheck(
   };
 }
 
-export async function rollback(deps: ActivationDeps): Promise<ActivationOutcome> {
+function rollbackVerificationError(version: string, reason: string): UpdateError {
+  return new UpdateError(
+    `Refusing rollback: retained hive ${version} ${reason}. ` +
+      `Reinstall it with \`hive update ${version}\`, then retry.`,
+  );
+}
+
+function verifyRollbackTarget(version: string, deps: RollbackDeps, root: string): void {
+  let material: z.infer<typeof VerificationMaterialSchema>;
+  try {
+    material = VerificationMaterialSchema.parse(JSON.parse(
+      readFileSync(verificationMaterialPath(versionDir(version, root)), "utf8"),
+    ));
+  } catch {
+    throw rollbackVerificationError(
+      version,
+      "has no valid signed rollback verification material",
+    );
+  }
+
+  const manifestBytes = Buffer.from(material.manifestBase64, "base64");
+  if (manifestBytes.toString("base64") !== material.manifestBase64) {
+    throw rollbackVerificationError(version, "has invalid verification material");
+  }
+
+  const publicKey = deps.publicKey === undefined
+    ? HIVE_RELEASE_PUBLIC_KEY
+    : deps.publicKey;
+  const trust = verifyManifest(manifestBytes, material.signature, publicKey);
+  if (!trust.verified || !trust.signed) {
+    const reason = trust.verified
+      ? "cannot be verified because this Hive build has no embedded release key"
+      : `has invalid verification material (${trust.reason})`;
+    throw rollbackVerificationError(version, reason);
+  }
+
+  let manifest: ReleaseManifest;
+  try {
+    manifest = parseReleaseManifest(JSON.parse(new TextDecoder("utf-8", { fatal: true })
+      .decode(manifestBytes)));
+  } catch {
+    throw rollbackVerificationError(version, "has an invalid signed release manifest");
+  }
+  if (manifest.version !== version) {
+    throw rollbackVerificationError(
+      version,
+      `has verification material for hive ${manifest.version}`,
+    );
+  }
+
+  const arch: HiveArch = deps.arch ?? (HIVE_ARCH === "arm64" ? "arm64" : "x64");
+  const artifact = selectArtifact(manifest, "cli", arch);
+  if (artifact === null) {
+    throw rollbackVerificationError(
+      version,
+      `has no signed CLI artifact for darwin-${arch}`,
+    );
+  }
+  let bytes: Uint8Array;
+  try {
+    bytes = new Uint8Array(readFileSync(cliPath(versionDir(version, root))));
+  } catch {
+    throw rollbackVerificationError(version, "has no readable CLI to verify");
+  }
+  if (!artifactMatches(artifact, bytes)) {
+    throw rollbackVerificationError(version, "does not match its signed release manifest");
+  }
+}
+
+export async function rollback(deps: RollbackDeps): Promise<ActivationOutcome> {
   const root = deps.root ?? installRoot();
   const state = readInstallState(root);
   if (state.previous === null) {
@@ -477,6 +614,7 @@ export async function rollback(deps: ActivationDeps): Promise<ActivationOutcome>
     );
   }
   const target = state.previous;
+  verifyRollbackTarget(target, deps, root);
   await activate(target, root);
   const healthy = await deps.healthCheck(cliPath(currentLink(root))).catch(() => false);
   if (!healthy) {
