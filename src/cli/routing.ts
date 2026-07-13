@@ -97,12 +97,17 @@ export async function printRouting(): Promise<void> {
   ]);
   const discovery = { claude, codex, grok };
 
-  const db = new HiveDatabase();
-  // Fail-closed on purpose: a corrupt policy store throws out of read() and
-  // this command reports it instead of printing a blank, permissive table.
-  const policy = new RoutingPolicyStore(db).read(now);
-  const escalations = db.listEscalations();
-  db.close();
+  const db = HiveDatabase.openReadonly();
+  let policy: RoutingPolicy;
+  let escalations: ReturnType<HiveDatabase["listEscalations"]>;
+  try {
+    // Fail-closed on purpose: a corrupt policy store throws out of read() and
+    // this command reports it instead of printing a blank, permissive table.
+    policy = new RoutingPolicyStore(db).read(now);
+    escalations = db.listEscalations();
+  } finally {
+    db.close();
+  }
 
   const lines = [
     ...formatChains(policy),

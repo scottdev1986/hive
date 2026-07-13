@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { mkdtempSync } from "node:fs";
@@ -874,7 +875,12 @@ describe("HiveDaemon HTTP server", () => {
       expect(db.listEvents().length).toEqual(6);
 
       const health = await daemon.fetch(new Request("http://hive/health"));
-      expect(await health.json()).toEqual({ ok: true, version: HIVE_VERSION });
+      expect(await health.json()).toEqual({
+        ok: true,
+        version: HIVE_VERSION,
+        database: { status: "ok" },
+        maintenance: { status: "unknown" },
+      });
 
       const reuseHandshake = await daemon.fetch(
         new Request("http://hive/handshake"),
@@ -885,6 +891,50 @@ describe("HiveDaemon HTTP server", () => {
         schemaEpoch: 1,
         capabilities: ["daemon-handshake-v1"],
         generation: 1,
+      });
+    } finally {
+      db.close();
+    }
+  });
+
+  test("health reports an unreadable database instead of inventing ok", async () => {
+    const path = join(home, "health-corrupt.db");
+    const db = new HiveDatabase(path);
+    const daemon = new HiveDaemon({ db, spawner: new StubSpawner() });
+    db.database.close();
+    await Bun.write(path, "not a sqlite database");
+    (db as unknown as { database: Database }).database =
+      new Database(path, { readonly: true });
+    try {
+      const response = await daemon.fetch(new Request("http://hive/health"));
+      expect(response.status).toBe(503);
+      expect(await response.json()).toMatchObject({
+        ok: false,
+        database: { status: "unreadable" },
+      });
+    } finally {
+      db.close();
+    }
+  });
+
+  test("health surfaces a failed maintenance run", async () => {
+    const db = new HiveDatabase(join(home, "health-maintenance.db"));
+    const daemon = new HiveDaemon({ db, spawner: new StubSpawner() });
+    (daemon as unknown as { reconcileAgents(): Promise<never> })
+      .reconcileAgents = () => Promise.reject(new Error("measured sweep failure"));
+    try {
+      await expect(daemon.runMaintenance()).rejects.toThrow(
+        "measured sweep failure",
+      );
+      const response = await daemon.fetch(new Request("http://hive/health"));
+      expect(response.status).toBe(503);
+      expect(await response.json()).toMatchObject({
+        ok: false,
+        database: { status: "ok" },
+        maintenance: {
+          status: "error",
+          error: "measured sweep failure",
+        },
       });
     } finally {
       db.close();

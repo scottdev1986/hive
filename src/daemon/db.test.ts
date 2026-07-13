@@ -47,6 +47,42 @@ function agent(overrides: Partial<AgentRecord> = {}): AgentRecord {
 }
 
 describe("HiveDatabase", () => {
+  test("opens read-only without creating or migrating schema", () => {
+    const path = join(home, "readonly-schema.db");
+    const initial = new Database(path, { create: true });
+    initial.exec("CREATE TABLE sentinel (value TEXT)");
+    initial.close();
+
+    const db = HiveDatabase.openReadonly(path);
+    try {
+      expect(db.database.query(
+        "SELECT name FROM sqlite_schema WHERE type = 'table' ORDER BY name",
+      ).all()).toEqual([{ name: "sentinel" }]);
+      expect(db.database.query("PRAGMA busy_timeout").get()).toEqual({
+        timeout: 5000,
+      });
+      expect(() => db.database.exec("CREATE TABLE migrated (value TEXT)"))
+        .toThrow("attempt to write a readonly database");
+    } finally {
+      db.close();
+    }
+  });
+
+  test("read-only opens keep reading while the daemon holds a write lock", () => {
+    const path = join(home, "readonly-contention.db");
+    const daemon = new HiveDatabase(path);
+    daemon.database.exec("BEGIN IMMEDIATE");
+    let reader: HiveDatabase | null = null;
+    try {
+      reader = HiveDatabase.openReadonly(path);
+      expect(reader.listAgents()).toEqual([]);
+    } finally {
+      reader?.close();
+      daemon.database.exec("ROLLBACK");
+      daemon.close();
+    }
+  });
+
   test("round-trips and updates agent records", () => {
     const db = new HiveDatabase(join(home, "agents.db"));
     try {

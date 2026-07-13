@@ -591,6 +591,10 @@ export class HiveDaemon {
   private bunServer: Server<undefined> | null = null;
   private reconciliationTimer: ReturnType<typeof setInterval> | null = null;
   private maintenanceRunning = false;
+  private maintenanceHealth:
+    | { status: "unknown" }
+    | { status: "ok" }
+    | { status: "error"; error: string } = { status: "unknown" };
   private readonly resources: ResourceLimits | null;
   private readonly lifecycleConfig: LifecycleConfig | null;
   private readonly psSample: CommandOutput;
@@ -1119,6 +1123,13 @@ export class HiveDaemon {
         );
       });
       this.db.pruneHistory(new Date().toISOString());
+      this.maintenanceHealth = { status: "ok" };
+    } catch (error) {
+      this.maintenanceHealth = {
+        status: "error",
+        error: error instanceof Error ? error.message : "unknown error",
+      };
+      throw error;
     } finally {
       this.maintenanceRunning = false;
     }
@@ -2000,11 +2011,36 @@ export class HiveDaemon {
 
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
-    // Public and non-authorizing. Health proves liveness and nothing else; it
-    // must never grow a side effect, because a route that mutates needs a
-    // capability and no launcher has one before it decides to talk to us.
+    // Public and non-authorizing. The DB probe is read-only, because a route
+    // that mutates needs a capability and no launcher has one before it
+    // decides to talk to us.
     if (url.pathname === "/health" && request.method === "GET") {
-      return json({ ok: true, version: HIVE_VERSION });
+      let database:
+        | { status: "ok" }
+        | { status: "degraded"; errors: string[] }
+        | { status: "unreadable"; error: string };
+      try {
+        const result = this.db.quickCheck();
+        database = result.length === 1 && result[0] === "ok"
+          ? { status: "ok" }
+          : { status: "degraded", errors: result };
+      } catch (error) {
+        database = {
+          status: "unreadable",
+          error: error instanceof Error ? error.message : "unknown error",
+        };
+      }
+      const ok = database.status === "ok" &&
+        this.maintenanceHealth.status !== "error";
+      return json(
+        {
+          ok,
+          version: HIVE_VERSION,
+          database,
+          maintenance: this.maintenanceHealth,
+        },
+        { status: ok ? 200 : 503 },
+      );
     }
     if (url.pathname === "/handshake" && request.method === "GET") {
       return json(await this.handshake());

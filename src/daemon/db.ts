@@ -304,12 +304,26 @@ export class HiveDatabase {
   readonly path: string;
   readonly database: Database;
 
-  constructor(path = getDatabasePath()) {
+  static openReadonly(path = getDatabasePath()): HiveDatabase {
+    return new HiveDatabase(path, { readonly: true });
+  }
+
+  constructor(
+    path = getDatabasePath(),
+    options: { readonly?: boolean } = {},
+  ) {
     this.path = path;
-    if (path !== ":memory:") {
+    if (options.readonly !== true && path !== ":memory:") {
       mkdirSync(dirname(path), { recursive: true });
     }
-    this.database = new Database(path, { create: true });
+    this.database = options.readonly === true
+      ? new Database(path, { readonly: true })
+      : new Database(path, { create: true });
+    // Connection-local only: this does not write the database, including on a
+    // read-only connection. Honest transient contention waits instead of
+    // failing immediately at bun:sqlite's zero-timeout default.
+    this.database.exec("PRAGMA busy_timeout = 5000");
+    if (options.readonly === true) return;
     this.database.exec("PRAGMA journal_mode = WAL");
     this.database.exec("PRAGMA foreign_keys = ON");
     this.database.exec(agentsTableDdl("agents", true));
@@ -603,6 +617,12 @@ export class HiveDatabase {
           )
       `).run(recoveredAt);
     })();
+  }
+
+  quickCheck(): string[] {
+    return z.array(z.object({ quick_check: z.string() }))
+      .parse(this.database.query("PRAGMA quick_check").all())
+      .map((row) => row.quick_check);
   }
 
   /**
