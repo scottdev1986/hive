@@ -187,9 +187,9 @@ describe("buildModelControlSnapshot", () => {
     expect(snapshot.quotaError).toContain("hive_quota_status failed");
   });
 
-  test("grok is marked meterless; metered vendors are marked metered", async () => {
+  test("every known vendor is marked metered once its capacity surface is wired", async () => {
     const snapshot = await buildModelControlSnapshot(fakeDependencies());
-    expect(snapshot.usageSurfaces.grok).toBe("none");
+    expect(snapshot.usageSurfaces.grok).toBe("metered");
     expect(snapshot.usageSurfaces.claude).toBe("metered");
     expect(snapshot.usageSurfaces.codex).toBe("metered");
   });

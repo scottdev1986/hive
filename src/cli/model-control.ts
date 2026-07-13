@@ -31,10 +31,11 @@ import { fetchQuotaStatus } from "./mcp";
  * - `quota: null` means the daemon could not be asked. It is NOT an empty
  *   list, and the app renders it as unknown, never as 0% used.
  * - `usageSurfaces` records whether Hive has ANY capacity-reading source for
- *   a provider. Grok has none — its billing endpoint is a money guard, not a
- *   gauge — so its entry is "none" and the app shows the unmetered panel
- *   instead of meters. The switch below fails closed on a vendor nobody
- *   classified: a new provider will not silently render as metered-and-empty.
+ *   a provider. Grok's `_x.ai/billing` carries `creditUsagePercent` (weekly
+ *   gauge) as of grok 0.2.99, so it is "metered" like Claude/Codex. The money
+ *   rails on the same payload remain a guard, never a gauge. The switch fails
+ *   closed on a vendor nobody classified: a new provider will not silently
+ *   render as metered-and-empty.
  */
 
 export interface ModelControlSnapshotDependencies {
@@ -61,11 +62,10 @@ function defaultDiscover(
 }
 
 /**
- * Whether Hive can read this provider's capacity at all. This mirrors the
- * structure of `src/daemon/quota-sources.ts`: Claude (`get_usage`) and Codex
- * (`account/rateLimits/read`) have discovery sources; Grok exposes no capacity
- * surface — `_x.ai/billing` answers "would this spend money", never "how full
- * is the plan" (grok-integration-spec §10).
+ * Whether Hive can read this provider's capacity at all. Mirrors
+ * `src/daemon/quota-sources.ts`: Claude (`get_usage`), Codex
+ * (`account/rateLimits/read`), and Grok (`_x.ai/billing` →
+ * `creditUsagePercent`) each have a session-free discovery source.
  */
 function usageSurface(provider: CapabilityProvider): "metered" | "none" {
   switch (provider) {
@@ -74,7 +74,7 @@ function usageSurface(provider: CapabilityProvider): "metered" | "none" {
     case "codex":
       return "metered";
     case "grok":
-      return "none";
+      return "metered";
     default:
       return unknownVendor(provider, "model-control-snapshot usageSurface");
   }

@@ -25,6 +25,8 @@ import {
   ClaudeStdioProbeTransport,
   CodexQuotaProbe,
   CodexStdioProbeTransport,
+  GrokQuotaProbe,
+  GrokStdioProbeTransport,
 } from "../daemon/quota-sources";
 import {
   CAPABILITY_PROVIDERS,
@@ -85,8 +87,9 @@ export async function runDaemon(): Promise<void> {
     })().catch(() => ({ vendorDefaults: {} }));
     routingPolicy.seedProvisionalBaseline(facts);
   }
-  // Live limits come from the providers themselves. Both probes are read-only
-  // and start no model turn, so a startup refresh costs nothing but a subprocess.
+  // Live limits come from the providers themselves. All three probes are
+  // read-only and start no model turn, so a startup refresh costs nothing but
+  // a subprocess.
   const quota = new QuotaService(
     new QuotaLedger(db),
     quotaConfig,
@@ -94,6 +97,7 @@ export async function runDaemon(): Promise<void> {
     [
       new CodexQuotaProbe(new CodexStdioProbeTransport()),
       new ClaudeQuotaProbe(new ClaudeStdioProbeTransport()),
+      new GrokQuotaProbe(new GrokStdioProbeTransport()),
     ],
   );
   const tmux = new TmuxAdapter();

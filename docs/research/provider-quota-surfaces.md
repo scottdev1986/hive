@@ -75,12 +75,41 @@ Note the deliberate inconsistency with the statusLine hook, which describes the 
 
 What Claude does **not** expose: the `initialize` control response returns `account` (email, organization, `subscriptionType`, `apiProvider`) and `models[]`, and contains zero usage data. The statusLine `rate_limits` block appears only for Claude.ai subscribers and only after the session's first API response. Nothing under `~/.claude` caches live rate-limit state; it lives in memory per session.
 
+## Grok — ACP `_x.ai/billing` (gauge + guard)
+
+`grok agent stdio` speaks ACP JSON-RPC. After `initialize` + `initialized`, the extension method `_x.ai/billing` with params `{}` returns the signed-in SuperGrok account's weekly usage. No session, no prompt, no turn. Bare `x.ai/billing` (no underscore) returns `-32601 Method not found`. The CLI's `/usage` slash command is the human-facing view of the same surface (see `~/.grok/docs/user-guide/04-slash-commands.md`). Verified against grok 0.2.99 on 2026-07-13; fixture `src/daemon/fixtures/grok-billing-supergrok.json`.
+
+```jsonc
+{
+  "config": {
+    "creditUsagePercent": 2.0,          // GAUGE: 0–100 used of the weekly pool
+    "currentPeriod": {
+      "type": "USAGE_PERIOD_TYPE_WEEKLY",
+      "start": "2026-07-12T17:18:56.768634+00:00",
+      "end": "2026-07-19T17:18:56.768634+00:00"   // rolling reset, not calendar week
+    },
+    "onDemandCap": { "val": 0 },        // GUARD: money rails, not capacity
+    "onDemandUsed": { "val": 0 },
+    "prepaidBalance": { "val": 0 },
+    "isUnifiedBillingUser": true,
+    "billingPeriodStart": "…",
+    "billingPeriodEnd": "…"
+  },
+  "subscription_tier": "SuperGrok"
+}
+```
+
+**Gauge vs guard.** `creditUsagePercent` is a real usage meter — live re-reads moved 2 → 3 → 4 during verification as the account spent. The money rails answer "would the next overflow spend money"; their zeros mean paid overflow is off, never "empty tank". Hive must never render money-rail zeros as remaining quota (that mistake is already recorded in memory). There is **no five-hour window** on this surface: five-hour is `not-metered` (positive absence); a missing percent with a recognized surface is `unknown`, not `not-metered`.
+
+Readings are `reported` (shape moved recently; earlier 2026-07-12 captures either lacked `creditUsagePercent` or never read that key). The account-wide weekly pool binds to `["*"]`; the free `initialize` `_meta.modelState.availableModels` list supplies the catalog.
+
 ## Binding a pool to the models it meters
 
-Neither vendor's quota payload carries a model id. Codex keys a sub-pool by an opaque codename — `codex_bengalfox` — and names it `"GPT-5.3-Codex-Spark"`. Claude reports `display_name: "Fable"` next to an explicit `id: null`. Both name the model exactly the way their **own model catalog** names it, and both publish that catalog for free:
+Neither Claude's nor Codex's quota payload carries a model id. Codex keys a sub-pool by an opaque codename — `codex_bengalfox` — and names it `"GPT-5.3-Codex-Spark"`. Claude reports `display_name: "Fable"` next to an explicit `id: null`. Both name the model exactly the way their **own model catalog** names it, and both publish that catalog for free. Grok's weekly pool is account-wide (`["*"]`), so it needs no display-name join.
 
 - **Claude:** the `initialize` control response already being awaited carries `models[]`, each entry with a `displayName` and the concrete `resolvedModel` it launches (`"Fable"` → `claude-fable-5`). No extra round trip; hive was previously throwing this frame away.
 - **Codex:** the app-server answers `model/list` (params `{}`, not `null` — a null one is rejected as a missing field) with `id` and `displayName` per model. It starts no thread, so it is as free as the limits read beside it.
+- **Grok:** ACP `initialize` `_meta.modelState.availableModels` lists `modelId` + `name` for free on the same process that calls `_x.ai/billing`.
 
 So the binding is **discovered by joining the pool's provider-given name against the provider's own display names**, and hive routes on the result. A pool whose name matches nothing in the catalog binds to nothing, stays unroutable, and says so — which is the honest state for a pool whose subject cannot be identified.
 

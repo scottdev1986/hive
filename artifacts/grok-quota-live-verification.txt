@@ -1,0 +1,23 @@
+# Live verification 2026-07-13 — denise Grok quota probe activated via current pointer
+# Build: versions/denise-grok-quota (worktree hive/denise-research-implement-get-grok-s)
+# CLI: hive quota  (after force refresh on activated build)
+# current pointer restored to versions/0.0.22 afterward
+
+claude/default/subscription (max) [discovered, fresh]
+  5h: 86.0% of 100.0% remaining ... [reported from statusline]
+  week: 43.0% of 100.0% remaining ... [reported from statusline]
+claude/default/weekly:Fable (Fable) [discovered, fresh]
+  week: 14.0% of 100.0% remaining ... [reported from provider]
+codex/default/codex (prolite) [discovered, fresh]
+  5h: not metered [authoritative from provider]
+  week: 64.3% of 100.0% remaining ... [authoritative from provider]
+codex/default/codex_bengalfox (GPT-5.3-Codex-Spark) [discovered, fresh]
+  5h: not metered [authoritative from provider]
+  week: 100.0% of 100.0% remaining ... [authoritative from provider]
+grok/default/subscription (SuperGrok) [discovered, fresh]
+  5h: not metered [reported from provider]
+  week: 96.0% of 100.0% remaining, 0.0% reserved (est), reset 2026-07-19T17:18:56.768Z [reported from provider]
+
+# hive_quota_status (MCP) Grok entry, same build:
+# weekly.used=4, remaining=96, remainingPct=0.96, fiveHour.availability=not-metered
+# model-control-snapshot: usageSurfaces.grok=metered, billing.generalUtilization=4, creditsEnabled=false

@@ -13,8 +13,10 @@ import {
 import {
   ClaudeStdioProbeTransport,
   CodexStdioProbeTransport,
+  GrokStdioProbeTransport,
   type ClaudeProbeTransport,
   type CodexProbeTransport,
+  type GrokProbeTransport,
 } from "./quota-sources";
 
 /**
@@ -59,6 +61,7 @@ import {
 /** The surface these facts come from: the same free `get_usage` frame quota reads. */
 const USAGE = "claude.get_usage" as const;
 const CODEX_LIMITS = "codex.account/rateLimits/read" as const;
+const GROK_BILLING = "grok._x.ai/billing" as const;
 
 /**
  * `get_usage`'s billing blocks, as claude 2.1.207 sends them. The key names are
@@ -278,6 +281,70 @@ export function accountBillingFromCodexRateLimits(
       : "Codex reports no current credit balance, but its CLI does not expose " +
         "whether auto-top-up is enabled; proceeding after the plan is exhausted " +
         "may purchase credits",
+  };
+}
+
+const GrokBillingSchema = z.object({
+  subscription_tier: z.string().nullable().optional(),
+  config: z.object({
+    creditUsagePercent: z.number().nullable().optional(),
+    onDemandCap: z.object({ val: z.number().nullable().optional() })
+      .passthrough().nullable().optional(),
+    onDemandUsed: z.object({ val: z.number().nullable().optional() })
+      .passthrough().nullable().optional(),
+    prepaidBalance: z.object({ val: z.number().nullable().optional() })
+      .passthrough().nullable().optional(),
+  }).passthrough().nullable().optional(),
+}).passthrough();
+
+/**
+ * Read Grok money-guard + weekly utilization from `_x.ai/billing`.
+ *
+ * `creditUsagePercent` is the gauge (plan pool used). The money rails
+ * (`onDemandCap` / `onDemandUsed` / `prepaidBalance`) answer whether paid
+ * overflow is live. All three rails at zero is measured paid-overflow-off;
+ * any positive rail is paid capacity. Never map a money-rail zero onto
+ * utilization — that mistake is already recorded in Hive's memory.
+ */
+export function accountBillingFromGrokBilling(
+  response: unknown,
+  observedAt: string,
+): AccountBilling {
+  const parsed = GrokBillingSchema.safeParse(response);
+  if (!parsed.success || parsed.data.config == null) {
+    return {
+      creditsEnabled: unknown("malformed", GROK_BILLING, observedAt),
+      disabledReason: null,
+      generalUtilization: unknown("malformed", GROK_BILLING, observedAt),
+      modelUtilization: {},
+      overflowUncertainty: "Grok billing data was malformed",
+    };
+  }
+  const config = parsed.data.config;
+  const moneyVal = (rail: { val?: number | null } | null | undefined): number | null =>
+    typeof rail?.val === "number" && Number.isFinite(rail.val) ? rail.val : null;
+  const cap = moneyVal(config.onDemandCap);
+  const used = moneyVal(config.onDemandUsed);
+  const prepaid = moneyVal(config.prepaidBalance);
+  const railsPresent = cap !== null && used !== null && prepaid !== null;
+  const anyPositive = (cap ?? 0) > 0 || (used ?? 0) > 0 || (prepaid ?? 0) > 0;
+  const creditsEnabled: Discovered<boolean> = !railsPresent
+    ? unknown("field-absent", GROK_BILLING, observedAt)
+    : known(anyPositive, GROK_BILLING, observedAt);
+
+  const percent = config.creditUsagePercent;
+  const generalUtilization: Discovered<number> =
+    typeof percent === "number" && Number.isFinite(percent) &&
+      percent >= 0 && percent <= 100
+      ? known(percent, GROK_BILLING, observedAt)
+      : unknown("field-absent", GROK_BILLING, observedAt);
+
+  return {
+    creditsEnabled,
+    disabledReason: null,
+    generalUtilization,
+    modelUtilization: {},
+    overflowUncertainty: null,
   };
 }
 
@@ -557,6 +624,7 @@ export async function readAccountBilling(
   transports?: {
     claude?: ClaudeProbeTransport;
     codex?: CodexProbeTransport;
+    grok?: GrokProbeTransport;
   },
 ): Promise<AccountBilling | null> {
   // The switch sits OUTSIDE the catch, and that placement is the whole point.
@@ -578,6 +646,7 @@ function billingReader(
   transports?: {
     claude?: ClaudeProbeTransport;
     codex?: CodexProbeTransport;
+    grok?: GrokProbeTransport;
   },
 ): (observedAt: string) => Promise<AccountBilling | null> {
   switch (provider) {
@@ -594,10 +663,11 @@ function billingReader(
         return accountBillingFromUsage(payload.usage, observedAt);
       };
     case "grok":
-      // The billing/rolling-reset adapter lands separately. Until then the
-      // money guard sees unknown and requires consent; it never borrows another
-      // vendor's answer or silently claims no-spend.
-      return async () => null;
+      return async (observedAt) => {
+        const payload = await (transports?.grok ??
+          new GrokStdioProbeTransport()).readBilling(timeoutMs);
+        return accountBillingFromGrokBilling(payload.billing, observedAt);
+      };
     default:
       return unknownVendor(provider, "readAccountBilling");
   }

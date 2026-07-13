@@ -11,11 +11,15 @@ import { authorizeForQuotaTest } from "./authorized-launch.test-support";
 import {
   ClaudeQuotaProbe,
   CodexQuotaProbe,
+  GrokQuotaProbe,
   catalogFromClaudeModels,
+  catalogFromGrokInitialize,
   readingsFromClaudeUsage,
   readingsFromCodexResponse,
+  readingsFromGrokBilling,
   orderRateLimitWindows,
   type ClaudeUsageResponse,
+  type GrokBillingResponse,
   type QuotaProbe,
   type QuotaProbeResult,
 } from "./quota-sources";
@@ -108,6 +112,119 @@ const pool = (quota: QuotaService, name: string, at = now): QuotaPoolStatus => {
   }
   return status;
 };
+
+// The parse is pinned against BYTES, not against a struct we typed by hand. A
+// fixture we hand-author agrees with whatever keys the code happens to read, so
+// it would keep passing after the vendor renamed one and every window went null.
+// This payload is the verbatim `_x.ai/billing` result from grok 0.2.99 on a
+// SuperGrok account, captured off the wire on 2026-07-13 (session-free ACP
+// probe: initialize → initialized → `_x.ai/billing` {}).
+describe("the real Grok payload, verbatim off the wire", () => {
+  const raw = JSON.parse(
+    readFileSync(join(import.meta.dir, "fixtures/grok-billing-supergrok.json"), "utf8"),
+  ) as GrokBillingResponse;
+
+  // Positive control: creditUsagePercent is the gauge the prior "unmeasurable"
+  // finding missed. If this key is renamed, the assertion fails instead of
+  // silently reporting null as "vendor is quiet".
+  test("reads creditUsagePercent as the weekly used percent", () => {
+    const [routable] = readingsFromGrokBilling(raw, "default", now.toISOString());
+    expect(raw.config?.creditUsagePercent).toBe(2.0);
+    expect(routable?.weekly?.usedPct).toBe(2.0);
+    expect(routable?.weekly?.resetsAt).toBe("2026-07-19T17:18:56.768Z");
+    expect(routable?.weekly?.windowMinutes).toBe(10_080);
+    expect(routable?.label).toBe("SuperGrok");
+    expect(routable?.models).toEqual(["*"]);
+    expect(routable?.weeklyMeterState).toBe("metered");
+  });
+
+  test("reports five-hour as not-metered — the wire has no five-hour window", () => {
+    const [routable] = readingsFromGrokBilling(raw, "default", now.toISOString());
+    expect(routable?.fiveHour).toBeNull();
+    expect(routable?.fiveHourMeterState).toBe("not-metered");
+  });
+
+  test("never maps money-rail zeros onto remaining quota", () => {
+    // onDemandCap/Used/prepaidBalance are all 0 on this account. That is
+    // paid-overflow-off, not "0% used" and not "empty tank".
+    expect(raw.config?.onDemandCap?.val).toBe(0);
+    expect(raw.config?.onDemandUsed?.val).toBe(0);
+    expect(raw.config?.prepaidBalance?.val).toBe(0);
+    const [routable] = readingsFromGrokBilling(raw, "default", now.toISOString());
+    expect(routable?.weekly?.usedPct).toBe(2.0);
+    expect(routable?.weekly?.usedPct).not.toBe(0);
+  });
+
+  test("a misspelled gauge key does not invent a reading", () => {
+    const broken = {
+      ...raw,
+      config: {
+        ...raw.config,
+        creditUsagePercent: undefined,
+        // Deliberate wrong key — the failure mode that burned earlier probes.
+        credit_usage_percent: 2.0,
+      },
+    } as GrokBillingResponse;
+    const [routable] = readingsFromGrokBilling(broken, "default", now.toISOString());
+    expect(routable?.weekly).toBeNull();
+    expect(routable?.weeklyMeterState).toBe("unknown");
+    expect(routable?.fiveHourMeterState).toBe("not-metered");
+  });
+
+  test("status surfaces the weekly gauge and not-metered five-hour", async () => {
+    const grok = new StubProbe("grok", {
+      status: "ok",
+      pools: readingsFromGrokBilling(raw, "default", now.toISOString()),
+      catalog: [],
+    });
+    const { quota, db } = await service([grok]);
+    try {
+      await quota.refreshFromProviders(now, { force: true });
+      const status = pool(quota, "subscription");
+      expect(status.provider).toBe("grok");
+      expect(status.fiveHour.availability).toBe("not-metered");
+      expect(status.fiveHour.used).toBeNull();
+      expect(status.weekly.availability).toBe("available");
+      expect(status.weekly.used).toBe(2.0);
+      expect(status.weekly.resetsAt).toBe("2026-07-19T17:18:56.768Z");
+    } finally {
+      db.close();
+    }
+  });
+
+  test("GrokQuotaProbe folds the wire payload into pools", async () => {
+    const result = await new GrokQuotaProbe(
+      {
+        readBilling: () => Promise.resolve({ billing: raw, catalog: [] }),
+      },
+      () => now,
+    ).read();
+    expect(result.status).toBe("ok");
+    if (result.status !== "ok") return;
+    expect(result.pools[0]?.weekly?.usedPct).toBe(2.0);
+  });
+
+  test("catalogFromGrokInitialize reads model ids from the free init frame", () => {
+    const entries = catalogFromGrokInitialize({
+      _meta: {
+        modelState: {
+          availableModels: [
+            { modelId: "grok-4.5", name: "Grok 4.5" },
+            { modelId: "grok-composer-2.5-fast", name: "Composer 2.5" },
+          ],
+        },
+      },
+    });
+    expect(entries).toEqual([
+      { provider: "grok", modelId: "grok-4.5", displayName: "Grok 4.5" },
+      {
+        provider: "grok",
+        modelId: "grok-composer-2.5-fast",
+        displayName: "Composer 2.5",
+      },
+    ]);
+  });
+});
 
 // The parse is pinned against BYTES, not against a struct we typed by hand. A
 // fixture we hand-author agrees with whatever keys the code happens to read, so

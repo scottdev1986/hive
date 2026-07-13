@@ -1,0 +1,30 @@
+{
+  "usageSurfaces": { "claude": "metered", "codex": "metered", "grok": "metered" },
+  "grokQuota": [{
+    "provider": "grok",
+    "account": "default",
+    "pool": "subscription",
+    "label": "SuperGrok",
+    "origin": "discovered",
+    "confidence": "reported",
+    "freshness": "fresh",
+    "source": "provider",
+    "fiveHour": { "availability": "not-metered", "used": null, "remaining": null },
+    "weekly": {
+      "availability": "available",
+      "unit": "percent",
+      "allowance": 100,
+      "used": 4,
+      "remaining": 96,
+      "remainingPct": 0.96,
+      "resetsAt": "2026-07-19T17:18:56.768Z",
+      "windowMinutes": 10080,
+      "confidence": "reported",
+      "source": "provider"
+    }
+  }],
+  "grokBilling": {
+    "creditsEnabled": { "state": "known", "value": false, "surface": "grok._x.ai/billing" },
+    "generalUtilization": { "state": "known", "value": 4, "surface": "grok._x.ai/billing" }
+  }
+}

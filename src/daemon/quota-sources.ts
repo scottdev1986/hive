@@ -12,7 +12,7 @@ import { z } from "zod";
  * when a provider declines to answer: a probe either returns a measurement or
  * says why it could not, and the gap is rendered as `unknown`.
  *
- * The asymmetry between the two vendors is real and is not papered over.
+ * The asymmetry between the vendors is real and is not papered over.
  *
  * **Codex** ships a first-party control plane. `codex app-server --stdio` speaks
  * JSON-RPC; after the mandatory `initialize` + `initialized` handshake, the
@@ -30,6 +30,15 @@ import { z } from "zod";
  * undocumented endpoint the CLI calls for itself, and routing on it would break
  * silently the day Anthropic changes it.
  *
+ * **Grok** answers on ACP `_x.ai/billing` after the same free `initialize` +
+ * `initialized` handshake that the CLI's `/usage` slash command uses. Measured
+ * against grok 0.2.99: the payload carries `config.creditUsagePercent` (0–100
+ * used of the shared weekly SuperGrok pool) and a rolling
+ * `config.currentPeriod` with start/end. The money rails (`onDemandCap`,
+ * `onDemandUsed`, `prepaidBalance`) remain a guard, never a gauge. There is no
+ * five-hour window on the wire. Readings are `reported` because the shape has
+ * moved recently (`creditUsagePercent` was absent from earlier captures).
+ *
  * Providers report the *fraction* of a window consumed, never its absolute size.
  * A discovered pool is therefore denominated in percent: allowance is 100 by
  * construction, and every usage figure is a percent of that window. The one thing
@@ -46,7 +55,7 @@ export interface DiscoveredWindow {
 }
 
 export interface DiscoveredPoolReading {
-  provider: "claude" | "codex";
+  provider: "claude" | "codex" | "grok";
   account: string;
   pool: string;
   label: string | null;
@@ -88,7 +97,7 @@ export interface DiscoveredPoolReading {
  * than being attached to a model on a guess.
  */
 export interface ModelCatalogEntry {
-  provider: "claude" | "codex";
+  provider: "claude" | "codex" | "grok";
   /** The id a spawn actually launches, e.g. `claude-fable-5`. */
   modelId: string;
   /** The provider's display name, e.g. `Fable`. The join key. */
@@ -111,7 +120,7 @@ export type QuotaProbeResult =
   | { status: "unavailable"; reason: string };
 
 export interface QuotaProbe {
-  readonly provider: "claude" | "codex";
+  readonly provider: "claude" | "codex" | "grok";
   read(): Promise<QuotaProbeResult>;
 }
 
@@ -843,3 +852,270 @@ export class ClaudeStdioProbeTransport implements ClaudeProbeTransport {
 export const CLAUDE_NO_SUBSCRIBER_LIMITS =
   "Claude Code reports no subscriber rate limits for this account; API-key, " +
   "Bedrock, and Vertex accounts have no plan windows to read.";
+
+/**
+ * The `_x.ai/billing` ACP result, as captured off the wire from grok 0.2.99
+ * on 2026-07-13 (fixture `fixtures/grok-billing-supergrok.json`). The gauge is
+ * `config.creditUsagePercent`. The money rails stay in the schema so parsers
+ * cannot confuse them with the gauge, but they are never mapped to usedPct.
+ */
+export interface GrokBillingResponse {
+  subscription_tier?: string | null;
+  config?: {
+    creditUsagePercent?: number | null;
+    currentPeriod?: {
+      type?: string | null;
+      start?: string | null;
+      end?: string | null;
+    } | null;
+    onDemandCap?: { val?: number | null } | null;
+    onDemandUsed?: { val?: number | null } | null;
+    prepaidBalance?: { val?: number | null } | null;
+    isUnifiedBillingUser?: boolean | null;
+    billingPeriodStart?: string | null;
+    billingPeriodEnd?: string | null;
+  } | null;
+}
+
+const GrokMoneyValSchema = z.object({
+  val: z.number().nullable().optional(),
+}).passthrough().nullable().optional();
+
+const GrokBillingResponseSchema = z.object({
+  subscription_tier: z.string().nullable().optional(),
+  config: z.object({
+    creditUsagePercent: z.number().nullable().optional(),
+    currentPeriod: z.object({
+      type: z.string().nullable().optional(),
+      start: z.string().nullable().optional(),
+      end: z.string().nullable().optional(),
+    }).passthrough().nullable().optional(),
+    onDemandCap: GrokMoneyValSchema,
+    onDemandUsed: GrokMoneyValSchema,
+    prepaidBalance: GrokMoneyValSchema,
+    isUnifiedBillingUser: z.boolean().nullable().optional(),
+    billingPeriodStart: z.string().nullable().optional(),
+    billingPeriodEnd: z.string().nullable().optional(),
+  }).passthrough().nullable().optional(),
+}).passthrough();
+
+/** Models advertised on ACP `initialize` `_meta.modelState.availableModels`. */
+const GrokInitModelsSchema = z.object({
+  availableModels: z.array(z.object({
+    modelId: z.string().nullable().optional(),
+    name: z.string().nullable().optional(),
+  }).passthrough()).optional(),
+}).passthrough();
+
+function periodWindowMinutes(
+  period: { start?: string | null; end?: string | null } | null | undefined,
+): number | null {
+  if (period === null || period === undefined) return null;
+  const start = typeof period.start === "string" ? Date.parse(period.start) : NaN;
+  const end = typeof period.end === "string" ? Date.parse(period.end) : NaN;
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return null;
+  return Math.round((end - start) / 60_000);
+}
+
+/**
+ * Turn one `_x.ai/billing` response into discovered pools.
+ *
+ * The SuperGrok weekly pool is account-wide (`["*"]`). `creditUsagePercent` is
+ * the gauge (0–100 used). `currentPeriod.end` is the reset boundary. There is
+ * no five-hour window on this surface — that is a positive `not-metered`, not
+ * a failed read. A payload that parses but lacks a usable percent leaves the
+ * weekly window `unknown` (vendor meters it; we could not read the number),
+ * never `not-metered` and never a fabricated 0/100.
+ */
+export function readingsFromGrokBilling(
+  response: GrokBillingResponse,
+  account: string,
+  observedAt: string,
+): DiscoveredPoolReading[] {
+  const parsed = GrokBillingResponseSchema.safeParse(response);
+  if (!parsed.success) return [];
+  const config = parsed.data.config;
+  if (config === null || config === undefined) return [];
+
+  const percent = config.creditUsagePercent;
+  const usablePercent = typeof percent === "number" &&
+      Number.isFinite(percent) && percent >= 0 && percent <= 100
+    ? percent
+    : null;
+  const period = config.currentPeriod;
+  const resetsAt = isoOrNull(period?.end ?? config.billingPeriodEnd);
+  const windowMinutes = periodWindowMinutes(period) ??
+    periodWindowMinutes({
+      start: config.billingPeriodStart,
+      end: config.billingPeriodEnd,
+    });
+
+  // A recognized weekly period (or a usable percent) means this surface is
+  // the subscription pool. An empty config with no period and no percent is
+  // not a reading at all.
+  if (usablePercent === null && period === null && resetsAt === null) {
+    return [];
+  }
+
+  const weekly: DiscoveredWindow | null = usablePercent === null
+    ? null
+    : {
+      usedPct: usablePercent,
+      windowMinutes,
+      resetsAt,
+    };
+
+  return [{
+    provider: "grok",
+    account,
+    pool: "subscription",
+    label: parsed.data.subscription_tier ?? null,
+    models: ["*"],
+    fiveHour: null,
+    weekly,
+    // No five-hour field has ever been observed on `_x.ai/billing`. That is
+    // absence-by-design, not a parse miss.
+    fiveHourMeterState: "not-metered",
+    // Missing percent with a recognized surface is unknown, never not-metered:
+    // the vendor does meter the weekly pool; we just did not get the number.
+    weeklyMeterState: weekly === null ? "unknown" : "metered",
+    observedAt,
+    source: "provider",
+    confidence: "reported",
+  }];
+}
+
+/** What one Grok probe session reads: billing + the free init model catalog. */
+export interface GrokProbePayload {
+  billing: GrokBillingResponse;
+  catalog: ModelCatalogEntry[];
+}
+
+export interface GrokProbeTransport {
+  /** ACP initialize → initialized → `_x.ai/billing`. No prompt, no turn. */
+  readBilling(timeoutMs: number): Promise<GrokProbePayload>;
+}
+
+/**
+ * Models from the ACP `initialize` result's `_meta.modelState`. Free — this
+ * frame is already required for the billing handshake.
+ */
+export function catalogFromGrokInitialize(result: unknown): ModelCatalogEntry[] {
+  if (typeof result !== "object" || result === null) return [];
+  const meta = (result as Record<string, unknown>)._meta;
+  if (typeof meta !== "object" || meta === null) return [];
+  const modelState = (meta as Record<string, unknown>).modelState;
+  const parsed = GrokInitModelsSchema.safeParse(modelState);
+  if (!parsed.success) return [];
+  const entries: ModelCatalogEntry[] = [];
+  for (const model of parsed.data.availableModels ?? []) {
+    const modelId = model.modelId;
+    if (typeof modelId !== "string" || modelId.length === 0) continue;
+    const displayName = typeof model.name === "string" && model.name.length > 0
+      ? model.name
+      : modelId;
+    entries.push({ provider: "grok", modelId, displayName });
+  }
+  return entries;
+}
+
+export class GrokQuotaProbe implements QuotaProbe {
+  readonly provider = "grok";
+
+  constructor(
+    private readonly transport: GrokProbeTransport,
+    private readonly clock: () => Date = () => new Date(),
+    private readonly account = "default",
+  ) {}
+
+  async read(): Promise<QuotaProbeResult> {
+    try {
+      const payload = await this.transport.readBilling(HANDSHAKE_TIMEOUT_MS);
+      const pools = readingsFromGrokBilling(
+        payload.billing,
+        this.account,
+        this.clock().toISOString(),
+      );
+      if (pools.length === 0) {
+        return {
+          status: "unavailable",
+          reason:
+            "grok `_x.ai/billing` returned no usable weekly usage reading; " +
+            "the account may not be signed in",
+        };
+      }
+      // A pool whose weekly number is missing is still a successful probe of
+      // the surface (five-hour not-metered, weekly unknown). Callers must not
+      // treat that as "provider down".
+      return { status: "ok", pools, catalog: payload.catalog };
+    } catch (error) {
+      return {
+        status: "unavailable",
+        reason: error instanceof Error ? error.message : "grok probe failed",
+      };
+    }
+  }
+}
+
+/**
+ * Drive a throwaway `grok agent stdio` over ACP. Handshake then
+ * `_x.ai/billing` with `{}`. No session, no prompt, no model turn — same cost
+ * class as Codex's rate-limit read. Verified against grok 0.2.99.
+ *
+ * Bare `x.ai/billing` (no underscore) returns -32601 Method not found.
+ */
+export class GrokStdioProbeTransport implements GrokProbeTransport {
+  constructor(
+    private readonly argv: string[] = ["grok", "agent", "stdio"],
+  ) {}
+
+  async readBilling(timeoutMs: number): Promise<GrokProbePayload> {
+    const child = Bun.spawn(this.argv, {
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "ignore",
+      cwd: tmpdir(),
+    });
+    const timer = setTimeout(() => child.kill(), timeoutMs);
+    try {
+      const responses = pendingResponses(child.stdout);
+      const send = (message: unknown): void => {
+        child.stdin.write(`${JSON.stringify(message)}\n`);
+        child.stdin.flush();
+      };
+      send({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: {
+          protocolVersion: 1,
+          clientInfo: { name: "hive", version: HIVE_VERSION },
+          clientCapabilities: {
+            fs: { readTextFile: false, writeTextFile: false },
+          },
+        },
+      });
+      const initResult = await responses.await("1");
+      const catalog = catalogFromGrokInitialize(initResult);
+      send({ jsonrpc: "2.0", method: "initialized", params: {} });
+      send({
+        jsonrpc: "2.0",
+        id: 2,
+        method: "_x.ai/billing",
+        params: {},
+      });
+      const result = await responses.await("2");
+      if (typeof result !== "object" || result === null) {
+        throw new Error("grok `_x.ai/billing` returned no result payload");
+      }
+      return {
+        billing: result as GrokBillingResponse,
+        catalog,
+      };
+    } finally {
+      clearTimeout(timer);
+      child.kill();
+      await child.exited.catch(() => undefined);
+    }
+  }
+}
