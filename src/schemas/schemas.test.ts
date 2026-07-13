@@ -2,42 +2,13 @@ import { describe, expect, test } from "bun:test";
 import {
   AgentMessageSchema,
   AgentRecordSchema,
-  ClaudeRouteSchema,
   HandoffSchema,
   HiveConfigSchema,
   HookEventSchema,
-  RouteSchema,
-  RoutingTableSchema,
   type AgentRecord,
   type AgentMessage,
   type HookEvent,
-  type RoutingTable,
 } from ".";
-
-// A LOCAL fixture: the binary ships no routing table any more, so the schema
-// tests bring their own. Tests may name models; the product may not.
-const TABLE_FIXTURE: RoutingTable = {
-  deep: {
-    tool: "claude",
-    claude: { model: "best" },
-    codex: { model: "default", effort: "high" },
-  },
-  standard: {
-    tool: "codex",
-    claude: { model: "sonnet" },
-    codex: { model: "default", effort: "medium" },
-  },
-  cheap: {
-    tool: "codex",
-    claude: { model: "haiku" },
-    codex: { model: "default", effort: "low" },
-  },
-  review: {
-    tool: "claude",
-    claude: { model: "sonnet" },
-    codex: { model: "default", effort: "medium" },
-  },
-};
 
 const timestamp = "2026-07-09T12:00:00.000Z";
 
@@ -79,82 +50,6 @@ describe("HiveConfigSchema", () => {
     expect(() => HiveConfigSchema.parse({ terminl: "auto" })).toThrow();
     expect(() => HiveConfigSchema.parse({ codex: { driver: "tui", typo: true } })).toThrow();
     expect(() => HiveConfigSchema.parse({ resources: { typo: true } })).toThrow();
-  });
-});
-
-describe("RoutingTableSchema", () => {
-  test("parses a valid round-trip", () => {
-    const parsed = RoutingTableSchema.parse(TABLE_FIXTURE);
-    expect(RoutingTableSchema.parse(roundTrip(parsed))).toEqual(TABLE_FIXTURE);
-  });
-
-  test("accepts the CLI account default while preserving pinned models", () => {
-    expect(
-      RoutingTableSchema.parse(TABLE_FIXTURE).standard.codex.model,
-    ).toEqual("default");
-    expect(RoutingTableSchema.parse({
-      ...TABLE_FIXTURE,
-      standard: {
-        ...TABLE_FIXTURE.standard,
-        codex: {
-          model: "gpt-pinned",
-          effort: "medium",
-        },
-      },
-    }).standard.codex.model).toEqual("gpt-pinned");
-  });
-
-  test("accepts minimal effort", () => {
-    expect(RouteSchema.parse({
-      ...TABLE_FIXTURE.standard,
-      codex: {
-        ...TABLE_FIXTURE.standard.codex,
-        effort: "minimal",
-      },
-    }).codex.effort).toEqual("minimal");
-  });
-
-  test("rejects a pre-migration flat route", () => {
-    expect(() =>
-      RoutingTableSchema.parse({
-        cheap: { tool: "codex", model: "x" },
-      })
-    ).toThrow(/unrecognized key.*model/i);
-  });
-
-  test("accepts open vendor effort strings and rejects misspelled keys", () => {
-    expect(
-      ClaudeRouteSchema.parse({ model: "sonnet", effort: "future-level" }),
-    ).toEqual({ model: "sonnet", effort: "future-level" });
-    expect(() =>
-      RoutingTableSchema.parse({
-        ...TABLE_FIXTURE,
-        cheap: {
-          ...TABLE_FIXTURE.cheap,
-          claude: { model: "haiku", modle: "typo" },
-        },
-      })
-    ).toThrow(/unrecognized key.*modle/i);
-  });
-
-  test("rejects unsafe effort strings", () => {
-    expect(() =>
-      ClaudeRouteSchema.parse({ model: "sonnet", effort: "HIGH!" })
-    ).toThrow();
-  });
-
-  test("rejects a route missing the codex sub-table", () => {
-    const { codex: _codex, ...withoutCodex } = TABLE_FIXTURE.standard;
-    expect(() => RouteSchema.parse(withoutCodex)).toThrow();
-  });
-
-  test("rejects an invalid routing table", () => {
-    expect(() =>
-      RoutingTableSchema.parse({
-        ...TABLE_FIXTURE,
-        deep: { ...TABLE_FIXTURE.deep, tool: "gemini" },
-      }),
-    ).toThrow();
   });
 });
 

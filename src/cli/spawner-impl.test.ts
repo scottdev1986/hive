@@ -33,9 +33,10 @@ import type {
   AgentRecord,
   AgentMessage,
   CapabilityRecord,
+  ChainEntry,
   QuotaPoolStatus,
-  Route,
   RoutingCategory,
+  RoutingPolicy,
   TerminalHandle,
 } from "../schemas";
 import {
@@ -56,30 +57,72 @@ import { QuotaService } from "../daemon/quota";
 import { agentTmuxSession } from "../daemon/tmux-sessions";
 import type { CapabilityDiscoveryResult } from "../daemon/capability-discovery";
 
-// A LOCAL routing table for the legacy static-table path: the binary ships no
-// table any more, so tests that exercise that path bring their own.
-const DEFAULT_ROUTING = {
-  deep: {
-    tool: "claude",
-    claude: { model: "best" },
-    codex: { model: "default", effort: "high" },
-  },
-  standard: {
-    tool: "codex",
-    claude: { model: "sonnet" },
-    codex: { model: "default", effort: "medium" },
-  },
-  cheap: {
-    tool: "codex",
-    claude: { model: "haiku" },
-    codex: { model: "default", effort: "low" },
-  },
-  review: {
-    tool: "claude",
-    claude: { model: "sonnet" },
-    codex: { model: "default", effort: "medium" },
-  },
+type TestRoute = {
+  tool: "claude" | "codex" | "grok";
+  claude?: { model: string; effort?: string };
+  codex?: { model: string; effort?: string };
+  grok?: { model: string; effort?: string };
+};
+
+function policyFromRoute(route: TestRoute): RoutingPolicy {
+  const target = route[route.tool];
+  if (target === undefined) throw new Error(`missing ${route.tool} fixture route`);
+  return {
+    schemaVersion: 1,
+    revision: 1,
+    updatedAt: timestamp,
+    provisional: false,
+    providers: {},
+    models: [],
+    chains: {
+      default: [{
+        provider: route.tool,
+        model: target.model,
+        effort: target.effort === undefined
+          ? { mode: "provider-controlled" }
+          : { mode: "exact", value: target.effort },
+      }],
+    },
+    selection: { global: "strict", categories: {} },
+  };
+}
+
+function policyWithChain(
+  entries: ChainEntry[],
+  selection: "spread" | "strict" = "strict",
+): RoutingPolicy {
+  return {
+    ...policyFromRoute(CODEX_ROUTE),
+    chains: { default: entries },
+    selection: { global: selection, categories: {} },
+  };
+}
+
+const CLAUDE_ROUTE = {
+  tool: "claude",
+  claude: { model: "claude-fable-5" },
+  codex: { model: "gpt-5.6-sol", effort: "high" },
 } as const;
+const CODEX_ROUTE = {
+  tool: "codex",
+  claude: { model: "sonnet" },
+  codex: { model: "gpt-5.6-sol", effort: "medium" },
+} as const;
+const CHEAP_ROUTE = {
+  tool: "codex",
+  claude: { model: "haiku" },
+  codex: { model: "gpt-5.6-sol", effort: "low" },
+} as const;
+const REVIEW_ROUTE = {
+  tool: "claude",
+  claude: { model: "sonnet" },
+  codex: { model: "gpt-5.6-sol", effort: "medium" },
+} as const;
+
+const quotaSpreadPolicy = (): RoutingPolicy => policyWithChain([
+  { provider: "claude", model: "claude-fable-5", effort: { mode: "provider-controlled" } },
+  { provider: "codex", model: "gpt-5.6-sol", effort: { mode: "provider-controlled" } },
+], "spread");
 
 const timestamp = "2026-07-09T12:00:00.000Z";
 const tempRoots: string[] = [];
@@ -129,21 +172,6 @@ const discovery = (record: CapabilityRecord): CapabilityDiscoveryResult => ({
       : "codex.model/list", timestamp),
   },
 });
-
-const fakeResolveModel = async (
-  tool: Route["tool"],
-  route: Route,
-): Promise<string> => {
-  const configured = route[tool]?.model;
-  if (configured === undefined) throw new Error(`missing ${tool} fixture route`);
-  if (tool === "claude" && configured === "best") {
-    return "claude-fable-5";
-  }
-  if (configured === "default") {
-    return tool === "claude" ? "claude-fable-5[1m]" : "gpt-5.6-sol";
-  }
-  return configured;
-};
 
 /** A holder that has closed, and whose name is therefore legal to reissue. */
 function closedAgent(name: string, closedAt: string): AgentRecord {
@@ -492,13 +520,12 @@ describe("HiveSpawner name pool", () => {
         repoRoot: root,
         port: 4317,
         config: { terminal: "auto", headless: true },
-        routing: async () => {
+        readRoutingPolicy: () => {
           throw new Error("changed routing table must not be consulted");
         },
         tmux,
         terminal: new FakeTerminal(),
         sleep: signalControlReadiness(store),
-        resolveModel: fakeResolveModel,
         quota: controlQuota.quota,
       });
       const message = {
@@ -574,11 +601,10 @@ describe("HiveSpawner name pool", () => {
       repoRoot: root,
       port: 4317,
       config: { terminal: "auto", headless: false },
-      routing: async () => DEFAULT_ROUTING.standard,
+      readRoutingPolicy: () => policyFromRoute(CODEX_ROUTE),
       tmux: new FakeTmux(),
       terminal,
       sleep: signalControlReadiness(store),
-      resolveModel: fakeResolveModel,
       onTerminalsChanged: () => {
         layoutRequests += 1;
       },
@@ -644,7 +670,7 @@ describe("HiveSpawner name pool", () => {
       repoRoot: root,
       port: 4317,
       config: { terminal: "auto", headless: false },
-      routing: async () => DEFAULT_ROUTING.cheap,
+      readRoutingPolicy: () => policyFromRoute(CHEAP_ROUTE),
       tmux,
       terminal,
       sleep: async () => {},
@@ -695,9 +721,9 @@ describe("HiveSpawner name pool", () => {
       repoRoot: root,
       port: 4317,
       config: { terminal: "auto", headless: false },
-      routing: async () => {
+      readRoutingPolicy: () => {
         routeReads += 1;
-        return DEFAULT_ROUTING.standard;
+        return policyFromRoute(CODEX_ROUTE);
       },
       tmux: new FakeTmux(),
       terminal,
@@ -759,8 +785,8 @@ describe("HiveSpawner name pool", () => {
       repoRoot: root,
       port: 4317,
       config: { terminal: "auto", headless: false },
-      routing: async () => ({
-        ...DEFAULT_ROUTING.standard,
+      readRoutingPolicy: () => policyFromRoute({
+        ...CODEX_ROUTE,
         tool: "claude",
         codex: { model: "different-model", effort: "minimal" },
       }),
@@ -899,9 +925,10 @@ describe("HiveSpawner name pool", () => {
       repoRoot: "/tmp/hive-concurrent-names",
       port: 4317,
       config: { terminal: "auto", headless: true },
-      routing: async () => {
+      readRoutingPolicy: () => policyFromRoute(CODEX_ROUTE),
+      discoverCapabilities: async () => {
         await gate;
-        return DEFAULT_ROUTING.standard;
+        return discovery(capabilityRecord("codex", "gpt-5.6-sol", ["medium"]));
       },
       tmux: new FakeTmux(),
       terminal: new FakeTerminal(),
@@ -910,7 +937,6 @@ describe("HiveSpawner name pool", () => {
         throw new Error("stop after routing");
       },
       sleep: async () => {},
-      resolveModel: fakeResolveModel,
     });
 
     // Every spawn is in flight at once, before any of them writes an agent row,
@@ -940,9 +966,10 @@ describe("HiveSpawner name pool", () => {
       repoRoot: "/tmp/hive-reservation-race",
       port: 4317,
       config: { terminal: "auto", headless: true },
-      routing: async () => {
+      readRoutingPolicy: () => policyFromRoute(CODEX_ROUTE),
+      discoverCapabilities: async () => {
         await routingGate;
-        return DEFAULT_ROUTING.standard;
+        return discovery(capabilityRecord("codex", "gpt-5.6-sol", ["medium"]));
       },
       tmux: new FakeTmux(),
       terminal: new FakeTerminal(),
@@ -950,7 +977,6 @@ describe("HiveSpawner name pool", () => {
         throw new Error("stop after routing");
       },
       sleep: async () => {},
-      resolveModel: fakeResolveModel,
     });
 
     const first = spawner.spawn({
@@ -984,7 +1010,7 @@ describe("HiveSpawner name pool", () => {
       repoRoot: "/tmp/hive-exhausted",
       port: 4317,
       config: { terminal: "auto", headless: true },
-      routing: async () => DEFAULT_ROUTING.deep,
+      readRoutingPolicy: () => policyFromRoute(CLAUDE_ROUTE),
       tmux: new FakeTmux(),
       terminal: new FakeTerminal(),
       createWorktree: async () => {
@@ -1007,7 +1033,7 @@ describe("HiveSpawner name pool", () => {
       repoRoot: "/tmp/hive-invalid-name",
       port: 4317,
       config: { terminal: "auto", headless: true },
-      routing: async () => DEFAULT_ROUTING.standard,
+      readRoutingPolicy: () => policyFromRoute(CODEX_ROUTE),
       tmux: new FakeTmux(),
       terminal: new FakeTerminal(),
       createWorktree: async () => {
@@ -1032,7 +1058,7 @@ describe("HiveSpawner name pool", () => {
       repoRoot: "/tmp/hive-collision",
       port: 4317,
       config: { terminal: "auto", headless: true },
-      routing: async () => DEFAULT_ROUTING.standard,
+      readRoutingPolicy: () => policyFromRoute(CODEX_ROUTE),
       tmux: new FakeTmux(),
       terminal: new FakeTerminal(),
       createWorktree: async () => {
@@ -1056,7 +1082,7 @@ describe("HiveSpawner name pool", () => {
       repoRoot: "/tmp/hive-reserved-name",
       port: 4317,
       config: { terminal: "auto", headless: true },
-      routing: async () => DEFAULT_ROUTING.standard,
+      readRoutingPolicy: () => policyFromRoute(CODEX_ROUTE),
       tmux: new FakeTmux(),
       terminal: new FakeTerminal(),
       createWorktree: async () => {
@@ -1088,8 +1114,8 @@ describe("HiveSpawner wiring", () => {
       repoRoot: root,
       port: 4317,
       config: { terminal: "auto", headless: true },
-      routing: async () => ({
-        ...DEFAULT_ROUTING.standard,
+      readRoutingPolicy: () => policyFromRoute({
+        ...CODEX_ROUTE,
         tool: "codex",
         codex: { model: "gpt-test", effort: "high" },
       }),
@@ -1101,7 +1127,6 @@ describe("HiveSpawner wiring", () => {
         return { path, branch: `hive/${name}-${slug}` };
       },
       sleep: signalReadiness(store),
-      resolveModel: fakeResolveModel,
       codexAppServer: {
         isAvailable: async () => {
           probedAppServer = true;
@@ -1141,8 +1166,8 @@ describe("HiveSpawner wiring", () => {
         headless: true,
         codex: { driver: "app-server" },
       },
-      routing: async () => ({
-        ...DEFAULT_ROUTING.standard,
+      readRoutingPolicy: () => policyFromRoute({
+        ...CODEX_ROUTE,
         tool: "codex",
         codex: { model: "gpt-test", effort: "high" },
       }),
@@ -1154,7 +1179,6 @@ describe("HiveSpawner wiring", () => {
         return { path, branch: `hive/${name}-${slug}` };
       },
       sleep: async () => {},
-      resolveModel: fakeResolveModel,
       codexAppServer: {
         isAvailable: async () => true,
         buildHostCommand: (value) => [
@@ -1199,8 +1223,8 @@ describe("HiveSpawner wiring", () => {
         headless: true,
         codex: { driver: "app-server" },
       },
-      routing: async () => ({
-        ...DEFAULT_ROUTING.standard,
+      readRoutingPolicy: () => policyFromRoute({
+        ...CODEX_ROUTE,
         tool: "codex",
         codex: { model: "gpt-test", effort: "medium" },
       }),
@@ -1213,7 +1237,6 @@ describe("HiveSpawner wiring", () => {
       },
       // The fallback TUI launch must still prove life on its own.
       sleep: signalReadiness(store),
-      resolveModel: fakeResolveModel,
       codexAppServer: {
         isAvailable: async () => true,
         buildHostCommand: () => ["hive", "codex-app-server-host"],
@@ -1276,7 +1299,7 @@ describe("HiveSpawner wiring", () => {
       repoRoot: root,
       port: 4317,
       config: { terminal: "auto", headless: true },
-      routing: async () => DEFAULT_ROUTING.deep,
+      readRoutingPolicy: quotaSpreadPolicy,
       tmux,
       terminal: new FakeTerminal(),
       createWorktree: async (_repoRoot, name, slug) => {
@@ -1285,7 +1308,6 @@ describe("HiveSpawner wiring", () => {
         return { path, branch: `hive/${name}-${slug}` };
       },
       sleep: signalReadiness(store),
-      resolveModel: fakeResolveModel,
       quota,
     });
 
@@ -1373,7 +1395,7 @@ describe("HiveSpawner wiring", () => {
       repoRoot: root,
       port: 4317,
       config: { terminal: "auto", headless: true },
-      routing: async () => DEFAULT_ROUTING.deep,
+      readRoutingPolicy: quotaSpreadPolicy,
       tmux: new FakeTmux(),
       terminal: new FakeTerminal(),
       createWorktree: async (_repoRoot, name, slug) => {
@@ -1382,7 +1404,6 @@ describe("HiveSpawner wiring", () => {
         return { path, branch: `hive/${name}-${slug}` };
       },
       sleep: signalReadiness(store),
-      resolveModel: fakeResolveModel,
       quota,
     });
 
@@ -1403,7 +1424,7 @@ describe("HiveSpawner wiring", () => {
       repoRoot: root,
       port: 4317,
       config: { terminal: "auto", headless: true },
-      routing: async () => DEFAULT_ROUTING.deep,
+      readRoutingPolicy: quotaSpreadPolicy,
       tmux: new FakeTmux(),
       terminal: new FakeTerminal(),
       // A worktree path that is a regular file, not a directory. buildMemoryIndex
@@ -1415,7 +1436,6 @@ describe("HiveSpawner wiring", () => {
         return { path, branch: `hive/${name}-${slug}` };
       },
       sleep: signalReadiness(store),
-      resolveModel: fakeResolveModel,
       quota,
     });
 
@@ -1448,7 +1468,7 @@ describe("HiveSpawner wiring", () => {
       repoRoot: root,
       port: 4317,
       config: { terminal: "auto", headless: true },
-      routing: async () => DEFAULT_ROUTING.deep,
+      readRoutingPolicy: quotaSpreadPolicy,
       tmux: new FakeTmux(),
       terminal: new FakeTerminal(),
       createWorktree: async (_repoRoot, name, slug) => {
@@ -1457,7 +1477,6 @@ describe("HiveSpawner wiring", () => {
         return { path, branch: `hive/${name}-${slug}` };
       },
       sleep: signalReadiness(store),
-      resolveModel: fakeResolveModel,
       quota,
     });
 
@@ -1492,8 +1511,7 @@ describe("HiveSpawner wiring", () => {
       repoRoot: root,
       port: 4317,
       config: { terminal: "auto", headless: true },
-      routing: async () => DEFAULT_ROUTING.deep,
-      routingPins: async () => ({}),
+      readRoutingPolicy: () => policyFromRoute(CLAUDE_ROUTE),
       // Both vendors answer, and neither lists this model. That is a
       // measurement, not a gap — the grounds to refuse.
       discoverCapabilities: async (provider) =>
@@ -1510,8 +1528,6 @@ describe("HiveSpawner wiring", () => {
         return { path, branch: `hive/${name}-${slug}` };
       },
       sleep: signalReadiness(store),
-      resolveModel: async (tool) =>
-        tool === "claude" ? "claude-opus-4-8" : "gpt-5.6-sol",
       quota,
     });
 
@@ -1562,8 +1578,13 @@ describe("HiveSpawner wiring", () => {
       repoRoot: root,
       port: 4317,
       config: { terminal: "auto", headless: true },
-      routing: async () => DEFAULT_ROUTING.deep,
-      routingPins: async () => ({}),
+      readRoutingPolicy: () => ({
+        ...policyFromRoute(CLAUDE_ROUTE),
+        chains: { default: [
+          { provider: "claude", model: "claude-opus-4-8", effort: { mode: "provider-controlled" } },
+          { provider: "codex", model: "gpt-5.6-sol", effort: { mode: "provider-controlled" } },
+        ] },
+      }),
       discoverCapabilities: async (provider) => {
         probes.push(provider);
         return provider === "grok"
@@ -1582,8 +1603,6 @@ describe("HiveSpawner wiring", () => {
         return { path, branch: `hive/${name}-${slug}` };
       },
       sleep: signalReadiness(store),
-      resolveModel: async (tool) =>
-        tool === "claude" ? "claude-opus-4-8" : "gpt-5.6-sol",
       quota,
     });
 
@@ -1619,7 +1638,7 @@ describe("HiveSpawner wiring", () => {
       repoRoot: root,
       port: 4317,
       config: { terminal: "auto", headless: true },
-      routing: async () => DEFAULT_ROUTING.deep,
+      readRoutingPolicy: () => policyFromRoute(CLAUDE_ROUTE),
       tmux,
       terminal: new FakeTerminal(),
       createWorktree: async (_repoRoot, name, slug) => {
@@ -1628,7 +1647,6 @@ describe("HiveSpawner wiring", () => {
         return { path, branch: `hive/${name}-${slug}` };
       },
       sleep: signalReadiness(store),
-      resolveModel: fakeResolveModel,
     });
 
     const spawned = await spawner.spawn({
@@ -1658,8 +1676,7 @@ describe("HiveSpawner wiring", () => {
       repoRoot: "/tmp/hive-effort-reject",
       port: 4317,
       config: { terminal: "auto", headless: true },
-      routing: async () => DEFAULT_ROUTING.deep,
-      routingPins: async () => ({}),
+      readRoutingPolicy: () => policyFromRoute(CLAUDE_ROUTE),
       discoverCapabilities: async () => discovery(record),
       tmux: new FakeTmux(),
       terminal: new FakeTerminal(),
@@ -1696,8 +1713,7 @@ describe("HiveSpawner wiring", () => {
       repoRoot: root,
       port: 4317,
       config: { terminal: "auto", headless: true },
-      routing: async () => DEFAULT_ROUTING.deep,
-      routingPins: async () => ({}),
+      readRoutingPolicy: () => policyFromRoute(CLAUDE_ROUTE),
       discoverCapabilities: async () => discovery(record),
       tmux,
       terminal: new FakeTerminal(),
@@ -1707,7 +1723,6 @@ describe("HiveSpawner wiring", () => {
         return { path, branch: `hive/${name}-${slug}` };
       },
       sleep: signalReadiness(store),
-      resolveModel: fakeResolveModel,
     });
 
     const spawned = await spawner.spawn({
@@ -1740,8 +1755,7 @@ describe("HiveSpawner wiring", () => {
       repoRoot: root,
       port: 4317,
       config: { terminal: "auto", headless: true },
-      routing: async () => DEFAULT_ROUTING.standard,
-      routingPins: async () => ({}),
+      readRoutingPolicy: () => policyFromRoute(CODEX_ROUTE),
       discoverCapabilities: async () => discovery(record),
       tmux,
       terminal: new FakeTerminal(),
@@ -1751,7 +1765,6 @@ describe("HiveSpawner wiring", () => {
         return { path, branch: `hive/${name}-${slug}` };
       },
       sleep: signalReadiness(store),
-      resolveModel: fakeResolveModel,
     });
 
     const spawned = await spawner.spawn({
@@ -1781,7 +1794,7 @@ describe("HiveSpawner wiring", () => {
       repoRoot: root,
       port: 4317,
       config: { terminal: "auto", headless: true },
-      routing: async () => DEFAULT_ROUTING.standard,
+      readRoutingPolicy: () => policyFromRoute(CODEX_ROUTE),
       issueCredential: (name, role, epoch) => {
         issued.push([name, role, epoch]);
         return "test-capability";
@@ -1794,7 +1807,6 @@ describe("HiveSpawner wiring", () => {
         return { path, branch: `hive/${name}-${slug}` };
       },
       sleep: signalReadiness(store),
-      resolveModel: fakeResolveModel,
     });
 
     const spawned = await spawner.spawn({
@@ -1821,14 +1833,13 @@ describe("HiveSpawner wiring", () => {
       repoRoot: root,
       port: 4317,
       config: { terminal: "auto", headless: true },
-      routing: async () => DEFAULT_ROUTING.standard,
+      readRoutingPolicy: () => policyFromRoute(CODEX_ROUTE),
       tmux: new FakeTmux(),
       terminal: new FakeTerminal(),
       createWorktree: async () => {
         worktrees += 1;
         throw new Error("must not create");
       },
-      resolveModel: fakeResolveModel,
     });
 
     await expect(spawner.spawn({
@@ -1855,8 +1866,7 @@ describe("HiveSpawner wiring", () => {
       repoRoot: root,
       port: 4317,
       config: { terminal: "auto", headless: true },
-      routing: async () => DEFAULT_ROUTING.standard,
-      routingPins: async () => ({}),
+      readRoutingPolicy: () => policyFromRoute(CODEX_ROUTE),
       discoverCapabilities: async (provider) =>
         provider === "grok"
           ? discovery(record)
@@ -1875,7 +1885,6 @@ describe("HiveSpawner wiring", () => {
         return { path, branch: `hive/${name}-${slug}` };
       },
       sleep: signalReadiness(store),
-      resolveModel: fakeResolveModel,
     });
 
     const spawned = await spawner.spawn({
@@ -1921,7 +1930,7 @@ describe("HiveSpawner wiring", () => {
       config: { terminal: "auto", headless: true },
       // The field failure: tier=standard routes tool=codex, and the explicit
       // claude model used to ride onto the Codex TUI verbatim.
-      routing: async () => DEFAULT_ROUTING.standard,
+      readRoutingPolicy: () => policyFromRoute(CODEX_ROUTE),
       tmux,
       terminal: new FakeTerminal(),
       createWorktree: async (_repoRoot, name, slug) => {
@@ -1930,7 +1939,6 @@ describe("HiveSpawner wiring", () => {
         return { path, branch: `hive/${name}-${slug}` };
       },
       sleep: signalReadiness(store),
-      resolveModel: fakeResolveModel,
     });
 
     const spawned = await spawner.spawn({
@@ -1955,7 +1963,7 @@ describe("HiveSpawner wiring", () => {
       repoRoot: root,
       port: 4317,
       config: { terminal: "auto", headless: true },
-      routing: async () => DEFAULT_ROUTING.standard,
+      readRoutingPolicy: () => policyFromRoute(CODEX_ROUTE),
       tmux: new FakeTmux(),
       terminal: new FakeTerminal(),
       createWorktree: async (_repoRoot, name, slug) => {
@@ -1964,7 +1972,6 @@ describe("HiveSpawner wiring", () => {
         return { path, branch: `hive/${name}-${slug}` };
       },
       sleep: async () => {},
-      resolveModel: fakeResolveModel,
     });
 
     await expect(spawner.spawn({
@@ -2020,7 +2027,7 @@ describe("HiveSpawner wiring", () => {
       repoRoot: root,
       port: 4317,
       config: { terminal: "auto", headless: true },
-      routing: async () => DEFAULT_ROUTING.deep,
+      readRoutingPolicy: () => policyFromRoute(CLAUDE_ROUTE),
       tmux,
       terminal: new FakeTerminal(),
       createWorktree: async (_repoRoot, name, slug) => {
@@ -2029,7 +2036,6 @@ describe("HiveSpawner wiring", () => {
         return { path, branch: `hive/${name}-${slug}` };
       },
       sleep: async () => {},
-      resolveModel: fakeResolveModel,
       quota,
     });
 
@@ -2050,18 +2056,12 @@ describe("HiveSpawner wiring", () => {
     const store = new FakeStore();
     const tmux = new FakeTmux();
     const terminal = new FakeTerminal();
-    const routes: Record<"deep" | "standard", Route> = {
-      deep: DEFAULT_ROUTING.deep,
-      standard: {
-        ...DEFAULT_ROUTING.standard,
-        codex: { model: "gpt-test", effort: "medium" },
+    const policy: RoutingPolicy = {
+      ...policyFromRoute(CODEX_ROUTE),
+      chains: {
+        complex_coding: [{ provider: "claude", model: "claude-fable-5", effort: { mode: "provider-controlled" } }],
+        simple_coding: [{ provider: "codex", model: "gpt-test", effort: { mode: "exact", value: "medium" } }],
       },
-    };
-    const routing = async (tier: RoutingCategory): Promise<Route> => {
-      if (tier === "deep" || tier === "standard") {
-        return routes[tier];
-      }
-      throw new Error(`Unexpected tier: ${tier}`);
     };
     const createWorktree = async (
       _repoRoot: string,
@@ -2081,12 +2081,11 @@ describe("HiveSpawner wiring", () => {
       repoRoot: root,
       port: 4317,
       config: { terminal: "auto", headless: false },
-      routing,
+      readRoutingPolicy: () => policy,
       tmux,
       terminal,
       createWorktree,
       sleep: signalReadiness(store),
-      resolveModel: fakeResolveModel,
     });
 
     const claude = await spawner.spawn({ task: "Build auth API", category: "complex_coding" });
@@ -2214,14 +2213,13 @@ describe("HiveSpawner wiring", () => {
         repoRoot: root,
         port: 4317,
         config: { terminal: "auto", headless: true },
-        routing: async () => DEFAULT_ROUTING.standard,
+        readRoutingPolicy: () => policyFromRoute(CODEX_ROUTE),
         tmux,
         terminal: new FakeTerminal(),
         createWorktree: async () => ({
           path: worktreePath,
           branch: "hive/maya-memory",
         }),
-        resolveModel: fakeResolveModel,
         sleep: signalReadiness(store),
       });
 
@@ -2258,14 +2256,13 @@ describe("HiveSpawner wiring", () => {
       repoRoot: root,
       port: 4317,
       config: { terminal: "auto", headless: true },
-      routing: async () => DEFAULT_ROUTING.standard,
+      readRoutingPolicy: () => policyFromRoute(CODEX_ROUTE),
       tmux,
       terminal: new FakeTerminal(),
       createWorktree: async () => ({
         path: worktreePath,
         branch: "hive/maya-ready",
       }),
-      resolveModel: fakeResolveModel,
       sleep: async () => {
         polls += 1;
         const current = store.listAgents()[0];
@@ -2307,13 +2304,18 @@ describe("HiveSpawner wiring", () => {
       repoRoot: root,
       port: 4317,
       config: { terminal: "auto", headless: true },
-      routing: async (tier) => DEFAULT_ROUTING[tier],
+      readRoutingPolicy: () => ({
+        ...policyFromRoute(CODEX_ROUTE),
+        chains: { default: [
+          { provider: "claude", model: "sonnet", effort: { mode: "provider-controlled" } },
+          { provider: "codex", model: "gpt-5.6-sol", effort: { mode: "exact", value: "medium" } },
+        ] },
+      }),
       tmux,
       terminal: new FakeTerminal(),
       createWorktree,
       claudeExecutable: "/daemon/native/claude",
       sleep: signalReadiness(store),
-      resolveModel: fakeResolveModel,
     });
 
     const claude = await spawner.spawn({
@@ -2340,7 +2342,7 @@ describe("HiveSpawner wiring", () => {
     expect(codex.tool).toEqual("codex");
     expect(codex.model).toEqual("gpt-5.6-sol");
     expect(tmux.sessions[1]?.[2]).toContain(
-      "'model_reasoning_effort=high'",
+      "'model_reasoning_effort=medium'",
     );
     expect(tmux.sessions[1]?.[2]).not.toContain("'model=default'");
   });
@@ -2356,7 +2358,10 @@ describe("HiveSpawner wiring", () => {
       repoRoot: root,
       port: 4317,
       config: { terminal: "auto", headless: true },
-      routing: async () => DEFAULT_ROUTING.cheap,
+      readRoutingPolicy: () => policyWithChain([
+        { provider: "codex", model: "gpt-5.6-sol", effort: { mode: "exact", value: "low" } },
+        { provider: "claude", model: "haiku", effort: { mode: "provider-controlled" } },
+      ]),
       tmux,
       terminal: new FakeTerminal(),
       createWorktree: async (_repoRoot, name, slug) => {
@@ -2389,7 +2394,7 @@ describe("HiveSpawner wiring", () => {
       repoRoot: root,
       port: 4317,
       config: { terminal: "auto", headless: true },
-      routing: async () => DEFAULT_ROUTING.review,
+      readRoutingPolicy: () => policyFromRoute(REVIEW_ROUTE),
       tmux,
       terminal: new FakeTerminal(),
       createWorktree: async (_repoRoot, name, slug) => {
@@ -2429,7 +2434,7 @@ describe("HiveSpawner wiring", () => {
       repoRoot: root,
       port: 4317,
       config: { terminal: "auto", headless: false },
-      routing: async () => DEFAULT_ROUTING.standard,
+      readRoutingPolicy: () => policyFromRoute(CODEX_ROUTE),
       tmux,
       terminal,
       createWorktree: async () => ({
@@ -2439,7 +2444,6 @@ describe("HiveSpawner wiring", () => {
       removeWorktree: async (repoRoot, path) => {
         removals.push([repoRoot, path]);
       },
-      resolveModel: fakeResolveModel,
       sleep: async () => {},
     });
 
@@ -2474,14 +2478,13 @@ describe("HiveSpawner wiring", () => {
       repoRoot: root,
       port: 4317,
       config: { terminal: "auto", headless: true },
-      routing: async () => DEFAULT_ROUTING.standard,
+      readRoutingPolicy: () => policyFromRoute(CODEX_ROUTE),
       tmux,
       terminal: new FakeTerminal(),
       createWorktree: async () => ({
         path: worktreePath,
         branch: "hive/maya-short-lived-launch",
       }),
-      resolveModel: fakeResolveModel,
       sleep: async () => {},
     });
 
@@ -2512,14 +2515,13 @@ describe("HiveSpawner wiring", () => {
       repoRoot: root,
       port: 4317,
       config: { terminal: "auto", headless: true },
-      routing: async () => DEFAULT_ROUTING.standard,
+      readRoutingPolicy: () => policyFromRoute(CODEX_ROUTE),
       tmux,
       terminal: new FakeTerminal(),
       createWorktree: async () => ({
         path: worktreePath,
         branch: "hive/maya-error-handling",
       }),
-      resolveModel: fakeResolveModel,
       // The signal arrives a few ticks in, so the earlier iterations read the
       // pane and must shrug at the incidental error text rather than call it a
       // launch failure.
@@ -2559,14 +2561,13 @@ describe("HiveSpawner wiring", () => {
       repoRoot: root,
       port: 4317,
       config: { terminal: "auto", headless: false },
-      routing: async () => DEFAULT_ROUTING.standard,
+      readRoutingPolicy: () => policyFromRoute(CODEX_ROUTE),
       tmux,
       terminal: new FailingTerminal(),
       createWorktree: async () => ({
         path: worktreePath,
         branch: "hive/maya-transient",
       }),
-      resolveModel: fakeResolveModel,
       // The signal arrives only on the final poll tick, so the transient
       // capture failure has to be survived, not shortcut around.
       sleep: (() => {
@@ -2606,8 +2607,8 @@ describe("HiveSpawner wiring", () => {
       repoRoot: root,
       port: 4317,
       config: { terminal: "auto", headless: true },
-      routing: async () => ({
-        ...DEFAULT_ROUTING.standard,
+      readRoutingPolicy: () => policyFromRoute({
+        ...CODEX_ROUTE,
         tool: "codex",
         codex: { model: "gpt-test", effort: "medium" },
       }),
@@ -2620,7 +2621,6 @@ describe("HiveSpawner wiring", () => {
       },
       // No hook event ever arrives: the DB row stays "spawning" throughout.
       sleep: async () => {},
-      resolveModel: fakeResolveModel,
       readCodexActivity: async (worktreePath) => {
         probed.push(worktreePath);
         return new Date(Date.now() + 60_000).toISOString();
@@ -2649,8 +2649,8 @@ describe("HiveSpawner wiring", () => {
       repoRoot: root,
       port: 4317,
       config: { terminal: "auto", headless: true },
-      routing: async () => ({
-        ...DEFAULT_ROUTING.standard,
+      readRoutingPolicy: () => policyFromRoute({
+        ...CODEX_ROUTE,
         tool: "codex",
         codex: { model: "gpt-test", effort: "medium" },
       }),
@@ -2663,7 +2663,6 @@ describe("HiveSpawner wiring", () => {
       },
       removeWorktree: async () => {},
       sleep: async () => {},
-      resolveModel: fakeResolveModel,
       readCodexActivity: async () => null,
     });
 
@@ -2696,7 +2695,7 @@ describe("HiveSpawner wiring", () => {
       repoRoot: root,
       port: 4317,
       config: { terminal: "auto", headless: true },
-      routing: async () => DEFAULT_ROUTING.standard,
+      readRoutingPolicy: () => policyFromRoute(CODEX_ROUTE),
       tmux,
       terminal: new FakeTerminal(),
       createWorktree: async (_repoRoot, name, slug) => {
@@ -2712,7 +2711,6 @@ describe("HiveSpawner wiring", () => {
         unmergedCommits: 2,
       }),
       sleep: async () => {},
-      resolveModel: fakeResolveModel,
       readCodexActivity: async () => null,
     });
 
@@ -2737,7 +2735,7 @@ describe("HiveSpawner wiring", () => {
       repoRoot: root,
       port: 4317,
       config: { terminal: "auto", headless: true },
-      routing: async () => DEFAULT_ROUTING.standard,
+      readRoutingPolicy: () => policyFromRoute(CODEX_ROUTE),
       tmux: new FakeTmux(),
       terminal: new FakeTerminal(),
       createWorktree: async (_repoRoot, name, slug) => {
@@ -2750,7 +2748,6 @@ describe("HiveSpawner wiring", () => {
       },
       assessStrandedWork: async () => ({ dirtyFiles: [], unmergedCommits: 0 }),
       sleep: async () => {},
-      resolveModel: fakeResolveModel,
       readCodexActivity: async () => null,
     });
 
@@ -2772,7 +2769,7 @@ describe("HiveSpawner wiring", () => {
       repoRoot: root,
       port: 4317,
       config: { terminal: "auto", headless: true },
-      routing: async () => DEFAULT_ROUTING.standard,
+      readRoutingPolicy: () => policyFromRoute(CODEX_ROUTE),
       tmux: new FakeTmux(),
       terminal: new FakeTerminal(),
       createWorktree: async (_repoRoot, name, slug) => {
@@ -2787,7 +2784,6 @@ describe("HiveSpawner wiring", () => {
         throw new Error("git is unavailable");
       },
       sleep: async () => {},
-      resolveModel: fakeResolveModel,
       readCodexActivity: async () => null,
     });
 
@@ -2815,7 +2811,7 @@ describe("HiveSpawner wiring", () => {
       repoRoot: root,
       port: 4317,
       config: { terminal: "auto", headless: false },
-      routing: async () => DEFAULT_ROUTING.standard,
+      readRoutingPolicy: () => policyFromRoute(CODEX_ROUTE),
       tmux: new FakeTmux(),
       terminal,
       workspacePresent: () => present,
@@ -2826,7 +2822,6 @@ describe("HiveSpawner wiring", () => {
         path: worktreePath,
         branch: "hive/presence-test",
       }),
-      resolveModel: fakeResolveModel,
       sleep: signalReadiness(store),
     });
 
@@ -2876,12 +2871,11 @@ describe("HiveSpawner wiring", () => {
       repoRoot: root,
       port: 4317,
       config: { terminal: "auto", headless: false },
-      routing: async () => DEFAULT_ROUTING.standard,
+      readRoutingPolicy: () => policyFromRoute(CODEX_ROUTE),
       tmux: new FakeTmux(),
       terminal,
       workspacePresent: () => true,
       sleep: signalControlReadiness(store),
-      resolveModel: fakeResolveModel,
       quota: controlQuota.quota,
     });
     const restarted = await spawner.restartForControl(
@@ -2914,7 +2908,7 @@ describe("HiveSpawner wiring", () => {
       repoRoot: root,
       port: 4317,
       config: { terminal: "auto", headless: false },
-      routing: async () => DEFAULT_ROUTING.standard,
+      readRoutingPolicy: () => policyFromRoute(CODEX_ROUTE),
       tmux: new FakeTmux(),
       terminal,
       createWorktree: async () => ({
@@ -2956,14 +2950,13 @@ describe("HiveSpawner wiring", () => {
         repoRoot: root,
         port: 4317,
         config: { terminal: "auto", headless: false },
-        routing: async () => DEFAULT_ROUTING.standard,
+        readRoutingPolicy: () => policyFromRoute(CODEX_ROUTE),
         tmux: new FakeTmux(),
         terminal,
         createWorktree: async () => ({
           path: worktreePath,
           branch: "hive/maya-layout",
         }),
-        resolveModel: fakeResolveModel,
         sleep: signalReadiness(store),
         onTerminalsChanged: () => {
           terminalsChanged += 1;
@@ -3108,84 +3101,6 @@ describe("agent landing protocol", () => {
   });
 });
 
-describe("spawn prompt diet", () => {
-  const worktree = {
-    path: "/repo/.hive/worktrees/maya",
-    branch: "hive/maya-auth-api",
-  };
-  const prompt = (tier?: "deep" | "standard" | "cheap" | "review"): string =>
-    buildAgentPrompt("maya", "Rename a flag", worktree, "/repo", "", { tier });
-
-  test("cheap tier is materially shorter than the full prompt", () => {
-    expect(prompt("cheap").length).toBeLessThan(prompt("standard").length * 0.8);
-  });
-
-  test("every other tier keeps the full prompt verbatim", () => {
-    const full = buildAgentPrompt("maya", "Rename a flag", worktree, "/repo");
-    for (const tier of ["deep", "standard", "review"] as const) {
-      expect(prompt(tier)).toBe(full);
-    }
-  });
-
-  // The landing protocol is Hive's safety stack. The cheap prompt rewrites its
-  // prose but may never drop a rule: a small model is the one that would have
-  // to infer the missing step.
-  test("the concise landing protocol keeps every safety rule", () => {
-    const concise = buildLandingProtocol(
-      worktree.branch,
-      "/repo",
-      "main",
-      "maya",
-      0,
-      true,
-      { test: "bun test", typecheck: "bun run typecheck" },
-    );
-    expect(concise).toContain("git rebase main");
-    expect(concise).toContain("git rebase --abort");
-    expect(concise).toContain("Red tests never merge");
-    expect(concise).toContain("proven identical on unmodified main");
-    expect(concise).toContain("bun run typecheck");
-    expect(concise).toContain("neither do type errors");
-    expect(concise).toContain("git diff --name-only ORIG_HEAD..HEAD");
-    expect(concise).toContain(
-      "`hive_land` with agent `maya`, capabilityEpoch `0`",
-    );
-    expect(concise).toContain("Never merge into the primary checkout");
-    expect(concise).toContain(`at most ${LANDING_MAX_ATTEMPTS} attempts`);
-    expect(concise).toContain("merge commit hash");
-    expect(concise).toContain("Leave your branch and worktree in place");
-    expect(concise).toContain("Never force");
-    expect((concise.match(/"orchestrator"/g) ?? []).length)
-      .toBeGreaterThanOrEqual(2);
-    expect(concise.length).toBeLessThan(
-      buildLandingProtocol(worktree.branch, "/repo").length,
-    );
-  });
-
-  test("cheap tier still carries the read-scoping and escalation tripwire", () => {
-    expect(prompt("cheap")).toContain("Read only what the task names");
-    expect(prompt("cheap")).toContain("stop and report rather than grinding");
-    expect(prompt("cheap")).toContain("hive_send");
-  });
-
-  // Idle-with-work is the mirror of grind-past-scope: both waste a live
-  // session, and every tier gets the clause because every tier can idle.
-  test("every tier is told to continue after reporting a landing", () => {
-    for (const tier of ["deep", "standard", "cheap", "review"] as const) {
-      expect(prompt(tier)).toContain(
-        "immediately continue with the next authorized piece",
-      );
-      expect(prompt(tier)).toContain("Stop only for a genuine blocker");
-    }
-  });
-
-  test("an omitted tier keeps today's prompt exactly", () => {
-    expect(buildAgentPrompt("maya", "Rename a flag", worktree, "/repo")).toBe(
-      prompt(undefined),
-    );
-  });
-});
-
 describe("scoped brief in the spawn prompt", () => {
   const worktree = {
     path: "/repo/.hive/worktrees/maya",
@@ -3283,7 +3198,7 @@ describe("coding guidelines are guaranteed in context at spawn", () => {
       repoRoot: root,
       port: 4317,
       config: { terminal: "auto", headless: true },
-      routing: async () => ({ ...DEFAULT_ROUTING.standard, tool: "claude" }),
+      readRoutingPolicy: () => policyFromRoute({ ...CODEX_ROUTE, tool: "claude" }),
       tmux,
       terminal: new FakeTerminal(),
       createWorktree: async (_repoRoot, name, slug) => {
@@ -3292,7 +3207,6 @@ describe("coding guidelines are guaranteed in context at spawn", () => {
         return { path, branch: `hive/${name}-${slug}` };
       },
       sleep: signalReadiness(store),
-      resolveModel: fakeResolveModel,
     });
 
     await spawner.spawn({ task: "Build auth API", category: "simple_coding" });
@@ -3320,8 +3234,8 @@ describe("coding guidelines are guaranteed in context at spawn", () => {
           headless: true,
           ...(driver === "app-server" ? { codex: { driver } } : {}),
         },
-        routing: async () => ({
-          ...DEFAULT_ROUTING.standard,
+        readRoutingPolicy: () => policyFromRoute({
+          ...CODEX_ROUTE,
           tool: "codex",
           codex: { model: "gpt-test", effort: "high" },
         }),
@@ -3333,7 +3247,6 @@ describe("coding guidelines are guaranteed in context at spawn", () => {
           return { path, branch: `hive/${name}-${slug}` };
         },
         sleep: async () => {},
-        resolveModel: fakeResolveModel,
         codexAppServer: {
           isAvailable: async () => true,
           buildHostCommand: () => ["hive", "codex-app-server-host"],
@@ -3451,7 +3364,7 @@ describe("HiveSpawner launch prompt transport", () => {
       repoRoot: root,
       port: 4317,
       config: { terminal: "auto", headless: true },
-      routing: async () => DEFAULT_ROUTING.standard,
+      readRoutingPolicy: () => policyFromRoute(CODEX_ROUTE),
       tmux,
       terminal: new FakeTerminal(),
       createWorktree: async (_repoRoot, name, slug) => {
@@ -3459,7 +3372,6 @@ describe("HiveSpawner launch prompt transport", () => {
         await mkdir(path, { recursive: true });
         return { path, branch: `hive/${name}-${slug}` };
       },
-      resolveModel: fakeResolveModel,
       quota,
       sleep,
     });
@@ -3613,20 +3525,6 @@ describe("a refusal names the reason it actually refused for", () => {
     modelUtilization: {},
   });
 
-  /** The derived route, with grok's cell under the caller's control. Both cells
-   * carry a real reason, so nothing here is a stand-in for the engine's answer. */
-  const governed = (grokModel: string | null) => ({
-    tool: "claude" as const,
-    cells: {
-      claude: { model: "claude-opus-4-8", reason: "derived from live discovery" },
-      codex: { model: null, reason: "the codex CLI is not installed" },
-      grok: grokModel === null
-        ? { model: null, reason: "grok discovery named no model for standard" }
-        : { model: grokModel, reason: "derived from live discovery" },
-    },
-    notes: [],
-  });
-
   async function spawnGrok(
     root: string,
     grokModel: string | null,
@@ -3643,7 +3541,9 @@ describe("a refusal names the reason it actually refused for", () => {
       repoRoot: root,
       port: 4317,
       config: { terminal: "auto", headless: true },
-      governingRoute: async () => governed(grokModel),
+      readRoutingPolicy: () => grokModel === null
+        ? { ...policyFromRoute(CLAUDE_ROUTE), chains: {} }
+        : policyFromRoute({ tool: "grok", grok: { model: grokModel } }),
       quota: new QuotaService(
         new QuotaLedger(db),
         QuotaConfigSchema.parse({
@@ -3666,7 +3566,6 @@ describe("a refusal names the reason it actually refused for", () => {
         return { path, branch: `hive/${name}-${slug}` };
       },
       sleep: signalReadiness(store),
-      resolveModel: fakeResolveModel,
       discoverCapabilities: async (provider) =>
         provider === "grok" ? grokDiscovery() : claudeDiscovery(),
       // Grok's billing surface is unreadable. Enablement is the user's standing
@@ -3739,9 +3638,8 @@ describe("a refusal names the reason it actually refused for", () => {
     tempRoots.push(root);
     const { failure, store } = await spawnGrok(root, null, undefined);
 
-    // Still a routing refusal, and it still carries the engine's own reason.
-    expect(failure).toContain("no grok route for standard");
-    expect(failure).toContain("grok discovery named no model for standard");
+    expect(failure).toContain("has no chain");
+    expect(failure).toContain("global default chain is empty");
     expect(failure).not.toContain("not enabled");
     expect([...store.approvals.values()]).toEqual([]);
   });

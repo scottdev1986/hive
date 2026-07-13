@@ -1627,34 +1627,40 @@ export class HiveSpawner implements Spawner {
           // vendor's honest answer: Claude's effort is observed, never
           // chosen; Grok and Codex take their discovered default; Codex's
           // CLI requires a flag, so its last resort stays "medium".
-          const requested = candidate.effort;
-          if (requested !== undefined) {
-            const validated = validateEffort(record, candidate.model, requested);
-            if (validated.warning !== undefined) console.warn(validated.warning);
-            return { refusal: null, ...(validated.effort === undefined ? {} : { effort: validated.effort }) };
-          }
-          const discoveredDefault = record?.defaultEffort.state === "known"
-            ? record.defaultEffort.value
-            : undefined;
-          switch (candidate.tool) {
-            case "claude":
-              return { refusal: null };
-            case "grok": {
-              if (discoveredDefault === undefined) return { refusal: null };
-              const validated = validateEffort(record, candidate.model, discoveredDefault);
-              return { refusal: null, ...(validated.effort === undefined ? {} : { effort: validated.effort }) };
-            }
-            case "codex": {
-              const validated = validateEffort(
-                record,
-                candidate.model,
-                discoveredDefault ?? "medium",
-              );
+          try {
+            const requested = candidate.effort;
+            if (requested !== undefined) {
+              const validated = validateEffort(record, candidate.model, requested);
               if (validated.warning !== undefined) console.warn(validated.warning);
               return { refusal: null, ...(validated.effort === undefined ? {} : { effort: validated.effort }) };
             }
-            default:
-              return unknownVendor(candidate.tool, "spawn effort");
+            const discoveredDefault = record?.defaultEffort.state === "known"
+              ? record.defaultEffort.value
+              : undefined;
+            switch (candidate.tool) {
+              case "claude":
+                return { refusal: null };
+              case "grok": {
+                if (discoveredDefault === undefined) return { refusal: null };
+                const validated = validateEffort(record, candidate.model, discoveredDefault);
+                return { refusal: null, ...(validated.effort === undefined ? {} : { effort: validated.effort }) };
+              }
+              case "codex": {
+                const validated = validateEffort(
+                  record,
+                  candidate.model,
+                  discoveredDefault ?? "medium",
+                );
+                if (validated.warning !== undefined) console.warn(validated.warning);
+                return { refusal: null, ...(validated.effort === undefined ? {} : { effort: validated.effort }) };
+              }
+              default:
+                return unknownVendor(candidate.tool, "spawn effort");
+            }
+          } catch (error) {
+            return {
+              refusal: error instanceof Error ? error.message : String(error),
+            };
           }
         },
       };

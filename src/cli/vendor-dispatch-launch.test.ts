@@ -4,14 +4,13 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { provisionSkills, type SkillTool } from "../adapters/skills";
-import { resolveConcreteModel } from "../adapters/tools/models";
 import {
   GRAPHIFY_HOOK_SCRIPT,
   writeGraphifyHook,
   type GraphifyHookKind,
 } from "../adapters/tools/graphify-hook";
 import { readAccountBilling } from "../daemon/usage-credits";
-import type { CapabilityProvider, Route } from "../schemas";
+import type { CapabilityProvider } from "../schemas";
 import {
   buildOrchestratorCommand,
   buildOrchestratorLaunchCommand,
@@ -138,22 +137,6 @@ test("launching an unknown vendor's orchestrator spawns nothing and touches no t
   expect(spawned).toBeNull();
   expect(askedTmux).toBe(false);
   expect(resolvedClaude).toBe(false);
-});
-
-test("a 'default' model is never resolved for an unknown vendor from codex's config", async () => {
-  const route = {
-    tool: UNKNOWN_TOOL,
-    claude: { model: "default" },
-    codex: { model: "default" },
-    grok: { model: "default" },
-  } as unknown as Route;
-
-  // The old ternary read ~/.codex/config.toml for anything that was not Claude
-  // and launched a third vendor's agent on whatever model Codex is pinned to —
-  // or, finding none, returned the "default" alias as though it had resolved
-  // something.
-  await expect(resolveConcreteModel(UNKNOWN_TOOL as Route["tool"], route))
-    .rejects.toThrow(/unknown vendor "future-vendor"/);
 });
 
 test("billing for an unknown vendor throws instead of probing claude's usage surface", async () => {

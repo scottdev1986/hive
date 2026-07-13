@@ -192,7 +192,7 @@ test("a review of an unknown vendor is not silently handed to claude", async () 
   const reviewOfClaude = await service.routeAndReserve({
     agentName: "maya",
     category: "code_review",
-    preferredTool: "claude",
+    selection: "strict",
     reviewOfTool: "claude",
     candidates,
   });
@@ -205,7 +205,7 @@ test("a review of an unknown vendor is not silently handed to claude", async () 
     service.routeAndReserve({
       agentName: "sam",
       category: "code_review",
-      preferredTool: "claude",
+      selection: "strict",
       reviewOfTool: UNKNOWN,
       candidates,
     }),

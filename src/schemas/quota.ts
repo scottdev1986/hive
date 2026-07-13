@@ -73,10 +73,25 @@ const legacyKeysMapped = <T>(
     ]),
   );
 
-const EstimateSchema = z.record(
+const DEFAULT_ESTIMATES: Record<RoutingCategory, number> = {
+  complex_coding: 20,
+  debugging: 20,
+  heavy_research: 20,
+  planning: 10,
+  simple_coding: 10,
+  default: 10,
+  code_review: 8,
+  light_research: 4,
+  summarization: 4,
+};
+
+const EstimateSchema = z.partialRecord(
   z.union([RoutingCategorySchema, z.enum(["deep", "standard", "cheap", "review"])]),
   z.number().positive(),
-).transform(legacyKeysMapped);
+).transform((table): Record<RoutingCategory, number> => ({
+  ...DEFAULT_ESTIMATES,
+  ...legacyKeysMapped(table),
+}));
 
 /**
  * How much of each window one run of a tier is expected to consume, as a percent
@@ -95,11 +110,6 @@ const PercentEstimateSchema = z.strictObject({
   weekly: z.number().positive().max(100),
 });
 
-const PercentEstimateTableSchema = z.record(
-  z.union([RoutingCategorySchema, z.enum(["deep", "standard", "cheap", "review"])]),
-  PercentEstimateSchema,
-).transform(legacyKeysMapped);
-
 export const DEFAULT_PERCENT_ESTIMATES: Record<
   RoutingCategory,
   { fiveHour: number; weekly: number }
@@ -117,6 +127,14 @@ export const DEFAULT_PERCENT_ESTIMATES: Record<
   light_research: { fiveHour: 1.5, weekly: 0.3 },
   summarization: { fiveHour: 1.5, weekly: 0.3 },
 };
+
+const PercentEstimateTableSchema = z.partialRecord(
+  z.union([RoutingCategorySchema, z.enum(["deep", "standard", "cheap", "review"])]),
+  PercentEstimateSchema,
+).transform((table): Record<RoutingCategory, { fiveHour: number; weekly: number }> => ({
+  ...DEFAULT_PERCENT_ESTIMATES,
+  ...legacyKeysMapped(table),
+}));
 
 export const QuotaConfigSchema = z.strictObject({
   enabled: z.boolean().default(true),
@@ -139,17 +157,7 @@ export const QuotaConfigSchema = z.strictObject({
    * would silently become the outage it was meant to prevent.
    */
   launchQuarantineMinutes: z.number().positive().default(15),
-  estimates: EstimateSchema.default({
-    complex_coding: 20,
-    debugging: 20,
-    heavy_research: 20,
-    planning: 10,
-    simple_coding: 10,
-    default: 10,
-    code_review: 8,
-    light_research: 4,
-    summarization: 4,
-  }),
+  estimates: EstimateSchema.default(DEFAULT_ESTIMATES),
   limits: z.array(QuotaLimitSchema).default([]),
 }).superRefine((value, context) => {
   if (value.criticalRemainingPct > value.warningRemainingPct) {

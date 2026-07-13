@@ -123,7 +123,7 @@ class StubSpawner implements Spawner {
     return agent({
       id: "agent-sam",
       name: request.name ?? "sam",
-      tier: request.category,
+      category: request.category,
       taskDescription: request.task,
       tmuxSession: `hive-${request.name ?? "sam"}`,
       worktreePath: `/tmp/hive-${request.name ?? "sam"}`,
@@ -141,7 +141,7 @@ class FailedSpawner implements Spawner {
   async spawn(request: SpawnRequest): Promise<AgentRecord> {
     return agent({
       status: "failed",
-      tier: request.category,
+      category: request.category,
       taskDescription: request.task,
       failureReason: "Error: model not supported",
       failedAt: timestamp,
@@ -270,7 +270,7 @@ describe("HiveDaemon HTTP server", () => {
     const decision = await quota.routeAndReserve({
       agentName: "maya",
       category: "simple_coding",
-      preferredTool: "codex",
+      selection: "strict",
       explicitTool: "codex",
       candidates: await authorizeForQuotaTest([
         { tool: "claude", model: "claude-model" },
@@ -1082,13 +1082,13 @@ describe("HiveDaemon HTTP server", () => {
           ],
         },
       })) as {
-        escalation: { tier: string; agentName: string; model: string };
+        escalation: { category: string; agentName: string; model: string };
         handoff: { branch: string; agentName: string };
         priorEscalations: number;
       };
       expect(escalated.priorEscalations).toEqual(0);
       expect(escalated.escalation.agentName).toEqual("sam");
-      expect(escalated.escalation.category).toEqual("review");
+      expect(escalated.escalation.category).toEqual("code_review");
       expect(escalated.escalation.model.length).toBeGreaterThan(0);
       expect(escalated.handoff.branch).toEqual("hive/sam-task");
 
@@ -1101,7 +1101,8 @@ describe("HiveDaemon HTTP server", () => {
       })) as Array<{ from: string; body: string }>;
       expect(escalationInbox.length).toEqual(1);
       expect(escalationInbox[0]?.from).toEqual("sam");
-      expect(escalationInbox[0]?.body).toContain("TIER ESCALATION from sam");
+      expect(escalationInbox[0]?.body).toContain("CAPABILITY ESCALATION from sam");
+      expect(escalationInbox[0]?.body).toContain("category=code_review");
       expect(escalationInbox[0]?.body).toContain("branch: hive/sam-task");
       expect(daemon.db.countEscalationsForAgent("agent-sam")).toEqual(1);
 
@@ -1882,7 +1883,7 @@ describe("HiveDaemon HTTP server", () => {
     const decision = await quota.routeAndReserve({
       agentName: "maya",
       category: "simple_coding",
-      preferredTool: "codex",
+      selection: "strict",
       explicitTool: "codex",
       candidates: await authorizeForQuotaTest([
         { tool: "claude", model: "claude-model" },
@@ -2613,7 +2614,7 @@ describe("the model an agent is actually running", () => {
       const decision = await quota.routeAndReserve({
         agentName: "probe",
         category: "simple_coding",
-        preferredTool: "claude",
+        selection: "strict",
         candidates: await authorizeForQuotaTest([{ tool: "claude", model: "sonnet" }]),
       });
       quota.markStarted(decision.reservation.id);
