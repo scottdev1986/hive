@@ -48,6 +48,7 @@ describe("TokenUsageStore", () => {
       }),
     ].join("\n") + "\n");
     const codex = store.startOrchestrator(session, "codex", repo, at);
+    store.registerOrchestratorProviderSession("codex-session", repo);
     await store.refreshSubject(codex);
     appendFileSync(codexPath, JSON.stringify({
       timestamp: "2026-07-13T12:01:00.000Z",

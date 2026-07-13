@@ -21,7 +21,11 @@ import {
 } from "../daemon/lifecycle";
 import { HiveDaemon } from "../daemon/server";
 import { HiveSpawner } from "../daemon/spawner-impl";
-import { QuotaLedger } from "../daemon/quota-ledger";
+import {
+  migrateDefaultQuotaLedger,
+  QuotaDatabase,
+  QuotaLedger,
+} from "../daemon/quota-ledger";
 import { WorkspacePresence } from "../daemon/workspace-presence";
 import { QuotaService } from "../daemon/quota";
 import {
@@ -96,8 +100,11 @@ export async function runDaemon(): Promise<void> {
   // Live limits come from the providers themselves. All three probes are
   // read-only and start no model turn, so a startup refresh costs nothing but
   // a subprocess.
+  const quotaDb = new QuotaDatabase();
+  const quotaLedger = new QuotaLedger(quotaDb);
+  migrateDefaultQuotaLedger(quotaDb);
   const quota = new QuotaService(
-    new QuotaLedger(db),
+    quotaLedger,
     quotaConfig,
     () => new Date(),
     [
@@ -235,6 +242,7 @@ export async function runDaemon(): Promise<void> {
     }
     stopping = true;
     await daemon.stop();
+    quotaDb.close();
     db.close();
     process.exit(0);
   };

@@ -1990,7 +1990,7 @@ export class QuotaService {
   async recoverExpiredReservations(
     now = this.clock(),
   ): Promise<QuotaReservation[]> {
-    const expired = this.ledger.expired(iso(now));
+    const expired = await this.ledger.expired(iso(now));
     for (const reservation of expired) {
       await this.cancel(reservation.id, iso(now));
     }

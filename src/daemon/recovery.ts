@@ -135,7 +135,10 @@ export interface CrashRecoveryDependencies {
    * SessionStart is the primary signal; a fresh rollout mtime remains an
    * independent fallback when hooks are disabled by policy or fail. Defaults
    * to `readCodexTelemetry`. */
-  readCodexActivity?: (worktreePath: string) => Promise<string | null>;
+  readCodexActivity?: (
+    worktreePath: string,
+    toolSessionId: string | undefined,
+  ) => Promise<string | null>;
 }
 
 const defaultSleep: Sleep = (milliseconds) =>
@@ -171,6 +174,7 @@ export class CrashRecovery {
   private readonly writeGrokConfig: typeof writeGrokAgentConfig;
   private readonly readCodexActivity: (
     worktreePath: string,
+    toolSessionId: string | undefined,
   ) => Promise<string | null>;
   // Agents with a recovery already in flight. The sweep (maintenance tick,
   // startup) and manual recovery (hive_recover) share no other interlock, and
@@ -194,8 +198,8 @@ export class CrashRecovery {
     this.writeCodexConfig = deps.writeCodexConfig ?? writeCodexAgentConfig;
     this.writeGrokConfig = deps.writeGrokConfig ?? writeGrokAgentConfig;
     this.readCodexActivity = deps.readCodexActivity ??
-      (async (worktreePath) =>
-        (await readCodexTelemetry(worktreePath)).lastActivityAt);
+      (async (worktreePath, toolSessionId) =>
+        (await readCodexTelemetry(worktreePath, toolSessionId)).lastActivityAt);
   }
 
   // The maintenance sweep: classify every agent whose tmux session is gone
@@ -634,7 +638,10 @@ export class CrashRecovery {
   ): Promise<boolean> {
     if (record.tool !== "codex" || record.worktreePath === null) return false;
     try {
-      const lastActivityAt = await this.readCodexActivity(record.worktreePath);
+      const lastActivityAt = await this.readCodexActivity(
+        record.worktreePath,
+        record.toolSessionId,
+      );
       return lastActivityAt !== null && lastActivityAt > monitorStartedAt;
     } catch {
       return false;

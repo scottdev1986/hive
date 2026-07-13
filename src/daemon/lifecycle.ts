@@ -14,12 +14,12 @@ export function getPidFilePath(): string {
   return resolve(getHiveHome(), "daemon.pid");
 }
 
-export function getPortFilePath(): string {
-  return resolve(getHiveHome(), "daemon.port");
+export function getPortFilePath(hiveHome = getHiveHome()): string {
+  return resolve(hiveHome, "daemon.port");
 }
 
-export function getDaemonLockPath(): string {
-  return resolve(getHiveHome(), "daemon.lock");
+export function getDaemonLockPath(hiveHome = getHiveHome()): string {
+  return resolve(hiveHome, "daemon.lock");
 }
 
 interface DaemonLock {
@@ -28,9 +28,11 @@ interface DaemonLock {
   readonly startedAt: string;
 }
 
-function readDaemonLock(): DaemonLock | null {
+function readDaemonLock(hiveHome = getHiveHome()): DaemonLock | null {
   try {
-    const value: unknown = JSON.parse(readFileSync(getDaemonLockPath(), "utf8"));
+    const value: unknown = JSON.parse(
+      readFileSync(getDaemonLockPath(hiveHome), "utf8"),
+    );
     if (typeof value !== "object" || value === null) return null;
     const lock = value as Record<string, unknown>;
     if (
@@ -40,6 +42,44 @@ function readDaemonLock(): DaemonLock | null {
     return lock as unknown as DaemonLock;
   } catch {
     return null;
+  }
+}
+
+export type DaemonInstanceLiveness = "live" | "dead" | "unknown";
+
+/**
+ * A missing lock or a dead owner proves the instance is dead. A live PID alone
+ * does not prove ownership (PIDs are reused), so only the matching handshake
+ * proves live; an unreachable starting daemon remains unknown and is preserved.
+ */
+export async function daemonInstanceLiveness(
+  hiveHome: string,
+  instanceId: string,
+): Promise<DaemonInstanceLiveness> {
+  const path = getDaemonLockPath(hiveHome);
+  const lock = readDaemonLock(hiveHome);
+  if (lock === null) {
+    try {
+      readFileSync(path);
+      return "unknown";
+    } catch (error) {
+      return (error as NodeJS.ErrnoException).code === "ENOENT" ? "dead" : "unknown";
+    }
+  }
+  if (lock.instanceId !== instanceId) return "unknown";
+  if (!processIsAlive(lock.pid)) return "dead";
+  const port = readNumber(getPortFilePath(hiveHome));
+  if (port === null || port <= 0 || port > 65_535) return "unknown";
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/handshake`, {
+      signal: AbortSignal.timeout(250),
+    });
+    const handshake = response.ok
+      ? parseDaemonHandshake(await response.json())
+      : null;
+    return handshake?.instanceId === instanceId ? "live" : "unknown";
+  } catch {
+    return "unknown";
   }
 }
 

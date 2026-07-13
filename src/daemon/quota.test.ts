@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   DEFAULT_QUOTA_CONFIG,
@@ -11,7 +11,13 @@ import {
 import { HiveDatabase } from "./db";
 import type { TmuxSender } from "./delivery";
 import { HiveDaemon } from "./server";
-import { QuotaLedger, QuotaLedgerUnknownError } from "./quota-ledger";
+import {
+  migrateDefaultQuotaLedger,
+  QuotaDatabase,
+  QuotaLedger,
+  QuotaLedgerUnknownError,
+} from "./quota-ledger";
+import { hiveInstanceSuffix } from "./tmux-sessions";
 import {
   calendarWeekBounds,
   QuotaExhaustedError,
@@ -363,6 +369,164 @@ describe("quota persistence and reservations", () => {
     expect(results.filter((result) => result.status === "rejected")).toHaveLength(1);
     secondDb.close();
     db.close();
+  });
+
+  test("shares reservations across instance databases without aliasing same-repo agent names", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-quota-shared-instances-"));
+    roots.push(root);
+    const path = join(root, "quota.db");
+    const firstDb = new QuotaDatabase(path);
+    const secondDb = new QuotaDatabase(path);
+    const firstLedger = new QuotaLedger(firstDb, "instance-a", join(root, "a"));
+    const secondLedger = new QuotaLedger(secondDb, "instance-b", join(root, "b"));
+    const quotaConfig = config([limit("claude", 100)]);
+    const clock = () => new Date("2026-07-09T12:00:00.000Z");
+    const first = new QuotaService(firstLedger, quotaConfig, clock);
+    const second = new QuotaService(secondLedger, quotaConfig, clock);
+
+    const [firstRoute, secondRoute] = await Promise.all([
+      first.routeAndReserve({
+        agentName: "maya",
+        category: "simple_coding",
+        selection: "strict",
+        explicitTool: "claude",
+        candidates: candidates(),
+      }),
+      second.routeAndReserve({
+        agentName: "maya",
+        category: "simple_coding",
+        selection: "strict",
+        explicitTool: "claude",
+        candidates: candidates(),
+      }),
+    ]);
+
+    expect(firstLedger.activeReservations().map((row) => row.id))
+      .toEqual([firstRoute.reservation.id]);
+    expect(secondLedger.activeReservations().map((row) => row.id))
+      .toEqual([secondRoute.reservation.id]);
+    expect(firstLedger.getReservation(secondRoute.reservation.id)?.instanceId)
+      .toEqual("instance-b");
+    expect(secondLedger.getReservation(firstRoute.reservation.id)?.instanceId)
+      .toEqual("instance-a");
+    firstDb.close();
+    secondDb.close();
+  });
+
+  test("a sibling preserves a live owner's hold and reclaims it once that owner dies", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-quota-shared-admission-"));
+    roots.push(root);
+    const path = join(root, "quota.db");
+    const firstDb = new QuotaDatabase(path);
+    const secondDb = new QuotaDatabase(path);
+    const liveness = new Map<string, "live" | "dead" | "unknown">([
+      ["instance-a", "live"],
+      ["instance-b", "live"],
+    ]);
+    const probe = async (_home: string, instanceId: string) =>
+      liveness.get(instanceId) ?? "unknown" as const;
+    const firstLedger = new QuotaLedger(
+      firstDb,
+      "instance-a",
+      join(root, "a"),
+      probe,
+    );
+    const secondLedger = new QuotaLedger(
+      secondDb,
+      "instance-b",
+      join(root, "b"),
+      probe,
+    );
+    const quotaConfig = config([limit("claude", 15)], {
+      reservationTtlMinutes: 1,
+    });
+    const clock = () => new Date("2026-07-09T12:00:00.000Z");
+    const services = [
+      new QuotaService(firstLedger, quotaConfig, clock),
+      new QuotaService(secondLedger, quotaConfig, clock),
+    ];
+    const results = await Promise.allSettled(services.map((service, index) =>
+      service.routeAndReserve({
+        agentName: index === 0 ? "maya" : "sam",
+        category: "simple_coding",
+        selection: "strict",
+        explicitTool: "claude",
+        candidates: candidates(),
+      })
+    ));
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(results.filter((result) => result.status === "rejected")).toHaveLength(1);
+    const accepted = results.find((result) => result.status === "fulfilled");
+    if (accepted?.status !== "fulfilled") throw new Error("missing accepted reservation");
+
+    const owner = accepted.value.reservation.instanceId;
+    const sibling = owner === "instance-a" ? services[1]! : services[0]!;
+    expect(await sibling.recoverExpired(new Date("2026-07-09T12:02:00.000Z")))
+      .toEqual(0);
+    expect(firstLedger.getReservation(accepted.value.reservation.id)?.status)
+      .toEqual("active");
+
+    liveness.set(owner, "dead");
+    expect(await sibling.recoverExpired(new Date("2026-07-09T12:02:00.000Z")))
+      .toEqual(1);
+    expect(firstLedger.getReservation(accepted.value.reservation.id)?.status)
+      .toEqual("released");
+    const replacement = await sibling.routeAndReserve({
+      agentName: "replacement",
+      category: "simple_coding",
+      selection: "strict",
+      explicitTool: "claude",
+      candidates: candidates(),
+    });
+    expect(replacement.reservation.status).toEqual("active");
+    firstDb.close();
+    secondDb.close();
+  });
+
+  test("migrates the default instance's intact quota history into quota.db once", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-quota-migration-"));
+    roots.push(root);
+    const legacyPath = join(root, "hive.db");
+    const legacyDb = new HiveDatabase(legacyPath);
+    const defaultInstance = hiveInstanceSuffix(join(homedir(), ".hive"));
+    const defaultHome = join(homedir(), ".hive");
+    const legacy = new QuotaLedger(legacyDb, defaultInstance, defaultHome);
+    const reservation = legacy.insertUnboundedReservation({
+      id: "legacy-reservation",
+      agentName: "maya",
+      provider: "claude",
+      account: "personal",
+      pool: "claude-premium",
+      model: "claude-model",
+      category: "simple_coding",
+      estimatedUnits: 10,
+      now: "2026-07-09T12:00:00.000Z",
+      expiresAt: "2026-07-09T13:00:00.000Z",
+    });
+    legacy.reconcile(
+      reservation.id,
+      7,
+      7,
+      "estimated",
+      "2026-07-09T12:05:00.000Z",
+    );
+    legacyDb.close();
+
+    const quotaDb = new QuotaDatabase(join(root, "quota.db"));
+    const migrated = new QuotaLedger(quotaDb, "instance-b");
+    migrateDefaultQuotaLedger(quotaDb, legacyPath);
+    migrateDefaultQuotaLedger(quotaDb, legacyPath);
+    expect(migrated.getReservation(reservation.id)).toMatchObject({
+      instanceId: defaultInstance,
+      status: "reconciled",
+      actualUnits: 7,
+    });
+    expect(migrated.usageTotals(
+      { provider: "claude", account: "personal", pool: "claude-premium" },
+      "2026-07-09T11:00:00.000Z",
+      "2026-07-01T00:00:00.000Z",
+    ).fiveHour).toEqual(7);
+    quotaDb.close();
   });
 
   test("gives a control restart its own idempotent reservation without double-counting the interrupted run", async () => {

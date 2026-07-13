@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   acquireDaemonLock,
+  daemonInstanceLiveness,
   daemonSpawnArgv,
   getDaemonLockPath,
   getPidFilePath,
@@ -13,6 +14,7 @@ import {
   releaseDaemonLock,
   writeLifecycleFiles,
 } from "./lifecycle";
+import { hiveInstanceSuffix } from "./tmux-sessions";
 import type { DaemonHandshake } from "./handshake";
 import { handshakeMismatch } from "./handshake";
 
@@ -69,6 +71,31 @@ describe("daemon lifecycle", () => {
       releaseDaemonLock(10101);
       await acquireDaemonLock(20202, () => true);
       releaseDaemonLock(20202);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      if (previousHome === undefined) delete process.env.HIVE_HOME;
+      else process.env.HIVE_HOME = previousHome;
+    }
+  });
+
+  test("proves daemon-lock liveness without treating an unreachable live pid as dead", async () => {
+    const previousHome = process.env.HIVE_HOME;
+    const home = mkdtempSync(join(tmpdir(), "hive-lifecycle-owner-"));
+    process.env.HIVE_HOME = home;
+    const instanceId = hiveInstanceSuffix(home);
+    try {
+      expect(await daemonInstanceLiveness(home, instanceId)).toEqual("dead");
+      await acquireDaemonLock();
+      writeLifecycleFiles(4317);
+      const fetchSpy = spyOn(globalThis, "fetch").mockResolvedValue(
+        Response.json({ ...handshake, instanceId }),
+      );
+      expect(await daemonInstanceLiveness(home, instanceId)).toEqual("live");
+      fetchSpy.mockRejectedValue(new Error("temporarily unreachable"));
+      expect(await daemonInstanceLiveness(home, instanceId)).toEqual("unknown");
+      fetchSpy.mockRestore();
+      releaseDaemonLock();
+      expect(await daemonInstanceLiveness(home, instanceId)).toEqual("dead");
     } finally {
       rmSync(home, { recursive: true, force: true });
       if (previousHome === undefined) delete process.env.HIVE_HOME;

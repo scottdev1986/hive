@@ -105,14 +105,17 @@ The provider account is machine-wide. Partitioning the ledger per instance is no
 
 **What cannot heal.** Reservations. `quota-sources.ts:44-46` states it exactly: *"The one thing a provider cannot tell us is how much of a window a future run will consume."* The admission test is `used + reservedLocally + estimate <= allowance − floor` (`quota-ledger.ts:870-883`), and `totals.reserved` is `SUM(...) WHERE status='active'` **from this DB only** (`:823-829`). Instance B sees `reserved = 0` for work instance A has already committed. Both can independently fill the pool to the allowance, and the deep-work floors (`reserveFiveHourPct`, `quota.ts:761-765`) are not protected at all. Up to 2× overshoot, and the repo's standing rule is *accurate numbers only*.
 
-**Decision: one machine-wide reservations database,** `~/.hive/quota.db`, holding `quota_reservations` and `quota_observations` keyed by `(provider, account, pool)`. Everything else in the quota schema stays per-instance.
+**Decision: one machine-wide quota ledger,** `~/.hive/quota.db`. The ledger moves as a unit; only quota configuration and routing policy stay per-instance. Quota is a property of the logged-in vendor account, not of a Hive instance, so usage, observations, reservations, provider catalogs, and their integrity state all describe one machine-wide resource.
+
+Splitting only `quota_reservations` and `quota_observations` is not safe with the current ledger. Reconciliation is one atomic transaction across reservation status, `quota_usage`, its monotonic sequence, and the integrity triggers. Observations watermark into that same sequence. Two WAL databases cannot preserve that transaction across a process crash, and an observation watermark from instance A can alias an unrelated local sequence in instance B. Moving the ledger as a unit preserves both invariants and makes the shared reservation admission transaction an ordinary SQLite `BEGIN IMMEDIATE`.
 
 This is the *only* place a shared writable database is justified, and the justification is that the resource being metered is itself shared. It is affordable because the mechanics already exist: WAL and `busy_timeout = 5000` are set on every connection (`db.ts:379`, `:401`), which is exactly the multi-process case WAL is for.
 
 Two constraints make it satisfy "killing one instance must not disturb another":
 
 - **No owner.** It is a file, not a broker process. Nothing to kill.
-- **A dead instance's reservations must expire.** TTL sweeping already exists (`quota-ledger.ts:1463-1467`, `quota.ts:1986`) but only reaps *its own* rows. It must reap any expired row, whichever instance wrote it — otherwise a killed instance wedges the pool for its siblings, which is precisely the disturbance the requirement forbids.
+- **Reservation ownership is explicit.** Every row records `instanceId` and `instanceHome`, so same-named agents in sibling instances cannot alias.
+- **Liveness, not a wall clock, authorizes reclamation.** A matching daemon lock plus matching live handshake protects a sibling's reservation even past its TTL. A missing lock or dead lock owner proves the instance dead and makes its reservations reclaimable immediately. Malformed or temporarily unreachable ownership is unknown and is preserved; absence is never converted into permission to cancel a possibly-live sibling.
 
 **This contradicts a published doc.** `docs/daemon/database-resilience.md:31` says Hive is *"a single-writer, single-process database."* That stays true of `hive.db`; it becomes false of `quota.db`. The doc must be amended in the same change — an unamended doc is how the next agent "proves" the multi-writer path is a bug.
 
@@ -182,7 +185,7 @@ Implement the lease `repoFamilyKeyOf` already documents (`git.ts:117-122`): a cr
 ### Wave 4 — shared quota (one agent; touches the money)
 
 **T13. Machine-wide `quota.db`.** Files: `src/daemon/quota-ledger.ts`, `src/daemon/quota.ts`, `src/daemon/db.ts`, `docs/daemon/database-resilience.md`.
-Move `quota_reservations` + `quota_observations` to `~/.hive/quota.db`; make TTL expiry reap *any* instance's expired rows; migrate the default instance's rows; amend the single-writer doc. Verify with two daemons reserving concurrently against one pool and asserting the admission test refuses the overshoot.
+Move the quota ledger as a unit to `~/.hive/quota.db`; record reservation ownership; reclaim holds only when the owning daemon lock proves dead; migrate the default instance's rows; amend the single-writer doc. Verify with two daemons reserving concurrently against one pool, assert the admission test refuses the overshoot, and prove both liveness directions: a live sibling's hold survives a sweep while a killed sibling's hold is reclaimed.
 
 ### Wave 5 — surfaces
 

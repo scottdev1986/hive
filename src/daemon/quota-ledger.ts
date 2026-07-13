@@ -1,3 +1,7 @@
+import { Database } from "bun:sqlite";
+import { existsSync, mkdirSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
 import { z } from "zod";
 import {
   CAPABILITY_PROVIDERS,
@@ -14,9 +18,135 @@ import {
 } from "../schemas";
 import type { HiveDatabase } from "./db";
 import { modelVendor } from "../adapters/tools/models";
+import {
+  daemonInstanceLiveness,
+  type DaemonInstanceLiveness,
+} from "./lifecycle";
+import { hiveInstanceSuffix, resolveHiveHome } from "./tmux-sessions";
+
+type LedgerDatabase = Pick<HiveDatabase, "database">;
+
+export function getQuotaDatabasePath(): string {
+  return join(homedir(), ".hive", "quota.db");
+}
+
+/** The quota ledger is the one machine-wide writable SQLite database. */
+export class QuotaDatabase implements LedgerDatabase {
+  readonly database: Database;
+
+  constructor(readonly path = getQuotaDatabasePath()) {
+    mkdirSync(dirname(path), { recursive: true });
+    this.database = new Database(path, { create: true });
+    this.database.exec("PRAGMA busy_timeout = 5000");
+    this.database.exec("PRAGMA journal_mode = WAL");
+    this.database.exec("PRAGMA foreign_keys = ON");
+    this.database.exec("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
+  }
+
+  close(): void {
+    this.database.close();
+  }
+}
+
+const QUOTA_MIGRATION_META_KEY = "defaultHiveQuotaMigrationV1";
+const SHARED_QUOTA_TABLES = [
+  "quota_observations",
+  "quota_fair_dispatch",
+  "quota_alerts",
+  "quota_pools",
+  "quota_model_catalog",
+  "quota_route_health",
+] as const;
+
+function quoted(identifier: string): string {
+  return `"${identifier.replaceAll('"', '""')}"`;
+}
+
+/**
+ * Copy the default instance's pre-cutover ledger once. Call this only after a
+ * QuotaLedger has installed the destination schema and integrity triggers.
+ */
+export function migrateDefaultQuotaLedger(
+  target: QuotaDatabase,
+  legacyPath = join(homedir(), ".hive", "hive.db"),
+): void {
+  if (
+    target.database.query("SELECT 1 FROM meta WHERE key = ?")
+      .get(QUOTA_MIGRATION_META_KEY) !== null
+  ) return;
+  if (!existsSync(legacyPath) || legacyPath === target.path) {
+    target.database.query("INSERT INTO meta (key, value) VALUES (?, ?)")
+      .run(QUOTA_MIGRATION_META_KEY, "no legacy database");
+    return;
+  }
+
+  target.database.query("ATTACH DATABASE ? AS legacy").run(legacyPath);
+  try {
+    target.database.transaction(() => {
+      if (
+        target.database.query("SELECT 1 FROM meta WHERE key = ?")
+          .get(QUOTA_MIGRATION_META_KEY) !== null
+      ) return;
+      const sourceHas = (table: string): boolean =>
+        target.database.query(
+          "SELECT 1 FROM legacy.sqlite_master WHERE type = 'table' AND name = ?",
+        ).get(table) !== null;
+      const commonColumns = (table: string): string[] => {
+        const source = new Set(
+          (target.database.query(`PRAGMA legacy.table_info(${quoted(table)})`).all() as
+            Array<{ name: string }>).map((column) => column.name),
+        );
+        return (target.database.query(`PRAGMA main.table_info(${quoted(table)})`).all() as
+          Array<{ name: string }>).map((column) => column.name)
+          .filter((column) => source.has(column));
+      };
+      const copy = (table: string): void => {
+        if (!sourceHas(table)) return;
+        const columns = commonColumns(table);
+        if (columns.length === 0) return;
+        const list = columns.map(quoted).join(", ");
+        target.database.exec(
+          `INSERT OR IGNORE INTO ${quoted(table)} (${list}) ` +
+            `SELECT ${list} FROM legacy.${quoted(table)}`,
+        );
+      };
+
+      if (sourceHas("quota_usage")) {
+        const columns = commonColumns("quota_usage");
+        const list = columns.map(quoted).join(", ");
+        const rows = target.database.query(
+          "SELECT id, seq FROM legacy.quota_usage ORDER BY seq",
+        ).all() as Array<{ id: string; seq: number }>;
+        for (const row of rows) {
+          target.database.query(
+            "UPDATE quota_usage_sequence SET next = ? WHERE id = 0",
+          ).run(row.seq);
+          target.database.query(
+            `INSERT OR IGNORE INTO quota_usage (${list}) ` +
+              `SELECT ${list} FROM legacy.quota_usage WHERE id = ?`,
+          ).run(row.id);
+        }
+      }
+      copy("quota_reservations");
+      target.database.query(
+        "UPDATE quota_reservations SET instanceId = ? WHERE instanceId = ''",
+      ).run(hiveInstanceSuffix(join(homedir(), ".hive")));
+      target.database.query(
+        "UPDATE quota_reservations SET instanceHome = ? WHERE instanceHome = ''",
+      ).run(resolveHiveHome(join(homedir(), ".hive")));
+      for (const table of SHARED_QUOTA_TABLES) copy(table);
+      target.database.query("INSERT INTO meta (key, value) VALUES (?, ?)")
+        .run(QUOTA_MIGRATION_META_KEY, legacyPath);
+    }).immediate();
+  } finally {
+    target.database.exec("DETACH DATABASE legacy");
+  }
+}
 
 const ReservationSchema = z.object({
   id: z.string(),
+  instanceId: z.string(),
+  instanceHome: z.string(),
   /**
    * The reservation this one settles with. A run gated by more than one pool
    * holds a row per pool, all sharing the primary row's id as their group, so
@@ -254,7 +384,15 @@ export function mergeObservationWindows(
 }
 
 export class QuotaLedger {
-  constructor(private readonly db: HiveDatabase) {
+  constructor(
+    private readonly db: LedgerDatabase,
+    private readonly instanceId = hiveInstanceSuffix(),
+    private readonly instanceHome = resolveHiveHome(),
+    private readonly instanceLiveness: (
+      hiveHome: string,
+      instanceId: string,
+    ) => Promise<DaemonInstanceLiveness> = daemonInstanceLiveness,
+  ) {
     const integrityInstalled = this.db.database.query(
       "SELECT value FROM meta WHERE key = ?",
     ).get(QUOTA_LEDGER_INTEGRITY_META_KEY) !== null;
@@ -293,6 +431,8 @@ export class QuotaLedger {
       );
       CREATE TABLE IF NOT EXISTS quota_reservations (
         id TEXT PRIMARY KEY,
+        instanceId TEXT NOT NULL DEFAULT '',
+        instanceHome TEXT NOT NULL DEFAULT '',
         agentName TEXT NOT NULL,
         provider TEXT NOT NULL,
         account TEXT NOT NULL,
@@ -429,6 +569,22 @@ export class QuotaLedger {
     const reservationColumnNames = new Set(
       reservationColumns.map((column) => column.name),
     );
+    if (!reservationColumnNames.has("instanceId")) {
+      this.db.database.exec(
+        "ALTER TABLE quota_reservations ADD COLUMN instanceId TEXT NOT NULL DEFAULT ''",
+      );
+      this.db.database.query(
+        "UPDATE quota_reservations SET instanceId = ? WHERE instanceId = ''",
+      ).run(this.instanceId);
+    }
+    if (!reservationColumnNames.has("instanceHome")) {
+      this.db.database.exec(
+        "ALTER TABLE quota_reservations ADD COLUMN instanceHome TEXT NOT NULL DEFAULT ''",
+      );
+      this.db.database.query(
+        "UPDATE quota_reservations SET instanceHome = ? WHERE instanceHome = ''",
+      ).run(this.instanceHome);
+    }
     if (!reservationColumnNames.has("purpose")) {
       this.db.database.exec(
         "ALTER TABLE quota_reservations ADD COLUMN purpose TEXT NOT NULL DEFAULT 'agent'",
@@ -988,14 +1144,16 @@ export class QuotaLedger {
     this.requireCoherent(input.provider, input.model);
     this.db.database.query(`
       INSERT INTO quota_reservations (
-        id, groupId, agentName, provider, account, pool, model, effort, category,
+        id, groupId, instanceId, instanceHome, agentName, provider, account, pool, model, effort, category,
         estimatedUnits, estimatedWeeklyUnits, status, createdAt, expiresAt,
         startedAt, reconciledAt, actualUnits, source, purpose,
         controlMessageId
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, NULL, NULL, NULL, NULL, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, NULL, NULL, NULL, NULL, ?, ?)
     `).run(
       input.id,
       groupId,
+      this.instanceId,
+      this.instanceHome,
       input.agentName,
       input.provider,
       input.account,
@@ -1353,9 +1511,9 @@ export class QuotaLedger {
   getActiveReservationForAgent(agentName: string): QuotaReservation | null {
     const row = this.db.database.query(`
       SELECT * FROM quota_reservations
-      WHERE agentName = ? AND status = 'active'
+      WHERE instanceId = ? AND agentName = ? AND status = 'active'
       ORDER BY createdAt DESC LIMIT 1
-    `).get(agentName);
+    `).get(this.instanceId, agentName);
     return row === null ? null : ReservationSchema.parse(row);
   }
 
@@ -1456,16 +1614,28 @@ export class QuotaLedger {
 
   activeReservations(): QuotaReservation[] {
     return this.db.database.query(
-      "SELECT * FROM quota_reservations WHERE status = 'active' ORDER BY createdAt, id",
-    ).all().map((row) => ReservationSchema.parse(row));
+      "SELECT * FROM quota_reservations WHERE instanceId = ? AND status = 'active' ORDER BY createdAt, id",
+    ).all(this.instanceId).map((row) => ReservationSchema.parse(row));
   }
 
-  expired(now: string): QuotaReservation[] {
-    return this.db.database.query(`
+  async expired(_now: string): Promise<QuotaReservation[]> {
+    const rows = this.db.database.query(`
       SELECT * FROM quota_reservations
-      WHERE status = 'active' AND expiresAt <= ?
+      WHERE status = 'active'
       ORDER BY expiresAt, id
-    `).all(now).map((row) => ReservationSchema.parse(row));
+    `).all().map((row) => ReservationSchema.parse(row));
+    const reclaimable: QuotaReservation[] = [];
+    for (const row of rows) {
+      const liveness = await this.instanceLiveness(row.instanceHome, row.instanceId);
+      if (liveness === "dead") {
+        reclaimable.push(row);
+      }
+      // Unknown ownership is preserved. In particular, a daemon between lock
+      // acquisition and handshake publication must never lose a reservation.
+      // A live daemon owns its reservation until it settles it. Wall-clock TTL
+      // is not authority to cancel work a sibling positively proves is alive.
+    }
+    return reclaimable;
   }
 
   /**

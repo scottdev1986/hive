@@ -205,7 +205,7 @@ class CodexTokenUsageAdapter implements TokenUsageAdapter {
 
   async discover(subject: SubjectRow, knownPaths: string[]) {
     if (knownPaths.length > 0) return { paths: knownPaths };
-    if (subject.providerSessionId === null) return { paths: [] };
+    if (subject.providerSessionId == null) return { paths: [] };
     const rollout = await findCodexRolloutBySessionId(
       subject.cwd,
       subject.providerSessionId,

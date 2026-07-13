@@ -183,21 +183,21 @@ describe("codex rollout telemetry", () => {
       JSON.stringify({ type: "response_item", payload: { type: "message" } }),
       tokenCount(129_200, 0, 258_400),
     ]);
-    const telemetry = await readCodexTelemetry(WORKTREE, home);
+    const telemetry = await readCodexTelemetry(WORKTREE, "thread-1", home);
     expect(telemetry.contextPct).toEqual(50);
     expect(telemetry.lastActivityAt).not.toEqual(null);
   });
 
   test("reports nulls without a matching rollout and tolerates missing usage", async () => {
     const home = makeHome();
-    expect(await readCodexTelemetry(WORKTREE, home)).toEqual({
+    expect(await readCodexTelemetry(WORKTREE, "thread-1", home)).toEqual({
       contextPct: null,
       lastActivityAt: null,
     });
     writeRollout(home, [
       JSON.stringify({ type: "event_msg", payload: { type: "task_started" } }),
     ]);
-    const telemetry = await readCodexTelemetry(WORKTREE, home);
+    const telemetry = await readCodexTelemetry(WORKTREE, "thread-1", home);
     expect(telemetry.contextPct).toEqual(null);
     expect(telemetry.lastActivityAt).not.toEqual(null);
   });
