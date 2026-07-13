@@ -1,8 +1,6 @@
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildMemoryIndex } from "../adapters/memory";
-import { ITerm2Adapter } from "../adapters/iterm2";
-import { TerminalAppAdapter } from "../adapters/terminal-app";
 import { TmuxAdapter } from "../adapters/tmux";
 import {
   buildClaudeSpawnCommand,
@@ -16,7 +14,7 @@ import { getHiveHome } from "../daemon/db";
 import { operatorHeaders } from "./credential";
 import { orchestratorTmuxSession } from "../daemon/orchestrator-lifecycle";
 import { hiveInstanceSuffix } from "../daemon/tmux-sessions";
-import { unknownVendor, type TerminalHandle } from "../schemas";
+import { unknownVendor } from "../schemas";
 import { ORCHESTRATOR_BRIEF, orchestratorDocGuidance } from "./orchestrator-brief";
 import { ensureProfile } from "../adapters/profile";
 import {
@@ -29,7 +27,6 @@ import {
 import type { CapabilityProvider } from "../schemas";
 
 export type OrchestratorTool = CapabilityProvider;
-export type OrchestratorTerminalApp = "auto" | "terminal" | "iterm2";
 
 /** The Codex root app-server socket. It lives in the per-user temp dir (0700
  * on macOS), never world-writable /tmp where any local user could pre-bind the
@@ -266,98 +263,6 @@ export function buildOrchestratorCommand(
   }
 }
 
-export type OrchestratorTerminalCapture = () => Promise<TerminalHandle | null>;
-
-export async function registerOrchestratorTerminal(
-  port: number,
-  handle: TerminalHandle,
-): Promise<void> {
-  const response = await fetch(`http://127.0.0.1:${port}/orchestrator-terminal`, {
-    method: "POST",
-    headers: { "content-type": "application/json", ...operatorHeaders() },
-    body: JSON.stringify({ handle }),
-  });
-  if (!response.ok) {
-    throw new Error(
-      `could not register the orchestrator terminal with Hive: HTTP ${response.status}`,
-    );
-  }
-}
-
-interface RunningTerminalRegistrationDependencies {
-  listClientTtys: (session: string) => Promise<string[]>;
-  captureTerminalApp: (tty: string) => Promise<TerminalHandle | null>;
-  captureITerm2: (tty: string) => Promise<TerminalHandle | null>;
-  register: (port: number, handle: TerminalHandle) => Promise<void>;
-}
-
-const runningTerminalRegistrationDependencies =
-  (): RunningTerminalRegistrationDependencies => ({
-    listClientTtys: async (session) =>
-      await new TmuxAdapter().listClientTtys(session),
-    captureTerminalApp: async (tty) =>
-      await new TerminalAppAdapter().captureWindowByTty(tty),
-    captureITerm2: async (tty) =>
-      await new ITerm2Adapter().captureWindowByTty(tty),
-    register: registerOrchestratorTerminal,
-  });
-
-// The recovery command asks tmux for the physical client attached to the
-// already-live root, so it identifies the orchestrator window rather than the
-// shell where `hive layout register` happens to run.
-export async function registerRunningOrchestratorTerminal(
-  port: number,
-  app: OrchestratorTerminalApp = "auto",
-  dependencies: RunningTerminalRegistrationDependencies =
-    runningTerminalRegistrationDependencies(),
-): Promise<TerminalHandle> {
-  const ttys = await dependencies.listClientTtys(orchestratorTmuxSession());
-  if (ttys.length !== 1) {
-    throw new Error(
-      ttys.length === 0
-        ? "the Hive orchestrator has no attached terminal client"
-        : "the Hive orchestrator has multiple attached terminal clients; detach all but one and retry",
-    );
-  }
-  const tty = ttys[0]!;
-  const captures = app === "terminal"
-    ? [dependencies.captureTerminalApp]
-    : app === "iterm2"
-    ? [dependencies.captureITerm2]
-    : [dependencies.captureTerminalApp, dependencies.captureITerm2];
-  const handles: TerminalHandle[] = [];
-  const errors: unknown[] = [];
-  for (const capture of captures) {
-    try {
-      const handle = await capture(tty);
-      if (handle !== null) handles.push(handle);
-    } catch (error) {
-      errors.push(error);
-    }
-  }
-  if (handles.length !== 1) {
-    if (handles.length > 1) {
-      throw new Error(`multiple terminal applications claim orchestrator TTY ${tty}`);
-    }
-    if (errors.length > 0) throw errors[0];
-    throw new Error(
-      `could not find a supported terminal window for orchestrator TTY ${tty}`,
-    );
-  }
-  const handle = handles[0]!;
-  await dependencies.register(port, handle);
-  return handle;
-}
-
-async function unregisterOrchestratorTerminal(port: number): Promise<void> {
-  // The daemon authenticates DELETE like POST; without the operator credential
-  // it answers 401 and the stale handle would sit in the layout forever.
-  await fetch(`http://127.0.0.1:${port}/orchestrator-terminal`, {
-    method: "DELETE",
-    headers: operatorHeaders(),
-  });
-}
-
 export function buildOrchestratorLaunchCommand(
   tool: OrchestratorTool,
   port: number,
@@ -447,9 +352,6 @@ export async function launchOrchestrator(
   port: number,
   cwd = process.cwd(),
   spawn: OrchestratorSpawn = spawnOrchestrator,
-  // Workspace owns the viewer, so normal launches have no external terminal
-  // handle to register with the daemon's legacy window wall.
-  captureTerminal: OrchestratorTerminalCapture = async () => null,
   detectVersion?: () => Promise<string | null>,
   resolveExecutable: () => ResolvedClaudeExecutable = resolveWorkingClaudeExecutable,
   tmux: OrchestratorTmux = new TmuxAdapter(),
@@ -485,89 +387,60 @@ export async function launchOrchestrator(
     default:
       unknownVendor(tool, "orchestrator launch");
   }
-  let registeredTerminal = false;
-  try {
-    const handle = await captureTerminal();
-    if (handle !== null) {
-      await registerOrchestratorTerminal(port, handle);
-      registeredTerminal = true;
-    }
-  } catch (error) {
-    // Window layout is cosmetic. Adapter, permission, and daemon registration
-    // failures must never prevent the orchestrator process from launching.
-    //
-    // The user is told, because this one they can actually fix — it is nearly
-    // always the macOS automation permission. What they are NOT shown is
-    // whatever string the adapter happened to throw: "registration skipped"
-    // names an internal step, not a thing that went wrong for them.
-    console.warn(
-      "Warning: could not arrange this session's window automatically; " +
-        "continuing without it\n" +
-        "Fix: System Settings > Privacy & Security > Automation, if macOS " +
-        `blocked it (${error instanceof Error ? error.message : String(error)})`,
-    );
-  }
-
-  try {
-    await prepareFreshOrchestratorSession(tmux);
-    await prepareOrchestratorConfig(tool, port, cwd);
-    let codexTokenFile = "";
-    switch (tool) {
-      case "codex": {
-        const provisioned = await provisionCodexRootToken(port).catch(() => null);
-        if (provisioned === null) {
-          // A daemon predating the mint endpoint; degrade to the old
-          // unauthenticated root rather than refuse to launch.
-          //
-          // Deliberately not printed. "No single-use Codex root token available
-          // from the daemon" names our own plumbing, and there is nothing the
-          // user can do with it — no command, no setting, no decision. A message
-          // that cannot be acted on is not a warning, it is noise, and it trains
-          // people to ignore the messages that do matter. The condition is real,
-          // so it goes where a real diagnostic goes: the daemon's log, on the
-          // side that knows it happened.
-        } else {
-          codexTokenFile = provisioned;
-        }
-        break;
+  await prepareFreshOrchestratorSession(tmux);
+  await prepareOrchestratorConfig(tool, port, cwd);
+  let codexTokenFile = "";
+  switch (tool) {
+    case "codex": {
+      const provisioned = await provisionCodexRootToken(port).catch(() => null);
+      if (provisioned === null) {
+        // A daemon predating the mint endpoint; degrade to the old
+        // unauthenticated root rather than refuse to launch.
+        //
+        // Deliberately not printed. "No single-use Codex root token available
+        // from the daemon" names our own plumbing, and there is nothing the
+        // user can do with it — no command, no setting, no decision. A message
+        // that cannot be acted on is not a warning, it is noise, and it trains
+        // people to ignore the messages that do matter. The condition is real,
+        // so it goes where a real diagnostic goes: the daemon's log, on the
+        // side that knows it happened.
+      } else {
+        codexTokenFile = provisioned;
       }
-      case "claude":
-        // Claude's orchestrator authenticates over the same operator
-        // credential every Claude agent uses; there is no root token to mint.
-        break;
-      case "grok":
-        // Grok authenticates through the operator credential written into its
-        // worktree-local project MCP config above.
-        break;
-      default:
-        unknownVendor(tool, "orchestrator root token");
+      break;
     }
-    const [memoryIndex, docGuidance] = await Promise.all([
-      buildMemoryIndex(cwd).catch(() => ""),
-      buildOrchestratorDocGuidance(cwd).catch(() => ""),
-    ]);
-    const child = spawn(
-      buildOrchestratorLaunchCommand(
-        tool,
-        port,
-        cwd,
-        memoryIndex,
-        docGuidance,
-        claudePath,
-        codexTokenFile,
-        recoveryBrief,
-      ),
-      {
-        cwd,
-        stdin: "inherit",
-        stdout: "inherit",
-        stderr: "inherit",
-      },
-    );
-    return await child.exited;
-  } finally {
-    if (registeredTerminal) {
-      await unregisterOrchestratorTerminal(port).catch(() => undefined);
-    }
+    case "claude":
+      // Claude's orchestrator authenticates over the same operator
+      // credential every Claude agent uses; there is no root token to mint.
+      break;
+    case "grok":
+      // Grok authenticates through the operator credential written into its
+      // worktree-local project MCP config above.
+      break;
+    default:
+      unknownVendor(tool, "orchestrator root token");
   }
+  const [memoryIndex, docGuidance] = await Promise.all([
+    buildMemoryIndex(cwd).catch(() => ""),
+    buildOrchestratorDocGuidance(cwd).catch(() => ""),
+  ]);
+  const child = spawn(
+    buildOrchestratorLaunchCommand(
+      tool,
+      port,
+      cwd,
+      memoryIndex,
+      docGuidance,
+      claudePath,
+      codexTokenFile,
+      recoveryBrief,
+    ),
+    {
+      cwd,
+      stdin: "inherit",
+      stdout: "inherit",
+      stderr: "inherit",
+    },
+  );
+  return await child.exited;
 }

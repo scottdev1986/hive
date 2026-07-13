@@ -46,7 +46,6 @@ type Step = (abort: () => void) => AgentRecord[];
 interface FeedRun {
   exitCode: number;
   lines: Array<Record<string, unknown>>;
-  presence: boolean[];
   sleeps: number[];
 }
 
@@ -62,7 +61,6 @@ async function runScript(
 ): Promise<FeedRun> {
   const controller = new AbortController();
   const lines: Array<Record<string, unknown>> = [];
-  const presence: boolean[] = [];
   const sleeps: number[] = [];
   let time = 0;
   let index = 0;
@@ -76,9 +74,6 @@ async function runScript(
     write: (line) => {
       lines.push(JSON.parse(line) as Record<string, unknown>);
     },
-    setPresence: async (_port, present) => {
-      presence.push(present);
-    },
     fetchAutonomy,
     fetchOrchestrator,
     fetchStatus: async () => {
@@ -90,7 +85,7 @@ async function runScript(
       return step(() => controller.abort());
     },
   });
-  return { exitCode, lines, presence, sleeps };
+  return { exitCode, lines, sleeps };
 }
 
 const snapshot = (...agents: AgentRecord[]): Step => () => agents;
@@ -142,13 +137,6 @@ describe("runWorkspaceFeed", () => {
       .toEqual("idle");
   });
 
-  test("shutdown surrenders the lease it took on start", async () => {
-    const run = await runScript([last(snapshot(agent("maya")))]);
-    // Renewal no longer rides on the emit — it is taken before the first poll,
-    // on the feed's own clock — so one grant here, then the surrender.
-    expect(run.presence).toEqual([true, false]);
-  });
-
   test("a failure is emitted once, retried with backoff, and recovery re-emits", async () => {
     const maya = agent("maya");
     const run = await runScript([
@@ -187,7 +175,7 @@ describe("runWorkspaceFeed", () => {
     ]);
   });
 
-  test("exits non-zero once the daemon is gone for 30s, still surrendering the lease", async () => {
+  test("exits non-zero once the daemon is gone for 30s", async () => {
     // Backoff caps at 4s, so ~9 consecutive failures cross the 30s deadline.
     const steps: Step[] = Array.from(
       { length: 30 },
@@ -198,13 +186,6 @@ describe("runWorkspaceFeed", () => {
     expect(run.lines).toEqual([{ v: 1, error: "connect ECONNREFUSED" }]);
     const failedFor = run.sleeps.reduce((total, ms) => total + ms, 0);
     expect(failedFor).toBeGreaterThanOrEqual(FEED_GIVE_UP_MS - FEED_RETRY_MAX_MS);
-    // The feed keeps offering the lease across the outage — the app is still
-    // attached, and a daemon that comes back should find its viewer at once
-    // rather than after the next successful poll. The POSTs simply fail while
-    // it is down. What matters is that it surrenders on the way out.
-    expect(run.presence.filter((present) => present).length)
-      .toBeGreaterThanOrEqual(1);
-    expect(run.presence.at(-1)).toEqual(false);
   });
 
   test("an abort mid-outage exits zero: a closing app is not a dead daemon", async () => {
@@ -213,7 +194,6 @@ describe("runWorkspaceFeed", () => {
       lastFailure("connect ECONNREFUSED"),
     ]);
     expect(run.exitCode).toEqual(0);
-    expect(run.presence.at(-1)).toEqual(false);
   });
 
   test("the snapshot carries the autonomy dial, and a flip alone re-emits", async () => {
@@ -244,51 +224,6 @@ describe("runWorkspaceFeed", () => {
     expect(run.lines).toHaveLength(1);
     expect(run.lines[0]?.agents).toBeDefined();
     expect("autonomy" in (run.lines[0] ?? {})).toEqual(false);
-  });
-
-  test("heartbeats renew the lease inside the daemon's TTL", async () => {
-    const maya = agent("maya");
-    // 11 unchanged polls: emits at t=0, 5s, 10s.
-    const steps: Step[] = Array.from({ length: 11 }, () => snapshot(maya));
-    steps.push(last(snapshot(maya)));
-    const run = await runScript(steps);
-    const renewals = run.presence.filter((present) => present).length;
-    // Renewals ride the feed's own 5s clock (t=0, 5s, 10s), not the emits.
-    expect(renewals).toBeGreaterThanOrEqual(3);
-    expect(run.lines.length).toEqual(3);
-    expect(run.sleeps.filter((ms) => ms === FEED_POLL_MS).length)
-      .toEqual(run.sleeps.length);
-  });
-
-  test("a status poll that hangs forever cannot stop the lease renewals", async () => {
-    // The 2026-07-12 incident reached by a hang instead of a kill: the feed is
-    // alive, the app is attached and looks perfectly normal, but a wedged
-    // status poll used to mean nothing ever renewed the lease — so the daemon
-    // concluded nobody was watching and opened Terminal windows over live panes.
-    const controller = new AbortController();
-    const presence: boolean[] = [];
-    let time = 0;
-    await runWorkspaceFeed(4483, {
-      // A daemon that accepted the request and never answered.
-      fetchStatus: () => new Promise<AgentRecord[]>(() => {}),
-      setPresence: async (_port, present) => {
-        presence.push(present);
-        // Three renewals is proof the heartbeat outlives the wedge; stop there
-        // so the loop cannot spin.
-        if (presence.filter(Boolean).length >= 3) controller.abort();
-      },
-      statusTimeoutMs: 1,
-      write: () => {},
-      now: () => time,
-      sleep: async (milliseconds) => {
-        time += milliseconds;
-      },
-      signal: controller.signal,
-    });
-
-    expect(presence.filter((present) => present).length).toBeGreaterThanOrEqual(3);
-    // And it still surrenders on the way out.
-    expect(presence.at(-1)).toEqual(false);
   });
 
   test("carries the root's status beside the agents, not inside them", async () => {

@@ -30,8 +30,6 @@ describe("config loading", () => {
   test("returns schema defaults when files are absent", async () => {
     await resetHome();
     expect(await loadHiveConfig()).toMatchObject({
-      terminal: "auto",
-      headless: false,
       autonomy: "sandboxed",
       resources: { enabled: true },
       lifecycle: { idleReap: true },

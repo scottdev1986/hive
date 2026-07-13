@@ -177,7 +177,6 @@ export async function runWorkspaceOrchestrator(
           undefined,
           undefined,
           undefined,
-          undefined,
           recoveryBrief,
         );
       } finally {

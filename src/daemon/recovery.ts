@@ -1,9 +1,4 @@
 import { existsSync } from "node:fs";
-import {
-  buildAgentTerminalTitle,
-  type TerminalAdapter,
-  type TerminalCloser,
-} from "../adapters/terminal";
 import { shellJoin } from "../adapters/tmux";
 import type { TmuxAdapter } from "../adapters/tmux";
 import {
@@ -68,8 +63,7 @@ type RecoveryStore = Pick<
   | "getAgentByName"
   | "getAgentById"
   | "upsertAgent"
-  | "markAgentDeadAndDetachTerminal"
-  | "attachTerminalHandle"
+  | "markAgentDead"
   | "isAgentNameReserved"
   | "getUndeliveredMessages"
   | "markMessageAlerted"
@@ -87,7 +81,6 @@ export interface CrashRecoveryDependencies {
     "hasSession" | "newSession" | "killSession" | "capturePane"
   >;
   port: number;
-  closeTerminal: TerminalCloser;
   send: (
     from: string,
     to: string,
@@ -108,10 +101,6 @@ export interface CrashRecoveryDependencies {
    * file — the same guarantee hive_kill and hive_mark_dead give, so a
    * capability can never outlive its agent through the recovery death path. */
   revokeCapabilities?: (agentName: string) => void;
-  /** Absent (headless or unconfigured) means recovered agents run without a
-   * viewer until `hive watch` opens one. */
-  terminal?: TerminalAdapter | undefined;
-  onTerminalsChanged?: (() => void) | undefined;
   resolveClaudeSessionId?: SessionResolver;
   resolveCodexSessionId?: SessionResolver;
   resolveGrokSessionId?: SessionResolver;
@@ -388,20 +377,13 @@ export class CrashRecovery {
     sessionId: string,
   ): Promise<RecoveryOutcome> {
     // Persist the attempt before launching so a crash mid-launch still
-    // counts against the cap, and detach the stale viewer: its tmux client
-    // died with the session, so the window shows a dead shell.
-    const staleHandle = agent.terminalHandle;
+    // counts against the cap.
     let record = this.deps.db.upsertAgent({
       ...agent,
-      terminalHandle: undefined,
       toolSessionId: sessionId,
       recoveryAttempts: agent.recoveryAttempts + 1,
       lastEventAt: new Date().toISOString(),
     });
-    if (staleHandle !== undefined) {
-      await this.deps.closeTerminal(staleHandle).catch(() => undefined);
-      this.deps.onTerminalsChanged?.();
-    }
     this.deps.dropChannel?.(record.name);
     this.denyPendingApprovals(record.name);
 
@@ -556,22 +538,6 @@ export class CrashRecovery {
       lastEventAt: new Date().toISOString(),
     });
 
-    if (this.deps.terminal !== undefined) {
-      try {
-        const handle = await this.deps.terminal.openWindow(
-          record.tmuxSession,
-          buildAgentTerminalTitle(record.name, record.model),
-        );
-        if (this.deps.db.attachTerminalHandle(record.id, handle) === null) {
-          await this.deps.terminal.closeWindow(handle).catch(() => undefined);
-        } else {
-          this.deps.onTerminalsChanged?.();
-        }
-      } catch {
-        // A viewer is cosmetic; the resumed session is already healthy.
-      }
-    }
-
     await this.deps.send(
       "hive-recovery",
       record.name,
@@ -653,7 +619,7 @@ export class CrashRecovery {
     reason: string,
   ): Promise<RecoveryOutcome> {
     const now = new Date().toISOString();
-    const dead = this.deps.db.markAgentDeadAndDetachTerminal(
+    this.deps.db.markAgentDead(
       agent.id,
       now,
       reason,
@@ -667,10 +633,6 @@ export class CrashRecovery {
     const stranded = this.deps.db.getUndeliveredMessages(agent.name);
     for (const message of stranded) {
       this.deps.db.markMessageAlerted(message.id, now);
-    }
-    if (dead?.terminalHandle !== undefined) {
-      await this.deps.closeTerminal(dead.terminalHandle).catch(() => undefined);
-      this.deps.onTerminalsChanged?.();
     }
     const strandedNote = stranded.length === 0
       ? ""

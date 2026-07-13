@@ -9,11 +9,6 @@ import type { Server } from "bun";
 import { z } from "zod";
 import { TmuxAdapter } from "../adapters/tmux";
 import {
-  closeTerminal,
-  type TerminalAdapter,
-  type TerminalCloser,
-} from "../adapters/terminal";
-import {
   CrashRecovery,
   type CrashRecoveryDependencies,
   type RecoveryOutcome,
@@ -58,7 +53,6 @@ import {
   QuotaObservationSchema,
   RoutingPolicyMutationSchema,
   StatuslineReportSchema,
-  TerminalHandleSchema,
   unknownVendor,
   type AgentRecord,
   type HookEvent,
@@ -84,8 +78,6 @@ import {
   RoutingPolicyConflictError,
   RoutingPolicyStore,
 } from "./routing-policy-store";
-import type { LayoutCoordinator } from "./layout";
-import { WorkspacePresence } from "./workspace-presence";
 import { MemoryIndex } from "./memory-index";
 import {
   BunTmuxSender,
@@ -315,22 +307,6 @@ const ApprovalDecisionSchema = z.object({
   decision: z.enum(["approve", "deny"]),
 });
 
-const OrchestratorTerminalRequestSchema = z.object({
-  handle: TerminalHandleSchema,
-});
-
-const WorkspacePresenceRequestSchema = z.object({
-  present: z.boolean(),
-  /** Which workspace is speaking — one id per feed process. Optional so a feed
-   * from an older build still registers (as the shared legacy owner). */
-  owner: z.string().min(1).optional(),
-});
-
-const ViewerRequestSchema = z.object({
-  agent: z.string().min(1),
-  handle: TerminalHandleSchema,
-});
-
 const LandRequestSchema = z.object({
   agent: z.string().min(1),
   capabilityEpoch: z.number().int().nonnegative(),
@@ -455,10 +431,6 @@ export interface HiveDaemonOptions {
     TmuxAdapter,
     "hasSession" | "killSession" | "capturePane" | "newSession"
   >;
-  closeTerminal?: TerminalCloser;
-  /** Viewer adapter for reopening windows on crash-recovered agents; omit in
-   * headless setups. */
-  terminal?: TerminalAdapter;
   recovery?: {
     resolveClaudeSessionId?: SessionResolver;
     resolveCodexSessionId?: SessionResolver;
@@ -502,11 +474,6 @@ export interface HiveDaemonOptions {
   hostname?: string;
   manageLifecycle?: boolean;
   machineMutations?: Pick<MachineMutationCoordinator, "beginOperation">;
-  layout?: LayoutCoordinator;
-  /** The Workspace-app viewer lease (`POST /workspace`). Shared with the
-   * spawner and layout so external viewer windows pause while the app is
-   * attached; an embedded daemon gets its own inert instance. */
-  workspacePresence?: WorkspacePresence;
   quota?: QuotaService;
   /** Durable provider-reported token accounting. Injectable so collector and
    * lifecycle tests never read the developer's real CLI artifacts. */
@@ -590,7 +557,6 @@ export class HiveDaemon {
   readonly spawner: Spawner;
   readonly memory: MemoryIndex;
   readonly capabilities: CapabilityStore;
-  readonly workspacePresence: WorkspacePresence;
   private memoryLock: Promise<unknown> = Promise.resolve();
   private readonly ownsDatabase: boolean;
   private readonly port: number;
@@ -632,8 +598,6 @@ export class HiveDaemon {
    * that heard the first alert did not survive it. */
   private readonly alertedStrandedBranches = new Set<string>();
   private readonly bootId = crypto.randomUUID();
-  private readonly closeTerminal: TerminalCloser;
-  private readonly layout: LayoutCoordinator | null;
   private readonly quota: QuotaService | undefined;
   private readonly tokenUsage: TokenUsageStore;
   private readonly modelInventory: HiveDaemonOptions["modelInventory"];
@@ -792,9 +756,6 @@ export class HiveDaemon {
     this.quota?.setAlertSink(async (body) => {
       await this.delivery.send("hive-quota", ORCHESTRATOR_NAME, body);
     });
-    this.closeTerminal = options.closeTerminal ?? closeTerminal;
-    this.layout = options.layout ?? null;
-    this.workspacePresence = options.workspacePresence ?? new WorkspacePresence();
     this.land = options.landBranch ?? landBranch;
     this.landReadiness = options.readLandReadiness ?? readLandReadiness;
     this.resources = options.resources ?? null;
@@ -848,15 +809,12 @@ export class HiveDaemon {
         this.capabilities.revokeSubject(agentName);
         removeCredential(agentName);
       },
-      closeTerminal: (handle) => this.closeTerminal(handle),
       send: (from, to, body, sendOptions) =>
         this.delivery.send(from, to, body, sendOptions),
       settleQuota: (agent) => this.settleAgentQuota(agent),
       authorizeLaunch: async (identity) =>
         await this.spawner.authorizeLaunch?.(identity) ?? null,
       flushQueued: (agentName) => this.delivery.flushQueued(agentName),
-      terminal: options.terminal,
-      onTerminalsChanged: () => this.layout?.requestLayout(),
       // A thunk, not a value: a resume launched after the user flips the
       // Agents-menu dial must match the setting the user can see, not the one
       // the daemon booted with.
@@ -1855,7 +1813,7 @@ export class HiveDaemon {
       captured,
     );
     const timestamp = options.at ?? new Date().toISOString();
-    const killed = this.db.markAgentDeadAndDetachTerminal(
+    const killed = this.db.markAgentDead(
       agent.id,
       timestamp,
       options.failureReason,
@@ -1863,17 +1821,9 @@ export class HiveDaemon {
     if (killed === null) {
       throw new Error(`Hive agent not found: ${agent.name}`);
     }
-    this.channels.drop(killed.agent.name);
-    await this.settleAgentQuota(killed.agent, timestamp);
-    if (killed.terminalHandle !== undefined) {
-      try {
-        await this.closeTerminal(killed.terminalHandle);
-      } catch {
-        // Terminal cleanup is best-effort; killing and marking dead must win.
-      }
-      this.layout?.requestLayout();
-    }
-    let updated = killed.agent;
+    this.channels.drop(killed.name);
+    await this.settleAgentQuota(killed, timestamp);
+    let updated = killed;
     const cleaned: {
       tmuxSession: string;
       worktreePath: string | null;
@@ -2432,35 +2382,6 @@ export class HiveDaemon {
     if (url.pathname === "/event" && request.method === "POST") {
       return this.receiveEvent(request);
     }
-    if (url.pathname === "/orchestrator-terminal") {
-      if (request.method === "POST") {
-        return this.registerOrchestratorTerminal(request);
-      }
-      if (request.method === "DELETE") {
-        const authenticated = this.authenticate(request, "/orchestrator-terminal");
-        if (!authenticated.ok) return this.denied(authenticated);
-        const decision = this.authorize(
-          authenticated.capability,
-          "/orchestrator-terminal",
-          "terminal:register",
-          undefined,
-        );
-        if (!decision.ok) return this.denied(decision);
-        this.db.clearOrchestratorTerminal();
-        return json({ ok: true });
-      }
-    }
-    if (url.pathname === "/viewer" && request.method === "POST") {
-      return this.attachViewer(request);
-    }
-    if (url.pathname === "/workspace") {
-      if (request.method === "POST") {
-        return this.setWorkspacePresenceEndpoint(request);
-      }
-      if (request.method === "GET") {
-        return this.readWorkspacePresenceEndpoint(request);
-      }
-    }
     if (url.pathname === "/statusline" && request.method === "POST") {
       return this.receiveStatusline(request);
     }
@@ -2935,55 +2856,6 @@ export class HiveDaemon {
     return live;
   }
 
-  private async registerOrchestratorTerminal(
-    request: Request,
-  ): Promise<Response> {
-    const authenticated = this.authenticate(request, "/orchestrator-terminal");
-    if (!authenticated.ok) return this.denied(authenticated);
-    const authorized = this.authorize(
-      authenticated.capability,
-      "/orchestrator-terminal",
-      "terminal:register",
-      undefined,
-    );
-    if (!authorized.ok) return this.denied(authorized);
-    let body: unknown;
-    try {
-      body = await request.json();
-    } catch {
-      return json({ error: "Invalid terminal handle" }, { status: 400 });
-    }
-    const parsed = OrchestratorTerminalRequestSchema.safeParse(body);
-    if (!parsed.success) {
-      return json(
-        { error: "Invalid terminal handle", issues: parsed.error.issues },
-        { status: 400 },
-      );
-    }
-    this.db.setOrchestratorTerminal(parsed.data.handle);
-    // Registration alone leaves a lone orchestrator window untouched; the
-    // wall only starts moving once agent viewers exist.
-    const hasViewers = this.db.listAgents().some((agent) =>
-      agent.terminalHandle !== undefined &&
-      agent.status !== "dead" && agent.status !== "done" &&
-      agent.status !== "failed"
-    );
-    if (hasViewers) {
-      this.layout?.requestLayout();
-    }
-    return json({ ok: true });
-  }
-
-  /**
-   * `POST /workspace` — the Workspace app's viewer lease.
-   *
-   * `{present: true}` grants (or renews) the lease for one TTL; the feed's
-   * heartbeat renews well inside it, and `{present: false}` surrenders it on
-   * clean shutdown. Operator-level, like `/orchestrator-terminal`: only the
-   * human's own tooling may decide who the viewer is. Allows are audited only
-   * when the lease state actually flips — the renewals are a heartbeat and,
-   * like channel polls, would bury every other audit row.
-   */
   /**
    * `GET /orchestrator-status` — what the root is doing, for the Workspace dot.
    *
@@ -3295,69 +3167,6 @@ export class HiveDaemon {
     return json({ enabled: state.enabled, ...this.graphify.status() });
   }
 
-  private async setWorkspacePresenceEndpoint(
-    request: Request,
-  ): Promise<Response> {
-    const authenticated = this.authenticate(request, "/workspace");
-    if (!authenticated.ok) return this.denied(authenticated);
-    let body: unknown;
-    try {
-      body = await request.json();
-    } catch {
-      return json({ error: "Invalid workspace presence" }, { status: 400 });
-    }
-    const parsed = WorkspacePresenceRequestSchema.safeParse(body);
-    if (!parsed.success) {
-      return json(
-        { error: "Invalid workspace presence", issues: parsed.error.issues },
-        { status: 400 },
-      );
-    }
-    const flips = parsed.data.present !== this.workspacePresence.isPresent();
-    const decision = this.authorize(
-      authenticated.capability,
-      "/workspace",
-      "terminal:register",
-      undefined,
-      flips,
-    );
-    if (!decision.ok) return this.denied(decision);
-    if (parsed.data.present) {
-      this.workspacePresence.markPresent(parsed.data.owner);
-    } else {
-      this.workspacePresence.clear(parsed.data.owner);
-      // This app stopped being a viewer. Only put the window wall back if it
-      // was the last one — another workspace may still be attached, and one
-      // app's exit must not blind the daemon to the rest.
-      if (!this.workspacePresence.isPresent()) {
-        this.layout?.requestLayout();
-      }
-    }
-    return json({
-      ok: true,
-      present: this.workspacePresence.isPresent(),
-      ttlMs: this.workspacePresence.ttlMs,
-    });
-  }
-
-  /** `GET /workspace` — read the live lease state. A poll, so allows are not
-   * audited. */
-  private async readWorkspacePresenceEndpoint(
-    request: Request,
-  ): Promise<Response> {
-    const authenticated = this.authenticate(request, "/workspace");
-    if (!authenticated.ok) return this.denied(authenticated);
-    const decision = this.authorize(
-      authenticated.capability,
-      "/workspace",
-      "status:read",
-      undefined,
-      false,
-    );
-    if (!decision.ok) return this.denied(decision);
-    return json({ present: this.workspacePresence.isPresent() });
-  }
-
   /**
    * POST /agents/<name>/kill — the pane's X button.
    *
@@ -3436,47 +3245,6 @@ export class HiveDaemon {
         { status: 500 },
       );
     }
-  }
-
-  private async attachViewer(request: Request): Promise<Response> {
-    const authenticated = this.authenticate(request, "/viewer");
-    if (!authenticated.ok) return this.denied(authenticated);
-    let body: unknown;
-    try {
-      body = await request.json();
-    } catch {
-      return json({ error: "Invalid viewer request" }, { status: 400 });
-    }
-    const parsed = ViewerRequestSchema.safeParse(body);
-    if (!parsed.success) {
-      return json(
-        { error: "Invalid viewer request", issues: parsed.error.issues },
-        { status: 400 },
-      );
-    }
-    const decision = this.authorize(
-      authenticated.capability,
-      "/viewer",
-      "viewer:attach",
-      parsed.data.agent,
-    );
-    if (!decision.ok) return this.denied(decision);
-    const agent = this.db.getAgentByName(parsed.data.agent);
-    if (agent === null) {
-      return json(
-        { error: `Hive agent not found: ${parsed.data.agent}` },
-        { status: 404 },
-      );
-    }
-    const attached = this.db.attachTerminalHandle(agent.id, parsed.data.handle);
-    if (attached === null) {
-      return json(
-        { error: `Hive agent is no longer live: ${parsed.data.agent}` },
-        { status: 409 },
-      );
-    }
-    this.layout?.requestLayout();
-    return json({ agent: attached });
   }
 
   async processEvent(event: HookEvent): Promise<void> {

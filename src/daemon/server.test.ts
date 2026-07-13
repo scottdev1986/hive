@@ -21,7 +21,6 @@ import { authorizeForQuotaTest } from "./authorized-launch.test-support";
 import { HIVE_VERSION, HiveDaemon, inferLegacyControl } from "./server";
 import { readLiveClaudeModel } from "./live-model";
 import { formatStatusTable } from "../cli/status";
-import { WorkspacePresence } from "./workspace-presence";
 import { actingAs, submitPaste } from "./testing";
 import type { BuildFreshness } from "./build-freshness";
 import type { SpawnRequest, Spawner } from "./spawner";
@@ -799,7 +798,7 @@ describe("HiveDaemon HTTP server", () => {
     }
   });
 
-  test("an expired control reservation settles, stops its process, preserves work, and re-tiles", async () => {
+  test("an expired control reservation settles, stops its process, and preserves work", async () => {
     const db = new HiveDatabase(join(home, "control-timeout.db"));
     const ledger = new QuotaLedger(db);
     let now = new Date(timestamp);
@@ -825,22 +824,17 @@ describe("HiveDaemon HTTP server", () => {
       stdout: "ignore",
       stderr: "ignore",
     });
-    const closed: AgentRecord["terminalHandle"][] = [];
-    let layouts = 0;
     const daemon = new HiveDaemon({
       db,
       spawner: new StubSpawner(),
       tmux,
       tmuxSender: new RootUnavailableTmuxSender(db),
       quota,
-      closeTerminal: async (handle) => { closed.push(handle); },
-      layout: { requestLayout: () => layouts += 1 },
       resourceRunners: {
         panePids: async (session) =>
           session === "hive-maya" ? [process.pid] : [],
       },
     });
-    const handle = { app: "iterm2", sessionId: "timeout-viewer" } as const;
     try {
       db.insertAgent(agent({
         status: "control-paused",
@@ -848,7 +842,6 @@ describe("HiveDaemon HTTP server", () => {
         capabilityEpoch: 1,
         controlMessageId: "timeout-control",
         controlQuotaReservationId: reservation.id,
-        terminalHandle: handle,
       }));
       now = new Date("2026-07-09T12:02:00.000Z");
       expect(await daemon.recoverQuotaReservations()).toEqual(1);
@@ -862,8 +855,6 @@ describe("HiveDaemon HTTP server", () => {
         writeRevoked: true,
         worktreePath: "/tmp/hive-maya",
       });
-      expect(closed).toEqual([handle]);
-      expect(layouts).toEqual(1);
       expect(db.listMessages().some((message) =>
         message.to === "orchestrator" && message.body.includes("timed out")
       )).toEqual(true);
@@ -1336,7 +1327,6 @@ describe("HiveDaemon HTTP server", () => {
     const tmux = new RootUnavailableTmuxSender(db);
     const daemonTmux = new FakeDaemonTmux();
     const removedWorktrees: Array<[string, string]> = [];
-    const closedTerminals: AgentRecord["terminalHandle"][] = [];
     const daemon = new HiveDaemon({
       db,
       spawner,
@@ -1350,14 +1340,6 @@ describe("HiveDaemon HTTP server", () => {
         dirtyFiles: [],
         unmergedCommits: 0,
       }),
-      closeTerminal: async (handle) => {
-        expect(db.getAgentByName("sam")).toMatchObject({
-          status: "dead",
-          terminalHandle: undefined,
-        });
-        closedTerminals.push(handle);
-        throw new Error("terminal handle is already stale");
-      },
       modelInventory: async () => ({
         observedAt: timestamp,
         complete: true,
@@ -1600,17 +1582,6 @@ describe("HiveDaemon HTTP server", () => {
         ],
       ]);
 
-      const terminalHandle = {
-        app: "terminal",
-        processId: 4242,
-        windowId: 731,
-        tty: "/dev/ttys009",
-      } as const;
-      db.upsertAgent({
-        ...db.getAgentByName("sam")!,
-        terminalHandle,
-      });
-
       const killed = textValue(await client.callTool({
         name: "hive_kill",
         arguments: { name: "sam", removeWorktree: true },
@@ -1625,7 +1596,6 @@ describe("HiveDaemon HTTP server", () => {
       };
       expect(killed.agent.status).toEqual("dead");
       expect(killed.agent.worktreePath).toEqual(null);
-      expect(killed.agent.terminalHandle).toBeUndefined();
       expect(killed.cleaned).toEqual({
         tmuxSession: "hive-sam",
         worktreePath: "/tmp/hive-sam",
@@ -1636,13 +1606,10 @@ describe("HiveDaemon HTTP server", () => {
       expect(removedWorktrees).toEqual([
         ["/tmp/repo", "/tmp/hive-sam"],
       ]);
-      expect(closedTerminals).toEqual([terminalHandle]);
-
       await client.callTool({
         name: "hive_kill",
         arguments: { name: "sam" },
       });
-      expect(closedTerminals).toEqual([terminalHandle]);
       expect(daemonTmux.killed).toEqual(["hive-sam", "hive-sam"]);
 
       const stopped = textValue(await client.callTool({
@@ -1758,20 +1725,15 @@ describe("HiveDaemon HTTP server", () => {
     const db = new HiveDatabase(join(home, "mark-dead-stopped-only.db"));
     const tmux = new FakeDaemonTmux();
     tmux.sessions.add("hive-maya");
-    const closed: AgentRecord["terminalHandle"][] = [];
-    let layouts = 0;
     const daemon = new HiveDaemon({
       db,
       spawner: new StubSpawner(),
       tmux,
       tmuxSender: new SilentTmuxSender(db),
-      closeTerminal: async (handle) => { closed.push(handle); },
-      layout: { requestLayout: () => layouts += 1 },
       assessStrandedWork: async () => ({ dirtyFiles: [], unmergedCommits: 0 }),
       resourceRunners: { panePids: async () => [] },
     });
-    const handle = { app: "iterm2", sessionId: "stopped-viewer" } as const;
-    db.insertAgent(agent({ terminalHandle: handle }));
+    db.insertAgent(agent());
     const transport = new StreamableHTTPClientTransport(
       new URL("http://hive/mcp"),
       { fetch: actingAs(daemon, "operator") },
@@ -1788,10 +1750,8 @@ describe("HiveDaemon HTTP server", () => {
       expect(JSON.stringify(refused.content)).toContain("hive_kill");
       expect(db.getAgentByName("maya")).toMatchObject({
         status: "working",
-        terminalHandle: handle,
       });
       expect(tmux.killed).toEqual([]);
-      expect(closed).toEqual([]);
 
       tmux.sessions.delete("hive-maya");
       const stopped = textValue(await client.callTool({
@@ -1799,9 +1759,6 @@ describe("HiveDaemon HTTP server", () => {
         arguments: { agent: "maya" },
       })) as AgentRecord;
       expect(stopped.status).toEqual("dead");
-      expect(stopped.terminalHandle).toBeUndefined();
-      expect(closed).toEqual([handle]);
-      expect(layouts).toEqual(1);
     } finally {
       await client.close();
       await daemon.stop();
@@ -1809,7 +1766,7 @@ describe("HiveDaemon HTTP server", () => {
     }
   });
 
-  test("the Workspace kill path cleans residual resources for a terminal agent", async () => {
+  test("the dead-agent kill path reaps residual owned processes only", async () => {
     const owned = Bun.spawn(["sleep", "60"], {
       stdout: "ignore",
       stderr: "ignore",
@@ -1818,27 +1775,23 @@ describe("HiveDaemon HTTP server", () => {
       stdout: "ignore",
       stderr: "ignore",
     });
-    const db = new HiveDatabase(join(home, "terminal-http-kill.db"));
+    const db = new HiveDatabase(join(home, "residual-http-kill.db"));
     const tmux = new FakeDaemonTmux();
     tmux.sessions.add("hive-maya");
-    const closed: AgentRecord["terminalHandle"][] = [];
     const daemon = new HiveDaemon({
       db,
       spawner: new StubSpawner(),
       tmux,
       tmuxSender: new SilentTmuxSender(db),
-      closeTerminal: async (handle) => { closed.push(handle); },
       resourceRunners: {
         panePids: async (session) => session === "hive-maya" ? [owned.pid] : [],
         orphans: null,
       },
     });
-    const handle = { app: "iterm2", sessionId: "residual-viewer" } as const;
     db.insertAgent(agent({
       status: "dead",
       worktreePath: null,
       branch: null,
-      terminalHandle: handle,
     }));
     try {
       expect(() => process.kill(owned.pid, 0)).not.toThrow();
@@ -1860,8 +1813,6 @@ describe("HiveDaemon HTTP server", () => {
       ])).not.toBeNull();
       expect(() => process.kill(unrelated.pid, 0)).not.toThrow();
       expect(tmux.killed).toEqual(["hive-maya"]);
-      expect(closed).toEqual([handle]);
-      expect(db.getAgentByName("maya")?.terminalHandle).toBeUndefined();
     } finally {
       owned.kill("SIGKILL");
       unrelated.kill("SIGKILL");
@@ -2228,7 +2179,7 @@ describe("HiveDaemon HTTP server", () => {
     }
   });
 
-  test("a dead hook reaps the process tree and closes its viewer", async () => {
+  test("a dead hook reaps the process tree", async () => {
     const db = new HiveDatabase(join(home, "dead-hook-teardown.db"));
     const tmux = new FakeDaemonTmux();
     tmux.sessions.add("hive-maya");
@@ -2236,22 +2187,17 @@ describe("HiveDaemon HTTP server", () => {
       stdout: "ignore",
       stderr: "ignore",
     });
-    const closed: AgentRecord["terminalHandle"][] = [];
-    let layouts = 0;
     const daemon = new HiveDaemon({
       db,
       spawner: new StubSpawner(),
       tmux,
       tmuxSender: new SilentTmuxSender(db),
-      closeTerminal: async (handle) => { closed.push(handle); },
-      layout: { requestLayout: () => layouts += 1 },
       resourceRunners: {
         panePids: async (session) =>
           session === "hive-maya" ? [owned.pid] : [],
       },
     });
-    const handle = { app: "iterm2", sessionId: "dead-hook-viewer" } as const;
-    db.insertAgent(agent({ terminalHandle: handle }));
+    db.insertAgent(agent());
     try {
       await daemon.processEvent({
         kind: "dead",
@@ -2259,13 +2205,8 @@ describe("HiveDaemon HTTP server", () => {
         timestamp: "2026-07-10T10:07:00.000Z",
       });
 
-      expect(db.getAgentByName("maya")).toMatchObject({
-        status: "dead",
-        terminalHandle: undefined,
-      });
+      expect(db.getAgentByName("maya")).toMatchObject({ status: "dead" });
       expect(tmux.killed).toEqual(["hive-maya"]);
-      expect(closed).toEqual([handle]);
-      expect(layouts).toEqual(1);
       const exitCode = await Promise.race([
         owned.exited,
         Bun.sleep(1_000).then(() => null),
@@ -2517,55 +2458,7 @@ describe("HiveDaemon HTTP server", () => {
     }
   });
 
-  test("reconciliation closes a dead agent's viewer and re-tiles the wall", async () => {
-    const db = new HiveDatabase(join(home, "reconcile-viewer.db"));
-    const tmux = new FakeDaemonTmux();
-    const closedTerminals: AgentRecord["terminalHandle"][] = [];
-    let layoutRequests = 0;
-    const daemon = new HiveDaemon({
-      db,
-      spawner: new StubSpawner(),
-      tmux,
-      closeTerminal: async (handle) => {
-        closedTerminals.push(handle);
-      },
-      layout: {
-        requestLayout: () => {
-          layoutRequests += 1;
-        },
-      },
-      recovery: { worktreeExists: () => false },
-    });
-    const terminalHandle = { app: "iterm2", sessionId: "viewer-1" } as const;
-    db.insertAgent(agent({ status: "idle", terminalHandle }));
-    db.insertAgent(agent({
-      id: "agent-david",
-      name: "david",
-      status: "idle",
-      tmuxSession: "hive-david",
-    }));
-    tmux.sessions.add("hive-david");
-    try {
-      await daemon.reconcileAgents();
-
-      expect(db.getAgentByName("maya")).toMatchObject({
-        status: "dead",
-        failureReason: "worktree is missing; session not resumable",
-      });
-      expect(db.getAgentByName("maya")?.terminalHandle).toBeUndefined();
-      expect(closedTerminals).toEqual([terminalHandle]);
-      expect(db.getAgentByName("david")?.status).toEqual("idle");
-      expect(layoutRequests).toEqual(1);
-
-      // A second sweep with nothing to do stays quiet.
-      await daemon.reconcileAgents();
-      expect(layoutRequests).toEqual(1);
-    } finally {
-      db.close();
-    }
-  });
-
-  test("reconciliation settles a dead agent's quota reservation while closing its viewer", async () => {
+  test("reconciliation settles a dead agent's quota reservation", async () => {
     const db = new HiveDatabase(join(home, "reconcile-quota.db"));
     const ledger = new QuotaLedger(db);
     const quota = new QuotaService(
@@ -2601,28 +2494,16 @@ describe("HiveDaemon HTTP server", () => {
       ]),
     });
     quota.markStarted(decision.reservation.id);
-    const closedTerminals: AgentRecord["terminalHandle"][] = [];
-    let layoutRequests = 0;
     const daemon = new HiveDaemon({
       db,
       spawner: new StubSpawner(),
       tmuxSender: new SilentTmuxSender(db),
       tmux: new FakeDaemonTmux(),
-      closeTerminal: async (handle) => {
-        closedTerminals.push(handle);
-      },
-      layout: {
-        requestLayout: () => {
-          layoutRequests += 1;
-        },
-      },
       quota,
       recovery: { worktreeExists: () => false },
     });
-    const terminalHandle = { app: "iterm2", sessionId: "viewer-1" } as const;
     db.insertAgent(agent({
       status: "working",
-      terminalHandle,
       quotaReservationId: decision.reservation.id,
     }));
     try {
@@ -2632,247 +2513,12 @@ describe("HiveDaemon HTTP server", () => {
         status: "dead",
         failureReason: "worktree is missing; session not resumable",
       });
-      expect(db.getAgentByName("maya")?.terminalHandle).toBeUndefined();
       // A started agent that dies keeps its conservative estimate.
       expect(ledger.getReservation(decision.reservation.id)).toMatchObject({
         status: "reconciled",
         source: "estimated",
       });
-      expect(closedTerminals).toEqual([terminalHandle]);
-      expect(layoutRequests).toEqual(1);
     } finally {
-      db.close();
-    }
-  });
-
-  test("hive_kill re-tiles the wall only when a viewer was tracked", async () => {
-    const db = new HiveDatabase(join(home, "kill-layout.db"));
-    let layoutRequests = 0;
-    const daemon = new HiveDaemon({
-      db,
-      spawner: new StubSpawner(),
-      tmux: new FakeDaemonTmux(),
-      closeTerminal: async () => {},
-      assessStrandedWork: async () => ({
-        dirtyFiles: [],
-        unmergedCommits: 0,
-      }),
-      layout: {
-        requestLayout: () => {
-          layoutRequests += 1;
-        },
-      },
-    });
-    db.insertAgent(agent({
-      terminalHandle: { app: "iterm2", sessionId: "viewer-1" },
-    }));
-    db.insertAgent(agent({
-      id: "agent-david",
-      name: "david",
-      tmuxSession: "hive-david",
-    }));
-    const transport = new StreamableHTTPClientTransport(
-      new URL("http://hive/mcp"),
-      { fetch: actingAs(daemon, "operator") },
-    );
-    const client = new Client({ name: "hive-test", version: "1.0.0" });
-    try {
-      await client.connect(transport);
-      await client.callTool({ name: "hive_kill", arguments: { name: "maya" } });
-      expect(layoutRequests).toEqual(1);
-
-      await client.callTool({
-        name: "hive_kill",
-        arguments: { name: "david" },
-      });
-      expect(layoutRequests).toEqual(1);
-    } finally {
-      await client.close();
-      await daemon.stop();
-      db.close();
-    }
-  });
-
-  test("registers, replaces, and clears the orchestrator terminal", async () => {
-    const db = new HiveDatabase(join(home, "orchestrator-terminal.db"));
-    let layoutRequests = 0;
-    const daemon = new HiveDaemon({
-      db,
-      spawner: new StubSpawner(),
-      tmux: new FakeDaemonTmux(),
-      layout: {
-        requestLayout: () => {
-          layoutRequests += 1;
-        },
-      },
-    });
-    const handle = {
-      app: "terminal",
-      processId: 4242,
-      windowId: 12,
-      tty: "/dev/ttys004",
-    } as const;
-    const operator = actingAs(daemon, "operator");
-    const post = (body: unknown) =>
-      operator("http://hive/orchestrator-terminal", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(body),
-      });
-    try {
-      // With no agent viewers yet, registration must not move the user's
-      // window.
-      const registered = await post({ handle });
-      expect(registered.status).toEqual(200);
-      expect(db.getOrchestratorTerminal()).toEqual(handle);
-      expect(layoutRequests).toEqual(0);
-
-      // Once a live viewer exists, re-registration re-tiles.
-      db.insertAgent(agent({
-        terminalHandle: { app: "iterm2", sessionId: "viewer-1" },
-      }));
-      await post({ handle });
-      expect(layoutRequests).toEqual(1);
-
-      const invalid = await post({ handle: { app: "screen" } });
-      expect(invalid.status).toEqual(400);
-
-      const notJson = await operator("http://hive/orchestrator-terminal", {
-        method: "POST",
-        body: "not json",
-      });
-      expect(notJson.status).toEqual(400);
-
-      const cleared = await operator("http://hive/orchestrator-terminal", {
-        method: "DELETE",
-      });
-      expect(cleared.status).toEqual(200);
-      expect(db.getOrchestratorTerminal()).toBeNull();
-    } finally {
-      await daemon.stop();
-      db.close();
-    }
-  });
-
-  test("viewer registration attaches the handle and re-tiles", async () => {
-    const db = new HiveDatabase(join(home, "viewer-endpoint.db"));
-    let layoutRequests = 0;
-    const daemon = new HiveDaemon({
-      db,
-      spawner: new StubSpawner(),
-      tmux: new FakeDaemonTmux(),
-      layout: {
-        requestLayout: () => {
-          layoutRequests += 1;
-        },
-      },
-    });
-    const handle = { app: "iterm2", sessionId: "watch-1" } as const;
-    const post = (body: unknown) =>
-      actingAs(daemon, "operator")("http://hive/viewer", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(body),
-      });
-    db.insertAgent(agent());
-    db.insertAgent(agent({ id: "agent-dead", name: "dead-sam", status: "dead" }));
-    try {
-      const attached = await post({ agent: "maya", handle });
-      expect(attached.status).toEqual(200);
-      expect(db.getAgentByName("maya")?.terminalHandle).toEqual(handle);
-      expect(layoutRequests).toEqual(1);
-
-      const unknown = await post({ agent: "nobody", handle });
-      expect(unknown.status).toEqual(404);
-
-      const terminal = await post({ agent: "dead-sam", handle });
-      expect(terminal.status).toEqual(409);
-
-      const invalid = await post({ agent: "maya" });
-      expect(invalid.status).toEqual(400);
-      expect(layoutRequests).toEqual(1);
-    } finally {
-      await daemon.stop();
-      db.close();
-    }
-  });
-
-  test("workspace presence is a TTL lease that pauses and releases the window wall", async () => {
-    const db = new HiveDatabase(join(home, "workspace-presence.db"));
-    let nowMs = 0;
-    const presence = new WorkspacePresence(() => nowMs);
-    let layoutRequests = 0;
-    const daemon = new HiveDaemon({
-      db,
-      spawner: new StubSpawner(),
-      tmux: new FakeDaemonTmux(),
-      workspacePresence: presence,
-      layout: {
-        requestLayout: () => {
-          layoutRequests += 1;
-        },
-      },
-    });
-    const operator = actingAs(daemon, "operator");
-    const post = (body: unknown) =>
-      operator("http://hive/workspace", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(body),
-      });
-    const read = async (): Promise<unknown> => (await operator("http://hive/workspace")).json();
-    try {
-      // No lease until the app registers.
-      expect(await read()).toEqual({ present: false });
-
-      const granted = await post({ present: true });
-      expect(granted.status).toEqual(200);
-      expect(await granted.json()).toEqual({
-        ok: true,
-        present: true,
-        ttlMs: presence.ttlMs,
-      });
-      expect(await read()).toEqual({ present: true });
-
-      // A crashed app stops renewing; the TTL reverts the daemon by itself.
-      nowMs = presence.ttlMs + 1;
-      expect(await read()).toEqual({ present: false });
-
-      // A clean shutdown surrenders explicitly and puts the wall back.
-      await post({ present: true });
-      expect(layoutRequests).toEqual(0);
-      const cleared = await post({ present: false });
-      expect(await cleared.json()).toMatchObject({ ok: true, present: false });
-      expect(layoutRequests).toEqual(1);
-
-      const malformed = await post({ present: "yes" });
-      expect(malformed.status).toEqual(400);
-      const notJson = await operator("http://hive/workspace", {
-        method: "POST",
-        body: "not json",
-      });
-      expect(notJson.status).toEqual(400);
-
-      // No credential, no lease; an agent credential may not claim it either.
-      const anonymous = await daemon.fetch(
-        new Request("http://hive/workspace", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ present: true }),
-        }),
-      );
-      expect(anonymous.status).toEqual(401);
-      const agentPost = await actingAs(daemon, "maya", "writer")(
-        "http://hive/workspace",
-        {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ present: true }),
-        },
-      );
-      expect(agentPost.status).toEqual(403);
-    } finally {
-      await daemon.stop();
       db.close();
     }
   });

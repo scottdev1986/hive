@@ -16,7 +16,6 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { TerminalAdapter } from "../adapters/terminal";
 import {
   accountBillingFromCodexRateLimits,
   type AccountBilling,
@@ -38,7 +37,6 @@ import type {
   QuotaPoolStatus,
   RoutingCategory,
   RoutingPolicy,
-  TerminalHandle,
 } from "../schemas";
 import {
   buildAgentPrompt,
@@ -339,19 +337,6 @@ class FakeStore {
     return record;
   }
 
-  attachTerminalHandle(
-    id: string,
-    handle: TerminalHandle,
-  ): AgentRecord | null {
-    const record = this.getAgentById(id);
-    if (
-      record === null || record.status === "dead" || record.status === "done" ||
-      record.status === "failed"
-    ) {
-      return null;
-    }
-    return this.insertAgent({ ...record, terminalHandle: handle });
-  }
 }
 
 /** The hardened readiness monitor treats poll exhaustion with no positive
@@ -432,26 +417,6 @@ class FakeTmux {
   }
 }
 
-class FakeTerminal implements TerminalAdapter {
-  readonly windows: Array<[string, string]> = [];
-  readonly closed: TerminalHandle[] = [];
-
-  constructor(private readonly onOpen: () => void = () => {}) {}
-
-  async openWindow(
-    session: string,
-    title: string,
-  ): Promise<TerminalHandle> {
-    this.windows.push([session, title]);
-    this.onOpen();
-    return { app: "iterm2", sessionId: `session-${session}` };
-  }
-
-  async closeWindow(handle: TerminalHandle): Promise<void> {
-    this.closed.push(handle);
-  }
-}
-
 class FlakyCaptureTmux extends FakeTmux {
   override async capturePane(name: string): Promise<string> {
     this.capturePaneCalls += 1;
@@ -460,17 +425,6 @@ class FlakyCaptureTmux extends FakeTmux {
     }
     return this.pane;
   }
-}
-
-class FailingTerminal implements TerminalAdapter {
-  async openWindow(
-    _session: string,
-    _title: string,
-  ): Promise<TerminalHandle> {
-    throw new Error("viewer unavailable");
-  }
-
-  async closeWindow(_handle: TerminalHandle): Promise<void> {}
 }
 
 // Claude spawns pre-accept folder trust in ~/.claude.json, and every launch now
@@ -540,12 +494,11 @@ describe("HiveSpawner name pool", () => {
         db: store,
         repoRoot: root,
         port: 4317,
-        config: { terminal: "auto", headless: true },
+        config: {},
         readRoutingPolicy: () => {
           throw new Error("changed routing table must not be consulted");
         },
         tmux,
-        terminal: new FakeTerminal(),
         sleep: signalControlReadiness(store),
         quota: controlQuota.quota,
       });
@@ -595,84 +548,14 @@ describe("HiveSpawner name pool", () => {
     }
   });
 
-  test("control restart swaps the stale viewer for a fresh one and re-tiles", async () => {
-    const root = await mkdtemp(join(tmpdir(), "hive-control-viewer-"));
-    tempRoots.push(root);
-    const staleHandle: TerminalHandle = {
-      app: "iterm2",
-      sessionId: "stale-viewer",
-    };
-    const controlled = {
-      ...agent("maya", "working"),
-      worktreePath: root,
-      terminalHandle: staleHandle,
-      executionIdentity: {
-        tool: "codex",
-        model: "gpt-test",
-        effort: "medium",
-      },
-    } satisfies AgentRecord;
-    const store = new FakeStore([controlled]);
-    const terminal = new FakeTerminal();
-    let layoutRequests = 0;
-    const controlQuota = makeControlQuota(root);
-    const spawner = new HiveSpawner({
-      isModelEnabled: async () => true,
-      db: store,
-      repoRoot: root,
-      port: 4317,
-      config: { terminal: "auto", headless: false },
-      readRoutingPolicy: () => policyFromRoute(CODEX_ROUTE),
-      tmux: new FakeTmux(),
-      terminal,
-      sleep: signalControlReadiness(store),
-      onTerminalsChanged: () => {
-        layoutRequests += 1;
-      },
-      quota: controlQuota.quota,
-    });
-    const restarted = await spawner.restartForControl(controlled, {
-      id: "control-viewer",
-      from: "orchestrator",
-      to: "maya",
-      body: "Pause before coding.",
-      createdAt: timestamp,
-      deliveredAt: null,
-      priority: "critical",
-      intent: "pause",
-      state: "queued",
-      injectedAt: null,
-      acknowledgedAt: null,
-      appliedAt: null,
-      deadlineAt: timestamp,
-      alertAt: null,
-      sequence: 1,
-      idempotencyKey: null,
-      capabilityEpoch: 1,
-    });
-    // The old lens pointed at the killed session; only the fresh one remains.
-    expect(terminal.closed).toEqual([staleHandle]);
-    expect(terminal.windows).toHaveLength(1);
-    expect(terminal.windows[0]?.[0]).toEqual("hive-maya");
-    expect(terminal.windows[0]?.[1]).toContain("maya");
-    expect(restarted.terminalHandle).toEqual({
-      app: "iterm2",
-      sessionId: "session-hive-maya",
-    });
-    expect(layoutRequests).toEqual(1);
-    controlQuota.db.close();
-  });
-
-  test("fails closed when the recorded model cannot launch and removes only its stale viewer", async () => {
+  test("fails closed when the recorded model cannot launch", async () => {
     const root = await mkdtemp(join(tmpdir(), "hive-control-unavailable-"));
     tempRoots.push(root);
-    const staleHandle = { app: "iterm2", sessionId: "stale" } as const;
     const controlled = {
       ...agent("maya", "control-paused"),
       worktreePath: root,
       capabilityEpoch: 1,
       writeRevoked: true,
-      terminalHandle: staleHandle,
       executionIdentity: {
         tool: "codex",
         model: "removed-model",
@@ -682,21 +565,17 @@ describe("HiveSpawner name pool", () => {
     } satisfies AgentRecord;
     const store = new FakeStore([controlled]);
     const tmux = new FakeTmux("Error: model not supported");
-    const terminal = new FakeTerminal();
     const controlQuota = makeControlQuota(root);
-    let layouts = 0;
     const spawner = new HiveSpawner({
       isModelEnabled: async () => true,
       db: store,
       repoRoot: root,
       port: 4317,
-      config: { terminal: "auto", headless: false },
+      config: {},
       readRoutingPolicy: () => policyFromRoute(CHEAP_ROUTE),
       tmux,
-      terminal,
       sleep: async () => {},
       quota: controlQuota.quota,
-      onTerminalsChanged: () => layouts += 1,
     });
 
     await expect(spawner.restartForControl(
@@ -710,10 +589,6 @@ describe("HiveSpawner name pool", () => {
       controlMessageId: "unavailable",
     });
     expect(failed.failureReason).toContain("model not supported");
-    expect(failed.terminalHandle).toBeUndefined();
-    expect(terminal.closed).toEqual([staleHandle]);
-    expect(terminal.windows).toEqual([]);
-    expect(layouts).toEqual(1);
     expect(
       controlQuota.quota.ledger.getReservation(
         failed.controlQuotaReservationId!,
@@ -725,29 +600,25 @@ describe("HiveSpawner name pool", () => {
   test("legacy rows without immutable launch fields remain revoked and visibly pending", async () => {
     const root = await mkdtemp(join(tmpdir(), "hive-control-legacy-"));
     tempRoots.push(root);
-    const staleHandle = { app: "iterm2", sessionId: "legacy-viewer" } as const;
     const controlled = {
       ...agent("maya", "control-paused"),
       worktreePath: root,
       writeRevoked: true,
       capabilityEpoch: 1,
-      terminalHandle: staleHandle,
     } satisfies AgentRecord;
     const store = new FakeStore([controlled]);
-    const terminal = new FakeTerminal();
     let routeReads = 0;
     const spawner = new HiveSpawner({
       isModelEnabled: async () => true,
       db: store,
       repoRoot: root,
       port: 4317,
-      config: { terminal: "auto", headless: false },
+      config: {},
       readRoutingPolicy: () => {
         routeReads += 1;
         return policyFromRoute(CODEX_ROUTE);
       },
       tmux: new FakeTmux(),
-      terminal,
     });
 
     await expect(spawner.restartForControl(
@@ -763,7 +634,6 @@ describe("HiveSpawner name pool", () => {
     expect(store.getAgentById(controlled.id)?.failureReason).toContain(
       "legacy or unresolved-default",
     );
-    expect(terminal.closed).toEqual([staleHandle]);
   });
 
   test("insufficient control quota never launches or changes the recorded model", async () => {
@@ -784,13 +654,11 @@ describe("HiveSpawner name pool", () => {
       }),
       () => new Date(timestamp),
     );
-    const staleHandle = { app: "iterm2", sessionId: "exhausted" } as const;
     const controlled = {
       ...agent("maya", "control-paused"),
       worktreePath: root,
       writeRevoked: true,
       capabilityEpoch: 1,
-      terminalHandle: staleHandle,
       executionIdentity: {
         tool: "codex",
         model: "gpt-test",
@@ -799,20 +667,18 @@ describe("HiveSpawner name pool", () => {
     } satisfies AgentRecord;
     const store = new FakeStore([controlled]);
     const tmux = new FakeTmux();
-    const terminal = new FakeTerminal();
     const spawner = new HiveSpawner({
       isModelEnabled: async () => true,
       db: store,
       repoRoot: root,
       port: 4317,
-      config: { terminal: "auto", headless: false },
+      config: {},
       readRoutingPolicy: () => policyFromRoute({
         ...CODEX_ROUTE,
         tool: "claude",
         codex: { model: "different-model", effort: "minimal" },
       }),
       tmux,
-      terminal,
       quota,
     });
 
@@ -821,8 +687,6 @@ describe("HiveSpawner name pool", () => {
       controlMessage("exhausted"),
     )).rejects.toThrow("Insufficient quota");
     expect(tmux.sessions).toHaveLength(0);
-    expect(terminal.windows).toHaveLength(0);
-    expect(terminal.closed).toEqual([staleHandle]);
     expect(store.getAgentById(controlled.id)).toMatchObject({
       model: "gpt-test",
       executionIdentity: controlled.executionIdentity,
@@ -945,14 +809,13 @@ describe("HiveSpawner name pool", () => {
       db: store,
       repoRoot: "/tmp/hive-concurrent-names",
       port: 4317,
-      config: { terminal: "auto", headless: true },
+      config: {},
       readRoutingPolicy: () => policyFromRoute(CODEX_ROUTE),
       discoverCapabilities: async () => {
         await gate;
         return discovery(capabilityRecord("codex", "gpt-5.6-sol", ["medium"]));
       },
       tmux: new FakeTmux(),
-      terminal: new FakeTerminal(),
       // Fail after the name is claimed: the claim is what this test is about.
       createWorktree: async () => {
         throw new Error("stop after routing");
@@ -986,14 +849,13 @@ describe("HiveSpawner name pool", () => {
       db: store,
       repoRoot: "/tmp/hive-reservation-race",
       port: 4317,
-      config: { terminal: "auto", headless: true },
+      config: {},
       readRoutingPolicy: () => policyFromRoute(CODEX_ROUTE),
       discoverCapabilities: async () => {
         await routingGate;
         return discovery(capabilityRecord("codex", "gpt-5.6-sol", ["medium"]));
       },
       tmux: new FakeTmux(),
-      terminal: new FakeTerminal(),
       createWorktree: async () => {
         throw new Error("stop after routing");
       },
@@ -1030,10 +892,9 @@ describe("HiveSpawner name pool", () => {
       db: store,
       repoRoot: "/tmp/hive-exhausted",
       port: 4317,
-      config: { terminal: "auto", headless: true },
+      config: {},
       readRoutingPolicy: () => policyFromRoute(CLAUDE_ROUTE),
       tmux: new FakeTmux(),
-      terminal: new FakeTerminal(),
       createWorktree: async () => {
         attemptedWorktree = true;
         return { path: "/tmp/unused", branch: "hive/unused-task" };
@@ -1053,10 +914,9 @@ describe("HiveSpawner name pool", () => {
       db: new FakeStore(),
       repoRoot: "/tmp/hive-invalid-name",
       port: 4317,
-      config: { terminal: "auto", headless: true },
+      config: {},
       readRoutingPolicy: () => policyFromRoute(CODEX_ROUTE),
       tmux: new FakeTmux(),
-      terminal: new FakeTerminal(),
       createWorktree: async () => {
         attemptedWorktree = true;
         return { path: "/tmp/unused", branch: "hive/unused-task" };
@@ -1078,10 +938,9 @@ describe("HiveSpawner name pool", () => {
       db: new FakeStore([agent("maya")]),
       repoRoot: "/tmp/hive-collision",
       port: 4317,
-      config: { terminal: "auto", headless: true },
+      config: {},
       readRoutingPolicy: () => policyFromRoute(CODEX_ROUTE),
       tmux: new FakeTmux(),
-      terminal: new FakeTerminal(),
       createWorktree: async () => {
         throw new Error("worktree must not be created");
       },
@@ -1102,10 +961,9 @@ describe("HiveSpawner name pool", () => {
       db: new FakeStore(),
       repoRoot: "/tmp/hive-reserved-name",
       port: 4317,
-      config: { terminal: "auto", headless: true },
+      config: {},
       readRoutingPolicy: () => policyFromRoute(CODEX_ROUTE),
       tmux: new FakeTmux(),
-      terminal: new FakeTerminal(),
       createWorktree: async () => {
         attemptedWorktree = true;
         return { path: "/tmp/unused", branch: "hive/unused-task" };
@@ -1134,14 +992,13 @@ describe("HiveSpawner wiring", () => {
       db: store,
       repoRoot: root,
       port: 4317,
-      config: { terminal: "auto", headless: true },
+      config: {},
       readRoutingPolicy: () => policyFromRoute({
         ...CODEX_ROUTE,
         tool: "codex",
         codex: { model: "gpt-test", effort: "high" },
       }),
       tmux,
-      terminal: new FakeTerminal(),
       createWorktree: async (_repoRoot, name, slug) => {
         const path = join(root, name);
         await mkdir(path, { recursive: true });
@@ -1183,8 +1040,6 @@ describe("HiveSpawner wiring", () => {
       repoRoot: root,
       port: 4317,
       config: {
-        terminal: "auto",
-        headless: true,
         codex: { driver: "app-server" },
       },
       readRoutingPolicy: () => policyFromRoute({
@@ -1193,7 +1048,6 @@ describe("HiveSpawner wiring", () => {
         codex: { model: "gpt-test", effort: "high" },
       }),
       tmux,
-      terminal: new FakeTerminal(),
       createWorktree: async (_repoRoot, name, slug) => {
         const path = join(root, name);
         await mkdir(path, { recursive: true });
@@ -1240,8 +1094,6 @@ describe("HiveSpawner wiring", () => {
       repoRoot: root,
       port: 4317,
       config: {
-        terminal: "auto",
-        headless: true,
         codex: { driver: "app-server" },
       },
       readRoutingPolicy: () => policyFromRoute({
@@ -1250,7 +1102,6 @@ describe("HiveSpawner wiring", () => {
         codex: { model: "gpt-test", effort: "medium" },
       }),
       tmux,
-      terminal: new FakeTerminal(),
       createWorktree: async (_repoRoot, name, slug) => {
         const path = join(root, name);
         await mkdir(path, { recursive: true });
@@ -1319,10 +1170,9 @@ describe("HiveSpawner wiring", () => {
       db: store,
       repoRoot: root,
       port: 4317,
-      config: { terminal: "auto", headless: true },
+      config: {},
       readRoutingPolicy: quotaSpreadPolicy,
       tmux,
-      terminal: new FakeTerminal(),
       createWorktree: async (_repoRoot, name, slug) => {
         const path = join(root, name);
         await mkdir(path, { recursive: true });
@@ -1418,10 +1268,9 @@ describe("HiveSpawner wiring", () => {
       db: store,
       repoRoot: root,
       port: 4317,
-      config: { terminal: "auto", headless: true },
+      config: {},
       readRoutingPolicy: quotaSpreadPolicy,
       tmux: new FakeTmux(),
-      terminal: new FakeTerminal(),
       createWorktree: async (_repoRoot, name, slug) => {
         const path = join(root, name);
         await mkdir(path, { recursive: true });
@@ -1447,10 +1296,9 @@ describe("HiveSpawner wiring", () => {
       db: store,
       repoRoot: root,
       port: 4317,
-      config: { terminal: "auto", headless: true },
+      config: {},
       readRoutingPolicy: quotaSpreadPolicy,
       tmux: new FakeTmux(),
-      terminal: new FakeTerminal(),
       // A worktree path that is a regular file, not a directory. buildMemoryIndex
       // walks it and dies on ENOTDIR — the real rejection, not a mocked one, and
       // the one promise in that Promise.all with no `.catch` of its own.
@@ -1491,10 +1339,9 @@ describe("HiveSpawner wiring", () => {
       db: store,
       repoRoot: root,
       port: 4317,
-      config: { terminal: "auto", headless: true },
+      config: {},
       readRoutingPolicy: quotaSpreadPolicy,
       tmux: new FakeTmux(),
-      terminal: new FakeTerminal(),
       createWorktree: async (_repoRoot, name, slug) => {
         const path = join(root, name);
         await mkdir(path, { recursive: true });
@@ -1534,7 +1381,7 @@ describe("HiveSpawner wiring", () => {
       db: store,
       repoRoot: root,
       port: 4317,
-      config: { terminal: "auto", headless: true },
+      config: {},
       readRoutingPolicy: () => policyFromRoute(CLAUDE_ROUTE),
       // Both vendors answer, and neither lists this model. That is a
       // measurement, not a gap — the grounds to refuse.
@@ -1545,7 +1392,6 @@ describe("HiveSpawner wiring", () => {
             : capabilityRecord("codex", "gpt-5.6-sol", ["low", "ultra"]),
         ),
       tmux,
-      terminal: new FakeTerminal(),
       createWorktree: async (_repoRoot, name, slug) => {
         const path = join(root, name);
         await mkdir(path, { recursive: true });
@@ -1601,7 +1447,7 @@ describe("HiveSpawner wiring", () => {
       db: store,
       repoRoot: root,
       port: 4317,
-      config: { terminal: "auto", headless: true },
+      config: {},
       readRoutingPolicy: () => ({
         ...policyFromRoute(CLAUDE_ROUTE),
         chains: { default: [
@@ -1620,7 +1466,6 @@ describe("HiveSpawner wiring", () => {
           );
       },
       tmux,
-      terminal: new FakeTerminal(),
       createWorktree: async (_repoRoot, name, slug) => {
         const path = join(root, name);
         await mkdir(path, { recursive: true });
@@ -1661,10 +1506,9 @@ describe("HiveSpawner wiring", () => {
       db: store,
       repoRoot: root,
       port: 4317,
-      config: { terminal: "auto", headless: true },
+      config: {},
       readRoutingPolicy: () => policyFromRoute(CLAUDE_ROUTE),
       tmux,
-      terminal: new FakeTerminal(),
       createWorktree: async (_repoRoot, name, slug) => {
         const path = join(root, name);
         await mkdir(path, { recursive: true });
@@ -1699,11 +1543,10 @@ describe("HiveSpawner wiring", () => {
       db: new FakeStore(),
       repoRoot: "/tmp/hive-effort-reject",
       port: 4317,
-      config: { terminal: "auto", headless: true },
+      config: {},
       readRoutingPolicy: () => policyFromRoute(CLAUDE_ROUTE),
       discoverCapabilities: async () => discovery(record),
       tmux: new FakeTmux(),
-      terminal: new FakeTerminal(),
       createWorktree: async () => {
         created = true;
         return { path: "/tmp/unused", branch: "hive/unused" };
@@ -1736,11 +1579,10 @@ describe("HiveSpawner wiring", () => {
       db: store,
       repoRoot: root,
       port: 4317,
-      config: { terminal: "auto", headless: true },
+      config: {},
       readRoutingPolicy: () => policyFromRoute(CLAUDE_ROUTE),
       discoverCapabilities: async () => discovery(record),
       tmux,
-      terminal: new FakeTerminal(),
       createWorktree: async (_repoRoot, name, slug) => {
         const path = join(root, name);
         await mkdir(path, { recursive: true });
@@ -1778,11 +1620,10 @@ describe("HiveSpawner wiring", () => {
       db: store,
       repoRoot: root,
       port: 4317,
-      config: { terminal: "auto", headless: true },
+      config: {},
       readRoutingPolicy: () => policyFromRoute(CODEX_ROUTE),
       discoverCapabilities: async () => discovery(record),
       tmux,
-      terminal: new FakeTerminal(),
       createWorktree: async (_repoRoot, name, slug) => {
         const path = join(root, name);
         await mkdir(path, { recursive: true });
@@ -1817,14 +1658,13 @@ describe("HiveSpawner wiring", () => {
       db: store,
       repoRoot: root,
       port: 4317,
-      config: { terminal: "auto", headless: true },
+      config: {},
       readRoutingPolicy: () => policyFromRoute(CODEX_ROUTE),
       issueCredential: (name, role, epoch) => {
         issued.push([name, role, epoch]);
         return "test-capability";
       },
       tmux,
-      terminal: new FakeTerminal(),
       createWorktree: async (_repoRoot, name, slug) => {
         const path = join(root, name);
         await mkdir(path, { recursive: true });
@@ -1857,10 +1697,9 @@ describe("HiveSpawner wiring", () => {
       db: new FakeStore(),
       repoRoot: root,
       port: 4317,
-      config: { terminal: "auto", headless: true },
+      config: {},
       readRoutingPolicy: () => policyFromRoute(CODEX_ROUTE),
       tmux: new FakeTmux(),
-      terminal: new FakeTerminal(),
       createWorktree: async () => {
         worktrees += 1;
         throw new Error("must not create");
@@ -1890,7 +1729,7 @@ describe("HiveSpawner wiring", () => {
       db: store,
       repoRoot: root,
       port: 4317,
-      config: { terminal: "auto", headless: true },
+      config: {},
       readRoutingPolicy: () => policyFromRoute(CODEX_ROUTE),
       discoverCapabilities: async (provider) =>
         provider === "grok"
@@ -1903,7 +1742,6 @@ describe("HiveSpawner wiring", () => {
       }),
       issueCredential: () => "test-capability",
       tmux,
-      terminal: new FakeTerminal(),
       createWorktree: async (_repoRoot, name, slug) => {
         const path = join(root, name);
         await mkdir(path, { recursive: true });
@@ -1952,12 +1790,11 @@ describe("HiveSpawner wiring", () => {
       db: store,
       repoRoot: root,
       port: 4317,
-      config: { terminal: "auto", headless: true },
+      config: {},
       // The field failure: the category routes to Codex, and the explicit
       // claude model used to ride onto the Codex TUI verbatim.
       readRoutingPolicy: () => policyFromRoute(CODEX_ROUTE),
       tmux,
-      terminal: new FakeTerminal(),
       createWorktree: async (_repoRoot, name, slug) => {
         const path = join(root, name);
         await mkdir(path, { recursive: true });
@@ -1987,10 +1824,9 @@ describe("HiveSpawner wiring", () => {
       db: store,
       repoRoot: root,
       port: 4317,
-      config: { terminal: "auto", headless: true },
+      config: {},
       readRoutingPolicy: () => policyFromRoute(CODEX_ROUTE),
       tmux: new FakeTmux(),
-      terminal: new FakeTerminal(),
       createWorktree: async (_repoRoot, name, slug) => {
         const path = join(root, name);
         await mkdir(path, { recursive: true });
@@ -2051,10 +1887,9 @@ describe("HiveSpawner wiring", () => {
       db: store,
       repoRoot: root,
       port: 4317,
-      config: { terminal: "auto", headless: true },
+      config: {},
       readRoutingPolicy: () => policyFromRoute(CLAUDE_ROUTE),
       tmux,
-      terminal: new FakeTerminal(),
       createWorktree: async (_repoRoot, name, slug) => {
         const path = join(root, name);
         await mkdir(path, { recursive: true });
@@ -2075,12 +1910,11 @@ describe("HiveSpawner wiring", () => {
     quotaDb.close();
   });
 
-  test("writes tool configs, starts named sessions, opens viewers, and inserts records", async () => {
+  test("writes tool configs, starts named sessions, and inserts records", async () => {
     const root = await mkdtemp(join(tmpdir(), "hive-spawner-"));
     tempRoots.push(root);
     const store = new FakeStore();
     const tmux = new FakeTmux();
-    const terminal = new FakeTerminal();
     const policy: RoutingPolicy = {
       ...policyFromRoute(CODEX_ROUTE),
       chains: {
@@ -2105,10 +1939,9 @@ describe("HiveSpawner wiring", () => {
       db: store,
       repoRoot: root,
       port: 4317,
-      config: { terminal: "auto", headless: false },
+      config: {},
       readRoutingPolicy: () => policy,
       tmux,
-      terminal,
       createWorktree,
       sleep: signalReadiness(store),
     });
@@ -2127,14 +1960,6 @@ describe("HiveSpawner wiring", () => {
     // corrected for any agent whose telemetry Hive could not read.
     expect(claude.contextPct).toBeNull();
     expect(codex.name).toEqual("david");
-    expect(claude.terminalHandle).toEqual({
-      app: "iterm2",
-      sessionId: `session-${agentTmuxSession("maya")}`,
-    });
-    expect(codex.terminalHandle).toEqual({
-      app: "iterm2",
-      sessionId: `session-${agentTmuxSession("david")}`,
-    });
     expect(store.agents).toEqual([claude, codex]);
     expect(tmux.sessions.map(([name]) => name)).toEqual([
       agentTmuxSession("maya"),
@@ -2167,23 +1992,6 @@ describe("HiveSpawner wiring", () => {
       model: "gpt-test",
       effort: "medium",
     });
-    expect(terminal.windows).toEqual([
-      [agentTmuxSession("maya"), "maya — claude-fable-5"],
-      [agentTmuxSession("david"), "david — gpt-test"],
-    ]);
-    for (const [, title] of terminal.windows) {
-      // Routing aliases must never surface: the title carries the concrete
-      // model the tool actually runs.
-      expect(title).not.toContain("best");
-      expect(title).not.toContain("default");
-      expect(title).not.toContain("hive-");
-      expect(title).not.toContain("Build auth API");
-      expect(title).not.toContain("Add route tests");
-      expect(title).not.toContain(root);
-      expect(title).not.toContain("deep");
-      expect(title).not.toContain("standard");
-      expect(title).not.toContain("tmux");
-    }
 
     const claudeSettings = await readFile(
       join(root, "maya", ".claude", "settings.local.json"),
@@ -2237,10 +2045,9 @@ describe("HiveSpawner wiring", () => {
         db: store,
         repoRoot: root,
         port: 4317,
-        config: { terminal: "auto", headless: true },
+        config: {},
         readRoutingPolicy: () => policyFromRoute(CODEX_ROUTE),
         tmux,
-        terminal: new FakeTerminal(),
         createWorktree: async () => ({
           path: worktreePath,
           branch: "hive/maya-memory",
@@ -2280,10 +2087,9 @@ describe("HiveSpawner wiring", () => {
       db: store,
       repoRoot: root,
       port: 4317,
-      config: { terminal: "auto", headless: true },
+      config: {},
       readRoutingPolicy: () => policyFromRoute(CODEX_ROUTE),
       tmux,
-      terminal: new FakeTerminal(),
       createWorktree: async () => ({
         path: worktreePath,
         branch: "hive/maya-ready",
@@ -2328,7 +2134,7 @@ describe("HiveSpawner wiring", () => {
       db: store,
       repoRoot: root,
       port: 4317,
-      config: { terminal: "auto", headless: true },
+      config: {},
       readRoutingPolicy: () => ({
         ...policyFromRoute(CODEX_ROUTE),
         chains: { default: [
@@ -2337,7 +2143,6 @@ describe("HiveSpawner wiring", () => {
         ] },
       }),
       tmux,
-      terminal: new FakeTerminal(),
       createWorktree,
       claudeExecutable: "/daemon/native/claude",
       sleep: signalReadiness(store),
@@ -2382,13 +2187,12 @@ describe("HiveSpawner wiring", () => {
       db: store,
       repoRoot: root,
       port: 4317,
-      config: { terminal: "auto", headless: true },
+      config: {},
       readRoutingPolicy: () => policyWithChain([
         { provider: "codex", model: "gpt-5.6-sol", effort: { mode: "exact", value: "low" } },
         { provider: "claude", model: "haiku", effort: { mode: "provider-controlled" } },
       ]),
       tmux,
-      terminal: new FakeTerminal(),
       createWorktree: async (_repoRoot, name, slug) => {
         const path = join(root, name);
         await mkdir(path, { recursive: true });
@@ -2418,10 +2222,9 @@ describe("HiveSpawner wiring", () => {
       db: store,
       repoRoot: root,
       port: 4317,
-      config: { terminal: "auto", headless: true },
+      config: {},
       readRoutingPolicy: () => policyFromRoute(REVIEW_ROUTE),
       tmux,
-      terminal: new FakeTerminal(),
       createWorktree: async (_repoRoot, name, slug) => {
         const path = join(root, name);
         await mkdir(path, { recursive: true });
@@ -2440,7 +2243,7 @@ describe("HiveSpawner wiring", () => {
     expect(tmux.sessions[0]?.[2]).toContain("'--model' 'sonnet'");
   });
 
-  test("marks pane errors failed, cleans up, and never opens a viewer", async () => {
+  test("marks pane errors failed and cleans up", async () => {
     const root = await mkdtemp(join(tmpdir(), "hive-spawner-failed-"));
     tempRoots.push(root);
     const worktreePath = join(root, "maya");
@@ -2451,17 +2254,15 @@ describe("HiveSpawner wiring", () => {
     ].join("\n");
     const store = new FakeStore();
     const tmux = new FakeTmux(pane);
-    const terminal = new FakeTerminal();
     const removals: Array<[string, string]> = [];
     const spawner = new HiveSpawner({
       isModelEnabled: async () => true,
       db: store,
       repoRoot: root,
       port: 4317,
-      config: { terminal: "auto", headless: false },
+      config: {},
       readRoutingPolicy: () => policyFromRoute(CODEX_ROUTE),
       tmux,
-      terminal,
       createWorktree: async () => ({
         path: worktreePath,
         branch: "hive/maya-failing-launch",
@@ -2484,7 +2285,6 @@ describe("HiveSpawner wiring", () => {
     expect(store.agents).toEqual([failed]);
     expect(tmux.killed).toEqual([agentTmuxSession("maya")]);
     expect(removals).toEqual([[root, worktreePath]]);
-    expect(terminal.windows).toEqual([]);
   });
 
   test("reports a short-lived process exit marker instead of a raw tmux exit", async () => {
@@ -2502,10 +2302,9 @@ describe("HiveSpawner wiring", () => {
       db: store,
       repoRoot: root,
       port: 4317,
-      config: { terminal: "auto", headless: true },
+      config: {},
       readRoutingPolicy: () => policyFromRoute(CODEX_ROUTE),
       tmux,
-      terminal: new FakeTerminal(),
       createWorktree: async () => ({
         path: worktreePath,
         branch: "hive/maya-short-lived-launch",
@@ -2539,10 +2338,9 @@ describe("HiveSpawner wiring", () => {
       db: store,
       repoRoot: root,
       port: 4317,
-      config: { terminal: "auto", headless: true },
+      config: {},
       readRoutingPolicy: () => policyFromRoute(CODEX_ROUTE),
       tmux,
-      terminal: new FakeTerminal(),
       createWorktree: async () => ({
         path: worktreePath,
         branch: "hive/maya-error-handling",
@@ -2573,7 +2371,7 @@ describe("HiveSpawner wiring", () => {
     expect(tmux.killed).toEqual([]);
   });
 
-  test("tolerates transient pane capture and viewer failures", async () => {
+  test("tolerates a transient pane capture failure", async () => {
     const root = await mkdtemp(join(tmpdir(), "hive-spawner-transient-"));
     tempRoots.push(root);
     const worktreePath = join(root, "maya");
@@ -2585,10 +2383,9 @@ describe("HiveSpawner wiring", () => {
       db: store,
       repoRoot: root,
       port: 4317,
-      config: { terminal: "auto", headless: false },
+      config: {},
       readRoutingPolicy: () => policyFromRoute(CODEX_ROUTE),
       tmux,
-      terminal: new FailingTerminal(),
       createWorktree: async () => ({
         path: worktreePath,
         branch: "hive/maya-transient",
@@ -2639,14 +2436,13 @@ describe("HiveSpawner wiring", () => {
       db: store,
       repoRoot: root,
       port: 4317,
-      config: { terminal: "auto", headless: true },
+      config: {},
       readRoutingPolicy: () => policyFromRoute({
         ...CODEX_ROUTE,
         tool: "codex",
         codex: { model: "gpt-test", effort: "medium" },
       }),
       tmux,
-      terminal: new FakeTerminal(),
       createWorktree: async (_repoRoot, name, slug) => {
         const path = join(root, name);
         await mkdir(path, { recursive: true });
@@ -2688,14 +2484,13 @@ describe("HiveSpawner wiring", () => {
       db: store,
       repoRoot: root,
       port: 4317,
-      config: { terminal: "auto", headless: true },
+      config: {},
       readRoutingPolicy: () => policyFromRoute({
         ...CODEX_ROUTE,
         tool: "codex",
         codex: { model: "gpt-test", effort: "medium" },
       }),
       tmux,
-      terminal: new FakeTerminal(),
       createWorktree: async (_repoRoot, name, slug) => {
         const path = join(root, name);
         await mkdir(path, { recursive: true });
@@ -2734,10 +2529,9 @@ describe("HiveSpawner wiring", () => {
       db: store,
       repoRoot: root,
       port: 4317,
-      config: { terminal: "auto", headless: true },
+      config: {},
       readRoutingPolicy: () => policyFromRoute(CODEX_ROUTE),
       tmux,
-      terminal: new FakeTerminal(),
       createWorktree: async (_repoRoot, name, slug) => {
         const path = join(root, name);
         await mkdir(path, { recursive: true });
@@ -2774,10 +2568,9 @@ describe("HiveSpawner wiring", () => {
       db: store,
       repoRoot: root,
       port: 4317,
-      config: { terminal: "auto", headless: true },
+      config: {},
       readRoutingPolicy: () => policyFromRoute(CODEX_ROUTE),
       tmux: new FakeTmux(),
-      terminal: new FakeTerminal(),
       createWorktree: async (_repoRoot, name, slug) => {
         const path = join(root, name);
         await mkdir(path, { recursive: true });
@@ -2808,10 +2601,9 @@ describe("HiveSpawner wiring", () => {
       db: store,
       repoRoot: root,
       port: 4317,
-      config: { terminal: "auto", headless: true },
+      config: {},
       readRoutingPolicy: () => policyFromRoute(CODEX_ROUTE),
       tmux: new FakeTmux(),
-      terminal: new FakeTerminal(),
       createWorktree: async (_repoRoot, name, slug) => {
         const path = join(root, name);
         await mkdir(path, { recursive: true });
@@ -2833,201 +2625,6 @@ describe("HiveSpawner wiring", () => {
     expect(failed.failureReason).toContain("could not be checked");
   });
 
-  test("workspace presence suppresses spawn viewers until the lease lapses", async () => {
-    // While the Workspace app is the viewer, a spawn opens no external window
-    // — same effect as `headless`, but it reverts on its own when the lease
-    // does. The static config is untouched: this spawner is headless: false.
-    const root = await mkdtemp(join(tmpdir(), "hive-spawner-presence-"));
-    tempRoots.push(root);
-    const worktreePath = join(root, "worktree");
-    await mkdir(worktreePath, { recursive: true });
-    const store = new FakeStore();
-    const terminal = new FakeTerminal();
-    let present = true;
-    let layouts = 0;
-    const spawner = new HiveSpawner({
-      isModelEnabled: async () => true,
-      db: store,
-      repoRoot: root,
-      port: 4317,
-      config: { terminal: "auto", headless: false },
-      readRoutingPolicy: () => policyFromRoute(CODEX_ROUTE),
-      tmux: new FakeTmux(),
-      terminal,
-      workspacePresent: () => present,
-      onTerminalsChanged: () => {
-        layouts += 1;
-      },
-      createWorktree: async () => ({
-        path: worktreePath,
-        branch: "hive/presence-test",
-      }),
-      sleep: signalReadiness(store),
-    });
-
-    const suppressed = await spawner.spawn({
-      task: "Spawn while the app watches",
-      category: "simple_coding",
-    });
-    expect(suppressed.status).toEqual("working");
-    expect(terminal.windows).toEqual([]);
-    expect(suppressed.terminalHandle).toBeUndefined();
-    expect(layouts).toEqual(0);
-
-    // The lease lapsed (app quit or crashed): external viewers come back.
-    present = false;
-    const visible = await spawner.spawn({
-      task: "Spawn after the app is gone",
-      category: "simple_coding",
-    });
-    expect(terminal.windows).toHaveLength(1);
-    expect(terminal.windows[0]?.[0]).toEqual(visible.tmuxSession);
-    expect(layouts).toEqual(1);
-  });
-
-  test("workspace presence suppresses the control-restart viewer too", async () => {
-    const root = await mkdtemp(join(tmpdir(), "hive-control-presence-"));
-    tempRoots.push(root);
-    const staleHandle: TerminalHandle = {
-      app: "iterm2",
-      sessionId: "stale-viewer",
-    };
-    const controlled = {
-      ...agent("maya", "working"),
-      worktreePath: root,
-      terminalHandle: staleHandle,
-      executionIdentity: {
-        tool: "codex",
-        model: "gpt-test",
-        effort: "medium",
-      },
-    } satisfies AgentRecord;
-    const store = new FakeStore([controlled]);
-    const terminal = new FakeTerminal();
-    const controlQuota = makeControlQuota(root);
-    const spawner = new HiveSpawner({
-      isModelEnabled: async () => true,
-      db: store,
-      repoRoot: root,
-      port: 4317,
-      config: { terminal: "auto", headless: false },
-      readRoutingPolicy: () => policyFromRoute(CODEX_ROUTE),
-      tmux: new FakeTmux(),
-      terminal,
-      workspacePresent: () => true,
-      sleep: signalControlReadiness(store),
-      quota: controlQuota.quota,
-    });
-    const restarted = await spawner.restartForControl(
-      controlled,
-      controlMessage("control-presence"),
-    );
-    // The stale lens still closes — it pointed at a killed session — but no
-    // replacement window opens while the app holds the lease.
-    expect(terminal.closed).toEqual([staleHandle]);
-    expect(terminal.windows).toEqual([]);
-    expect(restarted.terminalHandle).toBeUndefined();
-    controlQuota.db.close();
-  });
-
-  test("closes a viewer that races with the agent being marked dead", async () => {
-    const root = await mkdtemp(join(tmpdir(), "hive-spawner-viewer-race-"));
-    tempRoots.push(root);
-    const worktreePath = join(root, "maya");
-    await mkdir(worktreePath, { recursive: true });
-    const store = new FakeStore();
-    const terminal = new FakeTerminal(() => {
-      const current = store.listAgents()[0];
-      if (current !== undefined) {
-        store.insertAgent({ ...current, status: "dead" });
-      }
-    });
-    const spawner = new HiveSpawner({
-      isModelEnabled: async () => true,
-      db: store,
-      repoRoot: root,
-      port: 4317,
-      config: { terminal: "auto", headless: false },
-      readRoutingPolicy: () => policyFromRoute(CODEX_ROUTE),
-      tmux: new FakeTmux(),
-      terminal,
-      createWorktree: async () => ({
-        path: worktreePath,
-        branch: "hive/maya-viewer-race",
-      }),
-      sleep: signalReadiness(store),
-    });
-
-    const spawned = await spawner.spawn({
-      task: "Race terminal launch with kill",
-      category: "simple_coding",
-    });
-
-    const handle = {
-      app: "iterm2",
-      sessionId: `session-${agentTmuxSession("maya")}`,
-    } as const;
-    expect(spawned.status).toEqual("dead");
-    expect(spawned.terminalHandle).toBeUndefined();
-    expect(terminal.closed).toEqual([handle]);
-    expect(store.getAgentById(spawned.id)?.terminalHandle).toBeUndefined();
-  });
-
-  test("announces terminal changes only after a viewer is attached", async () => {
-    const root = await mkdtemp(join(tmpdir(), "hive-spawner-layout-"));
-    tempRoots.push(root);
-    const worktreePath = join(root, "maya");
-    await mkdir(worktreePath, { recursive: true });
-    let terminalsChanged = 0;
-    const terminalErrors: string[] = [];
-    const makeSpawner = (
-      terminal: TerminalAdapter,
-      store: FakeStore,
-    ): HiveSpawner =>
-      new HiveSpawner({
-        isModelEnabled: async () => true,
-        db: store,
-        repoRoot: root,
-        port: 4317,
-        config: { terminal: "auto", headless: false },
-        readRoutingPolicy: () => policyFromRoute(CODEX_ROUTE),
-        tmux: new FakeTmux(),
-        terminal,
-        createWorktree: async () => ({
-          path: worktreePath,
-          branch: "hive/maya-layout",
-        }),
-        sleep: signalReadiness(store),
-        onTerminalsChanged: () => {
-          terminalsChanged += 1;
-        },
-        onTerminalError: (message) => terminalErrors.push(message),
-      });
-
-    const spawned = await makeSpawner(new FakeTerminal(), new FakeStore())
-      .spawn({ task: "Announce the new viewer", category: "simple_coding" });
-    expect(spawned.terminalHandle).toBeDefined();
-    expect(terminalsChanged).toEqual(1);
-
-    // A viewer that never opened leaves the wall untouched.
-    await makeSpawner(new FailingTerminal(), new FakeStore())
-      .spawn({ task: "Fail to open a viewer", category: "simple_coding" });
-    expect(terminalsChanged).toEqual(1);
-    expect(terminalErrors).toHaveLength(1);
-    expect(terminalErrors[0]).toContain("could not open viewer for maya");
-
-    // A viewer that lost the attach race was closed, not added.
-    const racingStore = new FakeStore();
-    const racingTerminal = new FakeTerminal(() => {
-      const current = racingStore.listAgents()[0];
-      if (current !== undefined) {
-        racingStore.insertAgent({ ...current, status: "dead" });
-      }
-    });
-    await makeSpawner(racingTerminal, racingStore)
-      .spawn({ task: "Lose the attach race", category: "simple_coding" });
-    expect(terminalsChanged).toEqual(1);
-  });
 });
 
 describe("agent landing protocol", () => {
@@ -3237,10 +2834,9 @@ describe("coding guidelines are guaranteed in context at spawn", () => {
       db: store,
       repoRoot: root,
       port: 4317,
-      config: { terminal: "auto", headless: true },
+      config: {},
       readRoutingPolicy: () => policyFromRoute({ ...CODEX_ROUTE, tool: "claude" }),
       tmux,
-      terminal: new FakeTerminal(),
       createWorktree: async (_repoRoot, name, slug) => {
         const path = join(root, name);
         await mkdir(path, { recursive: true });
@@ -3270,8 +2866,6 @@ describe("coding guidelines are guaranteed in context at spawn", () => {
         repoRoot: root,
         port: 4317,
         config: {
-          terminal: "auto",
-          headless: true,
           ...(driver === "app-server" ? { codex: { driver } } : {}),
         },
         readRoutingPolicy: () => policyFromRoute({
@@ -3280,7 +2874,6 @@ describe("coding guidelines are guaranteed in context at spawn", () => {
           codex: { model: "gpt-test", effort: "high" },
         }),
         tmux,
-        terminal: new FakeTerminal(),
         createWorktree: async (_repoRoot, name, slug) => {
           const path = join(root, `${driver}-${name}`);
           await mkdir(path, { recursive: true });
@@ -3403,10 +2996,9 @@ describe("HiveSpawner launch prompt transport", () => {
       db: store,
       repoRoot: root,
       port: 4317,
-      config: { terminal: "auto", headless: true },
+      config: {},
       readRoutingPolicy: () => policyFromRoute(CODEX_ROUTE),
       tmux,
-      terminal: new FakeTerminal(),
       createWorktree: async (_repoRoot, name, slug) => {
         const path = join(root, name);
         await mkdir(path, { recursive: true });
@@ -3600,7 +3192,7 @@ describe("a refusal names the reason it actually refused for", () => {
       db: store,
       repoRoot: root,
       port: 4317,
-      config: { terminal: "auto", headless: true },
+      config: {},
       readRoutingPolicy: () => options.policy ?? (grokModel === null
         ? { ...policyFromRoute(CLAUDE_ROUTE), chains: {} }
         : policyFromRoute({ tool: "grok", grok: { model: grokModel } })),
@@ -3619,7 +3211,6 @@ describe("a refusal names the reason it actually refused for", () => {
         () => new Date(timestamp),
       ),
       tmux,
-      terminal: new FakeTerminal(),
       createWorktree: async (_repoRoot, name, slug) => {
         const path = join(root, name);
         await mkdir(path, { recursive: true });

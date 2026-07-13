@@ -2,11 +2,6 @@ import { readFileSync } from "node:fs";
 import { factVerificationFlag } from "../adapters/memory";
 import { TmuxAdapter } from "../adapters/tmux";
 import {
-  buildAgentTerminalTitle,
-  resolveTerminal,
-} from "../adapters/terminal";
-import { loadHiveConfig } from "../config/load";
-import {
   cleanupLifecycleFiles,
   daemonInstanceLiveness,
   getPidFilePath,
@@ -36,10 +31,6 @@ import {
   searchMemory,
   writeMemory,
 } from "./mcp";
-import {
-  type OrchestratorTerminalApp,
-  registerRunningOrchestratorTerminal,
-} from "./orchestrator";
 import { operatorFetch, operatorHeaders } from "./credential";
 import { isAutonomy, type Autonomy } from "../config/autonomy";
 import { formatQuotaStatus, formatStatusTable } from "./status";
@@ -361,60 +352,6 @@ export async function recoverAgentsCli(name?: string): Promise<void> {
       console.log(`skipped ${outcome.agent}: ${outcome.reason}`);
     }
   }
-}
-
-export async function watchAgent(name: string): Promise<void> {
-  const port = requireDaemonPort();
-  const agents = await fetchAgentStatus(port);
-  const agent = agents.find((candidate) => candidate.name === name);
-  if (agent === undefined) {
-    const known = agents.length === 0
-      ? "No agents are currently registered."
-      : `Known agents: ${agents.map((candidate) => candidate.name).join(", ")}.`;
-    throw new Error(`unknown agent: ${name}. ${known}`);
-  }
-
-  const tmux = new TmuxAdapter();
-  if (!(await tmux.hasSession(agent.tmuxSession))) {
-    throw new Error(
-      `${name} is known, but its tmux session ${agent.tmuxSession} is gone\n` +
-        "Fix: check `hive status`, then spawn a replacement",
-    );
-  }
-  const config = await loadHiveConfig();
-  const handle = await resolveTerminal(config).openWindow(
-    agent.tmuxSession,
-    buildAgentTerminalTitle(agent.name, agent.model),
-  );
-  try {
-    // Hand the handle to the daemon so the new viewer joins the layout and
-    // hive_kill can close it later.
-    await fetch(`http://127.0.0.1:${port}/viewer`, {
-      method: "POST",
-      headers: { "content-type": "application/json", ...operatorHeaders() },
-      body: JSON.stringify({ agent: name, handle }),
-    });
-  } catch {
-    // Viewer tracking is best-effort; the window is already open.
-  }
-}
-
-export async function registerLayoutTerminal(
-  app: string = "auto",
-): Promise<void> {
-  if (app !== "auto" && app !== "terminal" && app !== "iterm2") {
-    throw new Error("terminal must be auto, terminal, or iterm2");
-  }
-  const terminalApp: OrchestratorTerminalApp = app;
-  const handle = await registerRunningOrchestratorTerminal(
-    requireDaemonPort(),
-    terminalApp,
-  );
-  console.log(
-    `Registered the orchestrator ${
-      handle.app === "terminal" ? "Terminal.app window" : "iTerm2 session"
-    } for layout.`,
-  );
 }
 
 export interface StopHiveDependencies {

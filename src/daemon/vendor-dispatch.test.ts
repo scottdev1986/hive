@@ -366,7 +366,6 @@ function deps(db: HiveDatabase, tmux: FakeTmux) {
     db,
     tmux: tmux as unknown as ConstructorParameters<typeof CrashRecovery>[0]["tmux"],
     port: 4483,
-    closeTerminal: async () => {},
     send: async () => {},
     settleQuota: async () => {},
     flushQueued: () => {},

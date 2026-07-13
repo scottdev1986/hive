@@ -115,7 +115,6 @@ test("launching an unknown vendor's orchestrator spawns nothing and touches no t
       spawned = command;
       return { exited: Promise.resolve(0) };
     },
-    async () => null,
     async () => "9.9.9",
     () => {
       resolvedClaude = true;

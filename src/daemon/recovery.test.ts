@@ -10,7 +10,7 @@ import {
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AgentRecord, TerminalHandle } from "../schemas";
+import type { AgentRecord } from "../schemas";
 import { HiveDatabase } from "./db";
 import { submitPaste } from "./testing";
 import { MessageDelivery, type TmuxSender } from "./delivery";
@@ -94,30 +94,13 @@ class SilentSender implements TmuxSender {
   }
 }
 
-class FakeTerminal {
-  readonly opened: { session: string; title: string }[] = [];
-  readonly closed: TerminalHandle[] = [];
-
-  async openWindow(session: string, title: string): Promise<TerminalHandle> {
-    this.opened.push({ session, title });
-    return { app: "iterm2", sessionId: `viewer-${this.opened.length}` };
-  }
-
-  async closeWindow(handle: TerminalHandle): Promise<void> {
-    this.closed.push(handle);
-  }
-}
-
 interface Harness {
   db: HiveDatabase;
   tmux: FakeTmux;
-  terminal: FakeTerminal;
   sender: SilentSender;
   recovery: CrashRecovery;
   settled: string[];
   revoked: string[];
-  closedViewers: TerminalHandle[];
-  layoutRequests: () => number;
   /** The hardened resume monitor fails a resume that never proves life, so
    * every successful-resume test must call this before resuming: it makes
    * each readiness poll tick advance lastEventAt, standing in for the
@@ -141,13 +124,10 @@ function harness(
 ): Harness {
   const db = new HiveDatabase(join(home, `${crypto.randomUUID()}.db`));
   const tmux = new FakeTmux();
-  const terminal = new FakeTerminal();
   const sender = new SilentSender(db);
   const delivery = new MessageDelivery(db, sender);
   const settled: string[] = [];
   const revoked: string[] = [];
-  const closedViewers: TerminalHandle[] = [];
-  let layoutRequests = 0;
   let proveLife = false;
   const recovery = new CrashRecovery({
     db,
@@ -155,9 +135,6 @@ function harness(
     authorizeLaunch: async (identity) =>
       (await authorizeForQuotaTest([identity]))[0]!,
     port: 4483,
-    closeTerminal: async (handle) => {
-      closedViewers.push(handle);
-    },
     send: (from, to, body, options) => delivery.send(from, to, body, options),
     settleQuota: async (record) => {
       settled.push(record.name);
@@ -165,10 +142,6 @@ function harness(
     flushQueued: (name) => delivery.flushQueued(name),
     revokeCapabilities: (name) => {
       revoked.push(name);
-    },
-    terminal,
-    onTerminalsChanged: () => {
-      layoutRequests += 1;
     },
     resolveClaudeSessionId: async () => null,
     resolveCodexSessionId: async () => null,
@@ -194,13 +167,10 @@ function harness(
   return {
     db,
     tmux,
-    terminal,
     sender,
     recovery,
     settled,
     revoked,
-    closedViewers,
-    layoutRequests: () => layoutRequests,
     signalProofOfLife: () => {
       proveLife = true;
     },
@@ -400,11 +370,7 @@ describe("crash resume", () => {
       recoveryAttempts: 1,
       toolSessionId: "0189-claude-session",
     });
-    // The viewer was reopened and the agent told what happened.
-    expect(h.terminal.opened).toEqual([
-      { session: "hive-maya", title: "maya — claude-fable-5" },
-    ]);
-    expect(record?.terminalHandle).toBeDefined();
+    // The resumed tmux session receives the recovery notice.
     expect(h.sender.sent.some(({ session, text }) =>
       session === "hive-maya" && text.includes("resumed your tool session")
     )).toBe(true);
@@ -607,23 +573,6 @@ describe("crash resume", () => {
       action: "marked-dead",
       reason: "resume launch failed: tmux new-session failed: boom",
     }]);
-  });
-
-  test("resume closes the stale crash-era viewer before opening a fresh one", async () => {
-    const h = harness();
-    h.signalProofOfLife();
-    const staleHandle = { app: "iterm2", sessionId: "stale" } as const;
-    h.db.insertAgent(agent({
-      status: "working",
-      toolSessionId: "sess-1",
-      terminalHandle: staleHandle,
-    }));
-
-    await h.recovery.sweep();
-
-    expect(h.closedViewers).toEqual([staleHandle]);
-    expect(h.terminal.opened).toHaveLength(1);
-    expect(h.layoutRequests()).toBeGreaterThanOrEqual(2);
   });
 
   test("queued messages flush into the resumed idle session", async () => {

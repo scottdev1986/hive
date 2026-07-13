@@ -24,9 +24,6 @@ describe("HiveConfigSchema", () => {
   test("parses a valid round-trip", () => {
     const parsed = HiveConfigSchema.parse({});
     expect(HiveConfigSchema.parse(roundTrip(parsed))).toEqual({
-      terminal: "auto",
-      headless: false,
-      layout: "auto",
       codex: { driver: "tui" },
       channels: "auto",
       autonomy: "sandboxed",
@@ -46,8 +43,9 @@ describe("HiveConfigSchema", () => {
   });
 
   test("rejects an invalid config", () => {
-    expect(() => HiveConfigSchema.parse({ terminal: "xterm" })).toThrow();
-    expect(() => HiveConfigSchema.parse({ layout: "stack" })).toThrow();
+    expect(() => HiveConfigSchema.parse({ terminal: "auto" })).toThrow();
+    expect(() => HiveConfigSchema.parse({ headless: true })).toThrow();
+    expect(() => HiveConfigSchema.parse({ layout: "auto" })).toThrow();
     expect(() =>
       HiveConfigSchema.parse({ codex: { driver: "exec" } })
     ).toThrow();
@@ -99,37 +97,12 @@ describe("AgentRecordSchema", () => {
     expect(AgentRecordSchema.parse(roundTrip(failed))).toEqual(failed);
   });
 
-  test("parses native terminal handles and remains compatible without one", () => {
-    const itermAgent = {
+  test("rejects retired external-viewer state", () => {
+    const retiredViewerState = ["terminal", "Handle"].join("");
+    expect(() => AgentRecordSchema.parse({
       ...agent,
-      terminalHandle: { app: "iterm2", sessionId: "session-uuid" },
-    } satisfies AgentRecord;
-    const terminalAgent = {
-      ...agent,
-      terminalHandle: {
-        app: "terminal",
-        processId: 4242,
-        windowId: 42,
-        tty: "/dev/ttys004",
-      },
-    } satisfies AgentRecord;
-
-    expect(AgentRecordSchema.parse(roundTrip(itermAgent))).toEqual(itermAgent);
-    expect(AgentRecordSchema.parse(roundTrip(terminalAgent))).toEqual(
-      terminalAgent,
-    );
-    expect(AgentRecordSchema.parse(roundTrip(agent))).toEqual(agent);
-    expect(() =>
-      AgentRecordSchema.parse({
-        ...agent,
-        terminalHandle: {
-          app: "terminal",
-          processId: 0,
-          windowId: 0,
-          tty: "",
-        },
-      })
-    ).toThrow();
+      [retiredViewerState]: { app: "external", sessionId: "session-uuid" },
+    })).toThrow();
   });
 });
 

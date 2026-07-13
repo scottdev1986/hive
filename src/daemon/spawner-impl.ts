@@ -2,10 +2,6 @@ import { join } from "node:path";
 import { buildScopedBrief } from "../adapters/brief";
 import { buildMemoryIndex } from "../adapters/memory";
 import { ensureProfile } from "../adapters/profile";
-import {
-  buildAgentTerminalTitle,
-  type TerminalAdapter,
-} from "../adapters/terminal";
 import { shellJoin } from "../adapters/tmux";
 import type { TmuxAdapter } from "../adapters/tmux";
 import {
@@ -209,7 +205,6 @@ export const NAME_POOL = [
 
 type AgentStore = Pick<
   HiveDatabase,
-  | "attachTerminalHandle"
   | "getAgentById"
   | "getLiveAgentByName"
   | "insertAgent"
@@ -268,7 +263,7 @@ export interface HiveSpawnerDependencies {
   repoRoot: string;
   port: number;
   issueCredential?: CredentialIssuer;
-  config: Pick<HiveConfig, "terminal" | "headless"> & {
+  config: {
     codex?: Pick<HiveConfig["codex"], "driver">;
     /** Writer autonomy. Absent (older callers, tests) fails safe to
      * "sandboxed"; the parsed HiveConfig always supplies a value. */
@@ -282,7 +277,6 @@ export interface HiveSpawnerDependencies {
    */
   readRoutingPolicy?: () => RoutingPolicy;
   tmux: TmuxSessionManager;
-  terminal: TerminalAdapter;
   createWorktree?: WorktreeCreator;
   unavailableAgentNames?: typeof unavailableAgentNames;
   removeWorktree?: WorktreeRemover;
@@ -339,18 +333,6 @@ export interface HiveSpawnerDependencies {
    * Channels regardless (see `useChannels`); this still gates the attended
    * orchestrator session. */
   channelsEnabled?: boolean;
-  /** Fires after a viewer window is attached so the daemon can re-tile the
-   * window wall. */
-  onTerminalsChanged?: () => void;
-  /** True while the Workspace app holds the viewer lease (`POST /workspace`).
-   * While it does, external viewer windows are skipped exactly as if
-   * `config.headless` were set — the app's panes are the viewers — but the
-   * static config keeps its meaning and behavior reverts when the lease
-   * lapses. Checked at open time, never cached. */
-  workspacePresent?: () => boolean;
-  /** Reports viewer automation failures without treating the detached agent
-   * process itself as failed. */
-  onTerminalError?: (message: string) => void;
   quota?: QuotaService;
   codexAppServer?: Pick<
     CodexAppServerManager,
@@ -972,10 +954,9 @@ export class HiveSpawner implements Spawner {
       throw error;
     }
 
-    // From here to markStarted the reservation must settle on every failure
-    // path; prepare touches the DB and the terminal layer, either of which
-    // can throw before the cancel-guarded launch block below begins.
-    let prepared: { record: AgentRecord; viewersChanged: boolean };
+    // From here to markStarted the reservation must settle if the durable
+    // control-state write fails before the cancel-guarded launch block begins.
+    let prepared: { record: AgentRecord };
     try {
       prepared = await this.prepareControlRestart(agent, message, reservationId);
     } catch (error) {
@@ -1206,61 +1187,13 @@ export class HiveSpawner implements Spawner {
         failureReason: `Critical control ${message.id} restart failed: ${reason}`,
         lastEventAt: new Date().toISOString(),
       });
-      if (prepared.viewersChanged) this.dependencies.onTerminalsChanged?.();
       throw new Error(
         `Recorded ${identity.tool}/${identity.model} could not be launched for ${agent.name}: ${reason}`,
       );
     }
 
-    const record = prepared.record;
-    let viewersChanged = prepared.viewersChanged;
-    if (this.viewersEnabled()) {
-      let handle: Awaited<ReturnType<TerminalAdapter["openWindow"]>> | null =
-        null;
-      try {
-        handle = await this.dependencies.terminal.openWindow(
-          record.tmuxSession,
-          buildAgentTerminalTitle(record.name, record.model),
-        );
-        const attached = this.dependencies.db.attachTerminalHandle(
-          record.id,
-          handle,
-        );
-        if (attached === null) {
-          const orphanedHandle = handle;
-          handle = null;
-          await this.dependencies.terminal.closeWindow(orphanedHandle);
-        } else {
-          handle = null;
-          viewersChanged = true;
-        }
-      } catch (error) {
-        // Opening a viewer is cosmetic and does not affect the restart.
-        this.dependencies.onTerminalError?.(
-          `hive terminal: could not open viewer for ${record.name}: ${
-            error instanceof Error ? error.message : "unknown error"
-          }`,
-        );
-        if (handle !== null) {
-          try {
-            await this.dependencies.terminal.closeWindow(handle);
-          } catch {
-            // A viewer that vanished during launch needs no further cleanup.
-          }
-        }
-      }
-    }
-    if (viewersChanged) {
-      this.dependencies.onTerminalsChanged?.();
-    }
-    return this.dependencies.db.getAgentById(record.id) ?? record;
-  }
-
-  /** External viewer windows open only when the daemon is not headless *and*
-   * no Workspace app currently holds the viewer lease. */
-  private viewersEnabled(): boolean {
-    return !this.dependencies.config.headless &&
-      this.dependencies.workspacePresent?.() !== true;
+    return this.dependencies.db.getAgentById(prepared.record.id) ??
+      prepared.record;
   }
 
   private async prepareControlRestart(
@@ -1268,15 +1201,13 @@ export class HiveSpawner implements Spawner {
     message: AgentMessage,
     reservationId?: string,
     failureReason?: string,
-  ): Promise<{ record: AgentRecord; viewersChanged: boolean }> {
+  ): Promise<{ record: AgentRecord }> {
     const current = this.dependencies.db.getAgentById(agent.id) ?? agent;
-    const previousHandle = current.terminalHandle;
     const record = this.dependencies.db.insertAgent({
       ...current,
       status: "control-paused",
       readOnly: true,
       writeRevoked: true,
-      terminalHandle: undefined,
       controlMessageId: message.id,
       controlQuotaReservationId: reservationId,
       failureReason,
@@ -1285,14 +1216,7 @@ export class HiveSpawner implements Spawner {
       // agree so the registry never accepts a bridge for this session.
       channelsEnabled: false,
     });
-    if (previousHandle !== undefined) {
-      try {
-        await this.dependencies.terminal.closeWindow(previousHandle);
-      } catch {
-        // Closing a killed session's viewer is cosmetic; revocation persists.
-      }
-    }
-    return { record, viewersChanged: previousHandle !== undefined };
+    return { record };
   }
 
   private async failClosedControlRestart(
@@ -1300,13 +1224,12 @@ export class HiveSpawner implements Spawner {
     message: AgentMessage,
     reason: string,
   ): Promise<void> {
-    const prepared = await this.prepareControlRestart(
+    await this.prepareControlRestart(
       agent,
       message,
       undefined,
       `Critical control ${message.id} is pending: ${reason}`,
     );
-    if (prepared.viewersChanged) this.dependencies.onTerminalsChanged?.();
   }
 
   private async monitorControlReadiness(
@@ -2288,42 +2211,6 @@ export class HiveSpawner implements Spawner {
       );
     }
 
-    if (this.viewersEnabled()) {
-      let handle: Awaited<ReturnType<TerminalAdapter["openWindow"]>> | null =
-        null;
-      try {
-        handle = await this.dependencies.terminal.openWindow(
-          record.tmuxSession,
-          buildAgentTerminalTitle(record.name, record.model),
-        );
-        const attached = this.dependencies.db.attachTerminalHandle(
-          record.id,
-          handle,
-        );
-        if (attached === null) {
-          const orphanedHandle = handle;
-          handle = null;
-          await this.dependencies.terminal.closeWindow(orphanedHandle);
-        } else {
-          handle = null;
-          this.dependencies.onTerminalsChanged?.();
-        }
-      } catch (error) {
-        // Opening a viewer is cosmetic and does not affect agent readiness.
-        this.dependencies.onTerminalError?.(
-          `hive terminal: could not open viewer for ${record.name}: ${
-            error instanceof Error ? error.message : "unknown error"
-          }`,
-        );
-        if (handle !== null) {
-          try {
-            await this.dependencies.terminal.closeWindow(handle);
-          } catch {
-            // A viewer that vanished during launch needs no further cleanup.
-          }
-        }
-      }
-    }
     return this.dependencies.db.getAgentById(record.id) ?? record;
   }
 

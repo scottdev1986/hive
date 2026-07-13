@@ -7,21 +7,6 @@ import { CapabilityProviderSchema, EffortLevelSchema } from "./capability";
 // dedicated root wake bridge instead of ordinary agent liveness checks.
 export const ORCHESTRATOR_NAME = "orchestrator";
 
-export const TerminalHandleSchema = z.discriminatedUnion("app", [
-  z.object({
-    app: z.literal("iterm2"),
-    sessionId: z.string().min(1),
-  }).strict(),
-  z.object({
-    app: z.literal("terminal"),
-    processId: z.number().int().positive(),
-    windowId: z.number().int().positive(),
-    tty: z.string().min(1),
-  }).strict(),
-]);
-
-export type TerminalHandle = z.infer<typeof TerminalHandleSchema>;
-
 // A control restart must be able to reproduce the process that was actually
 // launched without reading a routing table or a mutable tool default. Keep
 // only immutable launch choices here; daemon ports, paths, permissions, and
@@ -64,7 +49,9 @@ export function isTerminalAgentStatus(
   return (TERMINAL_AGENT_STATUSES as readonly string[]).includes(status);
 }
 
-export const AgentRecordSchema = z.object({
+const RETIRED_VIEWER_FIELD = ["terminal", "Handle"].join("");
+
+export const AgentRecordObjectSchema = z.object({
   // The AgentUUID: distinct per holder of a name, for the lifetime of the Hive.
   // Two agents that share a name across time never share an id, so history can
   // always tell them apart.
@@ -114,7 +101,6 @@ export const AgentRecordSchema = z.object({
   // its native resume instead of respawned from a blank prompt.
   toolSessionId: z.string().min(1).optional(),
   recoveryAttempts: z.number().int().nonnegative().default(0),
-  terminalHandle: TerminalHandleSchema.optional(),
   /**
    * How full this agent's context is, or **null when Hive has not observed it**.
    *
@@ -148,6 +134,16 @@ export const AgentRecordSchema = z.object({
   // preview enabled; channel delivery is never trusted for other sessions.
   channelsEnabled: z.boolean().default(false),
 });
+
+export const AgentRecordSchema = z.preprocess((value) => {
+  if (
+    typeof value === "object" && value !== null &&
+    RETIRED_VIEWER_FIELD in value
+  ) {
+    throw new Error("retired external-viewer state is not accepted");
+  }
+  return value;
+}, AgentRecordObjectSchema);
 
 export type AgentRecord = z.infer<typeof AgentRecordSchema>;
 

@@ -15,7 +15,6 @@ import {
   prepareFreshOrchestratorSession,
   prepareOrchestratorConfig,
   provisionCodexRootToken,
-  registerRunningOrchestratorTerminal,
 } from "./orchestrator";
 
 const noExistingRoot = {
@@ -206,7 +205,6 @@ describe("orchestrator brief", () => {
         command = spawned;
         return { exited: Promise.resolve(0) };
       },
-      async () => null,
       async () => { throw new Error("must not inspect Claude"); },
       () => { throw new Error("must not resolve Claude"); },
       noExistingRoot,
@@ -439,7 +437,6 @@ describe("orchestrator brief", () => {
           expect(readFileSync(mcpPath, "utf8")).toEqual(existingMcp);
           return { exited: Promise.resolve(17) };
         },
-        async () => null,
         async () => "2.1.80",
         undefined,
         noExistingRoot,
@@ -466,7 +463,6 @@ describe("orchestrator brief", () => {
         4317,
         root,
         () => ({ exited: Promise.reject(new Error("claude failed")) }),
-        async () => null,
         async () => "2.1.80",
         undefined,
         noExistingRoot,
@@ -488,66 +484,7 @@ describe("orchestrator brief", () => {
         throw new Error("must not spawn");
       },
       async () => null,
-      async () => null,
     )).rejects.toThrow(/needs Claude .* or newer/);
-  });
-
-  test("launches when Terminal.app capture reports pgrep's no-match error", async () => {
-    let spawned = false;
-    const exitCode = await launchOrchestrator(
-      "claude",
-      4317,
-      process.cwd(),
-      () => {
-        spawned = true;
-        return { exited: Promise.resolve(0) };
-      },
-      async () => {
-        throw new Error(
-          "could not find Terminal.app window: execution error: command exited with non-zero status (1)",
-        );
-      },
-      async () => "2.1.80",
-      undefined,
-      noExistingRoot,
-    );
-    expect(exitCode).toEqual(0);
-    expect(spawned).toEqual(true);
-  });
-
-  test("re-registers the running root by its attached client's exact TTY", async () => {
-    const registered: unknown[] = [];
-    const handle = {
-      app: "terminal",
-      processId: 4242,
-      windowId: 17,
-      tty: "/dev/ttys003",
-    } as const;
-
-    await expect(registerRunningOrchestratorTerminal(4317, "auto", {
-      listClientTtys: async (session) => {
-        expect(session).toEqual(orchestratorTmuxSession());
-        return ["/dev/ttys003"];
-      },
-      captureTerminalApp: async (tty) => {
-        expect(tty).toEqual("/dev/ttys003");
-        return handle;
-      },
-      captureITerm2: async () => null,
-      register: async (port, captured) => {
-        registered.push({ port, captured });
-      },
-    })).resolves.toEqual(handle);
-    expect(registered).toEqual([{ port: 4317, captured: handle }]);
-  });
-
-  test("refuses ambiguous multi-client root registration", async () => {
-    await expect(registerRunningOrchestratorTerminal(4317, "auto", {
-      listClientTtys: async () => ["/dev/ttys003", "/dev/ttys004"],
-      captureTerminalApp: async () => null,
-      captureITerm2: async () => null,
-      register: async () => {},
-    })).rejects.toThrow("multiple attached terminal clients");
   });
 
   test("launches the orchestrator with the repo's committed memory index", async () => {
@@ -572,7 +509,6 @@ describe("orchestrator brief", () => {
           capturedCommand = command;
           return { exited: Promise.resolve(0) };
         },
-        async () => null,
         async () => "2.1.80",
         undefined,
         noExistingRoot,

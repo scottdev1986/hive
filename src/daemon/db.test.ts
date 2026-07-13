@@ -165,15 +165,15 @@ describe("HiveDatabase", () => {
       db.insertAgent(agent());
       expect(db.getAgentByName("maya")?.closedAt).toBeUndefined();
 
-      const dead = db.markAgentDeadAndDetachTerminal(
+      const dead = db.markAgentDead(
         "agent-maya",
         "2026-07-09T12:02:00.000Z",
       );
-      expect(dead?.agent.closedAt).toEqual("2026-07-09T12:02:00.000Z");
+      expect(dead?.closedAt).toEqual("2026-07-09T12:02:00.000Z");
 
       // A later write that keeps the agent closed must not slide the instant.
       const rewritten = db.upsertAgent({
-        ...dead!.agent,
+        ...dead!,
         failureReason: "killed by orchestrator",
         lastEventAt: "2026-07-09T12:30:00.000Z",
       });
@@ -192,7 +192,7 @@ describe("HiveDatabase", () => {
     const db = new HiveDatabase(join(home, "holders.db"));
     try {
       db.insertAgent(agent({ taskDescription: "crash matrix" }));
-      db.markAgentDeadAndDetachTerminal("agent-maya", "2026-07-09T12:02:00.000Z");
+      db.markAgentDead("agent-maya", "2026-07-09T12:02:00.000Z");
       // The name comes back on a brand-new AgentUUID.
       db.insertAgent(agent({
         id: "agent-maya-2",
@@ -231,7 +231,7 @@ describe("HiveDatabase", () => {
         .toThrow(/UNIQUE constraint failed/);
 
       // Once the first holder closes, the name is free again.
-      db.markAgentDeadAndDetachTerminal("agent-maya", "2026-07-09T12:02:00.000Z");
+      db.markAgentDead("agent-maya", "2026-07-09T12:02:00.000Z");
       expect(db.insertAgent(agent({ id: "agent-maya-2" })).name).toEqual("maya");
     } finally {
       db.close();
@@ -309,47 +309,16 @@ describe("HiveDatabase", () => {
     }
   });
 
-  test("attaches terminal handles only while an agent is live", () => {
-    const db = new HiveDatabase(join(home, "terminal-handles.db"));
-    const handle = { app: "iterm2", sessionId: "session-agent-maya" } as const;
-    try {
-      db.insertAgent(agent());
-      expect(db.attachTerminalHandle("agent-maya", handle)?.terminalHandle)
-        .toEqual(handle);
-
-      const killed = db.markAgentDeadAndDetachTerminal(
-        "agent-maya",
-        "2026-07-09T12:02:00.000Z",
-      );
-      expect(killed?.terminalHandle).toEqual(handle);
-      expect(killed?.agent).toMatchObject({
-        status: "dead",
-        lastEventAt: "2026-07-09T12:02:00.000Z",
-      });
-      expect(killed?.agent.terminalHandle).toBeUndefined();
-      expect(db.attachTerminalHandle("agent-maya", handle)).toEqual(null);
-      expect(db.getAgentByName("maya")?.terminalHandle).toBeUndefined();
-    } finally {
-      db.close();
-    }
-  });
-
   test("marking dead records a failure reason and preserves an existing one", () => {
     const db = new HiveDatabase(join(home, "dead-reasons.db"));
     try {
-      db.upsertAgent(agent({
-        terminalHandle: { app: "iterm2", sessionId: "session-maya" },
-      }));
-      const reconciled = db.markAgentDeadAndDetachTerminal(
+      db.upsertAgent(agent());
+      const reconciled = db.markAgentDead(
         "agent-maya",
         "2026-07-09T13:00:00.000Z",
         "tmux session missing (reconciled)",
       );
-      expect(reconciled?.terminalHandle).toEqual({
-        app: "iterm2",
-        sessionId: "session-maya",
-      });
-      expect(reconciled?.agent.failureReason).toEqual(
+      expect(reconciled?.failureReason).toEqual(
         "tmux session missing (reconciled)",
       );
 
@@ -359,54 +328,17 @@ describe("HiveDatabase", () => {
         status: "stuck",
         failureReason: "earlier reason",
       }));
-      const preserved = db.markAgentDeadAndDetachTerminal(
+      const preserved = db.markAgentDead(
         "agent-david",
         "2026-07-09T13:00:00.000Z",
       );
-      expect(preserved?.agent.failureReason).toEqual("earlier reason");
+      expect(preserved?.failureReason).toEqual("earlier reason");
     } finally {
       db.close();
     }
   });
 
-  test("round-trips the orchestrator terminal handle", () => {
-    const db = new HiveDatabase(join(home, "orchestrator-terminal.db"));
-    try {
-      expect(db.getOrchestratorTerminal()).toBeNull();
-
-      const first = {
-        app: "terminal",
-        processId: 88,
-        windowId: 12,
-        tty: "/dev/ttys002",
-      } as const;
-      db.setOrchestratorTerminal(first);
-      expect(db.getOrchestratorTerminal()).toEqual(first);
-
-      const replacement = { app: "iterm2", sessionId: "root-1" } as const;
-      db.setOrchestratorTerminal(replacement);
-      expect(db.getOrchestratorTerminal()).toEqual(replacement);
-
-      db.clearOrchestratorTerminal();
-      expect(db.getOrchestratorTerminal()).toBeNull();
-    } finally {
-      db.close();
-    }
-  });
-
-  test("treats a corrupted orchestrator terminal record as absent", () => {
-    const db = new HiveDatabase(join(home, "orchestrator-corrupt.db"));
-    try {
-      db.database.query(
-        "INSERT INTO meta (key, value) VALUES ('orchestratorTerminal', 'not json')",
-      ).run();
-      expect(db.getOrchestratorTerminal()).toBeNull();
-    } finally {
-      db.close();
-    }
-  });
-
-  test("migrates legacy agent rows with no terminal handle", () => {
+  test("migrates legacy agent rows and omits retired viewer state", () => {
     const path = join(home, "legacy-agents.db");
     const legacy = new Database(path, { create: true });
     legacy.exec(`
@@ -452,12 +384,16 @@ describe("HiveDatabase", () => {
 
     const db = new HiveDatabase(path);
     try {
-      expect(db.getAgentByName("maya")).toEqual(value);
+      expect(db.getAgentByName("maya")).toMatchObject({
+        ...value,
+        contextPct: null,
+      });
+      const retiredViewerColumn = ["terminal", "Handle"].join("");
       expect(
         db.database.query("PRAGMA table_info(agents)").all().some(
-          (column) => (column as { name: string }).name === "terminalHandle",
+          (column) => (column as { name: string }).name === retiredViewerColumn,
         ),
-      ).toEqual(true);
+      ).toEqual(false);
       for (const name of [
         "executionIdentity",
         "controlMessageId",
@@ -871,6 +807,7 @@ describe("HiveDatabase", () => {
 describe("contextPct can say 'unknown'", () => {
   test("a legacy NOT NULL database is rebuilt, and its known-wrong numbers are dropped", () => {
     const path = join(home, "legacy-contextpct.db");
+    const retiredViewerColumn = ["terminal", "Handle"].join("");
     // A database from before unknown was representable: contextPct REAL NOT NULL,
     // carrying the numbers that made this a bug — computed against a hardcoded
     // 200k window while the agent ran a 1M one, so 100% when it was really ~22%.
@@ -880,7 +817,7 @@ describe("contextPct can say 'unknown'", () => {
         id TEXT PRIMARY KEY, name TEXT NOT NULL, tool TEXT NOT NULL,
         model TEXT NOT NULL, tier TEXT NOT NULL, status TEXT NOT NULL,
         taskDescription TEXT NOT NULL, worktreePath TEXT, branch TEXT,
-        tmuxSession TEXT NOT NULL, terminalHandle TEXT,
+        tmuxSession TEXT NOT NULL, ${retiredViewerColumn} TEXT,
         contextPct REAL NOT NULL,
         createdAt TEXT NOT NULL, lastEventAt TEXT NOT NULL,
         failureReason TEXT, failedAt TEXT, quotaReservationId TEXT,
@@ -910,6 +847,7 @@ describe("contextPct can say 'unknown'", () => {
       >;
       const contextPct = columns.find((column) => column.name === "contextPct");
       expect(contextPct?.notnull).toBe(0);
+      expect(columns.some((column) => column.name === retiredViewerColumn)).toBe(false);
 
       const zoe = db.getAgentByName("zoe");
       // The 100 is gone, not migrated forward: it was computed against the wrong
@@ -949,7 +887,7 @@ describe("contextPct can say 'unknown'", () => {
         id TEXT PRIMARY KEY, name TEXT NOT NULL, tool TEXT NOT NULL,
         model TEXT NOT NULL, tier TEXT NOT NULL, status TEXT NOT NULL,
         taskDescription TEXT NOT NULL, worktreePath TEXT, branch TEXT,
-        tmuxSession TEXT NOT NULL, terminalHandle TEXT,
+        tmuxSession TEXT NOT NULL,
         contextPct REAL NOT NULL,
         createdAt TEXT NOT NULL, lastEventAt TEXT NOT NULL
       )

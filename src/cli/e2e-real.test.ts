@@ -100,23 +100,6 @@ async function health(): Promise<boolean> {
   }
 }
 
-/** The operator credential the daemon minted at startup — the same 0600 file
- * every real `hive` invocation reads. */
-async function operatorToken(): Promise<string> {
-  return (await readFile(join(hiveHome, "credentials", "operator.cap"), "utf8"))
-    .trim();
-}
-
-async function workspacePresent(): Promise<boolean> {
-  const response = await fetch(`http://127.0.0.1:${port}/workspace`, {
-    headers: { Authorization: `Bearer ${await operatorToken()}` },
-    signal: AbortSignal.timeout(1_000),
-  });
-  expect(response.status).toEqual(200);
-  const body = (await response.json()) as { present: boolean };
-  return body.present;
-}
-
 async function until(
   predicate: () => Promise<boolean>,
   label: string,
@@ -283,7 +266,7 @@ e2e("real hive CLI against a real daemon and real tmux", () => {
     expect(output).not.toContain(`daemon port ${port}`);
   }, MINUTE);
 
-  test("workspace-feed streams NDJSON snapshots and holds the presence lease", async () => {
+  test("workspace-feed streams NDJSON snapshots and stops cleanly", async () => {
     const feed = Bun.spawn(
       [process.execPath, CLI, "workspace-feed", "--port", String(port)],
       {
@@ -305,16 +288,8 @@ e2e("real hive CLI against a real daemon and real tmux", () => {
       expect(first.error).toBeUndefined();
       expect(Array.isArray(first.agents)).toEqual(true);
 
-      // The running feed is the viewer lease.
-      await until(workspacePresent, "workspace presence to register");
-
       feed.kill("SIGTERM");
       expect(await feed.exited).toEqual(0);
-      // A clean shutdown surrenders the lease immediately — no TTL wait.
-      await until(
-        async () => !(await workspacePresent()),
-        "workspace presence to clear",
-      );
     } finally {
       lines.release();
       feed.kill("SIGKILL");

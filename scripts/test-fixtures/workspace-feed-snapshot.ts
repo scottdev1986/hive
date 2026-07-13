@@ -42,7 +42,6 @@ export async function buildWorkspaceFeedSnapshotFixture(): Promise<
     signal: controller.signal,
     now: () => Date.parse(OBSERVED_AT),
     sleep: async () => undefined,
-    setPresence: async () => undefined,
     fetchStatus: async () => {
       controller.abort();
       return [workspaceFeedAgentFixture];

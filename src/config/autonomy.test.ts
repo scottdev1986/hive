@@ -10,16 +10,16 @@ describe("upsertAutonomy", () => {
   });
 
   test("an existing top-level key is replaced in place", () => {
-    const text = ['layout = "off"', 'autonomy = "dangerous"', ""].join("\n");
+    const text = ['channels = "off"', 'autonomy = "dangerous"', ""].join("\n");
     expect(upsertAutonomy(text, "sandboxed")).toEqual(
-      ['layout = "off"', 'autonomy = "sandboxed"', ""].join("\n"),
+      ['channels = "off"', 'autonomy = "sandboxed"', ""].join("\n"),
     );
   });
 
   test("comments and unknown-to-this-edit keys survive the write", () => {
     const text = [
       "# my hive config",
-      'terminal = "iterm2"',
+      'routingManifest = "off"',
       "",
       "[codex]",
       'driver = "app-server"',
@@ -27,7 +27,7 @@ describe("upsertAutonomy", () => {
     ].join("\n");
     const result = upsertAutonomy(text, "dangerous");
     expect(result).toContain("# my hive config");
-    expect(result).toContain('terminal = "iterm2"');
+    expect(result).toContain('routingManifest = "off"');
     expect(result).toContain('driver = "app-server"');
     expect(result.startsWith('autonomy = "dangerous"\n')).toEqual(true);
   });

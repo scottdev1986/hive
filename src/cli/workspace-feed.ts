@@ -19,17 +19,12 @@
  *
  * Polling lives here, not in Swift, because this process already holds the
  * operator credential (0600 file) and the MCP client; the app just decodes
- * lines. The same loop doubles as the viewer lease: it registers workspace
- * presence with the daemon on start, renews it on every emit (≤5 s apart,
- * well inside the 15 s TTL), and surrenders it on SIGINT/SIGTERM/stdin close.
- * The app closing its end of the pipe is therefore enough to give the daemon
- * its external viewer windows back; a crashed app is covered by the TTL.
+ * lines.
  *
  * The feed retries a dead daemon with backoff and exits non-zero only after
  * 30 s of continuous unreachability — a daemon restart mid-session must look
  * like a hiccup, not a teardown.
  */
-import { randomUUID } from "node:crypto";
 import type { AgentRecord } from "../schemas";
 import { isAutonomy, type Autonomy } from "../config/autonomy";
 import type { OrchestratorStatus } from "../daemon/orchestrator-status";
@@ -41,8 +36,7 @@ export const FEED_POLL_MS = 1_000;
 export const FEED_HEARTBEAT_MS = 5_000;
 export const FEED_RETRY_MAX_MS = 4_000;
 export const FEED_GIVE_UP_MS = 30_000;
-/** A status poll may not outlast the presence TTL: a hung request must become a
- * reported error, not a silent lapse. */
+/** A hung status request must become a reported error, not a silent lapse. */
 export const FEED_STATUS_TIMEOUT_MS = 5_000;
 
 export interface WorkspaceFeedDeps {
@@ -55,7 +49,6 @@ export interface WorkspaceFeedDeps {
    * un-knowable states alike degrade to null (field omitted): the root's dot
    * goes gray/unknown, which is the truth, rather than a fabricated word. */
   readonly fetchOrchestrator?: (port: number) => Promise<OrchestratorStatus | null>;
-  readonly setPresence?: (port: number, present: boolean) => Promise<void>;
   readonly write?: (line: string) => void;
   readonly sleep?: (milliseconds: number, signal?: AbortSignal) => Promise<void>;
   readonly now?: () => number;
@@ -95,24 +88,6 @@ async function getOrchestratorStatus(
     : null;
 }
 
-/** Who this feed is. One id per feed process, so the daemon can tell our lease
- * from another workspace's: a second app shutting down must surrender only its
- * own, never ours. */
-const FEED_OWNER = randomUUID();
-
-/** `POST /workspace` with the operator credential: grant, renew, or surrender
- * the viewer lease. */
-async function postPresence(port: number, present: boolean): Promise<void> {
-  const response = await operatorFetch(`http://127.0.0.1:${port}/workspace`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ present, owner: FEED_OWNER }),
-  });
-  if (!response.ok) {
-    throw new Error(`workspace presence registration failed: HTTP ${response.status}`);
-  }
-}
-
 /** Reject if the work has not finished in time. Its own timer, not the injected
  * `sleep`: a test that stubs sleep to a no-op must not thereby time out every
  * poll. The loser is defused so a slow-but-successful poll cannot reject later. */
@@ -135,8 +110,7 @@ function withTimeout<T>(work: Promise<T>, milliseconds: number): Promise<T> {
   });
 }
 
-/** A sleep the shutdown signal can cut short, so SIGTERM never waits out a
- * backoff before the lease is surrendered. */
+/** A sleep the shutdown signal can cut short. */
 const abortableSleep = (
   milliseconds: number,
   signal?: AbortSignal,
@@ -162,7 +136,6 @@ export async function runWorkspaceFeed(
   const fetchStatus = deps.fetchStatus ?? fetchAgentStatus;
   const fetchAutonomy = deps.fetchAutonomy ?? getAutonomy;
   const fetchOrchestrator = deps.fetchOrchestrator ?? getOrchestratorStatus;
-  const setPresence = deps.setPresence ?? postPresence;
   const write = deps.write ??
     ((line: string) => void process.stdout.write(`${line}\n`));
   const sleep = deps.sleep ?? abortableSleep;
@@ -173,29 +146,12 @@ export async function runWorkspaceFeed(
   let lastSnapshot: string | null = null;
   let lastEmitAt: number | null = null;
   let lastError: string | null = null;
-  let lastRenewAt: number | null = null;
   let unreachableSince: number | null = null;
   let retryMs = FEED_POLL_MS;
   let exitCode = 0;
 
   while (signal?.aborted !== true) {
     try {
-      // Renew BEFORE the poll and on our own clock, never as a reward for the
-      // poll succeeding. The lease says "an app is attached", and it is: this
-      // process lives exactly as long as the app's end of the pipe does.
-      // Renewal used to ride on an emit, so a status poll that hung — and
-      // `fetchStatus` had no timeout — left a live feed renewing nothing, the
-      // lease lapsed after 15s, and the daemon opened Terminal windows over
-      // live panes. That is the 2026-07-12 incident reached by a hang instead
-      // of a kill.
-      if (
-        lastRenewAt === null || now() - lastRenewAt >= FEED_HEARTBEAT_MS
-      ) {
-        lastRenewAt = now();
-        await setPresence(port, true).catch(() => undefined);
-      }
-      // And bound the poll, so a wedged daemon can never outlast the TTL: at
-      // worst one timeout plus one backoff, still well inside it.
       const agents = await withTimeout(fetchStatus(port), statusTimeoutMs);
       // Autonomy rides the same snapshot line so the app's menu tracks the
       // dial. Best-effort by design: its failure must never take the agent
@@ -241,15 +197,12 @@ export async function runWorkspaceFeed(
     }
   }
 
-  // Surrender the lease on the way out, whatever the reason; a daemon that is
-  // already gone has nothing to surrender to.
-  await setPresence(port, false).catch(() => undefined);
   return exitCode;
 }
 
 /** Process wiring for the hidden CLI command: SIGINT, SIGTERM, and the app
  * closing its end of stdin all stop the loop through one AbortController, so
- * every exit path surrenders the viewer lease. */
+ * every exit path stops cleanly. */
 export async function runWorkspaceFeedCli(port: number): Promise<number> {
   const controller = new AbortController();
   const stop = (): void => controller.abort();
@@ -266,7 +219,7 @@ export async function runWorkspaceFeedCli(port: number): Promise<number> {
     process.stdin.off("end", stop);
     process.stdin.off("error", stop);
     // A resumed stdin holds the event loop open; without this the process
-    // would finish the loop, surrender the lease, and then never exit.
+    // would finish the loop and then never exit.
     process.stdin.pause();
   }
 }

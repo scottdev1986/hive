@@ -2,7 +2,6 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { TmuxAdapter } from "../adapters/tmux";
 import { CodexAppServerManager } from "../adapters/tools/codex-app-server";
-import { resolveTerminal } from "../adapters/terminal";
 import { loadHiveConfig, loadQuotaConfig } from "../config/load";
 import { HiveDatabase } from "../daemon/db";
 import {
@@ -13,7 +12,6 @@ import {
 import { BunTmuxSender } from "../daemon/delivery";
 import { buildGraphBrief } from "../adapters/graphify";
 import { GraphifyService } from "../daemon/graphify-service";
-import { TerminalLayoutManager } from "../daemon/layout";
 import {
   acquireDaemonLock,
   readConfiguredPort,
@@ -26,7 +24,6 @@ import {
   QuotaDatabase,
   QuotaLedger,
 } from "../daemon/quota-ledger";
-import { WorkspacePresence } from "../daemon/workspace-presence";
 import { QuotaService } from "../daemon/quota";
 import {
   ClaudeQuotaProbe,
@@ -39,7 +36,6 @@ import {
 import {
   CAPABILITY_PROVIDERS,
   forEachProvider,
-  ORCHESTRATOR_NAME,
   unknownVendor,
   type CapabilityProvider,
 } from "../schemas";
@@ -114,27 +110,8 @@ export async function runDaemon(): Promise<void> {
     ],
   );
   const tmux = new TmuxAdapter();
-  const terminal = resolveTerminal(config);
   const port = readConfiguredPort();
   let daemon: HiveDaemon;
-  const reportTerminalError = (message: string): void => {
-    console.error(message);
-    // The detached daemon has no visible stderr. Put terminal failures on the
-    // durable orchestrator path so geometry cannot fail silently.
-    void daemon?.delivery.send("hive-terminal", ORCHESTRATOR_NAME, message, {
-      idempotencyKey: `terminal-error:${Bun.hash(message)}`,
-    }).catch(() => undefined);
-  };
-  // While the Workspace app holds the viewer lease its panes are the viewers:
-  // no external windows are opened and the window wall stays still. The lease
-  // is TTL-based, so a crashed app reverts the daemon to external viewers.
-  const workspacePresence = new WorkspacePresence();
-  const layout = new TerminalLayoutManager({
-    db,
-    enabled: config.layout === "auto" && !config.headless,
-    suppressed: () => workspacePresence.isPresent(),
-    logError: reportTerminalError,
-  });
   const codexAppServer = new CodexAppServerManager({
     onEvent: (event) => daemon.processEvent(event),
     queueApproval: ({ agentName, description }) =>
@@ -184,10 +161,6 @@ export async function runDaemon(): Promise<void> {
     // The release valve reads the provider's own metering, not a model name.
     readBilling: (provider) => readBillingWithMemory(provider),
     tmux,
-    terminal,
-    workspacePresent: () => workspacePresence.isPresent(),
-    onTerminalsChanged: () => layout.requestLayout(),
-    onTerminalError: reportTerminalError,
     channelsEnabled: config.channels === "auto",
     // Even when quota-aware routing is disabled, critical read-only restarts
     // require a durable accounting lifecycle.
@@ -208,14 +181,10 @@ export async function runDaemon(): Promise<void> {
     spawner,
     tmuxSender,
     tmux,
-    // Crash-recovered agents get their viewers reopened unless headless.
-    ...(config.headless ? {} : { terminal }),
     repoRoot,
     graphify,
     port,
     manageLifecycle: true,
-    layout,
-    workspacePresence,
     quota,
     modelInventory: () =>
       readModelInventory({ readPolicy: () => routingPolicy.read() }),

@@ -151,11 +151,8 @@ describe("an unauthenticated process cannot mutate anything", () => {
     const routes: Array<[string, string, unknown]> = [
       ["/event", "POST", { kind: "notification", agentName: "maya", timestamp }],
       ["/recover", "POST", { agent: "maya" }],
-      ["/viewer", "POST", { agent: "maya", handle: { app: "iterm2", sessionId: "s" } }],
       ["/statusline", "POST", { agent: "maya" }],
       ["/channel/register", "POST", { agent: "maya", clientName: "x", clientVersion: "1" }],
-      ["/orchestrator-terminal", "POST", { handle: { app: "iterm2", sessionId: "s" } }],
-      ["/orchestrator-terminal", "DELETE", null],
     ];
     for (const [path, method, body] of routes) {
       const response = await authorized(daemon, null)(`http://hive${path}`, {
@@ -619,25 +616,10 @@ describe("legitimate workflows keep working", () => {
     await daemon.stop();
   });
 
-  test("the operator drives viewers, terminals, and recovery", async () => {
+  test("the operator drives recovery", async () => {
     const { daemon, db } = harness();
     db.upsertAgent(agentRecord());
     const { token } = daemon.capabilities.mint("operator", "operator");
-    const handle = { app: "iterm2" as const, sessionId: "session-1" };
-
-    const viewer = await authorized(daemon, token)("http://hive/viewer", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ agent: "maya", handle }),
-    });
-    expect(viewer.status).toBe(200);
-
-    const terminal = await authorized(daemon, token)("http://hive/orchestrator-terminal", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ handle }),
-    });
-    expect(terminal.status).toBe(200);
 
     const recover = await authorized(daemon, token)("http://hive/recover", {
       method: "POST",

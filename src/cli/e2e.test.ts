@@ -2,8 +2,6 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { TerminalAdapter } from "../adapters/terminal";
-import type { TerminalHandle } from "../schemas";
 import { HiveDatabase } from "../daemon/db";
 import type { TmuxSender } from "../daemon/delivery";
 import { HiveDaemon } from "../daemon/server";
@@ -43,17 +41,6 @@ class FakeTmux implements TmuxSender {
   }
 }
 
-class FakeTerminal implements TerminalAdapter {
-  async openWindow(
-    _session: string,
-    _title: string,
-  ): Promise<TerminalHandle> {
-    return { app: "iterm2", sessionId: "unused-headless-session" };
-  }
-
-  async closeWindow(_handle: TerminalHandle): Promise<void> {}
-}
-
 describe("CLI-to-daemon smoke", () => {
   // A spawn writes its brief under HIVE_HOME. Point it at a throwaway directory
   // so the suite never writes into the operator's real ~/.hive.
@@ -83,7 +70,7 @@ describe("CLI-to-daemon smoke", () => {
       db,
       repoRoot: root,
       port: 0,
-      config: { terminal: "auto", headless: true },
+      config: {},
       readRoutingPolicy: () => ({
         schemaVersion: 2,
         revision: 1,
@@ -96,7 +83,6 @@ describe("CLI-to-daemon smoke", () => {
       }),
       issueCredential: () => "test-reader-capability",
       tmux,
-      terminal: new FakeTerminal(),
       createWorktree: async (_repoRoot, name, slug) => ({
         path: worktreePath,
         branch: `hive/${name}-${slug}`,

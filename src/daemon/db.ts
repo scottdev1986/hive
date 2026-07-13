@@ -11,15 +11,14 @@ import { dirname, join } from "node:path";
 import { z } from "zod";
 import {
   AgentMessageSchema,
+  AgentRecordObjectSchema,
   AgentRecordSchema,
   HookEventSchema,
   ExecutionIdentitySchema,
-  TerminalHandleSchema,
   isTerminalAgentStatus,
   type AgentMessage,
   type AgentRecord,
   type HookEvent,
-  type TerminalHandle,
 } from "../schemas";
 
 const StoredCapabilitySchema = z.object({
@@ -110,7 +109,7 @@ export const EscalationSchema = z.object({
 
 export type Escalation = z.infer<typeof EscalationSchema>;
 
-const AgentDatabaseRowSchema = AgentRecordSchema.extend({
+const AgentDatabaseRowSchema = AgentRecordObjectSchema.extend({
   failureReason: z.string().nullable(),
   failedAt: z.string().nullable(),
   closedAt: z.string().nullable(),
@@ -121,7 +120,6 @@ const AgentDatabaseRowSchema = AgentRecordSchema.extend({
   controlQuotaReservationId: z.string().nullable(),
   controlMessageId: z.string().nullable(),
   executionIdentity: z.string().nullable(),
-  terminalHandle: z.string().nullable(),
   toolSessionId: z.string().nullable(),
   contextWindow: z.number().int().positive().nullable().default(null),
   recoveryAttempts: z.number().int().nonnegative().default(0),
@@ -147,9 +145,6 @@ function parseAgentRow(row: unknown): AgentRecord {
     executionIdentity: value.executionIdentity === null
       ? undefined
       : ExecutionIdentitySchema.parse(JSON.parse(value.executionIdentity)),
-    terminalHandle: value.terminalHandle === null
-      ? undefined
-      : TerminalHandleSchema.parse(JSON.parse(value.terminalHandle)),
     readOnly: value.readOnly === true || value.readOnly === 1,
     writeRevoked: value.writeRevoked === true || value.writeRevoked === 1,
     channelsEnabled: value.channelsEnabled === true ||
@@ -263,7 +258,6 @@ function agentsTableDdl(table: string, ifNotExists = false): string {
       worktreePath TEXT,
       branch TEXT,
       tmuxSession TEXT NOT NULL,
-      terminalHandle TEXT,
       -- Nullable on purpose: null is "not observed", which is a different fact
       -- from 0%, and 0% is the one that gets an agent overloaded.
       contextPct REAL,
@@ -516,9 +510,6 @@ export class HiveDatabase {
     if (!agentColumnNames.has("failedAt")) {
       this.database.exec("ALTER TABLE agents ADD COLUMN failedAt TEXT");
     }
-    if (!agentColumnNames.has("terminalHandle")) {
-      this.database.exec("ALTER TABLE agents ADD COLUMN terminalHandle TEXT");
-    }
     if (!agentColumnNames.has("quotaReservationId")) {
       this.database.exec("ALTER TABLE agents ADD COLUMN quotaReservationId TEXT");
     }
@@ -616,8 +607,12 @@ export class HiveDatabase {
         WHERE closedAt IS NULL AND status IN ('done', 'dead', 'failed')
       `);
     }
-    this.dropLegacyUniqueAgentName();
     this.relaxContextPctNullability();
+    this.dropLegacyUniqueAgentName();
+    const retiredViewerColumn = ["terminal", "Handle"].join("");
+    if (this.agentColumnNames().has(retiredViewerColumn)) {
+      this.rebuildAgentsTable("contextPct", new Set([retiredViewerColumn]));
+    }
     this.database.exec(`
       -- The mechanical guarantee behind "a name means exactly one agent": at
       -- most one non-terminal row per name. A second spawn onto a live name
@@ -777,14 +772,19 @@ export class HiveDatabase {
    * any of them — and it had already started doing exactly that to `liveModel`.
    * So neither table is described from memory: the old one's columns come from
    * SQLite, the new one's come from SQLite, and any column the new table lacks is
-   * recreated on it from the old one's own declaration. Dropping a column has to
-   * be a decision somebody made, never a side effect of not recognising it.
+   * recreated on it from the old one's own declaration. `droppedColumns` is the
+   * explicit record of a removal; omission from current DDL is never enough.
    *
    * The rebuild runs before the agents indexes are created, so dropping the table
    * takes no index of Hive's with it.
    */
-  private rebuildAgentsTable(contextPctExpression: string): void {
-    const columns = this.agentColumns();
+  private rebuildAgentsTable(
+    contextPctExpression: string,
+    droppedColumns: ReadonlySet<string> = new Set(),
+  ): void {
+    const columns = this.agentColumns().filter((column) =>
+      !droppedColumns.has(column.name)
+    );
     const targets = columns
       .map((column) => quoteIdentifier(column.name))
       .join(", ");
@@ -866,12 +866,12 @@ export class HiveDatabase {
     this.database.query(`
       INSERT INTO agents (
         id, name, tool, model, liveModel, category, status, taskDescription,
-        worktreePath, branch, tmuxSession, terminalHandle, contextPct,
+        worktreePath, branch, tmuxSession, contextPct,
         createdAt, lastEventAt, failureReason, failedAt,
         quotaReservationId, controlQuotaReservationId, controlMessageId,
         executionIdentity, toolSessionId, contextWindow, recoveryAttempts,
         capabilityEpoch, readOnly, writeRevoked, channelsEnabled, closedAt
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         name = excluded.name,
         tool = excluded.tool,
@@ -883,7 +883,6 @@ export class HiveDatabase {
         worktreePath = excluded.worktreePath,
         branch = excluded.branch,
         tmuxSession = excluded.tmuxSession,
-        terminalHandle = excluded.terminalHandle,
         contextPct = excluded.contextPct,
         createdAt = excluded.createdAt,
         lastEventAt = excluded.lastEventAt,
@@ -913,9 +912,6 @@ export class HiveDatabase {
       value.worktreePath,
       value.branch,
       value.tmuxSession,
-      value.terminalHandle === undefined
-        ? null
-        : JSON.stringify(value.terminalHandle),
       value.contextPct,
       value.createdAt,
       value.lastEventAt,
@@ -959,71 +955,23 @@ export class HiveDatabase {
     return this.upsertAgent(agent);
   }
 
-  attachTerminalHandle(
-    agentId: string,
-    handle: TerminalHandle,
-  ): AgentRecord | null {
-    const value = TerminalHandleSchema.parse(handle);
-    const updated = this.database.query(`
-      UPDATE agents
-      SET terminalHandle = ?
-      WHERE id = ? AND status NOT IN ('dead', 'done', 'failed')
-    `).run(JSON.stringify(value), agentId);
-    return updated.changes === 0 ? null : this.getAgentById(agentId);
-  }
-
-  markAgentDeadAndDetachTerminal(
+  markAgentDead(
     agentId: string,
     timestamp: string,
     failureReason?: string,
-  ): { agent: AgentRecord; terminalHandle: TerminalHandle | undefined } | null {
+  ): AgentRecord | null {
     return this.transaction(() => {
       const current = this.getAgentById(agentId);
       if (current === null) {
         return null;
       }
-      const terminalHandle = current.terminalHandle;
-      const agent = this.upsertAgent({
+      return this.upsertAgent({
         ...current,
         status: "dead",
-        terminalHandle: undefined,
         failureReason: failureReason ?? current.failureReason,
         lastEventAt: timestamp,
       });
-      return { agent, terminalHandle };
     });
-  }
-
-  // The orchestrator is not a spawned agent and has no agents-table row; its
-  // viewer window handle lives in the meta table so the layout engine can
-  // keep the root window central across daemon restarts.
-  setOrchestratorTerminal(handle: TerminalHandle): void {
-    const value = TerminalHandleSchema.parse(handle);
-    this.database.query(`
-      INSERT INTO meta (key, value) VALUES ('orchestratorTerminal', ?)
-      ON CONFLICT(key) DO UPDATE SET value = excluded.value
-    `).run(JSON.stringify(value));
-  }
-
-  getOrchestratorTerminal(): TerminalHandle | null {
-    const row = this.database.query(
-      "SELECT value FROM meta WHERE key = 'orchestratorTerminal'",
-    ).get();
-    if (row === null) {
-      return null;
-    }
-    try {
-      const { value } = z.object({ value: z.string() }).parse(row);
-      return TerminalHandleSchema.parse(JSON.parse(value));
-    } catch {
-      return null;
-    }
-  }
-
-  clearOrchestratorTerminal(): void {
-    this.database.query(
-      "DELETE FROM meta WHERE key = 'orchestratorTerminal'",
-    ).run();
   }
 
   getAgentById(id: string): AgentRecord | null {
@@ -1198,7 +1146,7 @@ export class HiveDatabase {
    *
    * A spawned agent carries its own `lastEventAt` on its row, so it never needs
    * this. The orchestrator does: it is not a spawned agent and has no agents-row
-   * at all (see `setOrchestratorTerminal`), so `getAgentByName("orchestrator")`
+   * at all, so `getAgentByName("orchestrator")`
    * is null and anything that asks a row for the root's turn boundary gets
    * silence back and mistakes it for "never took one". The root's boundaries are
    * here, in the events its own hooks post, and this is the only place they

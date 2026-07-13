@@ -23,9 +23,6 @@ export const LifecycleConfigSchema = z.strictObject({
 });
 
 export const HiveConfigSchema = z.strictObject({
-  terminal: z.enum(["iterm2", "terminal", "auto"]).default("auto"),
-  headless: z.boolean().default(false),
-  layout: z.enum(["auto", "off"]).default("auto"),
   codex: z.strictObject({
     driver: z.enum(["tui", "app-server"]).default("tui"),
   }).default({ driver: "tui" }),

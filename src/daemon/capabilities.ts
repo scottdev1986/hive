@@ -40,8 +40,6 @@ export type Action =
   | "event:report"
   | "telemetry:report"
   | "channel:use"
-  | "viewer:attach"
-  | "terminal:register"
   | "root-token:mint"
   | "autonomy:read"
   | "autonomy:write"
@@ -71,7 +69,7 @@ const OPERATOR_ACTIONS: readonly Action[] = [
   "agent:mark-dead", "agent:recover", "approval:read", "approval:decide",
   "message:send", "message:ack", "message:read", "inbox:read",
   "branch:land", "memory:read", "memory:write", "event:report",
-  "telemetry:report", "viewer:attach", "terminal:register",
+  "telemetry:report",
   // Autonomy is the human's dial: only the operator credential (the user's
   // own CLI and the Workspace acting for them) may write it. Agents observing
   // it is harmless; an agent raising it would be a sandbox escape.
