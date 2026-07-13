@@ -467,4 +467,38 @@ describe("reapOrphanCodexHosts", () => {
       "unrelated.txt",
     ].sort());
   });
+
+  // A recycled pid held by a process that merely TALKS about codex is not a
+  // codex host. Hive puts an agent's task prompt on the command line, so an
+  // agent briefed to work on this reaper has "codex app-server" in its own
+  // `ps` output — as does the orchestrator, whose system prompt names every
+  // vendor. The old check was `command.includes("codex app-server")`, which
+  // those satisfy: the only thing standing between a recycled pid and a
+  // SIGKILL of a live agent was the dead-agent-row guard. Match the binary,
+  // which a prompt cannot forge.
+  test("does not reap a process that only mentions codex in its prompt", async () => {
+    const claudeAgent =
+      "/Users/x/.local/bin/claude --model claude-opus-4-8 --append-system-prompt " +
+      "Fix the reaper: it matches codex app-server by substring.";
+    const world: FakeWorld = {
+      files: new Map([
+        [pidfileFor("impostor"), "8181\n"],
+        [pidfileFor("real-host"), "9191\n"],
+      ]),
+      commands: new Map([
+        [8181, claudeAgent],
+        [9191, "codex app-server --stdio"],
+      ]),
+      killed: [],
+    };
+
+    const reaped = await reapOrphanCodexHosts(
+      status({ impostor: "dead", "real-host": "dead" }),
+      dependencies(world),
+    );
+
+    // The impostor is spared; the genuine orphan is still reaped.
+    expect(reaped).toEqual([9191]);
+    expect(world.killed).toEqual([9191]);
+  });
 });

@@ -60,6 +60,17 @@ The one-line decision: **do not start a libghostty integration** ([blueprint.md]
 - **A CALayer/Metal-drawn view gets zero accessibility for free.** Every `NSAccessibility` role, value, and range API must be hand-written before VoiceOver can read a single cell. This cost is invisible in a renderer bake-off and dominates it.
 - The version pin is load-bearing and lives at `workspace/Package.swift:20` (`exact: "1.11.2"` — 1.12's Metal backend breaks universal release builds). Rationale in [ui-design-system.md](ui-design-system.md).
 
+## Verifying the UI: a click you post to the system is silently dropped
+
+A synthetic click posted to the *system* (`CGEventPost`) never arrives unless the posting process holds the Accessibility grant — and it fails **silently**: no error, no exception, the event simply never lands. So a "click" that returned success proves nothing, and a test that drives the app that way is green because nothing happened. This is the Workspace's instance of the rule the daemon docs state in general: an act is not a state, and *the screen redrew* is not *the button worked*.
+
+Drive the app **in-process** instead. Two techniques, at different altitudes:
+
+- **A click or a scroll at a point** — build the `NSEvent` and hand it to the window's own dispatch: `window.sendEvent(event)`. This is the path a real user's click takes (hit-testing, the pane's click recognizer, SwiftTerm taking first responder itself). Already in-tree and shipped: `postClick` at `workspace/Sources/HiveWorkspace/ProjectWindowController.swift:397`, `postScrollWheel` at `:371`. Note that a click only *focuses* in a **key** window — an unfocused window swallows the effect and looks like a dropped event.
+- **Pressing a named control** (the pane's X, a menu item) — the point-based helpers above cannot address a button by identity, only by location. The approach on record walks the app's **own** AX tree (`AXUIElementCreateApplication(getpid())`), finds the control by role + description (`"Close Pane"`), and presses it with `AXUIElementPerformAction`. A working harness is recoverable at `hive/dominic-bug-quitting-hive-leaves-an-op` @ `ef0e25f` (`XProbe.swift`, plus a `HIVE_PROBE=quit` mode that exercises the quit path with an agent live). It is **deliberately not on main**: it arms itself at app launch and its own header calls it temporary.
+
+**Firmness:** the `sendEvent` technique is shipped code with callers. The AX-press harness is **recorded, not independently reproduced** — it was recovered from a dead agent's worktree, and re-running it means pressing a real Close Pane button on a live agent, which is why it was preserved rather than re-verified. Treat it as a strong lead with a working implementation attached, not as a proven recipe.
+
 ## Three rules that came out of this
 
 - **"Content-blind" must be an explicit field allowlist, not an adjective.** A quota arbiter that leases capacity must see provider, account, pool, concrete model, and estimated units — and therefore learns how many projects exist and which models they run. It never sees prompts, paths, repo names, or branch names. Write the field list down; an adjective is not a specification.

@@ -1,7 +1,7 @@
 import { createServer, connect, type Socket } from "node:net";
 import { chmod, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import type { AgentRecord, HookEvent } from "../../schemas";
 import { HIVE_VERSION } from "../../version";
 import { hiveInstanceSuffix } from "../../daemon/tmux-sessions";
@@ -948,6 +948,24 @@ export interface ReapOrphanDependencies {
  * to still be a codex app-server before the kill so a recycled pid is never
  * shot. Returns the pids that were reaped.
  */
+/**
+ * The pid in a pidfile can be recycled by the OS, so the process holding it
+ * now may not be the host that wrote it. What tells them apart has to be the
+ * BINARY, not the command line: Hive passes an agent's task prompt on the
+ * command line (`--append-system-prompt`), so any agent briefed about this
+ * reaper carries the literal phrase "codex app-server" in its own `ps` output
+ * and satisfies a substring test. The orchestrator does too. Only the
+ * dead-agent-row guard kept that from being a kill, which left the whole
+ * margin resting on the guard and none of it on the matcher.
+ *
+ * argv[0] cannot be faked by a prompt: a Claude agent is `claude` whatever it
+ * has been asked to think about.
+ */
+function isCodexAppServer(command: string): boolean {
+  const [binary, subcommand] = command.trim().split(/\s+/);
+  return basename(binary ?? "") === "codex" && subcommand === "app-server";
+}
+
 export async function reapOrphanCodexHosts(
   agentIdStatus: (id: string) => "live" | "dead" | "unknown",
   dependencies: ReapOrphanDependencies,
@@ -969,7 +987,7 @@ export async function reapOrphanCodexHosts(
     }
     if (Number.isSafeInteger(pid) && pid > 0) {
       const command = await dependencies.processCommand(pid);
-      if (command !== null && command.includes("codex app-server")) {
+      if (command !== null && isCodexAppServer(command)) {
         try {
           dependencies.kill(pid);
           reaped.push(pid);
