@@ -1,12 +1,12 @@
 import { Database } from "bun:sqlite";
-import { mkdirSync } from "node:fs";
+import { chmodSync, lstatSync, mkdirSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { z } from "zod";
 import {
   daemonInstanceLiveness,
   type DaemonInstanceLiveness,
 } from "./lifecycle";
-import { machineHiveHome } from "./instances";
 import { hiveInstanceSuffix, resolveHiveHome } from "./tmux-sessions";
 
 const MachineMutationPurposeSchema = z.enum([
@@ -56,8 +56,26 @@ const OperationRowSchema = z.object({
 
 type OperationRow = z.infer<typeof OperationRowSchema>;
 
-export function getMachineMutationDatabasePath(): string {
-  return join(machineHiveHome(), "mutation.db");
+export function getMachineMutationDatabasePath(
+  runtimeRoot = tmpdir(),
+): string {
+  const uid = typeof process.getuid === "function" ? process.getuid() : null;
+  const runtimeDirectory = join(runtimeRoot, `hive-${uid ?? "user"}`);
+  mkdirSync(runtimeDirectory, { recursive: true, mode: 0o700 });
+  const state = lstatSync(runtimeDirectory);
+  if (
+    !state.isDirectory() ||
+    state.isSymbolicLink() ||
+    (uid !== null && state.uid !== uid)
+  ) {
+    throw new Error(
+      `Machine mutation runtime directory ${runtimeDirectory} is not a directory owned by this user`,
+    );
+  }
+  chmodSync(runtimeDirectory, 0o700);
+
+  // Machine uninstall removes Hive home before releasing its lease.
+  return join(runtimeDirectory, "machine-mutation.db");
 }
 
 async function processIdentity(pid: number): Promise<ProcessIdentityState> {
@@ -117,6 +135,7 @@ export class MachineMutationCoordinator {
     this.instanceLiveness = options.instanceLiveness ?? daemonInstanceLiveness;
     mkdirSync(dirname(this.path), { recursive: true });
     this.database = new Database(this.path, { create: true });
+    chmodSync(this.path, 0o600);
     this.database.exec("PRAGMA busy_timeout = 5000");
     this.database.exec("PRAGMA journal_mode = WAL");
     this.database.exec(`

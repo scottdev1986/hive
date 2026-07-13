@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  getMachineMutationDatabasePath,
   MachineMutationCoordinator,
   type ProcessIdentityState,
 } from "./mutation-lease";
@@ -42,6 +43,45 @@ function coordinator(options: {
 }
 
 describe("machine mutation lease", () => {
+  test("machine uninstall can release its lease after removing Hive home", async () => {
+    const root = mkdtempSync(join(tmpdir(), "hive-mutation-uninstall-"));
+    roots.push(root);
+    const hiveHome = join(root, "home");
+    mkdirSync(hiveHome);
+    const previousHiveHome = process.env.HIVE_HOME;
+    process.env.HIVE_HOME = hiveHome;
+
+    const processes = new Map<number, ProcessIdentityState>([
+      [101, { state: "live", startedAt: "process-101" }],
+    ]);
+    let uninstall: MachineMutationCoordinator | undefined;
+    try {
+      const path = getMachineMutationDatabasePath(join(root, "runtime"));
+      uninstall = coordinator({
+        path,
+        instanceId: "default",
+        instanceHome: hiveHome,
+        pid: 101,
+        processes,
+      });
+      const lease = await uninstall.acquireLease("machine-uninstall");
+
+      rmSync(hiveHome, { recursive: true });
+
+      let releaseError: unknown;
+      try {
+        lease.release();
+      } catch (error) {
+        releaseError = error;
+      }
+      expect(releaseError).toBeUndefined();
+    } finally {
+      uninstall?.close();
+      if (previousHiveHome === undefined) delete process.env.HIVE_HOME;
+      else process.env.HIVE_HOME = previousHiveHome;
+    }
+  });
+
   test("a live lease blocks spawn and landing operations across daemon instances", async () => {
     const path = databasePath();
     const processes = new Map<number, ProcessIdentityState>([
