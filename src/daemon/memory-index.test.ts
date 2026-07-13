@@ -37,6 +37,7 @@ function memory(overrides: Partial<MemoryWriteInput>): MemoryWriteInput {
     evidence: "Measured by the test",
     status: "verified",
     supersedes: [],
+    date: "2026-07-12",
     verified: "2026-07-12",
     ...overrides,
   };

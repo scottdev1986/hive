@@ -79,6 +79,7 @@ function validWrite(overrides: Record<string, unknown> = {}) {
     evidence: "Measured by the MCP integration test",
     status: "verified",
     supersedes: [],
+    date: "2026-07-12",
     verified: "2026-07-12",
     ...overrides,
   };
