@@ -101,6 +101,24 @@ describe("hive uninstall --repo", () => {
     }
   });
 
+  test("a stop failure is reported and nothing is removed", async () => {
+    const root = await gitRepo();
+    try {
+      await mkdir(join(root, "graphify-out"), { recursive: true });
+      const { deps, lines } = probe(true, {
+        stop: async () => {
+          throw new Error("tmux refused the stop");
+        },
+      });
+      expect(await runUninstallRepo(root, {}, deps)).toBe(1);
+      expect(existsSync(join(root, "graphify-out"))).toBe(true);
+      expect(lines.join("\n")).toContain("tmux refused the stop");
+      expect(lines.join("\n")).toContain("rerun `hive uninstall --repo`");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   test("confirmed: removes everything Hive put in, keeps everything the human owns", async () => {
     const root = await gitRepo();
     try {
@@ -255,6 +273,108 @@ describe("hive uninstall", () => {
       expect(existsSync(home)).toBe(false);
       expect(lines.join("\n")).toContain(getHiveHome());
       expect(lines.join("\n")).toContain("source");
+    } finally {
+      if (previous === undefined) delete process.env.HIVE_HOME;
+      else process.env.HIVE_HOME = previous;
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  test("rechecks every team after confirmation before stopping anything", async () => {
+    const home = await mkdtemp(join(tmpdir(), "hive-home-spawn-race-"));
+    const previous = process.env.HIVE_HOME;
+    process.env.HIVE_HOME = home;
+    try {
+      let checks = 0;
+      const { deps, lines, stops } = probe(true, {
+        liveTeams: async () => {
+          checks += 1;
+          return checks === 1 ? [] : [{
+            instance: {
+              name: "review",
+              home: join(home, "instances", "review"),
+              instanceId: "instance-review",
+              port: 4318,
+              pid: 1234,
+              running: true,
+            },
+            liveAgents: ["new-agent"],
+          }];
+        },
+      });
+      expect(await runUninstallMachine({}, deps)).toBe(1);
+      expect(checks).toBe(2);
+      expect(stops).toEqual([]);
+      expect(lines.join("\n")).toContain("review (new-agent)");
+      expect(existsSync(home)).toBe(true);
+    } finally {
+      if (previous === undefined) delete process.env.HIVE_HOME;
+      else process.env.HIVE_HOME = previous;
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  test("proves every daemon stopped before cleaning this instance's sessions", async () => {
+    const home = await mkdtemp(join(tmpdir(), "hive-home-stop-order-"));
+    const previous = process.env.HIVE_HOME;
+    process.env.HIVE_HOME = home;
+    try {
+      const order: string[] = [];
+      const { deps } = probe(true, {
+        stopOtherInstances: async () => {
+          order.push("daemons");
+        },
+        stop: async () => {
+          order.push("sessions");
+        },
+      });
+      expect(await runUninstallMachine({}, deps)).toBe(0);
+      expect(order).toEqual(["daemons", "sessions"]);
+    } finally {
+      if (previous === undefined) delete process.env.HIVE_HOME;
+      else process.env.HIVE_HOME = previous;
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  test("retains machine state when a daemon will not stop", async () => {
+    const home = await mkdtemp(join(tmpdir(), "hive-home-daemon-stuck-"));
+    const previous = process.env.HIVE_HOME;
+    process.env.HIVE_HOME = home;
+    try {
+      await writeFile(join(home, "hive.db"), "");
+      const { deps, lines, stops } = probe(true, {
+        stopOtherInstances: async () => {
+          throw new Error("review instance is still alive");
+        },
+      });
+      expect(await runUninstallMachine({}, deps)).toBe(1);
+      expect(stops).toEqual([]);
+      expect(existsSync(home)).toBe(true);
+      expect(lines.join("\n")).toContain("review instance is still alive");
+      expect(lines.join("\n")).toContain("rerun `hive uninstall`");
+    } finally {
+      if (previous === undefined) delete process.env.HIVE_HOME;
+      else process.env.HIVE_HOME = previous;
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  test("a session stop failure is reported and machine state is retained", async () => {
+    const home = await mkdtemp(join(tmpdir(), "hive-home-stop-failed-"));
+    const previous = process.env.HIVE_HOME;
+    process.env.HIVE_HOME = home;
+    try {
+      await writeFile(join(home, "hive.db"), "");
+      const { deps, lines } = probe(true, {
+        stop: async () => {
+          throw new Error("tmux is unavailable");
+        },
+      });
+      expect(await runUninstallMachine({}, deps)).toBe(1);
+      expect(existsSync(home)).toBe(true);
+      expect(lines.join("\n")).toContain("tmux is unavailable");
+      expect(lines.join("\n")).toContain("rerun `hive uninstall`");
     } finally {
       if (previous === undefined) delete process.env.HIVE_HOME;
       else process.env.HIVE_HOME = previous;

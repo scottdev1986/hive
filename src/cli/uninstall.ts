@@ -114,6 +114,18 @@ export const defaultUninstallDeps: UninstallDeps = {
   stopOtherInstances,
 };
 
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function liveTeamRefusal(blockers: readonly InstanceMutationBlocker[]): string {
+  return "Refusing machine uninstall while a Hive instance has a live or unobservable team: " +
+    blockers.map(({ instance, liveAgents }) =>
+      `${instance.name} (${liveAgents.join(", ")})`
+    ).join("; ") +
+    "\nFix: let every team finish and make every instance observable, then rerun `hive uninstall`.";
+}
+
 /** Confirm a destructive plan: explicit `--yes` wins, a TTY is asked
  * (default no), and a non-TTY without `--yes` refuses with the scriptable
  * spelling — a destructive default is never guessed. */
@@ -253,9 +265,15 @@ export async function runUninstallRepo(
     return 1;
   }
 
-  await deps.stop().catch(() => {
-    // No daemon (or no tmux) is fine: there is nothing to stop.
-  });
+  try {
+    await deps.stop();
+  } catch (error) {
+    deps.log(
+      `Refusing repo uninstall because this instance did not stop: ${errorMessage(error)}\n` +
+        "Fix: stop its agents and daemon, then rerun `hive uninstall --repo`.",
+    );
+    return 1;
+  }
   await removeWorktreesAndBranches(root, deps.run, deps.log);
   for (const tool of CAPABILITY_PROVIDERS) {
     await removeShippedSkills(root, tool, deps.log);
@@ -289,12 +307,7 @@ export async function runUninstallMachine(
   const hiveHome = machineHiveHome();
   const blockers = await deps.liveTeams();
   if (blockers.length > 0) {
-    deps.log(
-      "Refusing machine uninstall while a Hive instance has a live or unobservable team: " +
-        blockers.map(({ instance, liveAgents }) =>
-          `${instance.name} (${liveAgents.join(", ")})`
-        ).join("; "),
-    );
+    deps.log(liveTeamRefusal(blockers));
     return 1;
   }
   const plan = [
@@ -312,16 +325,28 @@ export async function runUninstallMachine(
     return 1;
   }
 
-  await deps.stop().catch(() => {
-    // No daemon is fine.
-  });
+  const postConfirmationBlockers = await deps.liveTeams();
+  if (postConfirmationBlockers.length > 0) {
+    deps.log(liveTeamRefusal(postConfirmationBlockers));
+    return 1;
+  }
   try {
     await deps.stopOtherInstances();
   } catch (error) {
     deps.log(
       `Refusing to remove the machine-wide binary because another instance did not stop: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
+        errorMessage(error)
+      }\nFix: stop every Hive daemon, then rerun \`hive uninstall\`.`,
+    );
+    return 1;
+  }
+  try {
+    await deps.stop();
+  } catch (error) {
+    deps.log(
+      `Refusing machine uninstall because this instance's sessions did not stop: ${
+        errorMessage(error)
+      }\nFix: stop the sessions, then rerun \`hive uninstall\`.`,
     );
     return 1;
   }
