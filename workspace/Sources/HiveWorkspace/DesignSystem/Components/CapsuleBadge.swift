@@ -55,7 +55,7 @@ final class CapsuleBadge: NSView {
         label.stringValue = text
         label.textColor = style.tint
         label.lineBreakMode = .byTruncatingTail
-        label.setContentCompressionResistancePriority(.init(720), for: .horizontal)
+        label.setContentCompressionResistancePriority(.init(460), for: .horizontal)
 
         var views: [NSView] = []
         if let symbol, let image = NSImage(

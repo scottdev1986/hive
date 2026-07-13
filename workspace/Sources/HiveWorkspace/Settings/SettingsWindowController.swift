@@ -12,18 +12,26 @@ final class SettingsWindowController: NSWindowController, NSToolbarDelegate {
     private var modelsController: ModelsSettingsController!
     private let container = NSViewController()
 
-    convenience init(hivePath: String?) {
+    convenience init(hivePath: String?, initialWidth: Double? = nil) {
         let dataSource = ModelControlDataSource(hivePath: hivePath)
         let tasks = TasksSettingsController(dataSource: dataSource)
         let models = ModelsSettingsController(dataSource: dataSource)
 
+        let width = CGFloat(initialWidth ?? 880)
         let container = NSViewController()
-        container.view = NSView(frame: NSRect(x: 0, y: 0, width: 760, height: 720))
+        container.view = NSView(frame: NSRect(x: 0, y: 0, width: width, height: 820))
+        // Pin the window's idea of the content size. Without this, AppKit
+        // adopts the content's Auto Layout FITTING width at display time and
+        // overrides any frame we set (this window once opened wider than the
+        // screen that way).
+        container.preferredContentSize = NSSize(width: width, height: 820)
 
         let window = NSWindow(contentViewController: container)
         window.title = "Settings"
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
         self.init(window: window)
+
+        forcedWidth = initialWidth.map { CGFloat($0) }
 
         tasksController = tasks
         modelsController = models
@@ -48,40 +56,68 @@ final class SettingsWindowController: NSWindowController, NSToolbarDelegate {
         toolbar.selectedItemIdentifier = Self.tasksItem
         select(page: tasksController)
 
-        // The window must open ON the screen: a sensible default, clamped to
-        // the visible frame, and an honest minimum below which the design
-        // does not work. (AppKit's fitting-size pass is what once opened this
-        // window wider than the display.)
-        let visible = NSScreen.main?.visibleFrame
-            ?? NSRect(x: 0, y: 0, width: 1280, height: 900)
-        let size = NSSize(
-            width: min(880, visible.width - 40),
-            height: min(820, visible.height - 40))
-        let origin = NSPoint(
-            x: visible.midX - size.width / 2,
-            y: visible.midY - size.height / 2)
-        window.setFrame(NSRect(origin: origin, size: size), display: false)
         window.contentMinSize = NSSize(
             width: Theme.Metric.minContentWidth + 2 * Theme.Space.page, height: 420)
-        window.setFrameAutosaveName("HiveModelControlCenter")
+        // The user's own saved frame wins when one exists; otherwise the
+        // window opens at a sensible default CLAMPED TO THE SCREEN — it must
+        // never open off it (AppKit's fitting-size pass once opened this
+        // window wider than the display). Verification runs (explicit width)
+        // skip the autosave entirely so they never fight a saved frame and
+        // never overwrite the user's.
+        let restored: Bool
+        if initialWidth == nil {
+            window.setFrameAutosaveName("HiveModelControlCenter")
+            restored = window.setFrameUsingName("HiveModelControlCenter")
+        } else {
+            restored = false
+        }
+        if !restored {
+            let visible = NSScreen.main?.visibleFrame
+                ?? NSRect(x: 0, y: 0, width: 1280, height: 900)
+            let size = NSSize(
+                width: min(width, visible.width - 40),
+                height: min(820, visible.height - 40))
+            let origin = NSPoint(
+                x: visible.midX - size.width / 2,
+                y: visible.midY - size.height / 2)
+            window.setFrame(NSRect(origin: origin, size: size), display: false)
+        }
 
         dataSource.refresh()
     }
 
+    /// The selected section, reasserted on every show so window display
+    /// quirks can never leave the toolbar and the visible page disagreeing.
+    private var currentSection = "tasks"
+    /// Verification affordance: reassert this width after display, because
+    /// the first display pass re-adopts the content's fitting width.
+    private var forcedWidth: CGFloat?
+
     private func select(page: SettingsPageController) {
+        currentSection = page === tasksController ? "tasks" : "models"
         tasksController.view.isHidden = page !== tasksController
         modelsController.view.isHidden = page !== modelsController
         window?.title = page === tasksController ? "Settings — Tasks" : "Settings — Models"
     }
 
     func show() {
+        select(section: currentSection)
         window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         // After the key-view loop settles: open at the top, not wherever the
         // first focusable control happened to live.
         DispatchQueue.main.async { [weak self] in
-            self?.tasksController.scrollToTop()
-            self?.modelsController.scrollToTop()
+            guard let self else { return }
+            if let width = self.forcedWidth, let window = self.window {
+                let clamped = max(window.contentMinSize.width, width)
+                // The hard cap is the one sizing input the fitting pass
+                // cannot exceed.
+                window.contentMaxSize = NSSize(
+                    width: clamped, height: .greatestFiniteMagnitude)
+                window.setContentSize(NSSize(width: clamped, height: 820))
+            }
+            self.tasksController.scrollToTop()
+            self.modelsController.scrollToTop()
         }
     }
 

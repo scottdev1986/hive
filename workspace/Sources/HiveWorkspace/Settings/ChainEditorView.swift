@@ -338,7 +338,7 @@ final class ChainRowView: NSView {
         label.font = Theme.Font.body
         label.lineBreakMode = .byTruncatingTail
         label.toolTip = resolvedModel?.displayId ?? entry.model
-        label.setContentCompressionResistancePriority(.init(720), for: .horizontal)
+        label.setContentCompressionResistancePriority(.init(465), for: .horizontal)
         if struck {
             label.attributedStringValue = NSAttributedString(
                 string: text,
@@ -404,7 +404,7 @@ final class ChainRowView: NSView {
             why.textColor = .tertiaryLabelColor
             why.lineBreakMode = .byTruncatingTail
             why.toolTip = note
-            why.setContentCompressionResistancePriority(.init(600), for: .horizontal)
+            why.setContentCompressionResistancePriority(.init(440), for: .horizontal)
             column.addArrangedSubview(why)
             why.widthAnchor.constraint(
                 lessThanOrEqualTo: column.widthAnchor).isActive = true

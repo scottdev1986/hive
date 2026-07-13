@@ -29,6 +29,8 @@ struct LaunchConfig {
     /// Force the app appearance ("light"/"dark") — screenshot/verification
     /// affordance; never changes the system setting.
     var appearance: String?
+    /// Force the settings window width at launch (responsive verification).
+    var settingsWidth: Double?
 
     /// A window can only open with the full contract; anything less gets the
     /// explainer window.
@@ -60,6 +62,8 @@ struct LaunchConfig {
                 config.settingsPage = iterator.next()
             case "--appearance":
                 config.appearance = iterator.next()
+            case "--settings-width":
+                config.settingsWidth = iterator.next().flatMap(Double.init)
             case "--project":
                 config.projectDirectory = iterator.next()
             case "--port":

@@ -26,7 +26,7 @@ final class EffortControlView: NSView {
         caption.font = Theme.Font.caption
         caption.textColor = .secondaryLabelColor
         caption.lineBreakMode = .byTruncatingTail
-        caption.setContentCompressionResistancePriority(.init(710), for: .horizontal)
+        caption.setContentCompressionResistancePriority(.init(455), for: .horizontal)
 
         switch axis {
         case .known(let levels, _):

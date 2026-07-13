@@ -38,14 +38,14 @@ final class ModelRowView: NSView {
         let nameLabel = NSTextField(labelWithString: name)
         nameLabel.font = Theme.Font.body
         nameLabel.lineBreakMode = .byTruncatingTail
-        nameLabel.setContentCompressionResistancePriority(.init(740), for: .horizontal)
+        nameLabel.setContentCompressionResistancePriority(.init(480), for: .horizontal)
 
         let idLabel = NSTextField(labelWithString: model.displayId)
         idLabel.font = Theme.Font.monoCaption
         idLabel.textColor = .tertiaryLabelColor
         idLabel.lineBreakMode = .byTruncatingTail
         idLabel.toolTip = model.displayId
-        idLabel.setContentCompressionResistancePriority(.init(730), for: .horizontal)
+        idLabel.setContentCompressionResistancePriority(.init(470), for: .horizontal)
 
         toggle.controlSize = .small
         toggle.target = self
@@ -114,7 +114,7 @@ final class ModelRowView: NSView {
             caption.textColor = .secondaryLabelColor
             caption.lineBreakMode = .byTruncatingTail
             caption.toolTip = captionText
-            caption.setContentCompressionResistancePriority(.init(700), for: .horizontal)
+            caption.setContentCompressionResistancePriority(.init(450), for: .horizontal)
             textColumn.addArrangedSubview(caption)
         }
         // The persistent may-spend line: icon + words, calm, always there
@@ -134,7 +134,7 @@ final class ModelRowView: NSView {
             label.textColor = .secondaryLabelColor
             label.lineBreakMode = .byTruncatingTail
             label.toolTip = text
-            label.setContentCompressionResistancePriority(.init(700), for: .horizontal)
+            label.setContentCompressionResistancePriority(.init(450), for: .horizontal)
             let line = NSStackView(views: [icon, label])
             line.orientation = .horizontal
             line.alignment = .centerY

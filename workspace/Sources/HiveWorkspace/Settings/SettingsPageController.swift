@@ -45,10 +45,13 @@ class SettingsPageController: NSViewController {
         // A centered reading column: at most 720 pt, at least the window
         // minus margins — whichever is smaller. The soft full-width
         // constraint yields to the hard cap, so narrow windows get margins
-        // and wide windows get a column, never a sprawl.
+        // and wide windows get a column, never a sprawl. Its priority sits
+        // BELOW NSLayoutPriorityWindowSizeStayPut (500): at 500 or above the
+        // layout pass resizes the WINDOW to satisfy it instead of shrinking
+        // the column — which is how this window once grew past the screen.
         let fullWidth = contentStack.widthAnchor.constraint(
             equalTo: documentView.widthAnchor, constant: -2 * Theme.Space.page)
-        fullWidth.priority = .init(500)
+        fullWidth.priority = .init(490)
         NSLayoutConstraint.activate([
             documentView.widthAnchor.constraint(
                 equalTo: scrollView.contentView.widthAnchor),
@@ -92,9 +95,16 @@ class SettingsPageController: NSViewController {
         contentStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
         buildContent()
         buildFooter()
-        documentView.layoutSubtreeIfNeeded()
-        scrollView.contentView.scroll(to: savedOrigin)
-        scrollView.reflectScrolledClipView(scrollView.contentView)
+        // Scroll restoration waits for the normal layout pass. Forcing
+        // layout here (layoutSubtreeIfNeeded) walks up to the window and
+        // makes it adopt the content's fitting width — snapping the window
+        // out of whatever size the user gave it, and once clean off the
+        // screen.
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.scrollView.contentView.scroll(to: savedOrigin)
+            self.scrollView.reflectScrolledClipView(self.scrollView.contentView)
+        }
     }
 
     /// Override: the page's sections, added to `contentStack`.
@@ -199,7 +209,7 @@ class SettingsPageController: NSViewController {
         label.textColor = .tertiaryLabelColor
         label.lineBreakMode = .byTruncatingTail
         label.toolTip = footerText
-        label.setContentCompressionResistancePriority(.init(600), for: .horizontal)
+        label.setContentCompressionResistancePriority(.init(420), for: .horizontal)
 
         let refresh = NSButton(
             title: "Refresh", target: self, action: #selector(refreshTapped(_:)))

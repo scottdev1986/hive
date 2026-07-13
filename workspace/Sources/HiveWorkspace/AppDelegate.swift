@@ -278,7 +278,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             // Works in both launch modes: with `--hive` the screen reads live
             // data; a bare Dock launch has no binary path and the screen says
             // so instead of guessing.
-            settingsController = SettingsWindowController(hivePath: config.hivePath)
+            settingsController = SettingsWindowController(
+                hivePath: config.hivePath, initialWidth: config.settingsWidth)
         }
         if let page = config.settingsPage {
             settingsController?.select(section: page)
