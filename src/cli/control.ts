@@ -122,6 +122,64 @@ function readDaemonPid(): number | null {
   }
 }
 
+/**
+ * `hive kill <agent>` — close an agent and everything it started.
+ *
+ * This is what the Workspace's pane X shells out to, and it is deliberately the
+ * same daemon path `hive_kill` takes: the daemon owns the kill, because only
+ * the daemon knows the agent's process tree, its quota reservation and its
+ * unlanded work. A UI that killed the tmux session itself would leave the
+ * vendor CLI, the Codex host and the MCP children running — that is the exact
+ * leak this command exists to close.
+ *
+ * Immediate and unconditional: no confirmation, no prompt. Unlanded work is not
+ * discarded by that — the daemon preserves the branch and tells the
+ * orchestrator — so the caller has nothing to ask the user about.
+ */
+export async function killAgentCli(
+  name: string,
+  port: number = requireDaemonPort(),
+): Promise<void> {
+  const response = await operatorFetch(
+    `http://127.0.0.1:${port}/agents/${encodeURIComponent(name)}/kill`,
+    { method: "POST" },
+  );
+  const body = await response.json().catch(() => null) as
+    | {
+      error?: string;
+      alreadyDead?: boolean;
+      preserved?: { branch: string; ref: string } | null;
+      reaped?: { killed?: unknown[]; survivors?: { pid: number; command: string }[] };
+    }
+    | null;
+  if (!response.ok) {
+    throw new Error(body?.error ?? `kill failed (HTTP ${response.status})`);
+  }
+  if (body?.alreadyDead === true) {
+    console.log(`${name} was already closed`);
+    return;
+  }
+  const killed = body?.reaped?.killed?.length ?? 0;
+  console.log(
+    `killed ${name} — ${killed} process(es) reaped`,
+  );
+  if (body?.preserved != null) {
+    console.log(
+      `  unlanded work preserved: ${body.preserved.branch} at ${body.preserved.ref}`,
+    );
+  }
+  // Survivors are a failed kill. Say so on stderr and exit non-zero: the whole
+  // point of this command is that "I sent the signal" is not "it is dead".
+  const survivors = body?.reaped?.survivors ?? [];
+  if (survivors.length > 0) {
+    throw new Error(
+      `${survivors.length} process(es) survived SIGKILL and are still running: ` +
+        survivors.map((process) => `pid ${process.pid} (${process.command})`)
+          .join(", "),
+    );
+  }
+}
+
 export async function printStatus(): Promise<void> {
   const agents = await fetchAgentStatus(requireDaemonPort());
   console.log(formatStatusTable(agents));

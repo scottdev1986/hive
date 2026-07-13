@@ -1,12 +1,16 @@
 import { describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 import type { AgentRecord, HookEvent } from "../../schemas";
+import { basename } from "node:path";
+import { hiveInstanceSuffix } from "../../daemon/tmux-sessions";
 import {
   CodexAppServerManager,
   CodexAppServerClient,
   CodexAppServerThreadConnection,
   type CodexAppServerTransport,
+  codexAgentHostPidfile,
   codexAgentSocketPath,
+  hostPidfileAgentId,
   reapOrphanCodexHosts,
   renderCodexViewerMessage,
 } from "./codex-app-server";
@@ -401,14 +405,39 @@ describe("reapOrphanCodexHosts", () => {
   const status = (map: Record<string, "live" | "dead" | "unknown">) =>
   (id: string) => map[id] ?? "unknown";
 
+  // The pidfile names are BUILT BY THE PRODUCTION WRITER, never hand-typed.
+  //
+  // They used to be spelled `hive-codex-dead-agent.sock.pid` here — a format
+  // nothing in Hive has ever written. The real name carries the instance hash
+  // (`hive-codex-<suffix>-<agentId>.sock.pid`), and the reaper's old greedy
+  // pattern captured `<suffix>-<agentId>` as the agent id, so against a REAL
+  // filename the lookup always answered "unknown" and the reaper skipped every
+  // pidfile it saw. The fixture was the only thing that ever matched it: a
+  // green test standing exactly where the bug was. Generating the names from
+  // `codexAgentHostPidfile` is what makes this test able to fail.
+  const pidfileFor = (id: string): string =>
+    basename(codexAgentHostPidfile({ id } as AgentRecord));
+  const socketFor = (id: string): string =>
+    basename(codexAgentSocketPath({ id } as AgentRecord));
+
+  test("the reaper parses the name the host writer actually produces", () => {
+    const name = pidfileFor("dead-agent");
+    expect(name).toContain(hiveInstanceSuffix());
+    expect(hostPidfileAgentId(name)).toBe("dead-agent");
+    // A pidfile belonging to another instance is not ours to reap.
+    expect(
+      hostPidfileAgentId("hive-codex-0123456789-dead-agent.sock.pid"),
+    ).toBeNull();
+  });
+
   test("kills only verified codex children of known-dead agents", async () => {
     const world: FakeWorld = {
       files: new Map([
-        ["hive-codex-dead-agent.sock.pid", "4242\n"],
-        ["hive-codex-dead-agent.sock", ""],
-        ["hive-codex-live-agent.sock.pid", "5151\n"],
-        ["hive-codex-foreign-agent.sock.pid", "6161\n"],
-        ["hive-codex-recycled.sock.pid", "7171\n"],
+        [pidfileFor("dead-agent"), "4242\n"],
+        [socketFor("dead-agent"), ""],
+        [pidfileFor("live-agent"), "5151\n"],
+        [pidfileFor("foreign-agent"), "6161\n"],
+        [pidfileFor("recycled"), "7171\n"],
         ["unrelated.txt", "ignore me"],
       ]),
       commands: new Map([
@@ -433,9 +462,9 @@ describe("reapOrphanCodexHosts", () => {
     // Dead agents' pidfiles and sockets are cleared even when the pid was
     // recycled by another program; live and unknown agents keep theirs.
     expect([...world.files.keys()].sort()).toEqual([
-      "hive-codex-foreign-agent.sock.pid",
-      "hive-codex-live-agent.sock.pid",
+      pidfileFor("foreign-agent"),
+      pidfileFor("live-agent"),
       "unrelated.txt",
-    ]);
+    ].sort());
   });
 });

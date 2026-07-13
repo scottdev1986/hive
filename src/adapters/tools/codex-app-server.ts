@@ -897,7 +897,39 @@ export async function runCodexAppServerHost(
   return exitCode;
 }
 
-const HOST_PIDFILE_PATTERN = /^hive-codex-(.+)\.sock\.pid$/;
+/** The host's pidfile, dropped beside its socket so a dead host's child can be
+ * found by a daemon that never spawned it. */
+export function codexAgentHostPidfile(
+  agent: AgentRecord,
+  hiveHome?: string,
+): string {
+  return `${codexAgentSocketPath(agent, hiveHome)}.pid`;
+}
+
+/**
+ * The agent id inside a host pidfile name, or null when the file is not this
+ * instance's.
+ *
+ * The name is `hive-codex-<instanceSuffix>-<agentId>.sock.pid`. The previous
+ * pattern was `/^hive-codex-(.+)\.sock\.pid$/`, whose greedy group captured
+ * `<instanceSuffix>-<agentId>` as one string and handed *that* to a lookup by
+ * agent id — which could only ever answer "unknown", so the reaper skipped
+ * every pidfile it had ever seen and NEVER FIRED. Orphaned codex hosts leaked
+ * on every single run, with one instance running and no multi-instance in
+ * sight. Anchoring on this instance's own suffix also makes the "an unknown id
+ * may belong to another hive instance sharing the temp dir" guard real, rather
+ * than a comment describing something the code did not do.
+ */
+export function hostPidfileAgentId(
+  name: string,
+  hiveHome?: string,
+): string | null {
+  const prefix = `hive-codex-${hiveInstanceSuffix(hiveHome)}-`;
+  const suffix = ".sock.pid";
+  if (!name.startsWith(prefix) || !name.endsWith(suffix)) return null;
+  const id = name.slice(prefix.length, -suffix.length);
+  return id === "" ? null : id;
+}
 
 export interface ReapOrphanDependencies {
   listSocketDir: () => Promise<string[]>;
@@ -919,14 +951,15 @@ export interface ReapOrphanDependencies {
 export async function reapOrphanCodexHosts(
   agentIdStatus: (id: string) => "live" | "dead" | "unknown",
   dependencies: ReapOrphanDependencies,
+  hiveHome?: string,
 ): Promise<number[]> {
   const reaped: number[] = [];
   for (const name of await dependencies.listSocketDir()) {
-    const match = HOST_PIDFILE_PATTERN.exec(name);
-    if (match === null) continue;
     // Socket paths flatten the agent id with the same substitution as
     // defaultSocketPath, and uuids survive it unchanged.
-    const status = agentIdStatus(match[1]!);
+    const agentId = hostPidfileAgentId(name, hiveHome);
+    if (agentId === null) continue;
+    const status = agentIdStatus(agentId);
     if (status !== "dead") continue;
     let pid: number | null = null;
     try {

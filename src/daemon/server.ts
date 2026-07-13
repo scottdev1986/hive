@@ -1,4 +1,5 @@
 import { readdir, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import {
@@ -127,10 +128,17 @@ import {
 } from "./spawner";
 import type { QuotaService } from "./quota";
 import {
+  codexAgentHostPidfile,
   reapOrphanCodexHosts,
   type CodexAppServerManager,
   type ReapOrphanDependencies,
 } from "../adapters/tools/codex-app-server";
+import {
+  defaultReapDependencies,
+  reapProcessTree,
+  type ReapDependencies,
+  type ReapOutcome,
+} from "./teardown";
 import {
   assessResources,
   paneProcessState,
@@ -152,10 +160,17 @@ export { HIVE_VERSION };
 
 const OPERATOR_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
-// Codex app-server hosts drop their pidfiles beside their sockets in /tmp
-// (see defaultSocketPath); the daemon reaps children whose host died without
-// running its own cleanup.
-const CODEX_SOCKET_DIR = "/tmp";
+// Codex app-server hosts drop their pidfiles beside their sockets; the daemon
+// reaps children whose host died without running its own cleanup.
+//
+// This is `tmpdir()`, NOT "/tmp". codexAgentSocketPath binds into the per-user
+// temp dir (0700 on macOS, `/var/folders/.../T`) precisely so no other local
+// user can pre-bind the name — and this constant said "/tmp", so the reaper
+// listed a directory the sockets were never in. It therefore found no pidfiles
+// to skip in the first place, which is why the broken agent-id lookup below it
+// went unnoticed: two independent bugs, both of which had to be fixed before a
+// single orphan could ever be reaped.
+const CODEX_SOCKET_DIR = tmpdir();
 
 // An agent in one of these statuses still owns its branch, so unlanded commits
 // on it are work in progress rather than stranded work. Every other status —
@@ -534,6 +549,8 @@ export interface HiveDaemonOptions {
     panePids?: (session: string) => Promise<number[]>;
     kill?: (pid: number) => void;
     orphans?: ReapOrphanDependencies | null;
+    /** Test seam for the kill path's process-tree reap. */
+    reap?: ReapDependencies;
   };
 }
 
@@ -631,6 +648,7 @@ export class HiveDaemon {
   private readonly panePids: (session: string) => Promise<number[]>;
   private readonly killProcess: (pid: number) => void;
   private readonly orphanDependencies: ReapOrphanDependencies | null;
+  private readonly reapDependencies: ReapDependencies;
   private memoryPressure = false;
 
   constructor(options: HiveDaemonOptions) {
@@ -766,6 +784,8 @@ export class HiveDaemon {
     this.orphanDependencies = options.resourceRunners?.orphans === undefined
       ? defaultOrphanDependencies()
       : options.resourceRunners.orphans;
+    this.reapDependencies = options.resourceRunners?.reap ??
+      defaultReapDependencies();
     this.repoRoot = options.repoRoot ?? process.cwd();
     this.readClaudeTelemetry = options.telemetryReaders?.claude ??
       readClaudeTelemetry;
@@ -1641,15 +1661,62 @@ export class HiveDaemon {
   }
 
   /**
-   * The one teardown path for closing a live agent: kill its tmux session,
-   * mark it dead, settle its quota reservation, and — only when asked —
-   * remove its worktree and branch. `hive_kill` and the idle-reap sweep
-   * (reapIdleAgents) both funnel through here so there is exactly one place
-   * that can delete a worktree, and exactly one guard protecting it.
+   * Every process this agent owns, gathered BEFORE anything is killed.
    *
-   * Work is either merged or explicitly surfaced — never silently lost. This
-   * therefore always reports stranded work (unmerged commits or uncommitted
-   * files), and removal refuses to delete it unless the caller passes
+   * Order is the whole point: once `tmux kill-session` returns, the panes are
+   * gone and their pids are unrecoverable, so a tree captured afterwards is
+   * empty and a reap built on it is a no-op that reports success.
+   *
+   * Two roots, because an agent's processes hang off two different parents.
+   * The pane pids anchor everything the agent's shell started — the vendor
+   * CLI and whatever it spawned, including MCP stdio children. The Codex
+   * app-server host does NOT hang off the pane at all: the daemon spawns it,
+   * so it is the daemon's child, and no signal aimed at a pane will ever
+   * reach it. It is found by the pidfile it drops beside its socket.
+   */
+  private async agentProcessRoots(agent: AgentRecord): Promise<number[]> {
+    const roots: number[] = [];
+    try {
+      roots.push(...await this.panePids(agent.tmuxSession));
+    } catch {
+      // A session that is already gone contributes no pids, which is correct:
+      // there is nothing left in it to kill.
+    }
+    try {
+      const pid = Number.parseInt(
+        (await readFile(codexAgentHostPidfile(agent), "utf8")).trim(),
+        10,
+      );
+      if (Number.isSafeInteger(pid) && pid > 1) roots.push(pid);
+    } catch {
+      // No pidfile: this agent never ran a Codex host, or it cleaned up after
+      // itself. Either way there is nothing to reap.
+    }
+    return roots;
+  }
+
+  /**
+   * The one teardown path for closing a live agent. `hive_kill`, the pane X
+   * (POST /agents/:name/kill), the idle-reap sweep, and daemon shutdown all
+   * funnel through here, so there is exactly one place that can kill an agent,
+   * exactly one guard protecting a worktree, and one policy for unlanded work.
+   *
+   * The sequence is fixed by what each step destroys:
+   *
+   *   1. capture the process tree      (the pane pids die with the session)
+   *   2. kill the tmux session         (tears down the pane)
+   *   3. SIGKILL the captured tree     (what tmux does not reach: vendor CLI,
+   *                                     Codex host, MCP children) and VERIFY
+   *   4. mark dead, settle quota
+   *   5. assess unlanded work, and preserve it as a ref if there is any —
+   *      before step 7 can remove the worktree it lives in
+   *   6. tell the orchestrator what was preserved, and what would not die
+   *   7. remove the worktree only when asked, and never over stranded work
+   *
+   * Killing is immediate and unconditional — no confirmation, no delay. That
+   * is a UX decision, and it is explicitly NOT permission to destroy: work
+   * that is not on main is preserved as a git ref and reported. Removal of the
+   * worktree still refuses to delete stranded work unless the caller passes
    * discardWork.
    */
   private async killAgentTeardown(
@@ -1662,6 +1729,8 @@ export class HiveDaemon {
       worktreePath: string | null;
       branch: string | null;
     };
+    reaped: ReapOutcome;
+    preserved: { branch: string; ref: string } | null;
     stranded: {
       branch: string | null;
       worktreePath: string | null;
@@ -1673,7 +1742,9 @@ export class HiveDaemon {
     this.capabilities.revokeSubject(agent.name);
     removeCredential(agent.name);
 
+    const roots = await this.agentProcessRoots(agent);
     await this.tmux.killSession(agent.tmuxSession, { ignoreMissing: true });
+    const reaped = await reapProcessTree(roots, this.reapDependencies);
     const timestamp = new Date().toISOString();
     const killed = this.db.markAgentDeadAndDetachTerminal(agent.id, timestamp);
     if (killed === null) {
@@ -1709,6 +1780,7 @@ export class HiveDaemon {
         note: string;
       }
       | null = null;
+    let preserved: { branch: string; ref: string } | null = null;
     if (agent.worktreePath !== null || agent.branch !== null) {
       try {
         const work = await this.assessStranded(
@@ -1725,6 +1797,24 @@ export class HiveDaemon {
             note:
               `${agent.name} left work that is not on main; merge it via an integrator agent or pass discardWork to delete it.`,
           };
+          // The kill is immediate, so nobody was asked whether this work
+          // mattered. Preserve it as a ref before anything else can decide it
+          // did not: the ref outlives the branch, the worktree and the daemon,
+          // and it is the only thing standing between "closed a pane" and
+          // "destroyed an afternoon".
+          if (agent.branch !== null) {
+            try {
+              await markBranchPreserved(this.repoRoot, agent.branch, true);
+              preserved = {
+                branch: agent.branch,
+                ref: `refs/hive-preserved/${agent.branch}`,
+              };
+            } catch (error) {
+              stranded.note += ` Preserving the branch FAILED (${
+                error instanceof Error ? error.message : "unknown error"
+              }); the branch itself was not deleted.`;
+            }
+          }
         }
       } catch (error) {
         stranded = {
@@ -1738,6 +1828,8 @@ export class HiveDaemon {
         };
       }
     }
+
+    await this.reportKill(agent, reaped, preserved, stranded);
 
     if (
       (options.removeWorktree ?? false) && agent.worktreePath !== null &&
@@ -1756,10 +1848,96 @@ export class HiveDaemon {
       });
     }
 
-    return { agent: updated, cleaned, stranded };
+    return { agent: updated, cleaned, reaped, preserved, stranded };
   }
 
+  /**
+   * Tell the orchestrator what a kill actually did.
+   *
+   * Two things are worth a durable message and nothing else is. Preserved work,
+   * because an immediate kill gives nobody the chance to ask — the orchestrator
+   * has to learn that a branch was saved and where to find it, or preservation
+   * is just a ref nobody reads. And survivors, because a process that would not
+   * die is the failure this whole path exists to prevent, and the one thing we
+   * must never do is report a clean kill over the top of it.
+   *
+   * A clean kill of a clean agent says nothing. There is nothing to say, and
+   * the root's context is the scarcest thing in the system.
+   */
+  private async reportKill(
+    agent: AgentRecord,
+    reaped: ReapOutcome,
+    preserved: { branch: string; ref: string } | null,
+    stranded: { unmergedCommits: number; dirtyFiles: string[] } | null,
+  ): Promise<void> {
+    if (preserved !== null && stranded !== null) {
+      await this.delivery.send(
+        "hive-lifecycle",
+        ORCHESTRATOR_NAME,
+        `${agent.name} was killed with work that is not on main. ` +
+          `Its branch ${preserved.branch} is PRESERVED at ${preserved.ref} ` +
+          `(${stranded.unmergedCommits} unmerged commit(s), ` +
+          `${stranded.dirtyFiles.length} uncommitted file(s)). ` +
+          "Nothing was deleted. Land it with an integrator agent, or discard it " +
+          "explicitly with hive_kill discardWork.",
+        { idempotencyKey: `kill-preserved:${agent.id}` },
+      ).catch(() => undefined);
+    }
+    if (reaped.survivors.length > 0) {
+      await this.delivery.send(
+        "hive-lifecycle",
+        ORCHESTRATOR_NAME,
+        `${agent.name} was killed but ${reaped.survivors.length} of its ` +
+          "process(es) SURVIVED SIGKILL and are still running: " +
+          reaped.survivors
+            .map((process) => `pid ${process.pid} (${process.command})`)
+            .join(", ") +
+          ". These are orphans; they may still hold a model session open.",
+        { idempotencyKey: `kill-survivors:${agent.id}` },
+      ).catch(() => undefined);
+    }
+  }
+
+  /**
+   * Close every live agent. Shutdown's first act, and the reason quitting the
+   * app cannot orphan anything.
+   *
+   * One agent that refuses to die must not strand the others, so a failure is
+   * reported and the loop continues — the alternative is a half-torn-down
+   * machine whose remaining agents nobody ever asked to close.
+   */
+  private async killAllAgents(): Promise<void> {
+    for (const agent of this.db.listAgents()) {
+      if (!LIVE_STATUSES.includes(agent.status)) continue;
+      try {
+        await this.killAgentTeardown(agent);
+      } catch (error) {
+        console.error(
+          `Hive could not cleanly close ${agent.name} during shutdown: ${
+            error instanceof Error ? error.message : "unknown error"
+          }`,
+        );
+      }
+    }
+  }
+
+  /**
+   * Stopping the daemon stops the MACHINE, not just the process.
+   *
+   * This used to kill the orchestrator's tmux session and exit, which left
+   * every agent — its vendor CLI, its Codex host, its MCP children — running
+   * with nothing left alive to supervise, message, meter or reap them. Quitting
+   * the app is the ordinary way a user ends a session, so that was the ordinary
+   * way Hive orphaned processes that go on spending money against the account.
+   *
+   * So: close every agent first, through the same one kill path the pane X
+   * uses, and only then take the daemon down. Agents are reaped before the
+   * timers stop, because teardown needs delivery and quota to still be alive.
+   */
   async stop(): Promise<void> {
+    if (this.manageLifecycle) {
+      await this.killAllAgents();
+    }
     if (this.reconciliationTimer !== null) {
       clearInterval(this.reconciliationTimer);
       this.reconciliationTimer = null;
@@ -1769,9 +1947,15 @@ export class HiveDaemon {
     this.codexControl?.close();
     await this.graphify?.stop();
     if (this.manageLifecycle) {
+      // The orchestrator has no agents row, so it is not in killAllAgents. Its
+      // pane holds a vendor CLI and that CLI's MCP children exactly like an
+      // agent's does, and killing the session alone would leave them behind.
+      const roots = await this.panePids(orchestratorTmuxSession())
+        .catch(() => [] as number[]);
       await this.tmux.killSession(orchestratorTmuxSession(), {
         ignoreMissing: true,
       });
+      await reapProcessTree(roots, this.reapDependencies);
       cleanupLifecycleFiles();
     }
     if (this.ownsDatabase) {
@@ -2165,6 +2349,12 @@ export class HiveDaemon {
     }
     if (url.pathname === "/codex-root-token" && request.method === "POST") {
       return this.mintCodexRootToken(request);
+    }
+    if (
+      url.pathname.startsWith("/agents/") &&
+      url.pathname.endsWith("/kill") && request.method === "POST"
+    ) {
+      return this.killEndpoint(url.pathname, request);
     }
     if (url.pathname === "/mcp") {
       return this.handleMcp(request);
@@ -3005,6 +3195,65 @@ export class HiveDaemon {
     );
     if (!decision.ok) return this.denied(decision);
     return json({ present: this.workspacePresence.isPresent() });
+  }
+
+  /**
+   * POST /agents/<name>/kill — the pane's X button.
+   *
+   * The Workspace needs a kill it can call without an MCP client, and it must
+   * be the SAME kill: a second teardown path is how one of them quietly stops
+   * reaping something. So this is a thin authorization shell over
+   * killAgentTeardown and holds no policy of its own.
+   *
+   * Idempotent, because a UI cannot be. The user can click X on a pane whose
+   * agent died a second ago, or click it twice; an already-dead agent is the
+   * outcome the caller wanted, so it is a 200 and not an error.
+   */
+  private async killEndpoint(
+    pathname: string,
+    request: Request,
+  ): Promise<Response> {
+    const authenticated = this.authenticate(request, "/agents/kill");
+    if (!authenticated.ok) return this.denied(authenticated);
+    const name = decodeURIComponent(
+      pathname.slice("/agents/".length, -"/kill".length),
+    );
+    if (name === "") {
+      return json({ error: "Invalid kill request: no agent" }, { status: 400 });
+    }
+    const decision = this.authorize(
+      authenticated.capability,
+      "/agents/kill",
+      "agent:kill",
+      name,
+    );
+    if (!decision.ok) return this.denied(decision);
+    const agent = this.db.getAgentByName(name);
+    if (agent === null) {
+      return json({ error: `Hive agent not found: ${name}` }, { status: 404 });
+    }
+    if (!LIVE_STATUSES.includes(agent.status)) {
+      return json({
+        agent,
+        cleaned: {
+          tmuxSession: agent.tmuxSession,
+          worktreePath: null,
+          branch: null,
+        },
+        reaped: { killed: [], survivors: [] },
+        preserved: null,
+        stranded: null,
+        alreadyDead: true,
+      });
+    }
+    try {
+      return json(await this.killAgentTeardown(agent));
+    } catch (error) {
+      return json(
+        { error: error instanceof Error ? error.message : "Kill failed" },
+        { status: 500 },
+      );
+    }
   }
 
   private async recoverEndpoint(request: Request): Promise<Response> {

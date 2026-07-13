@@ -4,6 +4,7 @@ import { Command, CommanderError } from "commander";
 import { runCodexAppServerHost } from "./adapters/tools/codex-app-server";
 import {
   autonomyCli,
+  killAgentCli,
   deleteMemoryCli,
   printQuotaStatus,
   printStatus,
@@ -486,6 +487,21 @@ export function createProgram(): Command {
       options.expectRevision,
       options.port === undefined ? undefined : parsePort(options.port),
     ));
+
+  program
+    .command("kill <agent>")
+    .description(
+      "Close an agent immediately and reap everything it started (vendor CLI, " +
+        "Codex host, MCP children). Unlanded work is preserved as a git ref, " +
+        "never discarded",
+    )
+    .option("--port <number>", "daemon port")
+    .action(async (agent: string, options: { port?: string }) => {
+      await killAgentCli(
+        agent,
+        ...(options.port === undefined ? [] : [parsePort(options.port)]),
+      );
+    });
 
   program
     .command("autonomy [mode]")
