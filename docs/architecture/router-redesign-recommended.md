@@ -31,12 +31,13 @@ adjudicates two independent architect proposals:
 - **chad** (Claude): `docs/architecture/router-redesign-chad.md` @ `03470cf`
 - **chandra** (Codex): `docs/architecture/router-redesign-chandra.md` @ `1e504e18`
 
-Those two source documents are deliberately **left on their branches**
-(`hive/chad-architect-design-the-optimal-r`, `hive/chandra-architect-design-the-optimal-r`)
-and are **not on main**. Half of each was overruled below; on main they would be
-briefing material for future agents, and a superseded design read as fact is the
-exact failure this reconciliation exists to prevent. Read them via `git show`
-for provenance, never as instructions.
+Those two source documents are deliberately **not on main**. Half of each was
+overruled below; on main they would be briefing material for future agents, and
+a superseded design read as fact is the exact failure this reconciliation exists
+to prevent. Their recovery SHAs (`03470cfb66ccaea85728e338525dd74a663a4f20`
+and `1e504e18d19ef844a75570e98928e4dec5ca7328`) are recorded in
+[`stranded-branch-disposal-2026-07-13.md`](stranded-branch-disposal-2026-07-13.md);
+read them via `git show <sha>` for provenance, never as instructions.
 
 It also says what survives and what dies in the landed UI artifact
 `docs/architecture/model-control-center-settings-ui.md` (e2d38fb).
