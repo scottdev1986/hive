@@ -48,15 +48,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     init(config: LaunchConfig) {
         self.config = config
         super.init()
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(menuDidBeginTracking(_:)),
+            name: NSMenu.didBeginTrackingNotification, object: nil)
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(
+            self, name: NSMenu.didBeginTrackingNotification, object: nil)
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        NotificationCenter.default.addObserver(
-            forName: NSMenu.didBeginTrackingNotification, object: nil, queue: .main
-        ) { [weak self] note in
-            self?.trackingMenu = note.object as? NSMenu
-        }
-
         guard config.isComplete,
               let projectDirectory = config.projectDirectory,
               let hivePath = config.hivePath,
@@ -387,22 +389,46 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         }
     }
 
-    /// Take down every surface this instance owns. Menus first: an open menu is
-    /// running a nested tracking loop that no window owns, so closing windows
-    /// alone leaves it on screen. Then the windows — the project or placeholder
-    /// window, Settings, and the attention/project panels are all this
-    /// process's windows, so `NSApp.windows` is exactly this instance's surface
-    /// set and nothing else's.
-    private func closeOwnedSurfaces(except keep: NSWindow? = nil) {
+    @objc private func menuDidBeginTracking(_ notification: Notification) {
+        trackingMenu = notification.object as? NSMenu
+    }
+
+    /// Take down every surface this instance owns. Menus and app-modal alerts
+    /// run nested event loops that closing their windows does not end; cancel
+    /// those loops first, then end sheets before closing their parents.
+    /// `NSApp.windows` is process-local, so a sibling Hive instance is outside
+    /// this set.
+    func closeOwnedSurfaces(except keep: NSWindow? = nil) {
         trackingMenu?.cancelTrackingWithoutAnimation()
         NSApp.mainMenu?.cancelTrackingWithoutAnimation()
-        for window in NSApp.windows where window !== keep {
-            // A sheet outlives the window it hangs on unless it is ended first
-            // (a failed agent kill puts one there), and it would hold the quit.
-            for sheet in window.sheets {
-                window.endSheet(sheet)
-            }
-            window.close()
+        let windows = NSApp.windows
+        Self.abortModalIfOwned(
+            NSApp.modalWindow, ownedWindows: windows, abort: NSApp.abortModal)
+        Self.tearDownWindows(
+            windows, keeping: keep,
+            endSheets: { window in
+                for sheet in window.sheets {
+                    window.endSheet(sheet)
+                }
+            },
+            close: { $0.close() })
+    }
+
+    static func abortModalIfOwned<Surface: AnyObject>(
+        _ modalWindow: Surface?, ownedWindows: [Surface], abort: () -> Void
+    ) {
+        guard let modalWindow,
+              ownedWindows.contains(where: { $0 === modalWindow }) else { return }
+        abort()
+    }
+
+    static func tearDownWindows<Window: AnyObject>(
+        _ windows: [Window], keeping keep: Window?,
+        endSheets: (Window) -> Void, close: (Window) -> Void
+    ) {
+        for window in windows {
+            endSheets(window)
+            if window !== keep { close(window) }
         }
     }
 
