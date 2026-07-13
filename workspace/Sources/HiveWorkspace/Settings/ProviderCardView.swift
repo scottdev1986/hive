@@ -360,7 +360,7 @@ final class UnmeteredPanelView: InsetPanelView {
         titleRow.alignment = .firstBaseline
         titleRow.spacing = Theme.Space.s
 
-        let body = NSTextField(wrappingLabelWithString: MCCCopy.unmeteredBody)
+        let body = NSTextField(wrappingLabelWithString: MCCCopy.unmeteredBody(vendorName))
         body.font = Theme.Font.caption
         body.textColor = .secondaryLabelColor
         body.compressHorizontally()

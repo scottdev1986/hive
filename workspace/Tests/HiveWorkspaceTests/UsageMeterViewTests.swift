@@ -21,6 +21,13 @@ final class UsageMeterViewTests: XCTestCase {
         }
     }
 
+    func testUnmeteredCopyNamesTheActualProvider() {
+        let copy = MCCCopy.unmeteredBody("Future Vendor")
+
+        XCTAssertTrue(copy.hasPrefix("Future Vendor does not report plan capacity"))
+        XCTAssertFalse(copy.contains("xAI"))
+    }
+
     private func textFields(in view: NSView) -> [NSTextField] {
         ((view as? NSTextField).map { [$0] } ?? [])
             + view.subviews.flatMap(textFields)

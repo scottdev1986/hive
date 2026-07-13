@@ -68,9 +68,10 @@ enum MCCCopy {
     // Unmetered provider (Grok)
 
     static let unmeteredTitle = "Usage limits cannot be tracked for this provider"
-    static let unmeteredBody =
-        "xAI does not report plan capacity to Hive. Money rails are monitored so Hive " +
+    static func unmeteredBody(_ vendorName: String) -> String {
+        "\(vendorName) does not report plan capacity to Hive. Money rails are monitored so Hive " +
         "does not silently spend on-demand balance; they are not a usage gauge."
+    }
 
     // Effort
 
