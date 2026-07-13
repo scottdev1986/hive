@@ -8,7 +8,7 @@ Hive is far closer to multi-instance than it looks, because `HIVE_HOME` is *alre
 
 So this is not a new architecture. It is finishing one, plus four places where the shared world — one git repo, one provider account, one `~/.claude.json`, one `current` symlink — genuinely cannot be partitioned and must be *shared safely* instead.
 
-The one thing that must not be missed: **the fixed port is currently an accidental mutex.** Two daemons on one `HIVE_HOME` are prevented today only because the second `Bun.serve` fails to bind 4483. Moving to ephemeral ports removes that protection, so the explicit per-instance daemon lock is not a follow-up — it must land in the same change, or we trade a loud failure for two daemons quietly sharing one SQLite file.
+The one thing that must not be missed: **the fixed port is currently an accidental mutex.** Two daemons on one `HIVE_HOME` are prevented today only because the second `Bun.serve` fails to bind 4483. Moving to ephemeral ports removes that protection, so the explicit per-instance daemon lock is not a follow-up — it must land in the same change. **This was measured, and the measurement corrected the reason** (see [§8, the T1 experiment](#8-the-t1-experiment-measured-2026-07-13)): the harm is not database corruption, which WAL prevents cleanly. It is an *invisible, accumulating daemon*.
 
 ## 1. What an instance is
 
@@ -64,7 +64,7 @@ Scoping legend: **I** = per-instance, **P** = per-project, **G** = genuinely glo
 | Resource | Current scoping | Required | Collision today |
 |---|---|---|---|
 | **Listening port** | Global constant `4483` (`lifecycle.ts:34`) | I | Second daemon gets `EADDRINUSE`; the detached child dies with `stderr: "ignore"` (`lifecycle.ts:150`), so the user sees only `"Hive daemon failed to start"`. No collision detection or retry anywhere. |
-| **Daemon-per-instance mutex** | *Implicit*, via the fixed-port bind failure | I | **None exists.** Once ports are ephemeral, two racing `ensureStarted` calls (TOCTOU at `lifecycle.ts:130-143`) both probe absent, both spawn, both bind successfully → **two daemons on one `hive.db`**, violating single-writer. |
+| **Daemon-per-instance mutex** | *Implicit*, via the fixed-port bind failure | I | **None exists.** Once ports are ephemeral, both daemons bind successfully (measured, §8). `hive.db` survives — but `daemon.port`/`daemon.pid` name only the *last* writer, so the first daemon becomes live, healthy, and **invisible to Hive's own discovery**, and every subsequent start stacks another one on top of it. |
 | **`ensureStarted` reuse gate** | Refuses any non-matching project outright (`lifecycle.ts:134-139`) | I | *"Refusing to reuse live Hive daemon... Stop the existing daemon before starting this project."* This is today's explicit single-instance enforcement. |
 | **Agent name allocation** | First-fit over `NAME_POOL`, arbitrated by a row in the instance's **own** DB (`spawner-impl.ts:400`, `db.ts:1065`) | P | **Guaranteed, not probabilistic:** two fresh instances both deterministically pick `maya`, then `david`. |
 | **Worktree path** `.hive/worktrees/<name>` | Agent name + repo root, **no existence check** (`adapters/worktrees.ts:172-182`) | P | Instance B's first spawn hard-fails on a raw git error (`fatal: '...worktrees/maya' already exists`). No fallback to the next name. |
@@ -203,11 +203,44 @@ Move `quota_reservations` + `quota_observations` to `~/.hive/quota.db`; make TTL
 
 | # | Unknown | Cheapest experiment |
 |---|---|---|
-| 1 | **Do two daemons on one ephemeral-port config actually both bind and corrupt `hive.db`?** The whole T1 argument rests on it. | Set `HIVE_PORT=0`, launch two daemons against one `HIVE_HOME`, and read `PRAGMA quick_check` plus the agents table. Fifteen minutes, and it settles whether T1 is a barrier or merely tidy. |
+| 1 | ~~**Do two daemons on one ephemeral-port config actually both bind and corrupt `hive.db`?**~~ | **SETTLED — see §8.** Both bind. `hive.db` is *not* corrupted. T1 remains a barrier, for a different reason. |
 | 2 | **Does WAL genuinely give safe multi-process writes for `quota.db` under our access pattern?** WAL supports it in general; our reservation path does read-then-insert, which is a lost-update shape unless it is one transaction. | Two processes, 500 interleaved `tryReserve` calls each against one pool, assert `SUM(estimatedUnits) <= allowance`. If it fails, the fix is `BEGIN IMMEDIATE`, not a redesign. |
 | 3 | **Will the vendor CLIs tolerate double probing?** `quota.ts:956-957` already warns that Claude's usage endpoint *"rate-limits under polling"*, and two instances cannot dedupe each other's probes. | Run the existing `ClaudeQuotaProbe` on two concurrent loops at the production interval for an hour; watch for 429s. If it rate-limits, the shared `quota.db` becomes the natural probe cache too — which is an argument *for* T13, not against. |
 | 4 | **Does `open -a` let one app process hold two instances' windows, or do we need `open -n`?** LaunchServices reuses the running instance by design (`workspace.ts:83-92`). | Launch the installed app twice with different `--args` and observe whether the second argv is delivered at all. This decides whether T14 is a windowing change or a process-model change — a much larger fork. |
 | 5 | **Is `hiveInstanceSuffix` stable enough to key ownership refs?** It hashes `resolve(HIVE_HOME)`. A moved or symlinked home changes the id and orphans every `refs/hive-owner/*`. | Grep for whether any existing consumer already survives a home move; if not, accept it and say so — the same fragility already governs tmux and socket names, so this adds no new class of failure. |
+
+## 8. The T1 experiment (measured, 2026-07-13)
+
+Run against a throwaway `HIVE_HOME` and a throwaway git repo in a temp dir. The live install was never touched (verified before and after: same pid, same port, uninterrupted uptime).
+
+**Control — the fixed port really is a mutex.** Two daemons, one `HIVE_HOME`, both on a fixed port: the second dies with `hive: Failed to start server. Is port 4599 in use?`. Exactly one daemon survives. The protection we currently rely on is real, and it is entirely accidental.
+
+**Treatment — ephemeral ports.** Two daemons, one `HIVE_HOME`, `HIVE_PORT=0`. **Both bound. Both reported `{"ok":true}` on `/health`.** Two live daemons, one database.
+
+**The database is fine, and I was wrong to say otherwise.** 1,000 authenticated writes fired concurrently at both daemons: **1,000 accepted, 0 rejected, 0 rows lost** (500 via A, 500 via B, all present). `PRAGMA quick_check` → `ok`. `PRAGMA integrity_check` → `ok`. WAL and `busy_timeout` do precisely what they are documented to do, across processes as well as within one.
+
+Two further defences turned out to hold, both for the same structural reason — **the guard lives in SQL, so it serialises across processes for free**:
+- Message delivery cannot double-inject: `claimUndeliveredMessages` claims with `UPDATE ... WHERE id = ? AND deliveredAt IS NULL` and tests `changes === 1` (`db.ts:1369-1386`).
+- Agent-name allocation still arbitrates correctly, because the reservation is an `INSERT OR IGNORE` against the one shared table (`db.ts:1065`).
+- The shared credential table even makes the *overwritten* `operator.cap` authenticate against both daemons.
+
+**What actually breaks is discovery, and it is worse than corruption would have been.** `writeLifecycleFiles` is a blind overwrite (`lifecycle.ts:92-99`), so `daemon.port` and `daemon.pid` name only the **last** daemon to start. The first is orphaned: alive, healthy, holding the database, running its maintenance tick, sweeping resources, probing provider quota — and unnamed anywhere on disk.
+
+Then the second daemon exits normally. `cleanupLifecycleFiles` checks that the recorded pid is its own (`lifecycle.ts:101-108`), sees that it *is*, and **removes `daemon.port` and `daemon.pid`** — while the first daemon is still running. Measured, at that moment:
+
+```
+A (:53087) /health  -> {"ok":true, ...}     # alive, serving, spending
+readDaemonPort()    -> null
+isRunning()         -> false
+```
+
+A live daemon that Hive believes does not exist. `hive stop` cannot find it. And `ensureStarted` — seeing `isRunning() === false` — cheerfully starts another one: `hive init` printed `ready — ... (daemon port 54006)` while the orphan was still serving on 53087. **Two daemons alive, one known to Hive, and the count grows by one on every start.** Each orphan holds a database handle, runs maintenance, and spends real money against the shared provider account, with no supported way to see or stop it.
+
+This is the house bug class exactly: the pid file records an **act** (somebody wrote it), never a **state** (who is alive). The fixed port was the only thing keeping the act and the state in agreement.
+
+**Verdict: T1 is a hard barrier.** Not because ephemeral ports corrupt the database — they demonstrably do not — but because ephemeral ports *without a lock* convert a loud, safe failure (`Failed to start server`) into a silent, accumulating leak of invisible daemons. Ship the lock in the same change, and make `writeLifecycleFiles` refuse to overwrite lifecycle files belonging to a live daemon rather than clobbering them.
+
+**Wave ordering is unchanged.** T1 stays the barrier; everything downstream is unaffected. Two corrections to the plan's *reasoning*, both recorded above: the single-writer risk to `hive.db` was overstated (SQL-level guards and WAL cover it), and the real hazard — orphaned undiscoverable daemons — was one I had not identified before measuring.
 
 ## See Also
 
