@@ -174,6 +174,99 @@ final class ModelControlTests: XCTestCase {
         XCTAssertNotEqual(MeterState.notMetered, .unknown(reason: "no reading for this window"))
     }
 
+    // A window the plan does not meter has nothing reserved against it, and the
+    // daemon says so with null rather than a 0 that would measure a window that
+    // does not exist. This decodes the WIRE, not a struct we built ourselves,
+    // because the hazard is a schema mismatch and a struct cannot express one.
+    //
+    // The blast radius is why this is pinned: QuotaEntry.init(from:) lets a
+    // QuotaPool decode error propagate, so ONE non-decodable window fails the
+    // whole snapshot — `quota` goes nil and the UI reports "the Hive daemon
+    // could not be reached", blanking every provider and blaming the daemon for
+    // what is really a type error. A null reserve must never do that.
+    func testNullReserveOnANotMeteredWindowDecodesAndDoesNotBlankTheSnapshot() throws {
+        let wire = """
+        {"generatedAt":"2026-07-13T13:18:30.457Z","providers":{},"billing":{},
+         "usageSurfaces":{"codex":"metered"},
+         "quota":[
+          {"provider":"codex","account":"default","pool":"codex","origin":"discovered",
+           "models":["*"],"label":"prolite","routable":true,"confidence":"authoritative",
+           "freshness":"fresh","source":"provider",
+           "fiveHour":{"unit":"percent","allowance":null,"used":null,"reserved":null,
+             "reservedIsEstimate":null,"remaining":null,"remainingPct":null,
+             "resetsAt":null,"confidence":"missing","source":"none",
+             "observedAt":null,"windowMinutes":null},
+           "weekly":{"unit":"percent","allowance":100,"used":31,"reserved":1.5,
+             "reservedIsEstimate":true,"remaining":67.5,"remainingPct":0.675,
+             "resetsAt":"2026-07-19T18:58:59.000Z","confidence":"authoritative",
+             "source":"provider","observedAt":"2026-07-13T13:18:30.457Z",
+             "windowMinutes":10080}}
+        ]}
+        """.data(using: .utf8)!
+
+        let snapshot = try JSONDecoder().decode(ModelControlSnapshot.self, from: wire)
+        let quota = try XCTUnwrap(
+            snapshot.quota,
+            "a null reserve must not fail the snapshot — nil quota here would "
+                + "surface to the user as 'the daemon could not be reached'")
+        XCTAssertEqual(quota.count, 1)
+
+        // The numeric reserve on the metered window still round-trips.
+        guard case .pool(let pool) = quota[0] else { return XCTFail("expected a pool") }
+        XCTAssertNil(pool.fiveHour.reserved)
+        XCTAssertEqual(pool.weekly.reserved, 1.5)
+
+        // And the derivation still tells the two absences apart.
+        let usage = MeterDerivation.usage(
+            provider: .codex, surface: .metered, quota: quota, quotaError: nil)
+        guard case .metered(let windows) = usage else {
+            return XCTFail("expected meters, got \(usage)")
+        }
+        XCTAssertEqual(windows[0].state, .notMetered)
+        guard case .measured(let percent, _, _, _) = windows[1].state else {
+            return XCTFail("the weekly window IS measured, got \(windows[1].state)")
+        }
+        XCTAssertEqual(percent, 31)
+    }
+
+    // Backwards compatibility: the daemon shipping today sends a NUMERIC reserve
+    // on the not-metered window (reserved:8 against a window with no allowance).
+    // Making the field optional must not break the wire that is live right now.
+    func testNumericReserveFromTheCurrentDaemonStillDecodes() throws {
+        let wire = """
+        {"generatedAt":"2026-07-13T13:18:30.457Z","providers":{},"billing":{},
+         "usageSurfaces":{"codex":"metered"},
+         "quota":[
+          {"provider":"codex","account":"default","pool":"codex","origin":"discovered",
+           "models":["*"],"label":"prolite","routable":true,"confidence":"authoritative",
+           "freshness":"fresh","source":"provider",
+           "fiveHour":{"unit":"percent","allowance":null,"used":null,"reserved":8,
+             "reservedIsEstimate":true,"remaining":null,"remainingPct":null,
+             "resetsAt":"2026-07-13T15:24:58.589Z","confidence":"missing",
+             "source":"none","observedAt":null,"windowMinutes":null},
+           "weekly":{"unit":"percent","allowance":100,"used":31,"reserved":1.5,
+             "reservedIsEstimate":true,"remaining":67.5,"remainingPct":0.675,
+             "resetsAt":null,"confidence":"authoritative","source":"provider",
+             "observedAt":"2026-07-13T13:18:30.457Z","windowMinutes":10080}}
+        ]}
+        """.data(using: .utf8)!
+
+        let snapshot = try JSONDecoder().decode(ModelControlSnapshot.self, from: wire)
+        let quota = try XCTUnwrap(snapshot.quota)
+        guard case .pool(let pool) = quota[0] else { return XCTFail("expected a pool") }
+        XCTAssertEqual(pool.fiveHour.reserved, 8)
+        XCTAssertEqual(windowsAreNotMetered(quota), true)
+    }
+
+    /// The five-hour window derives .notMetered regardless of what reserve the
+    /// daemon happened to attach to it — the reserve is not what decides.
+    private func windowsAreNotMetered(_ quota: [QuotaEntry]) -> Bool {
+        guard case .metered(let windows) = MeterDerivation.usage(
+            provider: .codex, surface: .metered, quota: quota, quotaError: nil)
+        else { return false }
+        return windows[0].state == .notMetered
+    }
+
     // Nothing here encodes "Codex has no five-hour window" — the decision is
     // made from what the payload reports. The SAME provider on a plan that does
     // expose a five-hour window must light it up with no code change, or we have

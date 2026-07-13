@@ -279,7 +279,16 @@ public struct QuotaWindow: Codable, Equatable, Sendable {
     public var unit: String
     public var allowance: Double?
     public var used: Double?
-    public var reserved: Double
+    /// Optional for the same reason every other number here is: a window the
+    /// plan does not meter has nothing reserved against it, and `0` would be a
+    /// measurement of a window that does not exist. The daemon sends null.
+    ///
+    /// This MUST stay optional. QuotaEntry.init(from:) lets a QuotaPool decode
+    /// error propagate, so a single non-decodable window fails the WHOLE
+    /// snapshot — `quota` goes nil and the UI reports "the Hive daemon could
+    /// not be reached", blanking every provider's meters and blaming the daemon
+    /// for a schema mismatch.
+    public var reserved: Double?
     public var remaining: Double?
     public var remainingPct: Double?
     public var resetsAt: String?
@@ -290,7 +299,7 @@ public struct QuotaWindow: Codable, Equatable, Sendable {
 
     public init(
         unit: String, allowance: Double? = nil, used: Double? = nil,
-        reserved: Double = 0, remaining: Double? = nil, remainingPct: Double? = nil,
+        reserved: Double? = nil, remaining: Double? = nil, remainingPct: Double? = nil,
         resetsAt: String? = nil, confidence: String, source: String,
         observedAt: String? = nil, windowMinutes: Double? = nil
     ) {
