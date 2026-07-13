@@ -1,15 +1,16 @@
 # Grok routing fit — when Hive routes work to Grok, and how it decides
 
-**Status: DESIGN, 2026-07-12.** Companion to the Grok discovery findings (2026-07-12,
-bernard + bella). This document answers one question in the repo's own routing
+**Status: DESIGN.** Companion to the Grok discovery and quota findings. This
+document answers one question in the repo's own routing
 vocabulary: how does the dynamic router **discover** Grok's models, **fit** them to
 tiers, and decide **when** Grok is the right route — automatically, and still
 correctly when xAI ships a new model next week. It obeys the standing rulings in
 `docs/benchmark-fit-policy-proposal.md`, `docs/model-selection.md`, and
 `docs/research/provider-quota-surfaces.md`; nothing here is a manual routing table.
 
-Evidence discipline: every factual claim below is marked **measured** (verified on
-this machine, 2026-07-12, against `grok 0.2.93 (f00f96316d4b) [stable]`),
+Evidence discipline: every factual claim below is marked **measured** (model and
+catalog behavior verified against Grok 0.2.93; quota behavior verified against
+Grok 0.2.99),
 **documented** (an official xAI docs URL), or **UNKNOWN**. The Grok CLI ships
 multiple releases per day including breaking changes (measured: 0.2.92 and 0.2.93
 both dated 2026-07-08 in the shipped changelog), so every measured claim is
@@ -25,12 +26,11 @@ Under the user's SuperGrok subscription it authenticates by grok.com session, ca
 and `grok-composer-2.5-fast` (context 200,000; no effort levels). CLI usage is
 **plan-billed** against a shared weekly pool, not API credits; the account's
 on-demand cap is 0, so pool exhaustion **blocks instead of billing** (measured:
-`onDemandCap.val: 0` on the `x.ai/billing` wire). The pool's remaining level is
-**unmeasurable** on every surface that exists today (measured: the only billing
-surface, ACP ext_method `_x.ai/billing`, carries no allowance/remaining/percent and
-is byte-identical before and after a completed turn). The weekly window is a
-rolling 7 days anchored to the subscribe instant; its end
-(`config.currentPeriod.end`) **is** measurable and free to read.
+`onDemandCap.val: 0` on the `_x.ai/billing` wire). ACP `_x.ai/billing` exposes
+`config.creditUsagePercent`, a coarse 0–100 used gauge that moved after controlled
+model spend while the money rails stayed zero. `config.currentPeriod` supplies
+the weekly boundary. The surface contains no five-hour window, so weekly is
+metered and five-hour is positively not metered.
 
 ## 1. Discovery — the catalog is the source of truth
 
@@ -192,165 +192,120 @@ floors allow, preferred nowhere* — the user's stated intent ("use grok when it
 appropriate") is enacted by eligibility plus the pressure policy of §4, and can be
 strengthened any day with a one-line pin.
 
-## 3. The unmeasurable pool — quota policy
+## 3. The measured weekly pool — quota policy
 
-This is the crux. Claude and Codex have session-free, non-billable, percent-
-denominated pool readings (`docs/research/provider-quota-surfaces.md`). Grok has a
-weekly pool that **exists** but publishes **no level**: the only billing surface,
-ACP ext_method `_x.ai/billing` over `grok agent stdio` (underscore prefix
-mandatory; bare name → -32601; measured), returns period boundaries, on-demand/
-prepaid money rails, and tier — and is byte-identical before and after real spend
-(measured, spend-delta test). A router choosing between a vendor whose remaining
-capacity it can read and one it cannot see must have this spelled out:
+Grok's quota surface is ACP `_x.ai/billing` over `grok agent stdio` (underscore
+prefix mandatory; the bare method returns -32601). `config.creditUsagePercent`
+is a 0–100 used gauge of the shared SuperGrok weekly pool. A controlled
+spend-sensitivity experiment moved it from 7% to 8% after model work while
+`onDemandCap`, `onDemandUsed`, and `prepaidBalance` remained zero. Probe-only
+controls did not move it. The reading is therefore quota usage, not a money
+credit fraction.
+The raw timeline and controls live in
+`artifacts/grok-spend-sensitivity-experiment.md`; the wire contract is summarized
+in `docs/research/provider-quota-surfaces.md` §“Grok — ACP `_x.ai/billing`.”
 
 ### 3.1 What the pool record honestly contains
 
-Register one Grok pool ("the weekly pool" — product-level; **nothing per-model**,
-so both Grok models share it and there is no same-vendor downshift escape when it
-closes). Its record carries:
+Register one account-wide Grok subscription pool; all Grok models bind to it.
+Its record carries:
 
-- **Window**: `config.currentPeriod.start/end` from `_x.ai/billing` — UTC,
-  rolling 7 days anchored to the subscribe instant (measured; corroborated
-  independently by the paywall poll flipping six seconds after
-  `billingPeriodStart`). The reset boundary is real, free, and re-readable.
-- **Level**: none. Confidence is **`missing`** — the schema's word
-  (`QuotaConfidenceSchema`, `src/schemas/quota.ts`; there is no `unknown` member,
-  and `missing` is the honest one: no reading exists). The inspection surfaces
-  print "unmeasurable — vendor publishes no level", the window end, and the
-  evidence basis. **Never a number.** Hive's own ledger of Grok turns may be kept
-  as telemetry, but a consumption estimate against an unknown denominator is not
-  a level and is never rendered as one (accurate-numbers rule; the 12%-
-  `authoritative` failure in `provider-quota-surfaces.md` §"What a usage number
-  means" is the standing warning).
-- **Money rails**: `onDemandCap.val`, `onDemandUsed.val`, `prepaidBalance.val` —
-  the payload's one load-bearing gift. While `onDemandCap.val == 0`, exhaustion
-  blocks and cannot bill (measured). **If any rail ever goes nonzero, the safety
-  premise of this whole section is void**: Grok drops out of automatic routing
-  the same turn, an alert names the rail, and re-admission requires explicit user
-  consent — this is the spend guard applied, not a new mechanism.
+- **Weekly level:** `creditUsagePercent`, used percent with `reported`
+  provenance. The reading is coarse integer percent and may lag model spend by
+  several minutes. Hive preserves that provenance and timestamp rather than
+  upgrading it to an authoritative or instantaneous claim.
+- **Weekly window:** `currentPeriod.start/end`, with the duration derived from
+  those boundaries. The parser reads the payload rather than hardcoding seven
+  days.
+- **Five-hour window:** `not-metered`, based on positive absence from the
+  recognized surface. Grok does not acquire a fictional short window.
+- **Money rails:** `onDemandCap`, `onDemandUsed`, and `prepaidBalance`. These
+  answer whether overflow can cost money, not how much weekly capacity remains.
+  A nonzero rail triggers the existing spend-safety policy; it never becomes a
+  quota percentage.
 
-Neither empty nor infinite, structurally: the pool exists (so Grok is never the
-phantom "unconstrained, most attractive route" that
-`provider-quota-surfaces.md` §"Binding a pool" warns about), and it has no level
-(so nothing can rank it as having headroom it was never measured to have).
+If a recognized weekly surface lacks a usable `creditUsagePercent`, the weekly
+window is `unknown`/READ_FAILED. It is not `not-metered`, because positive
+controls established that the vendor meters this window. AUTO routing excludes
+the candidate after the last-known-good freshness allowance; an exact user
+choice remains subject to the ordinary consent, capability, and money-safety
+gates rather than being silently substituted.
 
-### 3.2 Exhaustion is detected at the point of use, and only there
+The rejected design treated the weekly pool as unmeasurable and waited for a
+limit-shaped model failure to infer exhaustion. That was faithful to earlier
+captures in which the percentage was absent, but it no longer matches the wire.
+It loses because controlled spend established a real gauge, and discarding that
+reading would deliberately replace measurement with failure inference.
 
-There is no reading to watch, so exhaustion announces itself as a **blocked
-call**: a Grok spawn or turn failing with a limit-shaped error. The exact error
-shape in headless output is **UNKNOWN** — never yet observed. The binary carries
-`credit_limit_hit` and `rate_limit_error` telemetry identifiers (measured,
-strings), so the CLI distinguishes these states internally; the first observed
-failure pins the real shape and must be logged **verbatim** (§5) — it is the most
-valuable single log line this design will ever produce.
+### 3.2 Exhaustion and reset
 
-On a limit-shaped failure:
+The ordinary measured-pool gate owns exhaustion. Before AUTO dispatch, Grok's
+weekly used percentage, outstanding reservations, and task estimate must fit the
+pool. At `currentPeriod.end`, Hive re-reads `_x.ai/billing`; it does not invent a
+full tank from the clock alone. A limit-shaped call failure remains valuable
+evidence of parser lag or provider drift and is logged verbatim, but it is no
+longer the primary capacity detector.
 
-1. Read `_x.ai/billing` (free) for a fresh `currentPeriod.end`.
-2. Mark the Grok pool **exhausted until that boundary**. Grok drops from every
-   eligible list via the existing availability filter — the same rule as "a
-   model whose own metered pool is spent, with credits off, stops being a
-   candidate" (`docs/model-selection.md` §Layer 1).
-3. The failed task **fails over by re-derivation**: the tier resolves again
-   without Grok and the spawn retries on the result. A mid-task block is a
-   handoff like any other death; Grok sessions persist and resume
-   (`--resume <id>`, measured), so a post-reset resume is possible but is an
-   operator convenience, not the recovery path.
-4. Alert the orchestrator/user the same turn: pool closed, boundary, what failed
-   over. Silence is the failure mode being designed against.
+The meter's coarse resolution and lag are the named costs. A task can begin
+against a reading that has not caught up with recent work. Reservations and the
+separate Hive assignment ledger reduce concurrent oversubscription; neither is
+rendered as provider-reported usage. If observed failures show that the lag
+exceeds the safety margin, policy can reserve more conservatively using measured
+failure evidence rather than pretending the gauge is absent.
 
-**Misclassification is the named risk**: until the error shape is pinned, a
-non-limit failure that pattern-matches could close the pool for up to seven days
-on a false signal. Mitigations, all mandatory: the closing error is logged
-verbatim with the decision; the pool state is manually clearable (the
-`hive_quota_reconcile` surface class); and closure is never inferred from
-anything but an actual failed Grok call — never from time, never from Hive's own
-spend ledger.
+## 4. Spreading load — Grok is a peer, not a pressure valve
 
-### 3.3 Re-arming
+The user's words are: "I want to spread more work out to more capable agents."
+Grok enters the same two-stage router as Claude and Codex. Consent, capability,
+availability, weekly affordability, and money safety decide whether it is
+eligible. Provider-level weighted fair dispatch over Hive-observed assignments
+then decides which eligible provider receives the next AUTO task, as specified
+in `routing-distribution-and-auto-selection.md`.
 
-At `currentPeriod.end` the pool returns to **eligible with level `missing`** —
-not "full", which would be an invented number. The boundary is re-read from
-`_x.ai/billing` rather than computed from the stale record (the window is
-anchored to a subscription event and re-anchors if the subscription changes —
-measured today: the anchor moved when the user subscribed mid-window). The first
-successful Grok turn after re-arm is the positive control that the vendor agrees.
+Quota percentages do not rank the three vendors against one another. A Grok
+weekly percentage, a Codex plan-dependent window, and Claude's five-hour plus
+weekly windows describe different constraints. Each provider's readings gate
+that provider; Hive's assignment ledger supplies the common distribution
+currency. Grok receives work because it is capable, consented, affordable, and
+behind its earned share—not because another vendor's meter is low.
 
-### 3.4 The wanted falsification
+The rejected pressure-valve policy preferred Grok when Claude or Codex showed
+pressure because an unseen Grok limit appeared cheaper to probe. Two facts
+defeat it: Grok's weekly limit is visible, and capability-first fair dispatch
+does not need a sacrificial vendor. Keeping the valve would slam Grok precisely
+when other vendors are constrained, recreating the load-concentration bug this
+router is meant to remove.
 
-If `creditUsagePercent` (or `monthlyLimit`/`includedUsed`/`totalUsed` — fields
-that exist, unpopulated, in the CLI's own response DTO; measured) ever appears on
-the wire, the pool has become measurable and §3 collapses into the ordinary
-measured-pool machinery. The billing parser therefore treats any newly populated
-key as a **loud, wanted signal** surfaced for re-derivation — logged and alerted,
-never silently ignored and never auto-parsed into a level without the semantics
-being established first (the unit is still UNKNOWN even then).
+The remaining risks are narrower:
 
-## 4. Spreading load — three vendors under pressure
-
-The user's words: "I want to spread more work out to more capable agents." With a
-third vendor, quota tie-breaking — the last stage of the pipeline — has more room
-to act, and the asymmetry of Grok's costs is what makes the policy safe to state:
-
-**Grok is the pressure valve.** Under normal conditions Grok is eligible where
-§2's evidence and the user's floors allow, preferred where the user says so, and
-otherwise sits in the ordering where its placement basis puts it. When Claude and
-Codex pools show measured pressure (their headroom below the standing
-thresholds), quota tie-breaking prefers the vendor whose failure is cheap:
-
-- Routing to Grok when it is secretly near-exhausted costs **one failed spawn and
-  a same-turn failover** — bounded, visible, and free (`onDemandCap == 0`,
-  measured: it blocks, it cannot bill).
-- *Not* routing to Grok preserves nothing: the weekly allowance does not
-  observably carry over past `currentPeriod.end` (rollover behavior:
-  **UNKNOWN**; the FAQ describes a weekly reset — documented:
-  https://docs.x.ai/grok/faq), while the Claude/Codex capacity it would have
-  saved is measured and real.
-
-Per the standing rule — name what each direction of error costs before calling
-one safe (`provider-quota-surfaces.md` §"'Conservative' was the bug, twice") —
-the direction that risks a visible bounced spawn is cheaper than the one that
-burns measurable pools to protect an unmeasurable one. That, and only that, is
-why an invisible pool may be leaned on under pressure.
-
-**Where this goes wrong, plainly:**
-
-1. **Mid-task exhaustion.** The valve routes work in; the pool closes mid-task;
-   the agent's turn blocks and the task is stranded until failover re-derives.
-   Under known pressure, prefer Grok for *bounded* work over long-running deep
-   tasks — a preference the classifier already expresses through tiers.
-2. **The shared-pool coupling.** The weekly pool spans every Grok product the
-   user touches (Chat, Imagine, Voice, Build, API — documented:
-   https://docs.x.ai/grok/faq). The user's own chat evening drains Hive's
-   routing capacity invisibly, and Hive's Build load shortens the user's chat
-   week. Hive cannot see either side. This is disclosed, not solved: it is the
-   price of an unmeasurable shared pool.
-3. **Quality dumping under pressure.** The valve engages precisely when work is
-   being displaced, so provisional-fit Grok inherits load at the worst time. The
-   floors hold (pressure never overrides a capability floor — the floor is
-   checked before quota ever ranks), and §5's escalation telemetry is the tripwire.
-4. **No intra-vendor escape.** Both Grok models drain one pool; when it closes,
-   the whole vendor closes. The failover target is always another vendor.
-5. **Misclassified exhaustion** (§3.2) parks the valve for up to a week — the
-   verbatim-log and manual-clear mitigations exist for exactly this.
+1. **Lagged weekly readings.** Integer percent can trail recent work, so
+   reservations and active-assignment accounting remain necessary.
+2. **Shared-pool coupling.** Other Grok products can consume the same weekly
+   pool. The gauge observes the aggregate after its reporting lag but cannot
+   attribute consumption to Hive.
+3. **Quality dumping.** Distribution never overrides the capability floor.
+   Escalation telemetry by model and tier remains the tripwire for provisional
+   fit.
+4. **No intra-vendor escape.** All Grok models drain the account-wide pool; an
+   exhausted weekly pool removes the vendor, not merely one model.
 
 ## 5. What would falsify this design, and what Hive logs to see it
 
 | # | Observation | What it falsifies | Where it must be visible |
 |---|---|---|---|
 | 1 | Grok escalation rate per model × tier materially above Claude/Codex peers at the same tier | the §2.2 provisional fit (vendor tiering overstated the class) | existing escalation counters on the routing inspection surfaces; per-vendor comparison view |
-| 2 | A pool marked exhausted while a subsequent manual Grok call succeeds | the §3.2 exhaustion detector (error shape misclassified) | the verbatim closing error logged beside the pool state; manual clear leaves an audit row |
-| 3 | Any money rail nonzero (`onDemandCap`, `onDemandUsed`, `prepaidBalance` moves) | the §3/§4 no-money-risk premise — the valve is no longer free to lean on | same-turn alert; Grok auto-routing suspended pending consent |
-| 4 | `creditUsagePercent` (or siblings) populated on the `_x.ai/billing` wire | §3's premise that the pool is unmeasurable — wanted; triggers redesign into a measured pool | billing parser's new-key alert (drift guard) |
-| 5 | Billing payload schema drift or `grok --version` change breaking any parser | the binding assumptions of §1/§3 wholesale | drift-guard alert; affected readings degrade to `stale`/`missing`, loudly |
+| 2 | A Grok limit failure while the fresh post-reservation weekly reading says the task fits | the §3.2 lag allowance or task estimate | verbatim failure beside the reading, reservation, estimate, and decision |
+| 3 | Any money rail nonzero (`onDemandCap`, `onDemandUsed`, `prepaidBalance` moves) | the no-paid-overflow premise | same-turn alert; existing spend-safety policy decides AUTO eligibility |
+| 4 | A recognized weekly surface repeatedly omits `creditUsagePercent` | the meter availability assumed by §3 | weekly state becomes READ_FAILED/unknown, never NOT_METERED; freshness and refusal are visible |
+| 5 | Billing payload schema drift or a `grok --version` change breaking any parser | the binding assumptions of §1/§3 wholesale | drift-guard alert; affected readings degrade to stale/unknown loudly |
 | 6 | A spawn carrying an effort Grok rejects | the per-model effort trust of §1.3 | spawn failure reason names the effort and the record it came from |
 | 7 | LiveBench (or a future registered source) publishes Grok rows that *contradict* vendor tiering (e.g. grok-4.5 scoring below the cheap-class line) | §2.2's fallback placement — measurement wins automatically, but the delta is worth an alert because it means vendor claims misled the interim | benchmark overlay telemetry: basis flip from `vendor-tiering` to `measured` recorded with both values |
 
 Required log lines (all stamped with `grok --version` and, where relevant, the
 models-cache `etag`): every Grok route decision with its placement-basis label;
-every `_x.ai/billing` read (raw payload — it is tiny); every Grok spawn/turn
-failure verbatim; every pool state transition (open → exhausted → re-armed) with
-its evidence.
+every `_x.ai/billing` reading and meter classification; every Grok spawn/turn
+failure verbatim; every weekly fit, exhaustion, and reset transition with its
+reading, reservation, and evidence.
 
 ## 6. Implementation inventory (for the implementing agent; not design)
 

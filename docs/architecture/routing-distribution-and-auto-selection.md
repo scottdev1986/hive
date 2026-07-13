@@ -186,7 +186,7 @@ cross-vendor distribution currency.
 
 **Weighted fair dispatch** balances what Hive itself assigned. Unlike provider quota, this
 measurement exists for every vendor: Hive can always count the work it sent to
-Grok even if Grok publishes no remaining-capacity number. For each provider Hive
+a provider even when that provider publishes no remaining-capacity number. For each provider Hive
 records active AUTO assignments and recently completed AUTO assignment
 opportunities in a bounded rolling window. Explicit model choices and control
 restarts are recorded for audit but do not create or repay fairness debt: direct
@@ -238,52 +238,41 @@ settled eligibility. Its cost is that it does not optimize consumption near a
 reset. That is deliberate: quota gates prevent unsafe work, while distribution
 avoids pretending that incompatible meters form one market.
 
-## Grok works under every metering classification
+## Grok is metered weekly and not metered for five hours
 
-Whether Grok exposes a real usage gauge is a provider fact, not a router design
-choice. The quota driver must establish it from a positive control on the live
-wire surface and pass a per-window classification to the router. This design is
-correct under either result and does not bake a belief about Grok into
-distribution:
+Grok 0.2.99 exposes `config.creditUsagePercent` on ACP `_x.ai/billing`. Controlled
+model spend moved the value from 7% to 8% while every money rail stayed at zero,
+establishing it as a coarse, lagging gauge of the shared SuperGrok weekly pool
+rather than a spend guard. `currentPeriod` supplies the weekly boundary. The
+same surface positively contains no five-hour window. The parser therefore
+emits two different facts: weekly is METERED when the percentage is present;
+five-hour is NOT_METERED. The positive controls are recorded in
+`artifacts/grok-spend-sensitivity-experiment.md` and
+`docs/research/provider-quota-surfaces.md` §“Grok — ACP `_x.ai/billing`.”
 
-- **A real gauge is established.** That window is METERED. Grok must fit it like
-  any other provider before entering AUTO. A separately absent five-hour window
-  can still be NOT_METERED; provider classification is not all-or-nothing.
-  Measured Grok pressure never becomes a cross-vendor score—fair dispatch still
-  spreads work from Hive's assignment ledger.
-- **A readable surface proves that no gauge exists.** That window is
-  NOT_METERED. Grok remains fully eligible for AUTO after consent, capability,
-  availability, and spend-safety checks. It receives assignments through fair
-  dispatch with no headroom number. NOT_METERED is not degraded, unavailable,
-  or read-failed. Excluding it would turn “no gauge” into “cannot work,” the
-  absence bug wearing its opposite mask.
-- **A gauge is expected but the read fails.** That window is READ_FAILED. Grok
-  is excluded from AUTO after the last-known-good freshness bound, with the
-  failure visible. This is a temporary inability to make an automatic quota
-  judgment, not a model capability decision.
+Grok must fit its weekly reading like any other provider before entering AUTO.
+Its absent five-hour window imposes no fictional quota check and is not a
+degraded state. If a recognized weekly surface arrives without a usable
+percentage, that weekly window is READ_FAILED, not NOT_METERED: Hive knows the
+gauge exists and failed to obtain its value. AUTO then excludes Grok after the
+last-known-good freshness bound, while an exact Grok CHOICE remains launchable
+subject to consent, capability, and money safety.
 
-In all three branches, an explicit Grok CHOICE works. Meter classification alone
-never revokes an enabled model the user deliberately selected. The launch still
-passes exact consent and capability checks, never substitutes another model,
-and applies the separate money guard. A READ_FAILED capacity gauge produces a
-warning; an unreadable spend rail uses the existing approval path rather than
-quietly refusing or rerouting the user's choice.
+The weekly percentage is still not a cross-vendor distribution score. Its
+multi-minute lag and integer granularity are adequate for Grok's own
+affordability gate, not for comparing a Grok week with a Claude five-hour window
+or a Codex week. Provider-level weighted fair dispatch remains load-bearing for
+spreading: Hive can count every assignment consistently even though the three
+vendors expose different window sets and cadences.
 
-If Grok is NOT_METERED, the assignment ledger is load-bearing: it is the only
-honest signal that can spread work to Grok without treating unknown capacity as
-free or empty. Hive cannot read the vendor's remaining allowance, but Hive can
-always count every task it dispatched there. If Grok is METERED, the same ledger
-still prevents cross-vendor arithmetic; the real gauge adds an affordability
-gate, not a different distribution algorithm.
-
-For a NOT_METERED weekly pool, the no-paid-spill guard and measured exhaustion
-latch in `grok-routing-fit.md` §3 remain relevant. A limit-shaped failure closes
-the pool until its observed boundary; re-arm returns it to NOT_METERED, never
-“100% free.” For a METERED pool, the ordinary measured exhaustion machinery
-supersedes that inference. In neither case should Grok become the pressure valve
-from `grok-routing-fit.md` §4: leaning on one vendor whenever other meters are
-low is not distribution, and it recreates a special router around the one
-surface that was hardest to reason about.
+The rejected design treated Grok as an unmeasurable weekly pool, detected
+exhaustion only at point of use, and leaned on it as a pressure valve when other
+vendors ran low. That matched older payload captures in which the percentage was
+absent, but the controlled spend experiment falsified its premise. Grok uses
+ordinary measured-pool exhaustion for the weekly window. It still must not
+become a pressure valve: leaning on one vendor whenever other meters are low is
+not distribution and would reintroduce special routing around a provider whose
+real meter is merely coarse.
 
 ## Selection outcomes
 
@@ -457,12 +446,10 @@ shows, in order:
 8. warnings, explicit overrides, and later capability escalation lineage.
 
 The summary sentence should be concrete: “Standard coding; AUTO; Claude's two
-meters fit, Codex weekly READ_FAILED, Grok weekly NOT_METERED with safe spend
-rails; Claude and Grok entered fair dispatch; Grok had the largest earned
-AUTO-share deficit; selected grok/model-x at high.” If a Grok gauge is
-established, the same sentence says METERED and prints its own-window fit. A
-user should not need logs to discover that another model was considered or why
-one disappeared.
+meters fit, Codex weekly READ_FAILED, Grok weekly METERED at 8% used with safe
+spend rails; Claude and Grok entered fair dispatch; Grok had the largest earned
+AUTO-share deficit; selected grok/model-x at high.” A user should not need logs
+to discover that another model was considered or why one disappeared.
 
 Decision records are append-only audit facts tied to the policy revision,
 catalog observations, quota observation ids, and fairness snapshot used. The
@@ -509,13 +496,13 @@ old router” path.
    A concurrent spawn must see the reservation/assignment. Delete the fixed
    unknown-headroom score at `src/daemon/quota.ts:61–64` in the same cutover; do
    not leave dual selection semantics behind a fallback.
-7. **Wire Grok through the measured classification, whichever it is.** If the
-   driver establishes a real gauge, mark that window METERED and use its
-   ordinary affordability gate. If a readable surface establishes no gauge,
-   mark it NOT_METERED and keep Grok fully AUTO-eligible through fair dispatch.
-   If an expected read fails, mark READ_FAILED and exclude only AUTO. Test both
-   gauge verdicts, mixed windows, exact choice under READ_FAILED, money-rail
-   change, limit failure, reset re-arm, one candidate, and empty pool.
+7. **Use Grok's measured weekly classification.** Feed the existing
+   `creditUsagePercent` weekly reading through the ordinary affordability gate
+   and preserve the positively absent five-hour window as NOT_METERED. A missing
+   or malformed percentage on a recognized weekly surface becomes READ_FAILED
+   and excludes only AUTO. Test the mixed window states, exact choice under
+   READ_FAILED, money-rail change, limit failure, reset re-arm, one candidate,
+   and empty pool.
 8. **Turn on the controls and watch measured outcomes.** MCC writes AUTO only
    after an affirmative user action. Compare assignment share, launch failure,
    first-attempt landing, and escalation rates by tier/model/provider. Evidence
