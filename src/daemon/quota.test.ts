@@ -157,6 +157,13 @@ describe("quota windows", () => {
 });
 
 describe("quota persistence and reservations", () => {
+  test("unknown-ledger recovery names the quota database", () => {
+    const error = new QuotaLedgerUnknownError("test corruption");
+
+    expect(error.message).toContain("restore the intact quota.db");
+    expect(error.message).not.toContain("hive.db");
+  });
+
   test("repairs an intact usage tail from an older daemon and protects later writes", async () => {
     const { db } = await fileDatabase("mixed-version-integrity");
     new QuotaLedger(db);

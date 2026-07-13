@@ -284,7 +284,7 @@ export class QuotaLedgerUnknownError extends Error {
   constructor(reason: string) {
     super(
       `The quota ledger history is unknown (${reason}). Refusing to report fresh ` +
-        "headroom or reserve more quota; restore the intact hive.db before launching.",
+        "headroom or reserve more quota; restore the intact quota.db before launching.",
     );
     this.name = "QuotaLedgerUnknownError";
   }
