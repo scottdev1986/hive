@@ -23,7 +23,7 @@ In row three the real project is alive at `B` and the bookmark points at an unre
 
 The surviving rule is stronger than either version: a bookmark is a hint, never a verdict. Filesystem evidence is consulted **before** the bookmark and may **only refuse**. See the resolver in [blueprint.md](blueprint.md) ("Project identity: evidence may only refuse").
 
-- **`NSURLFileResourceIdentifierKey` is not persistent across system restarts.** It can be evidence; it can never be the durable key. Same for `dev`/`ino`/`birthtime`: *matching* evidence is necessary and insufficient, *differing* evidence is dispositive.
+- **`NSURLFileResourceIdentifierKey` is not persistent across system restarts.** It can be evidence; it can never be the durable key. The durable refusal pair is `ino`/`birthtime`: matching is necessary and insufficient, while either differing is dispositive. `st_dev` is only a process-local mount hint because macOS may renumber it across reboot.
 - **Security-scoped bookmarks are a sandbox construct.** `startAccessingSecurityScopedResource()` is a no-op outside a sandbox. Hive ships unsandboxed (`scripts/signing/entitlements.plist` declares only `allow-jit` and `allow-unsigned-executable-memory` — no `app-sandbox` key), so the Workspace uses **plain** bookmarks, which is what the prototype measured.
 
 ## XPC: the endpoint is not the identity

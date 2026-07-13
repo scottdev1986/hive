@@ -21,7 +21,13 @@ export function evidenceOf(path: string): FsEvidence {
 }
 
 export function evidenceMatches(a: FsEvidence, b: FsEvidence): boolean {
-  return a.dev === b.dev && a.ino === b.ino && a.birthtimeMs === b.birthtimeMs;
+  // st_dev identifies the current mount, not the filesystem durably: macOS can
+  // assign a different value after a reboot while the directory's inode and
+  // birth time remain unchanged. Treating that remount as replacement locks
+  // every registered project behind NEEDS_SETUP. The inode + birth-time pair
+  // still refuses a recreated directory; dev remains useful for process-local
+  // volume behavior and diagnostics, but is not persisted identity evidence.
+  return a.ino === b.ino && a.birthtimeMs === b.birthtimeMs;
 }
 
 /**

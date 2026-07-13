@@ -25,8 +25,9 @@ In row three the real project is alive at `B`, and the bookmark points at an unr
 directory at `A`. The prescribed check then compares the bookmark's path (`A`) with the
 confirmed path (`A`), finds agreement, and attaches the wrong directory.
 
-So the resolver checks filesystem evidence — `dev`, `ino`, `birthtimeMs` — *before* it
-consults the bookmark. The blueprint is right that inode/device pairs are not identities.
+So the resolver checks durable filesystem evidence — `ino`, `birthtimeMs` — *before* it
+consults the bookmark. `st_dev` is retained only as a process-local mount hint because
+macOS may renumber it across reboot. The blueprint is right that these values are not identities.
 The asymmetry is what makes them useful:
 
 - **matching** evidence is necessary, and not sufficient, to prove identity;
@@ -59,7 +60,7 @@ with an inode — simulating one would quietly assert exactly the thing the blue
 ## What this does not prove
 
 - **Network volumes are untested.** No SMB server was reachable. The refusal logic assumes
-  `dev`/`ino`/`birthtimeMs` change when a directory is replaced; an SMB client synthesizes
+  `ino`/`birthtimeMs` change when a directory is replaced; an SMB client synthesizes
   inode numbers and a server may reissue them across remounts. `EVIDENCE.md` states the
   experiment that would settle it. Until then a network volume should reach `BLOCKED_CONFIG`.
 - **`concurrent-starts` is single-process.** Twenty `resolveOrCreate` calls on one event loop

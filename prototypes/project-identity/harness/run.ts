@@ -79,7 +79,7 @@ function renderEvidence(results: ScenarioResult[]): string {
     "would have made the result depend on an unrecorded server configuration. Nothing here",
     "should be read as evidence about network volumes. The specific claims that do not transfer:",
     "",
-    "- **Inode stability.** The refusal logic rests on `dev`/`ino`/`birthtimeMs` changing when a",
+    "- **Inode stability.** The refusal logic rests on `ino`/`birthtimeMs` changing when a",
     "  directory is replaced. An SMB client synthesizes inode numbers, and a server may reissue",
     "  them across remounts. If it does, `findByEvidence` can both miss a real move and, far worse,",
     "  match an unrelated directory.",

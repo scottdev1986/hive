@@ -29,12 +29,15 @@ export type Provenance = "foundation" | "probed" | "assumed";
  * The blueprint is right that these are "evidence only ... not persistent,
  * non-reusable identities". The asymmetry that makes them useful:
  *
- *   matching evidence  -> necessary but NOT sufficient to prove identity
- *   differing evidence -> DISPOSITIVE proof of non-identity
+ *   matching inode + birthtime  -> necessary but NOT sufficient to prove identity
+ *   differing inode or birthtime -> DISPOSITIVE proof of non-identity
  *
- * The resolver therefore only ever uses evidence to *refuse*, never to *accept*.
+ * The resolver therefore only ever uses durable evidence to *refuse*, never to
+ * *accept*. A differing dev alone is not durable evidence because mounts can be
+ * renumbered across reboots.
  */
 export interface FsEvidence {
+  /** Current mount's device number. Useful diagnostically, but not stable across reboots. */
   dev: number;
   ino: number;
   birthtimeMs: number;
