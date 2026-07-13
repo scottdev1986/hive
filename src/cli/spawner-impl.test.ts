@@ -2672,7 +2672,7 @@ describe("HiveSpawner wiring", () => {
     });
 
     expect(spawned.status).toEqual("spawning");
-    expect(rolloutReads).toBeGreaterThanOrEqual(4);
+    expect(rolloutReads).toBe(0);
     expect(processReads).toBeGreaterThanOrEqual(4);
     expect(tmux.capturePaneCalls).toBeGreaterThanOrEqual(4);
     expect(tmux.killed).toEqual([]);
