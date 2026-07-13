@@ -1,36 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { KillSessionOptions } from "../adapters/tmux";
-import type { AgentRecord } from "../schemas";
 import { stopAgentSessions, stopHive } from "./control";
 import { agentTmuxSession, orchestratorTmuxSession } from "../daemon/tmux-sessions";
-
-const timestamp = "2026-07-09T12:00:00.000Z";
-
-function agent(
-  name: string,
-  status: AgentRecord["status"],
-): AgentRecord {
-  return {
-    id: `agent-${name}`,
-    name,
-    tool: "codex",
-    model: "gpt-test",
-    category: "simple_coding",
-    status,
-    taskDescription: `Task for ${name}`,
-    worktreePath: `/tmp/${name}`,
-    branch: `hive/${name}-task`,
-    tmuxSession: `hive-${name}`,
-    contextPct: 0,
-    createdAt: timestamp,
-    lastEventAt: timestamp,
-    recoveryAttempts: 0,
-    capabilityEpoch: 0,
-    readOnly: false,
-    writeRevoked: false,
-    channelsEnabled: false,
-  };
-}
 
 class FakeStopTmux {
   readonly killed: string[] = [];
@@ -41,55 +12,47 @@ class FakeStopTmux {
     return this.sessions;
   }
 
+  async listPanePids(_session: string): Promise<number[]> {
+    return [];
+  }
+
   async killSession(
     session: string,
     _options?: KillSessionOptions,
   ): Promise<void> {
     this.killed.push(session);
+    const index = this.sessions.indexOf(session);
+    if (index !== -1) this.sessions.splice(index, 1);
   }
 }
 
 describe("hive stop agent sessions", () => {
-  test("kills live daemon agents and marks each row dead after its session", async () => {
-    const tmux = new FakeStopTmux([]);
-    const marked: string[] = [];
-    const stopped = await stopAgentSessions(4317, {
-      tmux,
-      fetchAgents: async () => [
-        agent("maya", "working"),
-        agent("sam", "idle"),
-        agent("david", "done"),
-      ],
-      markDead: async (_port, name) => {
-        expect(tmux.killed).toContain(`hive-${name}`);
-        marked.push(name);
-      },
-    });
+  test("the dead-daemon fallback stops every session owned by this instance", async () => {
+    const maya = agentTmuxSession("maya");
+    const sam = agentTmuxSession("sam");
+    const tmux = new FakeStopTmux([maya, "unrelated", sam]);
+    const stopped = await stopAgentSessions({ tmux });
 
     expect(stopped).toEqual(2);
-    expect(tmux.killed).toEqual(["hive-maya", "hive-sam"]);
-    expect(marked).toEqual(["maya", "sam"]);
+    expect(tmux.killed).toEqual([maya, sam]);
+    expect(tmux.sessions).toEqual(["unrelated"]);
   });
 
-  test("falls back to every hive-prefixed tmux session when daemon is unreachable", async () => {
+  test("captures every process tree before removing the first session", async () => {
     const tmux = new FakeStopTmux([
-      "hive-maya",
-      "unrelated",
-      "hive-stale-agent",
-      "also-unrelated",
+      agentTmuxSession("maya"),
+      agentTmuxSession("sam"),
     ]);
-    let marked = false;
-    const stopped = await stopAgentSessions(4317, {
-      tmux,
-      fetchAgents: () => Promise.reject(new Error("daemon unreachable")),
-      markDead: async () => {
-        marked = true;
-      },
-    });
+    let captures = 0;
+    tmux.listPanePids = async () => {
+      expect(tmux.killed).toEqual([]);
+      captures += 1;
+      return [];
+    };
+    const stopped = await stopAgentSessions({ tmux });
 
     expect(stopped).toEqual(2);
-    expect(tmux.killed).toEqual(["hive-maya", "hive-stale-agent"]);
-    expect(marked).toEqual(false);
+    expect(captures).toBe(2);
   });
 
   test("scratch stop targets only sessions scoped to its HIVE_HOME", async () => {
@@ -107,33 +70,133 @@ describe("hive stop agent sessions", () => {
       "unrelated",
     ]);
 
-    const stopped = await stopAgentSessions(null, { tmux, hiveHome: scratch });
+    const stopped = await stopAgentSessions({ tmux, hiveHome: scratch });
 
     expect(stopped).toEqual(2);
     expect(tmux.killed).toEqual([ownAgent, ownOrchestrator]);
   });
 
-  test("rejects daemon rows belonging to another instance", async () => {
-    const scratch = "/tmp/hive-scratch-daemon";
-    const own = agent("maya", "working");
-    own.tmuxSession = agentTmuxSession("maya", scratch);
-    const foreign = agent("sam", "working");
-    foreign.tmuxSession = agentTmuxSession("sam", "/tmp/hive-real-daemon");
-    const tmux = new FakeStopTmux([]);
+  test("preserves every session when one process tree cannot be captured", async () => {
+    const tmux = new FakeStopTmux([agentTmuxSession("maya")]);
+    tmux.listPanePids = async () => {
+      throw new Error("ps unavailable");
+    };
 
-    const stopped = await stopAgentSessions(4317, {
-      tmux,
-      hiveHome: scratch,
-      fetchAgents: async () => [own, foreign],
-      markDead: async () => {},
-    });
-
-    expect(stopped).toEqual(1);
-    expect(tmux.killed).toEqual([own.tmuxSession]);
+    await expect(stopAgentSessions({ tmux })).rejects.toThrow(
+      /process tree could not be captured.*ps unavailable/s,
+    );
+    expect(tmux.killed).toEqual([]);
   });
 });
 
 describe("hive stop daemon", () => {
+  test("signals a live daemon before touching the sessions it must reap", async () => {
+    const order: string[] = [];
+    const tmux = new FakeStopTmux([
+      agentTmuxSession("maya"),
+      orchestratorTmuxSession(),
+    ]);
+    tmux.killSession = async (session) => {
+      order.push(`session:${session}`);
+      tmux.killed.push(session);
+      const index = tmux.sessions.indexOf(session);
+      if (index !== -1) tmux.sessions.splice(index, 1);
+    };
+    const states: Array<"live" | "dead"> = ["live", "dead"];
+
+    await stopHive({
+      tmux,
+      readPid: () => 4242,
+      kill: () => order.push("SIGTERM"),
+      liveness: async () => states.shift() ?? "dead",
+      cleanup: () => {},
+      sleep: async () => {},
+      timeoutMs: 50,
+      log: () => {},
+    });
+
+    expect(order[0]).toBe("SIGTERM");
+  });
+
+  test("unknown daemon liveness preserves every process and session", async () => {
+    const tmux = new FakeStopTmux([agentTmuxSession("maya")]);
+    let signalled = false;
+
+    await expect(stopHive({
+      tmux,
+      readPid: () => 4242,
+      kill: () => {
+        signalled = true;
+      },
+      liveness: async () => "unknown",
+      cleanup: () => {},
+      sleep: async () => {},
+      timeoutMs: 50,
+      log: () => {},
+    })).rejects.toThrow(/unknown/);
+
+    expect(signalled).toBe(false);
+    expect(tmux.killed).toEqual([]);
+  });
+
+  test("a positively dead daemon fallback reaps a real detached session child", async () => {
+    const childProgram = "setInterval(() => {}, 1000)";
+    const parentProgram = [
+      `const child = Bun.spawn([${JSON.stringify(process.execPath)}, \"-e\", ${JSON.stringify(childProgram)}], { detached: true, stdin: \"ignore\", stdout: \"ignore\", stderr: \"ignore\" });`,
+      "console.log(child.pid);",
+      "setInterval(() => {}, 1000);",
+    ].join("\n");
+    const parent = Bun.spawn([process.execPath, "-e", parentProgram], {
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const reader = parent.stdout.getReader();
+    let output = "";
+    while (!output.includes("\n")) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      output += new TextDecoder().decode(chunk.value);
+    }
+    reader.releaseLock();
+    const childPid = Number.parseInt(output.trim(), 10);
+    expect(Number.isSafeInteger(childPid)).toBe(true);
+
+    const session = agentTmuxSession("maya");
+    let sessionPresent = true;
+    const tmux = {
+      listSessions: async () => sessionPresent ? [session] : [],
+      listPanePids: async () => [parent.pid],
+      killSession: async () => {
+        sessionPresent = false;
+        try {
+          process.kill(parent.pid, "SIGKILL");
+        } catch {
+          // The fallback's reaper may win the race.
+        }
+      },
+    };
+    try {
+      await stopHive({
+        tmux,
+        readPid: () => null,
+        liveness: async () => "dead",
+        cleanup: () => {},
+        log: () => {},
+      });
+
+      expect(() => process.kill(childPid, 0)).toThrow();
+    } finally {
+      for (const pid of [parent.pid, childPid]) {
+        try {
+          process.kill(pid, "SIGKILL");
+        } catch {
+          // Already gone is the intended result.
+        }
+      }
+      await parent.exited;
+    }
+  });
+
   test("does not report success or remove lifecycle evidence while the daemon is live", async () => {
     const tmux = new FakeStopTmux([]);
     const logs: string[] = [];
@@ -141,7 +204,6 @@ describe("hive stop daemon", () => {
 
     await expect(stopHive({
       tmux,
-      readPort: () => null,
       readPid: () => 4242,
       kill: () => {},
       liveness: async () => "live",
@@ -165,7 +227,6 @@ describe("hive stop daemon", () => {
 
     await stopHive({
       tmux,
-      readPort: () => null,
       readPid: () => 4242,
       kill: () => {},
       liveness: async () => states.shift() ?? "dead",
@@ -178,6 +239,6 @@ describe("hive stop daemon", () => {
     });
 
     expect(cleanedPid).toBe(4242);
-    expect(logs).toEqual(["Stopped 0 agent sessions and the Hive daemon."]);
+    expect(logs).toEqual(["Stopped the Hive daemon and its sessions."]);
   });
 });

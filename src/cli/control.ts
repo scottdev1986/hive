@@ -14,19 +14,22 @@ import {
   type DaemonInstanceLiveness,
 } from "../daemon/lifecycle";
 import { getHiveHome } from "../daemon/db";
+import {
+  captureProcessTree,
+  defaultReapDependencies,
+  reapCapturedTree,
+  type ReapDependencies,
+} from "../daemon/teardown";
 import type {
-  AgentRecord,
   MemoryScope,
   MemoryWriteInput,
   QuotaObservationInput,
 } from "../schemas";
-import { orchestratorTmuxSession } from "../daemon/orchestrator-lifecycle";
 import { hiveInstanceSuffix, isTmuxSessionForInstance } from "../daemon/tmux-sessions";
 import {
   deleteMemory,
   fetchAgentStatus,
   fetchQuotaStatus,
-  markAgentDead,
   readMemory,
   reconcileQuota,
   reindexMemory,
@@ -41,69 +44,73 @@ import { operatorFetch, operatorHeaders } from "./credential";
 import { isAutonomy, type Autonomy } from "../config/autonomy";
 import { formatQuotaStatus, formatStatusTable } from "./status";
 
-const isLive = (agent: AgentRecord): boolean =>
-  agent.status !== "dead" && agent.status !== "done";
-
 const isNoSuchProcessError = (error: unknown): boolean =>
   typeof error === "object" &&
   error !== null &&
   "code" in error &&
   error.code === "ESRCH";
 
-const isValidDaemonPort = (port: number | null): port is number =>
-  port !== null && port > 0 && port <= 65_535;
-
-type StopTmux = Pick<TmuxAdapter, "killSession" | "listSessions">;
-type AgentStatusFetcher = (port: number) => Promise<AgentRecord[]>;
-type DeadAgentMarker = (port: number, agentName: string) => Promise<void>;
+type StopTmux = Pick<
+  TmuxAdapter,
+  "killSession" | "listPanePids" | "listSessions"
+>;
 
 export interface StopAgentSessionDependencies {
   tmux: StopTmux;
-  fetchAgents?: AgentStatusFetcher;
-  markDead?: DeadAgentMarker;
   hiveHome?: string;
+  reap?: ReapDependencies;
 }
 
-const markAgentDeadViaMcp: DeadAgentMarker = async (port, agentName) => {
-  await markAgentDead(port, agentName);
-};
-
 export async function stopAgentSessions(
-  port: number | null,
   dependencies: StopAgentSessionDependencies,
 ): Promise<number> {
-  const fetchAgents = dependencies.fetchAgents ?? fetchAgentStatus;
-  const markDead = dependencies.markDead ?? markAgentDeadViaMcp;
-
-  if (isValidDaemonPort(port)) {
-    let agents: AgentRecord[] | null;
-    try {
-      agents = await fetchAgents(port);
-    } catch {
-      agents = null;
-    }
-    if (agents !== null) {
-      const liveAgents = agents.filter((agent) =>
-        isLive(agent) &&
-        isTmuxSessionForInstance(agent.tmuxSession, dependencies.hiveHome)
-      );
-      await Promise.all(liveAgents.map(async (agent) => {
-        await dependencies.tmux.killSession(agent.tmuxSession, {
-          ignoreMissing: true,
-        });
-        await markDead(port, agent.name);
-      }));
-      return liveAgents.length;
-    }
-  }
-
-  const hiveSessions = (await dependencies.tmux.listSessions()).filter(
+  const sessions = (await dependencies.tmux.listSessions()).filter(
     (session) => isTmuxSessionForInstance(session, dependencies.hiveHome),
   );
-  await Promise.all(hiveSessions.map((session) =>
+  if (sessions.length === 0) return 0;
+
+  const reap = dependencies.reap ?? defaultReapDependencies();
+  const captured = await Promise.all(sessions.map(async (session) => {
+    try {
+      const roots = await dependencies.tmux.listPanePids(session);
+      return await captureProcessTree(roots, reap);
+    } catch (error) {
+      throw new Error(
+        `Refusing to close ${session} because its process tree could not be captured: ${
+          error instanceof Error ? error.message : String(error)
+        }\nFix: inspect the session, then rerun \`hive stop\`.`,
+      );
+    }
+  }));
+
+  const sessionResults = await Promise.allSettled(sessions.map((session) =>
     dependencies.tmux.killSession(session, { ignoreMissing: true })
   ));
-  return hiveSessions.length;
+  const outcomes = await Promise.all(
+    captured.map((tree) => reapCapturedTree(tree, reap)),
+  );
+  const survivors = outcomes.flatMap((outcome) => outcome.survivors);
+  const remaining = new Set(await dependencies.tmux.listSessions());
+  const remainingOwned = sessions.filter((session) => remaining.has(session));
+  const sessionErrors = sessionResults.flatMap((result) =>
+    result.status === "rejected"
+      ? [result.reason instanceof Error ? result.reason.message : String(result.reason)]
+      : []
+  );
+  if (
+    sessionErrors.length > 0 || survivors.length > 0 || remainingOwned.length > 0
+  ) {
+    const details = [
+      ...sessionErrors,
+      ...survivors.map((process) => `pid ${process.pid} (${process.command}) survived`),
+      ...remainingOwned.map((session) => `${session} is still present`),
+    ];
+    throw new Error(
+      `Hive could not completely stop its remaining sessions: ${details.join("; ")}\n` +
+        "Fix: inspect the named sessions and processes, stop them, then rerun `hive stop`.",
+    );
+  }
+  return sessions.length;
 }
 
 export function requireDaemonPort(explicitPort?: number): number {
@@ -412,7 +419,6 @@ export async function registerLayoutTerminal(
 
 export interface StopHiveDependencies {
   readonly tmux?: StopTmux;
-  readonly readPort?: () => number | null;
   readonly readPid?: () => number | null;
   readonly kill?: (pid: number, signal: NodeJS.Signals) => void;
   readonly liveness?: () => Promise<DaemonInstanceLiveness>;
@@ -423,20 +429,27 @@ export interface StopHiveDependencies {
 }
 
 export async function stopHive(deps: StopHiveDependencies = {}): Promise<void> {
-  const port = (deps.readPort ?? readDaemonPort)();
   const tmux = deps.tmux ?? new TmuxAdapter();
-  const stoppedAgentCount = await stopAgentSessions(port, { tmux });
-  await tmux.killSession(orchestratorTmuxSession(), { ignoreMissing: true });
-  if (isTmuxSessionForInstance("hive-orchestrator")) {
-    await tmux.killSession("hive-orchestrator", { ignoreMissing: true });
-  }
-
   const pid = (deps.readPid ?? readDaemonPid)();
   const liveness = deps.liveness ?? (() =>
     daemonInstanceLiveness(getHiveHome(), hiveInstanceSuffix())
   );
   const cleanup = deps.cleanup ?? cleanupLifecycleFiles;
-  if (pid !== null) {
+  let state = await liveness();
+  if (state === "unknown") {
+    throw new Error(
+      "the daemon's liveness is unknown; refusing to signal it or close its sessions\n" +
+        "Fix: inspect the daemon lifecycle files, then rerun `hive stop`.",
+    );
+  }
+  const daemonWasLive = state === "live";
+  if (daemonWasLive) {
+    if (pid === null) {
+      throw new Error(
+        "the daemon is live but has no recorded pid\n" +
+          "Fix: inspect the daemon lifecycle files, then rerun `hive stop`.",
+      );
+    }
     try {
       (deps.kill ?? process.kill)(pid, "SIGTERM");
     } catch (error) {
@@ -446,7 +459,7 @@ export async function stopHive(deps: StopHiveDependencies = {}): Promise<void> {
     }
     const sleep = deps.sleep ?? ((milliseconds: number) => Bun.sleep(milliseconds));
     const attempts = Math.max(1, Math.ceil((deps.timeoutMs ?? 5_000) / 50));
-    let state = await liveness();
+    state = await liveness();
     for (let attempt = 0; state !== "dead" && attempt < attempts; attempt += 1) {
       await sleep(50);
       state = await liveness();
@@ -457,20 +470,17 @@ export async function stopHive(deps: StopHiveDependencies = {}): Promise<void> {
           "Fix: inspect the daemon, stop it manually, then rerun `hive stop`.",
       );
     }
-    cleanup(pid);
-  } else {
-    const state = await liveness();
-    if (state !== "dead") {
-      throw new Error(
-        `the daemon is ${state} but has no recorded pid\n` +
-          "Fix: inspect the daemon lifecycle files, then rerun `hive stop`.",
-      );
-    }
-    cleanup();
   }
 
-  const agentLabel = stoppedAgentCount === 1 ? "agent session" : "agent sessions";
-  (deps.log ?? console.log)(
-    `Stopped ${stoppedAgentCount} ${agentLabel}${pid === null ? "; no daemon process was recorded." : " and the Hive daemon."}`,
-  );
+  const stoppedSessions = await stopAgentSessions({ tmux });
+  cleanup(pid ?? undefined);
+  const sessionLabel = stoppedSessions === 1 ? "session" : "sessions";
+  const report = daemonWasLive
+    ? stoppedSessions === 0
+      ? "Stopped the Hive daemon and its sessions."
+      : `Stopped the Hive daemon; reaped ${stoppedSessions} remaining Hive ${sessionLabel}.`
+    : stoppedSessions === 0
+    ? "No live Hive daemon or sessions were found."
+    : `Stopped ${stoppedSessions} stale Hive ${sessionLabel}; no live daemon was found.`;
+  (deps.log ?? console.log)(report);
 }
