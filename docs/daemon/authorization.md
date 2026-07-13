@@ -21,7 +21,7 @@ The blueprint's XPC design gets this for free by omitting tenant IDs from method
 
 Four roles exist (`capabilities.ts:96-135`), and the interesting property of each is what it *cannot* do.
 
-**Operator** — the human's `hive` CLI and the Workspace acting for them. Holds 28 of the 29 actions; the one it lacks is `channel:use`, which is an agent-bridge transport, not a control-plane right. Unrestricted subject scope, deliberately: a caller that can already spawn and kill any agent gains no new authority from also being allowed to name one, so narrowing it would cost clarity and buy nothing.
+**Operator** — the human's `hive` CLI and the Workspace acting for them. Holds 26 of the 27 actions; the one it lacks is `channel:use`, which is an agent-bridge transport, not a control-plane right. Unrestricted subject scope, deliberately: a caller that can already spawn and kill any agent gains no new authority from also being allowed to name one, so narrowing it would cost clarity and buy nothing.
 
 **Orchestrator** — the root agent. Spawns, approves, kills, recovers, reads the global inbox, reads autonomy. It holds **no landing right and no autonomy/routing/graphify write**, ever. This is the single most important line in the matrix: the process that decides *what work happens* must not be the process that can *put code on `main`*. An orchestrator compromised by prompt injection can waste money; it cannot merge.
 
@@ -31,7 +31,7 @@ Four roles exist (`capabilities.ts:96-135`), and the interesting property of eac
 
 The asymmetry is the design. **Neither orchestrator nor writer is a superset of the other**, so a captured credential of either kind buys a strict subset of the control plane. There is no role that both decides and merges (`capabilities.ts:93-95`).
 
-## The 29 actions
+## The 27 actions
 
 Enumerated from `capabilities.ts:21-50`. `O` operator, `R` orchestrator, `W` writer, `r` reader.
 
@@ -58,8 +58,6 @@ Enumerated from `capabilities.ts:21-50`. `O` operator, `R` orchestrator, `W` wri
 | `event:report` | O R W r | |
 | `telemetry:report` | O R W r | |
 | `channel:use` | R W r | **operator does not hold it** |
-| `viewer:attach` | O | |
-| `terminal:register` | O | |
 | `root-token:mint` | O | the one minting carve-out |
 | `autonomy:read` | O R | agents may observe the dial |
 | `autonomy:write` | O | an agent raising it is a sandbox escape |
@@ -80,10 +78,6 @@ Every HTTP route below `/handshake` in `server.ts:2034-2157` authenticates first
 | `POST /event` | `event:report` | self | no | `server.ts:3208` |
 | `POST /statusline` | `telemetry:report` | self | no | `server.ts:2328` |
 | `POST /channel/{register,poll,ack,permission-request}` | `channel:use` | self | register + permission-request only | `server.ts:2204` |
-| `POST /viewer` | `viewer:attach` | any | yes | `server.ts:3046` |
-| `POST,DELETE /orchestrator-terminal` | `terminal:register` | — | yes | `server.ts:2082`, `:2577` |
-| `POST /workspace` | `terminal:register` | — | only when presence flips | `server.ts:2951` |
-| `GET /workspace` | `status:read` | — | no | `server.ts:2984` |
 | `GET /autonomy` | `autonomy:read` | — | no | `server.ts:2782` |
 | `POST /autonomy` | `autonomy:write` | — | yes | `server.ts:2792` |
 | `GET /routing/policy` | `routing-policy:read` | — | no | `server.ts:2846` |

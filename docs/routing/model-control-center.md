@@ -194,6 +194,8 @@ is the sole writer.
   set-selection | set-chain | export` (`src/cli/routing-policy.ts`, dispatched from
   `src/cli.ts:345`).
 
+The Settings controller keeps one data source while the window exists, but `show()` refreshes the model-control snapshot every time the window is shown before restoring the selected page (`HiveWorkspace/Settings/SettingsWindowController.swift:90-112`). Reopening Settings therefore cannot present the process's launch-time catalog or quota as if it were current; the in-window Refresh control is an additional explicit refresh, not the only one.
+
 ## Status: partly built, not "not started"
 
 The spec header said "Design spec (not started)" to the end. Shipped: eight AppKit files

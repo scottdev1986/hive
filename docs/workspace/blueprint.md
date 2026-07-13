@@ -29,23 +29,13 @@ Bare `hive` is the graphical front door: it runs the session boundary, then open
 
 **There is no fixture mode.** The mock UI was deleted in commit 2b4c1c3 ("Replace mock Workspace with live tmux terminals"). The only non-product launch flag is `--smoke`, which runs headless end-to-end checks against real panes and exits 0/1 (LaunchConfig.swift:10-58). Any document claiming the `workspace/` UI is a mock-driven prototype that "touches no control plane" is describing a build that no longer exists: the app speaks to the daemon.
 
-## The feed contract, and the reversal that produced it
+## The feed contract
 
-The feed is a long-lived `hive workspace-feed` subprocess printing NDJSON snapshots. While it runs, the daemon knows a workspace is attached and stops opening external Terminal windows; presence is a **lease** with a TTL, so a dead app hands viewing back to the daemon.
+The feed is a terminal-free, long-lived `hive workspace-feed` subprocess printing NDJSON snapshots. It reads the daemon through the operator credential and carries the agent records, writer-autonomy dial, and orchestrator status to the app; it neither registers a viewer nor changes daemon behavior (`src/cli/workspace-feed.ts:1-26`, `:132-200`). Agent panes exist only in the Workspace, attached to instance-owned tmux sessions.
 
-The old blueprint said the feed is *never* auto-restarted — that a dead feed grays the panes and the honest recovery is relaunching `hive`, not "a reconnect loop pretending the wire never dropped." **That contract is reversed, and the code says so by name.**
+The feed retries daemon errors internally for 30 seconds with bounded backoff. If the process exits, the app marks every pane disconnected while keeping the terminals attached, then restarts the feed with delays from 1 to 15 seconds and a budget of five attempts. A successful snapshot resets the budget (`WorkspaceCore/ProjectState.swift:243-264`, `HiveWorkspace/AppDelegate.swift:138-189`).
 
-On 2026-07-12 an agent verifying UI work ran `pkill -9 -f "workspace-feed --port 4483"` against the *user's real daemon*. His app's feed had exactly that command line, so it died. The app went on sitting there, attached and normal-looking, while the daemon watched the lease lapse, concluded nobody was watching, and opened Terminal.app windows over live panes for 39 minutes. The old contract outsourced recovery to a human who was never told he had to recover anything: it required him to notice a failure that is, by construction, invisible. **A blind workspace looks exactly like a healthy one.**
-
-The contract now (AppDelegate.swift:131-181):
-
-- `onExit → feedLost() + scheduleFeedRestart()`. `feedLost()` marks every pane `disconnected`, preserving its last confirmed status (ProjectState.swift:228-238) — including the orchestrator's, because losing the feed makes knowledge of the root exactly as untrustworthy as knowledge of any agent.
-- Restart with exponential backoff: 1 s doubling to a 15 s ceiling, **5 attempts**. A snapshot resets both counters — that is the feed proving it works.
-- Exhausting the budget raises a **critical `NSAlert`, once** (AppDelegate.swift:188-205): the workspace is blind, status is frozen, the daemon is about to open its own windows, agents are still alive in tmux, relaunch with `hive`.
-
-The rule the incident bought: **healing quietly is fine; failing quietly is what caused the incident.** The code comment at AppDelegate.swift:146-161 repudiates the old doc explicitly — *"Do not restore it out of respect for the comment that used to be here. Hive heals itself, and when it cannot, it says so."*
-
-The fallback still survives, and that is deliberate: a crashed or force-quit *app* has nobody left to restart the feed, so its lease lapses on the TTL and the daemon returns to external viewers. Only a *live* app reclaims presence. Auto-restart is the app supervising its own subprocess, not a machine pretending a dead wire is alive.
+Exhausting the restart budget closes the app's owned terminal surfaces and terminates that Workspace instance (`HiveWorkspace/AppDelegate.swift:191-203`). There is no daemon-side presence lease, external Terminal.app fallback, or hidden viewer window. Losing the metadata feed can make status unknown; it never moves the live agent sessions or invents another presentation surface.
 
 ## Panes, master, focus
 
