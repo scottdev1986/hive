@@ -91,6 +91,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         projectSwitcher.register(state: state) { [weak controller] in
             controller?.window?.makeKeyAndOrderFront(nil)
         }
+        controller.onStateChange = { [weak self] in
+            self?.projectSwitcher.refresh()
+        }
         attentionCenter.activateHandler = { [weak controller] _, paneID in
             controller?.window?.makeKeyAndOrderFront(nil)
             controller?.dispatch(.focusPane(paneID))

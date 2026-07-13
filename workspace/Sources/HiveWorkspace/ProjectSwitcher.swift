@@ -24,6 +24,11 @@ final class ProjectSwitcherController: NSObject {
         panel?.makeKeyAndOrderFront(nil)
     }
 
+    func refresh() {
+        guard panel?.isVisible == true else { return }
+        rebuildCards()
+    }
+
     private func buildPanel() {
         let panel = NSPanel(
             contentRect: NSRect(x: 0, y: 0, width: 380, height: 220),
@@ -59,6 +64,9 @@ final class ProjectSwitcherController: NSObject {
 
             let name = NSTextField(labelWithString: card.displayName)
             name.font = NSFont.systemFont(ofSize: 14, weight: .semibold)
+            name.lineBreakMode = .byTruncatingTail
+            name.toolTip = card.displayName
+            name.setContentCompressionResistancePriority(.init(490), for: .horizontal)
 
             var parts: [String] = []
             if let model = card.orchestratorModel { parts.append(model) }
@@ -66,9 +74,13 @@ final class ProjectSwitcherController: NSObject {
             if card.runningCount > 0 { parts.append("\(card.runningCount) running") }
             if card.waitingCount > 0 { parts.append("\(card.waitingCount) waiting") }
             if card.failedCount > 0 { parts.append("\(card.failedCount) failed") }
-            let summary = NSTextField(labelWithString: parts.joined(separator: " · "))
+            let summaryText = parts.joined(separator: " · ")
+            let summary = NSTextField(labelWithString: summaryText)
             summary.font = Theme.captionFont
             summary.textColor = card.failedCount > 0 ? .systemRed : .secondaryLabelColor
+            summary.lineBreakMode = .byTruncatingTail
+            summary.toolTip = summaryText
+            summary.setContentCompressionResistancePriority(.init(200), for: .horizontal)
 
             let open = NSButton(title: "Open", target: self, action: #selector(openProject(_:)))
             open.bezelStyle = .rounded

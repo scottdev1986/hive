@@ -58,6 +58,7 @@ final class PaneView: NSView {
         titleLabel.stringValue = title
         titleLabel.font = Theme.headerFont
         titleLabel.textColor = .labelColor
+        titleLabel.toolTip = title
         // Middle truncation keeps names tellable-apart under extreme squeeze:
         // "ab…l"/"ab…y" instead of both collapsing to "ab…".
         titleLabel.lineBreakMode = .byTruncatingMiddle
@@ -80,19 +81,13 @@ final class PaneView: NSView {
         let closeButton = headerButton(symbol: "xmark", tooltip: "Close Pane",
                                        action: #selector(closeAction))
 
-        // Explicit truncation priority for a narrowing header. The user finds
-        // a pane by NAME and DOT, so those are the last things standing:
-        //   1. status dot — fixed size, never yields
-        //   2. agent name — compresses (middle-truncated) only when nothing
-        //      else is left to give
-        //   3. failure badge, then close, then promote — detached whole,
-        //      never clipped; both buttons have keyboard/menu equivalents
-        //   4. detail text — yields first; its status word already rides the
-        //      dot, so it is the least costly loss
+        // AppKit may grow the window instead of truncating a label whose
+        // compression priority is 500 or higher. Keep both labels below that
+        // threshold; the detail still yields before the pane name.
         let spacer = NSView()
         spacer.setContentHuggingPriority(NSLayoutConstraint.Priority(1), for: .horizontal)
         spacer.setContentCompressionResistancePriority(NSLayoutConstraint.Priority(1), for: .horizontal)
-        titleLabel.setContentCompressionResistancePriority(NSLayoutConstraint.Priority(999), for: .horizontal)
+        titleLabel.setContentCompressionResistancePriority(NSLayoutConstraint.Priority(490), for: .horizontal)
         detailLabel.setContentCompressionResistancePriority(NSLayoutConstraint.Priority(200), for: .horizontal)
 
         headerStack.orientation = .horizontal
@@ -214,6 +209,7 @@ final class PaneView: NSView {
 
     func update(state: PaneState) {
         titleLabel.stringValue = state.title
+        titleLabel.toolTip = state.title
         detailLabel.stringValue = state.headerDescription
 
         let appearance = FeedStatusMap.activity(

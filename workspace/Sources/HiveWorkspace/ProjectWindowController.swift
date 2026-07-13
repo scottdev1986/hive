@@ -26,6 +26,7 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
     /// it alive — the feed must die with the window regardless, so the daemon
     /// gets its external viewers back).
     var onWindowWillClose: (() -> Void)?
+    var onStateChange: (() -> Void)?
 
     var paneViewCount: Int { paneViews.count }
 
@@ -200,6 +201,7 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
     }
 
     private func react(to changes: [StateChange]) {
+        guard !changes.isEmpty else { return }
         for change in changes {
             switch change {
             case .paneAdded(let paneID):
@@ -224,6 +226,7 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
                 attentionCenter.refresh()
             }
         }
+        onStateChange?()
     }
 
     // MARK: Pane management

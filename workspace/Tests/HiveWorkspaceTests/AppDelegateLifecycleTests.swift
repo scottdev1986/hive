@@ -64,6 +64,27 @@ final class AppDelegateLifecycleTests: XCTestCase {
         XCTAssertNil(pane.subviews[focusIndex].hitTest(.zero))
     }
 
+    func testPaneTitleTruncatesWithoutDrivingWindowWidth() throws {
+        let pane = PaneView(paneID: "worker", title: "initial-title") { _ in }
+        let title = try XCTUnwrap(textFields(in: pane).first {
+            $0.stringValue == "initial-title"
+        })
+
+        XCTAssertLessThan(
+            title.contentCompressionResistancePriority(for: .horizontal).rawValue, 500)
+        XCTAssertEqual(title.toolTip, "initial-title")
+
+        pane.update(state: PaneState(
+            id: "worker", kind: .agent, title: "updated-title",
+            feedStatus: "working", status: .running))
+        XCTAssertEqual(title.toolTip, "updated-title")
+    }
+
+    private func textFields(in view: NSView) -> [NSTextField] {
+        ((view as? NSTextField).map { [$0] } ?? [])
+            + view.subviews.flatMap(textFields)
+    }
+
     private final class RecordingMenu: NSMenu {
         var cancellationCount = 0
 
