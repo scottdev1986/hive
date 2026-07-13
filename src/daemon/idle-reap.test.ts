@@ -112,6 +112,12 @@ describe("idle-agent reap sweep", () => {
     try {
       await daemon.reapIdleAgents();
 
+      expect(db.getAgentByName("maya")?.status).toEqual("idle");
+      const warning = db.listMessages().find((message) => message.to === "maya");
+      expect(warning?.body).toContain("Persist any findings");
+      db.transitionMessage(warning!.id, "applied", new Date().toISOString());
+      await daemon.reapIdleAgents();
+
       expect(db.getAgentByName("maya")?.status).toEqual("dead");
       expect(db.getAgentByName("maya")?.worktreePath).toEqual(null);
       expect(tmux.killed).toEqual(["hive-maya"]);
@@ -126,6 +132,9 @@ describe("idle-agent reap sweep", () => {
     const { db, daemon } = reapDaemon();
     db.insertAgent(agent({ lastEventAt: OLD_ENOUGH }));
     try {
+      await daemon.reapIdleAgents();
+      const warning = db.listMessages().find((message) => message.to === "maya");
+      db.transitionMessage(warning!.id, "applied", new Date().toISOString());
       await daemon.reapIdleAgents();
 
       const notice = (await daemon.delivery.orchestratorInbox())[0];
@@ -319,6 +328,9 @@ describe("idle-agent reap sweep", () => {
     });
     db.insertAgent(agent({ lastEventAt: OLD_ENOUGH }));
     try {
+      await daemon.reapIdleAgents();
+      const warning = db.listMessages().find((message) => message.to === "maya");
+      db.transitionMessage(warning!.id, "applied", new Date().toISOString());
       await daemon.reapIdleAgents();
 
       expect(db.getAgentByName("maya")?.status).toEqual("dead");

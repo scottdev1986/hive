@@ -147,6 +147,17 @@ describe("stranded-branch reconciliation", () => {
     }
   });
 
+  test("stays quiet about a branch deliberately marked preserved", async () => {
+    const { db, daemon } = strandedDaemon([{ ...DAVID_BRANCH, preserved: true }]);
+    try {
+      await daemon.reconcileStrandedBranches();
+      expect(await daemon.delivery.orchestratorInbox()).toEqual([]);
+    } finally {
+      await daemon.stop();
+      db.close();
+    }
+  });
+
   test("does not repeat itself while the branch tip is unchanged", async () => {
     const { db, daemon } = strandedDaemon();
     try {

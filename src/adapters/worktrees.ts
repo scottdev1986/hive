@@ -30,10 +30,74 @@ export interface StrandedWork {
   unmergedCommits: number;
 }
 
+/** Paths an agent is observably changing, from its worktree and unmerged branch. */
+export async function observedWorktreeFiles(
+  repoRoot: string,
+  worktreePath: string | null,
+  branch: string | null,
+  mainBranch = "main",
+): Promise<string[]> {
+  const paths = new Set<string>();
+  if (worktreePath !== null) {
+    const status = await runGit(worktreePath, [
+      "status",
+      "--porcelain",
+      "-uall",
+    ]);
+    if (status.exitCode === 0) {
+      for (const line of status.stdout.split("\n")) {
+        if (line !== "") paths.add(line.slice(3));
+      }
+    }
+  }
+  if (branch !== null && await branchExists(repoRoot, branch)) {
+    const diff = await runGit(repoRoot, [
+      "diff",
+      "--name-only",
+      `${mainBranch}...${branch}`,
+    ]);
+    if (diff.exitCode === 0) {
+      for (const path of diff.stdout.split("\n")) {
+        if (path !== "") paths.add(path);
+      }
+    }
+  }
+  return [...paths].filter((path) => !HIVE_WORKTREE_WIRING.includes(path)).sort();
+}
+
 export interface UnmergedBranch {
   branch: string;
   tip: string;
   unmergedCommits: number;
+  preserved?: boolean;
+}
+
+const preservedRef = (branch: string): string =>
+  `refs/hive-preserved/${branch}`;
+
+export async function markBranchPreserved(
+  repoRoot: string,
+  branch: string,
+  preserved: boolean,
+): Promise<void> {
+  assertName(branch.replaceAll("/", "-"), "branch");
+  const result = preserved
+    ? await runGit(repoRoot, ["update-ref", preservedRef(branch), branch])
+    : await runGit(repoRoot, ["update-ref", "-d", preservedRef(branch)]);
+  assertGitSuccess(result, "update-ref");
+}
+
+async function isBranchPreserved(
+  repoRoot: string,
+  branch: string,
+): Promise<boolean> {
+  const result = await runGit(repoRoot, [
+    "show-ref",
+    "--verify",
+    "--quiet",
+    preservedRef(branch),
+  ]);
+  return result.exitCode === 0;
 }
 
 async function runGit(repoRoot: string, args: string[]): Promise<GitResult> {
@@ -262,7 +326,13 @@ export async function listUnmergedHiveBranches(
       branch,
       mainBranch,
     );
-    branches.push({ branch, tip, unmergedCommits });
+    const preserved = await isBranchPreserved(repoRoot, branch);
+    branches.push({
+      branch,
+      tip,
+      unmergedCommits,
+      ...(preserved ? { preserved } : {}),
+    });
   }
   return branches;
 }

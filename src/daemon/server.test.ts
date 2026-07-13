@@ -925,7 +925,7 @@ describe("HiveDaemon HTTP server", () => {
 
       const status = textValue(await client.callTool({
         name: "hive_status",
-        arguments: {},
+        arguments: { detail: "full" },
       }));
       expect(status).toEqual([agent({
         id: "agent-sam",
@@ -1201,7 +1201,7 @@ describe("HiveDaemon HTTP server", () => {
       // carries the untouched record.
       const status = textValue(await client.callTool({
         name: "hive_status",
-        arguments: {},
+        arguments: { detail: "full" },
       })) as Array<{ name: string; taskDescription: string }>;
       expect(status.find((row) => row.name === "nia")?.taskDescription)
         .toEqual(longTask);
@@ -2135,7 +2135,7 @@ describe("HiveDaemon HTTP server", () => {
       });
       const statuses = textValue(await client.callTool({
         name: "hive_status",
-        arguments: {},
+        arguments: { detail: "full", history: true },
       })) as AgentRecord[];
       expect(statuses[0]?.failureReason).toEqual(
         "Error: model not supported",

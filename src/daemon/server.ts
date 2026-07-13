@@ -37,6 +37,8 @@ import { readLiveClaudeModel } from "./live-model";
 import {
   assessStrandedWork,
   listUnmergedHiveBranches,
+  markBranchPreserved,
+  observedWorktreeFiles,
   removeWorktree,
   type RemoveWorktreeOptions,
   type StrandedWork,
@@ -252,6 +254,8 @@ const ReadMessageRequestSchema = z.object({
 
 const StatusRequestSchema = z.object({
   detail: z.enum(["full", "active"]).optional(),
+  history: z.boolean().optional(),
+  fields: z.array(z.string().min(1)).max(32).optional(),
 });
 
 const QuotaObservationRequestSchema = QuotaObservationSchema.omit({
@@ -268,6 +272,11 @@ const KillRequestSchema = z.object({
   name: z.string().min(1),
   removeWorktree: z.boolean().optional(),
   discardWork: z.boolean().optional(),
+});
+
+const PreserveBranchRequestSchema = z.object({
+  agent: z.string().min(1),
+  preserved: z.boolean().default(true),
 });
 
 const ApprovalDecisionSchema = z.object({
@@ -1778,6 +1787,18 @@ export class HiveDaemon {
         ).catch(logAlertDeliveryFailure);
         continue;
       }
+      const warningKey = `idle-reap-warning:${record.id}`;
+      if (
+        this.db.findMessageByIdempotency("hive-lifecycle", warningKey) === null
+      ) {
+        await this.delivery.send(
+          "hive-lifecycle",
+          record.name,
+          "Hive is about to reap this idle session. Persist any findings or design that exist only in your context or scratchpad now; if there is nothing to keep, no action is needed.",
+          { idempotencyKey: warningKey },
+        ).catch(logAlertDeliveryFailure);
+        continue;
+      }
       try {
         await this.killAgentTeardown(record, { removeWorktree: true });
         await this.delivery.send(
@@ -1816,7 +1837,8 @@ export class HiveDaemon {
     if (branches.length === 0) return;
     const agents = this.db.listAgents();
 
-    for (const { branch, tip, unmergedCommits } of branches) {
+    for (const { branch, tip, unmergedCommits, preserved } of branches) {
+      if (preserved) continue;
       const owners = agents.filter((agent) => agent.branch === branch);
       // A live agent is still working on its own branch; that is not stranded
       // work, it is work in progress.
@@ -2985,28 +3007,79 @@ export class HiveDaemon {
     server.registerTool("hive_status", {
       title: "Hive agent status",
       description:
-        'Fetch agent status on demand. Use detail "active" for a compact active-team summary; omitted detail preserves the full legacy response.',
+        'Fetch bounded live-agent status on demand. The compact default reports spawn-task provenance, later orchestrator instructions, observed Git paths, and overlaps. Use detail "full" for full live records, fields for a projection, and history:true only when terminal history is explicitly needed.',
       inputSchema: StatusRequestSchema,
-    }, async ({ detail }) => {
+    }, async ({ detail, history, fields }) => {
       this.authorizeTool(capability, "hive_status", "status:read", undefined, false);
       // graphifyCalls says whether the graph tools are earning their context
       // cost (integration doc, layer 3). Null is unknown — no observation —
       // never zero; only rendered at all when this daemon runs graphify.
-      const agents = this.db.listAgents().map((agent) => (
+      let agents = this.db.listAgents().map((agent) => (
         this.graphify === undefined ? agent : {
           ...agent,
           graphifyCalls: this.graphifyCalls.get(agent.id)?.count ?? null,
         }
       ));
+      if (history !== true) {
+        agents = agents.filter((agent) =>
+          !["dead", "done", "failed"].includes(agent.status)
+        );
+      }
+      const messages = this.db.listMessages();
+      const evidence = new Map<
+        string,
+        { instructions: string[]; files: string[] }
+      >();
+      await Promise.all(agents.map(async (agent) => {
+        evidence.set(agent.name, {
+          instructions: messages.filter((message) =>
+            message.from === ORCHESTRATOR_NAME &&
+            message.to === agent.name && message.intent === "instruction" &&
+            Date.parse(message.createdAt) > Date.parse(agent.createdAt)
+          ).map((message) => message.body),
+          files: await observedWorktreeFiles(
+            this.repoRoot,
+            agent.worktreePath,
+            agent.branch,
+          ).catch(() => []),
+        });
+      }));
       // Landed is not live: the daemon runs a compiled binary, so main can be
       // ahead of the code answering this call. Status says so unasked — the
       // failure mode is precisely that nobody thinks to ask.
       const build = await this.buildFreshness();
+      let result = (detail === "full"
+        ? agents
+        : compactActiveTeam(agents, evidence)) as unknown as Array<
+          Record<string, unknown>
+        >;
+      if (fields !== undefined) {
+        result = result.map((record) => Object.fromEntries(fields
+          .filter((field) => field in record)
+          .map((field) => [field, record[field]])));
+      }
       return toolResult(
-        detail === "active" ? compactActiveTeam(agents) : agents,
+        result,
         "agents",
         build.message,
       );
+    });
+
+    server.registerTool("hive_preserve_branch", {
+      title: "Mark intentionally preserved branch",
+      description: "Mark or unmark a closed agent branch as intentionally preserved so stranded-work reconciliation does not repeatedly alarm on a deliberate state.",
+      inputSchema: PreserveBranchRequestSchema,
+    }, async ({ agent, preserved }) => {
+      this.authorizeTool(capability, "hive_preserve_branch", "agent:kill", agent, false);
+      const record = this.db.getAgentByName(agent);
+      if (record?.branch === null || record?.branch === undefined) {
+        throw new Error(`Agent ${agent} has no branch to preserve`);
+      }
+      if (LIVE_STATUSES.includes(record.status)) {
+        throw new Error(`Agent ${agent} is still live; its branch is active work`);
+      }
+      await markBranchPreserved(this.repoRoot, record.branch, preserved);
+      return toolResult({ branch: record.branch, preserved }, "result");
     });
 
     server.registerTool("hive_quota_status", {

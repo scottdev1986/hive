@@ -17,6 +17,7 @@ import {
 } from "./delivery";
 import {
   createOrchestratorEnvelope,
+  compactActiveTeam,
   formatOrchestratorWake,
   ORCHESTRATOR_ENVELOPE_MAX_BYTES,
   orchestratorTmuxSession,
@@ -26,6 +27,16 @@ import type { Spawner } from "./spawner";
 
 const home = mkdtempSync(join(tmpdir(), "hive-orchestrator-lifecycle-"));
 const timestamp = "2026-07-09T12:00:00.000Z";
+
+test("active status reports observed ownership overlap", () => {
+  const agents = [agent(), agent({ id: "agent-noor", name: "noor" })];
+  const status = compactActiveTeam(agents, new Map([
+    ["maya", { instructions: [], files: ["src/shared.ts"] }],
+    ["noor", { instructions: [], files: ["src/shared.ts", "src/noor.ts"] }],
+  ]));
+  expect(status[0]?.overlaps).toEqual(["noor"]);
+  expect(status[1]?.overlaps).toEqual(["maya"]);
+});
 
 function agent(overrides: Partial<AgentRecord> = {}): AgentRecord {
   return {
@@ -440,6 +451,18 @@ describe("event-driven orchestrator lifecycle", () => {
         timestamp: "2026-07-09T12:00:10.000Z",
       });
       expect(listSpy).toHaveBeenCalledTimes(0);
+      db.insertMessage(AgentMessageSchema.parse({
+        id: "reassignment",
+        from: ORCHESTRATOR_NAME,
+        to: "maya",
+        body: "Stop the bridge work. Build the policy store only.",
+        createdAt: "2026-07-09T12:00:11.000Z",
+        deliveredAt: null,
+        priority: "normal",
+        intent: "instruction",
+        state: "queued",
+        sequence: 1,
+      }));
 
       await client.connect(transport);
       const status = textValue(await client.callTool({
@@ -450,9 +473,16 @@ describe("event-driven orchestrator lifecycle", () => {
       expect(status).toHaveLength(1);
       expect(status[0]?.name).toEqual("maya");
       expect(status[0]?.task).toBeString();
+      expect(status[0]?.instructionCount).toEqual(1);
+      expect(status[0]?.latestInstruction).toContain("policy store");
       expect((status[0]?.task as string).length).toBeLessThanOrEqual(160);
       expect(status[0]).not.toHaveProperty("taskDescription");
       expect(status[0]).not.toHaveProperty("worktreePath");
+      const projected = textValue(await client.callTool({
+        name: "hive_status",
+        arguments: { detail: "active", fields: ["name", "instructionCount"] },
+      }));
+      expect(projected).toEqual([{ name: "maya", instructionCount: 1 }]);
     } finally {
       listSpy.mockRestore();
       await client.close().catch(() => undefined);

@@ -34,6 +34,11 @@ export interface ActiveAgentSummary {
   contextPct: number | null;
   status: AgentRecord["status"];
   task: string;
+  instructionCount: number;
+  latestInstruction?: string;
+  observedFiles: string[];
+  overlaps: string[];
+  graphifyCalls?: number | null;
   lastEventAt: string;
 }
 
@@ -138,6 +143,7 @@ export function formatOrchestratorWake(
 
 export function compactActiveTeam(
   agents: AgentRecord[],
+  evidence: Map<string, { instructions: string[]; files: string[] }> = new Map(),
 ): ActiveAgentSummary[] {
   return agents
     .filter((agent) =>
@@ -145,7 +151,20 @@ export function compactActiveTeam(
       agent.status !== "done" &&
       agent.status !== "failed"
     )
-    .map((agent) => ({
+    .map((agent) => {
+      const observed = evidence.get(agent.name) ?? {
+        instructions: [],
+        files: [],
+      };
+      const overlaps = agents.filter((other) =>
+        other.name !== agent.name &&
+        !["dead", "done", "failed"].includes(other.status) &&
+        (evidence.get(other.name)?.files ?? []).some((path) =>
+          observed.files.includes(path)
+        )
+      )
+        .map((other) => other.name);
+      return {
       name: agent.name,
       tool: agent.tool,
       // The model it is running, not the one it was spawned with — this is the
@@ -159,8 +178,25 @@ export function compactActiveTeam(
         agent.taskDescription.replaceAll(/\s+/g, " ").trim(),
         MAX_TASK_CODE_POINTS,
       ),
+      instructionCount: observed.instructions.length,
+      ...(observed.instructions.at(-1) === undefined ? {} : {
+        latestInstruction: truncateCodePoints(
+          observed.instructions.at(-1)!.replaceAll(/\s+/g, " ").trim(),
+          MAX_TASK_CODE_POINTS,
+        ),
+      }),
+      observedFiles: observed.files,
+      overlaps,
+      ...(Object.hasOwn(agent, "graphifyCalls")
+        ? {
+          graphifyCalls:
+            (agent as AgentRecord & { graphifyCalls: number | null })
+              .graphifyCalls,
+        }
+        : {}),
       lastEventAt: agent.lastEventAt,
-    }));
+      };
+    });
 }
 
 const MAX_SPAWN_TASK_CODE_POINTS = 120;

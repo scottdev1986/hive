@@ -8,6 +8,8 @@ import {
   createWorktree,
   listUnmergedHiveBranches,
   listWorktrees,
+  markBranchPreserved,
+  observedWorktreeFiles,
   removeWorktree,
   slugify,
 } from "./worktrees";
@@ -217,11 +219,26 @@ describe("git worktree manager", () => {
       "README.md",
       "uncommitted.txt",
     ]);
+    expect(await observedWorktreeFiles(repoRoot, created.path, created.branch))
+      .toEqual(["README.md", "committed.txt", "uncommitted.txt"]);
 
     await removeWorktree(repoRoot, created.path, {
       deleteBranch: true,
       discardTracked: true,
     });
+  });
+
+  test("marks an unmerged branch as intentionally preserved", async () => {
+    const created = await createWorktree(repoRoot, "agent-preserved", "design");
+    await writeFile(join(created.path, "design.md"), "kept deliberately\n");
+    await git("-C", created.path, "add", "design.md");
+    await git("-C", created.path, "commit", "-m", "preserved design");
+    await markBranchPreserved(repoRoot, created.branch, true);
+    expect((await listUnmergedHiveBranches(repoRoot)).find((entry) =>
+      entry.branch === created.branch
+    )?.preserved).toEqual(true);
+    await markBranchPreserved(repoRoot, created.branch, false);
+    await removeWorktree(repoRoot, created.path, { deleteBranch: true, discardTracked: true });
   });
 
   test("treats a deleted worktree directory and missing branch as nothing stranded", async () => {
