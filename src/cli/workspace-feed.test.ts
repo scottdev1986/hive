@@ -1,4 +1,9 @@
 import { describe, expect, test } from "bun:test";
+import {
+  buildWorkspaceFeedSnapshotFixture,
+  WORKSPACE_FEED_SNAPSHOT_FIXTURE,
+  workspaceFeedAgentFixture,
+} from "../../scripts/test-fixtures/workspace-feed-snapshot";
 import type { AgentRecord } from "../schemas";
 import {
   FEED_GIVE_UP_MS,
@@ -103,22 +108,24 @@ const lastFailure = (message: string): Step => (abort) => {
 };
 
 describe("runWorkspaceFeed", () => {
-  test("emits the first snapshot, stays silent while unchanged, heartbeats at 5s", async () => {
-    const maya = agent("maya");
-    const run = await runScript([
-      snapshot(maya), // t=0: first snapshot
-      snapshot(maya), // t=1s..4s: unchanged, silent
-      snapshot(maya),
-      snapshot(maya),
-      snapshot(maya),
-      last(snapshot(maya)), // t=5s: unchanged, but the heartbeat is due
-    ]);
+  test("emits the shared wire snapshot, stays silent while unchanged, heartbeats at 5s", async () => {
+    const run = await runScript(
+      [
+        snapshot(workspaceFeedAgentFixture), // t=0: first snapshot
+        snapshot(workspaceFeedAgentFixture), // t=1s..4s: unchanged, silent
+        snapshot(workspaceFeedAgentFixture),
+        snapshot(workspaceFeedAgentFixture),
+        snapshot(workspaceFeedAgentFixture),
+        last(snapshot(workspaceFeedAgentFixture)), // t=5s: heartbeat
+      ],
+      async () => "dangerous",
+      async () => "working",
+    );
+    const fixture = await Bun.file(WORKSPACE_FEED_SNAPSHOT_FIXTURE).json();
     expect(run.exitCode).toEqual(0);
     expect(run.lines).toHaveLength(2);
-    expect(run.lines[0]).toEqual({
-      v: 1,
-      agents: [JSON.parse(JSON.stringify(maya)) as unknown],
-    });
+    expect(await buildWorkspaceFeedSnapshotFixture()).toEqual(fixture);
+    expect(run.lines[0]).toEqual(fixture);
     expect(run.lines[1]?.agents).toBeDefined();
     expect(run.sleeps.every((ms) => ms === FEED_POLL_MS)).toEqual(true);
   });
