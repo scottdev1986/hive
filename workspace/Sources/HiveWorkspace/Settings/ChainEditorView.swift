@@ -281,7 +281,7 @@ final class ChainSectionView: NSView {
                     item.representedObject = ChainEntryBox(entry: ChainEntry(
                         provider: providerID.rawValue,
                         model: model.canonicalId,
-                        effort: .none))
+                        effort: EffortTarget.none))
                 case .unknown(let reason):
                     item.title = "  \(name)  —  effort unknown"
                     item.toolTip = MCCCopy.effortUnknown(reason)

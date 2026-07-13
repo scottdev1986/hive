@@ -794,7 +794,9 @@ final class ModelControlTests: XCTestCase {
     func testChainReorderKeepsPrimaryAtIndexZero() {
         let a = ChainEntry(provider: "claude", model: "a", effort: .exact("high"))
         let b = ChainEntry(provider: "codex", model: "b", effort: .providerControlled)
-        let c = ChainEntry(provider: "grok", model: "grok-4.5", effort: .none)
+        let c = ChainEntry(
+            provider: "grok", model: "grok-4.5", effort: EffortTarget.none)
+        XCTAssertEqual(c.effort, .some(EffortTarget.none))
         let moved = ModelControlPolicy.move([a, b, c], from: 2, to: 0)
         XCTAssertEqual(moved, [c, a, b])
         XCTAssertEqual(ModelControlPolicy.move([a, b, c], from: 5, to: 0), [a, b, c],
