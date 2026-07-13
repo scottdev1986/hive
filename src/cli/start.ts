@@ -37,7 +37,9 @@ export interface StartDeps {
    * `ensureDaemonForBuild` and `ensureStarted`. */
   readonly ensureDaemon?: (cwd: string) => Promise<void>;
   readonly ensurePort?: () => Promise<number>;
+  readonly ensureProfile?: (cwd: string) => Promise<unknown>;
   readonly repairProjectConfig?: (cwd: string) => Promise<unknown>;
+  readonly warn?: (line: string) => void;
 }
 
 /** Resolve the staged-but-not-active version, so the notice can say so. */
@@ -110,9 +112,9 @@ export interface StartedSession {
  * attaches, which is why bare `hive` can run this and then hand the port to the
  * Workspace app while `hive init` just prints where the daemon is.
  *
- * The repo profile is ensured here too, before the daemon, and says nothing on
- * any path (SPEC §14). The daemon ensures it as well; both are deterministic and
- * idempotent, and neither announces itself, so racing them costs nothing.
+ * The repo profile is ensured here too, before the daemon. Successful profiling
+ * is silent (SPEC §14). The daemon ensures it as well; both are deterministic
+ * and idempotent, so racing them costs nothing.
  */
 export async function startSession(deps: StartDeps = {}): Promise<StartedSession> {
   await printStartNotice(deps).catch(() => {
@@ -120,9 +122,13 @@ export async function startSession(deps: StartDeps = {}): Promise<StartedSession
   });
   const cwd = deps.cwd ?? process.cwd();
   await (deps.repairProjectConfig ?? repairLeakedProjectConfig)(cwd);
-  await ensureProfile(cwd).catch(() => {
-    // Profiling is best-effort: a repo starts even if its profile cannot be
-    // written or read, just with poorer briefs.
+  await (deps.ensureProfile ?? ensureProfile)(cwd).catch((error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error);
+    const warn = deps.warn ?? ((line: string) => process.stderr.write(`${line}\n`));
+    warn(
+      `Repository profiling failed: ${message}\n` +
+        "Fix: resolve the error, then run `hive init --refresh`.",
+    );
   });
   await (deps.ensureDaemon ?? ensureDaemonForBuild)(cwd);
   const port = await (deps.ensurePort ?? ensureStarted)();

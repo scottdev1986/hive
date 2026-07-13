@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { startSession } from "./start";
 import { loadDerivedProfile, profilePath } from "../adapters/profile";
 
-// The session boundary profiles the repo and says nothing about it (SPEC §14).
+// The session boundary profiles the repo silently when profiling succeeds.
 // Hive's own state goes to a throwaway HIVE_HOME here, never into the repo.
 let hiveHome: string;
 const originalHiveHome = process.env.HIVE_HOME;
@@ -100,6 +100,29 @@ describe("startSession", () => {
     }
   });
 
+  test("a profile failure is actionable without blocking the session", async () => {
+    const lines: string[] = [];
+    const session = await startSession({
+      cwd: "/repo",
+      checkUpdate: async () => {
+        throw new Error("offline");
+      },
+      ensureProfile: async () => {
+        throw new Error("profile directory is read-only");
+      },
+      ensureDaemon: async () => {},
+      ensurePort: async () => 45_020,
+      warn: (line) => lines.push(line),
+      write: () => {},
+    });
+
+    expect(session.port).toEqual(45_020);
+    expect(lines).toEqual([
+      "Repository profiling failed: profile directory is read-only\n" +
+        "Fix: resolve the error, then run `hive init --refresh`.",
+    ]);
+  });
+
   test("a stale-daemon refusal stops the session before any daemon starts", async () => {
     const root = await repoWithSpec();
     let started = false;
@@ -126,7 +149,7 @@ describe("startSession", () => {
   });
 });
 
-describe("the profile never speaks", () => {
+describe("successful profiling stays silent", () => {
   test("a drifted repo starts silently, on a profile that has already been fixed", async () => {
     const root = await repoWithSpec();
     const lines: string[] = [];
