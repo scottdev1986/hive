@@ -137,6 +137,21 @@ export async function githubReleaseSource(
   const manifest = parseReleaseManifest(
     JSON.parse(new TextDecoder().decode(manifestBytes)),
   );
+  if (manifest.tag !== release.tag_name) {
+    throw new Error(
+      `release manifest names ${manifest.tag} but GitHub returned ${release.tag_name}`,
+    );
+  }
+  if (manifest.tag !== `v${manifest.version}`) {
+    throw new Error(
+      `release manifest tag ${manifest.tag} does not match version ${manifest.version}`,
+    );
+  }
+  if (version !== "latest" && manifest.version !== version) {
+    throw new Error(
+      `requested hive ${version} but GitHub returned ${release.tag_name}`,
+    );
+  }
 
   const signatureUrl = assetUrl(SIGNATURE_ASSET);
   const signature = signatureUrl === null

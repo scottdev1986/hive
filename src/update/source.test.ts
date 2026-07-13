@@ -46,12 +46,16 @@ interface AssetResponse {
 }
 
 /** A GitHub that serves the manifest, no signature, and one asset. */
-function fakeGitHub(asset: AssetResponse): typeof fetch {
+function fakeGitHub(
+  asset: AssetResponse,
+  releaseTag = "v0.0.9",
+  manifest: typeof MANIFEST = MANIFEST,
+): typeof fetch {
   return ((url: string) => {
     if (url.includes("api.github.com")) {
       return Promise.resolve(
         Response.json({
-          tag_name: "v0.0.9",
+          tag_name: releaseTag,
           assets: [
             { name: MANIFEST_ASSET, browser_download_url: "https://x/manifest" },
             { name: "hive-darwin-arm64", browser_download_url: "https://x/cli" },
@@ -60,7 +64,7 @@ function fakeGitHub(asset: AssetResponse): typeof fetch {
       );
     }
     if (url.endsWith("/manifest")) {
-      return Promise.resolve(new Response(JSON.stringify(MANIFEST)));
+      return Promise.resolve(new Response(JSON.stringify(manifest)));
     }
     if (url.endsWith("/cli")) {
       return Promise.resolve(streamed(asset.chunks, asset.contentLength));
@@ -138,6 +142,32 @@ describe("githubReleaseSource download", () => {
     expect(source.manifest.version).toBe("0.0.9");
     // The exact bytes, not a re-serialization: the signature is over these.
     expect(new TextDecoder().decode(source.manifestBytes)).toBe(JSON.stringify(MANIFEST));
+  });
+
+  test("refuses a signed-manifest replay from a different release tag", async () => {
+    const replayed = { ...MANIFEST, version: "0.0.8", tag: "v0.0.8" };
+    await expect(githubReleaseSource(
+      "0.0.9",
+      "owner/repo",
+      fakeGitHub(
+        { chunks: [chunk("abcdefghijkl")], contentLength: 12 },
+        "v0.0.9",
+        replayed,
+      ),
+    )).rejects.toThrow(/manifest names v0\.0\.8 but GitHub returned v0\.0\.9/);
+  });
+
+  test("an exact request refuses a different release response", async () => {
+    const other = { ...MANIFEST, version: "0.0.8", tag: "v0.0.8" };
+    await expect(githubReleaseSource(
+      "0.0.9",
+      "owner/repo",
+      fakeGitHub(
+        { chunks: [chunk("abcdefghijkl")], contentLength: 12 },
+        "v0.0.8",
+        other,
+      ),
+    )).rejects.toThrow(/requested hive 0\.0\.9 but GitHub returned v0\.0\.8/);
   });
 
   test("SIGNATURE_ASSET is the name the source looks for", () => {

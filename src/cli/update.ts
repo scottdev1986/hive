@@ -258,11 +258,6 @@ export async function runUpdate(requested?: string): Promise<void> {
   const source = await githubReleaseSource(target);
   const version = source.manifest.version;
 
-  if (version === HIVE_VERSION && requested === undefined) {
-    console.log(`hive ${HIVE_VERSION} is the latest release`);
-    return;
-  }
-
   // One way in, whether the bytes arrive now or are already on disk. `isStaged()`
   // used to short-circuit staging entirely, which skipped all three checks — an
   // interrupted earlier run was enough to walk a binary past a fail-closed path.
@@ -278,6 +273,10 @@ export async function runUpdate(requested?: string): Promise<void> {
     progress: (artifact) => startDownload(artifact.name, artifact.size),
   });
   console.log(verifiedLine(staged));
+  if (version === HIVE_VERSION && requested === undefined) {
+    console.log(`hive ${HIVE_VERSION} is the latest release`);
+    return;
+  }
 
   // The activation half, only when the control plane is provably idle.
   const blockers = await instanceMutationBlockers(liveAgentNames);
