@@ -1,0 +1,45 @@
+{
+  "label": "AFTER_immediate",
+  "ts": "2026-07-13T10:05:52-0400",
+  "unix": 1783951552.807869,
+  "creditUsagePercent": 7.0,
+  "percent_repr": "7.0",
+  "currentPeriod": {
+    "type": "USAGE_PERIOD_TYPE_WEEKLY",
+    "start": "2026-07-12T17:18:56.768634+00:00",
+    "end": "2026-07-19T17:18:56.768634+00:00"
+  },
+  "onDemandCap": {
+    "val": 0
+  },
+  "onDemandUsed": {
+    "val": 0
+  },
+  "prepaidBalance": {
+    "val": 0
+  },
+  "subscription_tier": "SuperGrok",
+  "raw_result": {
+    "config": {
+      "creditUsagePercent": 7.0,
+      "currentPeriod": {
+        "type": "USAGE_PERIOD_TYPE_WEEKLY",
+        "start": "2026-07-12T17:18:56.768634+00:00",
+        "end": "2026-07-19T17:18:56.768634+00:00"
+      },
+      "onDemandCap": {
+        "val": 0
+      },
+      "onDemandUsed": {
+        "val": 0
+      },
+      "prepaidBalance": {
+        "val": 0
+      },
+      "isUnifiedBillingUser": true,
+      "billingPeriodStart": "2026-07-12T17:18:56.768634+00:00",
+      "billingPeriodEnd": "2026-07-19T17:18:56.768634+00:00"
+    },
+    "subscription_tier": "SuperGrok"
+  }
+}
