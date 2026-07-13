@@ -657,6 +657,10 @@ describe("HiveDaemon HTTP server", () => {
     quota.markStarted(reservation.id);
     const tmux = new FakeDaemonTmux();
     tmux.sessions.add("hive-maya");
+    const process = Bun.spawn(["sh", "-c", "sleep 60 & wait"], {
+      stdout: "ignore",
+      stderr: "ignore",
+    });
     const closed: AgentRecord["terminalHandle"][] = [];
     let layouts = 0;
     const daemon = new HiveDaemon({
@@ -667,6 +671,10 @@ describe("HiveDaemon HTTP server", () => {
       quota,
       closeTerminal: async (handle) => { closed.push(handle); },
       layout: { requestLayout: () => layouts += 1 },
+      resourceRunners: {
+        panePids: async (session) =>
+          session === "hive-maya" ? [process.pid] : [],
+      },
     });
     const handle = { app: "iterm2", sessionId: "timeout-viewer" } as const;
     try {
@@ -695,7 +703,13 @@ describe("HiveDaemon HTTP server", () => {
       expect(db.listMessages().some((message) =>
         message.to === "orchestrator" && message.body.includes("timed out")
       )).toEqual(true);
+      const exitCode = await Promise.race([
+        process.exited,
+        Bun.sleep(1_000).then(() => null),
+      ]);
+      expect(exitCode).not.toBeNull();
     } finally {
+      process.kill("SIGKILL");
       db.close();
     }
   });

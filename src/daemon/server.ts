@@ -1620,31 +1620,26 @@ export class HiveDaemon {
   async recoverQuotaReservations(): Promise<number> {
     if (this.quota === undefined) return 0;
     const expired = await this.quota.recoverExpiredReservations();
-    let viewersChanged = false;
     for (const reservation of expired) {
       if (reservation.purpose !== "control") continue;
       const agent = this.db.getAgentByName(reservation.agentName);
       if (agent?.controlQuotaReservationId !== reservation.id) continue;
-      await this.tmux.killSession(agent.tmuxSession, { ignoreMissing: true });
-      const detached = this.db.markAgentDeadAndDetachTerminal(
-        agent.id,
-        new Date().toISOString(),
-        `Critical control acknowledgement process timed out (reservation ${reservation.id})`,
-      );
-      if (detached?.terminalHandle !== undefined) {
-        viewersChanged = true;
-        await this.closeTerminal(detached.terminalHandle).catch(() => undefined);
-      }
+      const teardown = await this.killAgentTeardown(agent, {
+        failureReason:
+          `Critical control acknowledgement process timed out (reservation ${reservation.id})`,
+      });
+      const processOutcome = teardown.reaped.survivors.length === 0
+        ? "all captured processes were stopped"
+        : `${teardown.reaped.survivors.length} captured process(es) survived SIGKILL and remain running`;
       await this.delivery.send(
         "hive-control",
         ORCHESTRATOR_NAME,
         `Critical control acknowledgement process for ${agent.name} timed out. ` +
-          `Reservation ${reservation.id} settled conservatively; the process was stopped, ` +
+          `Reservation ${reservation.id} settled conservatively; ${processOutcome}, ` +
           "write and landing capability remain revoked, and the worktree is preserved.",
         { idempotencyKey: `control-quota-timeout:${reservation.id}` },
       ).catch(logAlertDeliveryFailure);
     }
-    if (viewersChanged) this.layout?.requestLayout();
     await this.settleReservationsOfDeadAgents();
     return expired.length;
   }
@@ -1741,7 +1736,11 @@ export class HiveDaemon {
    */
   private async killAgentTeardown(
     agent: AgentRecord,
-    options: { removeWorktree?: boolean; discardWork?: boolean } = {},
+    options: {
+      removeWorktree?: boolean;
+      discardWork?: boolean;
+      failureReason?: string;
+    } = {},
   ): Promise<{
     agent: AgentRecord;
     cleaned: {
@@ -1772,7 +1771,11 @@ export class HiveDaemon {
     await this.tmux.killSession(agent.tmuxSession, { ignoreMissing: true });
     const reaped = await reapCapturedTree(captured, this.reapDependencies);
     const timestamp = new Date().toISOString();
-    const killed = this.db.markAgentDeadAndDetachTerminal(agent.id, timestamp);
+    const killed = this.db.markAgentDeadAndDetachTerminal(
+      agent.id,
+      timestamp,
+      options.failureReason,
+    );
     if (killed === null) {
       throw new Error(`Hive agent not found: ${agent.name}`);
     }
