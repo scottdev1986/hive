@@ -236,12 +236,12 @@ export type QuotaObservationInput = z.input<typeof QuotaObservationSchema>;
 // The subscriber usage block Claude Code passes to its statusLine command:
 // used percentage and reset time per rolling window, each window optionally
 // absent (API-key accounts, or before the session's first response).
-export const StatuslineRateWindowSchema = z.object({
+export const StatuslineRateWindowSchema = z.strictObject({
   usedPct: z.number().min(0).max(100),
   resetsAt: z.iso.datetime({ offset: true }).nullable().default(null),
 });
 
-export const StatuslineReportSchema = z.object({
+export const StatuslineReportSchema = z.strictObject({
   agent: z.string().min(1),
   effort: z.string().min(1).max(64).regex(/^[a-z0-9-]+$/).optional(),
   fiveHour: StatuslineRateWindowSchema.optional(),

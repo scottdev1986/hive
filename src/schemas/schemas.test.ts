@@ -5,6 +5,7 @@ import {
   HandoffSchema,
   HiveConfigSchema,
   HookEventSchema,
+  StatuslineReportSchema,
   type AgentRecord,
   type AgentMessage,
   type HookEvent,
@@ -260,5 +261,28 @@ describe("HandoffSchema", () => {
 
   test("rejects an invalid handoff", () => {
     expect(() => HandoffSchema.parse({ ...handoff, remaining: "tests" })).toThrow();
+  });
+});
+
+describe("StatuslineReportSchema", () => {
+  const report = {
+    agent: "agent-3",
+    fiveHour: { usedPct: 37, resetsAt: timestamp },
+    contextWindow: 1_000_000,
+    contextUsedPct: 22,
+    observedAt: timestamp,
+  };
+
+  test("preserves measured fields and rejects renamed ones", () => {
+    expect(StatuslineReportSchema.parse(report)).toEqual(report);
+    expect(() => StatuslineReportSchema.parse({
+      ...report,
+      contextWindow: undefined,
+      context_window: 1_000_000,
+    })).toThrow();
+    expect(() => StatuslineReportSchema.parse({
+      ...report,
+      fiveHour: { usedPct: 37, resetsAt: undefined, resets_at: timestamp },
+    })).toThrow();
   });
 });
