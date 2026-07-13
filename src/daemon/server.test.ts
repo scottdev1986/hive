@@ -2678,10 +2678,13 @@ describe("the model an agent is actually running", () => {
       assessStrandedWork: async () => ({ dirtyFiles: [], unmergedCommits: 0 }),
     });
     // The exact figure hive_quota_status reports: QuotaService.statuses().
-    const reserved = (): number =>
-      quota.statuses().find((status): status is QuotaPoolStatus =>
+    const reserved = (): number => {
+      const value = quota.statuses().find((status): status is QuotaPoolStatus =>
         !("configured" in status) && status.pool === "subscription"
       )!.fiveHour.reserved;
+      if (value === null) throw new Error("subscription five-hour window is not metered");
+      return value;
+    };
     try {
       const before = reserved();
 

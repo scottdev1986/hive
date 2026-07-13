@@ -97,6 +97,7 @@ const claudePool: QuotaStatus = {
   freshness: "fresh",
   source: "provider",
   fiveHour: {
+    availability: "available",
     unit: "percent",
     allowance: 100,
     used: 63,
@@ -111,6 +112,7 @@ const claudePool: QuotaStatus = {
     windowMinutes: 300,
   },
   weekly: {
+    availability: "unknown",
     unit: "percent",
     allowance: null,
     used: null,

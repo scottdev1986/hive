@@ -1384,6 +1384,9 @@ describe("HiveSpawner wiring", () => {
     if (status === undefined) {
       throw new Error("codex pool is absent from statuses() — the reader is blind");
     }
+    if (status.fiveHour.reserved === null) {
+      throw new Error("codex five-hour window is not metered");
+    }
     return status.fiveHour.reserved;
   }
 

@@ -63,8 +63,13 @@ export function formatStatusTable(agents: AgentRecord[]): string {
  * Nothing here can print a capacity number that no provider reported.
  */
 function formatQuotaWindow(label: string, window: QuotaWindowStatus): string {
+  if (window.availability === "not-metered") {
+    return `  ${label}: not metered [${window.confidence} from ${window.source}]`;
+  }
   const unit = window.unit === "percent" ? "%" : "";
-  const reserved = `${window.reserved.toFixed(1)}${unit} reserved (est)`;
+  const reserved = window.reserved === null
+    ? "reservation unknown"
+    : `${window.reserved.toFixed(1)}${unit} reserved (est)`;
   const reset = window.resetsAt ?? "unknown";
   const capacity = window.remaining === null || window.allowance === null
     ? "unknown remaining"

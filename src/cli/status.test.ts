@@ -105,6 +105,7 @@ describe("quota status", () => {
       freshness: "fresh",
       source: "manual",
       fiveHour: {
+        availability: "available",
         unit: "units",
         allowance: 100,
         used: 60,
@@ -119,6 +120,7 @@ describe("quota status", () => {
         windowMinutes: 300,
       },
       weekly: {
+        availability: "available",
         unit: "units",
         allowance: 500,
         used: 100,
@@ -154,6 +156,7 @@ describe("quota status", () => {
       freshness: "missing",
       source: "none",
       fiveHour: {
+        availability: "available",
         unit: "percent",
         allowance: 100,
         used: 6,
@@ -168,6 +171,7 @@ describe("quota status", () => {
         windowMinutes: 300,
       },
       weekly: {
+        availability: "unknown",
         unit: "percent",
         allowance: null,
         used: null,

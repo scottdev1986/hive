@@ -1,5 +1,6 @@
 import { tmpdir } from "node:os";
 import type { CodexRateLimitsResponse, CodexRateLimitSnapshot } from "./quota";
+import type { QuotaMeterState } from "../schemas";
 import { HIVE_VERSION } from "../version";
 import { z } from "zod";
 
@@ -58,6 +59,10 @@ export interface DiscoveredPoolReading {
   models: string[];
   fiveHour: DiscoveredWindow | null;
   weekly: DiscoveredWindow | null;
+  /** Absent means unknown; only a provider parser may assert not-metered. */
+  fiveHourMeterState?: QuotaMeterState;
+  /** Absent means unknown; only a provider parser may assert not-metered. */
+  weeklyMeterState?: QuotaMeterState;
   observedAt: string;
   source: "provider" | "statusline";
   confidence: "authoritative" | "reported";
@@ -180,17 +185,32 @@ export function readingsFromCodexResponse(
     snapshot: CodexRateLimitSnapshot,
     pool: string,
     models: string[],
-  ): DiscoveredPoolReading => ({
-    provider: "codex",
-    account,
-    pool,
-    label: snapshot.limitName ?? snapshot.planType ?? null,
-    models,
-    ...orderRateLimitWindows(snapshot),
-    observedAt,
-    source: "provider",
-    confidence: "authoritative",
-  });
+  ): DiscoveredPoolReading => {
+    const windows = orderRateLimitWindows(snapshot);
+    const reported = [snapshot.primary, snapshot.secondary]
+      .filter((window) => window !== null && window !== undefined).length;
+    const parsed = Number(windows.fiveHour !== null) +
+      Number(windows.weekly !== null);
+    // A null slot in this authoritative response is a positive statement that
+    // the plan has no second meter. A non-null slot we could not parse is not:
+    // malformed data is unknown, never confident absence.
+    const absent: QuotaMeterState = reported > parsed
+      ? "unknown"
+      : "not-metered";
+    return {
+      provider: "codex",
+      account,
+      pool,
+      label: snapshot.limitName ?? snapshot.planType ?? null,
+      models,
+      ...windows,
+      fiveHourMeterState: windows.fiveHour === null ? absent : "metered",
+      weeklyMeterState: windows.weekly === null ? absent : "metered",
+      observedAt,
+      source: "provider",
+      confidence: "authoritative",
+    };
+  };
 
   const routablePool = response.rateLimits.limitId ?? "default";
   const pools = [base(response.rateLimits, routablePool, ["*"])];
@@ -609,6 +629,8 @@ export function readingsFromClaudeUsage(
       models: ["*"],
       fiveHour,
       weekly,
+      fiveHourMeterState: fiveHour === null ? "unknown" : "metered",
+      weeklyMeterState: weekly === null ? "unknown" : "metered",
       observedAt,
       source: "provider",
       // `get_usage` is self-described as experimental and its shape may change,
@@ -628,6 +650,8 @@ export function readingsFromClaudeUsage(
       models: [],
       fiveHour: null,
       weekly: window,
+      fiveHourMeterState: "not-metered",
+      weeklyMeterState: "metered",
       observedAt,
       source: "provider",
       confidence: "reported",

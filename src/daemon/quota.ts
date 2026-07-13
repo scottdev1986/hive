@@ -9,6 +9,7 @@ import {
   type QuotaConfidence,
   type QuotaConfig,
   type QuotaLimit,
+  type QuotaMeterState,
   type QuotaObservation,
   type QuotaObservationInput,
   type QuotaPoolOrigin,
@@ -315,6 +316,8 @@ export interface ResolvedQuotaLimit extends QuotaLimit {
   overridesDiscovered: boolean;
   fiveHourWindowMinutes: number | null;
   weeklyWindowMinutes: number | null;
+  fiveHourMeterState: QuotaMeterState;
+  weeklyMeterState: QuotaMeterState;
 }
 
 export interface QuotaRefreshReport {
@@ -415,6 +418,10 @@ export class QuotaService {
         label: reading.label,
         fiveHourWindowMinutes: reading.fiveHour?.windowMinutes ?? null,
         weeklyWindowMinutes: reading.weekly?.windowMinutes ?? null,
+        fiveHourMeterState: reading.fiveHourMeterState ??
+          (reading.fiveHour === null ? "unknown" : "metered"),
+        weeklyMeterState: reading.weeklyMeterState ??
+          (reading.weekly === null ? "unknown" : "metered"),
         discoveredAt: reading.observedAt,
         source: reading.source,
       });
@@ -484,6 +491,8 @@ export class QuotaService {
       overridesDiscovered: false,
       fiveHourWindowMinutes: 5 * 60,
       weeklyWindowMinutes: 7 * 24 * 60,
+      fiveHourMeterState: "metered",
+      weeklyMeterState: "metered",
     }));
     const discovered: ResolvedQuotaLimit[] = [];
     const bind = this.poolBinder();
@@ -522,6 +531,8 @@ export class QuotaService {
         overridesDiscovered: false,
         fiveHourWindowMinutes: pool.fiveHourWindowMinutes,
         weeklyWindowMinutes: pool.weeklyWindowMinutes,
+        fiveHourMeterState: pool.fiveHourMeterState,
+        weeklyMeterState: pool.weeklyMeterState,
       });
     }
     return [...manual, ...discovered];
@@ -1009,6 +1020,10 @@ export class QuotaService {
           label: reading.label,
           fiveHourWindowMinutes: reading.fiveHour?.windowMinutes ?? null,
           weeklyWindowMinutes: reading.weekly?.windowMinutes ?? null,
+          fiveHourMeterState: reading.fiveHourMeterState ??
+            (reading.fiveHour === null ? "unknown" : "metered"),
+          weeklyMeterState: reading.weeklyMeterState ??
+            (reading.weekly === null ? "unknown" : "metered"),
           discoveredAt: reading.observedAt,
           source: reading.source,
         });
@@ -1195,8 +1210,36 @@ export class QuotaService {
     const windowStatus = (
       window: "fiveHour" | "weekly",
     ): QuotaWindowStatus => {
+      const other = window === "fiveHour" ? "weekly" : "fiveHour";
       const observedAt = observation?.[`${window}ObservedAt`] ?? null;
       const resetsAtRaw = observation?.[`${window}ResetAt`] ?? null;
+      const windowMinutes = window === "fiveHour"
+        ? limit.fiveHourWindowMinutes
+        : limit.weeklyWindowMinutes;
+      const meterState = window === "fiveHour"
+        ? limit.fiveHourMeterState
+        : limit.weeklyMeterState;
+      const absenceObservedAt = observation?.[`${other}ObservedAt`] ?? null;
+      const notMetered = limit.origin === "discovered" &&
+        meterState === "not-metered";
+      if (notMetered) {
+        return {
+          availability: "not-metered",
+          unit: limit.unit,
+          allowance: null,
+          used: null,
+          reserved: null,
+          reservedIsEstimate: null,
+          remaining: null,
+          remainingPct: null,
+          resetsAt: null,
+          confidence: observation?.[`${other}Confidence`] ??
+            observation?.confidence ?? "missing",
+          source: observation?.[`${other}Source`] ?? observation?.source ?? "none",
+          observedAt: absenceObservedAt,
+          windowMinutes: null,
+        };
+      }
       const observationValid = observedAt !== null && valid(resetsAtRaw);
       const ledgerUsed = window === "fiveHour" ? totals.fiveHour : totals.weekly;
       const reserved = window === "fiveHour"
@@ -1239,15 +1282,19 @@ export class QuotaService {
       const remaining = used === null
         ? null
         : Math.max(0, allowance - used - reserved);
-      const earliest = window === "fiveHour"
-        ? this.ledger.earliestUsageAt(scope, bounds.fiveHourStart)
-        : limit.weeklyWindow === "rolling"
-          ? this.ledger.earliestUsageAt(scope, bounds.weeklyStart)
-          : null;
-      const fallbackReset = window === "fiveHour"
-        ? (earliest === null ? null : add(new Date(earliest), 5 * HOUR_MS))
-        : bounds.weeklyEnd ??
-          (earliest === null ? null : add(new Date(earliest), 7 * DAY_MS));
+      const earliest = limit.unit === "units"
+        ? window === "fiveHour"
+          ? this.ledger.earliestUsageAt(scope, bounds.fiveHourStart)
+          : limit.weeklyWindow === "rolling"
+            ? this.ledger.earliestUsageAt(scope, bounds.weeklyStart)
+            : null
+        : null;
+      const fallbackReset = limit.unit === "units"
+        ? window === "fiveHour"
+          ? (earliest === null ? null : add(new Date(earliest), 5 * HOUR_MS))
+          : bounds.weeklyEnd ??
+            (earliest === null ? null : add(new Date(earliest), 7 * DAY_MS))
+        : null;
       // The label describes the number actually being published, not the reading
       // it was built from. A measured base with Hive's own estimate of the spend
       // since is partly a guess, and calling it `authoritative` would be a claim
@@ -1263,6 +1310,7 @@ export class QuotaService {
               ? "estimated"
               : observation?.[`${window}Confidence`] ?? observation!.confidence;
       return {
+        availability: unmeasured ? "unknown" : "available",
         unit: limit.unit,
         allowance: used === null ? null : allowance,
         used,
@@ -1270,7 +1318,7 @@ export class QuotaService {
         reservedIsEstimate: true,
         remaining,
         remainingPct: remaining === null ? null : remaining / allowance,
-        resetsAt: (observationValid ? resetsAtRaw : null) ?? fallbackReset,
+        resetsAt: observationValid ? resetsAtRaw : fallbackReset,
         confidence,
         source: unmeasured
           ? "none"
@@ -1278,9 +1326,7 @@ export class QuotaService {
             ? "ledger"
             : observation?.[`${window}Source`] ?? observation!.source,
         observedAt: observationValid ? observedAt : null,
-        windowMinutes: window === "fiveHour"
-          ? limit.fiveHourWindowMinutes
-          : limit.weeklyWindowMinutes,
+        windowMinutes,
       };
     };
 
@@ -1439,6 +1485,7 @@ export class QuotaService {
     status: QuotaPoolStatus,
     window: "fiveHour" | "weekly",
   ): boolean {
+    if (status[window].availability === "not-metered") return false;
     const declared = window === "fiveHour"
       ? limit.fiveHourWindowMinutes
       : limit.weeklyWindowMinutes;
@@ -2074,6 +2121,8 @@ export class QuotaService {
       label: null,
       fiveHourWindowMinutes: 5 * 60,
       weeklyWindowMinutes: 7 * 24 * 60,
+      fiveHourMeterState: "metered",
+      weeklyMeterState: "metered",
       discoveredAt: observedAt,
       source: "statusline",
     });
@@ -2210,7 +2259,10 @@ export class QuotaService {
     ] as const) {
       // An unmeasured window cannot cross a threshold. Alerting on it would mean
       // thresholding a number Hive invented.
-      if (value.remainingPct === null || value.allowance === null) continue;
+      if (
+        value.remainingPct === null || value.allowance === null ||
+        value.reserved === null
+      ) continue;
       const current = this.level(value.remainingPct);
       const prior = this.ledger.getAlertState(limit, window);
       const boundaryChanged = prior?.boundaryAt !== null &&

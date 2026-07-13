@@ -144,6 +144,59 @@ describe("the real Codex payload, verbatim off the wire", () => {
     expect(routable?.confidence).toBe("authoritative");
     expect(routable?.source).toBe("provider");
   });
+
+  test("status carries no synthesized figures for the window this plan does not meter", async () => {
+    const codex = new StubProbe("codex", {
+      status: "ok",
+      pools: readingsFromCodexResponse(raw, "default", now.toISOString()),
+      catalog: [],
+    });
+    const { quota, db } = await service([codex]);
+    try {
+      await quota.refreshFromProviders(now, { force: true });
+      const candidates = await authorizeForQuotaTest([
+        { tool: "codex", model: "gpt-5.3-codex" },
+      ]);
+      const spent = await quota.routeAndReserve({
+        agentName: "spent",
+        category: "complex_coding",
+        selection: "strict",
+        explicitCandidate: true,
+        candidates,
+      });
+      await quota.reconcile(
+        spent.reservation.id,
+        undefined,
+        "estimated",
+        "2026-07-10T12:10:00.000Z",
+      );
+      await quota.routeAndReserve({
+        agentName: "active",
+        category: "complex_coding",
+        selection: "strict",
+        explicitCandidate: true,
+        candidates,
+      });
+
+      expect(pool(quota, "codex").fiveHour).toEqual({
+        availability: "not-metered",
+        unit: "percent",
+        allowance: null,
+        used: null,
+        reserved: null,
+        reservedIsEstimate: null,
+        remaining: null,
+        remainingPct: null,
+        resetsAt: null,
+        confidence: "authoritative",
+        source: "provider",
+        observedAt: now.toISOString(),
+        windowMinutes: null,
+      });
+    } finally {
+      db.close();
+    }
+  });
 });
 
 describe("window ordering", () => {
@@ -680,6 +733,8 @@ describe("provider unavailable", () => {
         label: null,
         fiveHourWindowMinutes: 300,
         weeklyWindowMinutes: 10_080,
+        fiveHourMeterState: "metered",
+        weeklyMeterState: "metered",
         discoveredAt: now.toISOString(),
         source: "provider",
       });
@@ -756,6 +811,42 @@ describe("claude usage probe", () => {
     }, "default", now.toISOString());
     expect(pools[0]?.fiveHour?.usedPct).toBe(10);
     expect(pools[0]?.weekly).toBeNull();
+  });
+
+  test("a partial read preserves a known meter instead of asserting absence", async () => {
+    let pools = readingsFromClaudeUsage(
+      claudeUsage,
+      "default",
+      now.toISOString(),
+    );
+    const probe: QuotaProbe = {
+      provider: "claude",
+      read: async () => ({ status: "ok", pools, catalog: [] }),
+    };
+    const { quota, db } = await service([probe]);
+    try {
+      await quota.refreshFromProviders(now, { force: true });
+      const later = new Date(now.getTime() + 60_000);
+      pools = readingsFromClaudeUsage({
+        subscription_type: "max",
+        rate_limits_available: true,
+        rate_limits: {
+          five_hour: { utilization: null, resets_at: null },
+          seven_day: { utilization: 43, resets_at: null },
+        },
+      }, "default", later.toISOString());
+      await quota.refreshFromProviders(later, { force: true });
+
+      const limit = quota.resolvedLimits().find((candidate) =>
+        candidate.provider === "claude" && candidate.pool === "subscription"
+      );
+      expect(limit?.fiveHourMeterState).toBe("unknown");
+      expect(limit?.fiveHourWindowMinutes).toBe(300);
+      expect(pool(quota, "subscription", later).fiveHour.availability)
+        .not.toBe("not-metered");
+    } finally {
+      db.close();
+    }
   });
 
   test("drops malformed and out-of-range usage instead of inventing headroom", () => {

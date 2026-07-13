@@ -24,6 +24,13 @@ export const QuotaSourceSchema = z.enum([
 ]);
 export type QuotaSource = z.infer<typeof QuotaSourceSchema>;
 
+export const QuotaMeterStateSchema = z.enum([
+  "metered",
+  "not-metered",
+  "unknown",
+]);
+export type QuotaMeterState = z.infer<typeof QuotaMeterStateSchema>;
+
 /**
  * Where a pool's shape came from. `discovered` pools are read from the provider
  * at startup and are denominated in percent of the window, because no provider
@@ -271,21 +278,21 @@ export interface QuotaScope {
 }
 
 /**
- * One window of one pool. Every number here is either a real measurement or
- * `null`; a window Hive has no observation for reports `used: null`, never `0`.
- * `reserved` is the exception that proves the rule: it is Hive's own in-flight
- * bookkeeping, is always known, and is always an estimate — hence
- * `reservedIsEstimate`, which is `true` unconditionally so no renderer can
- * mistake it for provider truth.
+ * One window of one pool. `availability` keeps three facts apart: a window with
+ * values, a window the provider affirmatively does not meter, and a window Hive
+ * could not read. A not-metered window carries no numerical fields at all — not
+ * even Hive's otherwise-known reservation estimate — because attaching a figure
+ * to a nonexistent meter would manufacture exactly the window this type reports.
  */
 export interface QuotaWindowStatus {
+  availability: "available" | "not-metered" | "unknown";
   /** `percent` for provider-discovered pools; `units` for manual overrides. */
   unit: "percent" | "units";
   /** Provider capacity. Always 100 for percent pools; null when unknowable. */
   allowance: number | null;
   used: number | null;
-  reserved: number;
-  reservedIsEstimate: true;
+  reserved: number | null;
+  reservedIsEstimate: true | null;
   remaining: number | null;
   remainingPct: number | null;
   resetsAt: string | null;

@@ -2,6 +2,7 @@ import { z } from "zod";
 import {
   CAPABILITY_PROVIDERS,
   CapabilityProviderSchema,
+  QuotaMeterStateSchema,
   QuotaObservationSchema,
   splitVariant,
   type CapabilityProvider,
@@ -66,6 +67,8 @@ const DiscoveredPoolSchema = z.object({
   label: z.string().nullable(),
   fiveHourWindowMinutes: z.number().nullable(),
   weeklyWindowMinutes: z.number().nullable(),
+  fiveHourMeterState: QuotaMeterStateSchema,
+  weeklyMeterState: QuotaMeterStateSchema,
   discoveredAt: z.string(),
   source: z.enum(["provider", "statusline"]),
 });
@@ -343,6 +346,8 @@ export class QuotaLedger {
         label TEXT,
         fiveHourWindowMinutes REAL,
         weeklyWindowMinutes REAL,
+        fiveHourMeterState TEXT NOT NULL DEFAULT 'unknown',
+        weeklyMeterState TEXT NOT NULL DEFAULT 'unknown',
         discoveredAt TEXT NOT NULL,
         source TEXT NOT NULL,
         PRIMARY KEY(provider, account, pool)
@@ -365,6 +370,26 @@ export class QuotaLedger {
         PRIMARY KEY(provider, model, effort)
       );
     `);
+    const poolColumns = z.array(z.object({ name: z.string() })).parse(
+      this.db.database.query("PRAGMA table_info(quota_pools)").all(),
+    );
+    const poolColumnNames = new Set(poolColumns.map((column) => column.name));
+    for (
+      const [column, duration] of [
+        ["fiveHourMeterState", "fiveHourWindowMinutes"],
+        ["weeklyMeterState", "weeklyWindowMinutes"],
+      ] as const
+    ) {
+      if (poolColumnNames.has(column)) continue;
+      this.db.database.exec(
+        `ALTER TABLE quota_pools ADD COLUMN ${column} TEXT NOT NULL DEFAULT 'unknown'`,
+      );
+      // A stored duration proves the window was metered. A legacy null proves
+      // nothing, so it remains unknown until a provider explicitly says more.
+      this.db.database.exec(
+        `UPDATE quota_pools SET ${column} = 'metered' WHERE ${duration} IS NOT NULL`,
+      );
+    }
     const observationColumns = z.array(z.object({ name: z.string() })).parse(
       this.db.database.query("PRAGMA table_info(quota_observations)").all(),
     );
@@ -1088,13 +1113,24 @@ export class QuotaLedger {
     this.db.database.query(`
       INSERT INTO quota_pools (
         provider, account, pool, models, label, fiveHourWindowMinutes,
-        weeklyWindowMinutes, discoveredAt, source
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        weeklyWindowMinutes, fiveHourMeterState, weeklyMeterState,
+        discoveredAt, source
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(provider, account, pool) DO UPDATE SET
         models = excluded.models,
         label = excluded.label,
-        fiveHourWindowMinutes = excluded.fiveHourWindowMinutes,
-        weeklyWindowMinutes = excluded.weeklyWindowMinutes,
+        fiveHourWindowMinutes = CASE
+          WHEN excluded.fiveHourMeterState = 'unknown'
+            THEN quota_pools.fiveHourWindowMinutes
+          ELSE excluded.fiveHourWindowMinutes
+        END,
+        weeklyWindowMinutes = CASE
+          WHEN excluded.weeklyMeterState = 'unknown'
+            THEN quota_pools.weeklyWindowMinutes
+          ELSE excluded.weeklyWindowMinutes
+        END,
+        fiveHourMeterState = excluded.fiveHourMeterState,
+        weeklyMeterState = excluded.weeklyMeterState,
         discoveredAt = excluded.discoveredAt,
         source = excluded.source
     `).run(
@@ -1105,6 +1141,8 @@ export class QuotaLedger {
       value.label,
       value.fiveHourWindowMinutes,
       value.weeklyWindowMinutes,
+      value.fiveHourMeterState,
+      value.weeklyMeterState,
       value.discoveredAt,
       value.source,
     );
