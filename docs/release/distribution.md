@@ -9,19 +9,19 @@ Why Hive ships a signed native installer rather than npm, Homebrew, or Sparkle �
 
 ## The one thing code cites this document for
 
-`src/update/source.ts:7` and `src/update/check.ts:103-107` both cite the distribution research by name as the recorded rationale for a knowing deviation, and this article inherits that role. The deviation:
+`src/update/source.ts:4-8` and `src/update/check.ts:102-108` both cite the distribution research by name as the recorded rationale for a knowing deviation, and this article inherits that role. The deviation:
 
 > GitHub Releases should hold immutable bytes; a small CDN-backed endpoint should express mutable channel and rollout policy. Do not make every client scrape the GitHub "latest" API or trust a moving asset without a signed policy document.
 
-**The shipped updater does exactly what that sentence forbids.** It reads `releases/latest` and the `hive-release.json` asset attached to it (`update/source.ts:112-116`, `update/check.ts:109-139`). There is no channel endpoint. The choice was between a knowing deviation and no updater at all, and it is confined to `src/update/source.ts`, which exists as the seam — introducing the channel document changes that file and nothing else.
+**The shipped updater does exactly what that sentence forbids.** It reads `releases/latest` and the `hive-release.json` asset attached to it (`update/source.ts:105-154`, `update/check.ts:102-142`). There is no channel endpoint. The choice was between a knowing deviation and no updater at all, and it is confined to `src/update/source.ts`, which exists as the seam — introducing the channel document changes that file and nothing else.
 
 The deviation is **recorded, not rationalized**. Until it closes: channel and rollout policy are inferred from a mutable API, and the manifest's `channel` field is written but never read. What stands between a compromised release and an installed Hive is TLS, GitHub's immutable-release guarantee, and — since 0.0.6 — the Ed25519 manifest signature that the research doc argued for and that now exists. The signature is the part that closed; the channel document is the part that did not.
 
 ## What the installer actually verifies — and does not
 
-`install.sh` downloads a published release, checks every artifact's SHA-256 against the release manifest, proves the binary runs, and only then points `~/.local/bin/hive` at it. **That is the whole of its verification** (`install.sh:75-83`).
+`install.sh` downloads a published release, checks every artifact's SHA-256 against the release manifest, proves the binary runs, and only then points `~/.local/bin/hive` at it. **That is the whole of its verification** (`install.sh:73-118`).
 
-The design called for the installer to verify the manifest signature, the Developer ID signature, and the Team ID. **It does none of those.** The script says so itself (`install.sh:72-74`): the manifest is served over TLS from an immutable release, and "when a Hive release key exists, `hive update` additionally verifies its Ed25519 signature." So the first install is anchored on TLS + GitHub immutability + SHA-256 against an *unverified* manifest; every subsequent update through `hive update` is anchored on the embedded key and is fail-closed. **This is a real gap, not a rounding error**: an attacker who can serve a forged manifest *and* the matching bytes defeats the installer, because the digest it checks comes from the same document it did not authenticate.
+The design called for the installer to verify the manifest signature, the Developer ID signature, and the Team ID. **It does none of those.** The script says so itself (`install.sh:77-79`): the manifest is served over TLS from an immutable release, and "when a Hive release key exists, `hive update` additionally verifies its Ed25519 signature." So the first install is anchored on TLS + GitHub immutability + SHA-256 against an *unverified* manifest; every subsequent update through `hive update` is anchored on the embedded key and is fail-closed. **This is a real gap, not a rounding error**: an attacker who can serve a forged manifest *and* the matching bytes defeats the installer, because the digest it checks comes from the same document it did not authenticate.
 
 The reason it has not been closed is the one the research doc gave: portable POSIX shell cannot reliably verify Ed25519 on every supported macOS. The stated options are a tiny notarized installer binary, or a pinned Apple-native signature check plus a SHA from a versioned HTTPS script. Neither is built. `curl | sh` is convenient, not a trust argument; the script is short enough to audit, which is the only reason it is acceptable at all.
 
@@ -29,8 +29,8 @@ The reason it has not been closed is the one the research doc gave: portable POS
 
 Recorded so nobody re-derives them from the research doc as though they were behavior:
 
-- **Manifest fields** "artifact URL, supported macOS, minimum updater version, rollout percentage" — absent. The real field list is `release/manifest.ts:54-66`.
-- **The health check** was specified to open the database read/write, bind the MCP endpoint, and perform a no-op transaction, keeping a DB snapshot and a grace period. It is `hive --version`, checked for the string `hive` (`cli/update.ts:81-82`). Retention is three version directories (`update/install.ts:350-370`), not a database snapshot.
+- **Manifest fields** "artifact URL, supported macOS, minimum updater version, rollout percentage" — absent. The real field list is `release/manifest.ts:49-75`.
+- **The health check** was specified to open the database read/write, bind the MCP endpoint, and perform a no-op transaction, keeping a DB snapshot and a grace period. It is `hive --version`, checked for the string `hive` (`cli/update.ts:87-92`). Retention is three version directories (`update/install.ts:408-468`), not a database snapshot.
 - **An external updater helper** asking the old daemon to "prepare for update" (checkpoint WAL, record state, close listeners, exit) — not built. A stale, provably idle daemon is simply SIGTERM'd and waited on (`update/daemon.ts:150-199`).
 - **Background fetch and stage, jittered background checks, and a deterministic 5% → 25% → 100% rollout** keyed on an anonymous install ID — none built. There is one ring.
 - **Homebrew tap formula updates from release CI** — not built. Hive detects a Homebrew-owned install and refuses to rewrite it; that is all.
@@ -82,7 +82,7 @@ The desktop precedents agree, and this is why activation is gated on quiescence 
 
 **OrbStack.** Owns both the app and its bundled CLIs, linking them from an app-managed directory. Evidence for single-owner bundling; *not* evidence that daemon restarts are safe — its docs specify no no-interruption contract.
 
-The consequence for Hive is the one the code implements: a Unix process keeps executing its already-open image after a symlink changes, so atomic activation does **not** update the running daemon. Download, activation, and daemon restart are three separate events, and the handshake is what refuses to attach a new CLI to an old daemon. The stale/foreign/busy triage and the restart path are in [versioning-and-release.md](versioning-and-release.md); what the restart must not corrupt is in [../daemon/database-resilience.md](../daemon/database-resilience.md).
+The consequence for Hive is the one the code implements: a Unix process keeps executing its already-open image after a symlink changes, so atomic activation does **not** update a running daemon. Download and signed staging are safe while teams run; activation is a separate machine-wide event under the mutation lease and refuses until every instance is observable and idle; restarting a stale daemon is a third event. The handshake refuses to attach a new CLI to an old build. The all-instance gate is in `src/cli/update.ts:281-367`; the stale/foreign/busy triage and restart path are in [versioning-and-release.md](versioning-and-release.md); what restart must not corrupt is in [Database resilience](../daemon/database-resilience.md).
 
 Two further rules from the design still stand as intent even though nothing enforces them yet. **Database migrations must follow expand/contract**: an automatically activated release may add compatible tables, columns, or indexes, but must not destroy state the previous binary needs for rollback; destructive migrations wait for a later release or an explicit user-confirmed upgrade. And **agent hooks are another client**: a live team should keep using the session's recorded executable path rather than whatever `hive` resolves to on `PATH`, so a team has one control-plane version from birth to quiescence.
 

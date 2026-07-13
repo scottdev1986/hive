@@ -9,9 +9,9 @@ What a user sees when a new Hive exists: at most one dim line at the end of a co
 
 ## The shape, as shipped
 
-The check runs **in the CLI**, not the daemon. `withTrailingUpdateNotice(wantsUpdateNotice(argv), …)` wraps the whole command in `src/cli.ts:819-825`: the check starts when the command starts and runs concurrently, the line prints only after the command finishes *normally* (a failed command's error is the last thing the user reads, not a version advertisement), and a failed or slow check is silence, never an error.
+The check runs **in the CLI**, not the daemon. `withTrailingUpdateNotice(wantsUpdateNotice(argv), …)` wraps the whole command in `src/cli.ts:868-873`: the check starts when the command starts and runs concurrently, the line prints only after the command finishes *normally* (a failed command's error is the last thing the user reads, not a version advertisement), and a failed or slow check is silence, never an error.
 
-The network budget is **300 ms** (`cli/update-notice.ts:33`, `:99-109`): a cold fetch aborts fast rather than keeping the process alive after the command is done, and the result still lands in the on-disk cache so the *next* command shows it instantly. `checkForUpdate` itself allows 2.5 s (`update/check.ts:23`) on the surfaces that can afford it.
+The network budget is **300 ms** (`cli/update-notice.ts:33`, `:96-105`): a cold fetch aborts fast rather than keeping the process alive after the command is done, and the result still lands in the on-disk cache so the *next* command shows it instantly. `checkForUpdate` itself allows 2.5 s (`update/check.ts:21`) on the surfaces that can afford it.
 
 This contradicts the original design, and the contradiction is the most important thing to know about this article. The research doc's central thesis was that **the daemon owns checking and the CLI owns telling** — the daemon fetching a signed channel manifest on a jittered ~24-hour timer, recording `{latestVersion, stagedVersion, checkedAt, securityCritical}` in the `meta` table, and the CLI "never touching the network for update purposes." None of that is built. No daemon code calls `checkForUpdate`; `update/check.ts:11-13` admits the daemon-owned background check "is not built yet" and says the module is written so the daemon *can* call it unchanged. State lives in two JSON files under `~/.hive`, not in `meta`:
 
@@ -24,11 +24,7 @@ The consequence, stated plainly: a long-running daemon learns about a release on
 
 Hive has three possible surfaces and only one is right by default. The daemon has no UI. The orchestrator terminal belongs to a running Claude Code or Codex session, and injecting Hive chrome into it mid-session is both technically awkward and exactly the interruption this design forbids. That leaves the CLI.
 
-The passive trailing notice appears on exactly eight commands (`cli/update-notice.ts:38-47`):
-
-```
-status  quota  autonomy  memory  watch  layout  stop  recover
-```
+The passive trailing notice appears only on the human-facing commands in `USER_FACING_COMMANDS` (`cli/update-notice.ts:38-49`). Session boundaries and machine-facing protocol commands are deliberately absent from that allowlist.
 
 **`claude`, `codex`, `init`, and bare `hive` are excluded on purpose** (`cli/update-notice.ts:13-16`). They are **session boundaries**, and they already print the richer *start* notice through `startSession` → `printStartNotice` (`cli/start.ts:51-70`, `cli/start.ts:118`) and, for the standalone Workspace launch, `cli/workspace.ts:176-190`. Two version lines on one command is one too many, and the start notice is strictly better on those surfaces: it is the last moment Hive owns the terminal before an orchestrator takes it, so it always says *something* — including `could not check for updates (…)`, which is the whole point of asking. Everything not on either list — `hive event`, the hidden app-server host, hooks, bridges — never speaks at all, because a surprise stderr line inside an agent turn corrupts a protocol.
 
@@ -64,7 +60,7 @@ Per-version dismissal is `hive update skip`, Codex's politest-rate-limit-in-the-
 
 ## The commands
 
-The real command family (`src/cli.ts:293-315`):
+The real command family (`src/cli.ts:308-331`):
 
 ```
 hive update                  check, download, verify, stage; activate if the team is idle
@@ -77,17 +73,21 @@ hive update skip             silence notices for the currently offered version
 
 `hive update channel stable` and `hive update off | on` **do not exist** — the research doc listed both. Channels: the manifest carries a `channel` enum (`release/manifest.ts:58`) but **nothing reads it**; `update/source.ts:112-116` resolves `releases/latest` unconditionally. `off`/`on` are the environment variables above.
 
-Claude Code splits pinning into a separate `claude install`; Hive folds it into `hive update <version>` because a second installer-flavored verb earns its keep only when install and update genuinely differ, and under versioned directories they are the same operation: fetch, verify, stage, activate. `rollback` is sugar for `hive update <previous>` that requires no version lookup and is guaranteed local — the moment you want it is the moment you distrust the network's newest offering.
+Claude Code splits pinning into a separate `claude install`; Hive folds it into `hive update <version>` because a second installer-flavored verb earns its keep only when install and update genuinely differ, and under versioned directories they are the same operation: fetch, verify, stage, activate.
+
+`rollback` does not fetch release bytes, but it is not a trust shortcut. Each staged version stores the exact signed manifest bytes and signature in `release-verification.json`. Rollback re-verifies that signature, selects the artifact for the running architecture, and re-hashes the retained CLI before changing `current`. A legacy or tampered version without valid verification material is refused with an instruction to reinstall that exact version (`update/install.ts:536-618`).
 
 ### The three checks, named out loud
 
-`hive update` prints what it actually verified (`cli/update.ts:216-242`):
+`hive update` prints what it actually verified (`cli/update.ts:259-279`, `:327-350`):
 
 ```
 hive 0.0.9 staged — verified: Ed25519 signature, SHA-256, binary probed
 ```
 
-Hive performs three independent integrity checks on every update — the Ed25519 signature over the manifest, the SHA-256 of each artifact against that signed manifest, and executing the staged binary to make it state its own version before it can ever be `current` — and for a long time told the user about none of them. **"Downloaded and verified" names no check and so cannot be wrong, which is exactly what was wrong with it**: it neither earns trust nor risks anything. The answer to a trust complaint is not a stronger adjective; it is saying plainly what already happens. The rejected alternative was to keep the vague line and let `hive update status` carry the detail — it loses because the moment of the claim is the moment the user is deciding, and nobody audits an install afterwards. The unsigned branch is the inverse and must never read as a footnote, so it prints `UNSIGNED RELEASE:` on a line of its own (`cli/update.ts:244-248`).
+Hive performs three independent integrity checks on every update — the Ed25519 signature over the manifest, the SHA-256 of each artifact against that signed manifest, and executing the staged binary to make it state its own version before it can ever be `current` — and for a long time told the user about none of them. **"Downloaded and verified" names no check and so cannot be wrong, which is exactly what was wrong with it**: it neither earns trust nor risks anything. The answer to a trust complaint is not a stronger adjective; it is saying plainly what already happens. The rejected alternative was to keep the vague line and let `hive update status` carry the detail — it loses because the moment of the claim is the moment the user is deciding, and nobody audits an install afterwards.
+
+There is no unsigned update mode. Staging refuses when the running binary has no embedded release key, the signature asset is missing, or the signature does not verify. A source checkout refuses self-update and tells the user to pull and rebuild (`cli/update.ts:94-117`, `update/install.ts:158-173`).
 
 The download is **visible**: a binary that asks to replace itself, over tens of megabytes, on a connection the user cannot see, has to earn that. The signed manifest already carries the size, so it is on screen before the connection opens. It degrades twice — no `Content-Length` means bytes and rate but no invented percentage, and off a TTY it prints one plain line and no ANSI, because a `\r`-redrawn bar in a log file is a single unreadable 400 KB line.
 
@@ -97,7 +97,9 @@ The download is **visible**: a binary that asks to replace itself, over tens of 
 
 **A Homebrew-owned install is refused, not rewritten** (`cli/update.ts:96-101`), and so is an `unmanaged` binary Hive did not place. Two owners for one install is how a package receipt starts lying.
 
-**Daemon auto-activation at quiescence is not built.** A staged update waits for a human to re-run `hive update`. The one-shot `hive updated to 0.0.9` line that was supposed to close that loop does not exist. What *is* built is the refusal message, which names the one thing the user can do about it (`update/daemon.ts:212-224`): `3 agent(s) still working (leo, maya, sam); the running daemon and team are unaffected` / `Fix: run \`hive stop\` to activate now`.
+**Daemon auto-activation at quiescence is not built.** A staged update waits for a human to re-run `hive update`; the one-shot completion line from the design does not exist.
+
+Activation is a machine-wide mutation. It holds the mutation lease, repeats the all-instance liveness check, and refuses while any instance has a live or unobservable team. Spawn and landing use the same coordinator, so a new operation cannot enter between the final check and the `current` change (`cli/update.ts:281-325`, `daemon/mutation-lease.ts:162-305`). The refusal names each blocking instance and the observed agent names or unknown marker (`cli/update.ts:224-231`). Downloading, signature verification, hashing, probing, and staging happen before that lease because they do not change the active install.
 
 **Wire compatibility is not N/N−1.** The research doc promised "N/N−1 wire compatibility by policy"; `daemon/handshake.ts:11` is `{min: 1, max: 1}` — one wire version, refuse on mismatch. That is the conservative half of the contract and not yet the useful half.
 
