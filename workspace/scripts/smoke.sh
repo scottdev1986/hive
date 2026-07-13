@@ -15,6 +15,8 @@ cd "$(dirname "$0")/.." || exit 1
 RUN_ID="hivesmoke$$"
 PROJECT_DIR="$(mktemp -d "${TMPDIR:-/tmp}/hive-smoke-project.XXXXXX")"
 SUPPORT_DIR="$(mktemp -d "${TMPDIR:-/tmp}/hive-smoke-support.XXXXXX")"
+INSTANCE_HOME="$SUPPORT_DIR/instance"
+mkdir -p "$INSTANCE_HOME"
 SESS_ONE="${RUN_ID}-agent-one"
 SESS_TWO="${RUN_ID}-agent-two"
 SESS_ORCH="${RUN_ID}-orch"
@@ -87,6 +89,7 @@ HIVE_SMOKE_TYPE_INTO="agent-one" \
 HIVE_SMOKE_RT_MARKER="$RT_MARKER" \
 HIVE_SMOKE_CLOSE="agent-two" \
 "$BIN" --smoke --project "$PROJECT_DIR" --port 0 --hive "$FAKE_HIVE" \
+  --instance-id "$RUN_ID" --instance-home "$INSTANCE_HOME" \
   --orchestrator-session "$SESS_ORCH" --feed "$FEED"
 app_status=$?
 [ "$app_status" -eq 0 ] || fail "app smoke exited $app_status"
