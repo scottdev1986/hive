@@ -184,7 +184,9 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
             return "exec \(shellQuoted(hivePath)) workspace-orchestrator --tool \(shellQuoted(orchestrator)) --port \(daemonPort)"
         case .agent:
             let session = pane.tmuxSession ?? pane.title
-            return "exec tmux attach-session -t \(shellQuoted(session))"
+            let target = shellQuoted("=\(session):")
+            return "until tmux has-session -t \(target) 2>/dev/null; do sleep 0.5; done; "
+                + "exec tmux attach-session -t \(shellQuoted(session))"
         }
     }
 

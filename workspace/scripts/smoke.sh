@@ -38,7 +38,6 @@ trap cleanup EXIT
 # prompt to type at; agent-two chatters forever; orch stands in for the
 # selected Workspace orchestrator session.
 tmux new-session -d -x 100 -y 30 -s "$SESS_ONE" 'echo AGENT-ONE-ALIVE; exec sh -i' || { echo "SMOKE FAIL: cannot start tmux"; exit 1; }
-tmux new-session -d -x 100 -y 30 -s "$SESS_TWO" 'while :; do echo AGENT-TWO-ALIVE; sleep 1; done'
 tmux new-session -d -x 100 -y 30 -s "$SESS_ORCH" 'echo ORCH-ALIVE; exec sh -i'
 
 # --- (b) Feed binary: contract-conformant NDJSON naming those sessions ------
@@ -74,6 +73,12 @@ chmod +x "$FAKE_HIVE"
 # --- (c) Build and run the app's in-process smoke assertions ----------------
 swift build || exit 1
 BIN="$(swift build --show-bin-path)/HiveWorkspace"
+
+# The daemon publishes an AgentRecord just before it creates the agent's tmux
+# session. Keep agent-two absent for one second so its first attach fails; the
+# pane must retry instead of leaving tmux's "can't find session" on screen.
+(sleep 1; tmux new-session -d -x 100 -y 30 -s "$SESS_TWO" \
+  'while :; do echo AGENT-TWO-ALIVE; sleep 1; done') &
 
 HIVE_SMOKE_AGENTS="agent-one=AGENT-ONE-ALIVE,agent-two=AGENT-TWO-ALIVE" \
 HIVE_SMOKE_CLOSED="ghost" \

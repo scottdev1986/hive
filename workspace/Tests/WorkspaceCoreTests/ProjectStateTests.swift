@@ -332,6 +332,7 @@ final class ProjectStateTests: XCTestCase {
         let agent = try XCTUnwrap(decoded.agents?.first)
         XCTAssertEqual(agent.name, "idx")
         XCTAssertEqual(agent.tool, "codex")
+        XCTAssertEqual(agent.tmuxSession, "hive-idx")
         XCTAssertEqual(agent.contextPct, 41.5)
         XCTAssertNil(agent.closedAt)
     }
