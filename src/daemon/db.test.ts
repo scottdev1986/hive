@@ -804,6 +804,68 @@ describe("HiveDatabase", () => {
       process.env.HIVE_HOME = home;
     }
   });
+
+  test("keeps first-install and lost-database semantics distinct in both open modes", () => {
+    const isolatedHome = mkdtempSync(join(tmpdir(), "hive-open-matrix-test-"));
+    process.env.HIVE_HOME = isolatedHome;
+    const path = join(isolatedHome, "hive.db");
+    try {
+      expect(() => HiveDatabase.openReadonly()).toThrow(
+        "A read-only command will not create or seed it",
+      );
+      expect(existsSync(path)).toBe(false);
+      expect(existsSync(getDatabaseIdentityPath())).toBe(false);
+
+      const initialized = new HiveDatabase();
+      initialized.close();
+      expect(existsSync(path)).toBe(true);
+      expect(existsSync(getDatabaseIdentityPath())).toBe(true);
+
+      rmSync(path, { force: true });
+      rmSync(`${path}-wal`, { force: true });
+      rmSync(`${path}-shm`, { force: true });
+      expect(() => new HiveDatabase()).toThrow(
+        "refusing to create an empty replacement",
+      );
+      expect(() => HiveDatabase.openReadonly()).toThrow(
+        "refusing to create an empty replacement",
+      );
+      expect(existsSync(path)).toBe(false);
+    } finally {
+      rmSync(isolatedHome, { recursive: true, force: true });
+      process.env.HIVE_HOME = home;
+    }
+  });
+
+  test("read-only adoption of a legacy database never creates identity or schema", () => {
+    const isolatedHome = mkdtempSync(join(tmpdir(), "hive-readonly-adopt-test-"));
+    process.env.HIVE_HOME = isolatedHome;
+    const path = join(isolatedHome, "hive.db");
+    const legacy = new Database(path, { create: true });
+    legacy.exec("CREATE TABLE sentinel (value TEXT)");
+    const before = legacy.query(
+      "SELECT type, name, sql FROM sqlite_schema ORDER BY type, name",
+    ).all();
+    legacy.close();
+    try {
+      expect(existsSync(getDatabaseIdentityPath())).toBe(false);
+      const readonly = HiveDatabase.openReadonly();
+      readonly.close();
+      expect(existsSync(getDatabaseIdentityPath())).toBe(false);
+
+      const observed = new Database(path, { readonly: true });
+      try {
+        expect(observed.query(
+          "SELECT type, name, sql FROM sqlite_schema ORDER BY type, name",
+        ).all()).toEqual(before);
+      } finally {
+        observed.close();
+      }
+    } finally {
+      rmSync(isolatedHome, { recursive: true, force: true });
+      process.env.HIVE_HOME = home;
+    }
+  });
 });
 
 describe("contextPct can say 'unknown'", () => {

@@ -361,6 +361,12 @@ export class HiveDatabase {
           "Restore hive.db from backup or explicitly uninstall/reset Hive before starting again.",
       );
     }
+    if (options.readonly === true && !existsSync(path)) {
+      throw new HiveDatabaseIdentityError(
+        `Hive's database has not been initialized at ${path}. ` +
+          "A read-only command will not create or seed it; start the Hive daemon first.",
+      );
+    }
     if (options.readonly !== true && path !== ":memory:") {
       mkdirSync(dirname(path), { recursive: true });
     }
