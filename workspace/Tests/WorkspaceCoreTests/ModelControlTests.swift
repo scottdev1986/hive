@@ -407,9 +407,9 @@ final class ModelControlTests: XCTestCase {
     }
 
     func testChainReorderKeepsPrimaryAtIndexZero() {
-        let a = ChainEntry(target: .exact(provider: "claude", model: "a", variant: nil), effort: .exact("high"))
-        let b = ChainEntry(target: .exact(provider: "codex", model: "b", variant: nil), effort: .providerControlled)
-        let c = ChainEntry(target: .vendorDefault(provider: "grok"), effort: .none)
+        let a = ChainEntry(provider: "claude", model: "a", effort: .exact("high"))
+        let b = ChainEntry(provider: "codex", model: "b", effort: .providerControlled)
+        let c = ChainEntry(provider: "grok", model: "grok-4.5", effort: .none)
         let moved = ModelControlPolicy.move([a, b, c], from: 2, to: 0)
         XCTAssertEqual(moved, [c, a, b])
         XCTAssertEqual(ModelControlPolicy.move([a, b, c], from: 5, to: 0), [a, b, c],
@@ -431,12 +431,75 @@ final class ModelControlTests: XCTestCase {
         XCTAssertEqual(policy.defaultChain.map(\.provider), ["claude"])
     }
 
+    // MARK: The provisional routing table — the atom is (model, effort)
+
+    /// Two consented providers, one with a full effort axis and one whose
+    /// vendor states there is no effort axis.
+    private var routingTableSnapshot: ModelControlSnapshot {
+        var snapshot = grokAvailableSnapshot
+        snapshot.billing["grok"] = BillingSnapshot(
+            creditsEnabled: .known(false, surface: "grok._x.ai/billing", observedAt: ""),
+            generalUtilization: .unknown(reason: "surface-silent", surface: "grok._x.ai/billing", observedAt: ""))
+        return snapshot
+    }
+
+    func testEveryCategorySeedsAChainWithReasoning() {
+        let policy = ProvisionalPolicyStore.seed(from: routingTableSnapshot)
+        for category in TaskCategory.allCases {
+            let chain = policy.categoryPolicy(category).chain
+            XCTAssertFalse(chain.isEmpty, "\(category.rawValue) should ship pre-filled")
+            for entry in chain {
+                XCTAssertEqual(entry.confidence, .assumed,
+                               "nothing claims evidence that does not exist")
+                XCTAssertTrue(entry.note?.contains("Assumed order") == true,
+                              "every seeded row says why it was chosen")
+            }
+        }
+        XCTAssertFalse(policy.defaultChain.isEmpty)
+    }
+
+    func testSameModelSeedsAtDifferentEffortsInDifferentCategories() {
+        // The whole feature: fable-5@high for complex coding and fable-5@low
+        // for summarization are two different placeable routing choices.
+        let policy = ProvisionalPolicyStore.seed(from: routingTableSnapshot)
+        let complex = policy.categoryPolicy(.complexCoding).chain
+            .first { $0.provider == "claude" }
+        let summarize = policy.categoryPolicy(.summarization).chain
+            .first { $0.provider == "claude" }
+        guard let complexModel = complex?.model, let summaryModel = summarize?.model else {
+            return XCTFail("claude should seed exact targets in both categories")
+        }
+        XCTAssertEqual(complexModel, summaryModel, "same model…")
+        XCTAssertEqual(complex?.effort, .exact("high"))
+        XCTAssertEqual(summarize?.effort, .exact("low"))
+        XCTAssertNotEqual(complex?.effort, summarize?.effort, "…different atoms")
+    }
+
+    func testSeedingNeverInventsAnEffortLevel() {
+        // Grok's model states it has NO effort axis: the seeded entry must be
+        // effort .none — assignable, with nothing to pick — never a made-up
+        // "high".
+        let policy = ProvisionalPolicyStore.seed(from: routingTableSnapshot)
+        let grokLink = policy.categoryPolicy(.complexCoding).chain
+            .first { $0.provider == "grok" }
+        XCTAssertNotNil(grokLink, "a consented grok is seeded — visible, usable")
+        XCTAssertEqual(grokLink?.effort, EffortTarget.none)
+    }
+
+    func testCodeReviewLeadsWithADifferentVendor() {
+        let policy = ProvisionalPolicyStore.seed(from: routingTableSnapshot)
+        let review = policy.categoryPolicy(.codeReview).chain
+        let complex = policy.categoryPolicy(.complexCoding).chain
+        XCTAssertEqual(review.count, complex.count)
+        XCTAssertNotEqual(review.first?.provider, complex.first?.provider,
+                          "review prefers vendor independence")
+    }
+
     func testChainLinkStatusProviderOffWins() {
         var policy = ProvisionalPolicyStore.seed(from: fixtureSnapshot)
         policy.setProviderEnabled(.claude, false)
         let entry = ChainEntry(
-            target: .exact(provider: "claude", model: "claude-opus-4-8", variant: nil),
-            effort: .exact("high"))
+            provider: "claude", model: "claude-opus-4-8", effort: .exact("high"))
         XCTAssertEqual(
             ChainLinkStatus.derive(entry: entry, policy: policy, snapshot: fixtureSnapshot),
             .providerOff)
@@ -445,8 +508,7 @@ final class ModelControlTests: XCTestCase {
     func testChainLinkStatusUnresolvableWhenModelLeftCatalog() {
         let policy = ProvisionalPolicyStore.seed(from: fixtureSnapshot)
         let entry = ChainEntry(
-            target: .exact(provider: "claude", model: "claude-3-opus", variant: nil),
-            effort: .providerControlled)
+            provider: "claude", model: "claude-3-opus", effort: .providerControlled)
         XCTAssertEqual(
             ChainLinkStatus.derive(entry: entry, policy: policy, snapshot: fixtureSnapshot),
             .unresolvable)
@@ -456,8 +518,7 @@ final class ModelControlTests: XCTestCase {
         var policy = ProvisionalPolicyStore.seed(from: fixtureSnapshot)
         policy.setModelEnabled(provider: .claude, modelId: "claude-opus-4-8", false)
         let entry = ChainEntry(
-            target: .exact(provider: "claude", model: "claude-opus-4-8", variant: nil),
-            effort: .providerControlled)
+            provider: "claude", model: "claude-opus-4-8", effort: .providerControlled)
         XCTAssertEqual(
             ChainLinkStatus.derive(entry: entry, policy: policy, snapshot: fixtureSnapshot),
             .modelDisabled)
@@ -471,6 +532,38 @@ final class ModelControlTests: XCTestCase {
         let warnings = PolicyWarning.derive(policy: policy, snapshot: fixtureSnapshot)
         XCTAssertTrue(warnings.contains(.noProvidersEnabled))
         XCTAssertTrue(warnings.contains(.defaultChainEmpty))
+    }
+
+    // MARK: Display names — specific models, never "default"
+
+    func testHumanNamePrefersTheVendorsOwnDisplayName() {
+        var record = model(
+            supportsEffort: .known(true, surface: "t", observedAt: ""),
+            levels: .known(["low"], surface: "t", observedAt: ""))
+        record.displayName = "Fable"
+        XCTAssertEqual(record.humanName, "Fable")
+    }
+
+    func testHumanNameNeverDisplaysDefaultAsAModel() {
+        // Claude's menu labels its alias entry "Default (recommended)". That
+        // is an alias's label, not a model identity — the UI displays models.
+        var record = model(
+            supportsEffort: .known(true, surface: "t", observedAt: ""),
+            levels: .known(["low"], surface: "t", observedAt: ""))
+        record.provider = "claude"
+        record.canonicalId = "claude-opus-4-8"
+        record.displayName = "Default (recommended)"
+        XCTAssertEqual(record.humanName, "Opus 4.8")
+    }
+
+    func testHumanNamePrettifiesTheVendorIdMechanically() {
+        var record = model(
+            supportsEffort: .known(true, surface: "t", observedAt: ""),
+            levels: .known(["low"], surface: "t", observedAt: ""))
+        record.provider = "claude"
+        record.canonicalId = "claude-fable-5"
+        record.displayName = nil
+        XCTAssertEqual(record.humanName, "Fable 5")
     }
 
     // MARK: Billing chips

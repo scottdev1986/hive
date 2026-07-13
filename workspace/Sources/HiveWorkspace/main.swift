@@ -9,6 +9,12 @@ import AppKit
 let config = LaunchConfig.parse(Array(CommandLine.arguments.dropFirst()))
 
 let app = NSApplication.shared
+if let appearance = config.appearance {
+    // Screenshot/verification affordance: force this app's appearance
+    // without touching the system setting.
+    app.appearance = NSAppearance(
+        named: appearance == "light" ? .aqua : .darkAqua)
+}
 let delegate = AppDelegate(config: config)
 app.delegate = delegate
 // Smoke stays a background process (offscreen windows, no Dock icon) — except

@@ -50,31 +50,49 @@ public enum EffortTarget: Equatable, Codable, Sendable {
 
 // MARK: - Chain entries
 
-/// One link in an ordered fallback chain. `exact` is what almost every edit
-/// produces. `vendorDefault` is the labeled, opt-in "track this vendor's
-/// current default" mode — volatile, re-resolved at spawn, never cached as an
-/// identity. There is no bare "default" string that could pass for a model id
-/// (governing doc §2.6).
+/// How sure Hive is about a provisional chain entry. Nothing claims
+/// `measured` until outcome telemetry exists (governing doc §2.8).
+public enum ChainConfidence: String, Equatable, Codable, Sendable {
+    case documented
+    case assumed
+}
+
+/// One link in an ordered fallback chain. THE ATOM IS A (MODEL, EFFORT)
+/// PAIR: fable-5@high and fable-5@low are two different routing choices, and
+/// the same model may sit at different efforts in different categories.
+///
+/// Every entry names an EXACT model. There is no vendor-default entry type
+/// and no bare "default" token: a default that quietly wins is exactly what
+/// this feature removes. The user is the router; the chain shows precisely
+/// which model runs, at which effort.
 public struct ChainEntry: Equatable, Codable, Sendable {
-    public enum Target: Equatable, Codable, Sendable {
-        case exact(provider: String, model: String, variant: String?)
-        case vendorDefault(provider: String)
-    }
-
-    public var target: Target
-    /// Effort is per chain LINK, not only per model: the same model may run
-    /// `high` in complex coding and `medium` in summarization (§8.2).
+    public var provider: String
+    public var model: String
+    public var variant: String?
+    /// Effort is per chain LINK, not per model (§8.2).
     public var effort: EffortTarget
+    /// Why this entry sits where it does — shown in the task view so the
+    /// user can make informed overrides instead of guessing. Provisional
+    /// seeds always say "assumed"; nothing wears authority it lacks.
+    public var note: String?
+    public var confidence: ChainConfidence?
 
-    public init(target: Target, effort: EffortTarget) {
-        self.target = target
+    public init(
+        provider: String, model: String, variant: String? = nil,
+        effort: EffortTarget,
+        note: String? = nil, confidence: ChainConfidence? = nil
+    ) {
+        self.provider = provider
+        self.model = model
+        self.variant = variant
         self.effort = effort
+        self.note = note
+        self.confidence = confidence
     }
 
-    public var provider: String {
-        switch target {
-        case .exact(let provider, _, _), .vendorDefault(let provider): return provider
-        }
+    /// The identity the no-duplicates rule compares.
+    public var targetKey: String {
+        [provider, model, variant ?? ""].joined(separator: "\u{0}")
     }
 }
 
@@ -275,27 +293,18 @@ public enum ChainLinkStatus: Equatable, Sendable {
     ) -> ChainLinkStatus {
         let provider = ProviderID(entry.provider)
         if !policy.providerEnabled(provider) { return .providerOff }
-        switch entry.target {
-        case .vendorDefault:
-            // Tracks the vendor's moving default; resolvable while the
-            // provider's catalog is readable.
-            if case .available = snapshot.providers[entry.provider] { return .effective }
+        guard case .available(let models, _) = snapshot.providers[entry.provider] else {
             return .unresolvable
-        case .exact(_, let model, let variant):
-            guard case .available(let models, _) = snapshot.providers[entry.provider] else {
-                return .unresolvable
-            }
-            guard let record = models.first(where: {
-                $0.canonicalId == model && $0.variant == variant
-            }) else {
-                return .unresolvable
-            }
-            let displayId = record.displayId
-            if !policy.modelPolicy(provider: provider, modelId: displayId).isEnabled {
-                return .modelDisabled
-            }
-            return .effective
         }
+        guard let record = models.first(where: {
+            $0.canonicalId == entry.model && $0.variant == entry.variant
+        }) else {
+            return .unresolvable
+        }
+        if !policy.modelPolicy(provider: provider, modelId: record.displayId).isEnabled {
+            return .modelDisabled
+        }
+        return .effective
     }
 }
 
@@ -345,9 +354,13 @@ public enum PolicyWarning: Equatable, Sendable {
 ///
 /// It never invents a measurement, and nothing persists across launches.
 public enum ProvisionalPolicyStore {
+
+    /// The citation every seeded entry carries. Provisional means provisional:
+    /// no entry claims outcome evidence that does not exist.
+    static let assumedNote = "Assumed order — no Hive outcome data yet."
+
     public static func seed(from snapshot: ModelControlSnapshot) -> ModelControlPolicy {
         var providers: [String: ProviderPolicy] = [:]
-        var defaultChain: [ChainEntry] = []
         for id in snapshot.providerIDs {
             let billing = snapshot.billing[id.rawValue] ?? nil
             // Billing unreadable end-to-end → every model ships off until the
@@ -356,16 +369,93 @@ public enum ProvisionalPolicyStore {
             let enablement: ModelEnablement = billing == nil ? .seededOff : .enabled
             providers[id.rawValue] = ProviderPolicy(
                 enabled: true, absentModelEnablement: enablement)
-            if case .available = snapshot.providers[id.rawValue], enablement == .enabled {
-                defaultChain.append(ChainEntry(
-                    target: .vendorDefault(provider: id.rawValue),
-                    effort: .providerControlled))
-            }
         }
-        return ModelControlPolicy(
+        let policy = ModelControlPolicy(
             providers: providers,
-            categories: [:],
-            defaultChain: defaultChain,
+            categories: seedCategories(from: snapshot, providers: providers),
+            defaultChain: seedChain(
+                from: snapshot, providers: providers,
+                effortIntent: "medium",
+                why: "Mid effort, diversified across vendors."),
             provisional: true)
+        return policy
+    }
+
+    /// The provisional routing table (governing doc §2.8): every category gets
+    /// an ordered chain of (model @ effort) atoms resolved from the LIVE
+    /// catalog — never ids frozen in the binary — with a note saying why.
+    /// Only consented (billing-verified) providers are seeded; an unconsented
+    /// vendor's models must never be pre-wired into spending positions.
+    private static func seedCategories(
+        from snapshot: ModelControlSnapshot,
+        providers: [String: ProviderPolicy]
+    ) -> [String: CategoryPolicy] {
+        // (effort intent, why this order) per category — the §2.8 intents.
+        let plans: [(TaskCategory, String, String)] = [
+            (.complexCoding, "high", "Strongest available at high effort for hard code."),
+            (.debugging, "high", "Coding-capable models at high effort; kept separate from complex coding for future evidence."),
+            (.codeReview, "high", "Prefers a different vendor than the usual producer, at high effort."),
+            (.planning, "high", "Strong reasoning first."),
+            (.heavyResearch, "high", "Strong reasoning / synthesis at high effort."),
+            (.simpleCoding, "medium", "Vendor defaults at medium effort for routine changes."),
+            (.lightResearch, "low", "Cheap and fast first; spreads work off the coding pools."),
+            (.summarization, "low", "Cheapest competent choice first."),
+        ]
+        var categories: [String: CategoryPolicy] = [:]
+        for (category, effortIntent, why) in plans {
+            var chain = seedChain(
+                from: snapshot, providers: providers,
+                effortIntent: effortIntent, why: why)
+            // Code review prefers vendor independence: rotate so the first
+            // link is not the same vendor every other category leads with.
+            if category == .codeReview, chain.count > 1 {
+                chain.append(chain.removeFirst())
+            }
+            categories[category.rawValue] = CategoryPolicy(
+                chain: chain, exhaustionBehavior: .refuse)
+        }
+        return categories
+    }
+
+    /// One entry per consented, available provider: its effective-default
+    /// model at the intended effort — but only an effort the vendor actually
+    /// advertises; otherwise the entry stays provider-controlled. Nothing here
+    /// invents a level.
+    private static func seedChain(
+        from snapshot: ModelControlSnapshot,
+        providers: [String: ProviderPolicy],
+        effortIntent: String,
+        why: String
+    ) -> [ChainEntry] {
+        var chain: [ChainEntry] = []
+        for id in snapshot.providerIDs {
+            guard providers[id.rawValue]?.absentModelEnablement == .enabled,
+                  case .available(let models, let effectiveDefault)? =
+                    snapshot.providers[id.rawValue] else { continue }
+            let flagship = effectiveDefault.model.value
+                .flatMap { defaultId in models.first { $0.canonicalId == defaultId } }
+                ?? models.first { $0.hidden.value != true }
+            guard let flagship else { continue }
+            let effort: EffortTarget
+            var effortNote = ""
+            switch EffortAxis.derive(from: flagship) {
+            case .known(let levels, _) where levels.contains(effortIntent):
+                effort = .exact(effortIntent)
+            case .none:
+                effort = .none
+                effortNote = " This model has no effort setting."
+            default:
+                effort = .providerControlled
+                effortNote = " Effort left to the vendor — \(effortIntent) is not advertised."
+            }
+            chain.append(ChainEntry(
+                provider: id.rawValue,
+                model: flagship.canonicalId,
+                variant: flagship.variant,
+                effort: effort,
+                note: "\(assumedNote) \(why)\(effortNote)",
+                confidence: .assumed))
+        }
+        return chain
     }
 }

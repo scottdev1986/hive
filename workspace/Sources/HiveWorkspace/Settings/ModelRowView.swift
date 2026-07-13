@@ -34,7 +34,7 @@ final class ModelRowView: NSView {
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
 
-        let name = model.displayName ?? model.canonicalId
+        let name = model.humanName
         let nameLabel = NSTextField(labelWithString: name)
         nameLabel.font = Theme.Font.body
         nameLabel.lineBreakMode = .byTruncatingTail
@@ -114,6 +114,7 @@ final class ModelRowView: NSView {
             caption.textColor = .secondaryLabelColor
             caption.lineBreakMode = .byTruncatingTail
             caption.toolTip = captionText
+            caption.setContentCompressionResistancePriority(.init(700), for: .horizontal)
             textColumn.addArrangedSubview(caption)
         }
         // The persistent may-spend line: icon + words, calm, always there
@@ -133,6 +134,7 @@ final class ModelRowView: NSView {
             label.textColor = .secondaryLabelColor
             label.lineBreakMode = .byTruncatingTail
             label.toolTip = text
+            label.setContentCompressionResistancePriority(.init(700), for: .horizontal)
             let line = NSStackView(views: [icon, label])
             line.orientation = .horizontal
             line.alignment = .centerY

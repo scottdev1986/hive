@@ -88,3 +88,16 @@ class InsetPanelView: NSView {
         layer?.backgroundColor = Theme.insetFill.cgColor
     }
 }
+
+extension NSBox {
+    /// A hairline separator that never absorbs a stretched stack's surplus
+    /// space (a stretched NSBox floats its 1 px line mid-gap, which reads as
+    /// broken layout).
+    static func hdsSeparator() -> NSBox {
+        let box = NSBox()
+        box.boxType = .separator
+        box.translatesAutoresizingMaskIntoConstraints = false
+        box.setContentHuggingPriority(.required, for: .vertical)
+        return box
+    }
+}

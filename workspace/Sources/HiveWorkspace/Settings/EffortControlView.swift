@@ -26,11 +26,12 @@ final class EffortControlView: NSView {
         caption.font = Theme.Font.caption
         caption.textColor = .secondaryLabelColor
         caption.lineBreakMode = .byTruncatingTail
+        caption.setContentCompressionResistancePriority(.init(710), for: .horizontal)
 
         switch axis {
         case .known(let levels, _):
             self.levels = levels
-            popup.addItem(withTitle: "Vendor default")
+            popup.addItem(withTitle: "Vendor decides")
             popup.menu?.addItem(.separator())
             for level in levels {
                 popup.addItem(withTitle: level)

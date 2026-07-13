@@ -21,7 +21,7 @@ enum MCCCopy {
     static let warnNoProviders =
         "No providers enabled — Hive cannot spawn agents until at least one provider is turned on."
     static let warnDefaultChainEmpty =
-        "Your Default chain is empty. Categories with no chain of their own have nowhere to go."
+        "Your Global fallback chain is empty. Categories with no chain of their own have nowhere to go."
 
     // Badges
 
@@ -66,7 +66,7 @@ enum MCCCopy {
     static func effortUnknown(_ reason: String) -> String {
         "Effort options unknown — \(reason)"
     }
-    static let effortProviderControlled = "Vendor default (Hive sends no effort flag)"
+    static let effortProviderControlled = "Vendor decides (Hive sends no effort flag)"
 
     // Consent is enablement: flipping a model on IS the authorisation to
     // spend. The copy must make that impossible to miss without alarm.
@@ -93,18 +93,13 @@ enum MCCCopy {
     static let modelPreferenceOnOverridden = "Your preference: on (not effective)"
     static let modelDisabledSelf = "Disabled"
     static let subtitleFallback = "Ordered fallback — one model at a time. Not an ensemble."
-    static func chainVendorDefault(_ modelDisplayName: String) -> String {
-        "Vendor default — currently \(modelDisplayName)"
-    }
-    static let chainVendorDefaultNote =
-        "Tracks this vendor's current default. It can change without notice."
-    static let chainEmptyUsesDefault = "No chain of its own — uses your Default chain."
+    static let chainEmptyUsesDefault = "No chain of its own — uses your Global fallback chain."
     static let chainAllIneffective = "Every model in this chain is off or unavailable."
     static let chainExhaustionRefuse =
         "If every model here is unavailable, spawns for this category will fail."
     static let chainExhaustionWiden =
-        "If every model here is unavailable, Hive will use your Default chain."
-    static let defaultChainTitle = "Default (global fallback)"
+        "If every model here is unavailable, Hive will use your Global fallback chain."
+    static let defaultChainTitle = "Global fallback"
     static let defaultChainSubtitle = "Used when a category has no chain of its own."
 
     // Accessibility

@@ -25,6 +25,9 @@ final class ChainSectionView: NSView {
         self.dataSource = dataSource
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
+        // Sections keep their fitting height; a stretched card must never
+        // pad out a section with dead space.
+        setContentHuggingPriority(.required, for: .vertical)
         rebuild()
     }
 
@@ -165,7 +168,7 @@ final class ChainSectionView: NSView {
             popup.controlSize = .small
             popup.font = NSFont.systemFont(ofSize: 11)
             popup.addItem(withTitle: "Refuse")
-            popup.addItem(withTitle: "Use Default chain")
+            popup.addItem(withTitle: "Use Global fallback")
             popup.selectItem(at: behavior == .refuse ? 0 : 1)
             popup.target = self
             popup.action = #selector(exhaustionChanged(_:))
@@ -208,44 +211,69 @@ final class ChainSectionView: NSView {
 
     // MARK: Add
 
+    /// The add picker. THE ATOM IS A (MODEL, EFFORT) PAIR: each model opens a
+    /// submenu of its advertised efforts, so placing fable-5@low is one
+    /// action and every advertised combination is reachable. Every item names
+    /// an EXACT model — there is no vendor-default entry and no "default"
+    /// anywhere; the user chooses specific models. A model whose vendor
+    /// states there is no effort axis adds directly (nothing to pick); one
+    /// whose effort surface is unreadable adds with the flag omitted and the
+    /// measured reason in its tooltip.
     private func makeAddButton() -> NSView {
         let popup = NSPopUpButton(frame: .zero, pullsDown: true)
         popup.controlSize = .small
         popup.font = NSFont.systemFont(ofSize: 11)
         popup.addItem(withTitle: "Add model…")
-        popup.setAccessibilityLabel("Add model to this chain")
+        popup.setAccessibilityLabel("Add a model and effort to this chain")
 
         guard let snapshot = dataSource.snapshot else { return popup }
         for providerID in snapshot.providerIDs {
-            guard case .available(let models, let effectiveDefault)? =
+            guard case .available(let models, _)? =
                 snapshot.providers[providerID.rawValue] else { continue }
             let providerTitle = ProviderBranding.title(for: providerID)
             let header = NSMenuItem(title: providerTitle, action: nil, keyEquivalent: "")
             header.isEnabled = false
             popup.menu?.addItem(header)
             for model in models {
-                let name = model.displayName ?? model.canonicalId
-                let item = NSMenuItem(
-                    title: "  \(name)", action: #selector(addEntry(_:)), keyEquivalent: "")
-                item.target = self
-                item.representedObject = ChainEntryBox(entry: ChainEntry(
-                    target: .exact(
+                let name = model.humanName
+                let item = NSMenuItem(title: "  \(name)", action: nil, keyEquivalent: "")
+                item.toolTip = model.displayId
+                switch EffortAxis.derive(from: model) {
+                case .known(let levels, let defaultLevel):
+                    let submenu = NSMenu(title: name)
+                    for level in levels {
+                        let suffix = level == defaultLevel ? "  (vendor recommends)" : ""
+                        let levelItem = NSMenuItem(
+                            title: "\(level)\(suffix)",
+                            action: #selector(addEntry(_:)), keyEquivalent: "")
+                        levelItem.target = self
+                        levelItem.representedObject = ChainEntryBox(entry: ChainEntry(
+                            provider: providerID.rawValue,
+                            model: model.canonicalId, variant: model.variant,
+                            effort: .exact(level)))
+                        submenu.addItem(levelItem)
+                    }
+                    item.submenu = submenu
+                case .none:
+                    item.title = "  \(name)  —  no effort setting"
+                    item.action = #selector(addEntry(_:))
+                    item.target = self
+                    item.representedObject = ChainEntryBox(entry: ChainEntry(
                         provider: providerID.rawValue,
-                        model: model.canonicalId, variant: model.variant),
-                    effort: .providerControlled))
+                        model: model.canonicalId, variant: model.variant,
+                        effort: .none))
+                case .unknown(let reason):
+                    item.title = "  \(name)  —  effort unknown"
+                    item.toolTip = MCCCopy.effortUnknown(reason)
+                    item.action = #selector(addEntry(_:))
+                    item.target = self
+                    item.representedObject = ChainEntryBox(entry: ChainEntry(
+                        provider: providerID.rawValue,
+                        model: model.canonicalId, variant: model.variant,
+                        effort: .providerControlled))
+                }
                 popup.menu?.addItem(item)
             }
-            // The one labeled exception to exact targets: tracking the
-            // vendor's moving default, opt-in and visibly volatile (§8.3).
-            let currentDefault = effectiveDefault.model.value ?? "unknown"
-            let item = NSMenuItem(
-                title: "  Vendor default (currently \(currentDefault))",
-                action: #selector(addEntry(_:)), keyEquivalent: "")
-            item.target = self
-            item.representedObject = ChainEntryBox(entry: ChainEntry(
-                target: .vendorDefault(provider: providerID.rawValue),
-                effort: .providerControlled))
-            popup.menu?.addItem(item)
         }
         return popup
     }
@@ -253,7 +281,7 @@ final class ChainSectionView: NSView {
     @objc private func addEntry(_ sender: NSMenuItem) {
         guard let box = sender.representedObject as? ChainEntryBox else { return }
         // No duplicate chain targets (governing doc §2.3 validation).
-        guard !chain.contains(where: { $0.target == box.entry.target }) else { return }
+        guard !chain.contains(where: { $0.targetKey == box.entry.targetKey }) else { return }
         writeChain(chain + [box.entry])
     }
 }
@@ -293,38 +321,23 @@ final class ChainRowView: NSView {
         let mark = ProviderMarkView(
             provider: providerID, size: Theme.Metric.chainMarkSize)
 
-        // Resolve the target against the live catalog for display.
+        // Resolve the exact target against the live catalog for display: the
+        // vendor's own model name, with the launch identity in the tooltip so
+        // there is never ambiguity about what will run.
         var resolvedModel: DiscoveredModel?
-        var text: String
         let providerTitle = ProviderBranding.title(for: providerID)
-        switch entry.target {
-        case .exact(_, let model, let variant):
-            if case .available(let models, _)? = snapshot.providers[entry.provider] {
-                resolvedModel = models.first {
-                    $0.canonicalId == model && $0.variant == variant
-                }
+        if case .available(let models, _)? = snapshot.providers[entry.provider] {
+            resolvedModel = models.first {
+                $0.canonicalId == entry.model && $0.variant == entry.variant
             }
-            let name = resolvedModel?.displayName ?? model
-            text = "\(providerTitle) · \(name)"
-        case .vendorDefault:
-            var current = "unknown"
-            if case .available(let models, let effectiveDefault)? =
-                snapshot.providers[entry.provider] {
-                if let defaultId = effectiveDefault.model.value {
-                    current = defaultId
-                    resolvedModel = models.first { $0.canonicalId == defaultId }
-                }
-            }
-            text = "\(providerTitle) · \(MCCCopy.chainVendorDefault(current))"
         }
+        let name = resolvedModel?.humanName ?? entry.model
+        let text = "\(providerTitle) · \(name)"
 
         let label = NSTextField(labelWithString: text)
         label.font = Theme.Font.body
         label.lineBreakMode = .byTruncatingTail
-        label.toolTip = {
-            if case .vendorDefault = entry.target { return MCCCopy.chainVendorDefaultNote }
-            return text
-        }()
+        label.toolTip = resolvedModel?.displayId ?? entry.model
         label.setContentCompressionResistancePriority(.init(720), for: .horizontal)
         if struck {
             label.attributedStringValue = NSAttributedString(
@@ -374,16 +387,35 @@ final class ChainRowView: NSView {
         views.append(NSView.spacer())
         views.append(contentsOf: [effort, up, down, remove])
         let row = NSStackView(views: views)
-        row.translatesAutoresizingMaskIntoConstraints = false
         row.orientation = .horizontal
         row.alignment = .centerY
         row.spacing = Theme.Space.s
-        addSubview(row)
+
+        let column = NSStackView(views: [row])
+        column.translatesAutoresizingMaskIntoConstraints = false
+        column.orientation = .vertical
+        column.alignment = .leading
+        column.spacing = 2
+        // The WHY line: the reasoning behind a seeded (or annotated) entry,
+        // so the user overrides with information instead of guessing.
+        if let note = entry.note, !note.isEmpty {
+            let why = NSTextField(labelWithString: note)
+            why.font = Theme.Font.caption
+            why.textColor = .tertiaryLabelColor
+            why.lineBreakMode = .byTruncatingTail
+            why.toolTip = note
+            why.setContentCompressionResistancePriority(.init(600), for: .horizontal)
+            column.addArrangedSubview(why)
+            why.widthAnchor.constraint(
+                lessThanOrEqualTo: column.widthAnchor).isActive = true
+        }
+        addSubview(column)
         NSLayoutConstraint.activate([
-            row.leadingAnchor.constraint(equalTo: leadingAnchor),
-            row.trailingAnchor.constraint(equalTo: trailingAnchor),
-            row.topAnchor.constraint(equalTo: topAnchor),
-            row.bottomAnchor.constraint(equalTo: bottomAnchor),
+            row.widthAnchor.constraint(equalTo: column.widthAnchor),
+            column.leadingAnchor.constraint(equalTo: leadingAnchor),
+            column.trailingAnchor.constraint(equalTo: trailingAnchor),
+            column.topAnchor.constraint(equalTo: topAnchor),
+            column.bottomAnchor.constraint(equalTo: bottomAnchor),
             heightAnchor.constraint(
                 greaterThanOrEqualToConstant: Theme.Metric.controlMinHeight),
         ])

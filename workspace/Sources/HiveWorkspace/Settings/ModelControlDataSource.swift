@@ -27,7 +27,12 @@ final class ModelControlDataSource {
     private(set) var lastRefreshed: Date?
 
     /// Fired on the main queue whenever snapshot, policy, or load state moved.
-    var onChange: (() -> Void)?
+    /// Multicast: both settings pages observe one policy.
+    private var observers: [() -> Void] = []
+
+    func addObserver(_ handler: @escaping () -> Void) {
+        observers.append(handler)
+    }
 
     private let hivePath: String?
     private let workQueue = DispatchQueue(
@@ -90,7 +95,7 @@ final class ModelControlDataSource {
     }
 
     private func notify() {
-        onChange?()
+        for observer in observers { observer() }
     }
 
     // MARK: Subprocess

@@ -224,9 +224,7 @@ final class ProviderCardView: CardView {
                 from: snapshot?.billing[provider.rawValue] ?? nil)
             for (index, model) in visible.enumerated() {
                 if index > 0 {
-                    let separator = NSBox()
-                    separator.boxType = .separator
-                    separator.translatesAutoresizingMaskIntoConstraints = false
+                                        let separator = NSBox.hdsSeparator()
                     rows.addArrangedSubview(separator)
                     separator.widthAnchor.constraint(equalTo: rows.widthAnchor).isActive = true
                 }

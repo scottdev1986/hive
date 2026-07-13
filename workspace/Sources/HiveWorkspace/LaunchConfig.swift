@@ -21,6 +21,14 @@ struct LaunchConfig {
     var orchestratorSession: String?
     var feedOverride: String?
     var smoke = false
+    /// Open the Settings window (Model Control Center) at launch. A
+    /// development/verification affordance; works with or without a project.
+    var settings = false
+    /// Which settings section to open ("tasks" or "models").
+    var settingsPage: String?
+    /// Force the app appearance ("light"/"dark") — screenshot/verification
+    /// affordance; never changes the system setting.
+    var appearance: String?
 
     /// A window can only open with the full contract; anything less gets the
     /// explainer window.
@@ -46,6 +54,12 @@ struct LaunchConfig {
             switch argument {
             case "--smoke":
                 config.smoke = true
+            case "--settings":
+                config.settings = true
+            case "--settings-page":
+                config.settingsPage = iterator.next()
+            case "--appearance":
+                config.appearance = iterator.next()
             case "--project":
                 config.projectDirectory = iterator.next()
             case "--port":

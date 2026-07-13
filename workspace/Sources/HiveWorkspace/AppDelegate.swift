@@ -56,6 +56,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             }
             // Dock click / bare CLI launch: project-neutral home, never cwd data.
             showPlaceholderWindow()
+            if config.settings { showSettings(nil) }
             return
         }
 
@@ -104,6 +105,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             controller.commitInitialGeometry()
             NSApp.activate(ignoringOtherApps: true)
             controller.window?.makeKeyAndOrderFront(nil)
+            if config.settings { showSettings(nil) }
         }
     }
 
@@ -277,6 +279,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             // data; a bare Dock launch has no binary path and the screen says
             // so instead of guessing.
             settingsController = SettingsWindowController(hivePath: config.hivePath)
+        }
+        if let page = config.settingsPage {
+            settingsController?.select(section: page)
         }
         settingsController?.show()
     }

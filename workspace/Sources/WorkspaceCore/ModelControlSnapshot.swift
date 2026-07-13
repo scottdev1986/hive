@@ -157,6 +157,40 @@ public struct DiscoveredModel: Codable, Equatable, Sendable {
     public var displayId: String {
         variant.map { "\(canonicalId)[\($0)]" } ?? canonicalId
     }
+
+    /// The name a human reads: the vendor's own display name where it names a
+    /// MODEL, else a mechanical prettification of the vendor's canonical id
+    /// ("claude-opus-4-8" → "Opus 4.8"). Never a name from anyone's memory.
+    ///
+    /// A vendor menu label like "Default (recommended)" is an alias's label,
+    /// not a model identity — the UI displays models, never "default", so
+    /// such labels fall through to the id (the user's rule: "we are specific
+    /// on the models that we choose").
+    public var humanName: String {
+        if let displayName {
+            let lowered = displayName.lowercased()
+            if !lowered.contains("default") && !lowered.contains("recommended") {
+                return displayName
+            }
+        }
+        var id = canonicalId
+        if id.lowercased().hasPrefix("\(provider.lowercased())-") {
+            id = String(id.dropFirst(provider.count + 1))
+        }
+        var words: [String] = []
+        for token in id.split(separator: "-") {
+            let isNumeric = token.allSatisfy { $0.isNumber || $0 == "." }
+            if isNumeric, let last = words.last,
+               last.allSatisfy({ $0.isNumber || $0 == "." }) {
+                words[words.count - 1] = "\(last).\(token)"
+            } else if isNumeric {
+                words.append(String(token))
+            } else {
+                words.append(token.prefix(1).uppercased() + token.dropFirst())
+            }
+        }
+        return words.isEmpty ? canonicalId : words.joined(separator: " ")
+    }
 }
 
 /// What an unflagged launch on this account runs — both fields genuinely
