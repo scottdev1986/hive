@@ -2618,14 +2618,22 @@ describe("HiveSpawner wiring", () => {
     expect(tmux.killed).toEqual([]);
   });
 
-  test("fresh codex rollout activity is proof of life when no hook event ever arrives", async () => {
-    // Native SessionStart is primary, but policy can disable hooks and hook
-    // execution can fail. The rollout mtime must remain a readiness fallback.
+  test("a codex spawn without an exact rollout id proves life through its pane and process", async () => {
     const root = await mkdtemp(join(tmpdir(), "hive-spawner-codex-rollout-"));
     tempRoots.push(root);
     const store = new FakeStore();
-    const tmux = new FakeTmux();
-    const probed: string[] = [];
+    const tmux = new class extends FakeTmux {
+      override async capturePane(_name: string): Promise<string> {
+        this.capturePaneCalls += 1;
+        return `Working (${this.capturePaneCalls}s)`;
+      }
+
+      override async listPanePids(_name: string): Promise<number[]> {
+        return [700];
+      }
+    }();
+    let rolloutReads = 0;
+    let processReads = 0;
     const spawner = new HiveSpawner({
       isModelEnabled: async () => true,
       db: store,
@@ -2644,23 +2652,30 @@ describe("HiveSpawner wiring", () => {
         await mkdir(path, { recursive: true });
         return { path, branch: `hive/${name}-${slug}` };
       },
-      // No hook event ever arrives: the DB row stays "spawning" throughout.
       sleep: async () => {},
-      readCodexActivity: async (worktreePath) => {
-        probed.push(worktreePath);
-        return new Date(Date.now() + 60_000).toISOString();
+      readCodexActivity: async () => {
+        rolloutReads += 1;
+        return null;
+      },
+      ps: async () => {
+        processReads += 1;
+        return [
+          "700 1 1024 /bin/zsh -c wrapper",
+          "701 700 2048 /usr/local/bin/codex -c model=gpt-test",
+        ].join("\n");
       },
     });
 
     const spawned = await spawner.spawn({
-      task: "Prove life through the rollout file",
+      task: "Prove life without borrowing another rollout",
       category: "simple_coding",
     });
 
     expect(spawned.status).toEqual("spawning");
-    expect(probed).toEqual([join(root, "maya")]);
+    expect(rolloutReads).toBeGreaterThanOrEqual(4);
+    expect(processReads).toBeGreaterThanOrEqual(4);
+    expect(tmux.capturePaneCalls).toBeGreaterThanOrEqual(4);
     expect(tmux.killed).toEqual([]);
-    expect(tmux.hasSessionCalls).toEqual(0);
   });
 
   test("a spawn with no readiness signal at all fails and is torn down", async () => {
