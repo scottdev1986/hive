@@ -139,6 +139,24 @@ export interface UsageTotals {
   reservedWeekly: number;
 }
 
+const LedgerIntegritySchema = z.object({
+  usageRows: z.number().int().nonnegative(),
+  reservationRows: z.number().int().nonnegative(),
+  nextUsageSeq: z.number().int().nonnegative(),
+});
+
+const QUOTA_LEDGER_INTEGRITY_META_KEY = "quotaLedgerIntegrityV1";
+
+export class QuotaLedgerUnknownError extends Error {
+  constructor(reason: string) {
+    super(
+      `The quota ledger history is unknown (${reason}). Refusing to report fresh ` +
+        "headroom or reserve more quota; restore the intact hive.db before launching.",
+    );
+    this.name = "QuotaLedgerUnknownError";
+  }
+}
+
 /**
  * The last spend each window's own reading had already been able to see. Each
  * window is observed on its own schedule, so each carries its own boundary:
@@ -234,6 +252,9 @@ export function mergeObservationWindows(
 
 export class QuotaLedger {
   constructor(private readonly db: HiveDatabase) {
+    const integrityInstalled = this.db.database.query(
+      "SELECT value FROM meta WHERE key = ?",
+    ).get(QUOTA_LEDGER_INTEGRITY_META_KEY) !== null;
     this.db.database.exec(`
       CREATE TABLE IF NOT EXISTS quota_usage (
         id TEXT PRIMARY KEY,
@@ -260,6 +281,12 @@ export class QuotaLedger {
       CREATE TABLE IF NOT EXISTS quota_usage_sequence (
         id INTEGER PRIMARY KEY CHECK(id = 0),
         next INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS quota_ledger_integrity (
+        id INTEGER PRIMARY KEY CHECK(id = 0),
+        usageRows INTEGER NOT NULL CHECK(usageRows >= 0),
+        reservationRows INTEGER NOT NULL CHECK(reservationRows >= 0),
+        nextUsageSeq INTEGER NOT NULL CHECK(nextUsageSeq >= 0)
       );
       CREATE TABLE IF NOT EXISTS quota_reservations (
         id TEXT PRIMARY KEY,
@@ -457,12 +484,63 @@ export class QuotaLedger {
       INSERT OR IGNORE INTO quota_usage_sequence (id, next)
       VALUES (0, (SELECT COALESCE(MAX(seq), 0) FROM quota_usage))
     `);
+    if (!integrityInstalled) {
+      this.immediate(() => {
+        this.db.database.exec(`
+          INSERT OR IGNORE INTO quota_ledger_integrity (
+            id, usageRows, reservationRows, nextUsageSeq
+          ) SELECT 0,
+            (SELECT COUNT(*) FROM quota_usage),
+            (SELECT COUNT(*) FROM quota_reservations),
+            (SELECT next FROM quota_usage_sequence WHERE id = 0)
+        `);
+        this.db.database.query(
+          "INSERT OR IGNORE INTO meta (key, value) VALUES (?, 'installed')",
+        ).run(QUOTA_LEDGER_INTEGRITY_META_KEY);
+      });
+    }
+    this.requireIntegrity();
     this.db.database.exec(`
       CREATE UNIQUE INDEX IF NOT EXISTS quota_reservations_active_control
       ON quota_reservations(controlMessageId)
       WHERE controlMessageId IS NOT NULL AND status = 'active'
     `);
     this.backfillObservationWatermarks();
+  }
+
+  private requireIntegrity(): void {
+    const expected = LedgerIntegritySchema.safeParse(
+      this.db.database.query(`
+        SELECT usageRows, reservationRows, nextUsageSeq
+        FROM quota_ledger_integrity WHERE id = 0
+      `).get(),
+    );
+    if (!expected.success) {
+      throw new QuotaLedgerUnknownError("its integrity checkpoint is missing or unreadable");
+    }
+    const actual = LedgerIntegritySchema.safeParse(
+      this.db.database.query(`
+        SELECT
+          (SELECT COUNT(*) FROM quota_usage) AS usageRows,
+          (SELECT COUNT(*) FROM quota_reservations) AS reservationRows,
+          (SELECT next FROM quota_usage_sequence WHERE id = 0) AS nextUsageSeq
+      `).get(),
+    );
+    if (!actual.success) {
+      throw new QuotaLedgerUnknownError("its spend sequence is missing or unreadable");
+    }
+    if (
+      expected.data.usageRows !== actual.data.usageRows ||
+      expected.data.reservationRows !== actual.data.reservationRows ||
+      expected.data.nextUsageSeq !== actual.data.nextUsageSeq
+    ) {
+      throw new QuotaLedgerUnknownError(
+        `checkpoint expected ${expected.data.usageRows} usage rows, ` +
+          `${expected.data.reservationRows} reservation rows, and sequence ` +
+          `${expected.data.nextUsageSeq}; found ${actual.data.usageRows}, ` +
+          `${actual.data.reservationRows}, and sequence ${actual.data.nextUsageSeq}`,
+      );
+    }
   }
 
   /**
@@ -576,6 +654,7 @@ export class QuotaLedger {
     fiveHourStart: string,
     weeklyStart: string,
   ): UsageTotals {
+    this.requireIntegrity();
     // Which window a spend falls in is a question about the clock, and the clock
     // answers it. Whether a *reading* already counted that spend is a question
     // about order, and only the sequence answers that — hence the two different
@@ -778,6 +857,7 @@ export class QuotaLedger {
   }
 
   private insert(input: ReserveQuotaInput, groupId: string): void {
+    this.requireIntegrity();
     this.requireCoherent(input.provider, input.model);
     this.db.database.query(`
       INSERT INTO quota_reservations (
@@ -803,6 +883,14 @@ export class QuotaLedger {
       input.purpose ?? "agent",
       input.controlMessageId ?? null,
     );
+    const checkpoint = this.db.database.query(`
+      UPDATE quota_ledger_integrity
+      SET reservationRows = reservationRows + 1
+      WHERE id = 0
+    `).run();
+    if (checkpoint.changes !== 1) {
+      throw new QuotaLedgerUnknownError("its reservation checkpoint could not be advanced");
+    }
   }
 
   tryReserve(input: ReserveQuotaInput): QuotaReservation | null {
@@ -1094,6 +1182,7 @@ export class QuotaLedger {
     occurredAt: string,
   ): QuotaReservation | null {
     return this.immediate(() => {
+      this.requireIntegrity();
       for (const reservation of this.group(id)) {
         if (reservation.status !== "active") continue;
         this.db.database.query(`
@@ -1103,7 +1192,8 @@ export class QuotaLedger {
         `).run(occurredAt, units, source, reservation.id);
         // The spend lands in each pool the run drew from. Both are percent of
         // their own window, so the same figure is the honest debit for each.
-        this.db.database.query(`
+        const seq = this.nextUsageSeq();
+        const inserted = this.db.database.query(`
           INSERT OR IGNORE INTO quota_usage (
             id, reservationId, provider, account, pool, model,
             units, weeklyUnits, occurredAt, source, confidence, seq
@@ -1120,8 +1210,21 @@ export class QuotaLedger {
           occurredAt,
           source,
           source === "estimated" ? "estimated" : "authoritative",
-          this.nextUsageSeq(),
+          seq,
         );
+        if (inserted.changes !== 1) {
+          throw new QuotaLedgerUnknownError(
+            `the spend for reservation ${reservation.id} could not be recorded exactly once`,
+          );
+        }
+        const checkpoint = this.db.database.query(`
+          UPDATE quota_ledger_integrity
+          SET usageRows = usageRows + 1, nextUsageSeq = ?
+          WHERE id = 0
+        `).run(seq);
+        if (checkpoint.changes !== 1) {
+          throw new QuotaLedgerUnknownError("its spend checkpoint could not be advanced");
+        }
       }
       return this.getReservation(id);
     });

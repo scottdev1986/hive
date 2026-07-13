@@ -1,6 +1,11 @@
 import { Database } from "bun:sqlite";
 import type { TurnBoundaryKind } from "./orchestrator-status";
-import { mkdirSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { z } from "zod";
@@ -160,6 +165,40 @@ export function getDatabasePath(): string {
   return join(getHiveHome(), "hive.db");
 }
 
+const DATABASE_IDENTITY_META_KEY = "databaseIdentity";
+
+export function getDatabaseIdentityPath(): string {
+  return join(getHiveHome(), "hive.db.identity");
+}
+
+export class HiveDatabaseIdentityError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "HiveDatabaseIdentityError";
+  }
+}
+
+function readDatabaseIdentityMarker(): string | null {
+  const markerPath = getDatabaseIdentityPath();
+  if (!existsSync(markerPath)) return null;
+  let value: string;
+  try {
+    value = readFileSync(markerPath, "utf8").trim();
+  } catch (error) {
+    throw new HiveDatabaseIdentityError(
+      `Hive cannot read its database identity marker at ${markerPath}: ${String(error)}. ` +
+        "Refusing to open or recreate the database until the marker is readable.",
+    );
+  }
+  if (!z.string().uuid().safeParse(value).success) {
+    throw new HiveDatabaseIdentityError(
+      `Hive's database identity marker at ${markerPath} is invalid. ` +
+        "Refusing to open or recreate the database because its persisted state cannot be identified.",
+    );
+  }
+  return value;
+}
+
 function parseEventRow(row: unknown): HookEvent {
   const value = z.object({
     kind: z.string(),
@@ -313,6 +352,15 @@ export class HiveDatabase {
     options: { readonly?: boolean } = {},
   ) {
     this.path = path;
+    const persistent = path === getDatabasePath();
+    const expectedIdentity = persistent ? readDatabaseIdentityMarker() : null;
+    if (expectedIdentity !== null && !existsSync(path)) {
+      throw new HiveDatabaseIdentityError(
+        `Hive's database is missing at ${path}, but its identity marker still exists; ` +
+          "refusing to create an empty replacement and silently discard policy, quota, or agent state. " +
+          "Restore hive.db from backup or explicitly uninstall/reset Hive before starting again.",
+      );
+    }
     if (options.readonly !== true && path !== ":memory:") {
       mkdirSync(dirname(path), { recursive: true });
     }
@@ -323,6 +371,26 @@ export class HiveDatabase {
     // read-only connection. Honest transient contention waits instead of
     // failing immediately at bun:sqlite's zero-timeout default.
     this.database.exec("PRAGMA busy_timeout = 5000");
+    if (expectedIdentity !== null) {
+      const metaExists = this.database.query(`
+        SELECT 1 AS present FROM sqlite_master
+        WHERE type = 'table' AND name = 'meta'
+      `).get() !== null;
+      const storedIdentity = metaExists
+        ? z.object({ value: z.string() }).nullable().parse(
+          this.database.query("SELECT value FROM meta WHERE key = ?")
+            .get(DATABASE_IDENTITY_META_KEY),
+        )?.value ?? null
+        : null;
+      if (storedIdentity !== expectedIdentity) {
+        this.database.close();
+        throw new HiveDatabaseIdentityError(
+          `Hive's database at ${path} does not match its persisted identity marker. ` +
+            "Refusing to use a replaced or reset database as fresh state. Restore the matching " +
+            "hive.db from backup or explicitly uninstall/reset Hive.",
+        );
+      }
+    }
     if (options.readonly === true) return;
     this.database.exec("PRAGMA journal_mode = WAL");
     this.database.exec("PRAGMA foreign_keys = ON");
@@ -617,6 +685,36 @@ export class HiveDatabase {
           )
       `).run(recoveredAt);
     })();
+    if (persistent && expectedIdentity === null) {
+      try {
+        const proposed = crypto.randomUUID();
+        this.database.query(
+          "INSERT OR IGNORE INTO meta (key, value) VALUES (?, ?)",
+        ).run(DATABASE_IDENTITY_META_KEY, proposed);
+        const identity = z.object({ value: z.string().uuid() }).parse(
+          this.database.query("SELECT value FROM meta WHERE key = ?")
+            .get(DATABASE_IDENTITY_META_KEY),
+        ).value;
+        try {
+          writeFileSync(getDatabaseIdentityPath(), `${identity}\n`, {
+            flag: "wx",
+            mode: 0o600,
+          });
+        } catch (error) {
+          if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) {
+            throw error;
+          }
+          if (readDatabaseIdentityMarker() !== identity) {
+            throw new HiveDatabaseIdentityError(
+              "Hive's database identity changed during startup; refusing to continue.",
+            );
+          }
+        }
+      } catch (error) {
+        this.database.close();
+        throw error;
+      }
+    }
   }
 
   quickCheck(): string[] {

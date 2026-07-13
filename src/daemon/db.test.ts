@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type {
@@ -8,7 +8,11 @@ import type {
   AgentRecord,
   HookEvent,
 } from "../schemas";
-import { HiveDatabase, type Approval } from "./db";
+import {
+  getDatabaseIdentityPath,
+  HiveDatabase,
+  type Approval,
+} from "./db";
 import {
   deleteAgentRow,
   deleteApprovalRow,
@@ -774,6 +778,28 @@ describe("HiveDatabase", () => {
       });
     } finally {
       db.close();
+      rmSync(isolatedHome, { recursive: true, force: true });
+      process.env.HIVE_HOME = home;
+    }
+  });
+
+  test("refuses to recreate a persistent database whose identity marker survived", () => {
+    const isolatedHome = mkdtempSync(join(tmpdir(), "hive-lost-db-test-"));
+    process.env.HIVE_HOME = isolatedHome;
+    const path = join(isolatedHome, "hive.db");
+    const db = new HiveDatabase();
+    db.close();
+    try {
+      expect(existsSync(getDatabaseIdentityPath())).toBe(true);
+      rmSync(path, { force: true });
+      rmSync(`${path}-wal`, { force: true });
+      rmSync(`${path}-shm`, { force: true });
+
+      expect(() => new HiveDatabase()).toThrow(
+        "refusing to create an empty replacement",
+      );
+      expect(existsSync(path)).toBe(false);
+    } finally {
       rmSync(isolatedHome, { recursive: true, force: true });
       process.env.HIVE_HOME = home;
     }

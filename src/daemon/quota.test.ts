@@ -11,7 +11,7 @@ import {
 import { HiveDatabase } from "./db";
 import type { TmuxSender } from "./delivery";
 import { HiveDaemon } from "./server";
-import { QuotaLedger } from "./quota-ledger";
+import { QuotaLedger, QuotaLedgerUnknownError } from "./quota-ledger";
 import {
   calendarWeekBounds,
   QuotaExhaustedError,
@@ -151,6 +151,60 @@ describe("quota windows", () => {
 });
 
 describe("quota persistence and reservations", () => {
+  test("distinguishes a genuine zero ledger from truncated spend and refuses a new reservation", async () => {
+    const { db } = await fileDatabase("truncated-ledger");
+    const ledger = new QuotaLedger(db);
+    const scope = {
+      provider: "claude" as const,
+      account: "personal",
+      pool: "claude-premium",
+    };
+    expect(ledger.usageTotals(
+      scope,
+      "2026-07-09T07:00:00.000Z",
+      "2026-07-02T12:00:00.000Z",
+    )).toMatchObject({ fiveHour: 0, weekly: 0, reserved: 0 });
+
+    ledger.insertUnboundedReservation({
+      id: "spent-run",
+      agentName: "spent",
+      ...scope,
+      model: "claude-model",
+      category: "simple_coding",
+      estimatedUnits: 10,
+      now: "2026-07-09T11:00:00.000Z",
+      expiresAt: "2026-07-09T13:00:00.000Z",
+    });
+    ledger.reconcile(
+      "spent-run",
+      10,
+      10,
+      "estimated",
+      "2026-07-09T11:30:00.000Z",
+    );
+    db.database.exec("DELETE FROM quota_usage");
+
+    expect(() => ledger.usageTotals(
+      scope,
+      "2026-07-09T07:00:00.000Z",
+      "2026-07-02T12:00:00.000Z",
+    )).toThrow(QuotaLedgerUnknownError);
+    const service = new QuotaService(
+      ledger,
+      config([limit("claude")]),
+      () => new Date("2026-07-09T12:00:00.000Z"),
+    );
+    await expect(service.routeAndReserve({
+      agentName: "maya",
+      category: "simple_coding",
+      selection: "strict",
+      explicitTool: "claude",
+      candidates: candidates(),
+    })).rejects.toThrow("quota ledger history is unknown");
+    expect(ledger.getActiveReservationForAgent("maya")).toBeNull();
+    db.close();
+  });
+
   test("final launch revalidation refuses a released reservation", async () => {
     const { db } = await fileDatabase("adapter-revalidation");
     const service = new QuotaService(
