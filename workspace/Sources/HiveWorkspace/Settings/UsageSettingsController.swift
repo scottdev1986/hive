@@ -25,11 +25,13 @@ final class UsageSettingsController: SettingsPageController {
             let panel = InsetPanelView()
             let title = NSTextField(labelWithString: "Token usage is unavailable")
             title.font = Theme.Font.headline
+            title.compressHorizontally()
             let reason = NSTextField(wrappingLabelWithString:
                 snapshot.tokenUsageError
                     ?? "The running daemon predates session token tracking. Restart Hive after updating.")
             reason.font = Theme.Font.callout
             reason.textColor = .secondaryLabelColor
+            reason.compressHorizontally()
             panel.contentStack.addArrangedSubview(title)
             panel.contentStack.addArrangedSubview(reason)
             reason.widthAnchor.constraint(equalTo: panel.contentStack.widthAnchor).isActive = true
@@ -44,6 +46,7 @@ final class UsageSettingsController: SettingsPageController {
                 "No metered Hive session has started yet. Token tracking begins with the next orchestrator launch.")
             label.font = Theme.Font.callout
             label.textColor = .secondaryLabelColor
+            label.compressHorizontally()
             panel.contentStack.addArrangedSubview(label)
             label.widthAnchor.constraint(equalTo: panel.contentStack.widthAnchor).isActive = true
             contentStack.addArrangedSubview(panel)
@@ -61,6 +64,7 @@ final class UsageSettingsController: SettingsPageController {
 
         let title = NSTextField(labelWithString: current ? "Current session" : sessionTitle(session))
         title.font = Theme.Font.headline
+        title.compressHorizontally(toolTip: title.stringValue)
         let status = CapsuleBadge(
             text: session.complete ? "Complete reading" : "Known subtotal",
             symbol: session.complete ? "checkmark.circle" : "questionmark.circle",
@@ -100,6 +104,7 @@ final class UsageSettingsController: SettingsPageController {
         let cache = NSTextField(wrappingLabelWithString: cacheDetail(headline))
         cache.font = Theme.Font.caption
         cache.textColor = .secondaryLabelColor
+        cache.compressHorizontally()
         card.contentStack.addArrangedSubview(cache)
         card.pinToContentWidth(cache)
 
@@ -122,6 +127,7 @@ final class UsageSettingsController: SettingsPageController {
                 "Not included yet: " + session.unknownSubjects.joined(separator: ", "))
             unknown.font = Theme.Font.caption
             unknown.textColor = .systemOrange
+            unknown.compressHorizontally()
             card.contentStack.addArrangedSubview(unknown)
             card.pinToContentWidth(unknown)
         }
@@ -132,6 +138,7 @@ final class UsageSettingsController: SettingsPageController {
             let label = NSTextField(labelWithString: "AGENTS")
             label.font = Theme.Font.sectionLabel
             label.textColor = .secondaryLabelColor
+            label.compressHorizontally()
             card.contentStack.addArrangedSubview(label)
             for usage in rows {
                 let row = agentRow(usage, newBasis: newBasis)
@@ -154,9 +161,11 @@ final class UsageSettingsController: SettingsPageController {
         let headline = counts?.headline
         let name = NSTextField(labelWithString: title)
         name.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
+        name.compressHorizontally()
         let bucketTotal = newBasis ? headline?.newTokens : counts?.totalTokens
         let total = NSTextField(labelWithString: format(bucketTotal))
         total.font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .semibold)
+        total.compressHorizontally()
         let heading = NSStackView(views: [name, NSView.spacer(), total])
         heading.orientation = .horizontal
         heading.alignment = .centerY
@@ -177,6 +186,7 @@ final class UsageSettingsController: SettingsPageController {
         let caption = NSTextField(wrappingLabelWithString: detail + countsDetail)
         caption.font = Theme.Font.caption
         caption.textColor = .secondaryLabelColor
+        caption.compressHorizontally()
         card.contentStack.addArrangedSubview(caption)
         card.pinToContentWidth(caption)
     }
@@ -186,6 +196,7 @@ final class UsageSettingsController: SettingsPageController {
         let name = NSTextField(labelWithString: usage.name)
         name.font = Theme.Font.callout
         name.lineBreakMode = .byTruncatingTail
+        name.compressHorizontally(toolTip: usage.name)
 
         let identity = [provider.rawValue.capitalized, usage.model]
             .compactMap { $0 }.joined(separator: " · ")
@@ -193,6 +204,7 @@ final class UsageSettingsController: SettingsPageController {
         secondary.font = Theme.Font.caption
         secondary.textColor = .secondaryLabelColor
         secondary.lineBreakMode = .byTruncatingTail
+        secondary.compressHorizontally(priority: 200, toolTip: identity)
         let labels = NSStackView(views: [name, secondary])
         labels.orientation = .vertical
         labels.alignment = .leading
@@ -214,6 +226,7 @@ final class UsageSettingsController: SettingsPageController {
         value.font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular)
         value.textColor = usage.counts == nil ? .secondaryLabelColor : .labelColor
         value.toolTip = toolTip
+        value.compressHorizontally()
 
         let row = NSStackView(views: [labels, NSView.spacer(), value])
         row.orientation = .horizontal
@@ -225,9 +238,11 @@ final class UsageSettingsController: SettingsPageController {
     private func metric(_ title: String, _ value: Int?) -> NSView {
         let number = NSTextField(labelWithString: format(value))
         number.font = NSFont.monospacedDigitSystemFont(ofSize: 18, weight: .semibold)
+        number.compressHorizontally()
         let label = NSTextField(labelWithString: title)
         label.font = Theme.Font.caption
         label.textColor = .secondaryLabelColor
+        label.compressHorizontally()
         let stack = NSStackView(views: [number, label])
         stack.orientation = .vertical
         stack.alignment = .leading

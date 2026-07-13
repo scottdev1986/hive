@@ -100,6 +100,9 @@ final class AppDelegateLifecycleTests: XCTestCase {
             id: "worker", kind: .agent, title: "updated-title",
             feedStatus: "working", status: .running))
         XCTAssertEqual(title.toolTip, "updated-title")
+        XCTAssertTrue(textFields(in: pane).contains {
+            $0.stringValue == "working" && $0.toolTip == "working"
+        })
     }
 
     private func textFields(in view: NSView) -> [NSTextField] {

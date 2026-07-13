@@ -46,3 +46,14 @@ enum Theme {
         NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
     }
 }
+
+extension NSTextField {
+    /// AppKit treats priorities of 500 or higher as permission to grow the
+    /// window around a label instead of compressing the label in place.
+    func compressHorizontally(
+        priority: Float = 490, toolTip: String? = nil
+    ) {
+        setContentCompressionResistancePriority(.init(priority), for: .horizontal)
+        if let toolTip { self.toolTip = toolTip }
+    }
+}

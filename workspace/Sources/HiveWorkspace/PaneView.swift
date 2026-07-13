@@ -211,6 +211,7 @@ final class PaneView: NSView {
         titleLabel.stringValue = state.title
         titleLabel.toolTip = state.title
         detailLabel.stringValue = state.headerDescription
+        detailLabel.toolTip = state.headerDescription
 
         let appearance = FeedStatusMap.activity(
             for: state.feedStatus, paneStatus: state.status).appearance

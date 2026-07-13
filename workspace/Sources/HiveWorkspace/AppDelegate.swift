@@ -413,12 +413,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         let title = NSTextField(labelWithString: "Hive Workspace")
         title.font = NSFont.systemFont(ofSize: 15, weight: .semibold)
         title.alignment = .center
+        title.compressHorizontally()
 
         let body = NSTextField(wrappingLabelWithString:
             "No project is open.\n\nRun `hive` from a project directory to open it here. New project? Run `hive init` there first.")
         body.font = Theme.bodyFont
         body.textColor = .secondaryLabelColor
         body.alignment = .center
+        body.compressHorizontally()
 
         let stack = NSStackView(views: [title, body])
         stack.orientation = .vertical

@@ -45,6 +45,8 @@ final class SettingsWindowControllerTests: XCTestCase {
         controller.show()
         waitForInvocationCount(4, at: count)
         waitForGrokRowState(.enabled, in: controller)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.35))
+        assertLabelsCannotResizeWindow(controller)
         controller.close()
     }
 
@@ -114,5 +116,28 @@ final class SettingsWindowControllerTests: XCTestCase {
             }
         }
         XCTFail("initial settings refresh did not settle")
+    }
+
+    private func assertLabelsCannotResizeWindow(_ controller: SettingsWindowController) {
+        let labels = controller.window?.contentView.map { textFields(in: $0) } ?? []
+        let offenders = labels.filter { label in
+            guard !hasButtonAncestor(label) else { return false }
+            return label.contentCompressionResistancePriority(for: .horizontal).rawValue >= 500
+        }
+        XCTAssertEqual(offenders.map { "\(type(of: $0)): \($0.stringValue)" }, [])
+    }
+
+    private func hasButtonAncestor(_ view: NSView) -> Bool {
+        var ancestor = view.superview
+        while let current = ancestor {
+            if current is NSButton { return true }
+            ancestor = current.superview
+        }
+        return false
+    }
+
+    private func textFields(in view: NSView) -> [NSTextField] {
+        ((view as? NSTextField).map { [$0] } ?? [])
+            + view.subviews.flatMap(textFields)
     }
 }

@@ -65,6 +65,7 @@ final class ProviderCardView: CardView {
         let titleLabel = NSTextField(labelWithString: title)
         titleLabel.font = Theme.Font.title
         titleLabel.lineBreakMode = .byTruncatingTail
+        titleLabel.compressHorizontally(toolTip: title)
 
         let master = NSSwitch()
         master.state = providerEnabled ? .on : .off
@@ -123,10 +124,11 @@ final class ProviderCardView: CardView {
         var chips: [NSView] = []
         if let plan = MeterDerivation.planLabel(
             provider: provider, quota: snapshot?.quota) {
-            let label = NSTextField(
-                labelWithString: plan.prefix(1).uppercased() + plan.dropFirst() + " plan")
+            let planText = plan.prefix(1).uppercased() + plan.dropFirst() + " plan"
+            let label = NSTextField(labelWithString: planText)
             label.font = Theme.Font.callout
             label.textColor = .secondaryLabelColor
+            label.compressHorizontally(toolTip: String(planText))
             chips.append(label)
         }
         let billing = snapshot?.billing[provider.rawValue] ?? nil
@@ -189,6 +191,7 @@ final class ProviderCardView: CardView {
                     ProviderBranding.title(for: provider)))
             silent.font = Theme.Font.caption
             silent.textColor = .secondaryLabelColor
+            silent.compressHorizontally()
             body.addArrangedSubview(silent)
             silent.widthAnchor.constraint(equalTo: body.widthAnchor).isActive = true
 
@@ -282,6 +285,7 @@ final class ProviderCardView: CardView {
             let label = NSTextField(wrappingLabelWithString: reason)
             label.font = Theme.Font.caption
             label.textColor = .secondaryLabelColor
+            label.compressHorizontally()
             body.addArrangedSubview(label)
             label.widthAnchor.constraint(equalTo: body.widthAnchor).isActive = true
 
@@ -359,6 +363,7 @@ final class UnmeteredPanelView: InsetPanelView {
         let body = NSTextField(wrappingLabelWithString: MCCCopy.unmeteredBody)
         body.font = Theme.Font.caption
         body.textColor = .secondaryLabelColor
+        body.compressHorizontally()
 
         contentStack.addArrangedSubview(titleRow)
         contentStack.addArrangedSubview(body)

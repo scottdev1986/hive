@@ -126,12 +126,14 @@ class SettingsPageController: NSViewController {
     func addHeader(title: String, subtitle: String) {
         let titleLabel = NSTextField(labelWithString: title)
         titleLabel.font = Theme.Font.largeTitle
+        titleLabel.compressHorizontally()
         contentStack.addArrangedSubview(titleLabel)
         contentStack.setCustomSpacing(Theme.Space.s, after: titleLabel)
 
         let subtitleLabel = NSTextField(wrappingLabelWithString: subtitle)
         subtitleLabel.font = Theme.Font.callout
         subtitleLabel.textColor = .secondaryLabelColor
+        subtitleLabel.compressHorizontally()
         contentStack.addArrangedSubview(subtitleLabel)
         pinToContent(subtitleLabel)
     }
@@ -149,6 +151,7 @@ class SettingsPageController: NSViewController {
                 labelWithString: "Reading providers, models, and usage from Hive…")
             label.font = Theme.Font.callout
             label.textColor = .secondaryLabelColor
+            label.compressHorizontally()
             let row = NSStackView(views: [spinner, label])
             row.orientation = .horizontal
             row.spacing = Theme.Space.s
@@ -157,9 +160,11 @@ class SettingsPageController: NSViewController {
             let panel = InsetPanelView()
             let title = NSTextField(labelWithString: "Hive could not be read")
             title.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
+            title.compressHorizontally()
             let body = NSTextField(wrappingLabelWithString: reason)
             body.font = Theme.Font.caption
             body.textColor = .secondaryLabelColor
+            body.compressHorizontally()
             let retry = NSButton(
                 title: "Try Again", target: self, action: #selector(refreshTapped(_:)))
             retry.controlSize = .small
@@ -184,6 +189,7 @@ class SettingsPageController: NSViewController {
                 "Changes will not persist: \(reason)")
             banner.font = Theme.Font.callout
             banner.textColor = .systemOrange
+            banner.compressHorizontally()
             contentStack.addArrangedSubview(banner)
             pinToContent(banner)
         }
@@ -191,6 +197,7 @@ class SettingsPageController: NSViewController {
             let banner = NSTextField(wrappingLabelWithString: writeError)
             banner.font = Theme.Font.callout
             banner.textColor = .systemOrange
+            banner.compressHorizontally()
             contentStack.addArrangedSubview(banner)
             pinToContent(banner)
         }
@@ -253,6 +260,7 @@ class SettingsPageController: NSViewController {
                 .foregroundColor: NSColor.secondaryLabelColor,
                 .kern: 0.6,
             ])
+        label.compressHorizontally()
         return label
     }
 
@@ -310,6 +318,7 @@ final class TasksSettingsController: SettingsPageController {
     private func buildSelectionControl() {
         let label = NSTextField(labelWithString: MCCCopy.selectionControlLabel)
         label.font = Theme.Font.headline
+        label.compressHorizontally()
 
         let popup = NSPopUpButton(frame: .zero, pullsDown: false)
         popup.controlSize = .small
@@ -380,6 +389,7 @@ final class TasksSettingsController: SettingsPageController {
         let caption = NSTextField(wrappingLabelWithString: captionText)
         caption.font = Theme.Font.caption
         caption.textColor = .tertiaryLabelColor
+        caption.compressHorizontally()
         contentStack.addArrangedSubview(caption)
         pinToContent(caption)
     }

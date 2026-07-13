@@ -73,11 +73,13 @@ final class ChainSectionView: NSView {
         }
         let title = NSTextField(labelWithString: titleText)
         title.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
+        title.compressHorizontally()
         stack.addArrangedSubview(title)
         if let subtitleText {
             let subtitle = NSTextField(wrappingLabelWithString: subtitleText)
             subtitle.font = Theme.Font.caption
             subtitle.textColor = .secondaryLabelColor
+            subtitle.compressHorizontally()
             stack.addArrangedSubview(subtitle)
             subtitle.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         }
@@ -109,6 +111,7 @@ final class ChainSectionView: NSView {
                 wrappingLabelWithString: MCCCopy.selectionCaption(override))
             caption.font = Theme.Font.caption
             caption.textColor = .tertiaryLabelColor
+            caption.compressHorizontally()
             stack.addArrangedSubview(caption)
             caption.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         }
@@ -122,6 +125,7 @@ final class ChainSectionView: NSView {
                 let empty = NSTextField(labelWithString: MCCCopy.chainEmptyUsesDefault)
                 empty.font = Theme.Font.caption
                 empty.textColor = .secondaryLabelColor
+                empty.compressHorizontally()
                 stack.addArrangedSubview(empty)
             case .defaultChain:
                 let warning = CapsuleBadge(
@@ -172,6 +176,7 @@ final class ChainSectionView: NSView {
                 MCCCopy.chainAllIneffective + " " + exhaustionConsequence())
             note.font = Theme.Font.callout
             note.textColor = .systemOrange
+            note.compressHorizontally()
             stack.addArrangedSubview(note)
             note.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         }
@@ -196,6 +201,7 @@ final class ChainSectionView: NSView {
             let label = NSTextField(labelWithString: "If every model above is unavailable:")
             label.font = Theme.Font.caption
             label.textColor = .secondaryLabelColor
+            label.compressHorizontally()
             let row = NSStackView(views: [label, popup])
             row.orientation = .horizontal
             row.alignment = .centerY
@@ -205,6 +211,7 @@ final class ChainSectionView: NSView {
             let consequence = NSTextField(wrappingLabelWithString: exhaustionConsequence())
             consequence.font = Theme.Font.caption
             consequence.textColor = .tertiaryLabelColor
+            consequence.compressHorizontally()
             stack.addArrangedSubview(consequence)
             consequence.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         }

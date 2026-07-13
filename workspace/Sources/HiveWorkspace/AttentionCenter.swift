@@ -95,12 +95,15 @@ extension AttentionCenter: NSTableViewDataSource, NSTableViewDelegate {
         let title = NSTextField(labelWithString: item.title)
         title.font = Theme.headerFont
         title.lineBreakMode = .byTruncatingTail
+        title.compressHorizontally(toolTip: item.title)
         title.translatesAutoresizingMaskIntoConstraints = false
 
-        let detail = NSTextField(labelWithString: "\(item.projectID.raw) · \(item.detail)")
+        let detailText = "\(item.projectID.raw) · \(item.detail)"
+        let detail = NSTextField(labelWithString: detailText)
         detail.font = Theme.captionFont
         detail.textColor = .secondaryLabelColor
         detail.lineBreakMode = .byTruncatingTail
+        detail.compressHorizontally(priority: 200, toolTip: detailText)
         detail.translatesAutoresizingMaskIntoConstraints = false
 
         cell.addSubview(icon)

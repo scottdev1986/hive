@@ -64,11 +64,13 @@ final class EffortControlView: NSView {
 
         case .none:
             caption.stringValue = MCCCopy.effortNone
+            caption.toolTip = caption.stringValue
             install(caption)
 
         case .unknown(let reason):
             caption.stringValue = MCCCopy.effortUnknown(reason)
             caption.textColor = .tertiaryLabelColor
+            caption.toolTip = caption.stringValue
             install(caption)
         }
     }

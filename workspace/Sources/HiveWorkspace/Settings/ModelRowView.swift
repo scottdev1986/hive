@@ -38,7 +38,7 @@ final class ModelRowView: NSView {
         let nameLabel = NSTextField(labelWithString: name)
         nameLabel.font = Theme.Font.body
         nameLabel.lineBreakMode = .byTruncatingTail
-        nameLabel.setContentCompressionResistancePriority(.init(480), for: .horizontal)
+        nameLabel.compressHorizontally(priority: 480, toolTip: name)
 
         let idLabel = NSTextField(labelWithString: model.displayId)
         idLabel.font = Theme.Font.monoCaption
@@ -135,6 +135,7 @@ final class ModelRowView: NSView {
             label.font = Theme.Font.caption
             label.textColor = .secondaryLabelColor
             label.preferredMaxLayoutWidth = 420
+            label.compressHorizontally()
             let line = NSStackView(views: [icon, label])
             line.orientation = .horizontal
             line.alignment = .centerY
