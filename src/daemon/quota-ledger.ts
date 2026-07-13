@@ -516,8 +516,8 @@ export class QuotaLedger {
       INSERT OR IGNORE INTO quota_usage_sequence (id, next)
       VALUES (0, (SELECT COALESCE(MAX(seq), 0) FROM quota_usage))
     `);
-    if (!integrityInstalled) {
-      this.immediate(() => {
+    this.immediate(() => {
+      if (!integrityInstalled) {
         this.db.database.exec(`
           INSERT OR IGNORE INTO quota_ledger_integrity (
             id, usageRows, reservationRows, nextUsageSeq
@@ -529,9 +529,43 @@ export class QuotaLedger {
         this.db.database.query(
           "INSERT OR IGNORE INTO meta (key, value) VALUES (?, 'installed')",
         ).run(QUOTA_LEDGER_INTEGRITY_META_KEY);
-      });
-    }
-    this.requireIntegrity();
+      }
+      // These triggers are part of the migration boundary, not merely the new
+      // writer. A daemon from before the integrity checkpoint can keep serving
+      // an already-running session during an upgrade; its inserts must advance
+      // the checkpoint too. Installing the checkpoint and triggers under one
+      // write lock leaves no unprotected window between them.
+      this.db.database.exec(`
+        CREATE TRIGGER IF NOT EXISTS quota_usage_integrity_insert
+        AFTER INSERT ON quota_usage
+        BEGIN
+          SELECT CASE
+            WHEN (SELECT COUNT(*) FROM quota_ledger_integrity WHERE id = 0) != 1
+              THEN RAISE(ABORT, 'quota ledger integrity checkpoint unavailable')
+            WHEN NEW.seq IS NULL
+              OR NEW.seq != (SELECT nextUsageSeq + 1 FROM quota_ledger_integrity WHERE id = 0)
+              OR NEW.seq != (SELECT next FROM quota_usage_sequence WHERE id = 0)
+              THEN RAISE(ABORT, 'quota usage sequence is not contiguous')
+          END;
+          UPDATE quota_ledger_integrity
+          SET usageRows = usageRows + 1, nextUsageSeq = NEW.seq
+          WHERE id = 0;
+        END;
+        CREATE TRIGGER IF NOT EXISTS quota_reservation_integrity_insert
+        AFTER INSERT ON quota_reservations
+        BEGIN
+          SELECT CASE
+            WHEN (SELECT COUNT(*) FROM quota_ledger_integrity WHERE id = 0) != 1
+              THEN RAISE(ABORT, 'quota ledger integrity checkpoint unavailable')
+          END;
+          UPDATE quota_ledger_integrity
+          SET reservationRows = reservationRows + 1
+          WHERE id = 0;
+        END;
+      `);
+      this.repairIntactUsageGrowth();
+      this.requireIntegrity();
+    });
     this.db.database.exec(`
       CREATE UNIQUE INDEX IF NOT EXISTS quota_reservations_active_control
       ON quota_reservations(controlMessageId)
@@ -573,6 +607,67 @@ export class QuotaLedger {
           `${actual.data.reservationRows}, and sequence ${actual.data.nextUsageSeq}`,
       );
     }
+  }
+
+  /**
+   * Repair the one state an older writer can leave behind: an intact,
+   * contiguous suffix committed after this checkpoint was first installed.
+   * Anything missing from the checkpointed prefix, any sequence gap or jump,
+   * and any reservation-count disagreement still refuses startup.
+   */
+  private repairIntactUsageGrowth(): void {
+    const state = z.object({
+      expectedUsageRows: z.number().int().nonnegative(),
+      expectedReservationRows: z.number().int().nonnegative(),
+      expectedNextUsageSeq: z.number().int().nonnegative(),
+      actualUsageRows: z.number().int().nonnegative(),
+      actualReservationRows: z.number().int().nonnegative(),
+      actualNextUsageSeq: z.number().int().nonnegative(),
+      prefixUsageRows: z.number().int().nonnegative(),
+      appendedUsageRows: z.number().int().nonnegative(),
+    }).safeParse(this.db.database.query(`
+      SELECT
+        integrity.usageRows AS expectedUsageRows,
+        integrity.reservationRows AS expectedReservationRows,
+        integrity.nextUsageSeq AS expectedNextUsageSeq,
+        (SELECT COUNT(*) FROM quota_usage) AS actualUsageRows,
+        (SELECT COUNT(*) FROM quota_reservations) AS actualReservationRows,
+        sequence.next AS actualNextUsageSeq,
+        (SELECT COUNT(*) FROM quota_usage
+          WHERE seq <= integrity.nextUsageSeq) AS prefixUsageRows,
+        (SELECT COUNT(*) FROM quota_usage
+          WHERE seq > integrity.nextUsageSeq AND seq <= sequence.next) AS appendedUsageRows
+      FROM quota_ledger_integrity AS integrity
+      JOIN quota_usage_sequence AS sequence ON sequence.id = 0
+      WHERE integrity.id = 0
+    `).get());
+    if (!state.success) return;
+
+    const value = state.data;
+    if (
+      value.actualReservationRows !== value.expectedReservationRows ||
+      value.actualUsageRows <= value.expectedUsageRows ||
+      value.actualNextUsageSeq <= value.expectedNextUsageSeq
+    ) return;
+    const appendedRows = value.actualUsageRows - value.expectedUsageRows;
+    const appendedSequences = value.actualNextUsageSeq - value.expectedNextUsageSeq;
+    if (
+      value.prefixUsageRows !== value.expectedUsageRows ||
+      value.appendedUsageRows !== appendedRows ||
+      appendedRows !== appendedSequences
+    ) return;
+
+    this.db.database.query(`
+      UPDATE quota_ledger_integrity
+      SET usageRows = ?, nextUsageSeq = ?
+      WHERE id = 0 AND usageRows = ? AND reservationRows = ? AND nextUsageSeq = ?
+    `).run(
+      value.actualUsageRows,
+      value.actualNextUsageSeq,
+      value.expectedUsageRows,
+      value.expectedReservationRows,
+      value.expectedNextUsageSeq,
+    );
   }
 
   /**
@@ -915,14 +1010,6 @@ export class QuotaLedger {
       input.purpose ?? "agent",
       input.controlMessageId ?? null,
     );
-    const checkpoint = this.db.database.query(`
-      UPDATE quota_ledger_integrity
-      SET reservationRows = reservationRows + 1
-      WHERE id = 0
-    `).run();
-    if (checkpoint.changes !== 1) {
-      throw new QuotaLedgerUnknownError("its reservation checkpoint could not be advanced");
-    }
   }
 
   tryReserve(input: ReserveQuotaInput): QuotaReservation | null {
@@ -1331,7 +1418,8 @@ export class QuotaLedger {
             id, reservationId, provider, account, pool, model,
             units, weeklyUnits, occurredAt, source, confidence, seq
           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `).run(
+          RETURNING id
+        `).get(
           crypto.randomUUID(),
           reservation.id,
           reservation.provider,
@@ -1345,18 +1433,10 @@ export class QuotaLedger {
           source === "estimated" ? "estimated" : "authoritative",
           seq,
         );
-        if (inserted.changes !== 1) {
+        if (inserted === null) {
           throw new QuotaLedgerUnknownError(
             `the spend for reservation ${reservation.id} could not be recorded exactly once`,
           );
-        }
-        const checkpoint = this.db.database.query(`
-          UPDATE quota_ledger_integrity
-          SET usageRows = usageRows + 1, nextUsageSeq = ?
-          WHERE id = 0
-        `).run(seq);
-        if (checkpoint.changes !== 1) {
-          throw new QuotaLedgerUnknownError("its spend checkpoint could not be advanced");
         }
       }
       return this.getReservation(id);

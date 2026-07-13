@@ -151,6 +151,86 @@ describe("quota windows", () => {
 });
 
 describe("quota persistence and reservations", () => {
+  test("repairs an intact usage tail from an older daemon and protects later writes", async () => {
+    const { db } = await fileDatabase("mixed-version-integrity");
+    new QuotaLedger(db);
+
+    // Reproduce the upgrade window: a pre-integrity daemon writes after the
+    // new build has checkpointed the ledger, but before insert triggers exist.
+    db.database.exec(`
+      DROP TRIGGER IF EXISTS quota_usage_integrity_insert;
+      UPDATE quota_usage_sequence SET next = 1 WHERE id = 0;
+      INSERT INTO quota_usage (
+        id, reservationId, provider, account, pool, model,
+        units, weeklyUnits, occurredAt, source, confidence, seq
+      ) VALUES (
+        'old-daemon-usage-1', NULL, 'codex', 'personal', 'codex',
+        'codex-model', 4, 1, '2026-07-13T14:09:01.602Z',
+        'estimated', 'estimated', 1
+      );
+    `);
+
+    expect(() => new QuotaLedger(db)).not.toThrow();
+    expect(db.database.query(`
+      SELECT usageRows, reservationRows, nextUsageSeq
+      FROM quota_ledger_integrity WHERE id = 0
+    `).get()).toEqual({
+      usageRows: 1,
+      reservationRows: 0,
+      nextUsageSeq: 1,
+    });
+
+    // The reinstalled trigger makes the same old write path safe from now on.
+    db.database.exec(`
+      UPDATE quota_usage_sequence SET next = 2 WHERE id = 0;
+      INSERT INTO quota_usage (
+        id, reservationId, provider, account, pool, model,
+        units, weeklyUnits, occurredAt, source, confidence, seq
+      ) VALUES (
+        'old-daemon-usage-2', NULL, 'codex', 'personal', 'codex',
+        'codex-model', 4, 1, '2026-07-13T14:10:01.602Z',
+        'estimated', 'estimated', 2
+      );
+      INSERT INTO quota_reservations (
+        id, agentName, provider, account, pool, model, category,
+        estimatedUnits, status, createdAt, expiresAt
+      ) VALUES (
+        'old-daemon-reservation', 'maya', 'codex', 'personal', 'codex',
+        'codex-model', 'simple_coding', 4, 'active',
+        '2026-07-13T14:11:01.602Z', '2026-07-13T15:11:01.602Z'
+      );
+    `);
+    expect(db.database.query(`
+      SELECT usageRows, reservationRows, nextUsageSeq
+      FROM quota_ledger_integrity WHERE id = 0
+    `).get()).toEqual({
+      usageRows: 2,
+      reservationRows: 1,
+      nextUsageSeq: 2,
+    });
+    db.close();
+  });
+
+  test("refuses to repair non-contiguous usage growth", async () => {
+    const { db } = await fileDatabase("mixed-version-integrity-gap");
+    new QuotaLedger(db);
+    db.database.exec(`
+      DROP TRIGGER IF EXISTS quota_usage_integrity_insert;
+      UPDATE quota_usage_sequence SET next = 2 WHERE id = 0;
+      INSERT INTO quota_usage (
+        id, reservationId, provider, account, pool, model,
+        units, weeklyUnits, occurredAt, source, confidence, seq
+      ) VALUES (
+        'old-daemon-usage-2', NULL, 'codex', 'personal', 'codex',
+        'codex-model', 4, 1, '2026-07-13T14:10:01.602Z',
+        'estimated', 'estimated', 2
+      );
+    `);
+
+    expect(() => new QuotaLedger(db)).toThrow(QuotaLedgerUnknownError);
+    db.close();
+  });
+
   test("distinguishes a genuine zero ledger from truncated spend and refuses a new reservation", async () => {
     const { db } = await fileDatabase("truncated-ledger");
     const ledger = new QuotaLedger(db);
