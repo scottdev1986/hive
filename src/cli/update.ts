@@ -34,7 +34,6 @@ import {
   restartStaleDaemon,
 } from "../update/daemon";
 import { startDownload } from "../update/progress";
-import { yellow } from "../update/notice";
 import { releaseKeys } from "../release/manifest";
 import { expectedDaemonHandshake } from "../daemon/handshake";
 import { isRunning } from "../daemon/lifecycle";
@@ -244,22 +243,10 @@ async function stopStaleDaemonAfterActivation(): Promise<void> {
  * status` carry the detail. It loses because the moment of the claim is the
  * moment the user is deciding, and nobody audits an install afterwards.
  *
- * The unsigned branch is the inverse and must never read as a footnote: it means
- * nothing proves the release came from Hive at all, so it says so in the line
- * itself rather than trailing a reassuring one.
  */
 function verifiedLine(staged: StageOutcome): string {
-  const checks = staged.signed
-    ? "Ed25519 signature, SHA-256, binary probed"
-    : `SHA-256 (${staged.cliSha256.slice(0, 12)}), binary probed — but UNSIGNED`;
   const how = staged.reused ? "already staged" : "staged";
-  return `hive ${staged.version} ${how} — verified: ${checks}`;
-}
-
-/** Loud, and on a line of its own. A `warning:` prefix on stderr is missable. */
-function announceUnsigned(warning: string, isTTY: boolean): void {
-  const body = `UNSIGNED RELEASE: ${warning}`;
-  console.error(isTTY ? yellow(body) : body);
+  return `hive ${staged.version} ${how} — verified: Ed25519 signature, SHA-256, binary probed`;
 }
 
 export async function runUpdate(requested?: string): Promise<void> {
@@ -290,17 +277,6 @@ export async function runUpdate(requested?: string): Promise<void> {
     unpackApp,
     progress: (artifact) => startDownload(artifact.name, artifact.size),
   });
-  // Unreachable from any current release — every build since 0.0.6 embeds the
-  // key, so `signed` is true and this branch is dead today. It stays anyway, and
-  // deliberately. The pipeline's graceful degradation is real: a build with no
-  // key secret configured still publishes, and the only thing standing between
-  // that and a silently unverified install is this branch. Deleting it as dead
-  // code would convert a loud unsigned release into a quiet one, which is the
-  // precise failure this whole surface exists to prevent. A guard earns its keep
-  // exactly when you expect it never to fire.
-  if (!staged.signed && staged.warning !== null) {
-    announceUnsigned(staged.warning, process.stderr.isTTY === true);
-  }
   console.log(verifiedLine(staged));
 
   // The activation half, only when the control plane is provably idle.

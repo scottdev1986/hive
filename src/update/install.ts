@@ -95,10 +95,6 @@ export class UpdateError extends Error {}
 export interface StageResult {
   readonly version: string;
   readonly directory: string;
-  readonly signed: boolean;
-  readonly warning: string | null;
-  /** The digest that actually matched, so the CLI can name it rather than allude to it. */
-  readonly cliSha256: string;
 }
 
 /**
@@ -199,9 +195,6 @@ export async function stageRelease(deps: StageDeps): Promise<StageResult> {
   return {
     version,
     directory: target,
-    signed: true,
-    warning: null,
-    cliSha256: cli.sha256,
   };
 }
 
@@ -226,7 +219,6 @@ export interface StageOutcome extends StageResult {
 async function proveStaged(
   deps: StageDeps,
   cli: ReleaseArtifact,
-  trust: { signed: boolean; warning: string | null },
   root: string,
 ): Promise<StageOutcome> {
   const version = deps.manifest.version;
@@ -256,9 +248,6 @@ async function proveStaged(
   return {
     version,
     directory: versionDir(version, root),
-    signed: trust.signed,
-    warning: trust.warning,
-    cliSha256: cli.sha256,
     reused: true,
   };
 }
@@ -287,11 +276,6 @@ export async function ensureStaged(deps: StageDeps): Promise<StageOutcome> {
       "Refusing update: manifest is not signed by an embedded Hive release key",
     );
   }
-  const summary = {
-    signed: true,
-    warning: null,
-  };
-
   const version = deps.manifest.version;
   const cli = selectArtifact(deps.manifest, "cli", deps.arch);
   if (cli === null) {
@@ -302,7 +286,7 @@ export async function ensureStaged(deps: StageDeps): Promise<StageOutcome> {
 
   if (isStaged(version, root)) {
     try {
-      return await proveStaged(deps, cli, summary, root);
+      return await proveStaged(deps, cli, root);
     } catch (error) {
       // The staged copy is not what the signed manifest describes. Discarding
       // and refetching is safe *unless* it is the version currently running:

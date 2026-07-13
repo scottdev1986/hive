@@ -95,8 +95,6 @@ describe("staging a release", () => {
   test("verifies, stages, and leaves an immutable version directory", async () => {
     const result = await stageRelease(stageDeps("0.0.7"));
     expect(result.version).toEqual("0.0.7");
-    expect(result.signed).toEqual(true);
-    expect(result.warning).toBeNull();
     expect(isStaged("0.0.7", root)).toEqual(true);
   });
 
