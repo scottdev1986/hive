@@ -24,7 +24,7 @@ import { formatStatusTable } from "../cli/status";
 import { actingAs, submitPaste } from "./testing";
 import type { BuildFreshness } from "./build-freshness";
 import type { SpawnRequest, Spawner } from "./spawner";
-import { orchestratorTmuxSession } from "./tmux-sessions";
+import { agentTmuxSession, orchestratorTmuxSession } from "./tmux-sessions";
 import {
   MachineMutationCoordinator,
   type ProcessIdentityState,
@@ -1065,7 +1065,7 @@ describe("HiveDaemon HTTP server", () => {
       spawner: new StubSpawner(),
       tmuxSender: new SilentTmuxSender(db),
     });
-    db.insertAgent(agent());
+    db.insertAgent(agent({ tmuxSession: agentTmuxSession("maya", home) }));
     try {
       const events = [
         { kind: "session-start", agentName: "maya", timestamp },
