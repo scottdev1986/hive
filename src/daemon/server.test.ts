@@ -1512,6 +1512,61 @@ describe("HiveDaemon HTTP server", () => {
     }
   });
 
+  test("hive_mark_dead refuses live sessions and cleans confirmed-stopped agents", async () => {
+    const db = new HiveDatabase(join(home, "mark-dead-stopped-only.db"));
+    const tmux = new FakeDaemonTmux();
+    tmux.sessions.add("hive-maya");
+    const closed: AgentRecord["terminalHandle"][] = [];
+    let layouts = 0;
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new StubSpawner(),
+      tmux,
+      tmuxSender: new SilentTmuxSender(db),
+      closeTerminal: async (handle) => { closed.push(handle); },
+      layout: { requestLayout: () => layouts += 1 },
+      assessStrandedWork: async () => ({ dirtyFiles: [], unmergedCommits: 0 }),
+      resourceRunners: { panePids: async () => [] },
+    });
+    const handle = { app: "iterm2", sessionId: "stopped-viewer" } as const;
+    db.insertAgent(agent({ terminalHandle: handle }));
+    const transport = new StreamableHTTPClientTransport(
+      new URL("http://hive/mcp"),
+      { fetch: actingAs(daemon, "operator") },
+    );
+    const client = new Client({ name: "mark-dead-test", version: "1.0.0" });
+    try {
+      await client.connect(transport);
+
+      const refused = await client.callTool({
+        name: "hive_mark_dead",
+        arguments: { agent: "maya" },
+      });
+      expect(refused.isError).toBe(true);
+      expect(JSON.stringify(refused.content)).toContain("hive_kill");
+      expect(db.getAgentByName("maya")).toMatchObject({
+        status: "working",
+        terminalHandle: handle,
+      });
+      expect(tmux.killed).toEqual([]);
+      expect(closed).toEqual([]);
+
+      tmux.sessions.delete("hive-maya");
+      const stopped = textValue(await client.callTool({
+        name: "hive_mark_dead",
+        arguments: { agent: "maya" },
+      })) as AgentRecord;
+      expect(stopped.status).toEqual("dead");
+      expect(stopped.terminalHandle).toBeUndefined();
+      expect(closed).toEqual([handle]);
+      expect(layouts).toEqual(1);
+    } finally {
+      await client.close();
+      await daemon.stop();
+      db.close();
+    }
+  });
+
   test("hive_approvals trims by kind: boilerplate is cut, a tool permission never is", async () => {
     // The trim exists to stop re-sending the same boilerplate on every poll.
     // It must never reach a tool-permission description, because THAT text is

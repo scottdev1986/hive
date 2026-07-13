@@ -3772,7 +3772,8 @@ export class HiveDaemon {
 
     server.registerTool("hive_mark_dead", {
       title: "Mark Hive agent dead",
-      description: "Mark a stopped Hive agent as dead in the status table.",
+      description:
+        "Mark a confirmed-stopped Hive agent dead after cleaning its residual resources and viewer. Refuses while the tmux session still exists; use hive_kill to stop a live agent.",
       inputSchema: MarkDeadRequestSchema,
     }, async ({ agent: agentName }) => {
       this.authorizeTool(capability, "hive_mark_dead", "agent:mark-dead", agentName);
@@ -3780,21 +3781,12 @@ export class HiveDaemon {
       if (agent === null) {
         throw new Error(`Hive agent not found: ${agentName}`);
       }
-      const updated = this.db.upsertAgent({
-        ...agent,
-        status: "dead",
-        lastEventAt: new Date().toISOString(),
-      });
-      // A dead agent's credential dies with it, so a surviving descendant of
-      // its process cannot keep speaking for a tenant that no longer exists.
-      // The token file goes too: revocation already makes it useless, but a
-      // plaintext credential for every agent ever spawned must not accumulate
-      // on disk for the life of the install.
-      this.capabilities.revokeSubject(updated.name);
-      removeCredential(updated.name);
-      this.channels.drop(updated.name);
-      await this.settleAgentQuota(updated);
-      return toolResult(updated, "agent");
+      if (await this.tmux.hasSession(agent.tmuxSession)) {
+        throw new Error(
+          `Cannot mark ${agentName} dead: tmux session ${agent.tmuxSession} is still running. Use hive_kill to stop a live agent.`,
+        );
+      }
+      return toolResult((await this.killAgentTeardown(agent)).agent, "agent");
     });
 
     server.registerTool("hive_kill", {
