@@ -158,6 +158,11 @@ describe("AgentMessageSchema", () => {
     expect(() =>
       AgentMessageSchema.parse({ ...message, deliveredAt: 123 }),
     ).toThrow();
+    expect(() => AgentMessageSchema.parse({
+      ...message,
+      priority: undefined,
+      priorty: "critical",
+    })).toThrow();
   });
 });
 

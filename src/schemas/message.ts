@@ -22,7 +22,7 @@ export type MessageLifecycleState = z.infer<
   typeof MessageLifecycleStateSchema
 >;
 
-export const AgentMessageSchema = z.object({
+export const AgentMessageSchema = z.strictObject({
   id: z.string().min(1),
   from: z.string().min(1),
   to: z.string().min(1),
@@ -44,7 +44,7 @@ export const AgentMessageSchema = z.object({
 
 export type AgentMessage = z.infer<typeof AgentMessageSchema>;
 
-export const OrchestratorMessageEnvelopeSchema = z.object({
+export const OrchestratorMessageEnvelopeSchema = z.strictObject({
   kind: z.literal("hive.message"),
   id: z.string().min(1),
   from: z.string().min(1),
