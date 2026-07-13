@@ -676,4 +676,43 @@ describe("runCommand", () => {
     expect(result.timedOut).toBe(true);
     expect(result.exitCode).not.toBe(0);
   });
+
+  test("a timeout kills a real background descendant", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-graphify-process-"));
+    const pidFile = join(root, "child.pid");
+    let childPid = 0;
+    try {
+      const result = await runCommand([
+        "/bin/sh",
+        "-c",
+        "nohup /bin/sleep 30 >/dev/null 2>&1 & " +
+          "child=$!; printf '%s\\n' \"$child\" > \"$1\"; wait",
+        "sh",
+        pidFile,
+      ], { timeoutMs: 100 });
+      expect(result.timedOut).toBe(true);
+      childPid = Number((await readFile(pidFile, "utf8")).trim());
+      expect(Number.isSafeInteger(childPid) && childPid > 0).toBe(true);
+
+      let alive = true;
+      for (let attempt = 0; attempt < 50 && alive; attempt += 1) {
+        try {
+          process.kill(childPid, 0);
+          await Bun.sleep(10);
+        } catch {
+          alive = false;
+        }
+      }
+      expect(alive).toBe(false);
+    } finally {
+      if (childPid > 0) {
+        try {
+          process.kill(childPid, "SIGKILL");
+        } catch {
+          // The timeout already reaped it.
+        }
+      }
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 });

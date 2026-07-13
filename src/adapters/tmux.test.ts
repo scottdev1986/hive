@@ -11,6 +11,7 @@ import {
 } from "./tmux";
 import { join } from "node:path";
 import { promptArgument, writeLaunchPrompt } from "../daemon/launch-prompt";
+import { agentTmuxSession, hiveInstanceSuffix } from "../daemon/tmux-sessions";
 
 const socketName = `hive-test-${crypto.randomUUID()}`;
 const tmux = new TmuxAdapter(socketName);
@@ -105,7 +106,7 @@ function recordingAdapter(options: {
     }
     return { stdout: "", stderr: "", exitCode: 0 };
   };
-  const adapter = new TmuxAdapter(undefined, {
+  const adapter = new TmuxAdapter("recording", {
     run,
     sleep: async (milliseconds) => {
       sleeps.push(milliseconds);
@@ -127,7 +128,7 @@ describe("TmuxAdapter launch diagnostics", () => {
       "'claude' '--model' 'sonnet'",
     );
 
-    expect(calls).toHaveLength(1);
+    expect(calls).toHaveLength(2);
     expect(calls[0]?.args.slice(0, 7)).toEqual([
       "new-session",
       "-d",
@@ -156,6 +157,11 @@ describe("TmuxAdapter launch diagnostics", () => {
       "history-limit",
       String(HIVE_HISTORY_LIMIT),
     ]);
+    expect(calls[1]?.args).toEqual([
+      "has-session",
+      "-t",
+      "=hive-maya",
+    ]);
     expect(holdPaneOnFailure("exit 17")).toStartWith("(exit 17);");
   });
 
@@ -163,6 +169,54 @@ describe("TmuxAdapter launch diagnostics", () => {
     expect(() => holdPaneOnFailure("true", 0)).toThrow(
       "failure hold must be a positive whole number",
     );
+  });
+
+  test("refuses a successful launch whose session does not exist", async () => {
+    const adapter = new TmuxAdapter(undefined, {
+      run: async (args) => args[0] === "has-session"
+        ? { stdout: "", stderr: "can't find session", exitCode: 1 }
+        : { stdout: "", stderr: "", exitCode: 0 },
+    });
+
+    expect(adapter.newSession(agentTmuxSession("missing"), "/tmp", "cat"))
+      .rejects.toThrow("did not create the session");
+  });
+});
+
+describe("TmuxAdapter instance boundary", () => {
+  test("never sends a command to another instance's session", async () => {
+    const calls: string[][] = [];
+    const adapter = new TmuxAdapter(undefined, {
+      run: async (args) => {
+        calls.push(args);
+        return { stdout: "", stderr: "", exitCode: 0 };
+      },
+    });
+    const ownSuffix = hiveInstanceSuffix();
+    const otherSuffix = ownSuffix === "0000000000"
+      ? "1111111111"
+      : "0000000000";
+
+    expect(adapter.killSession(`hive-maya-${otherSuffix}`)).rejects.toThrow(
+      "different Hive instance",
+    );
+    expect(calls).toEqual([]);
+  });
+
+  test("filters sibling sessions out of the default server inventory", async () => {
+    const own = agentTmuxSession("maya");
+    const otherSuffix = hiveInstanceSuffix() === "0000000000"
+      ? "1111111111"
+      : "0000000000";
+    const adapter = new TmuxAdapter(undefined, {
+      run: async () => ({
+        stdout: `${own}\nhive-david-${otherSuffix}\n`,
+        stderr: "",
+        exitCode: 0,
+      }),
+    });
+
+    expect(await adapter.listSessions()).toEqual([own]);
   });
 });
 
@@ -251,7 +305,7 @@ describe("TmuxAdapter.sendKeys injection", () => {
 
 describe("TmuxAdapter", () => {
   test("rejects malformed pane PIDs instead of partially parsing them", async () => {
-    const adapter = new TmuxAdapter(undefined, {
+    const adapter = new TmuxAdapter("test", {
       run: async () => ({
         stdout: "42\n12oops\n-7\n0\n9007199254740992\n73\n",
         stderr: "",
@@ -264,7 +318,7 @@ describe("TmuxAdapter", () => {
 
   test("lists the unique physical client TTYs attached to an exact session", async () => {
     const calls: string[][] = [];
-    const adapter = new TmuxAdapter(undefined, {
+    const adapter = new TmuxAdapter("test", {
       run: async (args) => {
         calls.push(args);
         return {
@@ -348,6 +402,16 @@ describe("TmuxAdapter", () => {
       message = error instanceof Error ? error.message : String(error);
     }
     expect(message.includes("tmux kill-session failed")).toEqual(true);
+  });
+
+  test("refuses a successful kill while the session still exists", async () => {
+    const adapter = new TmuxAdapter(undefined, {
+      run: async () => ({ stdout: "", stderr: "", exitCode: 0 }),
+    });
+
+    expect(adapter.killSession(agentTmuxSession("survivor"))).rejects.toThrow(
+      "still exists",
+    );
   });
 
   test("creates, lists, writes to, captures, and kills a real session", async () => {
@@ -496,7 +560,7 @@ describe("TmuxAdapter", () => {
 describe("interrupting a working agent", () => {
   test("an interrupt escapes, CLEARS the composer, then pastes", async () => {
     const calls: string[][] = [];
-    const tmux = new TmuxAdapter(undefined, {
+    const tmux = new TmuxAdapter("test", {
       run: async (args: string[]) => {
         calls.push(args);
         return { exitCode: 0, stdout: "", stderr: "" };
@@ -522,7 +586,7 @@ describe("interrupting a working agent", () => {
 
   test("routine traffic never interrupts a thinking agent", async () => {
     const calls: string[][] = [];
-    const tmux = new TmuxAdapter(undefined, {
+    const tmux = new TmuxAdapter("test", {
       run: async (args: string[]) => {
         calls.push(args);
         return { exitCode: 0, stdout: "", stderr: "" };

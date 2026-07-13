@@ -1,7 +1,8 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
+import { hiveInstanceSuffix } from "../daemon/tmux-sessions";
 import { writeGrokAgentConfig } from "./tools/grok";
 import {
   assessStrandedWork,
@@ -133,7 +134,7 @@ describe("git worktree manager", () => {
     expect((await git("branch", "--list", created.branch)).trim()).toEqual("");
   });
 
-  test("prunes and cleans up a branch after manual directory deletion", async () => {
+  test("unregisters and cleans up a branch after manual directory deletion", async () => {
     const created = await createWorktree(repoRoot, "agent-6", "manual-delete");
     await rm(created.path, { recursive: true, force: true });
 
@@ -145,6 +146,27 @@ describe("git worktree manager", () => {
       ),
     ).toEqual(false);
     expect((await git("branch", "--list", created.branch)).trim()).toEqual("");
+  });
+
+  test("missing-worktree cleanup never unregisters a different missing worktree", async () => {
+    const target = await createWorktree(repoRoot, "agent-target", "missing");
+    const sibling = await createWorktree(repoRoot, "agent-other", "missing");
+    const siblingPath = await realpath(sibling.path);
+    await rm(target.path, { recursive: true, force: true });
+    await rm(sibling.path, { recursive: true, force: true });
+
+    try {
+      await removeWorktree(repoRoot, target.path, { deleteBranch: true });
+      expect(await listWorktrees(repoRoot)).toContainEqual({
+        path: siblingPath,
+        branch: sibling.branch,
+      });
+    } finally {
+      await removeWorktree(repoRoot, sibling.path, {
+        deleteBranch: true,
+        branch: sibling.branch,
+      });
+    }
   });
 
   test("reports no stranded work for a clean, fully merged branch", async () => {
@@ -267,6 +289,57 @@ describe("git worktree manager", () => {
     });
 
     expect((await git("branch", "--list", created.branch)).trim()).toEqual("");
+  });
+
+  test("refuses to remove a worktree owned by another Hive instance", async () => {
+    const created = await createWorktree(repoRoot, "agent-sibling", "owned");
+    const ownRef = `refs/hive-owner/${hiveInstanceSuffix()}/${created.branch}`;
+    const siblingRef = `refs/hive-owner/sibling-instance/${created.branch}`;
+    await git("update-ref", "-d", ownRef);
+    await git("update-ref", siblingRef, created.branch);
+
+    try {
+      expect(removeWorktree(repoRoot, created.path, {
+        deleteBranch: true,
+        branch: created.branch,
+      })).rejects.toThrow("another Hive instance");
+      expect((await git("branch", "--list", created.branch)).trim())
+        .toContain(created.branch);
+    } finally {
+      await git("update-ref", "-d", siblingRef);
+      if ((await git("branch", "--list", created.branch)).trim() !== "") {
+        await git("update-ref", ownRef, created.branch);
+        await removeWorktree(repoRoot, created.path, {
+          deleteBranch: true,
+          discardTracked: true,
+          branch: created.branch,
+        });
+      }
+    }
+  });
+
+  test("only the default instance may clean up ownerless legacy worktrees", async () => {
+    const created = await createWorktree(repoRoot, "agent-legacy", "ownerless");
+    const ownRef = `refs/hive-owner/${hiveInstanceSuffix()}/${created.branch}`;
+    await git("update-ref", "-d", ownRef);
+
+    expect(removeWorktree(repoRoot, created.path, {
+      deleteBranch: true,
+      branch: created.branch,
+    })).rejects.toThrow("ownerless legacy branch outside the default");
+
+    const namedHome = Bun.env.HIVE_HOME;
+    Bun.env.HIVE_HOME = join(homedir(), ".hive");
+    try {
+      await removeWorktree(repoRoot, created.path, {
+        deleteBranch: true,
+        branch: created.branch,
+      });
+      expect((await git("branch", "--list", created.branch)).trim()).toBe("");
+    } finally {
+      if (namedHome === undefined) delete Bun.env.HIVE_HOME;
+      else Bun.env.HIVE_HOME = namedHome;
+    }
   });
 
   test("treats a deleted worktree directory and missing branch as nothing stranded", async () => {

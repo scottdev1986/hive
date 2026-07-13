@@ -794,6 +794,7 @@ export async function runCodexAppServerHost(
     `mcp_servers.hive.url=${JSON.stringify(`http://127.0.0.1:${options.daemonPort}/mcp`)}`,
   ], {
     cwd: options.worktree,
+    detached: true,
     stdin: "pipe",
     stdout: "pipe",
     stderr: "pipe",
@@ -804,9 +805,13 @@ export async function runCodexAppServerHost(
   await Bun.write(`${options.socket}.pid`, `${child.pid}\n`);
   const stopChild = (): void => {
     try {
-      child.kill();
+      process.kill(-child.pid, "SIGKILL");
     } catch {
-      // The child already exited.
+      try {
+        child.kill("SIGKILL");
+      } catch {
+        // The child already exited.
+      }
     }
   };
   process.once("SIGINT", stopChild);
@@ -938,6 +943,7 @@ export interface ReapOrphanDependencies {
   readPidFile: (name: string) => Promise<string>;
   removeFile: (name: string) => Promise<void>;
   processCommand: (pid: number) => Promise<string | null>;
+  /** A negative target signals the process group, matching process.kill. */
   kill: (pid: number) => void;
 }
 
@@ -990,12 +996,28 @@ export async function reapOrphanCodexHosts(
     if (Number.isSafeInteger(pid) && pid > 0) {
       const command = await dependencies.processCommand(pid);
       if (command !== null && isCodexAppServer(command)) {
+        let signaled = false;
         try {
-          dependencies.kill(pid);
-          reaped.push(pid);
+          dependencies.kill(-pid);
+          signaled = true;
         } catch {
-          // The process exited between the check and the kill.
+          try {
+            // Hosts created before process-group isolation need direct cleanup.
+            dependencies.kill(pid);
+            signaled = true;
+          } catch {
+            // The process exited between identification and the signal.
+          }
         }
+        let stillRunning = true;
+        for (let attempt = 0; attempt < 50 && stillRunning; attempt += 1) {
+          stillRunning = await dependencies.processCommand(pid) !== null;
+          if (stillRunning) await Bun.sleep(10);
+        }
+        if (stillRunning) {
+          throw new Error(`Codex app-server ${pid} is still running after reap`);
+        }
+        if (signaled) reaped.push(pid);
       }
     }
     await dependencies.removeFile(name).catch(() => undefined);

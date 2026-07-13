@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import type { AgentRecord, HookEvent } from "../../schemas";
-import { basename } from "node:path";
+import { basename, join } from "node:path";
 import { hiveInstanceSuffix } from "../../daemon/tmux-sessions";
 import {
   CodexAppServerManager,
@@ -399,6 +400,7 @@ describe("reapOrphanCodexHosts", () => {
     processCommand: async (pid: number) => world.commands.get(pid) ?? null,
     kill: (pid: number) => {
       world.killed.push(pid);
+      world.commands.delete(Math.abs(pid));
     },
   });
 
@@ -458,7 +460,7 @@ describe("reapOrphanCodexHosts", () => {
     );
 
     expect(reaped).toEqual([4242]);
-    expect(world.killed).toEqual([4242]);
+    expect(world.killed).toEqual([-4242]);
     // Dead agents' pidfiles and sockets are cleared even when the pid was
     // recycled by another program; live and unknown agents keep theirs.
     expect([...world.files.keys()].sort()).toEqual([
@@ -466,6 +468,24 @@ describe("reapOrphanCodexHosts", () => {
       pidfileFor("live-agent"),
       "unrelated.txt",
     ].sort());
+  });
+
+  test("does not report a no-op kill as a successful reap", async () => {
+    const world: FakeWorld = {
+      files: new Map([[pidfileFor("unkillable"), "7373\n"]]),
+      commands: new Map([[7373, "codex app-server --stdio"]]),
+      killed: [],
+    };
+
+    expect(reapOrphanCodexHosts(
+      status({ unkillable: "dead" }),
+      {
+        ...dependencies(world),
+        kill: (pid) => {
+          world.killed.push(pid);
+        },
+      },
+    )).rejects.toThrow("still running after reap");
   });
 
   // A recycled pid held by a process that merely TALKS about codex is not a
@@ -499,6 +519,86 @@ describe("reapOrphanCodexHosts", () => {
 
     // The impostor is spared; the genuine orphan is still reaped.
     expect(reaped).toEqual([9191]);
-    expect(world.killed).toEqual([9191]);
+    expect(world.killed).toEqual([-9191]);
+  });
+
+  test("kills a real orphan app-server process group", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-codex-orphan-"));
+    const executable = join(root, "codex");
+    const childPidPath = join(root, "child.pid");
+    let childPid = 0;
+    let appServer: ReturnType<typeof Bun.spawn> | null = null;
+    try {
+      await symlink("/bin/sh", executable);
+      await writeFile(
+        join(root, "app-server"),
+        "nohup /bin/sleep 30 >/dev/null 2>&1 & " +
+          "child=$!; printf '%s\\n' \"$child\" > \"$1\"; wait\n",
+      );
+      appServer = Bun.spawn([executable, "app-server", childPidPath], {
+        cwd: root,
+        detached: true,
+        stdin: "ignore",
+        stdout: "ignore",
+        stderr: "ignore",
+      });
+      for (let attempt = 0; attempt < 100 && childPid === 0; attempt += 1) {
+        childPid = Number(
+          (await readFile(childPidPath, "utf8").catch(() => "")).trim(),
+        );
+        if (childPid === 0) await Bun.sleep(10);
+      }
+      expect(childPid).toBeGreaterThan(0);
+
+      const processCommand = async (pid: number): Promise<string | null> => {
+        const ps = Bun.spawn(["ps", "-o", "command=", "-p", String(pid)], {
+          stdout: "pipe",
+          stderr: "ignore",
+        });
+        const [command, exitCode] = await Promise.all([
+          new Response(ps.stdout).text(),
+          ps.exited,
+        ]);
+        return exitCode === 0 ? command.trim() : null;
+      };
+      expect(await processCommand(appServer.pid)).toStartWith(
+        `${executable} app-server`,
+      );
+      const name = pidfileFor("real-orphan");
+      const files = new Map([[name, `${appServer.pid}\n`]]);
+      expect(await reapOrphanCodexHosts(
+        status({ "real-orphan": "dead" }),
+        {
+          listSocketDir: async () => [...files.keys()],
+          readPidFile: async (file) => files.get(file) ?? "",
+          removeFile: async (file) => {
+            files.delete(file);
+          },
+          processCommand,
+          kill: (pid) => process.kill(pid, "SIGKILL"),
+        },
+      )).toEqual([appServer.pid]);
+      await appServer.exited;
+
+      let childAlive = true;
+      for (let attempt = 0; attempt < 50 && childAlive; attempt += 1) {
+        try {
+          process.kill(childPid, 0);
+          await Bun.sleep(10);
+        } catch {
+          childAlive = false;
+        }
+      }
+      expect(childAlive).toBe(false);
+    } finally {
+      if (appServer !== null) {
+        try {
+          process.kill(-appServer.pid, "SIGKILL");
+        } catch {
+          // The reaper already killed the group.
+        }
+      }
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });

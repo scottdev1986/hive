@@ -1,3 +1,5 @@
+import { isTmuxSessionForInstance } from "../daemon/tmux-sessions";
+
 interface TmuxResult {
   stdout: string;
   stderr: string;
@@ -35,6 +37,14 @@ function validateSessionName(session: string): void {
       "tmux session name must be 1-100 characters using only letters, numbers, underscores, or dashes",
     );
   }
+}
+
+function isMissingSession(result: TmuxResult): boolean {
+  if (result.exitCode === 0) return false;
+  return result.stderr.includes("can't find session") ||
+    result.stderr.includes("no server running") ||
+    (result.stderr.includes("error connecting") &&
+      result.stderr.includes("No such file or directory"));
 }
 
 export const shellQuote = (value: string): string =>
@@ -107,13 +117,32 @@ export class TmuxAdapter {
     this.enterDelayMs = options.enterDelayMs ?? SEND_ENTER_DELAY_MS;
   }
 
-  async hasSession(session: string): Promise<boolean> {
+  private validateTarget(session: string): void {
     validateSessionName(session);
+    if (
+      this.socketName === undefined &&
+      !isTmuxSessionForInstance(session)
+    ) {
+      throw new Error(
+        `tmux session belongs to a different Hive instance: ${session}`,
+      );
+    }
+  }
+
+  private async sessionExists(session: string): Promise<boolean> {
+    this.validateTarget(session);
     const result = await this.run(
       ["has-session", "-t", `=${session}`],
       this.socketName,
     );
-    return result.exitCode === 0;
+    if (result.exitCode === 0) return true;
+    if (isMissingSession(result)) return false;
+    assertSuccess(result, "has-session");
+    return false;
+  }
+
+  async hasSession(session: string): Promise<boolean> {
+    return this.sessionExists(session);
   }
 
   async newSession(
@@ -121,7 +150,7 @@ export class TmuxAdapter {
     cwd: string,
     command: string,
   ): Promise<void> {
-    validateSessionName(name);
+    this.validateTarget(name);
     const result = await this.run(
       [
         "new-session",
@@ -146,6 +175,9 @@ export class TmuxAdapter {
       this.socketName,
     );
     assertSuccess(result, "new-session");
+    if (!(await this.sessionExists(name))) {
+      throw new Error(`tmux new-session did not create the session: ${name}`);
+    }
   }
 
   /**
@@ -192,7 +224,7 @@ export class TmuxAdapter {
     text: string,
     options: { interrupt?: boolean } = {},
   ): Promise<void> {
-    validateSessionName(session);
+    this.validateTarget(session);
     if (options.interrupt === true) {
       await this.interruptComposer(session);
     }
@@ -226,7 +258,7 @@ export class TmuxAdapter {
   }
 
   async capturePane(session: string): Promise<string> {
-    validateSessionName(session);
+    this.validateTarget(session);
     const result = await this.run(
       ["capture-pane", "-p", "-t", `=${session}:`],
       this.socketName,
@@ -236,7 +268,7 @@ export class TmuxAdapter {
   }
 
   async listClientTtys(session: string): Promise<string[]> {
-    validateSessionName(session);
+    this.validateTarget(session);
     const result = await this.run(
       ["list-clients", "-t", `=${session}`, "-F", "#{client_tty}"],
       this.socketName,
@@ -252,7 +284,7 @@ export class TmuxAdapter {
    * resource watchdog's process-tree walk, so a runaway grandchild (e.g. a
    * hung test run inside an agent's shell) is still attributable. */
   async listPanePids(session: string): Promise<number[]> {
-    validateSessionName(session);
+    this.validateTarget(session);
     const result = await this.run(
       ["list-panes", "-s", "-t", `=${session}`, "-F", "#{pane_pid}"],
       this.socketName,
@@ -270,19 +302,21 @@ export class TmuxAdapter {
     session: string,
     options: KillSessionOptions = {},
   ): Promise<void> {
-    validateSessionName(session);
+    this.validateTarget(session);
     const result = await this.run(
       ["kill-session", "-t", `=${session}`],
       this.socketName,
     );
-    if (
-      result.exitCode !== 0 &&
-      (options.ignoreMissing ?? true) &&
-      !(await this.hasSession(session))
-    ) {
-      return;
+    const stillExists = await this.sessionExists(session);
+    if (result.exitCode !== 0) {
+      if ((options.ignoreMissing ?? true) && !stillExists) return;
+      assertSuccess(result, "kill-session");
     }
-    assertSuccess(result, "kill-session");
+    if (stillExists) {
+      throw new Error(
+        `tmux kill-session succeeded but the session still exists: ${session}`,
+      );
+    }
   }
 
   async listSessions(): Promise<string[]> {
@@ -302,10 +336,13 @@ export class TmuxAdapter {
       assertSuccess(result, "list-sessions");
     }
 
-    return result.stdout
+    const sessions = result.stdout
       .split("\n")
       .map((name) => name.trim())
       .filter((name) => name.length > 0);
+    return this.socketName === undefined
+      ? sessions.filter((session) => isTmuxSessionForInstance(session))
+      : sessions;
   }
 }
 

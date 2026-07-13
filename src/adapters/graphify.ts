@@ -97,9 +97,8 @@ export type CommandRunner = (
   options: { cwd?: string; env?: Record<string, string>; timeoutMs: number },
 ) => Promise<RunResult>;
 
-/** Run a command with a hard timeout (the landing.ts pattern): kill on the
- * deadline and say so, because a graphify that hangs must degrade, never
- * block anything that waits on it. */
+/** Run in a dedicated process group: a timed-out graphify may have spawned
+ * children, and killing only its parent leaves them running outside Hive. */
 export const runCommand: CommandRunner = async (argv, options) => {
   const proc = Bun.spawn(argv, {
     ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
@@ -107,11 +106,16 @@ export const runCommand: CommandRunner = async (argv, options) => {
     stdin: "ignore",
     stdout: "pipe",
     stderr: "pipe",
+    detached: true,
   });
   let timedOut = false;
   const timer = setTimeout(() => {
     timedOut = true;
-    proc.kill();
+    try {
+      process.kill(-proc.pid, "SIGKILL");
+    } catch {
+      proc.kill("SIGKILL");
+    }
   }, options.timeoutMs);
   try {
     const [exitCode, stdout, stderr] = await Promise.all([
