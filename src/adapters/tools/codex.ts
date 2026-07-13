@@ -17,6 +17,13 @@ import {
   type GraphifyHookKind,
 } from "./graphify-hook";
 import { hiveInstanceSuffix } from "../../daemon/tmux-sessions";
+import {
+  invalidRecoveryArtifactEvidence,
+  isMissingRecoveryArtifact,
+  recoveryArtifactTimestamp,
+  selectRecoverySessionId,
+  type RecoverySessionArtifact,
+} from "./recovery-session";
 
 /** Typed, not a bare string in a template: the token the generated hook
  * dispatches on. A kind the script has no arm for silently never nudges. */
@@ -257,6 +264,28 @@ async function findCodexRollout(
   sessionId?: string,
 ): Promise<CodexRolloutLocation | null> {
   const target = resolve(worktreePath);
+  const rollouts = await listCodexRollouts(home);
+  rollouts.sort((a, b) => b.mtimeMs - a.mtimeMs);
+  for (const rollout of rollouts.slice(0, ROLLOUT_SCAN_LIMIT)) {
+    const meta = await readRolloutSessionMeta(rollout.path);
+    if (
+      meta !== null && meta.cwd === target &&
+      (sessionId === undefined || meta.sessionId === sessionId)
+    ) {
+      return {
+        path: rollout.path,
+        sessionId: meta.sessionId,
+        mtimeMs: rollout.mtimeMs,
+      };
+    }
+  }
+  return null;
+}
+
+async function listCodexRollouts(
+  home: string,
+  strictEvidence = false,
+): Promise<{ path: string; mtimeMs: number }[]> {
   const rollouts: { path: string; mtimeMs: number }[] = [];
   const pending = [codexSessionsDirectory(home)];
   while (pending.length > 0) {
@@ -264,7 +293,14 @@ async function findCodexRollout(
     let entries;
     try {
       entries = await readdir(directory, { withFileTypes: true });
-    } catch {
+    } catch (error) {
+      if (strictEvidence && !isMissingRecoveryArtifact(error)) {
+        invalidRecoveryArtifactEvidence(
+          "Codex",
+          directory,
+          "directory cannot be read",
+        );
+      }
       continue;
     }
     for (const entry of entries) {
@@ -274,23 +310,20 @@ async function findCodexRollout(
       } else if (/^rollout-.*\.jsonl$/.test(entry.name)) {
         try {
           rollouts.push({ path, mtimeMs: (await stat(path)).mtimeMs });
-        } catch {
+        } catch (error) {
+          if (strictEvidence && !isMissingRecoveryArtifact(error)) {
+            invalidRecoveryArtifactEvidence(
+              "Codex",
+              path,
+              "cannot be inspected",
+            );
+          }
           // A rollout deleted mid-scan is simply not a candidate.
         }
       }
     }
   }
-  rollouts.sort((a, b) => b.mtimeMs - a.mtimeMs);
-  for (const rollout of rollouts.slice(0, ROLLOUT_SCAN_LIMIT)) {
-    const meta = await readRolloutSessionMeta(rollout.path);
-    if (
-      meta !== null && meta.cwd === target &&
-      (sessionId === undefined || meta.sessionId === sessionId)
-    ) {
-      return { path: rollout.path, sessionId: meta.sessionId, mtimeMs: rollout.mtimeMs };
-    }
-  }
-  return null;
+  return rollouts;
 }
 
 // The newest rollout recorded for a worktree — used only when no durable
@@ -317,9 +350,33 @@ export async function findLatestCodexSessionId(
   return (await findLatestCodexRollout(worktreePath, home))?.sessionId ?? null;
 }
 
+export async function discoverCodexRecoverySessionId(
+  worktreePath: string,
+  agentCreatedAt: string,
+  home = homedir(),
+): Promise<string | null> {
+  const target = resolve(worktreePath);
+  const artifacts: RecoverySessionArtifact[] = [];
+  for (const rollout of await listCodexRollouts(home, true)) {
+    const meta = await readRolloutSessionMeta(rollout.path, true);
+    if (meta === null || meta.cwd !== target) continue;
+    artifacts.push({
+      sessionId: meta.sessionId,
+      createdAtMs: recoveryArtifactTimestamp(
+        "Codex",
+        rollout.path,
+        meta.createdAt,
+      ),
+      path: rollout.path,
+    });
+  }
+  return selectRecoverySessionId("Codex", agentCreatedAt, artifacts);
+}
+
 async function readRolloutSessionMeta(
   path: string,
-): Promise<{ sessionId: string; cwd: string } | null> {
+  strictEvidence = false,
+): Promise<{ sessionId: string; cwd: string; createdAt: unknown } | null> {
   let firstLine: string;
   try {
     const input = createReadStream(path);
@@ -331,19 +388,34 @@ async function readRolloutSessionMeta(
       lines.close();
       input.destroy();
     }
-  } catch {
+  } catch (error) {
+    if (strictEvidence && !isMissingRecoveryArtifact(error)) {
+      invalidRecoveryArtifactEvidence("Codex", path, "cannot be read");
+    }
     return null;
   }
   let parsed: unknown;
   try {
     parsed = JSON.parse(firstLine);
   } catch {
+    if (strictEvidence) {
+      invalidRecoveryArtifactEvidence("Codex", path, "is not valid JSONL");
+    }
     return null;
   }
   if (
     typeof parsed !== "object" || parsed === null ||
     !("type" in parsed) || parsed.type !== "session_meta"
-  ) return null;
+  ) {
+    if (strictEvidence) {
+      invalidRecoveryArtifactEvidence(
+        "Codex",
+        path,
+        "has no session_meta first record",
+      );
+    }
+    return null;
+  }
   if (
     !("payload" in parsed) || typeof parsed.payload !== "object" ||
     parsed.payload === null
@@ -353,7 +425,11 @@ async function readRolloutSessionMeta(
   if (typeof sessionId !== "string" || typeof payload.cwd !== "string") {
     throw new Error(`Invalid Codex session_meta in ${path}`);
   }
-  return { sessionId, cwd: payload.cwd };
+  return {
+    sessionId,
+    cwd: payload.cwd,
+    createdAt: (parsed as Record<string, unknown>).timestamp,
+  };
 }
 
 export async function writeCodexAgentConfig(

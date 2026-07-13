@@ -1,6 +1,13 @@
 import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
+import {
+  invalidRecoveryArtifactEvidence,
+  isMissingRecoveryArtifact,
+  recoveryArtifactTimestamp,
+  selectRecoverySessionId,
+  type RecoverySessionArtifact,
+} from "./recovery-session";
 
 export interface GrokSpawnOptions {
   model: string;
@@ -271,6 +278,8 @@ interface GrokSummaryLocation {
   id: string;
   model: string | null;
   mtimeMs: number;
+  createdAt: unknown;
+  path: string;
   /** The session directory itself — `updates.jsonl` and `signals.json` are
    * this session's telemetry, and they are only findable from here. */
   directory: string;
@@ -284,28 +293,66 @@ async function findLatestGrokSummary(
   home?: string,
   sessionId?: string,
 ): Promise<GrokSummaryLocation | null> {
+  const summaries = await findGrokSummaries(worktreePath, home, sessionId);
+  let newest: GrokSummaryLocation | null = null;
+  for (const summary of summaries) {
+    if (newest === null || summary.mtimeMs > newest.mtimeMs) newest = summary;
+  }
+  return newest;
+}
+
+async function findGrokSummaries(
+  worktreePath: string,
+  home?: string,
+  sessionId?: string,
+  strictEvidence = false,
+): Promise<GrokSummaryLocation[]> {
   const target = resolve(worktreePath);
   const root = grokSessionsDirectory(home);
   let projects;
   try {
     projects = await readdir(root, { withFileTypes: true });
-  } catch {
-    return null;
+  } catch (error) {
+    if (strictEvidence && !isMissingRecoveryArtifact(error)) {
+      invalidRecoveryArtifactEvidence(
+        "Grok",
+        root,
+        "sessions directory cannot be read",
+      );
+    }
+    return [];
   }
-  let newest: GrokSummaryLocation | null = null;
+  const summaries: GrokSummaryLocation[] = [];
   for (const project of projects) {
     if (!project.isDirectory()) continue;
     const projectPath = join(root, project.name);
-    const recordedCwd = await readFile(join(projectPath, ".cwd"), "utf8")
-      .then((value) => value.trim())
-      .catch(() => null);
+    let recordedCwd: string | null;
+    try {
+      recordedCwd = (await readFile(join(projectPath, ".cwd"), "utf8")).trim();
+    } catch (error) {
+      if (strictEvidence && !isMissingRecoveryArtifact(error)) {
+        invalidRecoveryArtifactEvidence(
+          "Grok",
+          join(projectPath, ".cwd"),
+          "project identity cannot be read",
+        );
+      }
+      recordedCwd = null;
+    }
     if (project.name !== encodeURIComponent(target) && recordedCwd !== target) {
       continue;
     }
     let sessions;
     try {
       sessions = await readdir(projectPath, { withFileTypes: true });
-    } catch {
+    } catch (error) {
+      if (strictEvidence && !isMissingRecoveryArtifact(error)) {
+        invalidRecoveryArtifactEvidence(
+          "Grok",
+          projectPath,
+          "project directory cannot be read",
+        );
+      }
       continue;
     }
     for (const session of sessions) {
@@ -316,15 +363,32 @@ async function findLatestGrokSummary(
       try {
         parsed = JSON.parse(await readFile(summaryPath, "utf8"));
         mtimeMs = (await stat(summaryPath)).mtimeMs;
-      } catch {
+      } catch (error) {
+        if (strictEvidence && !isMissingRecoveryArtifact(error)) {
+          invalidRecoveryArtifactEvidence(
+            "Grok",
+            summaryPath,
+            "cannot be read as a summary",
+          );
+        }
         // A partial or concurrently deleted summary is not a candidate.
         continue;
       }
       if (!isRecord(parsed) || !isRecord(parsed.info)) {
+        if (strictEvidence) {
+          invalidRecoveryArtifactEvidence("Grok", summaryPath, "has no info");
+        }
         throw new Error(`Invalid Grok summary at ${summaryPath}`);
       }
       const info = parsed.info;
       if (typeof info.id !== "string" || typeof info.cwd !== "string") {
+        if (strictEvidence) {
+          invalidRecoveryArtifactEvidence(
+            "Grok",
+            summaryPath,
+            "has invalid session identity",
+          );
+        }
         throw new Error(`Invalid Grok summary at ${summaryPath}`);
       }
       if (
@@ -335,22 +399,29 @@ async function findLatestGrokSummary(
         parsed.current_model_id !== undefined &&
         typeof parsed.current_model_id !== "string"
       ) {
+        if (strictEvidence) {
+          invalidRecoveryArtifactEvidence(
+            "Grok",
+            summaryPath,
+            "has an invalid model id",
+          );
+        }
         throw new Error(`Invalid Grok summary at ${summaryPath}`);
       }
       const model = typeof parsed.current_model_id === "string"
         ? parsed.current_model_id
         : null;
-      if (newest === null || mtimeMs > newest.mtimeMs) {
-        newest = {
-          id: info.id,
-          model,
-          mtimeMs,
-          directory: join(projectPath, session.name),
-        };
-      }
+      summaries.push({
+        id: info.id,
+        model,
+        mtimeMs,
+        createdAt: parsed.created_at,
+        path: summaryPath,
+        directory: join(projectPath, session.name),
+      });
     }
   }
-  return newest;
+  return summaries;
 }
 
 /** Resolve only a session whose own summary records this exact worktree cwd. */
@@ -359,6 +430,25 @@ export async function findLatestGrokSessionId(
   home?: string,
 ): Promise<string | null> {
   return (await findLatestGrokSummary(worktreePath, home))?.id ?? null;
+}
+
+export async function discoverGrokRecoverySessionId(
+  worktreePath: string,
+  agentCreatedAt: string,
+  home?: string,
+): Promise<string | null> {
+  const artifacts: RecoverySessionArtifact[] = (
+    await findGrokSummaries(worktreePath, home, undefined, true)
+  ).map((summary) => ({
+    sessionId: summary.id,
+    createdAtMs: recoveryArtifactTimestamp(
+      "Grok",
+      summary.path,
+      summary.createdAt,
+    ),
+    path: summary.path,
+  }));
+  return selectRecoverySessionId("Grok", agentCreatedAt, artifacts);
 }
 
 /**

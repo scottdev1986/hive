@@ -24,6 +24,7 @@ import {
   detectClaudeCliVersion,
   resolveWorkingClaudeExecutable,
   claudeExecutableCandidates,
+  discoverClaudeRecoverySessionId,
   findLatestClaudeSessionId,
   writeClaudeAgentConfig,
   claudeConfigPath,
@@ -31,6 +32,7 @@ import {
   CLAUDE_CHANNELS_FLAG,
   HIVE_CHANNEL_SERVER_NAME,
 } from "./claude";
+import { RecoverySessionDiscoveryError } from "./recovery-session";
 import { GRAPHIFY_HOOK_SCRIPT } from "./graphify-hook";
 import { hiveInstanceSuffix } from "../../daemon/tmux-sessions";
 
@@ -316,6 +318,67 @@ describe("Claude adapter", () => {
 
     expect(await findLatestClaudeSessionId(worktreePath, fakeHome))
       .toEqual("newer-session");
+  });
+
+  test("recovery discovery uses internal creation evidence and refuses ambiguity", async () => {
+    const fakeHome = join(tempRoot, "claude-recovery-home");
+    const projectDir = claudeProjectDirectory(worktreePath, fakeHome);
+    await mkdir(projectDir, { recursive: true });
+    const transcript = (sessionId: string, timestampKey: string, timestamp: string) =>
+      `${JSON.stringify({
+        type: "user",
+        sessionId,
+        cwd: worktreePath,
+        [timestampKey]: timestamp,
+      })}\n`;
+    await writeFile(
+      join(projectDir, "predecessor.jsonl"),
+      transcript("predecessor", "timestamp", "2026-07-13T11:59:59.000Z"),
+    );
+
+    expect(await discoverClaudeRecoverySessionId(
+      worktreePath,
+      "2026-07-13T12:00:00.000Z",
+      fakeHome,
+    )).toBeNull();
+    await writeFile(
+      join(projectDir, "current.jsonl"),
+      transcript("current", "timestamp", "2026-07-13T12:00:01.000Z"),
+    );
+    await writeFile(
+      join(projectDir, "predecessor.jsonl"),
+      transcript("predecessor", "timestamp", "2026-07-13T11:59:59.000Z"),
+    );
+
+    expect(await discoverClaudeRecoverySessionId(
+      worktreePath,
+      "2026-07-13T12:00:00.000Z",
+      fakeHome,
+    )).toBe("current");
+
+    await writeFile(
+      join(projectDir, "second-current.jsonl"),
+      transcript("second-current", "timestamp", "2026-07-13T12:00:02.000Z"),
+    );
+    expect(discoverClaudeRecoverySessionId(
+      worktreePath,
+      "2026-07-13T12:00:00.000Z",
+      fakeHome,
+    )).rejects.toBeInstanceOf(RecoverySessionDiscoveryError);
+    await rm(join(projectDir, "second-current.jsonl"));
+
+    await writeFile(
+      join(projectDir, "unknown-evidence.jsonl"),
+      transcript("unknown-evidence", "timestmp", "2026-07-13T12:00:03.000Z"),
+    );
+    expect(discoverClaudeRecoverySessionId(
+      worktreePath,
+      "2026-07-13T12:00:00.000Z",
+      fakeHome,
+    )).rejects.toMatchObject({
+      name: "RecoverySessionDiscoveryError",
+      reason: "invalid-evidence",
+    });
   });
 
   test("a dangerous writer bypasses permissions via settings, not the CLI flag", async () => {

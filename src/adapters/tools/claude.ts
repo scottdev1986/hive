@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { createReadStream, existsSync } from "node:fs";
 import {
   mkdir,
   readdir,
@@ -11,6 +11,7 @@ import {
 } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { createInterface } from "node:readline";
 import { isDeepStrictEqual } from "node:util";
 import {
   GRAPHIFY_HOOK_SCRIPT,
@@ -20,6 +21,14 @@ import {
 } from "./graphify-hook";
 import { hiveInstanceSuffix } from "../../daemon/tmux-sessions";
 import { withFileLock } from "../file-lock";
+import {
+  invalidRecoveryArtifactEvidence,
+  isMissingRecoveryArtifact,
+  recoveryArtifactTimestamp,
+  RecoverySessionDiscoveryError,
+  selectRecoverySessionId,
+  type RecoverySessionArtifact,
+} from "./recovery-session";
 
 export interface ClaudeSpawnOptions {
   name: string;
@@ -371,8 +380,13 @@ export async function findLatestClaudeSessionId(
   let entries: string[];
   try {
     entries = await readdir(directory);
-  } catch {
-    return null;
+  } catch (error) {
+    if (isMissingRecoveryArtifact(error)) return null;
+    return invalidRecoveryArtifactEvidence(
+      "Claude",
+      directory,
+      "cannot be read",
+    );
   }
   let newest: { sessionId: string; mtimeMs: number } | null = null;
   for (const entry of entries) {
@@ -387,6 +401,91 @@ export async function findLatestClaudeSessionId(
     }
   }
   return newest?.sessionId ?? null;
+}
+
+export async function discoverClaudeRecoverySessionId(
+  worktreePath: string,
+  agentCreatedAt: string,
+  home = homedir(),
+): Promise<string | null> {
+  const directory = claudeProjectDirectory(worktreePath, home);
+  let entries: string[];
+  try {
+    entries = await readdir(directory);
+  } catch {
+    return null;
+  }
+  const target = resolve(worktreePath);
+  const artifacts: RecoverySessionArtifact[] = [];
+  for (const entry of entries) {
+    if (!entry.endsWith(".jsonl")) continue;
+    const path = join(directory, entry);
+    const sessionId = entry.slice(0, -".jsonl".length);
+    const artifact = await readClaudeRecoveryArtifact(path, sessionId, target);
+    if (artifact !== null) artifacts.push(artifact);
+  }
+  return selectRecoverySessionId("Claude", agentCreatedAt, artifacts);
+}
+
+async function readClaudeRecoveryArtifact(
+  path: string,
+  sessionId: string,
+  target: string,
+): Promise<RecoverySessionArtifact | null> {
+  let earliest = Number.POSITIVE_INFINITY;
+  let sawSessionRecord = false;
+  let sawDifferentCwd = false;
+  try {
+    const input = createReadStream(path);
+    const lines = createInterface({ input, crlfDelay: Infinity });
+    try {
+      for await (const line of lines) {
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(line);
+        } catch {
+          continue;
+        }
+        if (
+          typeof parsed !== "object" || parsed === null ||
+          !("sessionId" in parsed) || parsed.sessionId !== sessionId
+        ) continue;
+        sawSessionRecord = true;
+        if (!("timestamp" in parsed)) continue;
+        if (!("cwd" in parsed) || typeof parsed.cwd !== "string") {
+          invalidRecoveryArtifactEvidence("Claude", path, "has no cwd");
+        }
+        if (parsed.cwd !== target) {
+          sawDifferentCwd = true;
+          continue;
+        }
+        earliest = Math.min(
+          earliest,
+          recoveryArtifactTimestamp("Claude", path, parsed.timestamp),
+        );
+      }
+    } finally {
+      lines.close();
+      input.destroy();
+    }
+  } catch (error) {
+    if (error instanceof RecoverySessionDiscoveryError) throw error;
+    if (isMissingRecoveryArtifact(error)) return null;
+    return invalidRecoveryArtifactEvidence(
+      "Claude",
+      path,
+      "cannot be read",
+    );
+  }
+  if (Number.isFinite(earliest)) {
+    return { sessionId, createdAtMs: earliest, path };
+  }
+  if (sawSessionRecord && sawDifferentCwd) return null;
+  return invalidRecoveryArtifactEvidence(
+    "Claude",
+    path,
+    "has no timestamped session record",
+  );
 }
 
 // Claude Code keeps per-project first-run state in ~/.claude.json.

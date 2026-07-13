@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 import {
   buildGrokResumeCommand,
   buildGrokSpawnCommand,
+  discoverGrokRecoverySessionId,
   findLatestGrokSessionId,
   GROK_COMPATIBILITY_ENV,
   parseGrokCliVersion,
@@ -13,6 +14,7 @@ import {
   wrapGrokSpawnWithCompatibilityEnv,
   writeGrokAgentConfig,
 } from "./grok";
+import { RecoverySessionDiscoveryError } from "./recovery-session";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -175,5 +177,77 @@ describe("Grok adapter", () => {
     expect(findLatestGrokSessionId(worktree, home)).rejects.toThrow(
       "Invalid Grok summary",
     );
+  });
+
+  test("recovery discovery uses summary creation evidence and refuses ambiguity", async () => {
+    const home = await mkdtemp(join(tmpdir(), "hive-grok-recovery-home-"));
+    roots.push(home);
+    const worktree = resolve(join(home, "worktree"));
+    const project = join(home, "sessions", encodeURIComponent(worktree));
+    const summary = async (
+      directory: string,
+      id: string,
+      timestampKey: string,
+      timestamp: string,
+    ) => {
+      await mkdir(join(project, directory), { recursive: true });
+      await writeFile(join(project, directory, "summary.json"), JSON.stringify({
+        info: { id, cwd: worktree },
+        [timestampKey]: timestamp,
+      }));
+    };
+    await summary(
+      "predecessor",
+      "predecessor",
+      "created_at",
+      "2026-07-13T11:59:59.000Z",
+    );
+
+    expect(await discoverGrokRecoverySessionId(
+      worktree,
+      "2026-07-13T12:00:00.000Z",
+      home,
+    )).toBeNull();
+    await summary("current", "current", "created_at", "2026-07-13T12:00:01.000Z");
+    await summary(
+      "predecessor",
+      "predecessor",
+      "created_at",
+      "2026-07-13T11:59:59.000Z",
+    );
+
+    expect(await discoverGrokRecoverySessionId(
+      worktree,
+      "2026-07-13T12:00:00.000Z",
+      home,
+    )).toBe("current");
+
+    await summary(
+      "second-current",
+      "second-current",
+      "created_at",
+      "2026-07-13T12:00:02.000Z",
+    );
+    expect(discoverGrokRecoverySessionId(
+      worktree,
+      "2026-07-13T12:00:00.000Z",
+      home,
+    )).rejects.toBeInstanceOf(RecoverySessionDiscoveryError);
+    await rm(join(project, "second-current"), { recursive: true });
+
+    await summary(
+      "unknown-evidence",
+      "unknown-evidence",
+      "createdAt",
+      "2026-07-13T12:00:03.000Z",
+    );
+    expect(discoverGrokRecoverySessionId(
+      worktree,
+      "2026-07-13T12:00:00.000Z",
+      home,
+    )).rejects.toMatchObject({
+      name: "RecoverySessionDiscoveryError",
+      reason: "invalid-evidence",
+    });
   });
 });
