@@ -3,11 +3,10 @@ import Foundation
 /// User policy for the Model Control Center: what is enabled, at what effort,
 /// and which ordered chain serves each task category.
 ///
-/// The durable store for this policy is the daemon's SQLite (`hive.db`,
-/// governing doc §2.3) — a LATER PR. Until it exists, `ProvisionalPolicyStore`
-/// below seeds an in-memory policy from the live catalog. Policy here is
-/// *preference* data, so defaulting it is honest; capacity numbers are never
-/// defaulted anywhere.
+/// The daemon owns the durable routing document. `ProvisionalPolicyStore`
+/// remains the compatibility fallback for a daemon that cannot export that
+/// document: it seeds preference data from the live catalog in memory, but
+/// never invents capacity readings.
 
 // MARK: - Task categories
 

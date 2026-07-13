@@ -48,8 +48,8 @@ public enum ProviderUsage: Equatable, Sendable {
     /// Normally-metered vendor, no reading anywhere (e.g. Claude's
     /// experimental feed gone quiet). The provider stays enabled and spawnable.
     case silent(reason: String)
-    /// The vendor publishes no capacity surface at all (Grok). Deliberate,
-    /// first-class, never a meter and never an error state.
+    /// The vendor publishes no capacity surface. Deliberate, first-class,
+    /// never a meter and never an error state.
     case unmetered
     /// Hive could not ask (daemon down). Distinct from a vendor going quiet.
     case unknown(reason: String)

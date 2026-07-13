@@ -65,7 +65,7 @@ enum MCCCopy {
     }
     static func meterStaleAge(_ relative: String) -> String { "Last read \(relative) ago" }
 
-    // Unmetered provider (Grok)
+    // Unmetered provider
 
     static let unmeteredTitle = "Usage limits cannot be tracked for this provider"
     static func unmeteredBody(_ vendorName: String) -> String {

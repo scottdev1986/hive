@@ -349,7 +349,7 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
 
     /// Detaches every terminal (SIGTERM to attach clients / the orchestrator
     /// CLI). Agents keep running: their processes live in daemon-owned tmux
-    /// sessions, and a viewer must never kill them.
+    /// sessions, and detaching a client must never kill them.
     func terminateAllTerminals() {
         for view in paneViews.values {
             view.contentView.terminateChild()

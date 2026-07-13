@@ -209,7 +209,7 @@ final class TerminalPaneView: NSView, LocalProcessTerminalViewDelegate {
     }
 
     /// SIGTERMs the child — for agent panes that is the `tmux attach` client,
-    /// which detaches. NEVER `tmux kill-session`: closing a viewer must never
+    /// which detaches. NEVER `tmux kill-session`: closing a client must never
     /// kill an agent.
     func terminateChild() {
         pendingLaunch = nil

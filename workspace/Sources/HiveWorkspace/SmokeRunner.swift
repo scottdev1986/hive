@@ -19,7 +19,7 @@ import WorkspaceCore
 ///                           `tmux capture-pane` after this process exits
 ///   HIVE_SMOKE_CLOSE        agent name whose pane is closed mid-test; the
 ///                           harness asserts its tmux session is still alive
-///                           afterwards (closing a viewer never kills agents)
+///                           afterwards (detaching a client never kills agents)
 final class SmokeRunner {
 
     private let controller: ProjectWindowController
