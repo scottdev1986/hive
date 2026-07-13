@@ -92,26 +92,41 @@ notarize_bundle() { # notarize_bundle <bundle-dir> <arch>
   rm -f "$zip"
 }
 
-smoke() { # smoke <bundle-dir>  — extract, query, and MCP-serve a fixture
-  local dist="$1" fix port=8973
-  fix="$(mktemp -d)/fixture"
+smoke() ( # smoke <bundle-dir>  — extract, query, and MCP-serve a fixture
+  local dist="$1" tmp fix port pid=""
+  tmp="$(mktemp -d)"
+  fix="$tmp/fixture"
+  cleanup() {
+    if [ -n "$pid" ]; then
+      kill "$pid" 2>/dev/null || true
+      wait "$pid" 2>/dev/null || true
+    fi
+    rm -rf "$tmp"
+  }
+  trap cleanup EXIT
+  trap 'exit 130' INT TERM
+
   mkdir -p "$fix/src"
   printf 'def helper():\n    return 1\n\ndef caller():\n    return helper()\n' > "$fix/src/a.py"
   printf 'export function load(): number { return 0 }\n' > "$fix/src/b.ts"
   (cd "$fix" && env -i PATH=/usr/bin:/bin HOME="$HOME" "$dist/graphify" update . >/dev/null 2>&1)
   (cd "$fix" && env -i PATH=/usr/bin:/bin HOME="$HOME" "$dist/graphify" query "who calls helper" 2>/dev/null | grep -q "helper")
+  port="$(/usr/bin/python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')"
   (cd "$fix" && env -i PATH=/usr/bin:/bin HOME="$HOME" "$dist/graphify-mcp" --transport http --host 127.0.0.1 --port "$port" \
       --stateless --json-response graphify-out/graph.json >/dev/null 2>&1) &
-  local pid=$!
-  sleep 3
-  local ok=1
-  curl -sf -X POST "http://127.0.0.1:$port/mcp" \
-      -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' \
-      -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"query_graph","arguments":{"question":"who calls helper"}}}' \
-      | grep -q '"isError":false' && ok=0
-  kill "$pid" 2>/dev/null || true
-  return "$ok"
-}
+  pid=$!
+  for _ in {1..50}; do
+    kill -0 "$pid" 2>/dev/null || return 1
+    if curl -sf --max-time 1 -X POST "http://127.0.0.1:$port/mcp" \
+        -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' \
+        -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"query_graph","arguments":{"question":"who calls helper"}}}' \
+        | grep -q '"isError":false'; then
+      return 0
+    fi
+    sleep 0.1
+  done
+  return 1
+)
 
 build_one() { # build_one <arch> <python-key>
   local arch="$1" py_key="$2"
