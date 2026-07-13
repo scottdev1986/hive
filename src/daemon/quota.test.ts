@@ -302,7 +302,7 @@ describe("quota persistence and reservations", () => {
     );
     const request = {
       agentName: "maya",
-      tier: "standard" as const,
+      category: "simple_coding" as const,
       tool: "codex" as const,
       model: "codex-model",
       controlMessageId: "control-multi-pool",

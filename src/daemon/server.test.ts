@@ -325,7 +325,7 @@ describe("HiveDaemon HTTP server", () => {
         this.attempts += 1;
         await quota.reserveControlRun({
           agentName: value.name,
-          tier: value.tier,
+          category: value.category,
           tool: value.tool,
           model: value.model,
           controlMessageId: message.id,
@@ -347,7 +347,7 @@ describe("HiveDaemon HTTP server", () => {
       db.insertAgent(agent());
       const positiveControl = await quota.reserveControlRun({
         agentName: "maya",
-        tier: "standard",
+        category: "simple_coding",
         tool: "codex",
         model: "gpt-5-codex",
         controlMessageId: "original-run",
