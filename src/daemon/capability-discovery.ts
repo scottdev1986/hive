@@ -704,7 +704,8 @@ export class GrokCliCapabilityTransport implements GrokCapabilityTransport {
     if (!isMeasuredGrokCatalogIdentity(identity)) {
       throw new Error(
         `grok catalog liveness is unverified for ${identity.version} ` +
-          `(${identity.buildHash}); measured only on 0.2.93 (f00f96316d4b)`,
+          `(${identity.buildHash}); measured builds are 0.2.93 ` +
+          `(f00f96316d4b) and 0.2.99 (b1b49ccb71a7)`,
       );
     }
     const debugRoot = await mkdtemp(join(tmpdir(), "hive-grok-models-"));
@@ -748,17 +749,21 @@ export class GrokCliCapabilityTransport implements GrokCapabilityTransport {
   }
 }
 
-/** Positive liveness evidence measured on grok 0.2.93 / f00f96316d4b. The same
- * command offline returns cached stdout and exit 0 but never emits this event. */
+/** Positive liveness evidence measured on admitted Grok builds. The same command
+ * offline returns cached stdout and exit 0 but never emits either event. */
 export function grokModelsProvedLive(stderr: string): boolean {
-  return /Fetched remote settings from cli-chat-proxy/.test(stderr);
+  return /Fetched remote settings from cli-chat-proxy/.test(stderr) ||
+    /Fetched [1-9]\d* models from https:\/\/cli-chat-proxy\.grok\.com\/v1\/models/.test(
+      stderr,
+    );
 }
 
 export function isMeasuredGrokCatalogIdentity(identity: {
   version: string;
   buildHash: string;
 }): boolean {
-  return identity.version === "0.2.93" && identity.buildHash === "f00f96316d4b";
+  return (identity.version === "0.2.93" && identity.buildHash === "f00f96316d4b") ||
+    (identity.version === "0.2.99" && identity.buildHash === "b1b49ccb71a7");
 }
 
 function grokDefaultFromStdout(stdout: string): string | null {

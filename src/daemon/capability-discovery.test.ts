@@ -343,9 +343,12 @@ describe("Grok models catalog", () => {
     expect(result).toMatchObject({ status: "ok" });
   });
 
-  test("requires positive live-fetch evidence and the exact measured build", () => {
+  test("requires positive live-fetch evidence from an exact measured build", () => {
     expect(grokModelsProvedLive(
       "Fetched remote settings from cli-chat-proxy\n",
+    )).toBe(true);
+    expect(grokModelsProvedLive(
+      "Fetched 2 models from https://cli-chat-proxy.grok.com/v1/models\n",
     )).toBe(true);
     expect(grokModelsProvedLive(
       "Settings fetch failed after 3 attempts\n",
@@ -356,8 +359,12 @@ describe("Grok models catalog", () => {
       buildHash: "f00f96316d4b",
     })).toBe(true);
     expect(isMeasuredGrokCatalogIdentity({
-      version: "0.2.94",
-      buildHash: "different",
+      version: "0.2.99",
+      buildHash: "b1b49ccb71a7",
+    })).toBe(true);
+    expect(isMeasuredGrokCatalogIdentity({
+      version: "0.2.100",
+      buildHash: "unmeasured",
     })).toBe(false);
   });
 });
