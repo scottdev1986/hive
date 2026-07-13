@@ -276,6 +276,9 @@ interface GrokSummaryLocation {
   directory: string;
 }
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
 async function findLatestGrokSummary(
   worktreePath: string,
   home?: string,
@@ -308,33 +311,42 @@ async function findLatestGrokSummary(
     for (const session of sessions) {
       if (!session.isDirectory()) continue;
       const summaryPath = join(projectPath, session.name, "summary.json");
+      let parsed: unknown;
+      let mtimeMs: number;
       try {
-        const parsed: unknown = JSON.parse(await readFile(summaryPath, "utf8"));
-        if (typeof parsed !== "object" || parsed === null || !("info" in parsed)) {
-          continue;
-        }
-        const info = parsed.info;
-        if (
-          typeof info !== "object" || info === null ||
-          !("cwd" in info) || info.cwd !== target ||
-          !("id" in info) || typeof info.id !== "string" ||
-          (sessionId !== undefined && info.id !== sessionId)
-        ) continue;
-        const model = "current_model_id" in parsed &&
-            typeof parsed.current_model_id === "string"
-          ? parsed.current_model_id
-          : null;
-        const mtimeMs = (await stat(summaryPath)).mtimeMs;
-        if (newest === null || mtimeMs > newest.mtimeMs) {
-          newest = {
-            id: info.id,
-            model,
-            mtimeMs,
-            directory: join(projectPath, session.name),
-          };
-        }
+        parsed = JSON.parse(await readFile(summaryPath, "utf8"));
+        mtimeMs = (await stat(summaryPath)).mtimeMs;
       } catch {
         // A partial or concurrently deleted summary is not a candidate.
+        continue;
+      }
+      if (!isRecord(parsed) || !isRecord(parsed.info)) {
+        throw new Error(`Invalid Grok summary at ${summaryPath}`);
+      }
+      const info = parsed.info;
+      if (typeof info.id !== "string" || typeof info.cwd !== "string") {
+        throw new Error(`Invalid Grok summary at ${summaryPath}`);
+      }
+      if (
+        info.cwd !== target ||
+        (sessionId !== undefined && info.id !== sessionId)
+      ) continue;
+      if (
+        parsed.current_model_id !== undefined &&
+        typeof parsed.current_model_id !== "string"
+      ) {
+        throw new Error(`Invalid Grok summary at ${summaryPath}`);
+      }
+      const model = typeof parsed.current_model_id === "string"
+        ? parsed.current_model_id
+        : null;
+      if (newest === null || mtimeMs > newest.mtimeMs) {
+        newest = {
+          id: info.id,
+          model,
+          mtimeMs,
+          directory: join(projectPath, session.name),
+        };
       }
     }
   }

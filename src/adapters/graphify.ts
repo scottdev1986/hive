@@ -157,15 +157,29 @@ export async function readGraphifyState(root: string): Promise<GraphifyState> {
   } catch {
     return { enabled: false, pin: null };
   }
+  let raw: unknown;
   try {
-    const raw = Bun.TOML.parse(source) as Record<string, unknown>;
-    return {
-      enabled: raw.enabled === true,
-      pin: typeof raw.pin === "string" ? raw.pin : null,
-    };
+    raw = Bun.TOML.parse(source);
   } catch {
     return { enabled: false, pin: null };
   }
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    throw new Error(`Invalid graphify state at ${graphifyStatePath(root)}`);
+  }
+  const record = raw as Record<string, unknown>;
+  const unknownKeys = Object.keys(record).filter((key) =>
+    key !== "enabled" && key !== "pin"
+  );
+  if (
+    typeof record.enabled !== "boolean" || unknownKeys.length > 0 ||
+    (record.pin !== undefined && typeof record.pin !== "string")
+  ) {
+    throw new Error(`Invalid graphify state at ${graphifyStatePath(root)}`);
+  }
+  return {
+    enabled: record.enabled,
+    pin: typeof record.pin === "string" ? record.pin : null,
+  };
 }
 
 export async function writeGraphifyState(

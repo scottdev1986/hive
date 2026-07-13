@@ -160,4 +160,20 @@ describe("Grok adapter", () => {
     }));
     expect(await findLatestGrokSessionId(worktree, home)).toBe("old-id");
   });
+
+  test("refuses a summary whose session id key is unknown", async () => {
+    const home = await mkdtemp(join(tmpdir(), "hive-grok-drift-home-"));
+    roots.push(home);
+    const worktree = resolve(join(home, "worktree"));
+    const project = join(home, "sessions", encodeURIComponent(worktree));
+    await mkdir(join(project, "session"), { recursive: true });
+    await writeFile(join(project, "session", "summary.json"), JSON.stringify({
+      info: { sessionID: "drifted-session", cwd: worktree },
+      current_model_id: "observed-model",
+    }));
+
+    expect(findLatestGrokSessionId(worktree, home)).rejects.toThrow(
+      "Invalid Grok summary",
+    );
+  });
 });

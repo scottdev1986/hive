@@ -334,24 +334,26 @@ async function readRolloutSessionMeta(
   } catch {
     return null;
   }
+  let parsed: unknown;
   try {
-    const parsed: unknown = JSON.parse(firstLine);
-    if (
-      typeof parsed !== "object" || parsed === null ||
-      !("payload" in parsed) || typeof parsed.payload !== "object" ||
-      parsed.payload === null
-    ) {
-      return null;
-    }
-    const payload = parsed.payload as Record<string, unknown>;
-    const sessionId = payload.id ?? payload.session_id;
-    if (typeof sessionId !== "string" || typeof payload.cwd !== "string") {
-      return null;
-    }
-    return { sessionId, cwd: payload.cwd };
+    parsed = JSON.parse(firstLine);
   } catch {
     return null;
   }
+  if (
+    typeof parsed !== "object" || parsed === null ||
+    !("type" in parsed) || parsed.type !== "session_meta"
+  ) return null;
+  if (
+    !("payload" in parsed) || typeof parsed.payload !== "object" ||
+    parsed.payload === null
+  ) throw new Error(`Invalid Codex session_meta in ${path}`);
+  const payload = parsed.payload as Record<string, unknown>;
+  const sessionId = payload.id ?? payload.session_id;
+  if (typeof sessionId !== "string" || typeof payload.cwd !== "string") {
+    throw new Error(`Invalid Codex session_meta in ${path}`);
+  }
+  return { sessionId, cwd: payload.cwd };
 }
 
 export async function writeCodexAgentConfig(

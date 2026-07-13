@@ -137,8 +137,23 @@ describe("per-repo state", () => {
   test("a malformed state file reads as disabled", async () => {
     const root = await gitRepo();
     await writeGraphifyState(root, { enabled: true, pin: null });
-    await writeFile(graphifyStatePath(root), "enabled = maybe???");
+    await writeFile(graphifyStatePath(root), "enabled = [");
     expect(await readGraphifyState(root)).toEqual({ enabled: false, pin: null });
+    await rm(root, { recursive: true, force: true });
+  });
+
+  test("refuses valid TOML whose state keys are misspelled", async () => {
+    const root = await gitRepo();
+    await writeGraphifyState(root, { enabled: true, pin: graphifyPin() });
+
+    await writeFile(graphifyStatePath(root), "enabeld = true\n");
+    expect(readGraphifyState(root)).rejects.toThrow("Invalid graphify state");
+
+    await writeFile(
+      graphifyStatePath(root),
+      `enabled = true\npni = ${JSON.stringify(graphifyPin())}\n`,
+    );
+    expect(readGraphifyState(root)).rejects.toThrow("Invalid graphify state");
     await rm(root, { recursive: true, force: true });
   });
 });

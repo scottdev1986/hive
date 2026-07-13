@@ -367,6 +367,23 @@ describe("Codex adapter", () => {
       .toEqual("large-meta-session");
   });
 
+  test("refuses a session_meta record whose session id key is unknown", async () => {
+    const fakeHome = join(tempRoot, "drifted-meta-codex-home");
+    const dayDir = join(codexSessionsDirectory(fakeHome), "2026", "07", "11");
+    await mkdir(dayDir, { recursive: true });
+    await writeFile(
+      join(dayDir, "rollout-2026-07-11T10-00-00-drifted.jsonl"),
+      `${JSON.stringify({
+        type: "session_meta",
+        payload: { sessionID: "drifted-session", cwd: worktreePath },
+      })}\n`,
+    );
+
+    expect(findLatestCodexSessionId(worktreePath, fakeHome)).rejects.toThrow(
+      "Invalid Codex session_meta",
+    );
+  });
+
   test("omits the model override for the account default", () => {
     const command = buildCodexSpawnCommand({
       name: "agent-4",
