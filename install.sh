@@ -69,8 +69,15 @@ RESOLVED="${TAG#v}"
 BASE="https://github.com/$REPO/releases/download/$TAG"
 
 fetch() { curl -fsSL "$BASE/$1" -o "$TMP/$1" || die "could not download $1"; }
+fetch_optional() { curl -fsSL "$BASE/$1" -o "$TMP/$1"; }
 
 fetch hive-release.json
+if fetch_optional hive-release.json.sig 2>/dev/null; then
+  HAS_RELEASE_SIGNATURE=1
+else
+  HAS_RELEASE_SIGNATURE=0
+  printf '%s\n' 'install: release has no Hive manifest signature; install will continue, but rollback to this version will require reinstall' >&2
+fi
 fetch "hive-darwin-$ARCH"
 fetch HiveWorkspace.tar.gz
 
@@ -93,6 +100,19 @@ STAGING_DIR="$(mktemp -d "$ROOT/versions/.hive-stage.XXXXXX")"
 mv "$TMP/hive-darwin-$ARCH" "$STAGING_DIR/hive"
 chmod 755 "$STAGING_DIR/hive"
 tar -xzf "$TMP/HiveWorkspace.tar.gz" -C "$STAGING_DIR"
+
+# Preserve the exact provenance bytes for a future offline rollback. The shell
+# installer does not verify Ed25519; the installed Hive binary re-verifies this
+# material against its embedded key before it will reactivate the version.
+if [ "$HAS_RELEASE_SIGNATURE" = "1" ]; then
+  signature="$(tr -d '[:space:]' < "$TMP/hive-release.json.sig")"
+  if [ -n "$signature" ]; then
+    manifest_base64="$(base64 < "$TMP/hive-release.json" | tr -d '\n')"
+    printf '{\n  "schema": 1,\n  "manifestBase64": "%s",\n  "signature": "%s"\n}\n' "$manifest_base64" "$signature" > "$STAGING_DIR/release-verification.json"
+  else
+    printf '%s\n' 'install: release manifest signature is empty; rollback to this version will require reinstall' >&2
+  fi
+fi
 
 # Run it before it can ever be `current`.
 reported="$("$STAGING_DIR/hive" --version 2>/dev/null || true)"
