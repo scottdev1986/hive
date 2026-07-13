@@ -98,6 +98,22 @@ describe("manifest parsing", () => {
     })).toThrow();
   });
 
+  test("repeated universal asset names must describe the same bytes", () => {
+    const universal = manifest.artifacts[2]!;
+    const x64 = { ...universal, arch: "x64" as const };
+    expect(parseReleaseManifest({
+      ...manifest,
+      artifacts: [...manifest.artifacts, x64],
+    }).artifacts.at(-1)).toEqual(x64);
+    expect(() => parseReleaseManifest({
+      ...manifest,
+      artifacts: [
+        ...manifest.artifacts,
+        { ...x64, sha256: "d".repeat(64) },
+      ],
+    })).toThrow();
+  });
+
   test("rejects unknown fields within the current schema version", () => {
     expect(() => parseReleaseManifest({ ...manifest, securtyCritical: true }))
       .toThrow();

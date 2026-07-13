@@ -89,6 +89,7 @@ const ManifestSchema = z.strictObject({
     });
   }
   const targets = new Set<string>();
+  const assets = new Map<string, string>();
   for (const [index, artifact] of manifest.artifacts.entries()) {
     const target = `${artifact.kind}\0${artifact.platform}\0${artifact.arch}`;
     if (targets.has(target)) {
@@ -99,6 +100,22 @@ const ManifestSchema = z.strictObject({
       });
     }
     targets.add(target);
+    const identity = [
+      artifact.kind,
+      artifact.platform,
+      artifact.size,
+      artifact.sha256,
+      artifact.buildHash,
+    ].join("\0");
+    const existing = assets.get(artifact.name);
+    if (existing !== undefined && existing !== identity) {
+      context.addIssue({
+        code: "custom",
+        path: ["artifacts", index, "name"],
+        message: `artifact name ${artifact.name} describes conflicting bytes`,
+      });
+    }
+    assets.set(artifact.name, identity);
   }
 });
 
