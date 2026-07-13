@@ -374,5 +374,5 @@ export const capabilityFreshness = (
   const observed = new Date(record.observedAt).getTime();
   if (Number.isNaN(observed)) return "stale";
   const ageMinutes = (now.getTime() - observed) / 60_000;
-  return ageMinutes <= ttlMinutes ? "fresh" : "stale";
+  return ageMinutes >= 0 && ageMinutes <= ttlMinutes ? "fresh" : "stale";
 };
