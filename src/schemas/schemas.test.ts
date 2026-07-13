@@ -87,6 +87,15 @@ describe("AgentRecordSchema", () => {
     expect(() => AgentRecordSchema.parse({ ...agent, contextPct: 101 })).toThrow();
   });
 
+  test("a misspelled safety field cannot fall through to its default", () => {
+    expect(AgentRecordSchema.parse({ ...agent, readOnly: true }).readOnly).toBe(true);
+    expect(() => AgentRecordSchema.parse({
+      ...agent,
+      readOnly: undefined,
+      readonly: true,
+    })).toThrow();
+  });
+
   test("parses persisted spawn failure details", () => {
     const failed = {
       ...agent,

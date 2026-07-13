@@ -180,6 +180,51 @@ describe("the profile is Hive's, not the repo's", () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+
+  test("a recreated path resolves a new project state directory", async () => {
+    const parent = await tempRepo();
+    const root = join(parent, "project");
+    const identityHome = await mkdtemp(join(tmpdir(), "hive-home-recreated-"));
+    try {
+      process.env.HIVE_HOME = identityHome;
+      await mkdir(root);
+      const predecessor = projectStateDir(root);
+      expect(predecessor.startsWith(identityHome)).toBe(true);
+
+      await rm(root, { recursive: true, force: true });
+      await mkdir(root);
+      expect(() => projectStateDir(root)).toThrow("NEEDS_SETUP");
+
+      // Stand in for the explicit operator setup after Hive refused the
+      // recreated occupant. A fresh registration must receive fresh state.
+      await rm(join(identityHome, "project-registry.json"));
+      const successor = projectStateDir(root);
+      expect(successor.startsWith(identityHome)).toBe(true);
+      expect(successor).not.toBe(predecessor);
+    } finally {
+      process.env.HIVE_HOME = hiveHome;
+      await rm(parent, { recursive: true, force: true });
+      await rm(identityHome, { recursive: true, force: true });
+    }
+  });
+
+  test("the same path resolves inside the active Hive instance", async () => {
+    const root = await tempRepo();
+    const otherHome = await mkdtemp(join(tmpdir(), "hive-home-other-"));
+    try {
+      const first = projectStateDir(root);
+      expect(first.startsWith(hiveHome)).toBe(true);
+
+      process.env.HIVE_HOME = otherHome;
+      const second = projectStateDir(root);
+      expect(second.startsWith(otherHome)).toBe(true);
+      expect(second).not.toBe(first);
+    } finally {
+      process.env.HIVE_HOME = hiveHome;
+      await rm(root, { recursive: true, force: true });
+      await rm(otherHome, { recursive: true, force: true });
+    }
+  });
 });
 
 // --- deterministic generation -----------------------------------------------
@@ -270,6 +315,35 @@ describe("bootstrapProfile — docs-rich repo", () => {
       expect(await loadDerivedProfile(root)).toEqual(original);
       // A null command is dropped from the TOML, not written as `null`.
       expect(serializeProfile(original)).not.toContain("null");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("misspelled required cache keys force regeneration", async () => {
+    const root = await repoWithSpec();
+    try {
+      await ensureProfile(root);
+      const valid = await loadDerivedProfile(root);
+      expect(valid?.schemaVersion).toBe(2);
+      expect(valid?.docs.briefable).toContain("SPEC.md");
+
+      const path = profilePath(root);
+      const schemaTypo = (await Bun.file(path).text()).replace(
+        "schema_version",
+        "schema_verison",
+      );
+      await writeFile(path, schemaTypo);
+      expect(await loadDerivedProfile(root)).toBeNull();
+      expect((await ensureProfile(root)).schemaVersion).toBe(2);
+
+      const docsTypo = (await Bun.file(path).text()).replace(
+        "briefable =",
+        "briefble =",
+      );
+      await writeFile(path, docsTypo);
+      expect(await loadDerivedProfile(root)).toBeNull();
+      expect((await ensureProfile(root)).docs.briefable).toContain("SPEC.md");
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -474,6 +548,27 @@ describe("the committed override layers over what Hive derived", () => {
       await write(root, OVERRIDE_RELATIVE_PATH, "commands = [[[not toml\n");
       expect(await loadOverride(root)).toBeNull();
       expect((await ensureProfile(root)).commands.test).toBe("bun test");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("a valid override key is read and a misspelling is refused", async () => {
+    const root = await repoWithSpec();
+    try {
+      await write(
+        root,
+        OVERRIDE_RELATIVE_PATH,
+        '[commands]\ntypecheck = "make types"\n',
+      );
+      expect((await loadOverride(root))?.commands.typecheck).toBe("make types");
+
+      await write(
+        root,
+        OVERRIDE_RELATIVE_PATH,
+        '[commands]\ntypcheck = "make types"\n',
+      );
+      expect(loadOverride(root)).rejects.toThrow("Invalid profile override");
     } finally {
       await rm(root, { recursive: true, force: true });
     }

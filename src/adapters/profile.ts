@@ -38,6 +38,7 @@ import {
   rename,
 } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { z } from "zod";
 import {
   PROFILE_SCHEMA_VERSION,
   ProfileOverrideSchema,
@@ -100,18 +101,10 @@ function primaryWorktree(root: string): string {
   return common === null ? root : dirname(common);
 }
 
-// Resolving identity touches the registry, so memoize per root: a spawn-heavy
-// daemon asks this question constantly and the answer cannot change under it.
-const stateDirs = new Map<string, string>();
-
 /** The directory Hive keeps this project's derived state in. */
 export function projectStateDir(root: string): string {
-  const cached = stateDirs.get(root);
-  if (cached !== undefined) return cached;
   const { hiveUuid } = resolveHandshakeProject(primaryWorktree(root));
-  const dir = join(getHiveHome(), "projects", hiveUuid);
-  stateDirs.set(root, dir);
-  return dir;
+  return join(getHiveHome(), "projects", hiveUuid);
 }
 
 export function profilePath(root: string): string {
@@ -201,10 +194,34 @@ export function serializeProfile(profile: RepoProfile): string {
     sections.join("\n\n") + "\n";
 }
 
-const asString = (value: unknown): string | null =>
-  typeof value === "string" ? value : null;
-const asStringArray = (value: unknown): string[] =>
-  Array.isArray(value) ? value.filter((v): v is string => typeof v === "string") : [];
+const DerivedProfileWireSchema = z.strictObject({
+  schema_version: z.number().int().positive(),
+  docs: z.strictObject({
+    briefable: z.array(z.string()),
+    briefable_directories: z.array(z.string()),
+    primary: z.string().optional(),
+  }),
+  commands: z.strictObject({
+    build: z.string().optional(),
+    test: z.string().optional(),
+    typecheck: z.string().optional(),
+    lint: z.string().optional(),
+    run: z.string().optional(),
+  }),
+  conventions: z.strictObject({
+    agents_file: z.string().optional(),
+    language: z.string().optional(),
+    package_manager: z.string().optional(),
+    monorepo: z.boolean(),
+  }),
+  entry_points: z.strictObject({ ranked: z.array(z.string()) }),
+  fingerprint: z.strictObject({
+    generated: z.string(),
+    hive_version: z.string(),
+    commit: z.string().optional(),
+    inputs_hash: z.string(),
+  }),
+});
 
 /** Parse and validate the derived profile. Returns null when it is absent or
  * unreadable — an uncached repo, not an error. Callers get the *effective*
@@ -223,44 +240,37 @@ export async function loadDerivedProfile(root: string): Promise<RepoProfile | nu
   } catch {
     return null;
   }
-  const docs = (raw.docs ?? {}) as Record<string, unknown>;
-  const commands = (raw.commands ?? {}) as Record<string, unknown>;
-  const conventions = (raw.conventions ?? {}) as Record<string, unknown>;
-  const entryPoints = (raw.entry_points ?? {}) as Record<string, unknown>;
-  const fingerprint = (raw.fingerprint ?? {}) as Record<string, unknown>;
-
-  const candidate = {
-    schemaVersion: typeof raw.schema_version === "number"
-      ? raw.schema_version
-      : PROFILE_SCHEMA_VERSION,
+  const wire = DerivedProfileWireSchema.safeParse(raw);
+  if (!wire.success) return null;
+  const value = wire.data;
+  return RepoProfileSchema.parse({
+    schemaVersion: value.schema_version,
     docs: {
-      briefable: asStringArray(docs.briefable),
-      briefableDirectories: asStringArray(docs.briefable_directories),
-      primary: asString(docs.primary),
+      briefable: value.docs.briefable,
+      briefableDirectories: value.docs.briefable_directories,
+      primary: value.docs.primary ?? null,
     },
     commands: {
-      build: asString(commands.build),
-      test: asString(commands.test),
-      typecheck: asString(commands.typecheck),
-      lint: asString(commands.lint),
-      run: asString(commands.run),
+      build: value.commands.build ?? null,
+      test: value.commands.test ?? null,
+      typecheck: value.commands.typecheck ?? null,
+      lint: value.commands.lint ?? null,
+      run: value.commands.run ?? null,
     },
     conventions: {
-      agentsFile: asString(conventions.agents_file),
-      language: asString(conventions.language),
-      packageManager: asString(conventions.package_manager),
-      monorepo: conventions.monorepo === true,
+      agentsFile: value.conventions.agents_file ?? null,
+      language: value.conventions.language ?? null,
+      packageManager: value.conventions.package_manager ?? null,
+      monorepo: value.conventions.monorepo,
     },
-    entryPoints: asStringArray(entryPoints.ranked),
+    entryPoints: value.entry_points.ranked,
     fingerprint: {
-      generated: asString(fingerprint.generated) ?? "1970-01-01",
-      hiveVersion: asString(fingerprint.hive_version) ?? "unknown",
-      commit: asString(fingerprint.commit),
-      inputsHash: asString(fingerprint.inputs_hash) ?? "",
+      generated: value.fingerprint.generated,
+      hiveVersion: value.fingerprint.hive_version,
+      commit: value.fingerprint.commit ?? null,
+      inputsHash: value.fingerprint.inputs_hash,
     },
-  };
-  const parsed = RepoProfileSchema.safeParse(candidate);
-  return parsed.success ? parsed.data : null;
+  });
 }
 
 /** Write the profile atomically (temp + rename) so a concurrent reader never
@@ -289,9 +299,22 @@ export async function writeProfile(
 // The override: the repo's committed correction of a derivation Hive got wrong.
 // ---------------------------------------------------------------------------
 
-/** Read `.hive/profile.override.toml`. Absent, malformed, or empty all mean the
- * same thing — no override — because a typo in a hand-edited file must degrade
- * to Hive's own answer, never break the session that reads it. */
+const ProfileOverrideWireSchema = z.strictObject({
+  commands: z.strictObject({
+    build: z.string().optional(),
+    test: z.string().optional(),
+    typecheck: z.string().optional(),
+    lint: z.string().optional(),
+    run: z.string().optional(),
+  }).optional(),
+  docs: z.strictObject({
+    primary: z.string().optional(),
+    briefable_add: z.array(z.string()).optional(),
+  }).optional(),
+});
+
+/** Read `.hive/profile.override.toml`. Absence and malformed TOML mean no
+ * override; valid TOML with an unknown or mistyped key is refused visibly. */
 export async function loadOverride(root: string): Promise<ProfileOverride | null> {
   let source: string;
   try {
@@ -305,28 +328,29 @@ export async function loadOverride(root: string): Promise<ProfileOverride | null
   } catch {
     return null;
   }
-  // The file is written by a human, so its keys are TOML's snake_case; the schema
-  // is the codebase's camelCase. Map them across explicitly — handing the raw
-  // table to zod would let `briefable_add` parse "successfully" as an absent
-  // field, and a correction that silently does nothing is worse than no file.
-  const commands = (raw.commands ?? {}) as Record<string, unknown>;
-  const docs = (raw.docs ?? {}) as Record<string, unknown>;
-  const parsed = ProfileOverrideSchema.safeParse({
+  if (Object.keys(raw).length === 0) return null;
+  const wire = ProfileOverrideWireSchema.safeParse(raw);
+  if (!wire.success) {
+    const issues = wire.error.issues
+      .map((issue) => `${issue.path.join(".") || "root"}: ${issue.message}`)
+      .join("; ");
+    throw new Error(`Invalid profile override at ${overridePath(root)}: ${issues}`);
+  }
+  const commands = wire.data.commands ?? {};
+  const docs = wire.data.docs ?? {};
+  return ProfileOverrideSchema.parse({
     commands: {
-      ...(typeof commands.build === "string" ? { build: commands.build } : {}),
-      ...(typeof commands.test === "string" ? { test: commands.test } : {}),
-      ...(typeof commands.typecheck === "string"
-        ? { typecheck: commands.typecheck }
-        : {}),
-      ...(typeof commands.lint === "string" ? { lint: commands.lint } : {}),
-      ...(typeof commands.run === "string" ? { run: commands.run } : {}),
+      ...(commands.build === undefined ? {} : { build: commands.build }),
+      ...(commands.test === undefined ? {} : { test: commands.test }),
+      ...(commands.typecheck === undefined ? {} : { typecheck: commands.typecheck }),
+      ...(commands.lint === undefined ? {} : { lint: commands.lint }),
+      ...(commands.run === undefined ? {} : { run: commands.run }),
     },
     docs: {
-      ...(typeof docs.primary === "string" ? { primary: docs.primary } : {}),
-      briefableAdd: asStringArray(docs.briefable_add),
+      ...(docs.primary === undefined ? {} : { primary: docs.primary }),
+      briefableAdd: docs.briefable_add ?? [],
     },
   });
-  return parsed.success ? parsed.data : null;
 }
 
 /** Layer a human's corrections over the derived answers. Commands replace,
