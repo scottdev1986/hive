@@ -973,6 +973,105 @@ describe("HiveDaemon HTTP server", () => {
     }
   });
 
+  // Claude raises its NATIVE permission dialog through the same Notification
+  // hook it uses to say it is idle, and Hive kept the agent's status on both —
+  // so an agent parked on a dialog reported "working" forever and told nobody.
+  // The vendor's `notification_type` is what tells the two apart. Measured
+  // against claude 2.1.207:
+  //   permission_prompt  "Claude needs your permission"      <- blocked
+  //   idle_prompt        "Claude is waiting for your input"  <- idle
+  test("a native permission dialog makes the agent visible, not 'working'", async () => {
+    const db = new HiveDatabase(join(home, "permission-dialog.db"));
+    const tmux = new SilentTmuxSender(db);
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new StubSpawner(),
+      tmuxSender: tmux,
+    });
+    db.insertAgent(agent({ status: "working" }));
+    try {
+      await daemon.processEvent({
+        kind: "notification",
+        agentName: "maya",
+        timestamp,
+        notificationType: "permission_prompt",
+      });
+
+      // The whole defect in one assertion: this used to stay "working".
+      expect(db.getAgentByName("maya")?.status).toEqual("awaiting-approval");
+
+      // And a human is actually told, through the orchestrator. The agent
+      // cannot report this itself — it is blocked mid-turn.
+      const alerts = db.listMessages()
+        .filter((message) => message.from === "hive-resources");
+      expect(alerts).toHaveLength(1);
+      expect(alerts[0]?.to).toEqual("orchestrator");
+      expect(alerts[0]?.body).toContain("BLOCKED");
+      expect(alerts[0]?.body).toContain("maya");
+
+      // Hive can see the dialog but cannot answer it, so it must never claim
+      // it can: no pending approval is filed, because hive_approve would
+      // resolve a row while the agent stayed stuck behind the real dialog.
+      expect(db.listApprovals("pending")).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
+
+  // The negative control. An idle agent emits notifications while doing nothing
+  // at all, so keying "blocked" on the mere ARRIVAL of a Notification hook
+  // would park every idle agent in awaiting-approval.
+  test("an idle notification does not mark an agent blocked", async () => {
+    const db = new HiveDatabase(join(home, "idle-notification.db"));
+    const tmux = new SilentTmuxSender(db);
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new StubSpawner(),
+      tmuxSender: tmux,
+    });
+    db.insertAgent(agent({ status: "working" }));
+    try {
+      await daemon.processEvent({
+        kind: "notification",
+        agentName: "maya",
+        timestamp,
+        notificationType: "idle_prompt",
+      });
+
+      expect(db.getAgentByName("maya")?.status).toEqual("working");
+      expect(
+        db.listMessages().filter((message) => message.from === "hive-resources"),
+      ).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
+
+  // Hive cannot answer the vendor's dialog, so it cannot know from its own
+  // action that the dialog is gone. A completed tool call is the observation
+  // that proves it: the human cleared it at the pane and the agent moved on.
+  test("a completed tool call clears a blocked agent back to working", async () => {
+    const db = new HiveDatabase(join(home, "permission-cleared.db"));
+    const tmux = new SilentTmuxSender(db);
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new StubSpawner(),
+      tmuxSender: tmux,
+    });
+    db.insertAgent(agent({ status: "awaiting-approval" }));
+    try {
+      await daemon.processEvent({
+        kind: "tool-boundary",
+        agentName: "maya",
+        timestamp,
+      });
+
+      expect(db.getAgentByName("maya")?.status).toEqual("working");
+    } finally {
+      db.close();
+    }
+  });
+
   test("all MCP tools work through StreamableHTTPClientTransport", async () => {
     const db = new HiveDatabase(join(home, "mcp.db"));
     const spawner = new StubSpawner();

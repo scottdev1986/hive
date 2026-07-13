@@ -399,6 +399,21 @@ const nothingToLand = (name: string, branch: string | null): Error =>
       "Fix: if you have new work, commit it on your branch and land again; otherwise you are done.",
   );
 
+// Claude's `notification_type` when the CLI is holding a native permission
+// dialog open and waiting on a human. Measured against claude 2.1.207, where
+// the only other type an agent emits is `idle_prompt` — so this string, and not
+// the mere arrival of a Notification hook, is what "blocked" means.
+//
+// Hive can SEE this dialog but cannot ANSWER it: the hook carries no request id
+// and there is no reply channel back to the TUI (the channels permission relay
+// has one, but spawned agents run with channels off). So a permission_prompt
+// makes an agent visible, and a human still has to clear it at the pane.
+const CLAUDE_PERMISSION_PROMPT = "permission_prompt";
+
+const isPermissionPrompt = (event: HookEvent): boolean =>
+  event.kind === "notification" &&
+  event.notificationType === CLAUDE_PERMISSION_PROMPT;
+
 // Resource and control alerts are the only way daemon degradation reaches the
 // orchestrator; a failed alert send must not crash the sweep, but it must not
 // vanish either.
@@ -3092,6 +3107,13 @@ export class HiveDaemon {
         this.db.upsertAgent({
           ...agent,
           lastEventAt: new Date(value.timestamp).toISOString(),
+          // A tool ran to completion, so any native permission dialog that was
+          // holding this agent has been answered. This is the only honest way
+          // back out of `awaiting-approval` for a vendor-raised dialog: Hive
+          // cannot answer that dialog, so it must wait to OBSERVE it gone
+          // rather than assume. Left alone, a reader that a human unblocked at
+          // the pane would keep reporting "blocked" for the rest of its turn.
+          ...(agent.status === "awaiting-approval" ? { status: "working" } : {}),
           ...(value.toolSessionId === undefined
             ? {}
             : { toolSessionId: value.toolSessionId }),
@@ -3124,7 +3146,15 @@ export class HiveDaemon {
               : value.kind === "approval-request"
                 ? "awaiting-approval"
                 : value.kind === "notification"
-                  ? agent.status
+                  // The vendor's own dialog. Claude raises this hook when it is
+                  // BLOCKED asking for permission, and Hive used to hold the
+                  // agent's status here — so a session parked on a dialog went
+                  // on reporting "working" forever and told nobody. Any other
+                  // notification (notably idle_prompt, which an idle agent
+                  // emits while doing nothing) still changes nothing.
+                  ? (isPermissionPrompt(value)
+                    ? "awaiting-approval"
+                    : agent.status)
                 : "idle",
           contextPct: value.kind === "turn-end" &&
               value.contextPct !== undefined
@@ -3177,6 +3207,30 @@ export class HiveDaemon {
       } else if (value.kind === "dead") {
         await this.quota?.cancel(eventReservationId, value.timestamp);
       }
+    }
+
+    // Visibility is the whole point: a status nobody reads is not a fix. The
+    // agent cannot report this itself — it is blocked mid-turn, which is
+    // precisely why this went unnoticed — so the daemon speaks for it.
+    // Idempotent per agent per dialog: the hook fires once when the dialog
+    // opens, and re-notifying on a status Hive cannot clear on its own would
+    // spam the orchestrator.
+    if (
+      isPermissionPrompt(value) && agent !== undefined && agent !== null &&
+      agent.name !== ORCHESTRATOR_NAME
+    ) {
+      await this.delivery.send(
+        "hive-resources",
+        ORCHESTRATOR_NAME,
+        `${value.agentName} is BLOCKED on a Claude Code permission dialog in its own tmux pane ` +
+          `(session ${agent.tmuxSession ?? "unknown"}) and cannot proceed until a human answers it. ` +
+          `Hive can see this dialog but cannot answer it: the notification hook carries no request id, ` +
+          `so there is no reply path back to the TUI. Someone must clear it at the pane ` +
+          `(\`tmux attach -t ${agent.tmuxSession ?? "<session>"}\`).\n` +
+          `An agent under full autonomy should never reach this: it means the session launched ` +
+          `without bypassPermissions, so check its spawn.`,
+        { idempotencyKey: `permission-dialog:${agent.id}:${value.timestamp}` },
+      ).catch(logAlertDeliveryFailure);
     }
 
     if (value.kind === "session-start") {

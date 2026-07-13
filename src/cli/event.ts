@@ -10,6 +10,9 @@ export interface HookEventOptions {
   usageUnits?: number;
   usageSource?: "provider" | "gateway" | "estimated";
   toolSessionId?: string;
+  /** Claude's `notification_type`, read off the Notification hook's stdin.
+   * Never a CLI flag: only the vendor can say why it raised the notification. */
+  notificationType?: string;
 }
 
 export type EventFetcher = (
@@ -47,6 +50,14 @@ export function buildHookEvent(
       description: options.description ?? "Approval requested",
     });
   }
+  if (kind === "notification") {
+    return HookEventSchema.parse({
+      ...base,
+      ...(options.notificationType === undefined
+        ? {}
+        : { notificationType: options.notificationType }),
+    });
+  }
   return HookEventSchema.parse(base);
 }
 
@@ -66,22 +77,39 @@ export async function postHookEvent(
 // Claude Code pipes a JSON payload with the current session_id into every
 // hook command's stdin. That id is the handle crash recovery needs for
 // `claude --resume`, so the event CLI forwards it on every hook event.
+//
+// The Notification payload also carries `notification_type`, which is the only
+// thing that distinguishes an agent BLOCKED on a native permission dialog from
+// one merely idle. Dropping it here is what let a blocked agent be reported as
+// "working" indefinitely: the hook fired, said exactly what was wrong, and Hive
+// kept only the session id.
 export function parseHookStdin(
   text: string,
-): Pick<HookEventOptions, "toolSessionId"> {
+): Pick<HookEventOptions, "toolSessionId" | "notificationType"> {
+  const captured: Pick<
+    HookEventOptions,
+    "toolSessionId" | "notificationType"
+  > = {};
   try {
     const parsed: unknown = JSON.parse(text);
+    if (typeof parsed !== "object" || parsed === null) return captured;
     if (
-      typeof parsed === "object" && parsed !== null &&
       "session_id" in parsed && typeof parsed.session_id === "string" &&
       parsed.session_id.length > 0
     ) {
-      return { toolSessionId: parsed.session_id };
+      captured.toolSessionId = parsed.session_id;
+    }
+    if (
+      "notification_type" in parsed &&
+      typeof parsed.notification_type === "string" &&
+      parsed.notification_type.length > 0
+    ) {
+      captured.notificationType = parsed.notification_type;
     }
   } catch {
     // Anything that is not the documented hook JSON is simply not a capture.
   }
-  return {};
+  return captured;
 }
 
 export interface HookStdinSource {

@@ -133,6 +133,50 @@ describe("hive event", () => {
     expect(parseHookStdin(JSON.stringify(null))).toEqual({});
   });
 
+  // Verbatim Notification payloads from claude 2.1.207 — captured from a real
+  // CLI parked on a real WebFetch dialog, and from a real idle session. The
+  // notification_type is the ONLY field separating an agent blocked on a vendor
+  // permission dialog from one merely waiting, and dropping it here is what let
+  // a blocked agent report "working" indefinitely.
+  test("captures the notification type that says an agent is blocked", () => {
+    expect(parseHookStdin(JSON.stringify({
+      session_id: "b8b7c9e2-22f5-4b7a-9156-e6f2551b556e",
+      transcript_path: "/tmp/t.jsonl",
+      cwd: "/repo",
+      prompt_id: "ce191f42-50f7-4df3-851b-c3db926ae0d1",
+      hook_event_name: "Notification",
+      message: "Claude needs your permission",
+      notification_type: "permission_prompt",
+    }))).toEqual({
+      toolSessionId: "b8b7c9e2-22f5-4b7a-9156-e6f2551b556e",
+      notificationType: "permission_prompt",
+    });
+
+    expect(parseHookStdin(JSON.stringify({
+      session_id: "4aefd9a8-e43c-4568-8aaf-05be105d26ee",
+      hook_event_name: "Notification",
+      message: "Claude is waiting for your input",
+      notification_type: "idle_prompt",
+    }))).toEqual({
+      toolSessionId: "4aefd9a8-e43c-4568-8aaf-05be105d26ee",
+      notificationType: "idle_prompt",
+    });
+  });
+
+  test("carries the notification type onto the event", () => {
+    expect(
+      buildHookEvent("notification", {
+        agent: "maya",
+        notificationType: "permission_prompt",
+      }, timestamp),
+    ).toEqual({
+      kind: "notification",
+      agentName: "maya",
+      timestamp,
+      notificationType: "permission_prompt",
+    });
+  });
+
   test("reads hook stdin without ever stalling the agent turn", async () => {
     expect(await readHookStdin({
       isTTY: false,

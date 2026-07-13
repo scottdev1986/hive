@@ -26,7 +26,23 @@ export const HookEventSchema = z.discriminatedUnion("kind", [
     usageUnits: z.number().nonnegative().optional(),
     usageSource: z.enum(["provider", "gateway", "estimated"]).optional(),
   }),
-  HookEventBaseSchema.extend({ kind: z.literal("notification") }),
+  HookEventBaseSchema.extend({
+    kind: z.literal("notification"),
+    /** Claude's `notification_type`. The vendor's own discriminator for WHY it
+     * is speaking, and the only reliable way to tell a session BLOCKED on a
+     * native permission dialog from one merely sitting idle — both arrive as
+     * this same hook. Measured against claude 2.1.207:
+     *
+     *   permission_prompt  "Claude needs your permission"        <- blocked
+     *   idle_prompt        "Claude is waiting for your input"    <- idle
+     *
+     * Deliberately a free string, not an enum: an unrecognized type must be
+     * ignored, never rejected. Parsing the event strictly would drop the whole
+     * hook the first time the vendor adds a type, and a dropped event reads as
+     * "nothing happened". Absent means the producer sent no type — not that the
+     * agent is unblocked. */
+    notificationType: z.string().min(1).optional(),
+  }),
   HookEventBaseSchema.extend({
     kind: z.literal("effort-drift"),
     description: z.string().min(1),
