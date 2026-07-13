@@ -9,3 +9,4 @@ export * from "./profile";
 export * from "./quota";
 export * from "./routing-derivation";
 export * from "./routing-policy";
+export * from "./token-usage";

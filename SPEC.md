@@ -333,13 +333,13 @@ Alternatives considered: Go is the right shape (static binary, daemon ergonomics
 The concrete choices:
 
 - **Daemon MCP transport:** Streamable HTTP on localhost — one daemon, one endpoint, N agents. Both Claude Code and Codex configure HTTP MCP servers natively; stdio would mean a process per agent.
-- **Storage:** SQLite via `bun:sqlite` — inboxes, status table, run history, one file under `~/.hive/`.
+- **Storage:** SQLite via `bun:sqlite` — inboxes, status table, run history, and durable per-session token events, one file under `~/.hive/`. Token accounting keeps provider-reported input/output separate by orchestrator generation and worker session. The orchestrator bucket is an exact Hive-control lower bound; worker transcripts mix task work with embedded Hive protocol, so Hive reports that bucket as mixed instead of inventing a precise overhead split.
 - **tmux / git / osascript:** shell out via `Bun.spawn`. No wrapper libraries; the CLIs are the API.
 - **Hook glue:** the hive binary itself — Claude hooks and Codex `notify` invoke `hive event …`, which POSTs to the daemon. One code path, no curl scripts.
 - **Daemon lifecycle:** on-demand spawn with a pidfile; first `hive` command starts it. launchd is v2 polish, not v1 plumbing.
 - **Schemas:** Zod, shared across messages, handoffs, and the routing table (the MCP SDK is Zod-native). CLI parsing via Commander; tests via `bun test`, with the interesting coverage being integration tests driving real tmux sessions.
 
-One deliberate boundary: emulator adapters (osascript for iTerm2/Terminal) and tool adapters (spawn flags, hook-config writers, interactive drivers, and native control channels such as Channels and app-server) live behind small interfaces from day one. Those are the only two places vendor and platform specifics are allowed, and they're exactly where the roadmap grows (new terminals, OpenCode).
+One deliberate boundary: emulator adapters (osascript for iTerm2/Terminal) and tool adapters (spawn flags, hook-config writers, interactive drivers, native control channels such as Channels and app-server, and token-artifact normalization) live behind small interfaces from day one. The token ledger and its wire/UI schema accept an open provider id; OpenCode adds a collector adapter instead of another accounting system. Those are the only places vendor and platform specifics are allowed, and they're exactly where the roadmap grows (new terminals, OpenCode).
 
 ## Roadmap: the dogfooding arc
 

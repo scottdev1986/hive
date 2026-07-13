@@ -24,7 +24,7 @@ struct LaunchConfig {
     /// Open the Settings window (Model Control Center) at launch. A
     /// development/verification affordance; works with or without a project.
     var settings = false
-    /// Which settings section to open ("tasks" or "models").
+    /// Which settings section to open ("tasks", "models", or "usage").
     var settingsPage: String?
     /// Force the app appearance ("light"/"dark") — screenshot/verification
     /// affordance; never changes the system setting.

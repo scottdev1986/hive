@@ -2,6 +2,12 @@ import type { AgentRecord, CapabilityProvider } from "../schemas";
 import { isLiveAgent } from "../schemas";
 import { fetchAgentStatus, sendOrchestratorMessage } from "./mcp";
 import { launchOrchestrator } from "./orchestrator";
+import {
+  endTokenUsageSession,
+  endTokenUsageSubject,
+  startOrchestratorTokenSubject,
+  startTokenUsageSession,
+} from "./token-usage";
 
 const STATUS_RETRY_MAX_MS = 30_000;
 const RAPID_EXIT_MS = 10_000;
@@ -133,19 +139,59 @@ export async function runWorkspaceOrchestrator(
   port: number,
   cwd = process.cwd(),
 ): Promise<number> {
-  return await superviseOrchestratorSession({
-    launch: async (recoveryBrief) =>
-      await launchOrchestrator(
-        tool,
-        port,
-        cwd,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        recoveryBrief,
-      ),
+  let tokenSessionId: string | null = null;
+  try {
+    tokenSessionId = await startTokenUsageSession(port, cwd);
+  } catch (error) {
+    console.error(
+      `[hive] token tracking unavailable; launches continue unmetered: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+  const exitCode = await superviseOrchestratorSession({
+    launch: async (recoveryBrief) => {
+      let subjectId: string | null = null;
+      if (tokenSessionId !== null) {
+        try {
+          subjectId = await startOrchestratorTokenSubject(
+            port,
+            tokenSessionId,
+            tool,
+            cwd,
+          );
+        } catch (error) {
+          console.error(
+            `[hive] orchestrator token tracking unavailable: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
+        }
+      }
+      try {
+        return await launchOrchestrator(
+          tool,
+          port,
+          cwd,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          recoveryBrief,
+        );
+      } finally {
+        if (subjectId !== null) {
+          await endTokenUsageSubject(port, subjectId).catch((error) => {
+            console.error(
+              `[hive] could not finalize orchestrator token usage: ${
+                error instanceof Error ? error.message : String(error)
+              }`,
+            );
+          });
+        }
+      }
+    },
     fetchAgents: async () => await fetchAgentStatus(port),
     sendRecoveryPing: async (agentName, body) =>
       await sendOrchestratorMessage(port, agentName, body),
@@ -154,4 +200,14 @@ export async function runWorkspaceOrchestrator(
     now: Date.now,
     report: (message) => { console.error(message); },
   });
+  if (tokenSessionId !== null) {
+    await endTokenUsageSession(port, tokenSessionId).catch((error) => {
+      console.error(
+        `[hive] could not finalize token session: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    });
+  }
+  return exitCode;
 }

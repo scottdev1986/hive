@@ -58,6 +58,7 @@ describe("orchestrator brief", () => {
       "hive_spawn",
       "hive_status",
       "hive_quota_status",
+      "hive_token_usage",
       "hive_send",
       "hive_inbox",
       "hive_read_message",

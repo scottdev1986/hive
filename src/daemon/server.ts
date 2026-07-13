@@ -146,6 +146,7 @@ import {
 import type { LifecycleConfig, ResourceLimits } from "../schemas";
 import { HIVE_VERSION } from "../version";
 import type { ModelInventory } from "./model-inventory";
+import { TokenUsageStore } from "./token-usage";
 
 export { HIVE_VERSION };
 
@@ -262,6 +263,15 @@ const QuotaObservationRequestSchema = QuotaObservationSchema.omit({
   observedAt: true,
 }).extend({
   observedAt: z.iso.datetime({ offset: true }).optional(),
+});
+
+const TokenUsageSessionRequestSchema = z.object({
+  repoRoot: z.string().min(1),
+});
+
+const TokenUsageOrchestratorRequestSchema = z.object({
+  provider: z.string().min(1),
+  cwd: z.string().min(1),
 });
 
 const MarkDeadRequestSchema = z.object({
@@ -460,6 +470,9 @@ export interface HiveDaemonOptions {
    * attached; an embedded daemon gets its own inert instance. */
   workspacePresence?: WorkspacePresence;
   quota?: QuotaService;
+  /** Durable provider-reported token accounting. Injectable so collector and
+   * lifecycle tests never read the developer's real CLI artifacts. */
+  tokenUsage?: TokenUsageStore;
   /** Complete live model inventory for the read-only orchestrator surface. */
   modelInventory?: () => Promise<ModelInventory>;
   /** Root wake transport override for tests; defaults to the lazy Codex
@@ -577,6 +590,7 @@ export class HiveDaemon {
   private readonly closeTerminal: TerminalCloser;
   private readonly layout: LayoutCoordinator | null;
   private readonly quota: QuotaService | undefined;
+  private readonly tokenUsage: TokenUsageStore;
   private readonly modelInventory: HiveDaemonOptions["modelInventory"];
   private routingPolicy: RoutingPolicyStore | null = null;
   private readonly codexControl: HiveDaemonOptions["codexControl"];
@@ -621,6 +635,7 @@ export class HiveDaemon {
     this.manageLifecycle = options.manageLifecycle ?? false;
     this.tmux = options.tmux ?? new TmuxAdapter();
     this.quota = options.quota;
+    this.tokenUsage = options.tokenUsage ?? new TokenUsageStore(this.db);
     this.modelInventory = options.modelInventory;
     this.codexControl = options.codexControl;
     this.autonomy = options.autonomy;
@@ -1086,6 +1101,13 @@ export class HiveDaemon {
       await this.refreshToolTelemetry().catch((error) => {
         console.error(
           `Hive tool telemetry sweep failed: ${
+            error instanceof Error ? error.message : "unknown error"
+          }`,
+        );
+      });
+      await this.tokenUsage.refreshCurrent(this.repoRoot).catch((error) => {
+        console.error(
+          `Hive token-usage sweep failed: ${
             error instanceof Error ? error.message : "unknown error"
           }`,
         );
@@ -2097,6 +2119,26 @@ export class HiveDaemon {
     if (url.pathname === "/orchestrator-status" && request.method === "GET") {
       return this.orchestratorStatusEndpoint(request);
     }
+    if (url.pathname === "/token-usage" && request.method === "GET") {
+      return this.tokenUsageEndpoint(url, request);
+    }
+    if (url.pathname === "/token-usage/sessions" && request.method === "POST") {
+      return this.startTokenUsageSession(request);
+    }
+    const tokenSession = url.pathname.match(
+      /^\/token-usage\/sessions\/([^/]+)\/(orchestrators|end)$/,
+    );
+    if (tokenSession !== null && request.method === "POST") {
+      return tokenSession[2] === "orchestrators"
+        ? this.startTokenUsageOrchestrator(tokenSession[1]!, request)
+        : this.endTokenUsageSession(tokenSession[1]!, request);
+    }
+    const tokenSubject = url.pathname.match(
+      /^\/token-usage\/subjects\/([^/]+)\/end$/,
+    );
+    if (tokenSubject !== null && request.method === "POST") {
+      return this.endTokenUsageSubject(tokenSubject[1]!, request);
+    }
     if (url.pathname === "/graphify" && request.method === "POST") {
       return this.graphifyEndpoint(request);
     }
@@ -2608,6 +2650,119 @@ export class HiveDaemon {
     });
   }
 
+  private async tokenUsageEndpoint(
+    url: URL,
+    request: Request,
+  ): Promise<Response> {
+    const authenticated = this.authenticate(request, "/token-usage");
+    if (!authenticated.ok) return this.denied(authenticated);
+    const decision = this.authorize(
+      authenticated.capability,
+      "/token-usage",
+      "token-usage:read",
+      undefined,
+      false,
+    );
+    if (!decision.ok) return this.denied(decision);
+    try {
+      return json(await this.tokenUsage.snapshot(
+        url.searchParams.get("repoRoot") ?? undefined,
+      ));
+    } catch (error) {
+      return json(
+        { error: error instanceof Error ? error.message : String(error) },
+        { status: 500 },
+      );
+    }
+  }
+
+  private async startTokenUsageSession(request: Request): Promise<Response> {
+    const authenticated = this.authenticate(request, "/token-usage/sessions");
+    if (!authenticated.ok) return this.denied(authenticated);
+    const decision = this.authorize(
+      authenticated.capability,
+      "/token-usage/sessions",
+      "token-usage:write",
+      undefined,
+    );
+    if (!decision.ok) return this.denied(decision);
+    const body = TokenUsageSessionRequestSchema.safeParse(
+      await request.json().catch(() => null),
+    );
+    if (!body.success) return json({ error: body.error.message }, { status: 400 });
+    return json({ sessionId: await this.tokenUsage.startSession(body.data.repoRoot) });
+  }
+
+  private async startTokenUsageOrchestrator(
+    sessionId: string,
+    request: Request,
+  ): Promise<Response> {
+    const route = `/token-usage/sessions/${sessionId}/orchestrators`;
+    const authenticated = this.authenticate(request, route);
+    if (!authenticated.ok) return this.denied(authenticated);
+    const decision = this.authorize(
+      authenticated.capability,
+      route,
+      "token-usage:write",
+      undefined,
+    );
+    if (!decision.ok) return this.denied(decision);
+    const body = TokenUsageOrchestratorRequestSchema.safeParse(
+      await request.json().catch(() => null),
+    );
+    if (!body.success) return json({ error: body.error.message }, { status: 400 });
+    try {
+      return json({
+        subjectId: this.tokenUsage.startOrchestrator(
+          sessionId,
+          body.data.provider,
+          body.data.cwd,
+        ),
+      });
+    } catch (error) {
+      return json(
+        { error: error instanceof Error ? error.message : String(error) },
+        { status: 500 },
+      );
+    }
+  }
+
+  private async endTokenUsageSubject(
+    subjectId: string,
+    request: Request,
+  ): Promise<Response> {
+    const route = `/token-usage/subjects/${subjectId}/end`;
+    const authenticated = this.authenticate(request, route);
+    if (!authenticated.ok) return this.denied(authenticated);
+    const decision = this.authorize(
+      authenticated.capability,
+      route,
+      "token-usage:write",
+      undefined,
+    );
+    if (!decision.ok) return this.denied(decision);
+    await this.tokenUsage.endSubject(subjectId);
+    return json({ ok: true });
+  }
+
+  private async endTokenUsageSession(
+    sessionId: string,
+    request: Request,
+  ): Promise<Response> {
+    const route = `/token-usage/sessions/${sessionId}/end`;
+    const authenticated = this.authenticate(request, route);
+    if (!authenticated.ok) return this.denied(authenticated);
+    const decision = this.authorize(
+      authenticated.capability,
+      route,
+      "token-usage:write",
+      undefined,
+    );
+    if (!decision.ok) return this.denied(decision);
+    await this.tokenUsage.endSession(sessionId);
+    return json({ ok: true });
+  }
+
   /**
    * `/autonomy` — the writer-autonomy dial.
    *
@@ -2915,6 +3070,15 @@ export class HiveDaemon {
 
   async processEvent(event: HookEvent): Promise<void> {
     const value = HookEventSchema.parse(event);
+    if (
+      value.agentName === ORCHESTRATOR_NAME &&
+      value.toolSessionId !== undefined
+    ) {
+      this.tokenUsage.registerOrchestratorProviderSession(
+        value.toolSessionId,
+        this.repoRoot,
+      );
+    }
     if (value.kind === "tool-boundary") {
       // A deep agent fires this on every tool call — hundreds per turn — so
       // it deliberately skips the events table and the quota machinery. It
@@ -3152,6 +3316,24 @@ export class HiveDaemon {
     }, async () => {
       this.authorizeTool(capability, "hive_quota_status", "quota:read", undefined, false);
       return toolResult(this.quota?.statuses() ?? [], "quotas");
+    });
+
+    server.registerTool("hive_token_usage", {
+      title: "Hive token usage",
+      description:
+        "Show provider-reported input/output token totals by Hive session, with exact orchestrator control usage separated from mixed worker-session usage.",
+      inputSchema: z.object({
+        repoRoot: z.string().min(1).optional(),
+      }),
+    }, async ({ repoRoot }) => {
+      this.authorizeTool(
+        capability,
+        "hive_token_usage",
+        "token-usage:read",
+        undefined,
+        false,
+      );
+      return toolResult(await this.tokenUsage.snapshot(repoRoot), "tokenUsage");
     });
 
     server.registerTool("hive_models", {

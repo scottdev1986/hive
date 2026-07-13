@@ -8,7 +8,7 @@ import {
   type CapabilityProvider,
   type CapabilityRecord,
 } from "../schemas/capability";
-import type { QuotaStatus } from "../schemas";
+import type { QuotaStatus, TokenUsageSnapshot } from "../schemas";
 
 /**
  * Positive controls for the Model Control Center read surface. Every negative
@@ -131,12 +131,19 @@ const claudePool: QuotaStatus = {
 function fakeDependencies(overrides: {
   daemonPort?: () => number | null;
   quota?: (port: number) => Promise<QuotaStatus[]>;
+  tokenUsage?: (port: number) => Promise<TokenUsageSnapshot>;
 } = {}) {
   return {
     discover: (provider: CapabilityProvider) => Promise.resolve(discovery[provider]),
     readBilling: (provider: CapabilityProvider) => Promise.resolve(billings[provider]),
     daemonPort: overrides.daemonPort ?? (() => 4483),
     quota: overrides.quota ?? ((_port: number) => Promise.resolve([claudePool])),
+    tokenUsage: overrides.tokenUsage ?? ((_port: number) => Promise.resolve({
+      generatedAt: AT,
+      currentSessionId: null,
+      sessions: [],
+      attribution: "control-lower-bound",
+    })),
     now: () => new Date(AT),
   };
 }
@@ -185,6 +192,27 @@ describe("buildModelControlSnapshot", () => {
     }));
     expect(snapshot.quota).toBeNull();
     expect(snapshot.quotaError).toContain("hive_quota_status failed");
+  });
+
+  test("session token totals pass through without being inferred from quota", async () => {
+    const snapshot = await buildModelControlSnapshot(fakeDependencies({
+      tokenUsage: async () => ({
+        generatedAt: AT,
+        currentSessionId: null,
+        sessions: [],
+        attribution: "control-lower-bound",
+      }),
+    }));
+    expect(snapshot.tokenUsage?.attribution).toBe("control-lower-bound");
+    expect(snapshot.tokenUsageError).toBeNull();
+  });
+
+  test("a token collector failure is unknown, never an empty measured session", async () => {
+    const snapshot = await buildModelControlSnapshot(fakeDependencies({
+      tokenUsage: async () => { throw new Error("token artifact unreadable"); },
+    }));
+    expect(snapshot.tokenUsage).toBeNull();
+    expect(snapshot.tokenUsageError).toContain("token artifact unreadable");
   });
 
   test("every known vendor is marked metered once its capacity surface is wired", async () => {

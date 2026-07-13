@@ -46,6 +46,9 @@ The asymmetry between orchestrator and writer is deliberate. Neither role is a s
 | `hive_status` | `status:read` | all | — | — | — |
 | `hive_quota_status` | `quota:read` | all | — | — | — |
 | `hive_quota_reconcile` | `quota:write` | operator, orchestrator | — | — | `quota.reconcile` |
+| `hive_token_usage`, `GET /token-usage` | `token-usage:read` | operator, orchestrator | — | — | — |
+| `POST /token-usage/sessions/**` | `token-usage:write` | operator | — | — | `token-usage.write` |
+| `POST /token-usage/subjects/**` | `token-usage:write` | operator | — | — | `token-usage.write` |
 | `hive_spawn` | `agent:spawn` | operator, orchestrator | — | — | `agent.spawn` |
 | `hive_kill` | `agent:kill` | operator, orchestrator | any | — | `agent.kill` |
 | `hive_mark_dead` | `agent:mark-dead` | operator, orchestrator | any | — | `agent.mark-dead` |

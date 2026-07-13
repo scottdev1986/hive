@@ -22,6 +22,8 @@ export type Action =
   | "status:read"
   | "quota:read"
   | "quota:write"
+  | "token-usage:read"
+  | "token-usage:write"
   | "agent:spawn"
   | "agent:kill"
   | "agent:mark-dead"
@@ -64,7 +66,8 @@ const AGENT_DIRECTED: readonly Action[] = [
 ];
 
 const OPERATOR_ACTIONS: readonly Action[] = [
-  "status:read", "quota:read", "quota:write", "agent:spawn", "agent:kill",
+  "status:read", "quota:read", "quota:write", "token-usage:read",
+  "token-usage:write", "agent:spawn", "agent:kill",
   "agent:mark-dead", "agent:recover", "approval:read", "approval:decide",
   "message:send", "message:ack", "message:read", "inbox:read",
   "branch:land", "memory:read", "memory:write", "event:report",
@@ -102,7 +105,8 @@ export const ROLE_GRANTS: Readonly<Record<Role, RoleGrant>> = {
   },
   orchestrator: {
     actions: [
-      "status:read", "quota:read", "quota:write", "agent:spawn", "agent:kill",
+      "status:read", "quota:read", "quota:write", "token-usage:read",
+      "agent:spawn", "agent:kill",
       "agent:mark-dead", "agent:recover", "approval:read", "approval:decide",
       "message:send", "message:ack", "message:read", "inbox:read",
       "memory:read", "memory:write", "event:report", "telemetry:report",

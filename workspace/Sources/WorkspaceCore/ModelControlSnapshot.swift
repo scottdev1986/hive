@@ -428,6 +428,97 @@ public enum UsageSurface: String, Codable, Sendable {
     case none
 }
 
+// MARK: - Session token accounting
+
+public struct TokenCounts: Codable, Equatable, Sendable {
+    public var inputTokens: Int
+    public var cachedInputTokens: Int?
+    public var cacheCreationInputTokens: Int?
+    public var outputTokens: Int
+    public var reasoningTokens: Int?
+    public var totalTokens: Int
+}
+
+public enum TokenUsageReading: Equatable, Sendable {
+    case measured(counts: TokenCounts, source: String, observedAt: String)
+    case unknown(reason: String)
+}
+
+extension TokenUsageReading: Codable {
+    private enum CodingKeys: String, CodingKey {
+        case state, counts, source, observedAt, reason
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        switch try container.decode(String.self, forKey: .state) {
+        case "measured":
+            self = .measured(
+                counts: try container.decode(TokenCounts.self, forKey: .counts),
+                source: try container.decode(String.self, forKey: .source),
+                observedAt: try container.decode(String.self, forKey: .observedAt))
+        case "unknown":
+            self = .unknown(reason: try container.decode(String.self, forKey: .reason))
+        default:
+            throw DecodingError.dataCorruptedError(
+                forKey: .state, in: container,
+                debugDescription: "token usage state must be measured or unknown")
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        switch self {
+        case .measured(let counts, let source, let observedAt):
+            try container.encode("measured", forKey: .state)
+            try container.encode(counts, forKey: .counts)
+            try container.encode(source, forKey: .source)
+            try container.encode(observedAt, forKey: .observedAt)
+        case .unknown(let reason):
+            try container.encode("unknown", forKey: .state)
+            try container.encode(reason, forKey: .reason)
+        }
+    }
+}
+
+public struct TokenUsageSubject: Codable, Equatable, Sendable {
+    public var id: String
+    public var name: String
+    public var role: String
+    /// Open provider id: OpenCode and later CLIs require no wire/UI migration.
+    public var provider: String
+    public var model: String?
+    public var startedAt: String
+    public var endedAt: String?
+    public var reading: TokenUsageReading
+}
+
+public struct TokenUsageBreakdown: Codable, Equatable, Sendable {
+    /// nil is no reading; a measured zero is a non-nil all-zero value.
+    public var counts: TokenCounts?
+    public var subjectCount: Int
+}
+
+public struct TokenUsageSession: Codable, Equatable, Sendable {
+    public var id: String
+    public var repoRoot: String
+    public var startedAt: String
+    public var endedAt: String?
+    public var complete: Bool
+    public var unknownSubjects: [String]
+    public var fleet: TokenUsageBreakdown
+    public var hiveControl: TokenUsageBreakdown
+    public var workerSessions: TokenUsageBreakdown
+    public var subjects: [TokenUsageSubject]
+}
+
+public struct TokenUsageSnapshot: Codable, Equatable, Sendable {
+    public var generatedAt: String
+    public var currentSessionId: String?
+    public var sessions: [TokenUsageSession]
+    public var attribution: String
+}
+
 public struct ModelControlSnapshot: Codable, Equatable, Sendable {
     public var generatedAt: String
     public var providers: [String: ProviderCatalog]
@@ -436,6 +527,9 @@ public struct ModelControlSnapshot: Codable, Equatable, Sendable {
     /// nil means the daemon could not be asked — quota is UNKNOWN, not empty.
     public var quota: [QuotaEntry]?
     public var quotaError: String?
+    /// Optional for compatibility with daemons that predate token tracking.
+    public var tokenUsage: TokenUsageSnapshot?
+    public var tokenUsageError: String?
 
     public init(
         generatedAt: String,
@@ -443,7 +537,9 @@ public struct ModelControlSnapshot: Codable, Equatable, Sendable {
         billing: [String: BillingSnapshot?] = [:],
         usageSurfaces: [String: UsageSurface] = [:],
         quota: [QuotaEntry]? = nil,
-        quotaError: String? = nil
+        quotaError: String? = nil,
+        tokenUsage: TokenUsageSnapshot? = nil,
+        tokenUsageError: String? = nil
     ) {
         self.generatedAt = generatedAt
         self.providers = providers
@@ -451,6 +547,8 @@ public struct ModelControlSnapshot: Codable, Equatable, Sendable {
         self.usageSurfaces = usageSurfaces
         self.quota = quota
         self.quotaError = quotaError
+        self.tokenUsage = tokenUsage
+        self.tokenUsageError = tokenUsageError
     }
 
     public static func decode(from data: Data) throws -> ModelControlSnapshot {

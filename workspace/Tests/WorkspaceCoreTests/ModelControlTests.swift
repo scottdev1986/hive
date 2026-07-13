@@ -227,6 +227,51 @@ final class ModelControlTests: XCTestCase {
         XCTAssertEqual(percent, 31)
     }
 
+    func testTokenUsageDecodesOpenProviderAndUnknownSeparatelyFromZero() throws {
+        let wire = """
+        {"generatedAt":"2026-07-13T12:00:00.000Z","providers":{},"billing":{},
+         "usageSurfaces":{},"quota":[],"quotaError":null,
+         "tokenUsage":{"generatedAt":"2026-07-13T12:00:00.000Z",
+          "currentSessionId":"1b8b8892-a0ee-4fa4-a88c-d0d5c26879a4",
+          "attribution":"control-lower-bound","sessions":[{
+           "id":"1b8b8892-a0ee-4fa4-a88c-d0d5c26879a4","repoRoot":"/tmp/repo",
+           "startedAt":"2026-07-13T12:00:00.000Z","endedAt":null,
+           "complete":false,"unknownSubjects":["worker (quiet-cli)"],
+           "fleet":{"subjectCount":1,"counts":{"inputTokens":12,
+            "cachedInputTokens":null,"cacheCreationInputTokens":null,
+            "outputTokens":3,"reasoningTokens":null,"totalTokens":15}},
+           "hiveControl":{"subjectCount":1,"counts":{"inputTokens":12,
+            "cachedInputTokens":null,"cacheCreationInputTokens":null,
+            "outputTokens":3,"reasoningTokens":null,"totalTokens":15}},
+           "workerSessions":{"subjectCount":0,"counts":{"inputTokens":0,
+            "cachedInputTokens":0,"cacheCreationInputTokens":0,
+            "outputTokens":0,"reasoningTokens":0,"totalTokens":0}},
+           "subjects":[
+            {"id":"8a071f35-90da-4ec8-82ec-36ed29e703c1","name":"Orchestrator",
+             "role":"orchestrator","provider":"opencode","model":null,
+             "startedAt":"2026-07-13T12:00:00.000Z","endedAt":null,
+             "reading":{"state":"measured","counts":{"inputTokens":12,
+              "cachedInputTokens":null,"cacheCreationInputTokens":null,
+              "outputTokens":3,"reasoningTokens":null,"totalTokens":15},
+              "source":"opencode","observedAt":"2026-07-13T12:01:00.000Z"}},
+            {"id":"dc5bb689-3b93-426e-86a5-bf77d25f9bb2","name":"worker",
+             "role":"worker","provider":"quiet-cli","model":null,
+             "startedAt":"2026-07-13T12:00:00.000Z","endedAt":null,
+             "reading":{"state":"unknown","reason":"no provider evidence"}}
+           ]}]},"tokenUsageError":null}
+        """.data(using: .utf8)!
+
+        let snapshot = try ModelControlSnapshot.decode(from: wire)
+        let session = try XCTUnwrap(snapshot.tokenUsage?.sessions.first)
+        XCTAssertEqual(session.subjects.first?.provider, "opencode")
+        XCTAssertEqual(session.fleet.counts?.totalTokens, 15)
+        XCTAssertFalse(session.complete)
+        guard case .unknown(let reason) = session.subjects[1].reading else {
+            return XCTFail("missing evidence must remain unknown")
+        }
+        XCTAssertEqual(reason, "no provider evidence")
+    }
+
     // The daemon's word OVERRIDES the inference, and must: a window it calls
     // "unknown" is a failed read even if the duration went missing too. This is
     // the case the old heuristic got wrong, now settled by the vendor's own fact.

@@ -461,6 +461,32 @@ When effective and preference differ, the UI shows **both**.
 3. Confidence is available as secondary detail: "Reported by Claude Code · 12s ago."
 4. Two meters side-by-side only above ~320 pt of meter block; otherwise stack.
 
+### 7.7 Session token usage
+
+The Settings toolbar has a third page, **Usage**, for provider-reported token
+counts. This is not the provider capacity meter above: quota answers “how close
+is this account to a vendor limit?” while token accounting answers “how many
+tokens did this Hive session consume?” The two data sets never infer one
+another.
+
+Each Hive session includes every worker plus every orchestrator generation.
+When an orchestrator exits and the supervisor starts a backup, the new
+generation becomes another subject inside the same session instead of resetting
+the counter. The page shows three totals:
+
+- **All agents:** the measured fleet subtotal, input and output separately.
+- **Hive control:** exact orchestrator and backup-orchestrator tokens. Its share
+  of the measured fleet is a lower bound on Hive overhead, not the whole cost.
+- **Worker sessions:** task work plus the Hive protocol embedded in worker
+  prompts and replies. Providers do not label tokens inside a turn by purpose,
+  so Hive must never claim this is pure work or fabricate a precise split.
+
+A missing artifact or unreadable provider counter makes the session
+**incomplete** and names the missing subjects. The measured subtotal remains
+visible, labelled as such; unknown is never promoted to zero. Provider ids are
+open strings on this wire and in this UI. A fourth CLI such as OpenCode adds a
+token collector adapter, not a new ledger, API shape, or settings page.
+
 ---
 
 ## 8. Task categories and chains

@@ -13,9 +13,10 @@ import {
   unknownVendor,
   type CapabilityProvider,
 } from "../schemas/capability";
-import type { QuotaStatus } from "../schemas";
+import type { QuotaStatus, TokenUsageSnapshot } from "../schemas";
 import { readDaemonPort } from "../daemon/lifecycle";
 import { fetchQuotaStatus } from "./mcp";
+import { fetchTokenUsage } from "./token-usage";
 
 /**
  * `hive model-control-snapshot` — the Workspace app's read surface for the
@@ -43,6 +44,7 @@ export interface ModelControlSnapshotDependencies {
   readBilling?: (provider: CapabilityProvider) => Promise<AccountBilling | null>;
   daemonPort?: () => number | null;
   quota?: (port: number) => Promise<QuotaStatus[]>;
+  tokenUsage?: (port: number) => Promise<TokenUsageSnapshot>;
   now?: () => Date;
 }
 
@@ -87,6 +89,8 @@ export interface ModelControlSnapshot {
   usageSurfaces: Record<CapabilityProvider, "metered" | "none">;
   quota: QuotaStatus[] | null;
   quotaError: string | null;
+  tokenUsage: TokenUsageSnapshot | null;
+  tokenUsageError: string | null;
 }
 
 export async function buildModelControlSnapshot(
@@ -97,6 +101,7 @@ export async function buildModelControlSnapshot(
     ((provider: CapabilityProvider) => readBillingWithMemory(provider));
   const daemonPort = dependencies.daemonPort ?? readDaemonPort;
   const quota = dependencies.quota ?? fetchQuotaStatus;
+  const tokenUsage = dependencies.tokenUsage ?? fetchTokenUsage;
   const now = dependencies.now ?? (() => new Date());
 
   const readQuota = async (): Promise<
@@ -119,6 +124,27 @@ export async function buildModelControlSnapshot(
     }
   };
 
+  const readTokenUsage = async (): Promise<{
+    tokenUsage: TokenUsageSnapshot | null;
+    tokenUsageError: string | null;
+  }> => {
+    const port = daemonPort();
+    if (port === null || port <= 0 || port > 65_535) {
+      return {
+        tokenUsage: null,
+        tokenUsageError: "no daemon is running — token readings are unavailable",
+      };
+    }
+    try {
+      return { tokenUsage: await tokenUsage(port), tokenUsageError: null };
+    } catch (error) {
+      return {
+        tokenUsage: null,
+        tokenUsageError: error instanceof Error ? error.message : String(error),
+      };
+    }
+  };
+
   // A probe that throws is an unavailable provider with a measured reason —
   // one vendor's bad morning must not blank the other cards.
   const discoverSafely = async (
@@ -134,10 +160,11 @@ export async function buildModelControlSnapshot(
     }
   };
 
-  const [providers, billing, quotaResult] = await Promise.all([
+  const [providers, billing, quotaResult, tokenUsageResult] = await Promise.all([
     forEachProvider(discoverSafely),
     forEachProvider((provider) => readBilling(provider).catch(() => null)),
     readQuota(),
+    readTokenUsage(),
   ]);
 
   return {
@@ -152,6 +179,8 @@ export async function buildModelControlSnapshot(
     ) as Record<CapabilityProvider, "metered" | "none">,
     quota: quotaResult.quota,
     quotaError: quotaResult.quotaError,
+    tokenUsage: tokenUsageResult.tokenUsage,
+    tokenUsageError: tokenUsageResult.tokenUsageError,
   };
 }
 
