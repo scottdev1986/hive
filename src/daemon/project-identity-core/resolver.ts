@@ -254,6 +254,10 @@ function reconcile(
       }
     }
 
+    // `dev` is useful current-mount evidence even though it is not durable
+    // identity. Refresh it after inode + birth time have positively matched so
+    // pre-fix launchers can consume a registry repaired by a newer binary.
+    registry.refreshEvidence(existing.hiveUuid, evidence);
     return { status: "RESOLVED", key, hiveUuid: existing.hiveUuid, evidence };
   }
 

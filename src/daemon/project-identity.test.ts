@@ -4,6 +4,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -16,7 +17,7 @@ import {
   ProjectRegistry,
   resolveOrCreate,
 } from "./project-identity-core/index";
-import { resolveHandshakeProject } from "./project-identity";
+import { repairLegacyMountEvidence, resolveHandshakeProject } from "./project-identity";
 
 const originalHiveHome = process.env.HIVE_HOME;
 const root = mkdtempSync(join(tmpdir(), "hive-project-identity-"));
@@ -52,6 +53,38 @@ describe("durable project identity", () => {
       readFileSync(join(hiveHome, "project-registry.json"), "utf8"),
     );
     expect(persisted.tombstones).toEqual([]);
+    expect(persisted.records[0].evidence.dev).toBe(statSync(project).dev);
+  });
+
+  test("a staged fixed binary repairs evidence for a pre-fix updater", () => {
+    const registry = new ProjectRegistry();
+    const created = resolveOrCreate(project, {
+      registry,
+      ledger: new InMemoryManagedWorktreeLedger(),
+      ledgerCapability: LedgerCapability.issue("test"),
+    }, "legacy-seed");
+    if (created.status !== "RESOLVED") throw new Error("project was not created");
+
+    const snapshot = registry.snapshot();
+    snapshot.records[0]!.evidence.dev += 1;
+    writeFileSync(join(hiveHome, "project-registry.json"), JSON.stringify(snapshot));
+    const current = {
+      dev: statSync(project).dev,
+      ino: statSync(project).ino,
+      birthtimeMs: statSync(project).birthtimeMs,
+    };
+    const legacyMatches = (left: typeof current, right: typeof current) =>
+      left.dev === right.dev && left.ino === right.ino &&
+      left.birthtimeMs === right.birthtimeMs;
+    expect(legacyMatches(snapshot.records[0]!.evidence, current)).toBe(false);
+
+    expect(repairLegacyMountEvidence(project)).toBe(true);
+    const repaired = JSON.parse(
+      readFileSync(join(hiveHome, "project-registry.json"), "utf8"),
+    );
+    expect(legacyMatches(repaired.records[0].evidence, current)).toBe(true);
+    expect(repaired.records[0].hiveUuid).toBe(created.hiveUuid);
+    expect(repaired.tombstones).toEqual([]);
   });
 
   test("inode or birth-time changes still prove directory replacement", () => {

@@ -289,8 +289,10 @@ export async function runUpdate(requested?: string): Promise<void> {
   console.log(verifiedLine(staged));
 
   // The activation half, only when the control plane is provably idle.
-  const expected = await expectedDaemonHandshake(process.cwd());
-  const daemon = await inspectDaemonForUpdate({ expected, liveAgents: liveAgentNames });
+  const daemon = await inspectDaemonForUpdate({
+    expected: () => expectedDaemonHandshake(process.cwd()),
+    liveAgents: liveAgentNames,
+  });
   const refusal = explainRefusal(daemon);
   if (refusal !== null) {
     console.log(`hive ${version} activates when the team finishes`);

@@ -63,6 +63,7 @@ import {
   wantsUpdateNotice,
   withTrailingUpdateNotice,
 } from "./cli/update-notice";
+import { repairIdentityFromStagedVersionProbe } from "./update/bootstrap";
 import { runWorkspace } from "./cli/workspace";
 import { runWorkspaceFeedCli } from "./cli/workspace-feed";
 import { versionLine } from "./version";
@@ -834,6 +835,7 @@ export function createProgram(): Command {
 
 export async function main(argv = process.argv): Promise<number> {
   try {
+    repairIdentityFromStagedVersionProbe(argv);
     // The passive update notice trails user-facing commands (npm/gh shape):
     // the check runs alongside the command, the line prints after it, and a
     // failed or slow check is silence, never an error or a stall.

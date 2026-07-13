@@ -56,7 +56,8 @@ export function readDaemonPid(): number | null {
 }
 
 export interface InspectDeps {
-  readonly expected: DaemonHandshake;
+  /** Resolve project identity only after proving a Hive daemon is present. */
+  readonly expected: DaemonHandshake | (() => Promise<DaemonHandshake>);
   /** Names of agents that are alive; a live team defers activation. */
   readonly liveAgents: (port: number) => Promise<readonly string[]>;
   readonly port?: number | null;
@@ -96,18 +97,21 @@ export async function inspectDaemonForUpdate(
     // than kill a pid we cannot identify.
     return { state: "absent" };
   }
+  const expected = typeof deps.expected === "function"
+    ? await deps.expected()
+    : deps.expected;
 
   // Identity before everything. A daemon serving another project is never ours
   // to stop, whatever else differs. Both keys are identity: `hiveUuid` names the
   // project, `identityKey` names the directory that resolved to it.
-  if (actual.hiveUuid !== deps.expected.hiveUuid) {
+  if (actual.hiveUuid !== expected.hiveUuid) {
     return { state: "foreign", port, reason: "project identity (HiveUUID)" };
   }
-  if (actual.identityKey !== deps.expected.identityKey) {
+  if (actual.identityKey !== expected.identityKey) {
     return { state: "foreign", port, reason: "project identity key" };
   }
 
-  const reason = handshakeMismatch(deps.expected, actual);
+  const reason = handshakeMismatch(expected, actual);
   if (reason === null) return { state: "current", port };
 
   const live = await deps.liveAgents(port).catch(() => {

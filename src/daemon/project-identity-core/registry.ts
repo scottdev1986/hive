@@ -87,6 +87,14 @@ export class ProjectRegistry {
     return this.byUuid.get(hiveUuid) ?? null;
   }
 
+  /** Refresh non-identity filesystem evidence after a positive resolution. */
+  refreshEvidence(hiveUuid: string, evidence: FsEvidence): boolean {
+    const record = this.byUuid.get(hiveUuid);
+    if (!record || !evidenceMatches(record.evidence, evidence)) return false;
+    record.evidence = evidence;
+    return true;
+  }
+
   /**
    * Locate the record whose directory *is* the one described by `evidence`.
    *

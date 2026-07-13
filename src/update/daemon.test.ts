@@ -203,8 +203,17 @@ describe("the daemon left behind by an update", () => {
   });
 
   test("no daemon at all means activation is unconditionally safe", async () => {
-    const state = await inspectDaemonForUpdate({ expected, liveAgents: noAgents, port: null });
+    let resolvedIdentity = false;
+    const state = await inspectDaemonForUpdate({
+      expected: async () => {
+        resolvedIdentity = true;
+        throw new Error("legacy identity resolver is broken");
+      },
+      liveAgents: noAgents,
+      port: null,
+    });
     expect(state).toEqual({ state: "absent" });
+    expect(resolvedIdentity).toBe(false);
     expect(await restartStaleDaemon(state)).toEqual({ stopped: true, pid: null });
   });
 
