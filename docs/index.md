@@ -45,6 +45,7 @@ The control plane: who may do what, and what happens when state is missing.
 | [Authorization](daemon/authorization.md) | The daemon is the only boundary Hive has, and every agent runs as the same UID with a shell. The rights matrix, re-derived from the code, and why a request body is evidence of intent but never of authority. | 2026-07-13 |
 | [Database resilience](daemon/database-resilience.md) | The SQLite file was never the fragile part — the fragile part was how Hive read a database that wasn't there. One invariant, applied everywhere: absence must refuse, preserve, and say so. | 2026-07-13 |
 | [Orchestrator status](daemon/orchestrator-status.md) | The orchestrator has no agents row, so its status is derived from turn events — and an unpaired turn-end is a contradiction, while a long silence is merely unknown, never stuck. | 2026-07-13 |
+| [Multiple concurrent instances](daemon/multi-instance.md) | Design, not yet built. HIVE_HOME is already the instance key and the isolation stops at the listener — but the fixed port is an accidental mutex, and the shared provider account is the one thing that must not be partitioned. | 2026-07-13 |
 
 ## workspace
 
