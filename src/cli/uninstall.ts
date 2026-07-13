@@ -186,7 +186,7 @@ async function removeWorktreesAndBranches(
   const container = resolve(root, ".hive", "worktrees");
   const instanceId = hiveInstanceSuffix();
   const allowLegacy = isDefaultHiveHome();
-  const worktrees = await listWorktrees(root).catch(() => []);
+  const worktrees = await listWorktrees(root);
   const worktreeMarker = `${join(".hive", "worktrees")}/`;
   const registered = new Map(
     worktrees
@@ -211,14 +211,30 @@ async function removeWorktreesAndBranches(
       ["git", "worktree", "remove", "--force", path],
       { cwd: root, timeoutMs: 30_000 },
     );
-    if (removed.exitCode !== 0 && allowLegacy) {
+    if (removed.exitCode !== 0 && allowLegacy && worktree === undefined) {
       // A directory that is not a registered worktree (stale leftovers) is
       // only safely attributable to the legacy default instance.
       await rm(path, { recursive: true, force: true });
+    } else if (removed.exitCode !== 0) {
+      throw new Error(
+        `Git could not remove owned worktree ${path}: ${
+          removed.stderr.trim() || removed.stdout.trim() || `exit ${removed.exitCode}`
+        }`,
+      );
     }
-    if (removed.exitCode === 0 || allowLegacy) log(`Removed worktree ${path}.`);
+    log(`Removed worktree ${path}.`);
   }
-  await run(["git", "worktree", "prune"], { cwd: root, timeoutMs: 30_000 });
+  const pruned = await run(
+    ["git", "worktree", "prune"],
+    { cwd: root, timeoutMs: 30_000 },
+  );
+  if (pruned.exitCode !== 0) {
+    throw new Error(
+      `Git could not prune removed worktrees: ${
+        pruned.stderr.trim() || pruned.stdout.trim() || `exit ${pruned.exitCode}`
+      }`,
+    );
+  }
   await rmdir(container).catch(() => {});
   await rmdir(join(root, ".hive")).catch(() => {
     // Only removed when empty: `.hive/skills` and other user content stay.
@@ -228,22 +244,32 @@ async function removeWorktreesAndBranches(
     ["git", "branch", "--list", "hive/*", "--format", "%(refname:short)"],
     { cwd: root, timeoutMs: 30_000 },
   );
-  if (branches.exitCode === 0) {
-    for (const branch of branches.stdout.split("\n").map((line) => line.trim()).filter((line) => line.length > 0)) {
-      const owner = await branchOwner(root, branch);
-      if (owner !== instanceId && !(owner === undefined && allowLegacy)) {
-        log(`Left sibling-owned branch ${branch}.`);
-        continue;
-      }
-      const deleted = await run(
-        ["git", "branch", "-D", branch],
-        { cwd: root, timeoutMs: 30_000 },
-      );
-      if (deleted.exitCode === 0) {
-        await clearBranchOwnership(root, branch);
-        log(`Deleted branch ${branch}.`);
-      }
+  if (branches.exitCode !== 0) {
+    throw new Error(
+      `Git could not list Hive branches: ${
+        branches.stderr.trim() || branches.stdout.trim() || `exit ${branches.exitCode}`
+      }`,
+    );
+  }
+  for (const branch of branches.stdout.split("\n").map((line) => line.trim()).filter((line) => line.length > 0)) {
+    const owner = await branchOwner(root, branch);
+    if (owner !== instanceId && !(owner === undefined && allowLegacy)) {
+      log(`Left sibling-owned branch ${branch}.`);
+      continue;
     }
+    const deleted = await run(
+      ["git", "branch", "-D", branch],
+      { cwd: root, timeoutMs: 30_000 },
+    );
+    if (deleted.exitCode !== 0) {
+      throw new Error(
+        `Git could not delete owned branch ${branch}: ${
+          deleted.stderr.trim() || deleted.stdout.trim() || `exit ${deleted.exitCode}`
+        }`,
+      );
+    }
+    await clearBranchOwnership(root, branch);
+    log(`Deleted branch ${branch}.`);
   }
 }
 
@@ -274,7 +300,15 @@ export async function runUninstallRepo(
     );
     return 1;
   }
-  await removeWorktreesAndBranches(root, deps.run, deps.log);
+  try {
+    await removeWorktreesAndBranches(root, deps.run, deps.log);
+  } catch (error) {
+    deps.log(
+      `Repo uninstall stopped before cleanup completed: ${errorMessage(error)}\n` +
+        "Fix: resolve the Git error, then rerun `hive uninstall --repo`.",
+    );
+    return 1;
+  }
   for (const tool of CAPABILITY_PROVIDERS) {
     await removeShippedSkills(root, tool, deps.log);
   }

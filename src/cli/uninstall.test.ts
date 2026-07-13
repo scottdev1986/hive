@@ -230,6 +230,33 @@ describe("hive uninstall --repo", () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+
+  test("reports an owned branch that Git refuses to delete", async () => {
+    const root = await gitRepo();
+    try {
+      const worktree = join(root, ".hive", "worktrees", "maya");
+      git(root, ["worktree", "add", worktree, "-b", "hive/maya-owned"]);
+      git(root, [
+        "update-ref",
+        `refs/hive-owner/${hiveInstanceSuffix()}/hive/maya-owned`,
+        "hive/maya-owned",
+      ]);
+      const { deps, lines } = probe(true, {
+        run: async (argv, options) =>
+          argv[0] === "git" && argv[1] === "branch" && argv[2] === "-D"
+            ? { exitCode: 1, stdout: "", stderr: "branch is locked", timedOut: false }
+            : runCommand(argv, options),
+      });
+      expect(await runUninstallRepo(root, {}, deps)).toBe(1);
+      expect(Bun.spawnSync([
+        "git", "-C", root, "show-ref", "--verify", "refs/heads/hive/maya-owned",
+      ]).exitCode).toBe(0);
+      expect(lines.join("\n")).toContain("branch is locked");
+      expect(lines.join("\n")).not.toContain("Hive is removed from this repo");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("hive uninstall", () => {
