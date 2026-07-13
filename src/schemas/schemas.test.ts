@@ -5,6 +5,7 @@ import {
   HandoffSchema,
   HiveConfigSchema,
   HookEventSchema,
+  QuotaConfigSchema,
   RepoProfileSchema,
   StatuslineReportSchema,
   type AgentRecord,
@@ -319,6 +320,22 @@ describe("RepoProfileSchema", () => {
     expect(() => RepoProfileSchema.parse({
       ...profile,
       fingerprint: { ...profile.fingerprint, generated: "2026-02-31" },
+    })).toThrow();
+  });
+});
+
+describe("QuotaConfigSchema", () => {
+  test("migrates one legacy estimate key but rejects competing old and new keys", () => {
+    expect(QuotaConfigSchema.parse({ estimates: { deep: 17 } })
+      .estimates.complex_coding).toBe(17);
+    expect(() => QuotaConfigSchema.parse({
+      estimates: { deep: 17, complex_coding: 19 },
+    })).toThrow();
+    expect(() => QuotaConfigSchema.parse({
+      estimatesPct: {
+        deep: { fiveHour: 8, weekly: 1.5 },
+        complex_coding: { fiveHour: 9, weekly: 2 },
+      },
     })).toThrow();
   });
 });

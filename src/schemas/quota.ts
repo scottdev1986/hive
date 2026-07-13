@@ -96,7 +96,18 @@ const DEFAULT_ESTIMATES: Record<RoutingCategory, number> = {
 const EstimateSchema = z.partialRecord(
   z.union([RoutingCategorySchema, z.enum(["deep", "standard", "cheap", "review"])]),
   z.number().positive(),
-).transform((table): Record<RoutingCategory, number> => ({
+).superRefine((table, context) => {
+  const values = table as Record<string, unknown>;
+  for (const [legacy, category] of Object.entries(LEGACY_TIER_CATEGORY)) {
+    if (values[legacy] !== undefined && values[category] !== undefined) {
+      context.addIssue({
+        code: "custom",
+        path: [category],
+        message: `cannot set both legacy ${legacy} and ${category}`,
+      });
+    }
+  }
+}).transform((table): Record<RoutingCategory, number> => ({
   ...DEFAULT_ESTIMATES,
   ...legacyKeysMapped(table),
 }));
@@ -140,7 +151,18 @@ export const DEFAULT_PERCENT_ESTIMATES: Record<
 const PercentEstimateTableSchema = z.partialRecord(
   z.union([RoutingCategorySchema, z.enum(["deep", "standard", "cheap", "review"])]),
   PercentEstimateSchema,
-).transform((table): Record<RoutingCategory, { fiveHour: number; weekly: number }> => ({
+).superRefine((table, context) => {
+  const values = table as Record<string, unknown>;
+  for (const [legacy, category] of Object.entries(LEGACY_TIER_CATEGORY)) {
+    if (values[legacy] !== undefined && values[category] !== undefined) {
+      context.addIssue({
+        code: "custom",
+        path: [category],
+        message: `cannot set both legacy ${legacy} and ${category}`,
+      });
+    }
+  }
+}).transform((table): Record<RoutingCategory, { fiveHour: number; weekly: number }> => ({
   ...DEFAULT_PERCENT_ESTIMATES,
   ...legacyKeysMapped(table),
 }));
