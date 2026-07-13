@@ -70,6 +70,11 @@ import {
   listWorktrees,
 } from "../adapters/worktrees";
 import { hiveInstanceSuffix, isDefaultHiveHome } from "../daemon/tmux-sessions";
+import {
+  acquireMachineMutationLease,
+  type MachineMutationLease,
+  type MachineMutationPurpose,
+} from "../daemon/mutation-lease";
 
 export interface UninstallDeps {
   run: CommandRunner;
@@ -79,6 +84,7 @@ export interface UninstallDeps {
   stopCurrentInstance: () => Promise<void>;
   liveTeams: () => Promise<readonly InstanceMutationBlocker[]>;
   stopInstances: () => Promise<void>;
+  acquireLease: (purpose: MachineMutationPurpose) => Promise<MachineMutationLease>;
 }
 
 async function stopInstances(): Promise<void> {
@@ -112,6 +118,7 @@ export const defaultUninstallDeps: UninstallDeps = {
       .map((agent) => agent.name);
   }),
   stopInstances,
+  acquireLease: acquireMachineMutationLease,
 };
 
 function errorMessage(error: unknown): string {
@@ -351,42 +358,56 @@ export async function runUninstallMachine(
     return 1;
   }
 
-  const postConfirmationBlockers = await deps.liveTeams();
-  if (postConfirmationBlockers.length > 0) {
-    deps.log(liveTeamRefusal(postConfirmationBlockers));
-    return 1;
-  }
+  let lease: MachineMutationLease;
   try {
-    await deps.stopInstances();
+    lease = await deps.acquireLease("machine-uninstall");
   } catch (error) {
     deps.log(
-      `Refusing to remove the machine-wide binary because a Hive instance did not stop: ${
-        errorMessage(error)
-      }\nFix: stop every Hive daemon, then rerun \`hive uninstall\`.`,
+      `Refusing machine uninstall: ${errorMessage(error)}`,
     );
     return 1;
   }
+
   try {
-    await deps.stopCurrentInstance();
-  } catch (error) {
-    deps.log(
-      `Refusing machine uninstall because this instance's sessions did not stop: ${
-        errorMessage(error)
-      }\nFix: stop the sessions, then rerun \`hive uninstall\`.`,
-    );
-    return 1;
+    const postConfirmationBlockers = await deps.liveTeams();
+    if (postConfirmationBlockers.length > 0) {
+      deps.log(liveTeamRefusal(postConfirmationBlockers));
+      return 1;
+    }
+    try {
+      await deps.stopInstances();
+    } catch (error) {
+      deps.log(
+        `Refusing to remove the machine-wide binary because a Hive instance did not stop: ${
+          errorMessage(error)
+        }\nFix: stop every Hive daemon, then rerun \`hive uninstall\`.`,
+      );
+      return 1;
+    }
+    try {
+      await deps.stopCurrentInstance();
+    } catch (error) {
+      deps.log(
+        `Refusing machine uninstall because this instance's sessions did not stop: ${
+          errorMessage(error)
+        }\nFix: stop the sessions, then rerun \`hive uninstall\`.`,
+      );
+      return 1;
+    }
+    await rm(hiveHome, { recursive: true, force: true });
+    deps.log(`Removed ${hiveHome}.`);
+    if (method === "native") {
+      await rm(installRoot(), { recursive: true, force: true });
+      await rm(binLink(), { force: true });
+      deps.log(`Removed ${installRoot()} and ${binLink()}.`);
+    } else if (method === "homebrew") {
+      deps.log("The binary is Homebrew's: `brew uninstall hive` finishes the job.");
+    }
+    deps.log("Hive is removed.");
+    return 0;
+  } finally {
+    lease.release();
   }
-  await rm(hiveHome, { recursive: true, force: true });
-  deps.log(`Removed ${hiveHome}.`);
-  if (method === "native") {
-    await rm(installRoot(), { recursive: true, force: true });
-    await rm(binLink(), { force: true });
-    deps.log(`Removed ${installRoot()} and ${binLink()}.`);
-  } else if (method === "homebrew") {
-    deps.log("The binary is Homebrew's: `brew uninstall hive` finishes the job.");
-  }
-  deps.log("Hive is removed.");
-  return 0;
 }
 
 export async function runUninstall(

@@ -11,6 +11,7 @@ import {
 import { projectStateDir } from "../adapters/profile";
 import { getHiveHome } from "../daemon/db";
 import { hiveInstanceSuffix } from "../daemon/tmux-sessions";
+import { MachineMutationCoordinator } from "../daemon/mutation-lease";
 import { shippedSkillsFor } from "../skills/shipped";
 import { runUninstallMachine, runUninstallRepo, type UninstallDeps } from "./uninstall";
 
@@ -55,11 +56,13 @@ interface Probe {
   deps: UninstallDeps;
   lines: string[];
   stops: number[];
+  leaseEvents: string[];
 }
 
 function probe(confirm: boolean | null, overrides: Partial<UninstallDeps> = {}): Probe {
   const lines: string[] = [];
   const stops: number[] = [];
+  const leaseEvents: string[] = [];
   const deps: UninstallDeps = {
     run: runCommand,
     confirm: async () => confirm,
@@ -69,9 +72,13 @@ function probe(confirm: boolean | null, overrides: Partial<UninstallDeps> = {}):
     },
     liveTeams: async () => [],
     stopInstances: async () => {},
+    acquireLease: async (purpose) => {
+      leaseEvents.push(`acquire:${purpose}`);
+      return { release: () => leaseEvents.push(`release:${purpose}`) };
+    },
     ...overrides,
   };
-  return { deps, lines, stops };
+  return { deps, lines, stops, leaseEvents };
 }
 
 describe("hive uninstall --repo", () => {
@@ -164,9 +171,10 @@ describe("hive uninstall --repo", () => {
       await mkdir(projectStateDir(root), { recursive: true });
       await writeFile(join(projectStateDir(root), "initialized"), "stamp\n");
 
-      const { deps, lines, stops } = probe(true);
+      const { deps, lines, stops, leaseEvents } = probe(true);
       expect(await runUninstallRepo(root, {}, deps)).toBe(0);
       expect(stops).toEqual([1]);
+      expect(leaseEvents).toEqual([]);
 
       // Hive's footprint is gone…
       expect(existsSync(join(root, ".claude", "skills", ours.name))).toBe(false);
@@ -260,6 +268,55 @@ describe("hive uninstall --repo", () => {
 });
 
 describe("hive uninstall", () => {
+  test("holds the machine mutation lease from the final team check through removal", async () => {
+    const home = await mkdtemp(join(tmpdir(), "hive-home-machine-lease-"));
+    const previous = process.env.HIVE_HOME;
+    process.env.HIVE_HOME = home;
+    const order: string[] = [];
+    try {
+      await writeFile(join(home, "hive.db"), "");
+      const { deps } = probe(true, {
+        confirm: async () => {
+          order.push("confirm");
+          return true;
+        },
+        acquireLease: async (purpose) => {
+          order.push(`acquire:${purpose}`);
+          return {
+            release: () => {
+              order.push(`release:${existsSync(home) ? "present" : "removed"}`);
+            },
+          };
+        },
+        liveTeams: async () => {
+          order.push("teams");
+          return [];
+        },
+        stopInstances: async () => {
+          order.push("daemons");
+        },
+        stopCurrentInstance: async () => {
+          order.push("sessions");
+        },
+      });
+
+      expect(await runUninstallMachine({}, deps)).toBe(0);
+      expect(order).toEqual([
+        "teams",
+        "confirm",
+        "acquire:machine-uninstall",
+        "teams",
+        "daemons",
+        "sessions",
+        "release:removed",
+      ]);
+    } finally {
+      if (previous === undefined) delete process.env.HIVE_HOME;
+      else process.env.HIVE_HOME = previous;
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
   test("refuses machine removal while a sibling has a positively visible live team", async () => {
     const home = await mkdtemp(join(tmpdir(), "hive-home-sibling-live-"));
     const previous = process.env.HIVE_HOME;
@@ -289,6 +346,46 @@ describe("hive uninstall", () => {
     }
   });
 
+  test("preserves machine state when a real agent spawn operation wins the race", async () => {
+    const home = await mkdtemp(join(tmpdir(), "hive-home-spawn-operation-"));
+    const previous = process.env.HIVE_HOME;
+    process.env.HIVE_HOME = home;
+    const mutationPath = join(`${home}-runtime`, "mutation.db");
+    const operationCoordinator = new MachineMutationCoordinator({
+      path: mutationPath,
+      instanceId: "review",
+      instanceHome: home,
+    });
+    const uninstallCoordinator = new MachineMutationCoordinator({
+      path: mutationPath,
+      instanceId: "default",
+      instanceHome: home,
+      instanceLiveness: async () => "live",
+    });
+    const operation = await operationCoordinator.beginOperation("spawn");
+    try {
+      await writeFile(join(home, "hive.db"), "");
+      const { deps, lines, stops } = probe(true, {
+        acquireLease: (purpose) => uninstallCoordinator.acquireLease(purpose),
+      });
+
+      expect(await runUninstallMachine({}, deps)).toBe(1);
+      expect(stops).toEqual([]);
+      expect(existsSync(home)).toBe(true);
+      expect(lines.join("\n")).toContain(
+        "spawn in Hive instance review is in progress",
+      );
+    } finally {
+      operation.release();
+      uninstallCoordinator.close();
+      operationCoordinator.close();
+      if (previous === undefined) delete process.env.HIVE_HOME;
+      else process.env.HIVE_HOME = previous;
+      await rm(home, { recursive: true, force: true });
+      await rm(`${home}-runtime`, { recursive: true, force: true });
+    }
+  });
+
   test("confirmed: removes ~/.hive; a source build's binary is not Hive's to touch", async () => {
     const home = await mkdtemp(join(tmpdir(), "hive-home-gone-"));
     const previous = process.env.HIVE_HOME;
@@ -307,13 +404,40 @@ describe("hive uninstall", () => {
     }
   });
 
+  test("a real lease releases cleanly after Hive home is removed", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-home-real-lease-"));
+    const home = join(root, "home");
+    const previous = process.env.HIVE_HOME;
+    process.env.HIVE_HOME = home;
+    const coordinator = new MachineMutationCoordinator({
+      path: join(root, "runtime", "mutation.db"),
+      instanceId: "default",
+      instanceHome: home,
+    });
+    try {
+      await mkdir(home);
+      await writeFile(join(home, "hive.db"), "");
+      const { deps } = probe(true, {
+        acquireLease: (purpose) => coordinator.acquireLease(purpose),
+      });
+
+      expect(await runUninstallMachine({}, deps)).toBe(0);
+      expect(existsSync(home)).toBe(false);
+    } finally {
+      coordinator.close();
+      if (previous === undefined) delete process.env.HIVE_HOME;
+      else process.env.HIVE_HOME = previous;
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   test("rechecks every team after confirmation before stopping anything", async () => {
     const home = await mkdtemp(join(tmpdir(), "hive-home-spawn-race-"));
     const previous = process.env.HIVE_HOME;
     process.env.HIVE_HOME = home;
     try {
       let checks = 0;
-      const { deps, lines, stops } = probe(true, {
+      const { deps, lines, stops, leaseEvents } = probe(true, {
         liveTeams: async () => {
           checks += 1;
           return checks === 1 ? [] : [{
@@ -332,6 +456,10 @@ describe("hive uninstall", () => {
       expect(await runUninstallMachine({}, deps)).toBe(1);
       expect(checks).toBe(2);
       expect(stops).toEqual([]);
+      expect(leaseEvents).toEqual([
+        "acquire:machine-uninstall",
+        "release:machine-uninstall",
+      ]);
       expect(lines.join("\n")).toContain("review (new-agent)");
       expect(existsSync(home)).toBe(true);
     } finally {
