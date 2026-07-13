@@ -29,9 +29,7 @@ export type MemoryVerificationStatus = z.infer<
   typeof MemoryVerificationStatusSchema
 >;
 
-const IsoDateSchema = z
-  .string()
-  .regex(/^\d{4}-\d{2}-\d{2}$/, "date must be YYYY-MM-DD");
+const IsoDateSchema = z.iso.date();
 
 const verificationDateError = (input: {
   status: MemoryVerificationStatus;

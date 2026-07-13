@@ -59,7 +59,7 @@ export type ProfileConventions = z.infer<typeof ProfileConventionsSchema>;
 // comment — mark the profile stale, which is how a profile whose every derived
 // field was still correct came to nag the user to refresh it by hand.
 export const ProfileFingerprintSchema = z.object({
-  generated: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "generated must be YYYY-MM-DD"),
+  generated: z.iso.date(),
   hiveVersion: z.string(),
   commit: z.string().nullable(),
   inputsHash: z.string(),

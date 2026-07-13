@@ -46,6 +46,10 @@ describe("persisted memory contracts", () => {
       status: "stale",
       verified: undefined,
     })).toThrow();
+    expect(() => MemoryFactSchema.parse({
+      ...verifiedFact,
+      date: "2026-02-31",
+    })).toThrow();
   });
 
   test("write results reject unknown keys and preserve their positive fields", () => {
@@ -79,6 +83,8 @@ describe("persisted memory contracts", () => {
     };
     expect(MemorySearchResultSchema.parse(result)).toEqual(result);
     expect(() => MemorySearchResultSchema.parse({ ...result, date: "last Tuesday" }))
+      .toThrow();
+    expect(() => MemorySearchResultSchema.parse({ ...result, date: "2026-02-31" }))
       .toThrow();
   });
 });

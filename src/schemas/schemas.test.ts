@@ -5,6 +5,7 @@ import {
   HandoffSchema,
   HiveConfigSchema,
   HookEventSchema,
+  RepoProfileSchema,
   StatuslineReportSchema,
   type AgentRecord,
   type AgentMessage,
@@ -283,6 +284,41 @@ describe("StatuslineReportSchema", () => {
     expect(() => StatuslineReportSchema.parse({
       ...report,
       fiveHour: { usedPct: 37, resetsAt: undefined, resets_at: timestamp },
+    })).toThrow();
+  });
+});
+
+describe("RepoProfileSchema", () => {
+  const profile = {
+    schemaVersion: 2,
+    docs: { briefable: [], briefableDirectories: [], primary: null },
+    commands: {
+      build: null,
+      test: null,
+      typecheck: null,
+      lint: null,
+      run: null,
+    },
+    conventions: {
+      agentsFile: null,
+      language: null,
+      packageManager: null,
+      monorepo: false,
+    },
+    entryPoints: [],
+    fingerprint: {
+      generated: "2026-07-13",
+      hiveVersion: "0.0.0-dev",
+      commit: null,
+      inputsHash: "abc123",
+    },
+  };
+
+  test("accepts real calendar dates and rejects impossible ones", () => {
+    expect(RepoProfileSchema.parse(profile)).toEqual(profile);
+    expect(() => RepoProfileSchema.parse({
+      ...profile,
+      fingerprint: { ...profile.fingerprint, generated: "2026-02-31" },
     })).toThrow();
   });
 });
