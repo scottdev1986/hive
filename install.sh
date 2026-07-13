@@ -52,7 +52,12 @@ else
 fi
 
 TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT INT TERM
+STAGING_DIR=""
+cleanup() {
+  rm -rf "$TMP"
+  [ -z "$STAGING_DIR" ] || rm -rf "$STAGING_DIR"
+}
+trap cleanup EXIT INT TERM
 
 printf 'Resolving %s...\n' "$VERSION"
 curl -fsSL -H 'Accept: application/vnd.github+json' "$API" > "$TMP/release.json" ||
@@ -83,18 +88,23 @@ verify "hive-darwin-$ARCH"
 verify HiveWorkspace.tar.gz
 
 VERSION_DIR="$ROOT/versions/$RESOLVED"
-rm -rf "$VERSION_DIR"
-mkdir -p "$VERSION_DIR" "$BIN_DIR"
-mv "$TMP/hive-darwin-$ARCH" "$VERSION_DIR/hive"
-chmod 755 "$VERSION_DIR/hive"
-tar -xzf "$TMP/HiveWorkspace.tar.gz" -C "$VERSION_DIR"
+mkdir -p "$ROOT/versions" "$BIN_DIR"
+STAGING_DIR="$(mktemp -d "$ROOT/versions/.hive-stage.XXXXXX")"
+mv "$TMP/hive-darwin-$ARCH" "$STAGING_DIR/hive"
+chmod 755 "$STAGING_DIR/hive"
+tar -xzf "$TMP/HiveWorkspace.tar.gz" -C "$STAGING_DIR"
 
 # Run it before it can ever be `current`.
-reported="$("$VERSION_DIR/hive" --version 2>/dev/null || true)"
+reported="$("$STAGING_DIR/hive" --version 2>/dev/null || true)"
 case "$reported" in
   *"$RESOLVED"*) ;;
-  *) rm -rf "$VERSION_DIR"; die "staged binary reported '$reported', expected $RESOLVED" ;;
+  *) die "staged binary reported '$reported', expected $RESOLVED" ;;
 esac
+
+# The complete replacement is proven before an existing version is touched.
+rm -rf "$VERSION_DIR"
+mv "$STAGING_DIR" "$VERSION_DIR"
+STAGING_DIR=""
 
 # Atomic activation: one rename over the `current` symlink.
 PREVIOUS="$(readlink "$ROOT/current" 2>/dev/null | sed 's|^versions/||' || true)"
