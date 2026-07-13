@@ -2647,6 +2647,52 @@ describe("resource watchdog", () => {
     }
   });
 
+  test("reports a process that survived the watchdog kill instead of claiming success", async () => {
+    const owned = Bun.spawn(["sleep", "60"], {
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    const db = new HiveDatabase(":memory:");
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new StubSpawner(),
+      tmuxSender: new SilentTmuxSender(db),
+      resources: {
+        enabled: true,
+        perProcessMemoryMb: 12_288,
+        minSystemAvailableMb: 4_096,
+      },
+      resourceRunners: {
+        ps: async () =>
+          `${owned.pid} 1 94371840 sleep 60`,
+        vmStat: async () => vmStatOutput,
+        panePids: async (session) =>
+          session === "hive-maya" ? [owned.pid] : [],
+        kill: () => {},
+        orphans: null,
+      },
+    });
+    db.insertAgent(agent({ tmuxSession: "hive-maya" }));
+    try {
+      await daemon.sweepResources();
+
+      const reports = db.listMessages()
+        .filter((message) => message.from === "hive-resources");
+      expect(reports.some((message) =>
+        message.body.includes(`FAILED to kill pid ${owned.pid}`)
+      )).toBe(true);
+      expect(reports.some((message) =>
+        message.body.includes(`watchdog killed pid ${owned.pid}`)
+      )).toBe(false);
+      expect(() => process.kill(owned.pid, 0)).not.toThrow();
+    } finally {
+      owned.kill("SIGKILL");
+      await owned.exited;
+      await daemon.stop();
+      db.close();
+    }
+  });
+
   test("memory pressure pauses hive_spawn until it clears", async () => {
     const lowMemory = [
       "Mach Virtual Memory Statistics: (page size of 16384 bytes)",

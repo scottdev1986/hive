@@ -1523,23 +1523,42 @@ export class HiveDaemon {
       });
       this.memoryPressure = assessment.memoryPressure;
       for (const kill of assessment.kills) {
+        let reaped: ReapOutcome;
         try {
-          this.killProcess(kill.process.pid);
+          reaped = await reapCapturedTree([{
+            pid: kill.process.pid,
+            command: kill.process.command,
+          }], {
+            ...this.reapDependencies,
+            kill: (pid) => this.killProcess(pid),
+          });
         } catch (error) {
-          // A kill the watchdog attempted and lost (EPERM, pid raced away)
-          // still counts as degradation, and degradation is never silent:
-          // the runaway may still be allocating.
           console.error(
-            `Hive memory watchdog failed to kill pid ${kill.process.pid} under ${kill.owner}: ${
+            `Hive memory watchdog could not verify pid ${kill.process.pid} under ${kill.owner}: ${
               error instanceof Error ? error.message : "unknown error"
             }`,
           );
           await this.delivery.send(
             "hive-resources",
             ORCHESTRATOR_NAME,
-            `Hive memory watchdog FAILED to kill pid ${kill.process.pid} under ${kill.owner} ` +
+            `Hive memory watchdog FAILED to verify whether pid ${kill.process.pid} under ${kill.owner} stopped ` +
               `(${Math.round(kill.process.rssMb)} MB resident, limit ${limits.perProcessMemoryMb} MB): ` +
               `${kill.process.command.slice(0, 160)}. The process may still be allocating; ` +
+              `it may need to be stopped by hand.`,
+            { idempotencyKey: `resource-kill-failed:${kill.process.pid}` },
+          ).catch(logAlertDeliveryFailure);
+          continue;
+        }
+        if (reaped.survivors.length > 0) {
+          console.error(
+            `Hive memory watchdog failed to kill pid ${kill.process.pid} under ${kill.owner}: process survived SIGKILL`,
+          );
+          await this.delivery.send(
+            "hive-resources",
+            ORCHESTRATOR_NAME,
+            `Hive memory watchdog FAILED to kill pid ${kill.process.pid} under ${kill.owner} ` +
+              `(${Math.round(kill.process.rssMb)} MB resident, limit ${limits.perProcessMemoryMb} MB): ` +
+              `${kill.process.command.slice(0, 160)}. The process survived SIGKILL and may still be allocating; ` +
               `it may need to be stopped by hand.`,
             { idempotencyKey: `resource-kill-failed:${kill.process.pid}` },
           ).catch(logAlertDeliveryFailure);
