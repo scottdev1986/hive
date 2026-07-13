@@ -20,6 +20,21 @@ VERSION="${1:-latest}"
 
 die() { printf 'install: %s\n' "$1" >&2; exit 1; }
 
+# This installer is Darwin-only. BSD mv's -h is the no-follow half of the
+# atomic rename: without it, a `current` symlink to a directory is followed and
+# the temporary link is moved inside the old version while mv exits zero.
+replace_symlink() {
+  target="$1"
+  link="$2"
+  temporary="$link.tmp"
+  rm -f "$temporary"
+  ln -s "$target" "$temporary" || die "could not stage symlink $link"
+  /bin/mv -fh "$temporary" "$link" || die "could not replace symlink $link"
+  actual="$(readlink "$link" 2>/dev/null || true)"
+  [ "$actual" = "$target" ] ||
+    die "symlink $link points to '${actual:-nothing}', expected '$target'"
+}
+
 [ "$(uname -s)" = "Darwin" ] || die "Hive is macOS-only for now (found $(uname -s))."
 case "$(uname -m)" in
   arm64) ARCH=arm64 ;;
@@ -83,10 +98,14 @@ esac
 
 # Atomic activation: one rename over the `current` symlink.
 PREVIOUS="$(readlink "$ROOT/current" 2>/dev/null | sed 's|^versions/||' || true)"
-ln -sfn "versions/$RESOLVED" "$ROOT/current.tmp"
-mv -f "$ROOT/current.tmp" "$ROOT/current"
-ln -sfn "$ROOT/current/hive" "$BIN_DIR/hive.tmp"
-mv -f "$BIN_DIR/hive.tmp" "$BIN_DIR/hive"
+replace_symlink "versions/$RESOLVED" "$ROOT/current"
+active_dir="$(cd "$ROOT/current" 2>/dev/null && pwd -P || true)"
+intended_dir="$(cd "$VERSION_DIR" 2>/dev/null && pwd -P || true)"
+[ -n "$active_dir" ] || die "current does not resolve to an installed version"
+[ -n "$intended_dir" ] || die "staged version $VERSION_DIR does not resolve"
+[ "$active_dir" = "$intended_dir" ] ||
+  die "current resolved to '${active_dir:-nothing}', expected '$intended_dir'"
+replace_symlink "$ROOT/current/hive" "$BIN_DIR/hive"
 
 printf '{\n  "active": "%s",\n  "previous": %s\n}\n' "$RESOLVED" \
   "$([ -n "${PREVIOUS:-}" ] && printf '"%s"' "$PREVIOUS" || printf 'null')" \

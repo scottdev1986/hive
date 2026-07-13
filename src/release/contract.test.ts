@@ -7,7 +7,19 @@
  * instead of shipping a wrong version.
  */
 import { describe, expect, test } from "bun:test";
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  readlinkSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import { join, relative, resolve } from "node:path";
 
 const repoRoot = resolve(import.meta.dir, "../..");
@@ -107,8 +119,54 @@ describe("the installer", () => {
     expect(installer.indexOf("verify ")).toBeLessThan(installer.indexOf("--version"));
   });
 
-  test("activates through an atomic rename, not an in-place unlink", () => {
-    expect(installer).toContain('mv -f "$ROOT/current.tmp" "$ROOT/current"');
+  test("activates through a verified macOS no-follow rename", () => {
+    const platformGuard = installer.indexOf('"$(uname -s)" = "Darwin"');
+    const rename = installer.indexOf('/bin/mv -fh "$temporary" "$link"');
+    const activation = installer.indexOf('replace_symlink "versions/$RESOLVED" "$ROOT/current"');
+    expect(platformGuard).toBeGreaterThan(-1);
+    expect(rename).toBeGreaterThan(-1);
+    expect(activation).toBeGreaterThan(platformGuard);
+    expect(installer).toContain('[ "$actual" = "$target" ] ||');
+    expect(installer).toContain('[ "$active_dir" = "$intended_dir" ] ||');
+  });
+
+  test("plain macOS mv follows a current directory symlink and silently misses activation", () => {
+    if (process.platform !== "darwin") return;
+    const root = mkdtempSync(join(tmpdir(), "hive-install-follow-"));
+    try {
+      mkdirSync(join(root, "versions", "old"), { recursive: true });
+      mkdirSync(join(root, "versions", "new"), { recursive: true });
+      symlinkSync(join("versions", "old"), join(root, "current"));
+      symlinkSync(join("versions", "new"), join(root, "current.tmp"));
+
+      const moved = spawnSync("/bin/mv", ["-f", join(root, "current.tmp"), join(root, "current")]);
+
+      expect(moved.status).toEqual(0);
+      expect(readlinkSync(join(root, "current"))).toEqual(join("versions", "old"));
+      expect(readlinkSync(join(root, "versions", "old", "current.tmp")))
+        .toEqual(join("versions", "new"));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("macOS no-follow mv atomically replaces a current directory symlink", () => {
+    if (process.platform !== "darwin") return;
+    const root = mkdtempSync(join(tmpdir(), "hive-install-nofollow-"));
+    try {
+      mkdirSync(join(root, "versions", "old"), { recursive: true });
+      mkdirSync(join(root, "versions", "new"), { recursive: true });
+      symlinkSync(join("versions", "old"), join(root, "current"));
+      symlinkSync(join("versions", "new"), join(root, "current.tmp"));
+
+      const moved = spawnSync("/bin/mv", ["-fh", join(root, "current.tmp"), join(root, "current")]);
+
+      expect(moved.status).toEqual(0);
+      expect(readlinkSync(join(root, "current"))).toEqual(join("versions", "new"));
+      expect(existsSync(join(root, "versions", "old", "current.tmp"))).toEqual(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   test("is executable", () => {
