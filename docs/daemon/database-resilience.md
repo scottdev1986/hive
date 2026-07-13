@@ -1,7 +1,7 @@
 # Database resilience
 
 Updated: 2026-07-13
-Sources: Hive source tree, 2026-07-13; compiled from `docs/architecture/database-resilience.md`
+Source: Hive source tree, 2026-07-13
 
 ## Summary
 
@@ -34,6 +34,8 @@ Each instance's `hive.db` is, in normal operation, a **single-writer, single-pro
 
 The deliberate exception is `~/.hive/quota.db`: every live instance writes the same machine-wide ledger because every instance spends from the same logged-in vendor accounts. Its connections use WAL and a 5-second `busy_timeout`, and quota admission runs under `BEGIN IMMEDIATE`, so concurrent daemons serialize the check-and-reserve transaction. The ledger moves as one database because reservation reconciliation, usage sequencing, integrity triggers, and observation watermarks are one atomic system; splitting them across databases would make a process crash capable of committing only half the fact.
 
+Each active reservation records its owning `instanceId` and `instanceHome`. Reconciliation consults that instance's daemon lock and handshake: only a positively dead owner makes a reservation reclaimable; live and unknown owners are preserved (`src/daemon/quota-ledger.ts:1142-1170`, `:1615-1641`). A wall-clock expiry is not authority to cancel work that a sibling may still own.
+
 That single fact demolishes most generic SQLite hardening. There is no second writer to coordinate with, no connection pool, no replication. What is left is: what happens when the file is *wrong*.
 
 ## What is already true (do not re-litigate these)
@@ -41,8 +43,8 @@ That single fact demolishes most generic SQLite hardening. There is no second wr
 - `PRAGMA busy_timeout = 5000` is set on **every** connection, including read-only ones — it is connection-local and writes nothing (`db.ts:379`). bun:sqlite's default is zero, which fails instantly on honest transient contention.
 - `PRAGMA journal_mode = WAL`, `foreign_keys = ON` (`db.ts:401-402`).
 - **A missing database file is refused, not recreated.** If the out-of-DB identity marker exists but the file does not, the constructor throws `HiveDatabaseIdentityError` rather than letting `{create: true}` manufacture an empty replacement (`db.ts:357-363`). A *replaced* database is caught too: the stored identity in `meta` is compared against the marker and a mismatch closes the handle and throws (`db.ts:380-399`). This is the file-absent row of the table above, closed.
-- **`/health` actually reads the database.** It runs `quickCheck()` and reports `ok` / `degraded` / `unreadable`, and returns 503 when not ok (`src/daemon/server.ts:2039-2066`; `db.ts:726-730`). It used to return `{ok: true}` without touching SQLite — green on a corpse.
-- **An empty quota ledger reports unknown spend, not full headroom.** `QuotaLedgerUnknownError` (`src/daemon/quota-ledger.ts:153-161`) refuses to report fresh headroom or reserve more quota from a history it cannot read. Fail-open on money was the sharpest instance of the bug class.
+- **`/health` actually reads the database.** It runs `quickCheck()` and reports `ok` / `degraded` / `unreadable`, and returns 503 when not ok (`src/daemon/server.ts:2348-2374`; `db.ts:726-730`). It used to return `{ok: true}` without touching SQLite — green on a corpse.
+- **An empty quota ledger reports unknown spend, not full headroom.** `QuotaLedgerUnknownError` (`src/daemon/quota-ledger.ts:281-291`) refuses to report fresh headroom or reserve more quota from a history it cannot read. Fail-open on money was the sharpest instance of the bug class.
 - SIGKILL mid-write does not corrupt anything — that is what WAL is for. Partial migrations are self-healing: the ladder is a sequence of introspection-guarded `ALTER`s, and the one destructive step (the agents-table rebuild) is transactional and reconstructs columns it has never heard of from SQLite's own description of them, so an older binary cannot silently erase a newer one's column.
 
 ## What is still open
