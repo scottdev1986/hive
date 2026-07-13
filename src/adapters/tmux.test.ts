@@ -574,10 +574,7 @@ describe("interrupting a working agent", () => {
       .filter((c) => c[0] === "send-keys")
       .map((c) => c[c.length - 1]);
 
-    // Escape cancels the turn, but it also RESTORES the original prompt into the
-    // composer — measured against a real TUI. Pasting on top of that
-    // concatenates the control onto the old prompt and resubmits the mash as one
-    // corrupted turn. C-u is what stops that, and it is not optional.
+    // Escape restores the old prompt, so C-u must precede the control paste.
     expect(keys[0]).toEqual("Escape");
     expect(keys[1]).toEqual("C-u");
     expect(keys[keys.length - 1]).toEqual("Enter");
@@ -615,7 +612,7 @@ describe("interrupting a working agent", () => {
 describe("TmuxAdapter launch prompt limit", () => {
   const brief = `BRIEF ${"context ".repeat(12_500)}`; // ~100KB
 
-  test("rejects a brief passed on the command line, as Hive used to pass it", async () => {
+  test("rejects a brief passed on the command line", async () => {
     const session = `hive-inline-${crypto.randomUUID()}`;
     let message = "";
     try {

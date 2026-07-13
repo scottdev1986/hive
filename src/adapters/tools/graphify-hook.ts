@@ -11,22 +11,8 @@ export const GRAPHIFY_HOOK_SCRIPT = "hive-graphify-hook.sh";
  */
 export type GraphifyHookKind = "claude-search" | "claude-read" | "codex";
 
-/**
- * What each kind filters on, as the shell line that decides whether to nudge.
- *
- * Codex normalizes its shell tool to the name "Bash" in hook input, so its
- * command JSON matches the same search filter Claude's Bash hook uses.
- *
- * The record is total over `GraphifyHookKind` — that totality is the guard. A
- * third vendor's kind is a compile error here, which is deliberately NOT what
- * the script does at runtime: the generated `*) exit 0` stays, because a hook
- * is not a place to fail loudly. A PreToolUse hook that errors can block the
- * agent's tool call outright, so a Hive-side wiring bug would be paid for by
- * the agent, mid-turn, on every Bash call. The loud failure belongs at the
- * compile step, where the person who can fix it is standing; the shell stays
- * fail-open, and the missing nudges show up as a zero in the graphify adoption
- * counter that tool-telemetry already keeps per vendor.
- */
+/** Total over known hook kinds at compile time. The generated hook remains
+ * fail-open because a nudge failure must never block an agent tool call. */
 const GRAPHIFY_HOOK_FILTERS: Record<GraphifyHookKind, string> = {
   "claude-search":
     '    case "$input" in *grep*|*ripgrep*|*\"rg\ "*|*\"find\ "*|*\"fd\ "*|*\"ack\ "*|*\"ag\ "*) ;; *) exit 0 ;; esac',
@@ -53,11 +39,8 @@ export async function writeGraphifyHook(
     await rm(path, { force: true });
     return;
   }
-  // One output shape for both harnesses: Codex 0.144.1 parses a PreToolUse
-  // {"systemMessage": …} without error and then silently drops it — measured
-  // against a mock provider, the text never reaches the model — while the
-  // Claude-style hookSpecificOutput.additionalContext is injected as a
-  // developer message on both CLIs.
+  // Both harnesses inject hookSpecificOutput.additionalContext; Codex silently
+  // drops the otherwise accepted systemMessage shape.
   const script = [
     "#!/bin/sh",
     'kind="$1"',

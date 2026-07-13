@@ -58,7 +58,7 @@ describe("Grok adapter", () => {
     ]);
   });
 
-  test("uses the cross-model measured reader barrier", () => {
+  test("uses the cross-model reader barrier", () => {
     expect(buildGrokSpawnCommand({ ...writer, readOnly: true })).toEqual([
       "grok", "-m", "catalog-model",
       "--deny", "Bash",
@@ -90,7 +90,7 @@ describe("Grok adapter", () => {
     }
   });
 
-  test("parses only the measured version identity shape", () => {
+  test("parses only the vendor version identity shape", () => {
     expect(parseGrokCliVersion("grok 0.2.93 (f00f96316d4b) [stable]\n"))
       .toEqual({ version: "0.2.93", buildHash: "f00f96316d4b", channel: "stable" });
     expect(parseGrokCliVersion("0.2.93")).toBeNull();

@@ -2,12 +2,7 @@ import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-// Every MCP server attached to an agent spends context on every message it
-// sends (OpenAI states this outright for Codex; Claude Code defers the tool
-// *definitions* but still lists the names). A spawned agent inherits the
-// human's own servers — an IDE bridge, a vendor docs endpoint — none of which
-// its task asked for. Hive scopes that surface per spawn, and does it without
-// ever writing to the user's global config.
+// Scope inherited MCP servers per spawn without mutating global vendor config.
 
 /** Hive's own server. Always attached: it is how the agent reports, lands, and
  * reads memory. Scoping never removes it. */
@@ -20,14 +15,8 @@ export const HIVE_MCP_SERVERS: readonly string[] = [
   HIVE_CHANNEL_MCP_SERVER,
 ];
 
-// Verified against codex-cli 0.144.0: `-c` splits a dotted path on "." with no
-// TOML-quoting support, so `-c 'mcp_servers."a.b".enabled=false'` does not
-// address the server named `a.b` — it creates a *new* server literally keyed
-// `"a.b"` with no transport, and Codex then refuses to start:
-//   Error: failed to load configuration
-//   Caused by: invalid transport in `mcp_servers."a.b"`
-// A name Hive cannot address is therefore left attached rather than risking a
-// config that fails to load. Bare TOML keys are exactly [A-Za-z0-9_-]+.
+// Codex `-c` cannot quote a dotted path segment. Leave unaddressable server
+// names attached rather than generating an invalid transport entry.
 const CODEX_ADDRESSABLE_NAME = /^[A-Za-z0-9_-]+$/;
 
 export function isCodexAddressableServerName(name: string): boolean {
@@ -100,13 +89,8 @@ export interface CodexMcpExclusion {
   unaddressable: string[];
 }
 
-/**
- * Spawn-scoped config overrides that detach every inherited server the task
- * does not need. Verified against codex-cli 0.144.0: `-c` *deep-merges* into
- * the global config, so neither `-c 'mcp_servers={}'` nor a replacement inline
- * table removes anything — `mcp_servers.<name>.enabled=false` is the only
- * override that detaches a server, and `codex mcp list` reports it `disabled`.
- */
+/** Codex deep-merges `-c` overrides, so inherited servers must be disabled by
+ * addressable name; replacing the parent table does not detach them. */
 export function buildCodexMcpExclusionArgs(
   inherited: readonly string[],
   keep: readonly string[] = HIVE_MCP_SERVERS,

@@ -467,9 +467,6 @@ describe("buildTargetedGraphBrief", () => {
   ) => ({ id, label, source_file: file, source_location: loc, community: 1 });
   const link = (source: string, target: string, relation = "imports_from") =>
     ({ relation, confidence: "EXTRACTED", context: "import", source, target });
-  // A seed found by name; a second file whose ONLY relevance is defining a
-  // task-matched symbol the seed imports — the measured gap in the acceptance
-  // question (nothing named the config writer; its imported symbol did).
   const graph = {
     nodes: [
       node("api", "api.ts", "src/api.ts"),
@@ -545,16 +542,13 @@ describe("buildGraphBrief targeted path", () => {
     expect(brief).toContain("advisory");
     expect(brief).toContain("Graph locate:");
     expect(brief).toContain("NODE loginUser() [src=src/auth.ts loc=L9");
-    // The binary was never invoked: locate reads graph.json directly.
     expect(calls).toEqual([]);
     await rm(root, { recursive: true, force: true });
   });
 });
 
 describe("selectGraphBrief", () => {
-  // The serializer writes every NODE before the first EDGE; a head slice
-  // therefore always delivers zero edges (measured: 51 nodes, 0 edges at the
-  // old budget on the acceptance question). Selection must keep edges.
+  // A node-first serializer must not crowd every edge out of the brief.
   const header = "Traversal: BFS depth=2 | Start: ['a'] | 999 nodes found";
   const output = [
     header,
@@ -638,9 +632,6 @@ describe("writeGraphifyIgnore", () => {
 
 describe("snapshotGraphForServing", () => {
   test("copies the built graph to state-dir path rebuilds never touch", async () => {
-    // The MCP server re-reads its graph file per query and rebuilds rewrite
-    // graphify-out/graph.json in place, so serving the live file opens a
-    // "graph.json not found" window on every landing (measured 2026-07-12).
     const { snapshotGraphForServing, servingGraphPath, graphJsonPath } =
       await import("./graphify");
     const { mkdir } = await import("node:fs/promises");

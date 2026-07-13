@@ -129,11 +129,6 @@ export const runCommand: CommandRunner = async (argv, options) => {
   }
 };
 
-// ---------------------------------------------------------------------------
-// Per-repo state: enabled or not, and under which pin. Lives in the project's
-// derived-state dir (~/.hive/projects/<uuid>/), never in the repo.
-// ---------------------------------------------------------------------------
-
 export interface GraphifyState {
   enabled: boolean;
   /** The pin installed when this repo was enabled; null when never enabled. */
@@ -202,11 +197,6 @@ export async function writeGraphifyState(
   await writeFile(temporary, lines.join("\n"));
   await rename(temporary, path);
 }
-
-// ---------------------------------------------------------------------------
-// Install: fetch Hive's own frozen bundle, verify its sha256 against the
-// constant embedded in this binary, and unpack only after it matches.
-// ---------------------------------------------------------------------------
 
 export function noArtifactMessage(platformKey: string): string {
   return (
@@ -328,10 +318,6 @@ export async function installGraphify(
   return { ok: true, detail: `${probed.detail} (sha256-verified)` };
 }
 
-// ---------------------------------------------------------------------------
-// Graph builds: always --code-only, always scrubbed, always time-boxed.
-// ---------------------------------------------------------------------------
-
 /** Full extraction into `<root>/graphify-out/`. Local AST only: `--code-only`
  * is the pinned CLI's own zero-LLM switch, and the scrubbed environment makes
  * any upstream drift toward an LLM call fail loudly instead of egressing. */
@@ -387,12 +373,6 @@ export async function updateGraph(
   return { ok: true, detail: "graph updated" };
 }
 
-// ---------------------------------------------------------------------------
-// The spawn-brief digest (integration doc, layer 1): graph-derived context
-// injected by the daemon, so the graph pays out even for an agent that never
-// touches the MCP tools.
-// ---------------------------------------------------------------------------
-
 const GRAPH_BRIEF_PREAMBLE =
   "Graph context (graphify, advisory): a task-scoped slice of this repo's local code " +
   "knowledge graph. It is a hint for orientation — upstream accuracy is 45-76% — so " +
@@ -403,24 +383,11 @@ const GRAPH_BRIEF_PREAMBLE =
 const GRAPH_BRIEF_MAX_CHARS = 6_000;
 const GRAPH_BRIEF_TIMEOUT_MS = 3_000;
 
-/** The query's serializer writes every NODE line before the first EDGE line,
- * so a small `--budget` cuts the output before the edges — the only cited,
- * provenance-tagged content — ever appear (measured: on this repo edges start
- * near budget 16000; Hive's old 1200 delivered zero, always). The budget is
- * therefore large enough that edges reliably survive serialization, and
- * selectGraphBrief — not this number — bounds what the brief costs. Measured
- * at 40000 against this repo: ~450ms, ~56KB, well inside the time-box. */
+/** The serializer emits every node before any edge, so the query budget must
+ * reach provenance-bearing edges. `selectGraphBrief` bounds prompt cost. */
 const GRAPH_QUERY_BUDGET = 40_000;
 const GRAPH_BRIEF_HEADER_MAX_CHARS = 800;
 const GRAPH_BRIEF_NODE_MAX_CHARS = 2_000;
-
-// ---------------------------------------------------------------------------
-// Hive-side locate: score files against the task, expand one hop through the
-// graph's own edges, emit cited NODE/EDGE lines. Tuned against six real
-// orientation questions on this repo (all six surface their answer files);
-// the mechanisms — IDF-weighted name matching, hub-normalized structural
-// expansion, matched-symbol imports — are repo-agnostic.
-// ---------------------------------------------------------------------------
 
 const BRIEF_SEED_FILES = 5;
 const BRIEF_EXPANSION_FILES = 8;
@@ -474,23 +441,9 @@ function briefDamp(file: string): number {
   return damp;
 }
 
-/** Hive's own locate over a parsed graph.json, or null when the graph is not
- * the expected shape or nothing matches (callers fall back to the binary's
- * query). Three mechanisms, in order of evidence strength:
- *
- *   1. Seeds — files whose basename, symbol names, or path match the task's
- *      rare terms (IDF-weighted, so "agent" in an agent orchestrator counts
- *      for almost nothing and "graphify" counts for a lot).
- *   2. Structural expansion — files the seeds import or are imported by,
- *      normalized by degree so ubiquitous hubs do not win on connectivity.
- *   3. Matched-symbol expansion — a seed touches a symbol whose NAME matches
- *      the task; the file DEFINING that symbol is a strong relational lead.
- *      This is what surfaces the config-writer a question about "attaching
- *      a server to an agent" never names.
- *
- * Output reuses the binary's NODE/EDGE grammar (file:line citations,
- * EXTRACTED/INFERRED provenance tags) so everything agents are told about
- * reading graph output applies unchanged. */
+/** Locate from task-matched seeds plus one normalized structural hop. Output
+ * retains the binary's cited NODE/EDGE grammar; invalid or matchless graphs
+ * return null for the bounded binary fallback. */
 export function buildTargetedGraphBrief(
   graph: unknown,
   task: string,
@@ -799,12 +752,8 @@ export async function graphLocate(
   return { available: true, answer: `${brief}${LOCATE_VERIFY_FOOTER}` };
 }
 
-/** Select — never head-slice — the digest out of a `graphify query` dump.
- * The output shape is: header, all NODE lines (name + file:line citation),
- * then all EDGE lines (the provenance-tagged relations). A head slice keeps
- * the least dense part and always drops every edge, so this keeps the header,
- * the edges up to their own budget, and then the node lines that ground those
- * edges' endpoints with citations, before any other nodes. */
+/** Preserve edges and their cited endpoint nodes when reducing node-first query
+ * output. A head slice would discard every edge. */
 export function selectGraphBrief(output: string): string {
   const lines = output.split("\n");
   const headerLines: string[] = [];
@@ -879,19 +828,10 @@ export function selectGraphBrief(output: string): string {
  * the subprocess query path handles the outliers. */
 const TARGETED_BRIEF_MAX_GRAPH_BYTES = 50 * 1024 * 1024;
 
-/** The task-scoped digest for a spawn brief, or null when this repo never
- * opted in (silence — a repo without graphify should not hear about it).
- * Once opted in, every failure degrades to one loud line instead: an absent
- * graph must never look like a repo with nothing to find.
- *
- * The primary path reads graph.json directly and runs Hive's own locate
- * (buildTargetedGraphBrief below): the pinned binary's `query` anchors its
- * BFS on its own keyword matcher, which is the measured failure — on the
- * acceptance question it anchored "spawning" on vendored Swift and never
- * surfaced the files that actually answer. The binary accepts no explicit
- * start nodes, so better anchoring has to happen on Hive's side. The
- * subprocess `query` + selectGraphBrief path remains as the fallback for a
- * malformed, oversized, or matchless graph, and stays time-boxed. */
+/** The task-scoped spawn digest. Repos without graphify stay silent; opted-in
+ * failures are explicit so absence cannot masquerade as an empty graph.
+ * Hive locates from explicit seed nodes because the binary query cannot accept
+ * them; its bounded query remains the oversized or matchless fallback. */
 export async function buildGraphBrief(
   root: string,
   task: string,
@@ -939,19 +879,8 @@ export async function buildGraphBrief(
   return `${GRAPH_BRIEF_PREAMBLE}\n\n${selectGraphBrief(output)}`;
 }
 
-// ---------------------------------------------------------------------------
-// The serving snapshot: the MCP server must never read a file a rebuild is
-// rewriting.
-// ---------------------------------------------------------------------------
-
-/** The graph file the MCP server is pointed at. The serve process re-resolves
- * and re-reads its graph from disk on every query (upstream's hot-reload), and
- * `graphify update` rewrites `graphify-out/graph.json` in place — so a server
- * aimed at the live file answers "graph.json not found" to any query landing
- * inside a rebuild's write window, which post-landing rebuilds open on every
- * merge (measured 2026-07-12: a fresh agent hit exactly that). The daemon
- * therefore serves a copy under Hive's project state dir that no rebuild ever
- * touches; each successful rebuild refreshes it and restarts the server. */
+/** Serve an immutable project-state snapshot because graphify rewrites its live
+ * graph in place and the server reopens it for every query. */
 export function servingGraphPath(root: string): string {
   return join(projectStateDir(root), "graphify-serving", "graph.json");
 }
@@ -987,10 +916,6 @@ export async function snapshotGraphForServing(
   }
   return { ok: true, detail: target };
 }
-
-// ---------------------------------------------------------------------------
-// Ignore hygiene: `.git/info/exclude`, verified, never `.gitignore`.
-// ---------------------------------------------------------------------------
 
 const EXCLUDE_COMMENT = "# hive graphify: local knowledge graph, never committed";
 /** Both are Hive-written, machine-local state: the graph output dir and the
@@ -1091,10 +1016,6 @@ export async function removeGraphifyExcludeEntry(
   return true;
 }
 
-// ---------------------------------------------------------------------------
-// The generated .graphifyignore: keep vendored dependencies out of the graph.
-// ---------------------------------------------------------------------------
-
 /** First line of a Hive-generated `.graphifyignore`. A file without it is the
  * user's own and is never rewritten or removed. */
 export const GRAPHIFY_IGNORE_MARKER =
@@ -1120,25 +1041,9 @@ const VENDORED_DIR_FLOOR = [
  * every file, and a monorepo can gitignore thousands of directories. */
 const GITIGNORED_DIR_CAP = 400;
 
-/** Write `<root>/.graphifyignore` so extraction skips vendored dependencies.
- *
- * Why this exists at all: the pinned binary honours gitignore rules **only
- * from the scan root itself** (`_load_graphifyignore` walks ancestors, never
- * descendants), so a nested declaration like `workspace/.gitignore: .build/`
- * is invisible to it — measured on this repo, that one gap put 5,142 vendored
- * Swift nodes (51%) into the graph and poisoned query start-node selection.
- * The repo's own gitignore rules are the general signal: they are the team's
- * declaration of "not our code", per-repo, ecosystem-free. `git ls-files
- * --ignored` evaluates them at every level, so its directory list is exactly
- * the nested-gitignore knowledge the binary cannot see, and the static floor
- * covers vendored dirs that teams commit. The file lands in the repo root
- * because the binary reads it nowhere else; the `.git/info/exclude` entry
- * above keeps it out of anyone's `git status`.
- *
- * Over-exclusion is a silent failure, so: a `.graphifyignore` Hive did not
- * generate is left alone entirely (edit or replace the file to override any
- * rule — gitignore `!` negations win by last-match), and callers surface the
- * returned detail so what was excluded is said out loud at build time. */
+/** Materialize nested Git ignore rules at the scan root because graphify reads
+ * only root-level rules. Never replace a user-owned `.graphifyignore`; silent
+ * over-exclusion is worse than retaining extra nodes. */
 export async function writeGraphifyIgnore(
   root: string,
   run: CommandRunner = runCommand,
@@ -1203,12 +1108,8 @@ export async function writeGraphifyIgnore(
   };
 }
 
-// ---------------------------------------------------------------------------
-// Removal: the durable install is `rm -rf` twice. Spawn-time hook files are
-// derived runtime config: they fail open once this removes the server and are
-// removed with their worktrees (or by the next graphless config write).
-// ---------------------------------------------------------------------------
-
+/** Remove durable graphify state. Spawn hooks are derived, fail-open worktree
+ * files removed by cleanup or the next graphless config write. */
 export async function purgeGraphify(root: string): Promise<string[]> {
   const removed: string[] = [];
   for (const path of [graphifyToolsDir(), graphOutDir(root), dirname(servingGraphPath(root))]) {

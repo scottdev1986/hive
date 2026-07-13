@@ -97,14 +97,6 @@ describe("rankPrimaryDoc", () => {
   });
 
   test("a doc that merely TALKS ABOUT another doc does not vote for it", () => {
-    // The bug this ranking exists to not have. A document that discusses a
-    // filename — a migration note, a skill explaining which conventions file a
-    // vendor reads, this very sentence — used to cast one vote per mention, and
-    // the primary doc every agent is briefed with moved because of prose.
-    //
-    // Measured on this repo: CLAUDE.md had 23 bare mentions and ZERO inbound
-    // links, exactly as many mentions as SPEC.md. Under mention-counting a
-    // single new doc naming CLAUDE.md four times was enough to flip the primary.
     const primary = rankPrimaryDoc(["SPEC.md", "CLAUDE.md"], [
       { path: "SPEC.md", text: "the design" },
       { path: "README.md", text: "the design lives in [the spec](SPEC.md)" },
@@ -412,8 +404,6 @@ describe("a doc is briefable because it is there, not because git tracks it", ()
   });
 });
 
-// --- the fingerprint: what "stale" is allowed to mean -----------------------
-
 describe("ensureProfile — regenerates when wrong, and only when wrong", () => {
   test("twenty commits that change nothing it derives leave it untouched", async () => {
     const root = await repoWithSpec();
@@ -422,10 +412,6 @@ describe("ensureProfile — regenerates when wrong, and only when wrong", () => 
       const before = await Bun.file(profilePath(root)).text();
       const stamp = (await stat(profilePath(root))).mtimeMs;
 
-      // The bug this whole design exists to kill: the fingerprint used to hash
-      // the Git tree, so *any* commit to *any* file marked the profile stale —
-      // and the user got told it was "20 commits stale" and asked to fix it by
-      // hand, about a profile whose every derived field was still correct.
       for (let i = 0; i < 20; i++) {
         await write(root, `src/feature-${i}.ts`, `export const f${i} = ${i};\n`);
         commitAll(root, `feature ${i}`);
@@ -433,7 +419,6 @@ describe("ensureProfile — regenerates when wrong, and only when wrong", () => 
 
       const profile = await ensureProfile(root);
       expect(profile.docs.primary).toBe("SPEC.md");
-      // Byte-identical, and not even rewritten: no drift, so no work.
       expect(await Bun.file(profilePath(root)).text()).toBe(before);
       expect((await stat(profilePath(root))).mtimeMs).toBe(stamp);
     } finally {
@@ -449,8 +434,6 @@ describe("ensureProfile — regenerates when wrong, and only when wrong", () => 
       await write(root, "docs/design/api.md", "notes on the API\n");
       commitAll(root, "add a doc");
 
-      // The fingerprint re-lists the docs rather than trusting the recorded
-      // allowlist — a check driven by the old list could never see a new file.
       const profile = await ensureProfile(root);
       expect(profile.docs.briefable).toContain("docs/design/api.md");
       expect(profile.docs.briefableDirectories).toContain("docs/");

@@ -15,10 +15,8 @@ export interface GrokSpawnOptions {
   worktreePath: string;
   readOnly: boolean;
   executable?: string;
-  /** The session UUID Hive names for a NEW session. Grok drives no hook
-   * channel, so it never reports its session id back; without naming it up
-   * front, every reader has to guess which session on disk belongs to this
-   * agent, and a reused worktree still holds its dead predecessor's. */
+  /** The session UUID Hive assigns at creation because Grok has no session-id
+   * hook channel. */
   sessionId?: string;
 }
 
@@ -28,14 +26,8 @@ export interface GrokAgentConfigOptions {
   graphifyUrl?: string;
 }
 
-/**
- * The measured reader policy, kept in one place because Grok matches these
- * Claude-style rule names against differently named native tools. In
- * particular, `Bash` binds Grok's `Shell`; deny wins over allow.
- *
- * Measured on both reachable models: `MCPTool` binds composer-fast's
- * `CallMcpTool` and Grok 4.5's `use_tool` semantic wrapper.
- */
+/** Grok maps these compatibility names to native tools: `Bash` covers `Shell`,
+ * and `MCPTool` covers both `CallMcpTool` and `use_tool`. Deny wins. */
 export const GROK_READ_ONLY_PERMISSION_RULES: {
   deny: readonly string[];
   allow: readonly string[];
@@ -126,12 +118,7 @@ function grokLaunchArgs(options: GrokSpawnOptions): string[] {
   return argv;
 }
 
-/**
- * `--session-id` names a NEW session and is rejected on resume (measured: the
- * CLI accepts a v4 `crypto.randomUUID()` and creates the session directory
- * under exactly that id). It lives here rather than in `grokLaunchArgs`
- * because the resume path below must never carry it.
- */
+/** `--session-id` creates a session and must never enter the resume path. */
 export function buildGrokSpawnCommand(options: GrokSpawnOptions): string[] {
   const argv = grokLaunchArgs(options);
   if (options.sessionId !== undefined) {

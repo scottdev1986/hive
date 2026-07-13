@@ -109,23 +109,6 @@ describe("skill provisioning", () => {
     }
   });
 
-  /**
-   * Two vendors can share one skill directory, and both CLIs read all of it.
-   * Measured 2026-07-12: Grok scans `.agents/skills` — the same directory Codex
-   * reads — and `codex debug prompt-input` puts a foreign skill's name and
-   * description straight into the model-visible prompt, while `grok inspect
-   * --json` reports one with no `disabled` flag, i.e. active. `shippedSkillsFor`
-   * decides what Hive WRITES and nothing about what the CLI READS.
-   *
-   * A skill directory is per-checkout state (`.agents/`, `.claude/` are
-   * gitignored), so a fresh worktree is clean and a REUSED one is not: it still
-   * holds the last vendor's skills. That is what these tests close.
-   *
-   * The collision is exercised with the vendors that exist today, because it
-   * needs no third one: `hive-claude` is a shipped skill FOREIGN to Codex, and
-   * `.agents/skills` is Codex's own directory. Planting it there is the exact
-   * shape of the Grok/Codex case.
-   */
   test("a foreign vendor's Hive skill is removed from a reused worktree", async () => {
     const root = await mkdtemp(join(tmpdir(), "hive-skills-foreign-"));
     tempRoots.push(root);
@@ -135,16 +118,12 @@ describe("skill provisioning", () => {
       (skill) => skill.name === "hive-claude",
     )!;
 
-    // The worktree's previous life: a Claude-contract skill sitting in the
-    // directory Codex (and Grok) scan, byte-identical to what Hive ships.
+    // Plant a byte-identical foreign contract in the shared reader directory.
     await mkdir(join(native, foreign.name), { recursive: true });
     await writeFile(join(native, foreign.name, "SKILL.md"), foreign.content);
 
     await provisionSkills(worktree, "codex", join(root, "missing-global"));
 
-    // The effect: the wrong vendor's contract is GONE from the directory this
-    // agent's CLI reads. Not relabelled, not deprioritised — absent. A label
-    // asks the model to cooperate; this does not need it to.
     await expect(
       readFile(join(native, foreign.name, "SKILL.md"), "utf8"),
     ).rejects.toThrow();
@@ -177,39 +156,17 @@ describe("skill provisioning", () => {
       .toEqual(mine);
   });
 
-  /**
-   * A vendor contract must not be installed into a directory a SECOND vendor
-   * also reads. Grok scans `.agents/skills` — where Codex reads — so in a root
-   * where both are installed, a file written "for Codex" is read by Grok too,
-   * and Hive's contract tells it, with total confidence, facts that are false
-   * for it.
-   *
-   * What can be proven TODAY is the rule and the no-regression, because Claude
-   * and Codex do NOT share a directory: `.claude/skills` is not `.agents/skills`.
-   * There is no third vendor yet, so no pair of real vendors can collide, and the
-   * end-to-end effect (a Codex model-visible prompt containing no Grok contract)
-   * is not writable until Grok exists. It is specified in grok-integration-spec
-   * §13 for the commit that adds the vendor. Saying so is better than a test that
-   * asserts something weaker while looking like it asserts that.
-   */
   test("a skill is withheld from a directory a reader it is not addressed to would see", () => {
     const contract = shippedSkillsFor("codex")
       .find((skill) => skill.name === "hive-codex")!;
     const neutral = shippedSkillsFor("codex")
       .find((skill) => skill.name === "hive-memory")!;
 
-    // One reader — a worktree, or a machine with one CLI. Everything installs,
-    // exactly as before.
     expect(skillAddressesEveryReader(contract, ["codex"])).toBe(true);
     expect(skillAddressesEveryReader(neutral, ["codex"])).toBe(true);
 
-    // Two vendors sharing one directory. `hive-codex` is shipped to Codex alone,
-    // so a second reader would be reading a contract written for someone else:
-    // withheld. `hive-memory` is shipped to both, so it is addressed to both and
-    // still installs. This is the whole rule, and it needs no "is this a
-    // contract?" flag — the manifest already records who each skill is for.
-    expect(skillAddressesEveryReader(contract, ["codex", "claude"])).toBe(false);
-    expect(skillAddressesEveryReader(neutral, ["codex", "claude"])).toBe(true);
+    expect(skillAddressesEveryReader(contract, ["codex", "grok"])).toBe(false);
+    expect(skillAddressesEveryReader(neutral, ["codex", "grok"])).toBe(true);
   });
 
   test("the rule is conditional on a SHARED directory, so one vendor changes nothing", () => {

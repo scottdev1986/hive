@@ -1,32 +1,7 @@
 /**
- * The repo profile — Hive's portability seam (SPEC.md decision 14).
- *
- * A structured record of this repo's doc names, commands, and shape, so every
- * mechanism that used to assume the hive repo's own layout (the scoped brief,
- * the orchestrator's citation guidance, the landing gate) reads a per-repo
- * answer instead of a compiled-in guess. Product code calls `ensureProfile` and
- * gets a typed object, never a Markdown fact body parsed out of prose.
- *
- * The profile is a **cache, not a document**. Everything in it is derived from
- * the tree by reading manifests and listing docs — tens of milliseconds, zero
- * model tokens — so there is nothing in it a human is meant to maintain, and no
- * reason to make anyone think about it. Two consequences run through this file:
- *
- *   - It lives in Hive's own per-project state directory
- *     (`~/.hive/projects/<hiveUuid>/profile.toml`), not in the repo. It is not
- *     the repo's business, it does not belong in anyone's diff, and it never
- *     goes stale in a way a human has to fix.
- *   - It regenerates *silently*. `ensureProfile` compares a fingerprint of the
- *     inputs that actually determine the profile and rewrites it when they
- *     drift. It prints nothing, asks for nothing, and there is no refresh
- *     command to forget to run.
- *
- * The one part a human owns is `.hive/profile.override.toml` — committed, small,
- * hand-edited, never written by Hive — which layers over the derived answers
- * when detection gets one wrong. See `ProfileOverrideSchema`.
- *
- * Machine-specific things — absolute worktree paths, the daemon port — are never
- * written here; they are rebuilt at runtime.
+ * The repo profile is a derived cache in per-project Hive state. It regenerates
+ * when its determining inputs change; `.hive/profile.override.toml` is the only
+ * human-owned layer. Machine-specific runtime values are never persisted here.
  */
 import { createHash } from "node:crypto";
 import {
@@ -61,16 +36,8 @@ const isMissingFileError = (error: unknown): boolean =>
   "code" in error &&
   (error as { code?: unknown }).code === "ENOENT";
 
-// ---------------------------------------------------------------------------
-// Where the profile lives. Hive keeps its own state in its own directory, one
-// per project, keyed by the `hiveUuid` the project registry already mints —
-// which is what makes this survive a repo being renamed or moved.
-//
-// The key is resolved from the repo's *primary* worktree, never the calling
-// directory. Every agent runs in a linked worktree, and the registry gives a
-// linked worktree its own identity; keying on the caller would hand each agent
-// a private profile of its own branch. One repo, one profile.
-// ---------------------------------------------------------------------------
+// Resolve state through the primary worktree so linked agent worktrees share
+// one durable project identity and profile.
 
 /** Git helpers — cheap, best-effort. A directory that is not a Git checkout
  * profiles fine; it is simply its own project. */
@@ -115,13 +82,7 @@ export function overridePath(root: string): string {
   return join(root, OVERRIDE_RELATIVE_PATH);
 }
 
-// ---------------------------------------------------------------------------
-// TOML serialization. Bun.TOML.parse handles reading; TOML has no stringifier,
-// so we hand-write one for the profile's fixed shape (top-level int, tables of
-// strings, string arrays, ints, and bools). A null field omits its key rather
-// than emitting `null` (TOML has none): that is also how "which doc is primary,
-// dropped when none" and "whether an AGENTS.md exists" express absence.
-// ---------------------------------------------------------------------------
+// TOML has no null; optional profile fields are represented by omitted keys.
 
 const tomlString = (value: string): string => JSON.stringify(value);
 const tomlArray = (values: string[]): string =>
@@ -295,10 +256,6 @@ export async function writeProfile(
   await rename(temporary, path);
 }
 
-// ---------------------------------------------------------------------------
-// The override: the repo's committed correction of a derivation Hive got wrong.
-// ---------------------------------------------------------------------------
-
 const ProfileOverrideWireSchema = z.strictObject({
   commands: z.strictObject({
     build: z.string().optional(),
@@ -383,18 +340,8 @@ export function applyOverride(
   };
 }
 
-// ---------------------------------------------------------------------------
-// Fingerprint. A hash over the inputs that actually determine the profile: the
-// current doc inventory, the manifests and lockfiles, the tracked-file count.
-// Sizes stand in for contents — cheap, and a doc edit that changes a file's
-// length is exactly the edit that can move the inbound-link ranking.
-//
-// It deliberately does NOT hash the Git tree. It used to, which meant every
-// commit to any file marked the profile stale; a profile whose every derived
-// field was still correct would announce itself as "20 commits stale" and ask to
-// be refreshed by hand. Staleness now means the profile is *wrong*, and a
-// profile that is wrong gets rewritten without anyone being told.
-// ---------------------------------------------------------------------------
+// Hash only inputs that determine the profile. The Git tree itself would make
+// unrelated commits invalidate a still-correct cache.
 
 const MANIFEST_FILES = [
   "package.json",
@@ -445,14 +392,8 @@ export interface FingerprintInputs {
   commit: string | null;
 }
 
-/**
- * Hash everything `bootstrapProfile` reads, without reading any of it whole.
- *
- * The doc inventory is re-listed rather than taken from the existing profile,
- * which is the difference between a fingerprint that notices a *new* doc and one
- * that cannot: a check driven by the recorded allowlist can only ever see the
- * files it already knows about.
- */
+/** Fingerprint bootstrap inputs from the current tree, including newly added
+ * docs that cannot appear in a cached allowlist. */
 export async function computeFingerprint(root: string): Promise<FingerprintInputs> {
   const { briefable, briefableDirectories } = await inventoryDocPaths(root);
   const parts = [
@@ -475,11 +416,6 @@ export async function computeFingerprint(root: string): Promise<FingerprintInput
     commit: git(root, ["rev-parse", "HEAD"]),
   };
 }
-
-// ---------------------------------------------------------------------------
-// Deterministic generation — zero model tokens. Reads the manifests and docs and
-// produces the profile that un-hardcodes the brief mechanism on any repo.
-// ---------------------------------------------------------------------------
 
 function detectPackageManager(root: string): string | null {
   const has = (name: string): boolean =>
@@ -667,19 +603,8 @@ async function inventoryDocPaths(root: string): Promise<{
   return { rootDocs, briefable, briefableDirectories };
 }
 
-/**
- * Every path this doc *links to*: markdown inline targets `](path)` and
- * reference definitions `[id]: path`. Anchors and queries are stripped, so
- * `SPEC.md#routing` cites `SPEC.md`.
- *
- * A link target is the whole point. The ranker used to count how many times a
- * doc's basename appeared anywhere in the corpus, which cannot tell a citation
- * from a sentence that merely contains the characters `SPEC.md` — so a document
- * that TALKED ABOUT a filename voted for it. That is not hypothetical: a staged
- * doc naming the repo's Claude conventions file four times flipped this repo's
- * briefing primary away from SPEC.md, and that file is cited by exactly zero
- * links. What every agent gets briefed with must not be decidable by prose.
- */
+/** Markdown link targets, without anchors or queries. Bare filename mentions
+ * do not vote in primary-document ranking. */
 function citedPaths(text: string): string[] {
   const targets: string[] = [];
   for (const match of text.matchAll(/\]\(\s*<?([^)<>\s]+)/g)) {
@@ -693,21 +618,8 @@ function citedPaths(text: string): string[] {
     .filter((target) => target.length > 0);
 }
 
-/** Rank docs by inbound *citations* (how often each is linked to across the
- * corpus) with a small role boost, and return the most-cited as primary. This
- * is the doc-level analogue of aider's symbol ranking; the primary is "the one
- * everything else cites", whatever it is called.
- *
- * A citation is a link, not a mention. Counting mentions made the ranking a
- * popularity contest over prose, which any new document could win by discussing
- * a filename often enough — silently re-pointing the primary doc that every
- * agent in the system is briefed with. Measured on this repo when the
- * distinction was introduced: SPEC.md carried 5 inbound links and 23 bare
- * mentions; the Claude conventions file carried 0 links and the same 23
- * mentions. Mentions could not separate them. Links are decisive.
- *
- * Returns null primary when the corpus is empty or nothing is cited and no doc
- * carries a design role. */
+/** Rank by inbound Markdown links with a small design-role boost. Returns null
+ * when the corpus has neither citations nor a design-role document. */
 export function rankPrimaryDoc(
   docs: string[],
   corpus: Array<{ path: string; text: string }>,
@@ -842,23 +754,8 @@ export async function bootstrapProfile(root: string): Promise<RepoProfile> {
   });
 }
 
-// ---------------------------------------------------------------------------
-// The only entry point product code needs.
-// ---------------------------------------------------------------------------
-
-/**
- * The effective profile for `root`, generating or regenerating it as needed.
- *
- * Generation costs a `git ls-files`, a handful of `stat`s, and a read of the
- * repo's markdown — tens of milliseconds, zero model tokens. That measurement is
- * the whole design: because being wrong is cheap to fix, being wrong is not
- * worth *telling anyone about*. There is no stale state, no refresh command, and
- * no output on any path. A repo whose profile has drifted simply gets a correct
- * one before the caller sees it.
- *
- * Two processes racing here converge: generation is deterministic, and the write
- * is atomic and skipped when the bytes match.
- */
+/** Return the effective profile, regenerating drift before exposing it. Races
+ * converge because generation is deterministic and writes are atomic. */
 export async function ensureProfile(root: string): Promise<RepoProfile> {
   const cached = await loadDerivedProfile(root);
   if (cached !== null && cached.schemaVersion === PROFILE_SCHEMA_VERSION) {

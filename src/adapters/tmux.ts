@@ -180,30 +180,8 @@ export class TmuxAdapter {
     }
   }
 
-  /**
-   * Interrupt a working agent so a message reaches it NOW, rather than whenever
-   * it next happens to call a tool.
-   *
-   * The TUI advertises this itself — while it holds a queued message it prints
-   * "press esc to interrupt and send immediately" — and Hive was not using it.
-   * Without it, `urgent` and `critical` were indistinguishable from `normal` at
-   * the transport layer: paste and press Enter, then wait for a tool boundary
-   * that a reasoning model may not reach for minutes. A critical order revoking
-   * an agent's write authority sat unread in a composer while the agent kept
-   * writing, which is the most dangerous thing this system could do.
-   *
-   * Clearing the composer afterwards is not optional, and it is the part a naive
-   * implementation gets wrong. Escape cancels the turn and *restores the original
-   * prompt text into the composer* — measured — so pasting on top of it
-   * concatenates the control onto the end of the old prompt with no separator and
-   * resubmits the whole mash as one corrupted turn. `C-u` empties the line first.
-   *
-   * The cost is real and it is why only urgent and critical pay it: the
-   * interrupted turn is cancelled outright and the agent does not resume it, so
-   * whatever it was reasoning about is gone. That is precisely what a caller is
-   * asking for when they choose urgent over normal, and it is never done for
-   * routine traffic.
-   */
+  /** Escape restores the cancelled prompt in the composer, so clear it before
+   * pasting the urgent control. Interrupted turns cannot resume. */
   private async interruptComposer(session: string): Promise<void> {
     const escape = await this.run(
       ["send-keys", "-t", `=${session}:`, "Escape"],

@@ -178,11 +178,6 @@ describe("git worktree manager", () => {
     await removeWorktree(repoRoot, created.path, { deleteBranch: true });
   });
 
-  // Measured on the real agent bridget: `dirtyFiles: [".grok/"]`,
-  // `unmergedCommits: 0`. Dirty files mean "this agent still holds work", so
-  // Hive refused to reap her -- and since Hive writes that file into EVERY
-  // grok worktree at spawn, every grok agent was born permanently unfinished
-  // and could never be auto-reaped. They pile up forever.
   test("hive's own grok wiring is not the agent's work, and never blocks a reap", async () => {
     const created = await createWorktree(repoRoot, "agent-grok", "grok-wiring");
     await writeGrokAgentConfig(created.path, { daemonPort: 4711 });

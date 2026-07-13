@@ -170,11 +170,8 @@ export class CodexAppServerThreadConnection {
   }
 }
 
-// A JSON-RPC frame is at most a few hundred KB; megabytes of buffered bytes
-// without a newline means the peer is streaming garbage. Dropping the buffer
-// forfeits one unparseable frame instead of letting a broken peer grow the
-// process without bound (the 2026-07-10 OOM incident is why every unbounded
-// accumulation point in this file now has a ceiling).
+// A frame is at most a few hundred KB. An unterminated larger buffer is not a
+// valid frame and must not grow without bound.
 export const MAX_FRAME_BUFFER_BYTES = 4 * 1024 * 1024;
 
 export class SocketTransport implements CodexAppServerTransport {
@@ -731,7 +728,7 @@ function approvalResponse(
   return { decision: approved ? "accept" : "decline" };
 }
 
-export function renderCodexViewerMessage(message: RpcMessage): string | null {
+export function renderCodexHostMessage(message: RpcMessage): string | null {
   const method = message.method;
   const params = message.params ?? {};
   if (method === "turn/started") {
@@ -840,7 +837,7 @@ export async function runCodexAppServerHost(
   });
   await chmod(options.socket, 0o600);
   process.stdout.write(
-    `Hive viewer for ${options.agentName} — Codex app-server event feed\n`,
+    `Hive Codex app-server for ${options.agentName}\n`,
   );
   const stdout = new Response(child.stdout).body!.getReader();
   const stderr = new Response(child.stderr).body!.getReader();
@@ -872,11 +869,11 @@ export async function runCodexAppServerHost(
         childBuffer = childBuffer.slice(newline + 1);
         if (line.length === 0) continue;
         try {
-          const rendered = renderCodexViewerMessage(JSON.parse(line) as RpcMessage);
+          const rendered = renderCodexHostMessage(JSON.parse(line) as RpcMessage);
           if (rendered !== null) process.stdout.write(rendered);
         } catch {
-          // The daemon still receives the original frame; viewer rendering is
-          // deliberately best-effort and never controls the agent.
+          // The daemon receives the original frame; host rendering never
+          // controls the agent.
         }
       }
     }
@@ -913,20 +910,7 @@ export function codexAgentHostPidfile(
   return `${codexAgentSocketPath(agent, hiveHome)}.pid`;
 }
 
-/**
- * The agent id inside a host pidfile name, or null when the file is not this
- * instance's.
- *
- * The name is `hive-codex-<instanceSuffix>-<agentId>.sock.pid`. The previous
- * pattern was `/^hive-codex-(.+)\.sock\.pid$/`, whose greedy group captured
- * `<instanceSuffix>-<agentId>` as one string and handed *that* to a lookup by
- * agent id — which could only ever answer "unknown", so the reaper skipped
- * every pidfile it had ever seen and NEVER FIRED. Orphaned codex hosts leaked
- * on every single run, with one instance running and no multi-instance in
- * sight. Anchoring on this instance's own suffix also makes the "an unknown id
- * may belong to another hive instance sharing the temp dir" guard real, rather
- * than a comment describing something the code did not do.
- */
+/** The agent id in this instance's host pidfile, or null for any other name. */
 export function hostPidfileAgentId(
   name: string,
   hiveHome?: string,
@@ -947,28 +931,8 @@ export interface ReapOrphanDependencies {
   kill: (pid: number) => void;
 }
 
-/**
- * Kill codex app-server children whose host process died without cleanup.
- *
- * Only pidfiles whose agent id belongs to a KNOWN dead agent are acted on:
- * a live agent's host still owns its child, and an id this daemon has never
- * seen may belong to another hive instance sharing /tmp. The pid is verified
- * to still be a codex app-server before the kill so a recycled pid is never
- * shot. Returns the pids that were reaped.
- */
-/**
- * The pid in a pidfile can be recycled by the OS, so the process holding it
- * now may not be the host that wrote it. What tells them apart has to be the
- * BINARY, not the command line: Hive passes an agent's task prompt on the
- * command line (`--append-system-prompt`), so any agent briefed about this
- * reaper carries the literal phrase "codex app-server" in its own `ps` output
- * and satisfies a substring test. The orchestrator does too. Only the
- * dead-agent-row guard kept that from being a kill, which left the whole
- * margin resting on the guard and none of it on the matcher.
- *
- * argv[0] cannot be faked by a prompt: a Claude agent is `claude` whatever it
- * has been asked to think about.
- */
+/** A prompt can contain "codex app-server", so process identity must come
+ * from argv[0] and the subcommand. */
 function isCodexAppServer(command: string): boolean {
   const [binary, subcommand] = command.trim().split(/\s+/);
   return basename(binary ?? "") === "codex" && subcommand === "app-server";

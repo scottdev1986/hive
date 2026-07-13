@@ -13,7 +13,7 @@ import {
   codexAgentSocketPath,
   hostPidfileAgentId,
   reapOrphanCodexHosts,
-  renderCodexViewerMessage,
+  renderCodexHostMessage,
 } from "./codex-app-server";
 
 class FakeTransport implements CodexAppServerTransport {
@@ -252,16 +252,16 @@ describe("Codex app-server adapter", () => {
     });
   });
 
-  test("renders a readable viewer feed instead of raw protocol JSON", () => {
-    expect(renderCodexViewerMessage({
+  test("renders a readable host feed instead of raw protocol JSON", () => {
+    expect(renderCodexHostMessage({
       method: "item/agentMessage/delta",
       params: { delta: "Tests are green." },
     })).toEqual("Tests are green.");
-    expect(renderCodexViewerMessage({
+    expect(renderCodexHostMessage({
       method: "item/started",
       params: { item: { type: "commandExecution", command: "bun test" } },
     })).toEqual("\n$ bun test\n");
-    expect(renderCodexViewerMessage({
+    expect(renderCodexHostMessage({
       method: "account/rateLimits/updated",
       params: {},
     })).toEqual(null);
@@ -407,16 +407,8 @@ describe("reapOrphanCodexHosts", () => {
   const status = (map: Record<string, "live" | "dead" | "unknown">) =>
   (id: string) => map[id] ?? "unknown";
 
-  // The pidfile names are BUILT BY THE PRODUCTION WRITER, never hand-typed.
-  //
-  // They used to be spelled `hive-codex-dead-agent.sock.pid` here — a format
-  // nothing in Hive has ever written. The real name carries the instance hash
-  // (`hive-codex-<suffix>-<agentId>.sock.pid`), and the reaper's old greedy
-  // pattern captured `<suffix>-<agentId>` as the agent id, so against a REAL
-  // filename the lookup always answered "unknown" and the reaper skipped every
-  // pidfile it saw. The fixture was the only thing that ever matched it: a
-  // green test standing exactly where the bug was. Generating the names from
-  // `codexAgentHostPidfile` is what makes this test able to fail.
+  // Generate fixtures through the production writer so instance-qualified
+  // pidfile parsing cannot drift from its producer.
   const pidfileFor = (id: string): string =>
     basename(codexAgentHostPidfile({ id } as AgentRecord));
   const socketFor = (id: string): string =>
@@ -488,14 +480,7 @@ describe("reapOrphanCodexHosts", () => {
     )).rejects.toThrow("still running after reap");
   });
 
-  // A recycled pid held by a process that merely TALKS about codex is not a
-  // codex host. Hive puts an agent's task prompt on the command line, so an
-  // agent briefed to work on this reaper has "codex app-server" in its own
-  // `ps` output — as does the orchestrator, whose system prompt names every
-  // vendor. The old check was `command.includes("codex app-server")`, which
-  // those satisfy: the only thing standing between a recycled pid and a
-  // SIGKILL of a live agent was the dead-agent-row guard. Match the binary,
-  // which a prompt cannot forge.
+  // Prompt text can name codex app-server; argv[0] cannot be forged by it.
   test("does not reap a process that only mentions codex in its prompt", async () => {
     const claudeAgent =
       "/Users/x/.local/bin/claude --model claude-opus-4-8 --append-system-prompt " +

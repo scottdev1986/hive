@@ -36,22 +36,16 @@ export interface CodexSpawnOptions {
   worktreePath: string;
   daemonPort: number;
   readOnly: boolean;
-  /** Writer autonomy: no human input required. Uses the config-override form
-   * (approval_policy "never", sandbox_mode "danger-full-access" — values
-   * verified against codex 0.144.0, where the pair renders as "YOLO mode")
-   * so spawn and resume share one shape. Ignored for read-only sessions. */
+  /** Writer autonomy through config overrides shared by spawn and resume.
+   * Ignored for read-only sessions. */
   dangerous?: boolean;
   /** Names of MCP servers this spawn inherits from the user's global
    * `~/.codex/config.toml` and does not need. Each is detached for this
    * process only, via a config override; the user's file is never touched.
    * Hive's own `hive` server is never in this list. */
   excludeMcpServers?: readonly string[];
-  /** A capability token was minted for this agent, so the spawn tells codex
-   * to read the bearer from the launch environment. Only the env var NAME
-   * rides the argv; the value enters through the tmux launch command's
-   * `$(cat ...)` substitution (wrapCodexSpawnWithCapabilityEnv), which `ps`
-   * shows unexpanded. Never emitted without a token: codex 0.144.1 silently
-   * disables an MCP server whose bearer_token_env_var is unset. */
+  /** Read the bearer from the launch environment. Only the variable name may
+   * enter argv, and the override is absent when no token exists. */
   withCapabilityToken?: boolean;
   /** The per-repo graphify MCP server, when the daemon has one up and healthy
    * (docs/graphify/integration.md). Attached through the same
@@ -63,12 +57,8 @@ export type CodexAgentConfigOptions = Pick<
   CodexSpawnOptions,
   "name" | "daemonPort" | "readOnly" | "graphifyUrl"
 > & {
-  /** The agent's capability token. Codex has no connect-time headers helper,
-   * so unlike Claude its token has to sit in a file: a dedicated 0600
-   * `capability-token` whose contents the launch shell exports as
-   * CODEX_CAPABILITY_TOKEN_ENV for `bearer_token_env_var`. It must never ride
-   * an argv (visible in `ps`) and never sit in the project config.toml —
-   * codex does not read that file under Hive's launch. */
+  /** Stored only in Hive's 0600 token file and exported by the launch shell;
+   * never written to argv or project config. */
   capabilityToken?: string;
 };
 

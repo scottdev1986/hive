@@ -701,11 +701,6 @@ describe("Claude adapter", () => {
   });
 
   test("a daemon port change re-points the turn-start hook, not just the others", async () => {
-    // The 2026-07-12 incident: the config had been written under port 4317,
-    // the daemon came back on 4483, and the rewrite refreshed every hook
-    // except UserPromptSubmit — so the root's turn-starts posted to a dead
-    // port, its open turns were invisible, and the stalled-message sweep
-    // false-alarmed "idle yet never submitted" on a busy root.
     await writeClaudeAgentConfig(worktreePath, {
       name: "orchestrator",
       daemonPort: 4317,

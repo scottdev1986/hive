@@ -27,16 +27,8 @@ export interface RemoveWorktreeOptions {
   deleteBranch?: boolean;
   discardTracked?: boolean;
   force?: boolean;
-  /**
-   * The branch to delete, from the caller that knows it.
-   *
-   * Without it, deleteBranch can only delete what `git worktree list` still
-   * reports — and once the worktree directory is gone and its registration
-   * pruned, that list is empty, so the delete silently deletes nothing and
-   * still returns success. The caller then records the branch as removed while
-   * it is still sitting in the repo. Git's worktree list is not the authority
-   * on which branch an agent held; the caller is.
-   */
+  /** The caller-owned branch identity. A removed worktree registration cannot
+   * recover it reliably. */
   branch?: string;
 }
 
@@ -446,26 +438,9 @@ async function branchExists(repoRoot: string, branch: string): Promise<boolean> 
 }
 
 /**
- * Files Hive itself writes into an agent's worktree. They are wiring, never
- * work: Hive generates them at spawn and strips them at cleanup, and no agent
- * authors them.
- *
- * This exists because dirty files mean "this agent still holds work", so Hive
- * refuses to reap an agent that has any. `.grok/config.toml` is Hive's own
- * Grok MCP wiring (writeGrokAgentConfig), written into every Grok worktree at
- * spawn — which made every Grok agent permanently dirty, permanently
- * "unfinished", and impossible to auto-reap. They piled up forever.
- *
- * A repo's own .gitignore cannot fix this, because Hive runs in repos that
- * have never heard of it. The exclusion belongs here, in the check that
- * decides whether work exists at all.
- *
- * Named exactly, never by directory: excluding a path here means Hive may
- * delete the worktree holding it, so this must not be able to swallow a file
- * someone actually wrote. The Grok CLI itself writes nothing into its cwd
- * (measured — its session artifacts live in ~/.grok/sessions), so if anything
- * else ever appears under `.grok/` it shows up as dirty and blocks the reap.
- * That is the safe direction to fail.
+ * Exact Hive-owned wiring paths excluded from stranded-work checks. Directory
+ * patterns are forbidden because an exclusion can authorize worktree deletion;
+ * any other file under `.grok/` must remain visible as agent work.
  */
 const HIVE_WORKTREE_WIRING: readonly string[] = [".grok/config.toml"];
 

@@ -37,23 +37,8 @@ export interface ClaudeSpawnOptions {
   worktreePath: string;
   daemonPort: number;
   readOnly: boolean;
-  /** Autonomy: bypass every permission prompt so the session needs no human
-   * input. Applied through the worktree's settings (permissions.defaultMode
-   * "bypassPermissions"). That mode raises a blocking acceptance dialog on its
-   * own — the CLI keys the disclaimer on the mode, not on the
-   * `--dangerously-skip-permissions` flag — so writeClaudeAgentConfig pairs it
-   * with skipDangerousModePermissionPrompt in the same file. Verified against
-   * claude 2.1.206.
-   *
-   * Applies to READ-ONLY sessions too. It does not widen their authority:
-   * "bypassPermissions" suppresses the prompt, while permissions.deny removes
-   * the write tools outright, and the two are independent. Measured against
-   * claude 2.1.207 — under bypassPermissions a denied tool is not merely
-   * unprompted but absent ("No such tool available: Write. Write exists but is
-   * not enabled in this context"), and the deny list reaches Task subagents as
-   * well, so a reader cannot delegate around it. Landing is refused separately
-   * by the reader capability server-side. Leaving this off for a reader is what
-   * parked one on a WebFetch dialog while Hive reported it "working". */
+  /** Suppress interactive permission prompts. Read-only authority remains
+   * enforced independently by denied tools and server capabilities. */
   dangerous?: boolean;
   /** Launch with the Channels research preview so the hive-channel bridge can
    * push daemon messages into the running session. Attended sessions only: the
@@ -313,11 +298,7 @@ export function buildClaudeSpawnCommand(
     );
   }
   if (options.scopedMcpConfigPath !== undefined) {
-    // `--mcp-config <configs...>` is variadic in Claude 2.1.206, so the
-    // non-variadic `--strict-mcp-config` must follow it to terminate the list.
-    // Verified on this machine: with both flags a session exposes only the
-    // servers in the named file (5 inherited servers and 41 MCP tools drop to
-    // 1 server and 0 — `claude -p --output-format stream-json` init message).
+    // `--mcp-config` is variadic; the strict flag terminates its value list.
     command.push(
       "--mcp-config",
       options.scopedMcpConfigPath,
@@ -500,26 +481,8 @@ let trustSeedQueue: Promise<void> = Promise.resolve();
 const positiveInteger = (value: unknown): number =>
   typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0;
 
-/**
- * Pre-accept the folder-trust prompt for one Hive-created worktree.
- *
- * A fresh worktree is an unknown folder, so `claude` opens on a blocking
- * "Do you trust the files in this folder?" dialog that an unattended agent
- * cannot answer. The CLI documents this exact escape hatch in the error it
- * prints when it drops project settings: set
- * `projects[<path>].hasTrustDialogAccepted: true` in ~/.claude.json.
- *
- * Trust is also load-bearing beyond the dialog: an untrusted workspace makes
- * the CLI discard the project-scoped permission rules and hooks that Hive
- * writes into the worktree — including a read-only agent's deny list.
- *
- * Scope: this touches exactly one `projects` key, the agent worktree's own
- * absolute path, and never a global flag. The CLI resolves trust by walking
- * from the session cwd upward, so the worktree key alone is enough — Hive
- * never has to trust the repository root or affect the operator's own
- * sessions. (Accepting the dialog by hand records it against the main repo
- * instead, which is why this seeds the narrower key. Verified on 2.1.206.)
- */
+/** Trust exactly the agent worktree. Without folder trust Claude blocks and
+ * discards the project permission rules that enforce read-only sessions. */
 export async function seedClaudeWorktreeTrust(
   worktreePath: string,
   home = claudeHome(),
@@ -597,22 +560,15 @@ export async function writeClaudeAgentConfig(
       hiveInstanceSuffix(),
     ].join(" ");
 
-  // What makes a session read-only, in either mode. Denial is the guarantee:
-  // measured against claude 2.1.207, a denied tool is stripped from the session
-  // (and from its Task subagents) rather than merely prompted for, so it holds
-  // even under "bypassPermissions". The permission MODE only decides who gets
-  // asked — it was never what kept a reader from writing.
+  // Denied tools are removed from the session and its subagents, including in
+  // bypass mode; the permission mode alone does not make a session read-only.
   const readOnlyDeny = ["Edit", "Write", "NotebookEdit", "Bash"];
 
   const permissions = options.readOnly
     ? (options.dangerous ?? false)
       ? {
-          // Autonomy means no human input, for a reader as much as a writer.
-          // Everything the deny list leaves standing is a read: Read/Glob/Grep,
-          // WebFetch/WebSearch, and the MCP servers. There is no allow list
-          // because there is nothing left to gate — and an allow list is how
-          // this broke, since it had to enumerate every read tool in advance
-          // and WebFetch was not among them.
+          // The deny list defines read-only; an allow list would require Hive
+          // to predict every present and future read tool.
           defaultMode: "bypassPermissions",
           deny: readOnlyDeny,
         }
@@ -650,17 +606,8 @@ export async function writeClaudeAgentConfig(
         ],
       };
 
-  // bypassPermissions raises a blocking "WARNING: Claude Code running in Bypass
-  // Permissions mode" dialog on every launch, whether the mode arrives from the
-  // CLI flag or from these settings. The CLI clears it when
-  // skipDangerousModePermissionPrompt is set in any settings source, and
-  // localSettings (this file) is one of them — so the acceptance stays inside
-  // the agent's worktree instead of relying on the operator's ~/.claude
-  // settings. Measured against claude 2.1.206; without this key an unattended
-  // writer stalls on the dialog forever.
-  //
-  // Keyed on the MODE, not on who holds it: an autonomous reader is in
-  // bypassPermissions too, so it meets the same dialog and needs the same key.
+  // Every bypass-mode session, including an autonomous reader, needs the
+  // worktree-local acknowledgement or it blocks on an interactive warning.
   const bypassingPermissions = options.dangerous ?? false;
   const graphifyHook = graphifyHookPath(worktreePath, ".claude");
   // The kind is typed, not a free string: it is the token the generated hook
@@ -674,13 +621,8 @@ export async function writeClaudeAgentConfig(
     ...(bypassingPermissions ? { skipDangerousModePermissionPrompt: true } : {}),
     hooks: {
       SessionStart: hook(eventCommand("session-start")),
-      // Always written, like every other hook kind. This used to be skipped
-      // when the key already existed, so a daemon port change re-pointed every
-      // hook EXCEPT turn-start: the root kept posting turn-starts to the dead
-      // port, its open turns became invisible, and the stalled-message sweep
-      // read a busy root as "idle yet never submitted" (false alarm,
-      // 2026-07-12). deepMerge unions the arrays, so a user's own
-      // UserPromptSubmit hooks survive alongside this one.
+      // Always write the current daemon endpoint. deepMerge preserves the
+      // user's own UserPromptSubmit hooks alongside Hive's.
       UserPromptSubmit: hook(eventCommand("turn-start")),
       Stop: hook(eventCommand("turn-end")),
       Notification: hook(eventCommand("notification")),
@@ -779,9 +721,8 @@ export async function writeClaudeAgentConfig(
 
   const mergedSettings = deepMerge(existingSettings, settings);
   const mergedMcp = deepMerge(existingMcp, mcp);
-  // A respawn merges over the previous spawn's file, so a graphify entry from
-  // a daemon that is no longer serving would survive as a dead URL every
-  // agent pays a connect-timeout for. No URL now means no entry, period.
+  // A missing URL must remove a stale merged entry or every respawn retains a
+  // dead endpoint.
   if (
     options.graphifyUrl === undefined &&
     isRecord(mergedMcp.mcpServers)
