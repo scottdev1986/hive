@@ -234,6 +234,19 @@ describe("activation", () => {
     expect(readlinkSync(currentLink(root))).toEqual(join("versions", "0.0.7"));
   });
 
+  test("replaces the current symlink itself without following it", async () => {
+    fakeVersion("0.0.6");
+    fakeVersion("0.0.7");
+    writeFileSync(join(versionDir("0.0.6", root), "retained"), "old release\n");
+    await activate("0.0.6", root);
+
+    await activate("0.0.7", root);
+
+    expect(readlinkSync(currentLink(root))).toEqual(join("versions", "0.0.7"));
+    expect(readFileSync(join(versionDir("0.0.6", root), "retained"), "utf8"))
+      .toBe("old release\n");
+  });
+
   test("refuses to activate a version that is not staged", async () => {
     await expect(activate("0.0.9", root)).rejects.toThrow(UpdateError);
   });
