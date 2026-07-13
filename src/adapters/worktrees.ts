@@ -104,7 +104,7 @@ async function markBranchOwned(
   assertGitSuccess(result, "update-ref");
 }
 
-async function branchOwner(
+export async function branchOwner(
   repoRoot: string,
   branch: string,
 ): Promise<string | undefined> {
@@ -121,6 +121,13 @@ async function branchOwner(
     if (owner !== "") return owner;
   }
   return undefined;
+}
+
+export async function clearBranchOwnership(
+  repoRoot: string,
+  branch: string,
+): Promise<void> {
+  await markBranchOwned(repoRoot, branch, false);
 }
 
 export async function markBranchPreserved(

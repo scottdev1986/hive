@@ -4,7 +4,12 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
 import { parseDaemonHandshake } from "./handshake";
+import { getHiveHome } from "./db";
 import { hiveInstanceSuffix } from "./tmux-sessions";
+import {
+  daemonInstanceLiveness,
+  type DaemonInstanceLiveness,
+} from "./lifecycle";
 
 const INSTANCE_NAME = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
 
@@ -14,6 +19,12 @@ export function defaultHiveHome(): string {
 
 export function instancesRoot(): string {
   return join(defaultHiveHome(), "instances");
+}
+
+export function machineHiveHome(hiveHome = getHiveHome()): string {
+  const resolved = resolve(hiveHome);
+  const namedRoot = `${resolve(instancesRoot())}/`;
+  return resolved.startsWith(namedRoot) ? resolve(defaultHiveHome()) : resolved;
 }
 
 export function namedInstanceHome(name: string): string {
@@ -59,6 +70,11 @@ export interface HiveInstance {
   readonly running: boolean;
 }
 
+export interface InstanceMutationBlocker {
+  readonly instance: HiveInstance;
+  readonly liveAgents: readonly string[];
+}
+
 async function inspectInstance(name: string, home: string): Promise<HiveInstance> {
   const port = readNumber(join(home, "daemon.port"));
   const pid = readNumber(join(home, "daemon.pid"));
@@ -90,6 +106,38 @@ export async function listInstances(): Promise<HiveInstance[]> {
       .map((entry) => ({ name: entry.name, home: join(instancesRoot(), entry.name) })),
   ];
   return Promise.all(candidates.map(({ name, home }) => inspectInstance(name, home)));
+}
+
+/**
+ * Global install mutations are safe only when every positively live daemon has
+ * an empty team. An instance still starting is unknown and blocks too.
+ */
+export async function instanceMutationBlockers(
+  liveAgents: (port: number) => Promise<readonly string[]>,
+  deps: {
+    instances?: () => Promise<HiveInstance[]>;
+    liveness?: (
+      home: string,
+      instanceId: string,
+    ) => Promise<DaemonInstanceLiveness>;
+  } = {},
+): Promise<InstanceMutationBlocker[]> {
+  const blockers: InstanceMutationBlocker[] = [];
+  for (const instance of await (deps.instances ?? listInstances)()) {
+    if (instance.running && instance.port !== null) {
+      const agents = await liveAgents(instance.port).catch(() => ["<unknown>"]);
+      if (agents.length > 0) blockers.push({ instance, liveAgents: agents });
+      continue;
+    }
+    const state = await (deps.liveness ?? daemonInstanceLiveness)(
+      instance.home,
+      instance.instanceId,
+    );
+    if (state === "unknown") {
+      blockers.push({ instance, liveAgents: ["<starting-or-unreachable>"] });
+    }
+  }
+  return blockers;
 }
 
 export async function printInstances(): Promise<void> {

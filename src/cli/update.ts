@@ -38,6 +38,10 @@ import { yellow } from "../update/notice";
 import { releaseKeys } from "../release/manifest";
 import { expectedDaemonHandshake } from "../daemon/handshake";
 import { isRunning } from "../daemon/lifecycle";
+import {
+  instanceMutationBlockers,
+  type InstanceMutationBlocker,
+} from "../daemon/instances";
 import { fetchAgentStatus } from "./mcp";
 import {
   HIVE_ARCH,
@@ -180,12 +184,23 @@ export async function runUpdateSkip(): Promise<void> {
 
 export async function runRollback(): Promise<void> {
   guardSelfUpdate();
+  const blockers = await instanceMutationBlockers(liveAgentNames);
+  if (blockers.length > 0) throw new UpdateError(globalMutationRefusal(blockers));
   const outcome = await rollback({ healthCheck });
   if (!outcome.activated) {
     throw new UpdateError(outcome.reason);
   }
   console.log(`hive ${outcome.version} active (rolled back)`);
   await stopStaleDaemonAfterActivation();
+}
+
+export function globalMutationRefusal(
+  blockers: readonly InstanceMutationBlocker[],
+): string {
+  return blockers.map(({ instance, liveAgents }) =>
+    `${instance.name}: ${liveAgents.join(", ")}`
+  ).join("; ") +
+    " — refusing to change the machine-wide active Hive binary while any instance has a live or unobservable team";
 }
 
 /**
@@ -289,6 +304,12 @@ export async function runUpdate(requested?: string): Promise<void> {
   console.log(verifiedLine(staged));
 
   // The activation half, only when the control plane is provably idle.
+  const blockers = await instanceMutationBlockers(liveAgentNames);
+  if (blockers.length > 0) {
+    console.log(`hive ${version} activates when every instance's team finishes`);
+    console.log(globalMutationRefusal(blockers));
+    return;
+  }
   const daemon = await inspectDaemonForUpdate({
     expected: () => expectedDaemonHandshake(process.cwd()),
     liveAgents: liveAgentNames,

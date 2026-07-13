@@ -40,7 +40,7 @@
  */
 import { existsSync } from "node:fs";
 import { readdir, readFile, rm, rmdir } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import {
   GRAPHIFY_IGNORE_MARKER,
   graphOutDir,
@@ -51,12 +51,25 @@ import {
 import { projectStateDir } from "../adapters/profile";
 import { nativeSkillDirectory, type SkillTool } from "../adapters/skills";
 import { CAPABILITY_PROVIDERS } from "../schemas";
-import { getHiveHome } from "../daemon/db";
 import { shippedSkillsFor } from "../skills/shipped";
 import { binLink, detectInstallMethod, installRoot } from "../update/paths";
 import { stopHive } from "./control";
+import { fetchAgentStatus } from "./mcp";
 import { confirmOnTty, type ConfirmFn } from "./prompt";
 import { repairLeakedProjectConfig } from "./project-config-cleanup";
+import {
+  instanceMutationBlockers,
+  listInstances,
+  machineHiveHome,
+  type InstanceMutationBlocker,
+} from "../daemon/instances";
+import { daemonInstanceLiveness } from "../daemon/lifecycle";
+import {
+  branchOwner,
+  clearBranchOwnership,
+  listWorktrees,
+} from "../adapters/worktrees";
+import { hiveInstanceSuffix, isDefaultHiveHome } from "../daemon/tmux-sessions";
 
 export interface UninstallDeps {
   run: CommandRunner;
@@ -64,6 +77,27 @@ export interface UninstallDeps {
   log: (line: string) => void;
   /** Best-effort daemon/agent stop; injectable so tests never touch tmux. */
   stop: () => Promise<void>;
+  liveTeams: () => Promise<readonly InstanceMutationBlocker[]>;
+  stopOtherInstances: () => Promise<void>;
+}
+
+async function stopOtherInstances(): Promise<void> {
+  const instances = await listInstances();
+  for (const instance of instances) {
+    if (!instance.running) continue;
+    if (instance.pid === null) {
+      throw new Error(`instance ${instance.name} has no recorded daemon pid`);
+    }
+    process.kill(instance.pid, "SIGTERM");
+  }
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const states = await Promise.all(instances.map((instance) =>
+      daemonInstanceLiveness(instance.home, instance.instanceId)
+    ));
+    if (states.every((state) => state === "dead")) return;
+    await Bun.sleep(50);
+  }
+  throw new Error("one or more Hive instances did not stop");
 }
 
 export const defaultUninstallDeps: UninstallDeps = {
@@ -71,6 +105,13 @@ export const defaultUninstallDeps: UninstallDeps = {
   confirm: confirmOnTty,
   log: console.log,
   stop: stopHive,
+  liveTeams: () => instanceMutationBlockers(async (port) => {
+    const agents = await fetchAgentStatus(port);
+    return agents
+      .filter((agent) => agent.status !== "dead" && agent.status !== "done")
+      .map((agent) => agent.name);
+  }),
+  stopOtherInstances,
 };
 
 /** Confirm a destructive plan: explicit `--yes` wins, a TTY is asked
@@ -124,30 +165,49 @@ async function removeShippedSkills(
   }
 }
 
-/** Remove every agent worktree under `.hive/worktrees/` and every `hive/*`
- * branch. The confirmation named this: unlanded agent work dies here. */
+/** Remove only this instance's worktrees and branches. */
 async function removeWorktreesAndBranches(
   root: string,
   run: CommandRunner,
   log: (line: string) => void,
 ): Promise<void> {
-  const container = join(root, ".hive", "worktrees");
+  const container = resolve(root, ".hive", "worktrees");
+  const instanceId = hiveInstanceSuffix();
+  const allowLegacy = isDefaultHiveHome();
+  const worktrees = await listWorktrees(root).catch(() => []);
+  const worktreeMarker = `${join(".hive", "worktrees")}/`;
+  const registered = new Map(
+    worktrees
+      .filter((worktree) =>
+        worktree.path.includes(worktreeMarker)
+      )
+      .map((worktree) => [basename(worktree.path), worktree]),
+  );
   const entries = await readdir(container).catch(() => [] as string[]);
   for (const entry of entries) {
-    const path = join(container, entry);
+    const path = resolve(container, entry);
+    const worktree = registered.get(entry);
+    const owner = worktree?.branch === null || worktree?.branch === undefined
+      ? undefined
+      : await branchOwner(root, worktree.branch);
+    const owned = owner === instanceId || (owner === undefined && allowLegacy);
+    if (!owned) {
+      log(`Left sibling-owned worktree ${path}.`);
+      continue;
+    }
     const removed = await run(
       ["git", "worktree", "remove", "--force", path],
       { cwd: root, timeoutMs: 30_000 },
     );
-    if (removed.exitCode !== 0) {
+    if (removed.exitCode !== 0 && allowLegacy) {
       // A directory that is not a registered worktree (stale leftovers) is
-      // still Hive's to delete.
+      // only safely attributable to the legacy default instance.
       await rm(path, { recursive: true, force: true });
     }
-    log(`Removed worktree ${path}.`);
+    if (removed.exitCode === 0 || allowLegacy) log(`Removed worktree ${path}.`);
   }
   await run(["git", "worktree", "prune"], { cwd: root, timeoutMs: 30_000 });
-  await rm(container, { recursive: true, force: true });
+  await rmdir(container).catch(() => {});
   await rmdir(join(root, ".hive")).catch(() => {
     // Only removed when empty: `.hive/skills` and other user content stay.
   });
@@ -158,11 +218,19 @@ async function removeWorktreesAndBranches(
   );
   if (branches.exitCode === 0) {
     for (const branch of branches.stdout.split("\n").map((line) => line.trim()).filter((line) => line.length > 0)) {
+      const owner = await branchOwner(root, branch);
+      if (owner !== instanceId && !(owner === undefined && allowLegacy)) {
+        log(`Left sibling-owned branch ${branch}.`);
+        continue;
+      }
       const deleted = await run(
         ["git", "branch", "-D", branch],
         { cwd: root, timeoutMs: 30_000 },
       );
-      if (deleted.exitCode === 0) log(`Deleted branch ${branch}.`);
+      if (deleted.exitCode === 0) {
+        await clearBranchOwnership(root, branch);
+        log(`Deleted branch ${branch}.`);
+      }
     }
   }
 }
@@ -175,7 +243,7 @@ export async function runUninstallRepo(
   const plan = [
     `This removes Hive from ${root}:`,
     "  - stops this project's agents and daemon",
-    "  - deletes agent worktrees under .hive/worktrees/ and all hive/* branches (unlanded agent work is lost)",
+    "  - deletes this instance's agent worktrees and hive/* branches (its unlanded agent work is lost)",
     "  - removes the skills Hive installed (edited copies are yours and stay)",
     "  - removes Hive's entries from .mcp.json, .claude/settings.local.json, .codex/, and .git/info/exclude",
     "  - deletes graphify-out/, the generated .graphifyignore, and this repo's derived state under ~/.hive/projects/",
@@ -218,7 +286,17 @@ export async function runUninstallMachine(
   deps: UninstallDeps = defaultUninstallDeps,
 ): Promise<number> {
   const method = detectInstallMethod(process.execPath);
-  const hiveHome = getHiveHome();
+  const hiveHome = machineHiveHome();
+  const blockers = await deps.liveTeams();
+  if (blockers.length > 0) {
+    deps.log(
+      "Refusing machine uninstall while a Hive instance has a live or unobservable team: " +
+        blockers.map(({ instance, liveAgents }) =>
+          `${instance.name} (${liveAgents.join(", ")})`
+        ).join("; "),
+    );
+    return 1;
+  }
   const plan = [
     "This removes Hive from this machine:",
     `  - stops running agents and the daemon`,
@@ -237,6 +315,16 @@ export async function runUninstallMachine(
   await deps.stop().catch(() => {
     // No daemon is fine.
   });
+  try {
+    await deps.stopOtherInstances();
+  } catch (error) {
+    deps.log(
+      `Refusing to remove the machine-wide binary because another instance did not stop: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+    return 1;
+  }
   await rm(hiveHome, { recursive: true, force: true });
   deps.log(`Removed ${hiveHome}.`);
   if (method === "native") {

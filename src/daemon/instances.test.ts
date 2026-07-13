@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 
 import {
+  instanceMutationBlockers,
   namedInstanceHome,
   selectInstanceFromArgv,
 } from "./instances";
@@ -27,5 +28,48 @@ describe("instance selection", () => {
 
   test("instance names cannot escape the registry directory", () => {
     expect(() => namedInstanceHome("../other")).toThrow("Invalid Hive instance name");
+  });
+
+  test("global mutation sees each live instance's own team and blocks unknown startup", async () => {
+    const instances = [
+      {
+        name: "blue",
+        home: "/tmp/blue",
+        instanceId: "blue-id",
+        port: 4301,
+        pid: 101,
+        running: true,
+      },
+      {
+        name: "green",
+        home: "/tmp/green",
+        instanceId: "green-id",
+        port: 4302,
+        pid: 102,
+        running: true,
+      },
+      {
+        name: "starting",
+        home: "/tmp/starting",
+        instanceId: "starting-id",
+        port: null,
+        pid: 103,
+        running: false,
+      },
+    ];
+    const seen: number[] = [];
+    const blockers = await instanceMutationBlockers(async (port) => {
+      seen.push(port);
+      return port === 4301 ? ["maya"] : [];
+    }, {
+      instances: async () => instances,
+      liveness: async (_home, id) => id === "starting-id" ? "unknown" : "dead",
+    });
+    expect(seen).toEqual([4301, 4302]);
+    expect(blockers.map(({ instance, liveAgents }) => [instance.name, liveAgents]))
+      .toEqual([
+        ["blue", ["maya"]],
+        ["starting", ["<starting-or-unreachable>"]],
+      ]);
   });
 });

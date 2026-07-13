@@ -10,6 +10,7 @@ import {
 } from "../adapters/graphify";
 import { projectStateDir } from "../adapters/profile";
 import { getHiveHome } from "../daemon/db";
+import { hiveInstanceSuffix } from "../daemon/tmux-sessions";
 import { shippedSkillsFor } from "../skills/shipped";
 import { runUninstallMachine, runUninstallRepo, type UninstallDeps } from "./uninstall";
 
@@ -66,6 +67,8 @@ function probe(confirm: boolean | null, overrides: Partial<UninstallDeps> = {}):
     stop: async () => {
       stops.push(1);
     },
+    liveTeams: async () => [],
+    stopOtherInstances: async () => {},
     ...overrides,
   };
   return { deps, lines, stops };
@@ -113,6 +116,11 @@ describe("hive uninstall --repo", () => {
         `${theirs.content}\n# my edits\n`,
       );
       git(root, ["worktree", "add", join(root, ".hive", "worktrees", "wt"), "-b", "hive/wt-task"]);
+      git(root, [
+        "update-ref",
+        `refs/hive-owner/${hiveInstanceSuffix()}/hive/wt-task`,
+        "hive/wt-task",
+      ]);
       await mkdir(join(root, ".hive", "skills", "mine"), { recursive: true });
       await writeFile(join(root, ".hive", "skills", "mine", "SKILL.md"), "# mine\n");
       await mkdir(join(root, "graphify-out"), { recursive: true });
@@ -134,6 +142,7 @@ describe("hive uninstall --repo", () => {
           },
         }),
       );
+      await writeFile(join(hiveHome, "daemon.port"), "4483\n");
       await mkdir(projectStateDir(root), { recursive: true });
       await writeFile(join(projectStateDir(root), "initialized"), "stamp\n");
 
@@ -169,9 +178,72 @@ describe("hive uninstall --repo", () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+
+  test("removes only this instance's same-repo worktree and branch", async () => {
+    const root = await gitRepo();
+    try {
+      const ownPath = join(root, ".hive", "worktrees", "maya");
+      const siblingPath = join(root, ".hive", "worktrees", "david");
+      git(root, ["worktree", "add", ownPath, "-b", "hive/maya-own"]);
+      git(root, ["worktree", "add", siblingPath, "-b", "hive/david-sibling"]);
+      git(root, [
+        "update-ref",
+        `refs/hive-owner/${hiveInstanceSuffix()}/hive/maya-own`,
+        "hive/maya-own",
+      ]);
+      git(root, [
+        "update-ref",
+        "refs/hive-owner/sibling-instance/hive/david-sibling",
+        "hive/david-sibling",
+      ]);
+      const { deps, lines } = probe(true);
+      expect(await runUninstallRepo(root, {}, deps)).toBe(0);
+      expect(existsSync(ownPath)).toBe(false);
+      expect(existsSync(siblingPath)).toBe(true);
+      expect(Bun.spawnSync([
+        "git", "-C", root, "show-ref", "--verify", "refs/heads/hive/maya-own",
+      ]).exitCode).not.toBe(0);
+      expect(Bun.spawnSync([
+        "git", "-C", root, "show-ref", "--verify", "refs/heads/hive/david-sibling",
+      ]).exitCode).toBe(0);
+      expect(lines.join("\n")).toContain("Left sibling-owned worktree");
+      expect(lines.join("\n")).toContain("Left sibling-owned branch hive/david-sibling");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("hive uninstall", () => {
+  test("refuses machine removal while a sibling has a positively visible live team", async () => {
+    const home = await mkdtemp(join(tmpdir(), "hive-home-sibling-live-"));
+    const previous = process.env.HIVE_HOME;
+    process.env.HIVE_HOME = home;
+    try {
+      const { deps, lines, stops } = probe(true, {
+        liveTeams: async () => [{
+          instance: {
+            name: "review",
+            home: join(home, "instances", "review"),
+            instanceId: "instance-review",
+            port: 4318,
+            pid: 1234,
+            running: true,
+          },
+          liveAgents: ["maya"],
+        }],
+      });
+      expect(await runUninstallMachine({}, deps)).toBe(1);
+      expect(stops).toEqual([]);
+      expect(lines.join("\n")).toContain("review (maya)");
+      expect(existsSync(home)).toBe(true);
+    } finally {
+      if (previous === undefined) delete process.env.HIVE_HOME;
+      else process.env.HIVE_HOME = previous;
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
   test("confirmed: removes ~/.hive; a source build's binary is not Hive's to touch", async () => {
     const home = await mkdtemp(join(tmpdir(), "hive-home-gone-"));
     const previous = process.env.HIVE_HOME;
