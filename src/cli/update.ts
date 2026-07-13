@@ -26,12 +26,14 @@ import {
   ensureStaged,
   readInstallState,
   rollback,
+  type ActivationOutcome,
   type StageOutcome,
 } from "../update/install";
 import {
   explainRefusal,
   inspectDaemonForUpdate,
   restartStaleDaemon,
+  type DaemonUpdateState,
 } from "../update/daemon";
 import { startDownload } from "../update/progress";
 import { releaseKeys } from "../release/manifest";
@@ -51,6 +53,11 @@ import {
   versionLine,
 } from "../version";
 import type { HiveArch } from "../release/manifest";
+import {
+  acquireMachineMutationLease,
+  type MachineMutationLease,
+  type MachineMutationPurpose,
+} from "../daemon/mutation-lease";
 
 const arch = (): HiveArch => (HIVE_ARCH === "arm64" ? "arm64" : "x64");
 
@@ -181,16 +188,37 @@ export async function runUpdateSkip(): Promise<void> {
   console.log(`Silenced notices for hive ${cache.latestVersion}`);
 }
 
+export interface RollbackMutationDeps {
+  acquireLease: (purpose: MachineMutationPurpose) => Promise<MachineMutationLease>;
+  blockers: () => Promise<readonly InstanceMutationBlocker[]>;
+  rollback: () => Promise<ActivationOutcome>;
+  stopStaleDaemon: () => Promise<void>;
+  log: (line: string) => void;
+}
+
+export async function rollbackWhenIdle(deps: RollbackMutationDeps): Promise<void> {
+  const lease = await deps.acquireLease("rollback");
+  try {
+    const blockers = await deps.blockers();
+    if (blockers.length > 0) throw new UpdateError(globalMutationRefusal(blockers));
+    const outcome = await deps.rollback();
+    if (!outcome.activated) throw new UpdateError(outcome.reason);
+    deps.log(`hive ${outcome.version} active (rolled back)`);
+    await deps.stopStaleDaemon();
+  } finally {
+    lease.release();
+  }
+}
+
 export async function runRollback(): Promise<void> {
   guardSelfUpdate();
-  const blockers = await instanceMutationBlockers(liveAgentNames);
-  if (blockers.length > 0) throw new UpdateError(globalMutationRefusal(blockers));
-  const outcome = await rollback({ healthCheck });
-  if (!outcome.activated) {
-    throw new UpdateError(outcome.reason);
-  }
-  console.log(`hive ${outcome.version} active (rolled back)`);
-  await stopStaleDaemonAfterActivation();
+  await rollbackWhenIdle({
+    acquireLease: acquireMachineMutationLease,
+    blockers: () => instanceMutationBlockers(liveAgentNames),
+    rollback: () => rollback({ healthCheck }),
+    stopStaleDaemon: stopStaleDaemonAfterActivation,
+    log: console.log,
+  });
 }
 
 export function globalMutationRefusal(
@@ -199,7 +227,8 @@ export function globalMutationRefusal(
   return blockers.map(({ instance, liveAgents }) =>
     `${instance.name}: ${liveAgents.join(", ")}`
   ).join("; ") +
-    " — refusing to change the machine-wide active Hive binary while any instance has a live or unobservable team";
+    " — refusing to change the machine-wide active Hive binary while any instance has a live or unobservable team\n" +
+    "Fix: wait for every team to finish or stop them, then retry.";
 }
 
 /**
@@ -249,6 +278,52 @@ function verifiedLine(staged: StageOutcome): string {
   return `hive ${staged.version} ${how} — verified: Ed25519 signature, SHA-256, binary probed`;
 }
 
+export interface StagedUpdateActivationDeps {
+  acquireLease: (purpose: MachineMutationPurpose) => Promise<MachineMutationLease>;
+  blockers: () => Promise<readonly InstanceMutationBlocker[]>;
+  inspectDaemon: () => Promise<DaemonUpdateState>;
+  activate: () => Promise<ActivationOutcome>;
+  ensureBinLink: () => Promise<void>;
+  stopStaleDaemon: () => Promise<void>;
+  log: (line: string) => void;
+}
+
+export async function activateStagedUpdate(
+  version: string,
+  deps: StagedUpdateActivationDeps,
+): Promise<void> {
+  const lease = await deps.acquireLease("update");
+  try {
+    const blockers = await deps.blockers();
+    if (blockers.length > 0) {
+      deps.log(`hive ${version} activates when every instance's team finishes`);
+      deps.log(globalMutationRefusal(blockers));
+      return;
+    }
+    const daemon = await deps.inspectDaemon();
+    const refusal = explainRefusal(daemon);
+    if (refusal !== null) {
+      deps.log(`hive ${version} activates when the team finishes`);
+      deps.log(refusal);
+      return;
+    }
+
+    const outcome = await deps.activate();
+    await deps.ensureBinLink();
+    if (!outcome.activated) {
+      throw new UpdateError(
+        outcome.revertedTo === null
+          ? outcome.reason
+          : `${outcome.reason}; reverted to hive ${outcome.revertedTo}`,
+      );
+    }
+    deps.log(`hive ${outcome.version} active`);
+    await deps.stopStaleDaemon();
+  } finally {
+    lease.release();
+  }
+}
+
 export async function runUpdate(requested?: string): Promise<void> {
   guardSelfUpdate();
   const root = installRoot();
@@ -278,35 +353,18 @@ export async function runUpdate(requested?: string): Promise<void> {
     return;
   }
 
-  // The activation half, only when the control plane is provably idle.
-  const blockers = await instanceMutationBlockers(liveAgentNames);
-  if (blockers.length > 0) {
-    console.log(`hive ${version} activates when every instance's team finishes`);
-    console.log(globalMutationRefusal(blockers));
-    return;
-  }
-  const daemon = await inspectDaemonForUpdate({
-    expected: () => expectedDaemonHandshake(process.cwd()),
-    liveAgents: liveAgentNames,
+  await activateStagedUpdate(version, {
+    acquireLease: acquireMachineMutationLease,
+    blockers: () => instanceMutationBlockers(liveAgentNames),
+    inspectDaemon: () => inspectDaemonForUpdate({
+      expected: () => expectedDaemonHandshake(process.cwd()),
+      liveAgents: liveAgentNames,
+    }),
+    activate: () => activateWithHealthCheck(version, { root, healthCheck }),
+    ensureBinLink: () => ensureBinLink(root),
+    stopStaleDaemon: stopStaleDaemonAfterActivation,
+    log: console.log,
   });
-  const refusal = explainRefusal(daemon);
-  if (refusal !== null) {
-    console.log(`hive ${version} activates when the team finishes`);
-    console.log(refusal);
-    return;
-  }
-
-  const outcome = await activateWithHealthCheck(version, { root, healthCheck });
-  await ensureBinLink(root);
-  if (!outcome.activated) {
-    throw new UpdateError(
-      outcome.revertedTo === null
-        ? outcome.reason
-        : `${outcome.reason}; reverted to hive ${outcome.revertedTo}`,
-    );
-  }
-  console.log(`hive ${outcome.version} active`);
-  await stopStaleDaemonAfterActivation();
 }
 
 export { cliPath, currentLink };
