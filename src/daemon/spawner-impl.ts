@@ -16,7 +16,6 @@ import {
 } from "../adapters/tools/claude";
 import {
   buildCodexSpawnCommand,
-  findLatestCodexRollout,
   wrapCodexSpawnWithCapabilityEnv,
   writeCodexAgentConfig,
 } from "../adapters/tools/codex";
@@ -30,6 +29,7 @@ import {
 import { listInheritedCodexMcpServers } from "../adapters/tools/mcp-scope";
 import type { CodexAppServerManager } from "../adapters/tools/codex-app-server";
 import { provisionSkills } from "../adapters/skills";
+import { readCodexTelemetry } from "./tool-telemetry";
 import {
   modelVendor,
 } from "../adapters/tools/models";
@@ -356,11 +356,11 @@ export interface HiveSpawnerDependencies {
     CodexAppServerManager,
     "isAvailable" | "buildHostCommand" | "startAgent" | "disconnect"
   >;
-  /** Test seam for codex rollout activity during the readiness watch. Native
-   * SessionStart is the primary signal; a fresh rollout mtime remains an
-   * independent fallback when hooks are disabled by policy or fail. Defaults
-   * to `readCodexTelemetry`. */
-  readCodexActivity?: (worktreePath: string) => Promise<string | null>;
+  /** Test seam for activity from the rollout owned by this spawn. */
+  readCodexActivity?: (
+    worktreePath: string,
+    toolSessionId: string,
+  ) => Promise<string | null>;
 }
 
 const AGENT_NAME_PATTERN = /^[a-z][a-z0-9-]{1,20}$/;
@@ -725,6 +725,7 @@ export class HiveSpawner implements Spawner {
   private readonly claudeExecutable: string;
   private readonly readCodexActivity: (
     worktreePath: string,
+    toolSessionId: string,
   ) => Promise<string | null>;
   private readonly repoUnavailableNames: typeof unavailableAgentNames;
 
@@ -736,10 +737,8 @@ export class HiveSpawner implements Spawner {
     this.claudeExecutable = dependencies.claudeExecutable ??
       resolveWorkingClaudeExecutable().path;
     this.readCodexActivity = dependencies.readCodexActivity ??
-      (async (worktreePath) => {
-        const rollout = await findLatestCodexRollout(worktreePath);
-        return rollout === null ? null : new Date(rollout.mtimeMs).toISOString();
-      });
+      (async (worktreePath, toolSessionId) =>
+        (await readCodexTelemetry(worktreePath, toolSessionId)).lastActivityAt);
     this.repoUnavailableNames = dependencies.unavailableAgentNames ??
       (dependencies.createWorktree === undefined
         ? unavailableAgentNames
@@ -1354,12 +1353,12 @@ export class HiveSpawner implements Spawner {
     }
   }
 
-  /** A codex agent's rollout mtime, or null when there is none to read.
-   * Still a positive signal — it just cannot be the only one, because the
-   * rollout stays silent for the whole reasoning phase (see readiness.ts). */
   private async readCodexActivityFor(record: AgentRecord): Promise<string | null> {
-    const tool = record.executionIdentity?.tool ?? record.tool;
-    if (record.worktreePath === null) return null;
+    const current = this.dependencies.db.getAgentById(record.id) ?? record;
+    const tool = current.executionIdentity?.tool ?? current.tool;
+    if (current.worktreePath === null || current.toolSessionId === undefined) {
+      return null;
+    }
     switch (tool) {
       case "claude":
       case "grok":
@@ -1372,7 +1371,10 @@ export class HiveSpawner implements Spawner {
         return unknownVendor(tool, "Codex activity reader");
     }
     try {
-      return await this.readCodexActivity(record.worktreePath);
+      return await this.readCodexActivity(
+        current.worktreePath,
+        current.toolSessionId,
+      );
     } catch {
       return null;
     }
