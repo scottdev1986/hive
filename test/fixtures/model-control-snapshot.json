@@ -1,0 +1,216 @@
+{
+  "generatedAt": "2026-07-12T22:00:00.000Z",
+  "providers": {
+    "claude": {
+      "status": "ok",
+      "records": [
+        {
+          "provider": "claude",
+          "accountFingerprint": "abc123",
+          "cliVersion": "2.1.207",
+          "canonicalId": "claude-opus-4-8",
+          "variant": null,
+          "launchToken": "claude-opus-4-8",
+          "aliases": [],
+          "displayName": "Opus 4.8",
+          "entitled": {
+            "state": "known",
+            "value": true,
+            "surface": "claude.initialize",
+            "observedAt": "2026-07-12T22:00:00.000Z"
+          },
+          "hidden": {
+            "state": "unknown",
+            "reason": "surface-silent",
+            "surface": "claude.initialize",
+            "observedAt": "2026-07-12T22:00:00.000Z"
+          },
+          "supportsEffort": {
+            "state": "known",
+            "value": true,
+            "surface": "claude.initialize",
+            "observedAt": "2026-07-12T22:00:00.000Z"
+          },
+          "supportedEffortLevels": {
+            "state": "known",
+            "value": [
+              "low",
+              "medium",
+              "high"
+            ],
+            "surface": "claude.initialize",
+            "observedAt": "2026-07-12T22:00:00.000Z"
+          },
+          "defaultEffort": {
+            "state": "unknown",
+            "reason": "field-absent",
+            "surface": "claude.initialize",
+            "observedAt": "2026-07-12T22:00:00.000Z"
+          },
+          "observedAt": "2026-07-12T22:00:00.000Z"
+        }
+      ],
+      "effectiveDefault": {
+        "provider": "claude",
+        "model": {
+          "state": "known",
+          "value": "claude-opus-4-8",
+          "surface": "claude.initialize",
+          "observedAt": "2026-07-12T22:00:00.000Z"
+        },
+        "effort": {
+          "state": "unknown",
+          "reason": "surface-silent",
+          "surface": "claude.initialize",
+          "observedAt": "2026-07-12T22:00:00.000Z"
+        }
+      }
+    },
+    "codex": {
+      "status": "unavailable",
+      "reason": "codex CLI not signed in"
+    },
+    "grok": {
+      "status": "ok",
+      "records": [
+        {
+          "provider": "grok",
+          "accountFingerprint": "grok123",
+          "cliVersion": "0.2.99",
+          "canonicalId": "grok-composer-2.5-fast",
+          "variant": null,
+          "launchToken": "grok-composer-2.5-fast",
+          "aliases": [],
+          "displayName": null,
+          "entitled": {
+            "state": "known",
+            "value": true,
+            "surface": "grok.models",
+            "observedAt": "2026-07-12T22:00:00.000Z"
+          },
+          "hidden": {
+            "state": "known",
+            "value": false,
+            "surface": "grok.models_cache",
+            "observedAt": "2026-07-12T22:00:00.000Z"
+          },
+          "supportsEffort": {
+            "state": "known",
+            "value": false,
+            "surface": "grok.models_cache",
+            "observedAt": "2026-07-12T22:00:00.000Z"
+          },
+          "supportedEffortLevels": {
+            "state": "unknown",
+            "reason": "field-absent",
+            "surface": "grok.models_cache",
+            "observedAt": "2026-07-12T22:00:00.000Z"
+          },
+          "defaultEffort": {
+            "state": "unknown",
+            "reason": "field-absent",
+            "surface": "grok.models_cache",
+            "observedAt": "2026-07-12T22:00:00.000Z"
+          },
+          "observedAt": "2026-07-12T22:00:00.000Z"
+        }
+      ],
+      "effectiveDefault": {
+        "provider": "grok",
+        "model": {
+          "state": "known",
+          "value": "grok-4.5",
+          "surface": "grok.models",
+          "observedAt": "2026-07-12T22:00:00.000Z"
+        },
+        "effort": {
+          "state": "unknown",
+          "reason": "surface-silent",
+          "surface": "grok.models",
+          "observedAt": "2026-07-12T22:00:00.000Z"
+        }
+      }
+    }
+  },
+  "billing": {
+    "claude": {
+      "creditsEnabled": {
+        "state": "known",
+        "value": false,
+        "surface": "claude.get_usage",
+        "observedAt": "2026-07-12T22:00:00.000Z"
+      },
+      "disabledReason": null,
+      "generalUtilization": {
+        "state": "known",
+        "value": 63,
+        "surface": "claude.get_usage",
+        "observedAt": "2026-07-12T22:00:00.000Z"
+      },
+      "modelUtilization": {},
+      "overflowUncertainty": null
+    },
+    "codex": null,
+    "grok": null
+  },
+  "usageSurfaces": {
+    "claude": "metered",
+    "codex": "metered",
+    "grok": "metered"
+  },
+  "quota": [
+    {
+      "provider": "claude",
+      "account": "default",
+      "pool": "plan",
+      "origin": "discovered",
+      "overridesDiscovered": false,
+      "models": [
+        "*"
+      ],
+      "label": null,
+      "routable": true,
+      "confidence": "reported",
+      "freshness": "fresh",
+      "source": "provider",
+      "fiveHour": {
+        "availability": "available",
+        "unit": "percent",
+        "allowance": 100,
+        "used": 63,
+        "reserved": 0,
+        "reservedIsEstimate": true,
+        "remaining": 37,
+        "remainingPct": 0.37,
+        "resetsAt": "2026-07-12T22:00:00.000Z",
+        "confidence": "reported",
+        "source": "provider",
+        "observedAt": "2026-07-12T22:00:00.000Z",
+        "windowMinutes": 300
+      },
+      "weekly": {
+        "availability": "unknown",
+        "unit": "percent",
+        "allowance": null,
+        "used": null,
+        "reserved": 0,
+        "reservedIsEstimate": true,
+        "remaining": null,
+        "remainingPct": null,
+        "resetsAt": null,
+        "confidence": "missing",
+        "source": "none",
+        "observedAt": null,
+        "windowMinutes": null
+      }
+    }
+  ],
+  "quotaError": null,
+  "tokenUsage": {
+    "generatedAt": "2026-07-12T22:00:00.000Z",
+    "currentSessionId": null,
+    "sessions": [],
+    "attribution": "control-lower-bound"
+  },
+  "tokenUsageError": null
+}
