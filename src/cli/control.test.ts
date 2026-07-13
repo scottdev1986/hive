@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { KillSessionOptions } from "../adapters/tmux";
 import type { AgentRecord } from "../schemas";
-import { stopAgentSessions } from "./control";
+import { stopAgentSessions, stopHive } from "./control";
 import { agentTmuxSession, orchestratorTmuxSession } from "../daemon/tmux-sessions";
 
 const timestamp = "2026-07-09T12:00:00.000Z";
@@ -130,5 +130,54 @@ describe("hive stop agent sessions", () => {
 
     expect(stopped).toEqual(1);
     expect(tmux.killed).toEqual([own.tmuxSession]);
+  });
+});
+
+describe("hive stop daemon", () => {
+  test("does not report success or remove lifecycle evidence while the daemon is live", async () => {
+    const tmux = new FakeStopTmux([]);
+    const logs: string[] = [];
+    let cleaned = false;
+
+    await expect(stopHive({
+      tmux,
+      readPort: () => null,
+      readPid: () => 4242,
+      kill: () => {},
+      liveness: async () => "live",
+      cleanup: () => {
+        cleaned = true;
+      },
+      sleep: async () => {},
+      timeoutMs: 50,
+      log: (message) => logs.push(message),
+    })).rejects.toThrow(/daemon pid 4242 did not stop/);
+
+    expect(cleaned).toBe(false);
+    expect(logs).toEqual([]);
+  });
+
+  test("reports success only after liveness proves the daemon dead", async () => {
+    const tmux = new FakeStopTmux([]);
+    const states: Array<"live" | "unknown" | "dead"> = ["live", "unknown", "dead"];
+    const logs: string[] = [];
+    let cleanedPid: number | undefined;
+
+    await stopHive({
+      tmux,
+      readPort: () => null,
+      readPid: () => 4242,
+      kill: () => {},
+      liveness: async () => states.shift() ?? "dead",
+      cleanup: (pid) => {
+        cleanedPid = pid;
+      },
+      sleep: async () => {},
+      timeoutMs: 150,
+      log: (message) => logs.push(message),
+    });
+
+    expect(cleanedPid).toBe(4242);
+    expect(logs).toEqual(["Stopped 0 agent sessions and the Hive daemon."]);
   });
 });

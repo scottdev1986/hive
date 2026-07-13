@@ -711,7 +711,7 @@ export function createProgram(): Command {
   program
     .command("stop")
     .description("Stop live agents and the Hive daemon")
-    .action(stopHive);
+    .action(() => stopHive());
 
   program
     .command("event <kind>")

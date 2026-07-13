@@ -8,9 +8,12 @@ import {
 import { loadHiveConfig } from "../config/load";
 import {
   cleanupLifecycleFiles,
+  daemonInstanceLiveness,
   getPidFilePath,
   readDaemonPort,
+  type DaemonInstanceLiveness,
 } from "../daemon/lifecycle";
+import { getHiveHome } from "../daemon/db";
 import type {
   AgentRecord,
   MemoryScope,
@@ -18,7 +21,7 @@ import type {
   QuotaObservationInput,
 } from "../schemas";
 import { orchestratorTmuxSession } from "../daemon/orchestrator-lifecycle";
-import { isTmuxSessionForInstance } from "../daemon/tmux-sessions";
+import { hiveInstanceSuffix, isTmuxSessionForInstance } from "../daemon/tmux-sessions";
 import {
   deleteMemory,
   fetchAgentStatus,
@@ -407,31 +410,67 @@ export async function registerLayoutTerminal(
   );
 }
 
-export async function stopHive(): Promise<void> {
-  const port = readDaemonPort();
-  const tmux = new TmuxAdapter();
+export interface StopHiveDependencies {
+  readonly tmux?: StopTmux;
+  readonly readPort?: () => number | null;
+  readonly readPid?: () => number | null;
+  readonly kill?: (pid: number, signal: NodeJS.Signals) => void;
+  readonly liveness?: () => Promise<DaemonInstanceLiveness>;
+  readonly cleanup?: (pid?: number) => void;
+  readonly sleep?: (milliseconds: number) => Promise<void>;
+  readonly timeoutMs?: number;
+  readonly log?: (message: string) => void;
+}
+
+export async function stopHive(deps: StopHiveDependencies = {}): Promise<void> {
+  const port = (deps.readPort ?? readDaemonPort)();
+  const tmux = deps.tmux ?? new TmuxAdapter();
   const stoppedAgentCount = await stopAgentSessions(port, { tmux });
   await tmux.killSession(orchestratorTmuxSession(), { ignoreMissing: true });
   if (isTmuxSessionForInstance("hive-orchestrator")) {
     await tmux.killSession("hive-orchestrator", { ignoreMissing: true });
   }
 
-  const pid = readDaemonPid();
+  const pid = (deps.readPid ?? readDaemonPid)();
+  const liveness = deps.liveness ?? (() =>
+    daemonInstanceLiveness(getHiveHome(), hiveInstanceSuffix())
+  );
+  const cleanup = deps.cleanup ?? cleanupLifecycleFiles;
   if (pid !== null) {
     try {
-      process.kill(pid, "SIGTERM");
+      (deps.kill ?? process.kill)(pid, "SIGTERM");
     } catch (error) {
       if (!isNoSuchProcessError(error)) {
         throw error;
       }
     }
-    cleanupLifecycleFiles(pid);
+    const sleep = deps.sleep ?? ((milliseconds: number) => Bun.sleep(milliseconds));
+    const attempts = Math.max(1, Math.ceil((deps.timeoutMs ?? 5_000) / 50));
+    let state = await liveness();
+    for (let attempt = 0; state !== "dead" && attempt < attempts; attempt += 1) {
+      await sleep(50);
+      state = await liveness();
+    }
+    if (state !== "dead") {
+      throw new Error(
+        `daemon pid ${pid} did not stop (liveness: ${state})\n` +
+          "Fix: inspect the daemon, stop it manually, then rerun `hive stop`.",
+      );
+    }
+    cleanup(pid);
   } else {
-    cleanupLifecycleFiles();
+    const state = await liveness();
+    if (state !== "dead") {
+      throw new Error(
+        `the daemon is ${state} but has no recorded pid\n` +
+          "Fix: inspect the daemon lifecycle files, then rerun `hive stop`.",
+      );
+    }
+    cleanup();
   }
 
   const agentLabel = stoppedAgentCount === 1 ? "agent session" : "agent sessions";
-  console.log(
+  (deps.log ?? console.log)(
     `Stopped ${stoppedAgentCount} ${agentLabel}${pid === null ? "; no daemon process was recorded." : " and the Hive daemon."}`,
   );
 }
