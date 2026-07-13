@@ -577,6 +577,7 @@ export function buildLandingProtocol(
 
 export interface AgentPromptOptions {
   tool?: CapabilityProvider;
+  readOnly?: boolean;
   /** Drives the prompt diet. Absent (tests, older callers) keeps the full text. */
   tier?: RoutingTier;
   /** Doc sections the task named, extracted at spawn. See adapters/brief.ts. */
@@ -655,11 +656,12 @@ export function buildAgentPrompt(
   memoryIndex = "",
   options: AgentPromptOptions = {},
 ): string {
+  const readOnly = options.readOnly === true;
   const concise = options.tier !== undefined &&
     CONCISE_TIERS.includes(options.tier);
   const preamble = concise
     ? [
-        `You are ${name}, a Hive writer agent.`,
+        `You are ${name}, a Hive ${readOnly ? "read-only" : "writer"} agent.`,
         `Your task: ${task}`,
         `Work only inside your worktree at ${worktree.path}.`,
         `Report completion, blockers, and findings to "${ORCHESTRATOR_NAME}" with hive_send (hive_inbox and hive_status are also available). Reference artifacts by path; never paste them.`,
@@ -668,7 +670,7 @@ export function buildAgentPrompt(
         CONTINUOUS_EXECUTION,
       ]
     : [
-        `You are ${name}, a Hive writer agent.`,
+        `You are ${name}, a Hive ${readOnly ? "read-only" : "writer"} agent.`,
         `Your task: ${task}`,
         `Your file scope is your worktree at ${worktree.path}; do all code and file work there.`,
         "Use the Hive MCP tools hive_send, hive_inbox, and hive_status to message and coordinate with other named agents.",
@@ -684,9 +686,13 @@ export function buildAgentPrompt(
     CODING_GUIDELINES,
     HIVE_PROTOCOL_RULES,
     SEARCH_HYGIENE,
-    buildLandingProtocol(
-      worktree.branch, repoRoot, "main", name, 0, concise, options.landingCommands,
-    ),
+    ...(readOnly
+      ? [
+          "This process is capability-enforced read-only: it may read the repo, run permitted read-only commands, use MCP tools, and report with hive_send. It cannot change the worktree or land its branch. Persist findings in durable Hive messages; do not attempt a commit.",
+        ]
+      : [buildLandingProtocol(
+          worktree.branch, repoRoot, "main", name, 0, concise, options.landingCommands,
+        )]),
     ...(options.brief === undefined || options.brief === ""
       ? []
       : [options.brief]),
@@ -1545,6 +1551,12 @@ export class HiveSpawner implements Spawner {
     request: SpawnRequest,
     name: string,
   ): Promise<AgentRecord> {
+    const readOnly = request.readOnly ?? false;
+    if (readOnly && this.dependencies.issueCredential === undefined) {
+      throw new Error(
+        `Cannot spawn ${name} read-only: reader capability issuance is unavailable`,
+      );
+    }
     // What governs this spawn: the derivation engine (live discovery + pins +
     // last-known-good), and nothing else. There is no shipped table — a cell
     // the engine could not author arrives as `model: null` with its refusal
@@ -2002,6 +2014,7 @@ export class HiveSpawner implements Spawner {
       memoryIndex,
       {
         tool,
+        readOnly,
         tier: request.tier,
         brief,
         ...(graphBrief === null ? {} : { graphBrief }),
@@ -2050,7 +2063,10 @@ export class HiveSpawner implements Spawner {
       ...(executionIdentity === undefined ? {} : { executionIdentity }),
       recoveryAttempts: 0,
       capabilityEpoch: 0,
-      writeRevoked: false,
+      // Reader spawns enter the same durable authority state as a process
+      // restarted after critical write revocation. Capability authorization
+      // and hive_land both re-read this bit; it is not a prompt convention.
+      writeRevoked: readOnly,
       channelsEnabled: channels,
     });
 
@@ -2063,11 +2079,11 @@ export class HiveSpawner implements Spawner {
       // Grok's inherited MCPs are disabled by GROK_*_MCPS_ENABLED=false.
       : [];
     let argv: string[];
-    // A fresh writer is minted at epoch 0 with exactly one landing right, for
-    // its own branch. It cannot spawn, approve, kill, or name another agent.
+    // A reader carries no landing or memory-write right. A writer gets exactly
+    // one landing right for its own branch.
     const capabilityToken = this.dependencies.issueCredential?.(
       name,
-      "writer",
+      readOnly ? "reader" : "writer",
       record.capabilityEpoch,
     );
     try {
@@ -2080,7 +2096,7 @@ export class HiveSpawner implements Spawner {
         await writeClaudeAgentConfig(worktree.path, {
           daemonPort: this.dependencies.port,
           name,
-          readOnly: false,
+          readOnly,
           dangerous,
           channels,
           ...(graphifyUrl === null ? {} : { graphifyUrl }),
@@ -2090,7 +2106,7 @@ export class HiveSpawner implements Spawner {
           model,
           ...(effort === undefined ? {} : { effort }),
           name,
-          readOnly: false,
+          readOnly,
           dangerous,
           worktreePath: worktree.path,
           channels,
@@ -2103,7 +2119,7 @@ export class HiveSpawner implements Spawner {
         await writeCodexAgentConfig(worktree.path, {
           daemonPort: this.dependencies.port,
           name,
-          readOnly: false,
+          readOnly,
           ...(capabilityToken === undefined ? {} : { capabilityToken }),
           ...(graphifyUrl === null ? {} : { graphifyUrl }),
         });
@@ -2120,7 +2136,7 @@ export class HiveSpawner implements Spawner {
               effort: effort ?? "medium",
               model,
               name,
-              readOnly: false,
+              readOnly,
               dangerous,
               worktreePath: worktree.path,
               excludeMcpServers,
@@ -2139,7 +2155,7 @@ export class HiveSpawner implements Spawner {
           model,
           ...(effort === undefined ? {} : { effort }),
           worktreePath: worktree.path,
-          readOnly: false,
+          readOnly,
           ...(grokSessionId === undefined ? {} : { sessionId: grokSessionId }),
         });
         break;
@@ -2207,7 +2223,7 @@ export class HiveSpawner implements Spawner {
         try {
           const candidate = await revalidateAtAdapter();
           requireAuthorizedLaunch(candidate);
-          await this.dependencies.codexAppServer!.startAgent(record, prompt, false, effort ?? "medium");
+          await this.dependencies.codexAppServer!.startAgent(record, prompt, readOnly, effort ?? "medium");
         } catch (error) {
           // The binary advertised app-server support but the control process
           // could not complete its handshake. Replace it immediately with the
@@ -2231,7 +2247,7 @@ export class HiveSpawner implements Spawner {
             effort: effort ?? "medium",
             model,
             name,
-            readOnly: false,
+            readOnly,
             dangerous,
             worktreePath: worktree.path,
             excludeMcpServers,

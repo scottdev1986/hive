@@ -1769,6 +1769,76 @@ describe("HiveSpawner wiring", () => {
     expect(tmux.sessions[0]?.[2]).toContain("model_reasoning_effort=ultra");
   });
 
+  test("a read-only spawn gets reader authority and the real Codex filesystem sandbox", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-spawner-reader-"));
+    tempRoots.push(root);
+    const store = new FakeStore();
+    const tmux = new FakeTmux();
+    const issued: Array<[string, string, number]> = [];
+    const spawner = new HiveSpawner({
+      isModelEnabled: async () => true,
+      db: store,
+      repoRoot: root,
+      port: 4317,
+      config: { terminal: "auto", headless: true },
+      routing: async () => DEFAULT_ROUTING.standard,
+      issueCredential: (name, role, epoch) => {
+        issued.push([name, role, epoch]);
+        return "test-capability";
+      },
+      tmux,
+      terminal: new FakeTerminal(),
+      createWorktree: async (_repoRoot, name, slug) => {
+        const path = join(root, name);
+        await mkdir(path, { recursive: true });
+        return { path, branch: `hive/${name}-${slug}` };
+      },
+      sleep: signalReadiness(store),
+      resolveModel: fakeResolveModel,
+    });
+
+    const spawned = await spawner.spawn({
+      task: "Audit only",
+      tier: "standard",
+      tool: "codex",
+      readOnly: true,
+    });
+
+    expect(spawned.writeRevoked).toBeTrue();
+    expect(issued).toEqual([[spawned.name, "reader", 0]]);
+    const shell = tmux.sessions[0]?.[2] ?? "";
+    expect(shell).toContain("'--sandbox' 'read-only'");
+    expect(await deliveredPrompt(shell)).not.toContain("hive_land");
+  });
+
+  test("a read-only spawn refuses before creating a worktree when reader authority cannot be established", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-spawner-reader-refuse-"));
+    tempRoots.push(root);
+    let worktrees = 0;
+    const spawner = new HiveSpawner({
+      isModelEnabled: async () => true,
+      db: new FakeStore(),
+      repoRoot: root,
+      port: 4317,
+      config: { terminal: "auto", headless: true },
+      routing: async () => DEFAULT_ROUTING.standard,
+      tmux: new FakeTmux(),
+      terminal: new FakeTerminal(),
+      createWorktree: async () => {
+        worktrees += 1;
+        throw new Error("must not create");
+      },
+      resolveModel: fakeResolveModel,
+    });
+
+    await expect(spawner.spawn({
+      task: "Audit only",
+      tier: "standard",
+      readOnly: true,
+    })).rejects.toThrow("reader capability issuance is unavailable");
+    expect(worktrees).toEqual(0);
+  });
+
   test("launches Grok with catalog identity, project MCP config, and compatibility isolation", async () => {
     const root = await mkdtemp(join(tmpdir(), "hive-spawner-grok-"));
     tempRoots.push(root);

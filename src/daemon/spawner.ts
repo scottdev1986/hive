@@ -23,6 +23,8 @@ export const SpawnRequestSchema = z.object({
   // A user directive, passed verbatim after validation against the resolved
   // model's discovered capability record. No tier default is implied.
   effort: z.string().min(1).max(64).regex(/^[a-z0-9-]+$/).optional(),
+  /** Launch with reader authority and the vendor's enforced read-only mode. */
+  readOnly: z.boolean().optional(),
 });
 
 export type SpawnRequest = z.infer<typeof SpawnRequestSchema>;

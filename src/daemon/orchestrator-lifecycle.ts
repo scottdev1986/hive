@@ -27,6 +27,7 @@ const encoder = new TextEncoder();
 
 export interface ActiveAgentSummary {
   name: string;
+  readOnly: boolean;
   tool: AgentRecord["tool"];
   model: string;
   /** Null when Hive has not observed this agent's context. The orchestrator's
@@ -166,6 +167,9 @@ export function compactActiveTeam(
         .map((other) => other.name);
       return {
       name: agent.name,
+      // This is the durable authority bit consulted by both capability auth
+      // and the landing gate, not an inference from task prose.
+      readOnly: agent.writeRevoked,
       tool: agent.tool,
       // The model it is running, not the one it was spawned with — this is the
       // view the orchestrator routes off.
@@ -214,6 +218,7 @@ export interface SpawnResultSummary {
   branch: string | null;
   worktreePath: string | null;
   contextPct: number | null;
+  readOnly: boolean;
   quotaReservationId?: string;
   taskDescription: string;
   taskDescriptionLength: number;
@@ -237,6 +242,7 @@ export function compactSpawnResult(agent: AgentRecord): SpawnResultSummary {
     branch: agent.branch,
     worktreePath: agent.worktreePath,
     contextPct: agent.contextPct,
+    readOnly: agent.writeRevoked,
     ...(agent.quotaReservationId !== undefined
       ? { quotaReservationId: agent.quotaReservationId }
       : {}),

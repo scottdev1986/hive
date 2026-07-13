@@ -911,6 +911,7 @@ describe("HiveDaemon HTTP server", () => {
         branch: "hive/sam-task",
         worktreePath: "/tmp/hive-sam",
         contextPct: 14,
+        readOnly: false,
         taskDescription: "Review auth",
         taskDescriptionLength: 11,
       });

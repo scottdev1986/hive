@@ -823,4 +823,20 @@ describe("a spent land grant is measured before a human is asked", () => {
     expect(landed).toEqual(["hive/maya-work"]);
     await daemon.stop();
   });
+
+  test("a read-only agent cannot land even with its current capability epoch", async () => {
+    const { daemon, db, landed } = harness();
+    db.upsertAgent(agentRecord({ writeRevoked: true }));
+    const { token } = daemon.capabilities.mint("maya", "reader", { epoch: 0 });
+
+    const refused = await callTool(daemon, token, "hive_land", {
+      agent: "maya",
+      capabilityEpoch: 0,
+    });
+
+    expect(refused.ok).toBe(false);
+    expect(refused.error).toContain("may not branch:land");
+    expect(landed).toEqual([]);
+    await daemon.stop();
+  });
 });

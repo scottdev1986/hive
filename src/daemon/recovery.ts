@@ -229,7 +229,10 @@ export class CrashRecovery {
         // death, and never resume around a revocation.
         continue;
       }
-      if (agent.status === "control-paused" || agent.writeRevoked) {
+      if (
+        agent.status === "control-paused" ||
+        (agent.writeRevoked && agent.controlMessageId !== undefined)
+      ) {
         // Control machinery owns revoked agents; a vanished acknowledgement
         // process is ordinary death, not resumable work.
         outcomes.push(
@@ -263,7 +266,10 @@ export class CrashRecovery {
     if (agent.status === "done") {
       return { agent: name, action: "skipped", reason: "agent is done" };
     }
-    if (agent.writeRevoked) {
+    if (
+      agent.status === "control-paused" ||
+      (agent.writeRevoked && agent.controlMessageId !== undefined)
+    ) {
       return {
         agent: name,
         action: "skipped",
@@ -448,7 +454,7 @@ export class CrashRecovery {
           await this.writeClaudeConfig(worktreePath, {
             daemonPort: this.deps.port,
             name: record.name,
-            readOnly: false,
+            readOnly: record.writeRevoked,
             dangerous,
           });
           argv = buildClaudeResumeCommand({
@@ -458,7 +464,7 @@ export class CrashRecovery {
               ? { effort: identity.effort }
               : {}),
             name: record.name,
-            readOnly: false,
+            readOnly: record.writeRevoked,
             dangerous,
             worktreePath,
             executable: this.claudeExecutable,
@@ -469,14 +475,14 @@ export class CrashRecovery {
           await this.writeCodexConfig(worktreePath, {
             daemonPort: this.deps.port,
             name: record.name,
-            readOnly: false,
+            readOnly: record.writeRevoked,
           });
           argv = buildCodexResumeCommand({
             daemonPort: this.deps.port,
             effort: identity?.tool === "codex" ? identity.effort : "medium",
             model,
             name: record.name,
-            readOnly: false,
+            readOnly: record.writeRevoked,
             dangerous,
             worktreePath,
           }, sessionId);
@@ -492,7 +498,7 @@ export class CrashRecovery {
               ? { effort: identity.effort }
               : {}),
             worktreePath,
-            readOnly: false,
+            readOnly: record.writeRevoked,
           }, sessionId);
           break;
         }
