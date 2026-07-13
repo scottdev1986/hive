@@ -174,6 +174,84 @@ final class ModelControlTests: XCTestCase {
         XCTAssertNotEqual(MeterState.notMetered, .unknown(reason: "no reading for this window"))
     }
 
+    // THE POSITIVE CONTROL. These bytes were not typed by hand and were not
+    // copied from a description — they are what the daemon's own code (ac0979f)
+    // emitted when run over the real captured Codex payload
+    // (src/daemon/fixtures/codex-rate-limits-prolite.json).
+    //
+    // The first assertion is the whole point of the test: my reader must SEE
+    // availability. A misspelled key would decode to nil, the derivation would
+    // silently fall back to the old inference, the UI would still look right, and
+    // nothing would ever tell me the explicit path was dead. An all-absent field
+    // is indistinguishable from a quiet vendor — so prove the reader can see a
+    // positive before trusting any negative.
+    func testReaderActuallySeesAvailabilityOnTheRealEmittedWire() throws {
+        let wire = """
+        {"generatedAt":"2026-07-10T12:00:00.000Z","providers":{},"billing":{},
+         "usageSurfaces":{"codex":"metered"},
+         "quota":[{"provider":"codex","account":"default","pool":"codex",
+          "origin":"discovered","models":["*"],"label":"prolite","routable":true,
+          "confidence":"authoritative","freshness":"fresh","source":"provider",
+          "fiveHour":{"availability":"not-metered","unit":"percent","allowance":null,
+            "used":null,"reserved":null,"reservedIsEstimate":null,"remaining":null,
+            "remainingPct":null,"resetsAt":null,"confidence":"authoritative",
+            "source":"provider","observedAt":"2026-07-10T12:00:00.000Z",
+            "windowMinutes":null},
+          "weekly":{"availability":"available","unit":"percent","allowance":100,
+            "used":31,"reserved":0,"reservedIsEstimate":true,"remaining":69,
+            "remainingPct":0.69,"resetsAt":"2026-07-19T18:58:59.000Z",
+            "confidence":"authoritative","source":"provider",
+            "observedAt":"2026-07-10T12:00:00.000Z","windowMinutes":10080}}]}
+        """.data(using: .utf8)!
+
+        let snapshot = try JSONDecoder().decode(ModelControlSnapshot.self, from: wire)
+        let quota = try XCTUnwrap(snapshot.quota)
+        guard case .pool(let pool) = quota[0] else { return XCTFail("expected a pool") }
+
+        // The positive control: the field is READ, not silently absent.
+        XCTAssertEqual(
+            pool.fiveHour.availability, "not-metered",
+            "the reader must see the vendor's own word — nil here means a dead "
+                + "key that would fall back forever with no signal")
+        XCTAssertEqual(pool.weekly.availability, "available")
+
+        let usage = MeterDerivation.usage(
+            provider: .codex, surface: .metered, quota: quota, quotaError: nil)
+        guard case .metered(let windows) = usage else {
+            return XCTFail("expected meters, got \(usage)")
+        }
+        XCTAssertEqual(windows[0].state, .notMetered)
+        guard case .measured(let percent, _, _, _) = windows[1].state else {
+            return XCTFail("the weekly window IS measured, got \(windows[1].state)")
+        }
+        XCTAssertEqual(percent, 31)
+    }
+
+    // The daemon's word OVERRIDES the inference, and must: a window it calls
+    // "unknown" is a failed read even if the duration went missing too. This is
+    // the case the old heuristic got wrong, now settled by the vendor's own fact.
+    func testExplicitUnknownBeatsTheInferenceEvenWithNoDuration() {
+        let halfQuiet = QuotaEntry.pool(QuotaPool(
+            provider: "codex", pool: "codex", origin: "discovered",
+            confidence: "authoritative", freshness: "fresh", source: "provider",
+            fiveHour: QuotaWindow(
+                availability: "unknown", unit: "percent", used: nil,
+                confidence: "missing", source: "none", windowMinutes: nil),
+            weekly: QuotaWindow(
+                availability: "available", unit: "percent", allowance: 100, used: 31,
+                confidence: "authoritative", source: "provider", windowMinutes: 10_080)))
+        let usage = MeterDerivation.usage(
+            provider: .codex, surface: .metered, quota: [halfQuiet], quotaError: nil)
+        guard case .metered(let windows) = usage else {
+            return XCTFail("expected meters, got \(usage)")
+        }
+        guard case .unknown = windows[0].state else {
+            return XCTFail(
+                "the daemon said unknown — a missing duration must not override it "
+                    + "into a confident 'not metered', got \(windows[0].state)")
+        }
+    }
+
     // A window the plan does not meter has nothing reserved against it, and the
     // daemon says so with null rather than a 0 that would measure a window that
     // does not exist. This decodes the WIRE, not a struct we built ourselves,

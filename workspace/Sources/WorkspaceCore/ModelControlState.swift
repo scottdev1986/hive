@@ -149,38 +149,41 @@ public enum MeterDerivation {
             // .notMetered instead: absent by the vendor's design, and SAID so,
             // because a deliberate absence has to look deliberate (§2.3).
             //
-            // Two conditions gate that claim, and BOTH are load-bearing.
+            // The daemon now states this outright, per window: "available",
+            // "not-metered", or "unknown" (ac0979f). MEASURE, DO NOT INFER — a
+            // window's existence is the provider's fact to report, and we read it
+            // rather than deducing it from a missing duration.
             //
-            // 1. The pool demonstrably ANSWERED — a reading on the other window
-            //    is the positive control. A pool with no reading anywhere is
-            //    genuinely unknown, and both windows keep saying unknown so the
-            //    silence still shows.
+            // The fallback below exists only for a daemon older than ac0979f,
+            // which omits the field. An ABSENT availability is not "available"
+            // (an absent field is unknown, never false), so we fall back to the
+            // old inference rather than assuming the window is fine: a missing
+            // duration on a pool that ANSWERED (a reading on the other window is
+            // the positive control) and is AUTHORITATIVE about plan structure.
             //
-            // 2. The pool is AUTHORITATIVE. "Your plan has no such window" is a
-            //    confident, structural claim, and only a source that is stable
-            //    about plan structure may make it. Codex's app-server rate-limit
-            //    method is exactly that. Claude's get_usage is self-described
-            //    experimental and documented to go silent (§2.2), and it emits a
-            //    pool when EITHER window parses — so a partial read (weekly
-            //    present, five_hour missing) yields fiveHour: null, and the
-            //    ledger's upsert overwrites the previously-known 300 with it. A
-            //    window missing from a merely "reported" source means "we did not
-            //    get it", never "it does not exist". Without this gate a Max-plan
-            //    user whose feed went half-quiet would be told their plan does not
-            //    meter a five-hour window — the same lie as the original bug, in
-            //    the confident direction, which is the worse one.
-            //
-            // The strength of the claim has to match the strength of the evidence.
-            // darius is making per-window meter state explicit and persisted; once
-            // that lands, read the availability field directly and delete this
-            // inference rather than tightening it further.
+            // Both gates are load-bearing in that path. Claude's get_usage emits a
+            // pool when EITHER window parses, so a partial read yields fiveHour:
+            // null and the ledger's upsert overwrote a previously-known 300 with
+            // it — leaving a pool byte-identical to Codex's not-metered one. Only
+            // an authoritative source may assert a plan LACKS a window; a merely
+            // "reported", experimental feed (§2.2) that omits one means "we did
+            // not get it", never "it does not exist". Delete this fallback once no
+            // supported daemon predates ac0979f.
             let answered = pool.fiveHour.used != nil || pool.weekly.used != nil
             let authoritative = pool.confidence == "authoritative"
             func state(_ window: QuotaWindow) -> MeterState {
-                if answered && authoritative && window.windowMinutes == nil {
+                switch window.availability {
+                case "not-metered":
                     return .notMetered
+                case .some:
+                    // "available" or "unknown": the reading, or its absence, speaks.
+                    return meterState(for: window, parseDate: parseDate)
+                case nil:
+                    if answered && authoritative && window.windowMinutes == nil {
+                        return .notMetered
+                    }
+                    return meterState(for: window, parseDate: parseDate)
                 }
-                return meterState(for: window, parseDate: parseDate)
             }
             return .metered([
                 MeterWindow(label: "5 hour window", state: state(pool.fiveHour)),

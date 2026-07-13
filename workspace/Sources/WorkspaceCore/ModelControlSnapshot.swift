@@ -276,6 +276,13 @@ public struct BillingSnapshot: Codable, Equatable, Sendable {
 /// One window of one quota pool. Every number is a measurement or nil;
 /// nil is UNKNOWN, never zero (src/schemas/quota.ts `QuotaWindowStatus`).
 public struct QuotaWindow: Codable, Equatable, Sendable {
+    /// What the provider said about this window's EXISTENCE, as opposed to its
+    /// reading: "available", "not-metered", or "unknown" (src/schemas/quota.ts).
+    ///
+    /// Optional because a daemon older than ac0979f does not send it, and an
+    /// absent field is unknown — never "available". When it is missing the
+    /// derivation falls back to inferring absence from a missing duration.
+    public var availability: String?
     public var unit: String
     public var allowance: Double?
     public var used: Double?
@@ -298,11 +305,13 @@ public struct QuotaWindow: Codable, Equatable, Sendable {
     public var windowMinutes: Double?
 
     public init(
+        availability: String? = nil,
         unit: String, allowance: Double? = nil, used: Double? = nil,
         reserved: Double? = nil, remaining: Double? = nil, remainingPct: Double? = nil,
         resetsAt: String? = nil, confidence: String, source: String,
         observedAt: String? = nil, windowMinutes: Double? = nil
     ) {
+        self.availability = availability
         self.unit = unit
         self.allowance = allowance
         self.used = used
