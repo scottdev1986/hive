@@ -70,6 +70,8 @@ Measured end to end, SIGTERM to daemon exit, with every agent carrying a full tr
 
 `killAllAgents` is a sequential loop, so this is **~0.3s per agent**, with a hard floor of the 250ms post-SIGKILL verify-settle each. Extrapolated, a team of ~16 crosses five seconds.
 
+Both rows are single runs, and they are not held equally firmly. The 0.97s figure is the measurement recorded when the shutdown fix landed. The 6-agent row is **one observation by its author, not independently reproduced** — confirming it costs a real six-agent teardown, so it stands as recorded, not as established fact. What it has going for it is arithmetic: the ~0.3s/agent slope sits just above the 250ms floor the code actually sets, so it is at least consistent with the mechanism. Argue from the slope; do not quote the second row as a spec.
+
 **That is not a correctness bound, and the Workspace must not treat it as one.** The daemon is a *detached* process, not a child of the app: the SIGTERM handler runs `stop()` to completion whether or not the app is still alive to watch it. So the app's quit wait buys **observability, not correctness**, and a wait that expires means "we stopped watching", never "the teardown was truncated". Render an expired wait as such — not as a failure.
 
 Parallelising `killAllAgents` to shrink the number was deliberately **rejected**: it is a speculative change to a kill path, for a latency problem with no correctness consequence.
