@@ -7,7 +7,7 @@ import WorkspaceCore
 /// set. Launched by the CLI as
 /// `open -a HiveWorkspace --args --project <dir> --port <n> --hive <bin>
 /// --orchestrator-session <tmux session> --orchestrator <claude|codex|grok>`.
-final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSWindowDelegate {
 
     private let config: LaunchConfig
     private(set) var controller: ProjectWindowController?
@@ -37,6 +37,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private var feedRetired = false
     /// The unrecoverable-feed alert is shown once, not once per retry.
     private var feedFailureAnnounced = false
+    /// Whichever menu is tracking right now, if any. An open NSMenu runs a
+    /// nested tracking loop and belongs to no window, so closing the windows
+    /// cannot dismiss it — the instance has to cancel it by hand on the way
+    /// out. Weak, and per-instance: nothing here outlives this process.
+    private weak var trackingMenu: NSMenu?
 
     init(config: LaunchConfig) {
         self.config = config
@@ -44,6 +49,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        NotificationCenter.default.addObserver(
+            forName: NSMenu.didBeginTrackingNotification, object: nil, queue: .main
+        ) { [weak self] note in
+            self?.trackingMenu = note.object as? NSMenu
+        }
+
         guard config.isComplete,
               let projectDirectory = config.projectDirectory,
               let hivePath = config.hivePath,
@@ -78,8 +89,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             controller?.dispatch(.focusPane(paneID))
         }
 
-        controller.onWindowWillClose = { [weak self] in
+        controller.onWindowWillClose = { [weak self, weak controller] in
             self?.retireFeed()
+            // The project window is this instance's reason to exist: when it
+            // goes, so does everything else the instance put on screen. Without
+            // this, an open Settings window or panel keeps the process alive
+            // (the app quits only after its *last* window closes), and an open
+            // menu keeps tracking — the workspace disappears and its leftovers
+            // stay up.
+            self?.closeOwnedSurfaces(except: controller?.window)
         }
         controller.bootstrapOrchestrator()
         startFeed()
@@ -314,8 +332,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        closeOwnedSurfaces()
         retireFeed()
         controller?.terminateAllTerminals()
+    }
+
+    /// Take down every surface this instance owns. Menus first: an open menu is
+    /// running a nested tracking loop that no window owns, so closing windows
+    /// alone leaves it on screen. Then the windows — the project or placeholder
+    /// window, Settings, and the attention/project panels are all this
+    /// process's windows, so `NSApp.windows` is exactly this instance's surface
+    /// set and nothing else's.
+    private func closeOwnedSurfaces(except keep: NSWindow? = nil) {
+        trackingMenu?.cancelTrackingWithoutAnimation()
+        NSApp.mainMenu?.cancelTrackingWithoutAnimation()
+        for window in NSApp.windows where window !== keep {
+            window.close()
+        }
+    }
+
+    /// The placeholder window is the no-project instance's only window; closing
+    /// it ends that instance the same way closing the project window does.
+    func windowWillClose(_ notification: Notification) {
+        closeOwnedSurfaces(except: notification.object as? NSWindow)
     }
 
     // MARK: No-args launch
@@ -346,6 +385,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         window.contentView = stack
 
         placeholderWindow = window
+        window.delegate = self
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
