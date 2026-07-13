@@ -106,10 +106,12 @@ function parseState(raw: string): "enabled" | "disabled" | "unset" {
   );
 }
 
-/** `exact:LEVEL` | `none` | `provider-controlled` (optionally `unset` where
- * the caller allows it). "none" means the vendor's stated no-effort axis;
- * "provider-controlled" omits the flag without claiming to know the default. */
+/** Explicit effort intent. "none" means the vendor's stated no-effort axis;
+ * "provider-controlled" omits the flag without claiming to know the default,
+ * and "hive-decides" selects only from source-ordered advertised levels. */
 export function parseEffortTargetArg(raw: string): EffortTarget {
+  if (raw === "never-configured") return { mode: "never-configured" };
+  if (raw === "hive-decides") return { mode: "hive-decides" };
   if (raw === "none") return { mode: "none" };
   if (raw === "provider-controlled") return { mode: "provider-controlled" };
   if (raw.startsWith("exact:")) {
@@ -117,7 +119,7 @@ export function parseEffortTargetArg(raw: string): EffortTarget {
     if (value.length > 0) return { mode: "exact", value };
   }
   throw new Error(
-    `effort must be exact:LEVEL, none, or provider-controlled; got ${JSON.stringify(raw)}`,
+    `effort must be hive-decides, never-configured, exact:LEVEL, none, or provider-controlled; got ${JSON.stringify(raw)}`,
   );
 }
 
@@ -215,9 +217,9 @@ export async function setSelectionMode(
   options: { category?: string; port?: number },
   expectRevision: string,
 ): Promise<void> {
-  if (mode !== "spread" && mode !== "strict" && mode !== "unset") {
+  if (mode !== "never-configured" && mode !== "auto" && mode !== "choice" && mode !== "unset") {
     throw new Error(
-      `selection mode must be spread, strict, or unset; got ${JSON.stringify(mode)}`,
+      `selection mode must be never-configured, auto, choice, or unset; got ${JSON.stringify(mode)}`,
     );
   }
   printPolicy(await applyPolicyMutation(requireDaemonPort(options.port), {

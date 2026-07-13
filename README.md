@@ -51,8 +51,8 @@ Red is measured, never guessed: it appears only when the daemon records a pendin
 ## Features
 
 - **One conversation, many agents.** You talk to a single orchestrator; it manages the team.
-- **The right model for the job.** Tasks are tiered — cheap, standard, deep, review — and each tier maps to a tool and model, so a changelog update doesn't burn the same budget as a refactor.
-- **Mixed vendors on one team.** Claude Code, Codex, and Grok agents work side by side, and one vendor's model can review another's code. Grok is eligible across the routing table but preferred nowhere by default; a user pin sets the preference.
+- **The right model for the job.** Coding work has simple, standard, and complex capability floors. Automatic routing considers only explicitly enabled models with positive fit evidence; distribution never makes a weak model eligible for hard work.
+- **Mixed vendors on one team.** Claude Code, Codex, and Grok agents work side by side. “Let Hive decide” fairly distributes capable candidates using work Hive actually assigned, while an exact user preference always wins.
 - **Quota-aware.** Hive reads real usage limits from providers when they publish them and routes around whichever measurable pool is running low. There is nothing to configure, and it never invents a number: a window it cannot measure prints `unknown`.
 - **Isolated working copies.** Each agent works in its own git worktree on its own branch, and finished work reaches your main branch only through Hive's merge gate, one fast-forward at a time — main is never edited by two agents at once.
 - **Permission-gated by default, full autonomy one click away.** Out of the box, agents use their vendor's permission controls and anything risky — installs, pushes, writes outside their working copy — queues for your approval. When you'd rather walk away and let them run without prompts, flip the switch in the Workspace's Agents menu (or run `hive autonomy dangerous`); it persists until you flip it back.
@@ -144,7 +144,7 @@ Grok's ACP `_x.ai/billing` surface reports `creditUsagePercent`, a coarse used-p
 None required. If you want to change the defaults, Hive reads three optional files:
 
 - `~/.hive/config.toml` — `autonomy = "dangerous"` runs agents without permission prompts (the default, `"sandboxed"`, queues risky actions for approval); the Workspace's Agents menu and `hive autonomy` set this for you. `layout = "off"` stops Hive from arranging its windows — it only ever moves its own windows either way, never anything else you have open. `terminal = "iterm2"` or `"terminal"` pins which app viewer windows open in.
-- `~/.hive/routing.toml` — override which tool and model serve each task tier (`cheap`, `standard`, `deep`, `review`).
+- Routing policy lives in Hive's SQLite control store and is edited through `hive routing` / the Model Control Center. Provider consent, exact model consent, AUTO versus exact preference, and effort intent remain separate auditable values.
 - `~/.hive/quota.toml` — overlay your own planning allowances and warning thresholds on top of the limits Hive discovers from the providers.
 
 ## FAQ

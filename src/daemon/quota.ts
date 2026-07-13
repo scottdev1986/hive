@@ -53,18 +53,9 @@ type QuotaCandidateIdentity = Pick<
  * cheap/standard-preserve-deep rule, carried onto the categories that
  * inherited each kind of work.
  */
-/** Headroom two pools may differ by and still count as "even" — inside it
- * the user's chain rank decides, which both favours the primary and stops
- * per-spawn flip-flopping between near-equal pools. */
-const SPREAD_DEADBAND = 0.05;
-
-/** The fixed, deliberately modest headroom an UNMEASURED pool competes with:
- * present enough to catch work when measured pools are nearly spent, never
- * enough to beat a healthy one. An unknown must not resolve to "best". */
-const UNKNOWN_HEADROOM_SCORE = 0.15;
-
 const HEADROOM_PRESERVING_CATEGORIES: ReadonlySet<RoutingCategory> = new Set([
   "simple_coding",
+  "standard_coding",
   "summarization",
   "light_research",
   "default",
@@ -74,9 +65,9 @@ export interface QuotaRouteRequest {
   agentName: string;
   category: RoutingCategory;
   /**
-   * How to pick among the (already gated) candidates. `spread` — the default
-   * policy — picks by remaining headroom, rank-biased; `strict` preserves the
-   * caller's order exactly. Candidate ARRAY ORDER IS CHAIN RANK either way.
+   * How to pick among the already gated candidates. `spread` performs atomic
+   * fair dispatch over Hive-observed assignments; `strict` preserves the
+   * caller's exact order. Quota remains a per-candidate affordability gate.
    */
   selection: "spread" | "strict";
   explicitTool?: CapabilityProvider;
@@ -1568,7 +1559,7 @@ export class QuotaService {
       candidates = eligible;
     }
 
-    const evaluated = candidates.map((candidate, rank) => {
+    const evaluated = candidates.map((candidate) => {
       const entries = this.limitsFor(candidate).map((limit) => ({
         limit,
         status: this.statusForLimit(limit, now),
@@ -1584,52 +1575,16 @@ export class QuotaService {
         this.measured(entry.status, entry.limit) !== null
       );
       if (entries.length === 0 || known.length === 0) {
-        // UNKNOWN IS NOT INFINITE HEADROOM. A pool Hive cannot read (grok's
-        // money-guard surface, a silent usage feed) participates with a fixed
-        // conservative weight: it can catch work when the measured pools are
-        // nearly spent, and it can never win against a healthy one. Treating
-        // unknown as free would send everything to the darkest pool forever
-        // (unknown-read-as-permission, wearing a scheduling hat).
         return {
           candidate,
           entries: [],
-          score: UNKNOWN_HEADROOM_SCORE,
           unknown: true,
-          rank,
         };
       }
-      let score = Number.POSITIVE_INFINITY;
-      for (const entry of entries) {
-        const measured = this.measured(entry.status, entry.limit);
-        if (measured === null) continue;
-        const estimate = this.estimateFor(entry.limit, request.category);
-        score = Math.min(
-          score,
-          (measured.fiveRemaining - estimate.fiveHour) /
-            entry.limit.fiveHourAllowance,
-          (measured.weekRemaining - estimate.weekly) /
-            entry.limit.weeklyAllowance,
-        );
-      }
-      return { candidate, entries, score, unknown: false, rank };
+      return { candidate, entries, unknown: false };
     });
-    // SELECTION. `strict` keeps the caller's chain rank untouched — quota
-    // then vetoes and reserves in that order. `spread` picks by remaining
-    // headroom (already net of outstanding reservations, so concurrent
-    // spawns see each other) with the chain rank as tie-break inside a
-    // deadband: two pools within DEADBAND of each other are "even" and the
-    // user's preferred link wins, which is also what stops per-spawn
-    // flip-flopping between near-equal pools.
-    if (request.selection === "spread") {
-      evaluated.sort((left, right) => {
-        const difference = right.score - left.score;
-        return Math.abs(difference) <= SPREAD_DEADBAND
-          ? left.rank - right.rank
-          : difference;
-      });
-    }
 
-    // Viability, before headroom gets a vote. A route Hive has just watched fail
+    // Viability, before distribution gets a vote. A route Hive has just watched fail
     // to produce a working agent is not a route, however much quota it has.
     const quarantine = new Map<
       typeof evaluated[number],
@@ -1667,8 +1622,54 @@ export class QuotaService {
     }
 
     const failures: string[] = [];
+    const autoCandidates = request.selection === "spread"
+      ? attemptable.filter((item) => !item.unknown)
+      : attemptable;
+    if (request.selection === "spread") {
+      for (const item of attemptable.filter((candidate) => candidate.unknown)) {
+        failures.push(
+          `${item.candidate.tool}/${item.candidate.model}: quota read failed; ` +
+            "AUTO excludes unreadable capacity, while an explicit choice may still run it",
+        );
+      }
+      if (autoCandidates.length > 0) {
+        const fair = this.ledger.tryReserveFairGroups(autoCandidates.map((item) => ({
+          provider: item.candidate.tool,
+          inputs: this.reservationInputs(
+            request.agentName,
+            item.candidate,
+            item.entries,
+            request.category,
+            now,
+          ),
+        })));
+        if (fair.ok) {
+          const item = autoCandidates[fair.candidateIndex]!;
+          const primary = fair.reservations[0]!;
+          const governing = this.tightest(item.entries);
+          for (const entry of item.entries) await this.alertPool(entry.limit, now);
+          return {
+            ...item.candidate,
+            authorized: item.candidate,
+            reservation: primary,
+            status: this.statusForLimit(governing.limit, now),
+            reason: "capability-cleared weighted fair dispatch over Hive-observed assignments",
+            warnings: [
+              ...this.pressureWarnings(item.candidate, item.entries, request.category),
+              ...quarantineWarnings,
+            ],
+          };
+        }
+        for (const blocked of fair.blocked) {
+          const item = autoCandidates[blocked.candidateIndex]!;
+          failures.push(
+            `${item.candidate.tool}/${item.candidate.model}: ${blocked.blockedBy.pool} has no safe headroom`,
+          );
+        }
+      }
+    }
     let safeFallback: QuotaRouteCandidate | undefined;
-    for (const item of attemptable) {
+    for (const item of request.selection === "spread" ? [] : attemptable) {
       if (item.unknown) {
         const fallbackEstimate = this.config.estimates[request.category]!;
         const reservation = this.ledger.insertUnboundedReservation({

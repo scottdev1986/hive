@@ -1301,8 +1301,8 @@ describe("a route that cannot start is not a route", () => {
     confidence: "authoritative" as const,
   });
 
-  // Both providers measured and roomy, with codex the emptier of the two — so on
-  // headroom alone codex wins every time.
+  // Both providers are measured and capable. Their unlike windows are gates,
+  // never a cross-provider ranking score.
   const healthy = async () => {
     const made = await service([
       new StubProbe("claude", {
@@ -1320,7 +1320,7 @@ describe("a route that cannot start is not a route", () => {
     return made;
   };
 
-  test("headroom alone would pick the route that cannot start", async () => {
+  test("fair dispatch does not use unlike headroom as a capability ranking", async () => {
     const { quota } = await healthy();
     const decision = await quota.routeAndReserve({
       agentName: "deep-worker",
@@ -1328,8 +1328,7 @@ describe("a route that cannot start is not a route", () => {
       selection: "spread",
       candidates: both,
     });
-    // Baseline: this is the hazard. The emptiest pool wins on score.
-    expect(decision.tool).toBe("codex");
+    expect(decision.tool).toBe("claude");
   });
 
   test("a stale measured feed becomes fixed unknown headroom and loses to a healthy pool", async () => {
@@ -1376,7 +1375,7 @@ describe("a route that cannot start is not a route", () => {
       selection: "spread",
       candidates: both,
     });
-    expect(first.tool).toBe("codex");
+    expect(first.tool).toBe("claude");
     // The agent never came up. failSpawn settles the reservation and says why.
     await quota.cancel(
       first.reservation.id,
@@ -1390,8 +1389,8 @@ describe("a route that cannot start is not a route", () => {
       selection: "strict",
       candidates: both,
     });
-    // Codex still has all the headroom in the world. It is still not chosen.
-    expect(second.tool).toBe("claude");
+    // Claude still has room. Its observed launch failure is stronger evidence.
+    expect(second.tool).toBe("codex");
     expect(second.warnings.join(" ")).toContain("failed to start");
     expect(second.warnings.join(" ")).toContain("no readiness signal");
   });
@@ -1441,7 +1440,7 @@ describe("a route that cannot start is not a route", () => {
         selection: "spread",
         candidates: both,
       })).tool,
-    ).toBe("claude");
+    ).toBe("codex");
 
     // Someone fixes the underlying cause and a codex agent proves life. That is
     // the only evidence that matters, and it supersedes everything Hive

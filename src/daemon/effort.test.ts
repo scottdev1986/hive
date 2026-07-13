@@ -4,7 +4,7 @@ import {
   type CapabilityRecord,
   unknown,
 } from "../schemas";
-import { validateEffort } from "./effort";
+import { resolveAutoEffort, validateEffort } from "./effort";
 
 const observedAt = "2026-07-11T12:00:00.000Z";
 const surface = "claude.initialize" as const;
@@ -63,5 +63,69 @@ describe("effort eligibility", () => {
     const result = validateEffort(undefined, "future-model", "ultra");
     expect(result.effort).toBe("ultra");
     expect(result.warning).toContain("No capability record");
+  });
+});
+
+describe("Hive-decides effort", () => {
+  test("uses proved semantics rather than the vendor array order", () => {
+    const grok = record({
+      provider: "grok",
+      canonicalId: "grok-4.5",
+      launchToken: "grok-4.5",
+      aliases: [],
+      supportedEffortLevels: known(
+        ["high", "medium", "low"],
+        "grok.models_cache",
+        observedAt,
+      ),
+      defaultEffort: known("high", "grok.models_cache", observedAt),
+    });
+    expect(resolveAutoEffort(grok, "simple_coding").effort).toBe("low");
+    expect(resolveAutoEffort(grok, "complex_coding").effort).toBe("high");
+  });
+
+  test("standard uses the advertised default and complex uses Codex ultra", () => {
+    const codex = record({
+      provider: "codex",
+      canonicalId: "gpt-5.6-sol",
+      launchToken: "gpt-5.6-sol",
+      aliases: [],
+      supportsEffort: unknown("surface-silent", "codex.model/list", observedAt),
+      supportedEffortLevels: known(
+        ["ultra", "low", "max", "medium", "high", "xhigh"],
+        "codex.model/list",
+        observedAt,
+      ),
+      defaultEffort: known("medium", "codex.model/list", observedAt),
+    });
+    expect(resolveAutoEffort(codex, "standard_coding")).toMatchObject({
+      effort: "medium",
+      orderedLevels: ["low", "medium", "high", "xhigh", "max", "ultra"],
+    });
+    expect(resolveAutoEffort(codex, "complex_coding").effort).toBe("ultra");
+  });
+
+  test("an unproved future spelling refuses AUTO but remains explicitly valid", () => {
+    const future = record({
+      supportedEffortLevels: known(["low", "warp"], surface, observedAt),
+    });
+    expect(() => resolveAutoEffort(future, "complex_coding"))
+      .toThrow("does not know the ordering semantics of claude warp");
+    expect(validateEffort(future, future.canonicalId, "warp").effort).toBe("warp");
+  });
+
+  test("a model that positively has no effort axis resolves to no flag", () => {
+    expect(resolveAutoEffort(record({
+      supportsEffort: known(false, surface, observedAt),
+      supportedEffortLevels: known([], surface, observedAt),
+    }), "complex_coding")).toEqual({
+      orderedLevels: [],
+      basis: "claude reports that this model has no effort setting",
+    });
+  });
+
+  test("missing capability evidence refuses instead of choosing a default", () => {
+    expect(() => resolveAutoEffort(undefined, "standard_coding"))
+      .toThrow("requires a readable model capability record");
   });
 });

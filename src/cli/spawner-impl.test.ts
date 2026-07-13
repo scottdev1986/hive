@@ -73,7 +73,7 @@ function policyFromRoute(route: TestRoute): RoutingPolicy {
   const target = route[route.tool];
   if (target === undefined) throw new Error(`missing ${route.tool} fixture route`);
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     revision: 1,
     updatedAt: timestamp,
     provisional: false,
@@ -88,16 +88,27 @@ function policyFromRoute(route: TestRoute): RoutingPolicy {
           : { mode: "exact", value: target.effort },
       }],
     },
-    selection: { global: "strict", categories: {} },
+    selection: { global: "choice", categories: {} },
   };
 }
 
 function policyWithChain(
   entries: ChainEntry[],
-  selection: "spread" | "strict" = "strict",
+  selection: "auto" | "choice" = "choice",
 ): RoutingPolicy {
   return {
     ...policyFromRoute(CODEX_ROUTE),
+    providers: Object.fromEntries(
+      [...new Set(entries.map((entry) => entry.provider))].map((provider) =>
+        [provider, "enabled" as const]
+      ),
+    ),
+    models: entries.map((entry) => ({
+      provider: entry.provider,
+      model: entry.model,
+      state: "enabled" as const,
+      effort: entry.effort,
+    })),
     chains: { default: entries },
     selection: { global: selection, categories: {} },
   };
@@ -124,10 +135,14 @@ const REVIEW_ROUTE = {
   codex: { model: "gpt-5.6-sol", effort: "medium" },
 } as const;
 
-const quotaSpreadPolicy = (): RoutingPolicy => policyWithChain([
-  { provider: "claude", model: "claude-fable-5", effort: { mode: "provider-controlled" } },
+const quotaSpreadPolicy = (): RoutingPolicy => {
+  const entries: ChainEntry[] = [
   { provider: "codex", model: "gpt-5.6-sol", effort: { mode: "provider-controlled" } },
-], "spread");
+  { provider: "claude", model: "claude-fable-5", effort: { mode: "provider-controlled" } },
+  ];
+  const policy = policyWithChain(entries, "auto");
+  return { ...policy, chains: { ...policy.chains, complex_coding: entries } };
+};
 
 const timestamp = "2026-07-09T12:00:00.000Z";
 const tempRoots: string[] = [];
@@ -3747,11 +3762,11 @@ describe("a refusal names the reason it actually refused for", () => {
 
     expect(failure).toContain(
       "simple_coding: grok/grok-4.5 — enablement: grok-4.5 cannot launch " +
-        "because provider grok is not enabled; enable this provider in the Model Control Center",
+        "because exact model consent is not enabled under provider grok; enable both in the Model Control Center",
     );
     expect(failure).toContain(
       "default: claude/claude-opus-4-8 — enablement: claude-opus-4-8 cannot launch " +
-        "because provider claude is not enabled; enable this provider in the Model Control Center",
+        "because exact model consent is not enabled under provider claude; enable both in the Model Control Center",
     );
     expect(tmux.sessions).toEqual([]);
   });

@@ -172,17 +172,20 @@ remainder is useful for finding a candidate's own binding constraint, but
 sorting vendors by that minimum asserts equivalence between different time
 horizons. No such equivalence was measured.
 
-The live implementation contains the sharper failure. `src/daemon/quota.ts:61–64`
-assigns every fully unmeasured candidate `UNKNOWN_HEADROOM_SCORE = 0.15`, and
-`src/daemon/quota.ts:1586–1597` uses that invented number in real dispatch. The
+The pre-cutover implementation contained the sharper failure at
+`src/daemon/quota.ts:61–64`: it assigned every fully unmeasured candidate
+`UNKNOWN_HEADROOM_SCORE = 0.15`, then used that invented number in real
+dispatch. The
 comment correctly rejects “unknown means infinite,” but the replacement still
 turns absence into a convenient answer: unknown means exactly 15% headroom. It
 then competes against measured vendors as though 15% came from a provider.
 Choosing zero would starve the vendor and choosing one would slam it; choosing
-0.15 merely hides the same unsupported decision in the middle. This is a live
+0.15 merely hides the same unsupported decision in the middle. This was a live
 instance of the bug class in `database-resilience.md` §0—absence read as the
 permissive or convenient answer—and the strongest reason quota cannot be the
-cross-vendor distribution currency.
+cross-vendor distribution currency. The cutover deletes the constant and every
+cross-provider headroom sort; `QuotaLedger.tryReserveFairGroups` now owns the
+atomic assignment and reservation.
 
 **Weighted fair dispatch** balances what Hive itself assigned. Unlike provider quota, this
 measurement exists for every vendor: Hive can always count the work it sent to
@@ -380,8 +383,9 @@ The resolver first reads the model capability record:
 
 - `supportsEffort: known(false)` makes the control unavailable. The resolution
   records `none` as a vendor fact; it does not store a fake user preference.
-- An unknown support flag or unknown/malformed level list cannot satisfy AUTO
-  or validate CHOICE, so the candidate refuses at the effort gate.
+- `supportsEffort: unknown` does not erase a positively advertised nonempty
+  level list. AUTO may use that list when its value semantics are independently
+  proved. An unknown or malformed level list cannot satisfy AUTO.
 - A known nonempty list is the complete choice set. Hive never adds `medium`,
   copies a level from another model, or uses the vendor default unless that
   value appears in the list.
@@ -392,6 +396,25 @@ ordered middle otherwise, and complex selects the highest. An even-sized list
 uses the upper middle for standard. A one-level model uses that level for all
 tiers. If the vendor supplies levels without ordering semantics, AUTO refuses;
 array position is not silently promoted into meaning.
+
+The ordering proof is vendor-specific, not array-specific:
+
+- Anthropic documents `low → medium → high → xhigh → max` as increasing effort
+  and token use. Hive intersects that order with the exact model's advertised
+  levels.
+- OpenAI documents lower reasoning effort as faster and using fewer reasoning
+  tokens. The live Codex `model/list` descriptions positively order
+  `none/minimal/low/medium/high/xhigh/max/ultra`, with `ultra` described as
+  maximum reasoning plus automatic task delegation.
+- xAI documents `low → medium → high` as increasing reasoning depth. The live
+  Grok cache returns `high, medium, low`, proving that raw array order is not a
+  portable ordering contract.
+
+These exact spellings are the AUTO allowlist in `src/daemon/effort.ts:32–42`.
+They are not a validation enum: an advertised future label remains available
+to an exact user choice, but AUTO refuses it until its ordinal semantics have
+source proof. This preserves capability-first behavior without freezing vendor
+catalogs into Hive.
 
 This is a starting policy, not a quality measurement. It implements the adopted
 “lowest sufficient effort” rule while biasing the new middle tier upward rather
@@ -457,18 +480,18 @@ MCC reads them through the daemon/CLI subprocess contract in
 `model-control-center-settings-ui.md` §10. It never re-derives selection from a
 newer snapshot and never writes SQLite directly.
 
-## Implementation plan, highest risk first
+## Implementation status and remaining plan, highest risk first
 
 Each phase is independently fail-closed. There is no “new router failed, try the
 old router” path.
 
-1. **Persist explicit intent before enabling AUTO.** Bump the routing-policy
+1. **Landed in this cutover — persist explicit intent before enabling AUTO.** Bump the routing-policy
    schema; add tagged policy rows, strict wire schemas, CAS mutations, audit
    events, migrations, and absence/corruption tests. Seed explicit
    NEVER_CONFIGURED controls and zero consent rows. Keep AUTO behavior disabled.
    This is first because collapsing absent into AUTO can spend on an
    unconsented model regardless of every later algorithm.
-2. **Make consent provenance model-exact.** Separate provider master state from
+2. **Landed in this cutover — make consent provenance model-exact.** Separate provider master state from
    membership in the automatic model pool. Migrate accepted exact chains as
    explicit model consent; do not auto-consent newly discovered models. Test
    zero rows, disabled provider, absent model row, unreadable policy, and partial
@@ -480,23 +503,23 @@ old router” path.
    reader, not an empty world. Prove that READ_FAILED excludes AUTO but not an
    exact CHOICE. This makes the behavioral cutover auditable from its first
    spawn.
-4. **Add `standard_coding` and the classifier contract.** Extend every closed
+4. **Partly landed — add `standard_coding` and the classifier contract.** Extend every closed
    category enum, spawn schema, policy chain, quota estimate table, prompt,
    fixture, status surface, and escalation query. The orchestrator sends
    resolved tier plus reason; the daemon records it. Keep historical escalation
    categories unchanged and add lineage/rate denominators.
-5. **Add exact AUTO effort resolution at the gate.** Extend capability evidence
+5. **Landed in this cutover — add exact AUTO effort resolution at the gate.** Extend capability evidence
    with ordering provenance; implement simple/standard/complex selection only
    for known ordered advertised levels. Preserve exact choices and critical
    restart identity. Mutation tests must prove an unavailable or invented level
    cannot reach any adapter.
-6. **Replace cross-vendor headroom sort with atomic fair dispatch.** In one
+6. **Landed in this cutover — replace cross-vendor headroom sort with atomic fair dispatch.** In one
    transaction, read active/recent AUTO assignment counts, choose the
    under-share eligible provider, reserve its quota, and append the decision.
    A concurrent spawn must see the reservation/assignment. Delete the fixed
    unknown-headroom score at `src/daemon/quota.ts:61–64` in the same cutover; do
    not leave dual selection semantics behind a fallback.
-7. **Use Grok's measured weekly classification.** Feed the existing
+7. **Landed on main — use Grok's measured weekly classification.** Feed the existing
    `creditUsagePercent` weekly reading through the ordinary affordability gate
    and preserve the positively absent five-hour window as NOT_METERED. A missing
    or malformed percentage on a recognized weekly surface becomes READ_FAILED
@@ -562,3 +585,16 @@ paid overflow; the limit-failure latch and handoff contain recovery. If the
 provider later establishes a gauge, the driver changes that window to METERED
 and the ordinary gate takes over. The UI renders the recorded classification;
 it never infers one from the presence or absence of a number.
+
+## Effort ordering sources
+
+- Anthropic, “Effort”: <https://platform.claude.com/docs/en/build-with-claude/effort>
+- Anthropic, “Claude Code model configuration”: <https://code.claude.com/docs/en/model-config>
+- OpenAI, “Reasoning models”: <https://platform.openai.com/docs/guides/reasoning>
+- OpenAI, Codex model catalog: <https://developers.openai.com/api/docs/models>
+- xAI, “Reasoning”: <https://docs.x.ai/developers/model-capabilities/text/reasoning>
+
+The documentation proves the common labels' semantics. Account-visible
+availability is still taken from each exact model's live capability record;
+the 2026-07-13 Codex `model/list` probe and Grok model cache were positive
+controls for the lists and descriptions used by this cutover.

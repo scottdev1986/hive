@@ -64,7 +64,7 @@ const discovery = {
 };
 
 const policy: RoutingPolicy = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   revision: 1,
   updatedAt: AT,
   provisional: false,
@@ -76,7 +76,7 @@ const policy: RoutingPolicy = {
       { provider: "codex", model: "gpt-hidden", effort: { mode: "provider-controlled" } },
     ],
   },
-  selection: { global: "spread", categories: {} },
+  selection: { global: "auto", categories: {} },
 };
 
 describe("model inventory", () => {

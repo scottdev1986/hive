@@ -65,7 +65,7 @@ export type QuotaLimit = z.infer<typeof QuotaLimitSchema>;
  */
 const LEGACY_TIER_CATEGORY = {
   deep: "complex_coding",
-  standard: "simple_coding",
+  standard: "standard_coding",
   cheap: "summarization",
   review: "code_review",
 } as const;
@@ -85,6 +85,7 @@ const DEFAULT_ESTIMATES: Record<RoutingCategory, number> = {
   debugging: 20,
   heavy_research: 20,
   planning: 10,
+  standard_coding: 10,
   simple_coding: 10,
   default: 10,
   code_review: 8,
@@ -128,6 +129,7 @@ export const DEFAULT_PERCENT_ESTIMATES: Record<
   debugging: { fiveHour: 8, weekly: 1.5 },
   heavy_research: { fiveHour: 8, weekly: 1.5 },
   planning: { fiveHour: 4, weekly: 0.75 },
+  standard_coding: { fiveHour: 4, weekly: 0.75 },
   simple_coding: { fiveHour: 4, weekly: 0.75 },
   default: { fiveHour: 4, weekly: 0.75 },
   code_review: { fiveHour: 3, weekly: 0.6 },

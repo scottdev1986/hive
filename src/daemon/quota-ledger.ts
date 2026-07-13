@@ -315,6 +315,13 @@ export class QuotaLedger {
         ON quota_reservations(provider, account, pool, status);
       CREATE INDEX IF NOT EXISTS quota_reservations_agent
         ON quota_reservations(agentName, status);
+      CREATE TABLE IF NOT EXISTS quota_fair_dispatch (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        selectedAt TEXT NOT NULL,
+        selectedProvider TEXT NOT NULL,
+        eligibleProviders TEXT NOT NULL,
+        reservationId TEXT NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS quota_observations (
         provider TEXT NOT NULL,
         account TEXT NOT NULL,
@@ -960,6 +967,94 @@ export class QuotaLedger {
         ok: true as const,
         reservations: inputs.map((input) => this.getReservation(input.id)!),
       };
+    });
+  }
+
+  /**
+   * Atomically choose and reserve by weighted-fair deficit over Hive-observed
+   * assignments. Every historical dispatch credits each provider that was
+   * eligible an equal share and charges the selected provider one unit. A
+   * sole-capable dispatch therefore creates no debt. Quota percentages never
+   * enter this comparison, so unlike windows are never compared and a
+   * not-metered provider needs no fabricated headroom score.
+   */
+  tryReserveFairGroups(candidates: Array<{
+    provider: CapabilityProvider;
+    inputs: ReserveQuotaInput[];
+  }>):
+    | { ok: true; candidateIndex: number; reservations: QuotaReservation[] }
+    | { ok: false; blocked: Array<{ candidateIndex: number; blockedBy: ReserveQuotaInput }> }
+  {
+    if (candidates.length === 0) throw new Error("fair dispatch requires a candidate");
+    return this.immediate(() => {
+      const active = candidates.map((candidate, candidateIndex) => ({
+        ...candidate,
+        candidateIndex,
+      }));
+      const blocked: Array<{ candidateIndex: number; blockedBy: ReserveQuotaInput }> = [];
+      while (active.length > 0) {
+        const providers = [...new Set(active.map((candidate) => candidate.provider))];
+        const deficit = new Map(providers.map((provider) => [provider, 0]));
+        const rows = (this.db.database.query(`
+          SELECT selectedProvider, eligibleProviders
+          FROM quota_fair_dispatch ORDER BY id DESC LIMIT 1000
+        `).all() as Array<{ selectedProvider: string; eligibleProviders: string }>).reverse();
+        for (const row of rows) {
+          let eligible: CapabilityProvider[];
+          let selected: CapabilityProvider;
+          try {
+            eligible = z.array(CapabilityProviderSchema).parse(
+              JSON.parse(row.eligibleProviders),
+            );
+            selected = CapabilityProviderSchema.parse(row.selectedProvider);
+          } catch {
+            throw new QuotaLedgerUnknownError("its fair-dispatch history is unreadable");
+          }
+          const relevant = eligible.filter((provider) => deficit.has(provider));
+          if (relevant.length === 0) continue;
+          for (const provider of relevant) {
+            deficit.set(
+              provider,
+              deficit.get(provider)! + 1 / relevant.length,
+            );
+          }
+          if (deficit.has(selected)) {
+            deficit.set(selected, deficit.get(selected)! - 1);
+          }
+        }
+        for (const provider of providers) {
+          deficit.set(provider, deficit.get(provider)! + 1 / providers.length);
+        }
+        const providerOrder = [...providers].sort((left, right) =>
+          deficit.get(right)! - deficit.get(left)! ||
+          providers.indexOf(left) - providers.indexOf(right)
+        );
+        const chosen = providerOrder.flatMap((provider) =>
+          active.filter((candidate) => candidate.provider === provider)
+        )[0]!;
+        const blockedInput = chosen.inputs.find((input) => !this.fits(input));
+        if (blockedInput !== undefined) {
+          blocked.push({
+            candidateIndex: chosen.candidateIndex,
+            blockedBy: blockedInput,
+          });
+          active.splice(active.indexOf(chosen), 1);
+          continue;
+        }
+        const primary = chosen.inputs[0]!;
+        for (const input of chosen.inputs) this.insert(input, primary.id);
+        this.db.database.query(`
+          INSERT INTO quota_fair_dispatch
+            (selectedAt, selectedProvider, eligibleProviders, reservationId)
+          VALUES (?, ?, ?, ?)
+        `).run(primary.now, chosen.provider, JSON.stringify(providers), primary.id);
+        return {
+          ok: true as const,
+          candidateIndex: chosen.candidateIndex,
+          reservations: chosen.inputs.map((input) => this.getReservation(input.id)!),
+        };
+      }
+      return { ok: false as const, blocked };
     });
   }
 

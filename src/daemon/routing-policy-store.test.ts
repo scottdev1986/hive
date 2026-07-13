@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   modelPolicyState,
+  modelCategoryFit,
   providerPolicyState,
   ROUTING_CATEGORIES,
   type RoutingPolicy,
@@ -44,13 +45,15 @@ describe("fail-closed reading", () => {
       .toEqual({ state: "unconfigured", source: "none" });
   });
 
-  test("a pre-selection policy document defaults to spread", () => {
-    const { selection: _selection, ...legacy } = store.read(NOW);
+  test("a version-1 policy migrates choices but never invents AUTO", () => {
+    const { selection: _selection, ...current } = store.read(NOW);
+    const legacy = { ...current, schemaVersion: 1 };
     db.database.run(
       "INSERT INTO routing_policy (id, revision, updatedAt, document) VALUES (1, 0, ?, ?)",
       [NOW.toISOString(), JSON.stringify(legacy)],
     );
-    expect(store.read(NOW).selection).toEqual({ global: "spread", categories: {} });
+    const migrated = new RoutingPolicyStore(db).read(NOW);
+    expect(migrated.selection).toEqual({ global: "never-configured", categories: {} });
   });
 
   test("a corrupt policy row THROWS — it never degrades to an empty, permissive-looking document", () => {
@@ -69,7 +72,7 @@ describe("fail-closed reading", () => {
     expect(() => store.read(NOW)).toThrow(RoutingPolicyCorruptError);
   });
 
-  test("provider-off overrides an explicitly enabled model; enabling a provider covers its unlisted models; nothing means nothing", () => {
+  test("provider-off overrides an explicitly enabled model; provider enablement never consents to unlisted models", () => {
     let policy = store.apply(
       { op: "set-provider", expectedRevision: 0, provider: "claude", state: "enabled" },
       "test",
@@ -100,33 +103,56 @@ describe("fail-closed reading", () => {
       NOW,
     );
     expect(modelPolicyState(policy, "claude", "claude-unlisted"))
-      .toEqual({ state: "enabled", source: "provider" });
+      .toEqual({ state: "unconfigured", source: "none" });
     expect(modelPolicyState(policy, "codex", "gpt-anything"))
       .toEqual({ state: "unconfigured", source: "none" });
+  });
+});
+
+describe("capability fit evidence", () => {
+  test("coding chain placement is monotonic upward evidence, never a model-name guess", () => {
+    const policy: RoutingPolicy = {
+      ...store.read(NOW),
+      chains: {
+        standard_coding: [{
+          provider: "codex",
+          model: "gpt-proved",
+          effort: { mode: "hive-decides" },
+        }],
+      },
+    };
+    expect(modelCategoryFit(policy, "codex", "gpt-proved", "simple_coding").fits)
+      .toBeTrue();
+    expect(modelCategoryFit(policy, "codex", "gpt-proved", "standard_coding").fits)
+      .toBeTrue();
+    expect(modelCategoryFit(policy, "codex", "gpt-proved", "complex_coding").fits)
+      .toBeFalse();
+    expect(modelCategoryFit(policy, "claude", "sounds-strong", "simple_coding").fits)
+      .toBeFalse();
   });
 });
 
 describe("mutations and compare-and-set", () => {
   test("selection mutations set global and category modes and unset only the override", () => {
     let policy = store.apply(
-      { op: "set-selection", expectedRevision: 0, mode: "strict" },
+      { op: "set-selection", expectedRevision: 0, mode: "choice" },
       "test",
       NOW,
     );
-    expect(policy.selection).toEqual({ global: "strict", categories: {} });
+    expect(policy.selection).toEqual({ global: "choice", categories: {} });
     policy = store.apply(
       {
         op: "set-selection",
         expectedRevision: 1,
         category: "complex_coding",
-        mode: "spread",
+        mode: "auto",
       },
       "test",
       NOW,
     );
     expect(policy.selection).toEqual({
-      global: "strict",
-      categories: { complex_coding: "spread" },
+      global: "choice",
+      categories: { complex_coding: "auto" },
     });
     policy = store.apply(
       {
@@ -138,7 +164,7 @@ describe("mutations and compare-and-set", () => {
       "test",
       NOW,
     );
-    expect(policy.selection).toEqual({ global: "strict", categories: {} });
+    expect(policy.selection).toEqual({ global: "choice", categories: {} });
     expect(policy.revision).toBe(3);
   });
 
@@ -177,7 +203,7 @@ describe("mutations and compare-and-set", () => {
     expect(policy.providers.claude).toBe("enabled");
   });
 
-  test("unset deletes the row — back to inherited/unconfigured, never to an invented state", () => {
+  test("unsetting consent preserves explicit never-configured effort intent", () => {
     store.apply(
       {
         op: "set-model",
@@ -200,7 +226,12 @@ describe("mutations and compare-and-set", () => {
       "test",
       NOW,
     );
-    expect(policy.models).toEqual([]);
+    expect(policy.models).toEqual([{
+      provider: "codex",
+      model: "gpt-5.6-sol",
+      state: undefined,
+      effort: { mode: "never-configured" },
+    }]);
     expect(modelPolicyState(policy, "codex", "gpt-5.6-sol"))
       .toEqual({ state: "unconfigured", source: "none" });
   });
@@ -272,7 +303,11 @@ describe("mutations and compare-and-set", () => {
       "test",
       NOW,
     );
-    expect(emptied.models).toEqual([]);
+    expect(emptied.models).toEqual([{
+      provider: "claude",
+      model: "claude-fable-5",
+      effort: { mode: "never-configured" },
+    }]);
   });
 
   test("a chain stores in the user's order, replaces whole, and clears on empty", () => {
@@ -566,13 +601,13 @@ describe("the spawner join — policyModelEnablement answers the AuthorizedLaunc
     const isModelEnabled = policyModelEnablement(store);
     expect(await isModelEnabled("claude", "claude-fable-5"))
       .toEqual({
-        refusal: "claude-fable-5 cannot launch because provider claude is not enabled; " +
-          "enable this provider in the Model Control Center",
+        refusal: "claude-fable-5 cannot launch because exact model consent is not enabled " +
+          "under provider claude; enable both in the Model Control Center",
       });
     expect(await isModelEnabled("codex", "gpt-5.6-sol"))
       .toEqual({
-        refusal: "gpt-5.6-sol cannot launch because provider codex is not enabled; " +
-          "enable this provider in the Model Control Center",
+        refusal: "gpt-5.6-sol cannot launch because exact model consent is not enabled " +
+          "under provider codex; enable both in the Model Control Center",
       });
   });
 
@@ -586,12 +621,23 @@ describe("the spawner join — policyModelEnablement answers the AuthorizedLaunc
     const isModelEnabled = policyModelEnablement(store);
     expect(await isModelEnabled("grok", "grok-4.5"))
       .toEqual({
-        refusal: "grok-4.5 cannot launch because provider grok is not enabled; " +
-          "enable this provider in the Model Control Center",
+        refusal: "grok-4.5 cannot launch because exact model consent is not enabled " +
+          "under provider grok; enable both in the Model Control Center",
       });
 
     store.apply(
       { op: "set-provider", expectedRevision: 1, provider: "grok", state: "enabled" },
+      "the-user",
+      NOW,
+    );
+    store.apply(
+      {
+        op: "set-model",
+        expectedRevision: 2,
+        provider: "grok",
+        model: "grok-4.5",
+        state: "enabled",
+      },
       "the-user",
       NOW,
     );

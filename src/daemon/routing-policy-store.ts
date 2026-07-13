@@ -1,5 +1,6 @@
 import { existsSync, renameSync } from "node:fs";
 import { join } from "node:path";
+import { z } from "zod";
 import {
   CAPABILITY_PROVIDERS,
   emptyRoutingPolicy,
@@ -79,6 +80,98 @@ export class RoutingPolicyStore {
         after TEXT NOT NULL
       );
     `);
+    this.migrateStoredV1();
+  }
+
+  /**
+   * Version 1 represented preference as spread/strict and let missing model
+   * rows inherit provider enablement. The migration writes the three-state
+   * answer explicitly: every existing exact chain is CHOICE, every category
+   * without one is NEVER_CONFIGURED, and only exact targets from a
+   * non-provisional user policy become model consent. Nothing becomes AUTO.
+   */
+  private migrateStoredV1(now: Date = new Date()): void {
+    const row = this.db.database.query(
+      "SELECT document FROM routing_policy WHERE id = 1",
+    ).get() as { document: string } | null;
+    if (row === null) return;
+    let decoded: unknown;
+    try {
+      decoded = JSON.parse(row.document);
+    } catch {
+      return;
+    }
+    const header = z.object({ schemaVersion: z.literal(1) }).passthrough()
+      .safeParse(decoded);
+    if (!header.success) return;
+    const legacy = z.object({
+      schemaVersion: z.literal(1),
+      revision: z.number().int().nonnegative(),
+      updatedAt: z.string(),
+      provisional: z.boolean(),
+      providers: z.record(z.string(), z.unknown()),
+      models: z.array(z.unknown()),
+      chains: z.record(z.string(), z.array(z.unknown())),
+    }).passthrough().safeParse(decoded);
+    if (!legacy.success) return;
+
+    const categories: Record<string, "choice"> = {};
+    for (const [category, entries] of Object.entries(legacy.data.chains)) {
+      if (entries.length > 0) categories[category] = "choice";
+    }
+    const models: Record<string, unknown>[] = legacy.data.models.map((model) => ({
+      ...(model as object),
+      effort: (model as { effort?: unknown }).effort ?? { mode: "never-configured" },
+    }));
+    if (!legacy.data.provisional) {
+      for (const entries of Object.values(legacy.data.chains)) {
+        for (const entry of entries) {
+          const target = z.object({
+            provider: z.string(),
+            model: z.string(),
+          }).passthrough().safeParse(entry);
+          if (!target.success) continue;
+          const index = models.findIndex((model) => {
+            const parsed = z.object({ provider: z.string(), model: z.string() })
+              .passthrough().safeParse(model);
+            return parsed.success &&
+              parsed.data.provider === target.data.provider &&
+              parsed.data.model === target.data.model;
+          });
+          if (index >= 0) {
+            models[index] = { ...(models[index] as object), state: "enabled" };
+          } else {
+            models.push({
+              ...target.data,
+              state: "enabled",
+              effort: { mode: "never-configured" },
+            });
+          }
+        }
+      }
+    }
+    const next = RoutingPolicySchema.safeParse({
+      ...legacy.data,
+      schemaVersion: 2,
+      revision: legacy.data.revision + 1,
+      updatedAt: now.toISOString(),
+      models,
+      selection: { global: "never-configured", categories },
+    });
+    if (!next.success) return;
+    const after = canonicalRoutingPolicyJson(next.data);
+    this.db.database.transaction(() => {
+      this.db.database.run(
+        "UPDATE routing_policy SET revision = ?, updatedAt = ?, document = ? WHERE id = 1",
+        [next.data.revision, next.data.updatedAt, after],
+      );
+      this.db.database.run(
+        `INSERT INTO routing_policy_events
+           (at, actor, operation, revision, before, after)
+         VALUES (?, 'hive', 'migrate-v1-explicit-intent', ?, ?, ?)`,
+        [now.toISOString(), next.data.revision, row.document, after],
+      );
+    }).immediate();
   }
 
   /** The whole policy. No row → the empty revision-0 document (nothing
@@ -210,9 +303,8 @@ export class RoutingPolicyStore {
 }
 
 /** Pure mutation semantics, shared by the store and its tests. "unset"
- * deletes the row — back to inherited/unconfigured, never to an invented
- * state. A model row lives while it still says something (a state or an
- * effort) and is dropped when it says nothing. */
+ * returns to explicit never-configured intent, never to an invented AUTO.
+ * Model consent and effort remain independent fields. */
 function applyMutation(
   policy: RoutingPolicy,
   mutation: RoutingPolicyMutation,
@@ -227,23 +319,16 @@ function applyMutation(
     case "set-model": {
       const rest = withoutModelRow(policy, mutation.provider, mutation.model);
       const existing = modelRow(policy, mutation.provider, mutation.model);
-      if (mutation.state === "unset") {
-        return existing?.effort === undefined ? { ...policy, models: rest } : {
-          ...policy,
-          models: [...rest, {
-            provider: mutation.provider,
-            model: mutation.model,
-            effort: existing.effort,
-          }],
-        };
-      }
+      if (mutation.state === "unset") return existing === undefined
+        ? { ...policy, models: rest }
+        : { ...policy, models: [...rest, { ...existing, state: undefined }] };
       return {
         ...policy,
         models: [...rest, {
           provider: mutation.provider,
           model: mutation.model,
           state: mutation.state,
-          ...(existing?.effort === undefined ? {} : { effort: existing.effort }),
+          effort: existing?.effort ?? { mode: "never-configured" },
         }],
       };
     }
@@ -251,14 +336,11 @@ function applyMutation(
       const rest = withoutModelRow(policy, mutation.provider, mutation.model);
       const existing = modelRow(policy, mutation.provider, mutation.model);
       if (mutation.effort === "unset") {
-        return existing?.state === undefined ? { ...policy, models: rest } : {
-          ...policy,
-          models: [...rest, {
-            provider: mutation.provider,
-            model: mutation.model,
-            state: existing.state,
-          }],
-        };
+        if (existing === undefined) return { ...policy, models: rest };
+        return { ...policy, models: [...rest, {
+          ...existing,
+          effort: { mode: "never-configured" },
+        }] };
       }
       return {
         ...policy,
@@ -274,7 +356,37 @@ function applyMutation(
       const chains = { ...policy.chains };
       if (mutation.entries.length === 0) delete chains[mutation.category];
       else chains[mutation.category] = mutation.entries;
-      return { ...policy, chains };
+      if (mutation.entries.length === 0) return { ...policy, chains };
+      // Accepting an exact chain is also exact model consent. It never enables
+      // the provider master switch, and clearing/reordering a chain never
+      // revokes a model that another category or explicit model row may use.
+      let models = [...policy.models];
+      for (const entry of mutation.entries) {
+        const existing = models.find((row) =>
+          row.provider === entry.provider && row.model === entry.model
+        );
+        models = models.filter((row) =>
+          !(row.provider === entry.provider && row.model === entry.model)
+        );
+        models.push({
+          provider: entry.provider,
+          model: entry.model,
+          state: "enabled",
+          effort: existing?.effort ?? entry.effort,
+        });
+      }
+      return {
+        ...policy,
+        chains,
+        models,
+        selection: {
+          ...policy.selection,
+          categories: {
+            ...policy.selection.categories,
+            [mutation.category]: "choice",
+          },
+        },
+      };
     }
     case "set-selection": {
       if (mutation.category === undefined) {
@@ -347,6 +459,7 @@ function provisionalBaselineChains(
   assign("light_research", grokLed);
   assign("heavy_research", claudeLed);
   assign("simple_coding", codexLed);
+  assign("standard_coding", codexLed);
   assign("complex_coding", claudeLed);
   assign("code_review", codexLed);
   assign("planning", claudeLed);
@@ -375,7 +488,7 @@ export function canonicalRoutingPolicyJson(policy: RoutingPolicy): string {
     provider: row.provider,
     model: row.model,
     ...(row.state === undefined ? {} : { state: row.state }),
-    ...(row.effort === undefined ? {} : { effort: row.effort }),
+    effort: row.effort,
   }));
   const chains: Record<string, ChainEntry[]> = {};
   for (const category of ROUTING_CATEGORIES) {
@@ -432,8 +545,8 @@ export function policyModelEnablement(
     if (state === "enabled") return true;
     if (state === "disabled") return false;
     return {
-      refusal: `${model} cannot launch because provider ${provider} is not enabled; ` +
-        "enable this provider in the Model Control Center",
+      refusal: `${model} cannot launch because exact model consent is not enabled ` +
+        `under provider ${provider}; enable both in the Model Control Center`,
     };
   };
 }

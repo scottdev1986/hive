@@ -516,7 +516,7 @@ describe("quota persistence and reservations", () => {
 });
 
 describe("quota-aware routing", () => {
-  test("spread chooses more headroom even when that model is not primary", async () => {
+  test("fair dispatch starts with the stable primary instead of comparing unlike headroom windows", async () => {
     const { db } = await fileDatabase("routing");
     const ledger = new QuotaLedger(db);
     const now = new Date("2026-07-09T12:00:00.000Z");
@@ -531,11 +531,11 @@ describe("quota-aware routing", () => {
       selection: "spread",
       candidates: candidates(),
     });
-    expect(decision.tool).toEqual("codex");
+    expect(decision.tool).toEqual("claude");
     db.close();
   });
 
-  test("spread keeps the primary when headroom is inside the deadband", async () => {
+  test("fair dispatch ignores small cross-provider headroom differences", async () => {
     const { db } = await fileDatabase("deadband-primary");
     const service = new QuotaService(
       new QuotaLedger(db),
@@ -552,7 +552,7 @@ describe("quota-aware routing", () => {
     db.close();
   });
 
-  test("unknown headroom participates but never beats a healthy measured pool", async () => {
+  test("AUTO excludes unreadable quota while an affordable measured candidate exists", async () => {
     const { db } = await fileDatabase("unknown-headroom");
     const service = new QuotaService(
       new QuotaLedger(db),
@@ -573,26 +573,52 @@ describe("quota-aware routing", () => {
     db.close();
   });
 
-  test("outstanding reservations make the next concurrent spawn spread", async () => {
+  test("atomic fair dispatch gives concurrent spawns different providers", async () => {
     const { db } = await fileDatabase("reservations-spread");
     const service = new QuotaService(
       new QuotaLedger(db),
       config([limit("claude"), limit("codex")]),
       () => new Date("2026-07-09T12:00:00.000Z"),
     );
-    const first = await service.routeAndReserve({
-      agentName: "first",
-      category: "complex_coding",
-      selection: "spread",
-      candidates: candidates(),
-    });
-    const second = await service.routeAndReserve({
-      agentName: "second",
-      category: "complex_coding",
-      selection: "spread",
-      candidates: candidates(),
-    });
+    const [first, second] = await Promise.all([
+      service.routeAndReserve({
+        agentName: "first",
+        category: "complex_coding",
+        selection: "spread",
+        candidates: candidates(),
+      }),
+      service.routeAndReserve({
+        agentName: "second",
+        category: "complex_coding",
+        selection: "spread",
+        candidates: candidates(),
+      }),
+    ]);
     expect([first.tool, second.tool]).toEqual(["claude", "codex"]);
+    db.close();
+  });
+
+  test("sole-capable assignments create no fairness debt", async () => {
+    const { db } = await fileDatabase("fair-eligible-set");
+    const service = new QuotaService(
+      new QuotaLedger(db),
+      config([limit("claude"), limit("codex")]),
+      () => new Date("2026-07-09T12:00:00.000Z"),
+    );
+    const [claude] = candidates();
+    await service.routeAndReserve({
+      agentName: "only-claude",
+      category: "complex_coding",
+      selection: "spread",
+      candidates: [claude!],
+    });
+    const firstRealChoice = await service.routeAndReserve({
+      agentName: "choice",
+      category: "complex_coding",
+      selection: "spread",
+      candidates: candidates(),
+    });
+    expect(firstRealChoice.tool).toBe("claude");
     db.close();
   });
 

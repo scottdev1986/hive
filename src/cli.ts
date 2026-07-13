@@ -419,8 +419,8 @@ export function createProgram(): Command {
   routing
     .command("set-effort <provider> <model> <effort>")
     .description(
-      "Set a model's standing effort: exact:LEVEL, none (vendor states no effort axis), " +
-        "provider-controlled, or unset. Never changes enablement.",
+      "Set explicit effort intent: hive-decides, never-configured, exact:LEVEL, " +
+        "none, provider-controlled, or unset. Never changes enablement.",
     )
     .requiredOption(
       "--expect-revision <revision>",
@@ -442,9 +442,9 @@ export function createProgram(): Command {
   routing
     .command("set-selection <mode>")
     .description(
-      "How a category picks among its chain's eligible links: spread " +
-        "(default — by remaining quota headroom, rank-biased) or strict " +
-        "(always in chain order). Global unless --category names an " +
+      "Preference intent: auto lets Hive fairly dispatch among capable, enabled " +
+        "models; choice follows the exact chain; never-configured refuses. " +
+        "Global unless --category names an " +
         "override; unset (with --category) removes the override.",
     )
     .option("--category <category>", "override for one category only")

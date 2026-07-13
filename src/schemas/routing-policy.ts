@@ -25,6 +25,7 @@ export const ROUTING_CATEGORIES = [
   "light_research",
   "heavy_research",
   "simple_coding",
+  "standard_coding",
   "complex_coding",
   "code_review",
   "planning",
@@ -35,13 +36,19 @@ export const ROUTING_CATEGORIES = [
 export const RoutingCategorySchema = z.enum(ROUTING_CATEGORIES);
 export type RoutingCategory = z.infer<typeof RoutingCategorySchema>;
 
+export const CODING_TIERS = ["simple", "standard", "complex"] as const;
+export const CodingTierSchema = z.enum(CODING_TIERS);
+export type CodingTier = z.infer<typeof CodingTierSchema>;
+
 /**
- * Effort, three-valued to match the capability inventory: an exact advertised
- * level, an explicit "this model has no effort axis" (the vendor's statement,
- * never Hive's inference), or provider-controlled — omit the flag and let the
- * vendor decide, without ever claiming to know what its default is.
+ * Effort intent is explicit: unanswered, Hive-decides, an exact advertised
+ * level, a positively absent effort axis, or provider-controlled. The latter
+ * omits the flag and lets the vendor decide without claiming to know its
+ * default; it is not AUTO.
  */
 export const EffortTargetSchema = z.discriminatedUnion("mode", [
+  z.strictObject({ mode: z.literal("never-configured") }),
+  z.strictObject({ mode: z.literal("hive-decides") }),
   z.strictObject({ mode: z.literal("exact"), value: z.string().min(1) }),
   z.strictObject({ mode: z.literal("none") }),
   z.strictObject({ mode: z.literal("provider-controlled") }),
@@ -88,15 +95,11 @@ export const RoutingChainSchema = z.array(ChainEntrySchema).refine(
 export const ModelPolicySchema = z.strictObject({
   provider: CapabilityProviderSchema,
   model: ExactModelIdSchema,
-  /** Absent state means the row exists only for its effort; enablement then
-   * still inherits from the provider (or stays unconfigured). Choosing an
-   * effort must never bless a model as a side effect. */
+  /** Absent state means the row exists only for effort intent; it never
+   * inherits consent from the provider. Choosing effort must not bless a model. */
   state: z.enum(["enabled", "disabled"]).optional(),
-  /** The user's standing effort choice for this model, if they made one. */
-  effort: EffortTargetSchema.optional(),
-}).refine((row) => row.state !== undefined || row.effort !== undefined, {
-  message:
-    "a model row must carry a state or an effort; an empty row is deleted, not stored",
+  /** Explicit even when unanswered: absence must never acquire AUTO meaning. */
+  effort: EffortTargetSchema,
 });
 export type ModelPolicy = z.infer<typeof ModelPolicySchema>;
 
@@ -104,13 +107,16 @@ export type ModelPolicy = z.infer<typeof ModelPolicySchema>;
  * How a category picks among its chain's ELIGIBLE links (every link still
  * passes the full launch gate first — selection never bypasses a gate):
  *
- * - `spread` (the default): pick by remaining quota headroom, rank-biased —
- *   the chain is capability-and-preference, and the work spreads across the
- *   capable models instead of burning the primary's pool to zero.
- * - `strict`: always try in rank order — for a category where consistency
- *   matters more than load balancing.
+ * - `never-configured`: the user has not answered; automatic routing refuses.
+ * - `auto`: Hive considers every explicitly enabled model whose policy fit
+ *   clears the category, then distributes among the capable providers.
+ * - `choice`: the category's exact chain is the user's ordered preference.
  */
-export const SelectionModeSchema = z.enum(["spread", "strict"]);
+export const SelectionModeSchema = z.enum([
+  "never-configured",
+  "auto",
+  "choice",
+]);
 export type SelectionMode = z.infer<typeof SelectionModeSchema>;
 
 export const SelectionPolicySchema = z.strictObject({
@@ -125,7 +131,7 @@ export type SelectionPolicy = z.infer<typeof SelectionPolicySchema>;
  * rather than inventing a state.
  */
 export const RoutingPolicySchema = z.strictObject({
-  schemaVersion: z.literal(1),
+  schemaVersion: z.literal(2),
   /** Monotonic; every accepted mutation increments it. Writers must present
    * the revision they read (compare-and-set) so concurrent edits conflict
    * loudly instead of clobbering silently. */
@@ -141,8 +147,7 @@ export const RoutingPolicySchema = z.strictObject({
   ),
   models: z.array(ModelPolicySchema),
   chains: z.partialRecord(RoutingCategorySchema, RoutingChainSchema),
-  /** Defaulted so documents written before selection existed still parse. */
-  selection: SelectionPolicySchema.prefault({ global: "spread", categories: {} }),
+  selection: SelectionPolicySchema,
 });
 export type RoutingPolicy = z.infer<typeof RoutingPolicySchema>;
 
@@ -151,14 +156,14 @@ export type RoutingPolicy = z.infer<typeof RoutingPolicySchema>;
  * and "nothing configured" is not "everything permitted". */
 export function emptyRoutingPolicy(updatedAt: string): RoutingPolicy {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     revision: 0,
     updatedAt,
     provisional: false,
     providers: {},
     models: [],
     chains: {},
-    selection: { global: "spread", categories: {} },
+    selection: { global: "never-configured", categories: {} },
   };
 }
 
@@ -170,11 +175,56 @@ export function selectionModeFor(
   return policy.selection.categories[category] ?? policy.selection.global;
 }
 
+export interface CategoryFitDecision {
+  fits: boolean;
+  basis: string;
+}
+
+/**
+ * Policy-authored capability fit. Hive does not infer strength from a model
+ * name or provider. An exact chain placement is the user's positive evidence;
+ * coding tiers are monotonic, so complex proves standard and simple, while
+ * standard proves simple. Other categories require exact membership.
+ */
+export function modelCategoryFit(
+  policy: RoutingPolicy,
+  provider: CapabilityProvider,
+  model: string,
+  category: RoutingCategory,
+): CategoryFitDecision {
+  const has = (candidate: RoutingCategory): boolean =>
+    (policy.chains[candidate] ?? []).some((entry) =>
+      entry.provider === provider && entry.model === model
+    );
+  const label = `${provider}/${model}`;
+  if (category === "simple_coding") {
+    const evidence = (["complex_coding", "standard_coding", "simple_coding"] as const)
+      .find(has);
+    return evidence === undefined
+      ? { fits: false, basis: `${label} has no explicit coding-tier fit evidence` }
+      : { fits: true, basis: `${label} is explicitly placed in ${evidence}` };
+  }
+  if (category === "standard_coding") {
+    const evidence = (["complex_coding", "standard_coding"] as const).find(has);
+    return evidence === undefined
+      ? { fits: false, basis: `${label} has no standard-or-complex fit evidence` }
+      : { fits: true, basis: `${label} is explicitly placed in ${evidence}` };
+  }
+  if (category === "complex_coding") {
+    return has(category)
+      ? { fits: true, basis: `${label} is explicitly placed in complex_coding` }
+      : { fits: false, basis: `${label} has no explicit complex fit evidence` };
+  }
+  return has(category)
+    ? { fits: true, basis: `${label} is explicitly placed in ${category}` }
+    : { fits: false, basis: `${label} has no explicit ${category} fit evidence` };
+}
+
 /**
  * The mutations the daemon accepts — the CLI surface maps onto these 1:1.
  * Every mutation carries `expectedRevision`; a stale revision is rejected.
- * "unset" deletes the row, returning the subject to the inherited /
- * unconfigured state rather than to any invented one.
+ * "unset" writes or returns to the explicit unconfigured state rather than to
+ * any invented automatic answer.
  */
 export const RoutingPolicyMutationSchema = z.discriminatedUnion("op", [
   z.strictObject({
@@ -211,7 +261,8 @@ export const RoutingPolicyMutationSchema = z.discriminatedUnion("op", [
     category: RoutingCategorySchema.optional(),
     mode: z.union([SelectionModeSchema, z.literal("unset")]),
   }).refine((mutation) => !(mutation.category === undefined && mutation.mode === "unset"), {
-    message: 'the global selection mode is always set; choose "spread" or "strict"',
+    message:
+      'the global selection mode is always explicit; choose "never-configured", "auto", or "choice"',
   }),
 ]);
 export type RoutingPolicyMutation = z.infer<typeof RoutingPolicyMutationSchema>;
@@ -234,8 +285,9 @@ export function providerPolicyState(
 
 /**
  * The effective per-model reading: provider-off overrides everything under
- * it; an absent model row inherits the provider's explicit state; absent
- * both is unconfigured. `source` names which row answered, so a UI can show
+ * it; an absent model row remains unconfigured even under an enabled provider.
+ * Provider enablement is a master switch, not consent for every model the
+ * vendor may discover tomorrow. `source` names which row answered, so a UI can show
  * effective-vs-preference without re-deriving the rule.
  */
 export function modelPolicyState(
@@ -253,5 +305,5 @@ export function modelPolicyState(
     (entry) => entry.provider === provider && entry.model === model,
   );
   if (row?.state !== undefined) return { state: row.state, source: "model" };
-  return { state: "enabled", source: "provider" };
+  return { state: "unconfigured", source: "none" };
 }

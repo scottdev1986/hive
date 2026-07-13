@@ -62,7 +62,7 @@ describe("Model Control Center daemon pinning", () => {
     writeCredential(OPERATOR_SUBJECT, "operator-test-token");
 
     const policy = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       revision: 9,
       updatedAt: "2026-07-13T12:00:00.000Z",
       provisional: false,
@@ -80,7 +80,7 @@ describe("Model Control Center daemon pinning", () => {
           effort: { mode: "provider-controlled" },
         }],
       },
-      selection: { global: "spread", categories: {} },
+      selection: { global: "auto", categories: {} },
     };
     let requestedUrl = "";
     const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((

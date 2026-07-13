@@ -58,6 +58,7 @@ import {
   type RoutingCategory,
   type RoutingPolicy,
   selectionModeFor,
+  modelCategoryFit,
   type ChainEntry,
 } from "../schemas";
 import type { HiveDatabase } from "./db";
@@ -83,7 +84,7 @@ import {
   requireAuthorizedLaunch,
 } from "./authorized-launch";
 import { agentTmuxSession } from "./tmux-sessions";
-import { validateEffort } from "./effort";
+import { resolveAutoEffort, validateEffort } from "./effort";
 import type { CapabilityDiscoveryResult } from "./capability-discovery";
 import {
   poolAvailability,
@@ -1545,19 +1546,45 @@ export class HiveSpawner implements Spawner {
      * An explicit request.effort is the user's directive and outranks the
      * link.
      */
-    const linkEffort = (
+    const linkEffort = async (
       entry: { provider: CapabilityProvider; model: string; effort: EffortTarget },
       policy: RoutingPolicy,
-    ): string | undefined => {
+    ): Promise<string | undefined> => {
       if (request.effort !== undefined) return request.effort;
       if (entry.effort.mode === "exact") return entry.effort.value;
       if (entry.effort.mode === "none") return undefined;
+      if (entry.effort.mode === "never-configured") {
+        throw new Error(
+          `${entry.provider}/${entry.model} effort is never-configured; choose Hive decides or an explicit effort`,
+        );
+      }
+      if (entry.effort.mode === "hive-decides") {
+        const discovery = await this.discoverOnce(entry.provider);
+        const record = discovery?.status === "ok"
+          ? discovery.records.find((candidate) =>
+            candidate.launchToken === entry.model ||
+            candidate.canonicalId === entry.model ||
+            candidate.aliases.includes(entry.model)
+          )
+          : undefined;
+        return resolveAutoEffort(record, request.category).effort;
+      }
       // provider-controlled: the model row's standing effort choice, if the
       // user made one, is the next-most-specific instruction.
       const row = policy.models.find((candidate) =>
         candidate.provider === entry.provider && candidate.model === entry.model
       );
-      return row?.effort?.mode === "exact" ? row.effort.value : undefined;
+      if (row?.effort.mode === "exact") return row.effort.value;
+      if (row?.effort.mode === "hive-decides") {
+        const discovery = await this.discoverOnce(entry.provider);
+        const record = discovery?.status === "ok"
+          ? discovery.records.find((candidate) =>
+            candidate.launchToken === entry.model || candidate.canonicalId === entry.model
+          )
+          : undefined;
+        return resolveAutoEffort(record, request.category).effort;
+      }
+      return undefined;
     };
     const authorizeCandidate = async (
       raw: RawLaunchCandidate,
@@ -1727,6 +1754,12 @@ export class HiveSpawner implements Spawner {
       const policy = readPolicy();
       const category = request.category;
       const selection = selectionModeFor(policy, category);
+      if (selection === "never-configured") {
+        throw new Error(
+          `Cannot spawn ${name}: preference for ${category} is never-configured. ` +
+            "Choose Hive decides or an exact chain in the Model Control Center.",
+        );
+      }
       const attempts: string[] = [];
       const tried = new Set<string>();
       const gateChain = async (
@@ -1745,7 +1778,13 @@ export class HiveSpawner implements Spawner {
             );
             continue;
           }
-          const effortValue = linkEffort(entry, policy);
+          let effortValue: string | undefined;
+          try {
+            effortValue = await linkEffort(entry, policy);
+          } catch (error) {
+            attempts.push(`${label} — effort: ${error instanceof Error ? error.message : String(error)}`);
+            continue;
+          }
           const gate = await authorizeCandidate({
             tool: entry.provider,
             model: entry.model,
@@ -1772,7 +1811,7 @@ export class HiveSpawner implements Spawner {
           const decision = await this.dependencies.quota.routeAndReserve({
             agentName: name,
             category,
-            selection,
+            selection: selection === "auto" ? "spread" : "strict",
             ...(request.tool === undefined ? {} : { explicitTool: request.tool }),
             ...(request.reviewOfTool === undefined
               ? {}
@@ -1790,8 +1829,20 @@ export class HiveSpawner implements Spawner {
           return null;
         }
       };
-      const categoryChain = policy.chains[category] ?? [];
-      const defaultChain = category === "default" ? [] : policy.chains.default ?? [];
+      const categoryChain: ChainEntry[] = selection === "auto"
+        ? policy.models.flatMap((row) => {
+          if (row.state !== "enabled") return [];
+          const fit = modelCategoryFit(policy, row.provider, row.model, category);
+          if (!fit.fits) {
+            attempts.push(`fit: ${fit.basis}`);
+            return [];
+          }
+          return [{ provider: row.provider, model: row.model, effort: row.effort }];
+        })
+        : policy.chains[category] ?? [];
+      const defaultChain = selection === "choice" && category !== "default"
+        ? policy.chains.default ?? []
+        : [];
       if (categoryChain.length === 0 && defaultChain.length === 0) {
         throw new Error(
           `Cannot spawn ${name}: category ${category} has no chain and the ` +
