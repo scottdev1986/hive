@@ -77,7 +77,7 @@ const claudeUsage: ClaudeUsageResponse = {
 class StubProbe implements QuotaProbe {
   calls = 0;
   constructor(
-    readonly provider: "claude" | "codex",
+    readonly provider: "claude" | "codex" | "grok",
     private readonly result: QuotaProbeResult,
   ) {}
   read(): Promise<QuotaProbeResult> {
