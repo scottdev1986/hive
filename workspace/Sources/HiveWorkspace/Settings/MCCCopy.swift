@@ -32,6 +32,7 @@ enum MCCCopy {
     static let badgeCritical = "Critically low"
     static let badgePlanLimit = "Plan limit reached"
     static let badgeProviderOff = "Off — Hive will not invoke this CLI"
+    static let badgeProviderOffByDefault = "Off by default — enable to allow use"
     static let badgeNotAvailable = "Not available"
     static let badgeUnavailableModel = "Unavailable"
     static let badgePaidOverflowOff = "Paid overflow off"

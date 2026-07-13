@@ -174,15 +174,32 @@ class SettingsPageController: NSViewController {
             break
         }
 
-        guard let snapshot = dataSource.snapshot, let policy = dataSource.policy else {
+        guard dataSource.snapshot != nil, dataSource.policyLoaded else {
             return
         }
-        if policy.provisional {
+        // A backend that cannot persist says so — a settings screen whose
+        // switches silently do nothing is worse than one that warns.
+        if let reason = dataSource.placeholderReason {
+            let banner = NSTextField(wrappingLabelWithString:
+                "Changes will not persist: \(reason)")
+            banner.font = Theme.Font.callout
+            banner.textColor = .systemOrange
+            contentStack.addArrangedSubview(banner)
+            pinToContent(banner)
+        }
+        if let writeError = dataSource.policyWriteError {
+            let banner = NSTextField(wrappingLabelWithString: writeError)
+            banner.font = Theme.Font.callout
+            banner.textColor = .systemOrange
+            contentStack.addArrangedSubview(banner)
+            pinToContent(banner)
+        }
+        if dataSource.isProvisional {
             let banner = CapsuleBadge(
                 text: MCCCopy.provisionalBanner, symbol: "info.circle", style: .info)
             contentStack.addArrangedSubview(banner)
         }
-        for warning in PolicyWarning.derive(policy: policy, snapshot: snapshot) {
+        for warning in dataSource.warnings {
             let text: String
             switch warning {
             case .noProvidersEnabled: text = MCCCopy.warnNoProviders
@@ -253,18 +270,21 @@ final class FlippedView: NSView {
 }
 
 /// TASKS — the routing table, and the screen the window opens on. For each
-/// kind of work: which model, at which effort, in what fallback order, and
-/// why. The atom is a (model @ effort) pair.
+/// kind of work: which models are good enough, at which effort. The atom is
+/// a (model @ effort) pair; work SPREADS across a category's models by
+/// remaining capacity — rank is preference and tie-break, not a strict walk.
 final class TasksSettingsController: SettingsPageController {
 
     override func buildContent() {
         addHeader(
             title: "Tasks",
-            subtitle: "Which model handles each kind of work, at which effort, and in "
-                + "what fallback order. " + MCCCopy.subtitleFallback)
+            subtitle: "Which models are good enough for each kind of work, and at which "
+                + "effort. " + MCCCopy.subtitleSpread)
         addBanners()
 
-        guard dataSource.snapshot != nil else { return }
+        guard dataSource.snapshot != nil, dataSource.policyLoaded else { return }
+
+        buildSpreadControl()
 
         for category in TaskCategory.allCases {
             let card = CardView()
@@ -282,6 +302,82 @@ final class TasksSettingsController: SettingsPageController {
         defaultCard.pinToContentWidth(section)
         contentStack.addArrangedSubview(defaultCard)
         pinToContent(defaultCard)
+    }
+
+    /// The one prominent distribution control: the global mode, plus the
+    /// place per-category overrides are created (each overridden card then
+    /// shows its own badge with a clear way back to global).
+    private func buildSpreadControl() {
+        let label = NSTextField(labelWithString: MCCCopy.spreadControlLabel)
+        label.font = Theme.Font.headline
+
+        let popup = NSPopUpButton(frame: .zero, pullsDown: false)
+        popup.controlSize = .small
+        popup.font = NSFont.systemFont(ofSize: 11)
+        popup.addItem(withTitle: MCCCopy.spreadByCapacity)
+        popup.addItem(withTitle: MCCCopy.spreadStrictOrder)
+        popup.selectItem(at: dataSource.globalSpread == .spreadByCapacity ? 0 : 1)
+        popup.target = self
+        popup.action = #selector(globalSpreadChanged(_:))
+        popup.setAccessibilityLabel("How Hive picks among a category's models")
+
+        let overrides = NSPopUpButton(frame: .zero, pullsDown: true)
+        overrides.controlSize = .small
+        overrides.font = NSFont.systemFont(ofSize: 11)
+        overrides.addItem(withTitle: "Category override…")
+        for category in TaskCategory.allCases {
+            let item = NSMenuItem(title: category.label, action: nil, keyEquivalent: "")
+            let submenu = NSMenu(title: category.label)
+            for (title, mode) in [
+                (MCCCopy.spreadByCapacity, SpreadMode.spreadByCapacity),
+                (MCCCopy.spreadStrictOrder, SpreadMode.strictOrder),
+            ] {
+                let modeItem = NSMenuItem(
+                    title: title, action: #selector(categoryOverridePicked(_:)),
+                    keyEquivalent: "")
+                modeItem.target = self
+                modeItem.representedObject = [category.rawValue, mode.rawValue]
+                modeItem.state = dataSource.spreadOverride(category) == mode ? .on : .off
+                submenu.addItem(modeItem)
+            }
+            let clearItem = NSMenuItem(
+                title: MCCCopy.spreadUseGlobal,
+                action: #selector(categoryOverridePicked(_:)), keyEquivalent: "")
+            clearItem.target = self
+            clearItem.representedObject = [category.rawValue]
+            clearItem.state = dataSource.spreadOverride(category) == nil ? .on : .off
+            submenu.addItem(clearItem)
+            item.submenu = submenu
+            overrides.menu?.addItem(item)
+        }
+
+        let row = NSStackView(views: [label, popup, overrides, NSView.spacer()])
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.spacing = Theme.Space.m
+        contentStack.addArrangedSubview(row)
+        pinToContent(row)
+
+        let caption = NSTextField(wrappingLabelWithString:
+            dataSource.globalSpread == .spreadByCapacity
+                ? MCCCopy.spreadByCapacityCaption : MCCCopy.spreadStrictCaption)
+        caption.font = Theme.Font.caption
+        caption.textColor = .tertiaryLabelColor
+        contentStack.addArrangedSubview(caption)
+        pinToContent(caption)
+    }
+
+    @objc private func globalSpreadChanged(_ sender: NSPopUpButton) {
+        dataSource.setGlobalSpread(
+            sender.indexOfSelectedItem == 0 ? .spreadByCapacity : .strictOrder)
+    }
+
+    @objc private func categoryOverridePicked(_ sender: NSMenuItem) {
+        guard let payload = sender.representedObject as? [String],
+              let rawCategory = payload.first,
+              let category = TaskCategory(rawValue: rawCategory) else { return }
+        let mode = payload.count > 1 ? SpreadMode(rawValue: payload[1]) : nil
+        dataSource.setCategorySpread(category, mode)
     }
 }
 

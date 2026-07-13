@@ -83,6 +83,20 @@ public struct RoutingPolicyDocument: Codable, Equatable, Sendable {
         }
     }
 
+    /// How work distributes among a chain's capable models: "spread" (by
+    /// remaining capacity, the default) or "strict" (always in rank order).
+    /// Per-category entries are OVERRIDES of the global mode. Prefaulted at
+    /// decode, mirroring the daemon's parse-time prefault.
+    public struct Selection: Codable, Equatable, Sendable {
+        public var global: String
+        public var categories: [String: String]
+
+        public init(global: String = "spread", categories: [String: String] = [:]) {
+            self.global = global
+            self.categories = categories
+        }
+    }
+
     public var schemaVersion: Int
     /// Monotonic; every accepted mutation increments it. Writers present the
     /// revision they read — compare-and-set, so concurrent edits conflict
@@ -95,9 +109,42 @@ public struct RoutingPolicyDocument: Codable, Equatable, Sendable {
     public var providers: [String: String]
     public var models: [ModelRow]
     public var chains: [String: [WireChainEntry]]
+    public var selection: Selection
+
+    private enum CodingKeys: String, CodingKey {
+        case schemaVersion, revision, updatedAt, provisional
+        case providers, models, chains, selection
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = try container.decode(Int.self, forKey: .schemaVersion)
+        revision = try container.decode(Int.self, forKey: .revision)
+        updatedAt = try container.decode(String.self, forKey: .updatedAt)
+        provisional = try container.decode(Bool.self, forKey: .provisional)
+        providers = try container.decode([String: String].self, forKey: .providers)
+        models = try container.decode([ModelRow].self, forKey: .models)
+        chains = try container.decode([String: [WireChainEntry]].self, forKey: .chains)
+        // Prefaulted, like the daemon's parse: an older document without the
+        // field reads as global spread with no overrides.
+        selection = try container.decodeIfPresent(Selection.self, forKey: .selection)
+            ?? Selection()
+    }
 
     public static func decode(from data: Data) throws -> RoutingPolicyDocument {
         try JSONDecoder().decode(RoutingPolicyDocument.self, from: data)
+    }
+
+    public var globalSpread: SpreadMode {
+        SpreadMode(rawValue: selection.global) ?? .spreadByCapacity
+    }
+
+    public func spreadOverride(for category: TaskCategory) -> SpreadMode? {
+        selection.categories[category.rawValue].flatMap(SpreadMode.init(rawValue:))
+    }
+
+    public func effectiveSpread(_ category: TaskCategory) -> SpreadMode {
+        spreadOverride(for: category) ?? globalSpread
     }
 
     // MARK: Fail-closed reading (mirrors providerPolicyState / modelPolicyState)

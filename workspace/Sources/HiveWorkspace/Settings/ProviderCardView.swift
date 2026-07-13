@@ -34,7 +34,6 @@ final class ProviderCardView: CardView {
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
     private var snapshot: ModelControlSnapshot? { dataSource.snapshot }
-    private var policy: ModelControlPolicy? { dataSource.policy }
 
     private var catalog: ProviderCatalog? {
         snapshot?.providers[provider.rawValue]
@@ -46,7 +45,13 @@ final class ProviderCardView: CardView {
     }
 
     private var providerEnabled: Bool {
-        policy?.providerEnabled(provider) ?? true
+        dataSource.providerMasterOn(provider)
+    }
+
+    /// False = no explicit row in the policy store: off by default, awaiting
+    /// consent — an invitation, not a shutdown.
+    private var providerConfigured: Bool {
+        dataSource.providerConfigured(provider)
     }
 
     private func rebuild() {
@@ -74,9 +79,16 @@ final class ProviderCardView: CardView {
                 text: MCCCopy.badgeNotAvailable, symbol: "bolt.horizontal.circle",
                 style: .warning))
         } else if !providerEnabled {
-            headerViews.append(CapsuleBadge(
-                text: MCCCopy.badgeProviderOff, symbol: "power",
-                style: .warning))
+            // Two different off-reasons, two different looks: a deliberate
+            // user off warns; an unconfigured provider (no consent yet)
+            // invites.
+            headerViews.append(providerConfigured
+                ? CapsuleBadge(
+                    text: MCCCopy.badgeProviderOff, symbol: "power",
+                    style: .warning)
+                : CapsuleBadge(
+                    text: MCCCopy.badgeProviderOffByDefault, symbol: "shield",
+                    style: .info))
         }
         headerViews.append(NSView.spacer())
         headerViews.append(master)
@@ -88,14 +100,15 @@ final class ProviderCardView: CardView {
         contentStack.addArrangedSubview(header)
         pinToContentWidth(header)
 
-        // ── Body: everything below the header dims when the master is off.
+        // ── Body: dims only for a DELIBERATE off — an awaiting-consent card
+        // stays full strength.
         let body = NSStackView()
         body.orientation = .vertical
         body.alignment = .leading
         body.spacing = Theme.Space.m
         contentStack.addArrangedSubview(body)
         pinToContentWidth(body)
-        if !providerEnabled {
+        if !providerEnabled && providerConfigured {
             body.alphaValue = Theme.disabledContentAlpha
         }
 
@@ -228,17 +241,19 @@ final class ProviderCardView: CardView {
                     rows.addArrangedSubview(separator)
                     separator.widthAnchor.constraint(equalTo: rows.widthAnchor).isActive = true
                 }
-                let modelId = model.displayId
+                // The policy store's grain is the canonical model id — a
+                // context-window variant is not a different routing target.
+                let modelId = model.canonicalId
                 let hiddenByVendor = model.hidden.value == true
-                let rowState = policy?.rowState(
-                    provider: provider, modelId: modelId,
-                    available: !hiddenByVendor) ?? .enabled
+                let rowState = dataSource.rowState(
+                    provider: provider, model: modelId,
+                    available: !hiddenByVendor)
                 let row = ModelRowView(
                     model: model,
                     rowState: rowState,
                     effortAxis: EffortAxis.derive(from: model),
-                    effortSelection: policy?.modelPolicy(
-                        provider: provider, modelId: modelId).effort ?? .providerControlled,
+                    effortSelection: dataSource.effortSelection(
+                        provider: provider, model: modelId),
                     providerTitle: providerTitle,
                     poolExhausted: MeterDerivation.modelPoolExhausted(
                         provider: provider, canonicalId: model.canonicalId,
@@ -246,17 +261,13 @@ final class ProviderCardView: CardView {
                     spendCaveat: spendCaveat,
                     onToggle: { [weak self] enabled in
                         guard let self else { return }
-                        self.dataSource.mutatePolicy {
-                            $0.setModelEnabled(
-                                provider: self.provider, modelId: modelId, enabled)
-                        }
+                        self.dataSource.setModelEnabled(
+                            provider: self.provider, model: modelId, enabled)
                     },
                     onEffort: { [weak self] effort in
                         guard let self else { return }
-                        self.dataSource.mutatePolicy {
-                            $0.setModelEffort(
-                                provider: self.provider, modelId: modelId, effort)
-                        }
+                        self.dataSource.setEffort(
+                            provider: self.provider, model: modelId, effort)
                     })
                 rows.addArrangedSubview(row)
                 row.widthAnchor.constraint(equalTo: rows.widthAnchor).isActive = true
@@ -284,7 +295,8 @@ final class ProviderCardView: CardView {
     @objc private func masterToggled(_ sender: NSSwitch) {
         let enabled = sender.state == .on
         // Instant local write; every child row flips to override chrome now.
-        dataSource.mutatePolicy { $0.setProviderEnabled(provider, enabled) }
+        // Persistence follows through the daemon's CAS contract.
+        dataSource.setProviderEnabled(provider, enabled)
     }
 
     /// Expand/collapse is local and fluid: the rows stay in the hierarchy and

@@ -8,14 +8,21 @@ import WorkspaceCore
 /// - known(levels): a popup with exactly those strings, in vendor order
 /// - known-none: "This model has no effort setting."
 /// - unknown(reason): "Effort options unknown — {reason}"
+///
+/// There is deliberately NO "vendor decides" option: a vendor-chosen effort
+/// is a default wearing a different hat, and the user is specific about what
+/// runs. An effort the user has not chosen yet displays as unchosen
+/// ("Set effort…"), never as a hidden delegation.
 final class EffortControlView: NSView {
 
     private let popup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let caption = NSTextField(labelWithString: "")
     private var levels: [String] = []
+    private var hasPlaceholder = false
     var onSelect: ((EffortTarget) -> Void)?
 
-    init(axis: EffortAxis, selection: EffortTarget, enabled: Bool) {
+    /// `selection` nil (or provider-controlled) = no explicit choice yet.
+    init(axis: EffortAxis, selection: EffortTarget?, enabled: Bool) {
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
 
@@ -29,24 +36,29 @@ final class EffortControlView: NSView {
         caption.setContentCompressionResistancePriority(.init(455), for: .horizontal)
 
         switch axis {
-        case .known(let levels, _):
+        case .known(let levels, let defaultLevel):
             self.levels = levels
-            popup.addItem(withTitle: "Vendor decides")
-            popup.menu?.addItem(.separator())
-            for level in levels {
-                popup.addItem(withTitle: level)
-            }
-            if case .exact(let value) = selection,
+            var selectedIndex: Int?
+            if case .exact(let value)? = selection,
                let index = levels.firstIndex(of: value) {
-                // +2 skips the vendor-default item and the separator.
-                popup.selectItem(at: index + 2)
-            } else {
-                popup.selectItem(at: 0)
+                selectedIndex = index
             }
+            if selectedIndex == nil {
+                // No explicit choice yet: say so. The placeholder is not a
+                // pickable value and disappears once the user chooses.
+                hasPlaceholder = true
+                popup.addItem(withTitle: "Set effort…")
+                popup.menu?.addItem(.separator())
+            }
+            for level in levels {
+                let suffix = level == defaultLevel ? " (vendor recommends)" : ""
+                popup.addItem(withTitle: "\(level)\(suffix)")
+            }
+            let offset = hasPlaceholder ? 2 : 0
+            popup.selectItem(at: selectedIndex.map { $0 + offset } ?? 0)
             popup.target = self
             popup.action = #selector(pick(_:))
             popup.isEnabled = enabled
-            popup.toolTip = MCCCopy.effortProviderControlled
             popup.setAccessibilityLabel("Effort")
             install(popup)
 
@@ -74,11 +86,9 @@ final class EffortControlView: NSView {
     }
 
     @objc private func pick(_ sender: NSPopUpButton) {
-        let index = sender.indexOfSelectedItem
-        if index == 0 {
-            onSelect?(.providerControlled)
-        } else if index >= 2, index - 2 < levels.count {
-            onSelect?(.exact(levels[index - 2]))
-        }
+        let offset = hasPlaceholder ? 2 : 0
+        let index = sender.indexOfSelectedItem - offset
+        guard index >= 0, index < levels.count else { return }
+        onSelect?(.exact(levels[index]))
     }
 }

@@ -111,8 +111,10 @@ public enum ExhaustionBehavior: String, Codable, Sendable {
 /// weighted by rank so the preferred model still wins when pools are even.
 /// Strict order remains available where consistency matters more than load.
 public enum SpreadMode: String, Codable, Sendable {
-    case spreadByCapacity = "spread_by_capacity"
-    case strictOrder = "strict_order"
+    // Raw values are the daemon's wire spellings (selection.global /
+    // selection.categories values; `hive routing set-selection`).
+    case spreadByCapacity = "spread"
+    case strictOrder = "strict"
 }
 
 public struct CategoryPolicy: Equatable, Codable, Sendable {
@@ -168,7 +170,7 @@ public struct ProviderPolicy: Equatable, Codable, Sendable {
     /// The master toggle. Off = Hive will not invoke this CLI at all, and
     /// every model row beneath it is overridden (§7.4).
     public var enabled: Bool
-    /// Keyed by display id (canonical id + variant). A model with no entry
+    /// Keyed by canonical model id (the policy store's grain). A model with no entry
     /// inherits `absentModelEnablement` — newly discovered models are
     /// reachable, and under an unverified-billing vendor they arrive
     /// seeded-off rather than silently consented.
@@ -213,6 +215,23 @@ public struct ModelControlPolicy: Equatable, Codable, Sendable {
         self.defaultChain = defaultChain
         self.provisional = provisional
         self.globalSpread = globalSpread
+    }
+
+    public func effectiveSpread(_ category: TaskCategory) -> SpreadMode {
+        categoryPolicy(category).spreadOverride ?? globalSpread
+    }
+
+    public mutating func setGlobalSpread(_ mode: SpreadMode) {
+        globalSpread = mode
+        provisional = false
+    }
+
+    /// nil clears the override — the category falls back to the global mode.
+    public mutating func setCategorySpread(_ category: TaskCategory, _ mode: SpreadMode?) {
+        var policy = categories[category.rawValue] ?? CategoryPolicy()
+        policy.spreadOverride = mode
+        categories[category.rawValue] = policy
+        provisional = false
     }
 
     // MARK: Reads
@@ -306,9 +325,27 @@ public enum ChainLinkStatus: Equatable, Sendable {
     case effective
     case providerOff
     case modelDisabled
+    /// Shipped off awaiting the user's consent (unconfigured / seeded-off).
+    /// Distinct from a deliberate user off — the row invites, not scolds.
+    case awaitingConsent
     /// The model left the live catalog. Stays in policy, marked, never
     /// silently dropped and never launched.
     case unresolvable
+
+    /// The one derivation both policy backends share: a link's status is its
+    /// model's row state plus whether the live catalog still resolves it.
+    public static func derive(
+        rowState: ModelRowState, resolvedInCatalog: Bool
+    ) -> ChainLinkStatus {
+        guard resolvedInCatalog else { return .unresolvable }
+        switch rowState {
+        case .enabled: return .effective
+        case .disabledByProvider: return .providerOff
+        case .disabledBySelf: return .modelDisabled
+        case .seededOff: return .awaitingConsent
+        case .unavailable: return .unresolvable
+        }
+    }
 
     public static func derive(
         entry: ChainEntry,
@@ -321,11 +358,11 @@ public enum ChainLinkStatus: Equatable, Sendable {
             return .unresolvable
         }
         guard let record = models.first(where: {
-            $0.canonicalId == entry.model && $0.variant == entry.variant
+            $0.canonicalId == entry.model
         }) else {
             return .unresolvable
         }
-        if !policy.modelPolicy(provider: provider, modelId: record.displayId).isEnabled {
+        if !policy.modelPolicy(provider: provider, modelId: record.canonicalId).isEnabled {
             return .modelDisabled
         }
         return .effective
@@ -475,7 +512,6 @@ public enum ProvisionalPolicyStore {
             chain.append(ChainEntry(
                 provider: id.rawValue,
                 model: flagship.canonicalId,
-                variant: flagship.variant,
                 effort: effort,
                 note: "\(assumedNote) \(why)\(effortNote)",
                 confidence: .assumed))

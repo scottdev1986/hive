@@ -33,24 +33,17 @@ final class ChainSectionView: NSView {
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
+    private var category: TaskCategory? {
+        if case .category(let category) = kind { return category }
+        return nil
+    }
+
     private var chain: [ChainEntry] {
-        guard let policy = dataSource.policy else { return [] }
-        switch kind {
-        case .category(let category): return policy.categoryPolicy(category).chain
-        case .defaultChain: return policy.defaultChain
-        }
+        dataSource.chainEntries(category)
     }
 
     private func writeChain(_ chain: [ChainEntry]) {
-        dataSource.mutatePolicy { policy in
-            switch kind {
-            case .category(let category):
-                policy.setCategoryChain(category, chain: chain)
-            case .defaultChain:
-                policy.defaultChain = chain
-                policy.provisional = false
-            }
-        }
+        dataSource.setChain(category, entries: chain)
     }
 
     private func rebuild() {
@@ -90,8 +83,34 @@ final class ChainSectionView: NSView {
         }
 
         let entries = chain
-        guard let snapshot = dataSource.snapshot, let policy = dataSource.policy else {
+        guard let snapshot = dataSource.snapshot, dataSource.policyLoaded else {
             return
+        }
+
+        // ── Spread override: visible only when this category DIFFERS from
+        // the global mode (creation lives beside the global control).
+        if let category, let override = dataSource.spreadOverride(category) {
+            let badge = CapsuleBadge(
+                text: override == .strictOrder
+                    ? MCCCopy.spreadStrictOrder : MCCCopy.spreadByCapacity,
+                symbol: "arrow.triangle.branch", style: .neutral)
+            let clear = NSButton(
+                title: MCCCopy.spreadUseGlobal, target: self,
+                action: #selector(clearSpreadOverride(_:)))
+            clear.controlSize = .small
+            clear.bezelStyle = .inline
+            let row = NSStackView(views: [badge, clear])
+            row.orientation = .horizontal
+            row.alignment = .centerY
+            row.spacing = Theme.Space.s
+            stack.addArrangedSubview(row)
+            let caption = NSTextField(wrappingLabelWithString:
+                override == .strictOrder
+                    ? MCCCopy.spreadStrictCaption : MCCCopy.spreadByCapacityCaption)
+            caption.font = Theme.Font.caption
+            caption.textColor = .tertiaryLabelColor
+            stack.addArrangedSubview(caption)
+            caption.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         }
 
         // ── Empty chain
@@ -115,9 +134,7 @@ final class ChainSectionView: NSView {
         }
 
         // ── Rows
-        let statuses = entries.map {
-            ChainLinkStatus.derive(entry: $0, policy: policy, snapshot: snapshot)
-        }
+        let statuses = entries.map { dataSource.linkStatus($0) }
         let allIneffective = !statuses.contains(.effective)
         for (index, entry) in entries.enumerated() {
             let row = ChainRowView(
@@ -161,9 +178,11 @@ final class ChainSectionView: NSView {
 
         stack.addArrangedSubview(makeAddButton())
 
-        // ── Exhaustion control (categories with a deliberate chain only)
-        if case .category(let category) = kind {
-            let behavior = policy.categoryPolicy(category).exhaustionBehavior
+        // ── Exhaustion control (categories with a deliberate chain only).
+        // Hidden on the daemon backend until the store carries the field —
+        // a control that silently does not persist is a lie.
+        if case .category(let category) = kind, dataSource.canEditExhaustion {
+            let behavior = dataSource.exhaustionBehavior(category)
             let popup = NSPopUpButton(frame: .zero, pullsDown: false)
             popup.controlSize = .small
             popup.font = NSFont.systemFont(ofSize: 11)
@@ -192,21 +211,22 @@ final class ChainSectionView: NSView {
     }
 
     private func exhaustionConsequence() -> String {
-        guard case .category(let category) = kind, let policy = dataSource.policy else {
-            return ""
-        }
-        switch policy.categoryPolicy(category).exhaustionBehavior {
+        guard let category else { return "" }
+        switch dataSource.exhaustionBehavior(category) {
         case .refuse: return MCCCopy.chainExhaustionRefuse
         case .useGlobalFallback: return MCCCopy.chainExhaustionWiden
         }
     }
 
     @objc private func exhaustionChanged(_ sender: NSPopUpButton) {
-        guard case .category(let category) = kind else { return }
-        dataSource.mutatePolicy {
-            $0.setExhaustionBehavior(
-                category, sender.indexOfSelectedItem == 0 ? .refuse : .useGlobalFallback)
-        }
+        guard let category else { return }
+        dataSource.setExhaustionBehavior(
+            category, sender.indexOfSelectedItem == 0 ? .refuse : .useGlobalFallback)
+    }
+
+    @objc private func clearSpreadOverride(_ sender: Any?) {
+        guard let category else { return }
+        dataSource.setCategorySpread(category, nil)
     }
 
     // MARK: Add
@@ -249,7 +269,7 @@ final class ChainSectionView: NSView {
                         levelItem.target = self
                         levelItem.representedObject = ChainEntryBox(entry: ChainEntry(
                             provider: providerID.rawValue,
-                            model: model.canonicalId, variant: model.variant,
+                            model: model.canonicalId,
                             effort: .exact(level)))
                         submenu.addItem(levelItem)
                     }
@@ -260,7 +280,7 @@ final class ChainSectionView: NSView {
                     item.target = self
                     item.representedObject = ChainEntryBox(entry: ChainEntry(
                         provider: providerID.rawValue,
-                        model: model.canonicalId, variant: model.variant,
+                        model: model.canonicalId,
                         effort: .none))
                 case .unknown(let reason):
                     item.title = "  \(name)  —  effort unknown"
@@ -269,7 +289,7 @@ final class ChainSectionView: NSView {
                     item.target = self
                     item.representedObject = ChainEntryBox(entry: ChainEntry(
                         provider: providerID.rawValue,
-                        model: model.canonicalId, variant: model.variant,
+                        model: model.canonicalId,
                         effort: .providerControlled))
                 }
                 popup.menu?.addItem(item)
@@ -328,7 +348,7 @@ final class ChainRowView: NSView {
         let providerTitle = ProviderBranding.title(for: providerID)
         if case .available(let models, _)? = snapshot.providers[entry.provider] {
             resolvedModel = models.first {
-                $0.canonicalId == entry.model && $0.variant == entry.variant
+                $0.canonicalId == entry.model
             }
         }
         let name = resolvedModel?.humanName ?? entry.model
@@ -359,6 +379,9 @@ final class ChainRowView: NSView {
         case .modelDisabled:
             badge = CapsuleBadge(
                 text: MCCCopy.modelDisabledSelf, symbol: "switch.2", style: .warning)
+        case .awaitingConsent:
+            badge = CapsuleBadge(
+                text: MCCCopy.seededOffBadge, symbol: "shield", style: .info)
         case .unresolvable:
             badge = CapsuleBadge(
                 text: MCCCopy.badgeUnresolvable,

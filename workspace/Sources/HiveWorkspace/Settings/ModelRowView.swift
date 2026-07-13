@@ -23,7 +23,7 @@ final class ModelRowView: NSView {
         model: DiscoveredModel,
         rowState: ModelRowState,
         effortAxis: EffortAxis,
-        effortSelection: EffortTarget,
+        effortSelection: EffortTarget?,
         providerTitle: String,
         poolExhausted: Bool,
         spendCaveat: String?,
@@ -129,12 +129,12 @@ final class ModelRowView: NSView {
             let text = rowState == .enabled
                 ? MCCCopy.maySpendEnabled(spendCaveat)
                 : MCCCopy.maySpend(spendCaveat)
-            let label = NSTextField(labelWithString: text)
+            // A money warning that truncates is a money warning that does
+            // not work: this one wraps until it is fully legible.
+            let label = NSTextField(wrappingLabelWithString: text)
             label.font = Theme.Font.caption
             label.textColor = .secondaryLabelColor
-            label.lineBreakMode = .byTruncatingTail
-            label.toolTip = text
-            label.setContentCompressionResistancePriority(.init(450), for: .horizontal)
+            label.preferredMaxLayoutWidth = 420
             let line = NSStackView(views: [icon, label])
             line.orientation = .horizontal
             line.alignment = .centerY
