@@ -49,15 +49,16 @@ final class RoutingPolicyDocumentTests: XCTestCase {
             RoutingPolicyDocument.WireEffort.none)
     }
 
-    func testAbsentIsUnconfiguredNeverEnabled() {
+    func testAbsentProviderDisablesAnUnconfiguredModel() {
         let document = fixture
         XCTAssertEqual(document.providerState(.grok), .unconfigured)
         let unlisted = document.modelState(provider: .grok, model: "grok-3-mini")
-        XCTAssertEqual(unlisted.state, .unconfigured)
+        XCTAssertEqual(unlisted.state, .disabled)
+        XCTAssertEqual(unlisted.source, .provider)
         XCTAssertEqual(
             document.rowState(provider: .grok, model: "grok-3-mini", available: true),
-            .seededOff,
-            "unconfigured renders as off-awaiting-consent, never as on")
+            .disabledByProvider(preferenceOn: false),
+            "an absent provider confers no authority on its models")
     }
 
     func testProviderDisabledDominatesAnEnabledModelRow() {
@@ -71,13 +72,15 @@ final class RoutingPolicyDocumentTests: XCTestCase {
             "the stored preference is shown, non-authoritative")
     }
 
-    func testExplicitModelRowAnswersUnderAnUnconfiguredProvider() {
-        // Clay's rule, verbatim from modelPolicyState: only an explicit
-        // provider DISABLED overrides; unconfigured does not.
+    func testExplicitModelRowIsOnlyAPreferenceUnderAnUnconfiguredProvider() {
         let document = fixture
         let reading = document.modelState(provider: .grok, model: "grok-4.5")
-        XCTAssertEqual(reading.state, .enabled)
-        XCTAssertEqual(reading.source, .model)
+        XCTAssertEqual(reading.state, .disabled)
+        XCTAssertEqual(reading.source, .provider)
+        XCTAssertEqual(
+            document.rowState(provider: .grok, model: "grok-4.5", available: true),
+            .disabledByProvider(preferenceOn: true),
+            "the enabled child preference survives but is not authoritative")
     }
 
     func testEffortOnlyRowDoesNotBlessEnablement() {

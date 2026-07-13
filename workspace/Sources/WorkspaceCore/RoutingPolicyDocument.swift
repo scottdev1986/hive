@@ -178,20 +178,20 @@ public struct RoutingPolicyDocument: Codable, Equatable, Sendable {
         case none
     }
 
-    /// Provider-DISABLED overrides everything under it. An explicit model row
-    /// answers next. An enabled provider covers rows with no explicit state.
-    /// Absent everywhere is unconfigured.
+    /// Only an enabled provider confers authority. Every other provider state
+    /// overrides its models; an explicit model row remains a preference only.
+    /// Under an enabled provider, an explicit model row answers next, and the
+    /// provider covers rows with no explicit state.
     public func modelState(
         provider: ProviderID, model: String
     ) -> (state: PolicyState, source: PolicySource) {
         let providerState = providerState(provider)
-        if providerState == .disabled { return (.disabled, .provider) }
+        if providerState != .enabled { return (.disabled, .provider) }
         if let row = modelRow(provider: provider, model: model),
            let state = row.state {
             return (state == "enabled" ? .enabled : .disabled, .model)
         }
-        if providerState == .enabled { return (.enabled, .provider) }
-        return (.unconfigured, PolicySource.none)
+        return (.enabled, .provider)
     }
 
     public func modelRow(provider: ProviderID, model: String) -> ModelRow? {
