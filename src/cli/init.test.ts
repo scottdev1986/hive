@@ -285,20 +285,12 @@ describe("runInit — installing the shipped skills", () => {
           return new TextDecoder().decode(rendered.stdout);
         };
 
-        // The effect is model-visible, not merely a directory listing.
-        expect(renderCodexPrompt()).not.toContain("hive-grok");
-
-        // Positive control / mutation: putting the foreign contract back where
-        // Codex reads makes the same instrument see it by name.
-        const grokSkill = shippedSkillsFor("grok").find(
-          (skill) => skill.name === "hive-grok",
-        )!;
-        const foreignPath = skillFile(root, ".agents", grokSkill.name);
-        await mkdir(join(root, ".agents", "skills", grokSkill.name), {
-          recursive: true,
-        });
-        await writeFile(foreignPath, grokSkill.content);
-        expect(renderCodexPrompt()).toContain("hive-grok");
+        // The effect is model-visible, not merely a directory listing. The
+        // shared skill is the positive control that Codex read this directory;
+        // the foreign Grok contract must still be absent from the same render.
+        const prompt = renderCodexPrompt();
+        expect(prompt).toContain("karpathy-guidelines");
+        expect(prompt).not.toContain("hive-grok");
 
         // Agent worktrees have one reader and receive only their own contract.
         const worktree = join(root, "grok-worktree");
