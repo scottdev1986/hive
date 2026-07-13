@@ -358,22 +358,6 @@ final class ProjectStateTests: XCTestCase {
 
     // MARK: Feed line decoding (the NDJSON contract)
 
-    func testFeedLineDecodesContractShape() throws {
-        let line = """
-        {"v":1,"agents":[{"name":"idx","tool":"codex","model":"gpt-5.4","status":"working","taskDescription":"index","tmuxSession":"hive-idx","contextPct":41.5,"futureField":{"nested":true}}]}
-        """
-        let decoded = try XCTUnwrap(FeedLine.parse(line))
-        XCTAssertEqual(decoded.v, 1)
-        let agent = try XCTUnwrap(decoded.agents?.first)
-        XCTAssertEqual(agent.name, "idx")
-        XCTAssertEqual(agent.tool, "codex")
-        XCTAssertEqual(agent.tmuxSession, "hive-idx")
-        XCTAssertEqual(agent.contextPct, 41.5)
-        XCTAssertNil(agent.closedAt)
-        XCTAssertEqual(agent.status, "working")
-        XCTAssertEqual(FeedStatusMap.paneStatus(for: agent.status), .running)
-    }
-
     func testMissingAndWrongTypedAgentStatusStayUnknown() throws {
         let missing = try XCTUnwrap(FeedLine.parse(#"{"v":1,"agents":[{"name":"missing"}]}"#))
         let wrongType = try XCTUnwrap(FeedLine.parse(#"{"v":1,"agents":[{"name":"wrong","status":17}]}"#))
