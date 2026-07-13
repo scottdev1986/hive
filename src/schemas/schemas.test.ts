@@ -218,6 +218,22 @@ describe("HookEventSchema", () => {
       }),
     ).toThrow();
   });
+
+  test("reads positive usage fields and rejects a renamed key", () => {
+    const event = {
+      kind: "turn-end",
+      agentName: "agent-3",
+      timestamp,
+      usageUnits: 12,
+      usageSource: "provider",
+    } satisfies HookEvent;
+    expect(HookEventSchema.parse(event)).toEqual(event);
+    const { usageUnits: _, ...withoutUsage } = event;
+    expect(() => HookEventSchema.parse({
+      ...withoutUsage,
+      usage_units: 12,
+    })).toThrow();
+  });
 });
 
 describe("HandoffSchema", () => {

@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-const HookEventBaseSchema = z.object({
+const HookEventBaseSchema = z.strictObject({
   agentName: z.string().min(1),
   timestamp: z.iso.datetime({ offset: true }),
   // Claude pipes session_id to every hook; Codex notify carries thread-id.
