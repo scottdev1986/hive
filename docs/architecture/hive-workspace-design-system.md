@@ -101,9 +101,16 @@ relying on color.
 ### Badges — `CapsuleBadge`
 
 Four styles: `.neutral` (calm facts: "Paid overflow off"), `.info` (deliberate
-can't-measure or awaiting-consent states), `.warning` (needs attention:
-"Stale reading", "Near limit", provider off), `.critical` ("Critically low",
-"Plan limit reached"). Symbol + words always.
+can't-measure or awaiting-consent states: "Off by default"), `.warning` (needs
+attention: "Stale reading", "Near limit", provider off), `.critical`
+("Critically low", "Plan limit reached"). Symbol + words always.
+
+### Distribution language (Tasks)
+
+Chains are capability + preference, not a strict walk: work spreads across a
+category's models by remaining capacity; rank ("Preferred", "2nd") sets
+preference and breaks ties. Copy must never say "fallback order" or imply the
+top model always runs — and never an ensemble: one model per task.
 
 ### Meters — `UsageMeterView`
 
