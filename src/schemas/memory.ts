@@ -33,6 +33,22 @@ const IsoDateSchema = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}$/, "date must be YYYY-MM-DD");
 
+const verificationDateError = (input: {
+  status: MemoryVerificationStatus;
+  verified?: string | undefined;
+}): string | null => {
+  if (input.status === "verified" && input.verified === undefined) {
+    return "verified date is required when status is verified";
+  }
+  if (input.status === "unverified" && input.verified !== undefined) {
+    return "unverified articles cannot carry a verified date";
+  }
+  if (input.status === "stale" && input.verified === undefined) {
+    return "stale articles require their prior verified date";
+  }
+  return null;
+};
+
 export const MemoryTopicSchema = z
   .string()
   .min(1)
@@ -42,7 +58,7 @@ export const MemoryTopicSchema = z
     "topic must be lowercase kebab-case",
   );
 
-export const MemoryFactSchema = z.object({
+export const MemoryFactSchema = z.strictObject({
   id: z.string().min(1),
   scope: MemoryScopeSchema,
   topic: MemoryTopicSchema,
@@ -57,10 +73,26 @@ export const MemoryFactSchema = z.object({
   supersedes: z.array(z.string()),
   raw: z.array(z.string()),
   verified: IsoDateSchema.optional(),
+}).superRefine((input, context) => {
+  const verificationError = verificationDateError(input);
+  if (verificationError !== null) {
+    context.addIssue({
+      code: "custom",
+      path: ["verified"],
+      message: verificationError,
+    });
+  }
+  if (input.status === "conflicted" && !/conflict|disagree|contradict/i.test(input.body)) {
+    context.addIssue({
+      code: "custom",
+      path: ["body"],
+      message: "conflicted articles must annotate the disagreement",
+    });
+  }
 });
 export type MemoryFact = z.infer<typeof MemoryFactSchema>;
 
-export const MemoryWriteInputSchema = z.object({
+export const MemoryWriteInputSchema = z.strictObject({
   scope: MemoryScopeSchema,
   id: z.string().min(1).optional(),
   topic: MemoryTopicSchema,
@@ -74,25 +106,12 @@ export const MemoryWriteInputSchema = z.object({
   supersedes: z.array(z.string()),
   verified: IsoDateSchema.optional(),
 }).superRefine((input, context) => {
-  if (input.status === "verified" && input.verified === undefined) {
+  const verificationError = verificationDateError(input);
+  if (verificationError !== null) {
     context.addIssue({
       code: "custom",
       path: ["verified"],
-      message: "verified date is required when status is verified",
-    });
-  }
-  if (input.status === "unverified" && input.verified !== undefined) {
-    context.addIssue({
-      code: "custom",
-      path: ["verified"],
-      message: "unverified articles cannot carry a verified date",
-    });
-  }
-  if (input.status === "stale" && input.verified === undefined) {
-    context.addIssue({
-      code: "custom",
-      path: ["verified"],
-      message: "stale articles require their prior verified date",
+      message: verificationError,
     });
   }
   if (input.status === "conflicted" && !/conflict|disagree|contradict/i.test(input.body)) {
@@ -105,7 +124,7 @@ export const MemoryWriteInputSchema = z.object({
 });
 export type MemoryWriteInput = z.infer<typeof MemoryWriteInputSchema>;
 
-export const MemoryWriteResultSchema = z.object({
+export const MemoryWriteResultSchema = z.strictObject({
   id: z.string().min(1),
   scope: MemoryScopeSchema,
   topic: MemoryTopicSchema,
@@ -115,6 +134,15 @@ export const MemoryWriteResultSchema = z.object({
   source: MemorySourceSchema,
   status: MemoryVerificationStatusSchema,
   verified: IsoDateSchema.optional(),
+}).superRefine((input, context) => {
+  const verificationError = verificationDateError(input);
+  if (verificationError !== null) {
+    context.addIssue({
+      code: "custom",
+      path: ["verified"],
+      message: verificationError,
+    });
+  }
 });
 export type MemoryWriteResult = z.infer<typeof MemoryWriteResultSchema>;
 
@@ -135,13 +163,13 @@ export function compactMemoryWriteResult(
   };
 }
 
-export const MemorySearchResultSchema = z.object({
+export const MemorySearchResultSchema = z.strictObject({
   id: z.string().min(1),
   scope: MemoryScopeSchema,
   topic: MemoryTopicSchema,
   title: z.string().min(1),
   snippet: z.string(),
-  date: z.string(),
+  date: IsoDateSchema,
   status: MemoryVerificationStatusSchema,
   tags: z.array(z.string()),
   path: z.string().min(1),
