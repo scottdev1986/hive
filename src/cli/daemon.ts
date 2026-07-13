@@ -57,10 +57,8 @@ export async function runDaemon(): Promise<void> {
   }
   // First boot only: seed the provisional baseline. Chain entries are EXACT
   // model ids frozen from the vendors' live catalogs right now (an unreadable
-  // vendor is skipped, never guessed), and the seed enables ONLY the models
-  // whose billing was actually READ as plan-covered. Enablement is consent
-  // now, so a failed read seeds with nothing enabled — visible in the Control
-  // Center, off until the user's own click.
+  // vendor is skipped, never guessed), but the seed writes no enablement state.
+  // Enablement is consent, and only the user's own click can grant it.
   const routingPolicy = new RoutingPolicyStore(db);
   if (routingPolicy.isEmpty()) {
     const facts = await (async () => {
@@ -76,9 +74,6 @@ export async function runDaemon(): Promise<void> {
             return unknownVendor(provider, "policy baseline seeding");
         }
       });
-      const inventory = await readModelInventory({
-        discover: async (provider) => discovery[provider],
-      });
       const vendorDefaults: Partial<Record<CapabilityProvider, string>> = {};
       for (const provider of CAPABILITY_PROVIDERS) {
         const probed = discovery[provider];
@@ -86,13 +81,8 @@ export async function runDaemon(): Promise<void> {
           vendorDefaults[provider] = probed.effectiveDefault.model.value;
         }
       }
-      return {
-        coveredModels: inventory.models
-          .filter((model) => model.plan.status === "covered")
-          .map((model) => ({ provider: model.vendor, model: model.canonicalId })),
-        vendorDefaults,
-      };
-    })().catch(() => ({ coveredModels: [], vendorDefaults: {} }));
+      return { vendorDefaults };
+    })().catch(() => ({ vendorDefaults: {} }));
     routingPolicy.seedProvisionalBaseline(facts);
   }
   // Live limits come from the providers themselves. Both probes are read-only

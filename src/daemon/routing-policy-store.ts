@@ -9,6 +9,7 @@ import {
   RoutingPolicySchema,
   type CapabilityProvider,
   type ChainEntry,
+  type ModelEnablementDecision,
   type RoutingCategory,
   type RoutingPolicy,
   type RoutingPolicyMutation,
@@ -142,8 +143,8 @@ export class RoutingPolicyStore {
   }
 
   /**
-   * First-boot seeding: when NO policy row exists, write the provisional
-   * baseline so the router ships ready to use. Every chain entry names an
+   * First-boot seeding: when NO policy row exists, write provisional route
+   * suggestions without granting launch consent. Every chain entry names an
    * EXACT model id (user ruling 2026-07-13: "we are specific on the models
    * that we choose"): `vendorDefaults` carries each vendor's then-current
    * default AS READ FROM ITS LIVE CATALOG by the caller — frozen here as a
@@ -152,20 +153,13 @@ export class RoutingPolicyStore {
    * (skipped, not invented). Efforts seed provider-controlled — never
    * invented either.
    *
-   * ENABLEMENT IS CONSENT (user directive 2026-07-12: "no more prompting,
-   * the user sets it up"), so the seed may enable ONLY what is measured safe:
-   * `coveredModels` is the set of models whose billing Hive has actually READ
-   * as plan-covered — those ship enabled and the router works out of the box.
-   * Everything else stays UNCONFIGURED, which reads as not-enabled: visible
-   * in the UI, off until the user's own click, and that click is the consent.
-   * There is no path from "we could not tell" to "we spent his money" — a
-   * caller that could not read billing passes an empty list and the seed
-   * enables nothing. A store that already has a policy — even revision 1 from
-   * an earlier boot — is left exactly alone.
+   * ENABLEMENT IS CONSENT, so the seed writes no provider or model enablement
+   * at all. It may suggest exact chain order, but only the user's own click can
+   * make a provider launchable. A store that already has a policy — even
+   * revision 1 from an earlier boot — is left exactly alone.
    */
   seedProvisionalBaseline(
     facts: {
-      coveredModels: readonly { provider: CapabilityProvider; model: string }[];
       vendorDefaults: Partial<Record<CapabilityProvider, string>>;
     },
     now: Date = new Date(),
@@ -176,11 +170,6 @@ export class RoutingPolicyStore {
         ...emptyRoutingPolicy(now.toISOString()),
         revision: 1,
         provisional: true,
-        models: facts.coveredModels.map(({ provider, model }) => ({
-          provider,
-          model,
-          state: "enabled" as const,
-        })),
         chains: provisionalBaselineChains(facts.vendorDefaults),
       });
       this.write(policy, null, "seed-provisional-baseline", "hive", now);
@@ -419,10 +408,11 @@ export function canonicalRoutingPolicyJson(policy: RoutingPolicy): string {
  * isModelEnabled`), answered from the policy store — THE JOIN between the
  * consent record and the AuthorizedLaunch gate. The contract, verbatim from
  * the dependency's declaration: true = enabled (the user's consent); false =
- * explicitly disabled; null = unreadable/missing — and the gate refuses
- * anything that is not exactly true, so absence stays fail-closed on both
- * sides. A corrupt store THROWS out of here deliberately: the gate turns
- * that into its "policy unreadable" refusal instead of this adapter guessing.
+ * explicitly disabled; null = unreadable/missing; a structured refusal names
+ * a known policy reason. The gate refuses anything that is not exactly true,
+ * so absence stays fail-closed on both sides. A corrupt store THROWS out of
+ * here deliberately: the gate turns that into its "policy unreadable" refusal
+ * instead of this adapter guessing.
  *
  * Identity: policy rows are keyed by canonical id, which every vendor's
  * discovery currently sets identical to the launch token the gate passes in
@@ -433,12 +423,18 @@ export function canonicalRoutingPolicyJson(policy: RoutingPolicy): string {
  */
 export function policyModelEnablement(
   store: RoutingPolicyStore,
-): (provider: CapabilityProvider, model: string) => Promise<boolean | null> {
+): (
+  provider: CapabilityProvider,
+  model: string,
+) => Promise<ModelEnablementDecision> {
   return async (provider, model) => {
     const { state } = modelPolicyState(store.read(), provider, model);
     if (state === "enabled") return true;
     if (state === "disabled") return false;
-    return null;
+    return {
+      refusal: `${model} cannot launch because provider ${provider} is not enabled; ` +
+        "enable this provider in the Model Control Center",
+    };
   };
 }
 

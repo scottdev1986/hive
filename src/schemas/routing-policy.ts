@@ -223,6 +223,7 @@ export type RoutingPolicyMutation = z.infer<typeof RoutingPolicyMutationSchema>;
 // ---------------------------------------------------------------------------
 
 export type PolicyState = "enabled" | "disabled" | "unconfigured";
+export type ModelEnablementDecision = boolean | null | { refusal: string };
 
 export function providerPolicyState(
   policy: RoutingPolicy,
@@ -243,13 +244,14 @@ export function modelPolicyState(
   model: string,
 ): { state: PolicyState; source: "provider" | "model" | "none" } {
   const providerState = providerPolicyState(policy, provider);
-  if (providerState === "disabled") {
-    return { state: "disabled", source: "provider" };
+  if (providerState !== "enabled") {
+    return providerState === "disabled"
+      ? { state: "disabled", source: "provider" }
+      : { state: "unconfigured", source: "none" };
   }
   const row = policy.models.find(
     (entry) => entry.provider === provider && entry.model === model,
   );
   if (row?.state !== undefined) return { state: row.state, source: "model" };
-  if (providerState === "enabled") return { state: "enabled", source: "provider" };
-  return { state: "unconfigured", source: "none" };
+  return { state: "enabled", source: "provider" };
 }

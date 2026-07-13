@@ -34,6 +34,7 @@ import type {
   AgentMessage,
   CapabilityRecord,
   ChainEntry,
+  ModelEnablementDecision,
   QuotaPoolStatus,
   RoutingCategory,
   RoutingPolicy,
@@ -52,6 +53,10 @@ import {
   selectAgentName,
 } from "../daemon/spawner-impl";
 import { HiveDatabase } from "../daemon/db";
+import {
+  policyModelEnablement,
+  RoutingPolicyStore,
+} from "../daemon/routing-policy-store";
 import { QuotaLedger } from "../daemon/quota-ledger";
 import { QuotaService } from "../daemon/quota";
 import { agentTmuxSession } from "../daemon/tmux-sessions";
@@ -3530,7 +3535,10 @@ describe("a refusal names the reason it actually refused for", () => {
   async function spawnGrok(
     root: string,
     grokModel: string | null,
-    enabled: boolean | null | undefined | ((provider: "claude" | "codex" | "grok", model: string) => boolean | null),
+    enabled: ModelEnablementDecision | undefined | ((
+      provider: "claude" | "codex" | "grok",
+      model: string,
+    ) => ModelEnablementDecision | Promise<ModelEnablementDecision>),
     options: { policy?: RoutingPolicy; claudeAllowance?: number } = {},
   ): Promise<{ failure: string; store: FakeStore; tmux: FakeTmux }> {
     const store = new FakeStore();
@@ -3541,7 +3549,7 @@ describe("a refusal names the reason it actually refused for", () => {
         ? {}
         : {
           isModelEnabled: async (provider: "claude" | "codex" | "grok", model: string) =>
-            typeof enabled === "function" ? enabled(provider, model) : enabled,
+            typeof enabled === "function" ? await enabled(provider, model) : enabled,
         }),
       db: store,
       repoRoot: root,
@@ -3671,6 +3679,77 @@ describe("a refusal names the reason it actually refused for", () => {
     expect(failure).toContain("simple_coding: grok/grok-4.5 — enablement");
     expect(failure).toContain("default: claude/claude-opus-4-8 — enablement");
     expect(failure).toContain("Model Control Center");
+    expect(tmux.sessions).toEqual([]);
+  });
+
+  test("an unconfigured provider cannot promote enabled child rows into launch authority", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-provider-unconfigured-"));
+    tempRoots.push(root);
+    const policyDb = new HiveDatabase(":memory:");
+    const policyStore = new RoutingPolicyStore(policyDb);
+    let policy = policyStore.apply(
+      {
+        op: "set-model",
+        expectedRevision: 0,
+        provider: "grok",
+        model: "grok-4.5",
+        state: "enabled",
+      },
+      "unsafe-seed-regression",
+    );
+    policy = policyStore.apply(
+      {
+        op: "set-model",
+        expectedRevision: 1,
+        provider: "claude",
+        model: "claude-opus-4-8",
+        state: "enabled",
+      },
+      "unsafe-seed-regression",
+    );
+    policy = policyStore.apply(
+      {
+        op: "set-chain",
+        expectedRevision: 2,
+        category: "simple_coding",
+        entries: [{
+          provider: "grok",
+          model: "grok-4.5",
+          effort: { mode: "provider-controlled" },
+        }],
+      },
+      "unsafe-seed-regression",
+    );
+    policy = policyStore.apply(
+      {
+        op: "set-chain",
+        expectedRevision: 3,
+        category: "default",
+        entries: [{
+          provider: "claude",
+          model: "claude-opus-4-8",
+          effort: { mode: "provider-controlled" },
+        }],
+      },
+      "unsafe-seed-regression",
+    );
+
+    const { failure, tmux } = await spawnGrok(
+      root,
+      "grok-4.5",
+      policyModelEnablement(policyStore),
+      { policy },
+    );
+    policyDb.close();
+
+    expect(failure).toContain(
+      "simple_coding: grok/grok-4.5 — enablement: grok-4.5 cannot launch " +
+        "because provider grok is not enabled; enable this provider in the Model Control Center",
+    );
+    expect(failure).toContain(
+      "default: claude/claude-opus-4-8 — enablement: claude-opus-4-8 cannot launch " +
+        "because provider claude is not enabled; enable this provider in the Model Control Center",
+    );
     expect(tmux.sessions).toEqual([]);
   });
 

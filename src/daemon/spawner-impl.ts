@@ -52,6 +52,7 @@ import {
   type ExecutionIdentity,
   type CapabilityRecord,
   type HiveConfig,
+  type ModelEnablementDecision,
   splitVariant,
   type EffortTarget,
   type RoutingCategory,
@@ -302,11 +303,12 @@ export interface HiveSpawnerDependencies {
   readBilling?: (
     provider: CapabilityProvider,
   ) => Promise<AccountBilling | null>;
-  /** Policy-store consent. False is disabled; null is unreadable/missing. */
+  /** Policy-store consent. False is disabled; null is unreadable/missing; a
+   * structured refusal carries a known policy reason. */
   isModelEnabled?: (
     provider: CapabilityProvider,
     model: string,
-  ) => Promise<boolean | null>;
+  ) => Promise<ModelEnablementDecision>;
   /**
    * The per-repo graphify MCP server's URL, or null when there is nothing
    * healthy to attach (docs/architecture/graphify-integration.md). Read
@@ -851,7 +853,7 @@ export class HiveSpawner implements Spawner {
           : null;
       },
       enablement: async (candidate) => {
-        let enabled: boolean | null;
+        let enabled: ModelEnablementDecision;
         try {
           enabled = await this.dependencies.isModelEnabled?.(
             candidate.tool,
@@ -861,6 +863,9 @@ export class HiveSpawner implements Spawner {
           return `${candidate.model} enablement policy is unreadable (${
             error instanceof Error ? error.message : String(error)
           }); open the Model Control Center and enable it before launching`;
+        }
+        if (enabled !== null && typeof enabled === "object") {
+          return enabled.refusal;
         }
         if (enabled !== true) {
           return `${candidate.model} is not enabled; open the Model Control Center ` +
@@ -1576,7 +1581,7 @@ export class HiveSpawner implements Spawner {
             : null;
         },
         enablement: async (candidate) => {
-          let enabled: boolean | null;
+          let enabled: ModelEnablementDecision;
           try {
             enabled = await this.dependencies.isModelEnabled?.(
               candidate.tool,
@@ -1586,6 +1591,9 @@ export class HiveSpawner implements Spawner {
             return `${candidate.model} enablement policy is unreadable (${
               error instanceof Error ? error.message : String(error)
             }); open the Model Control Center and enable it before launching`;
+          }
+          if (enabled !== null && typeof enabled === "object") {
+            return enabled.refusal;
           }
           if (enabled !== true) {
             return `${candidate.model} is not enabled; open the Model Control Center ` +
