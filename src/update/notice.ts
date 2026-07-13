@@ -21,7 +21,7 @@ export interface NoticeContext {
   readonly installMethod: InstallMethod;
   /** Version already downloaded and verified into a version directory. */
   readonly staged?: string | null;
-  /** Live agents; a staged update waits for them rather than interrupting. */
+  /** Live agents; activation refuses rather than interrupting them. */
   readonly liveAgents?: number;
 }
 
@@ -48,7 +48,7 @@ function availableLine(
   }
   if (staged === latest && method === "native") {
     return liveAgents > 0
-      ? `hive ${latest} downloaded — activates when the current team finishes, or run ${command} now`
+      ? `hive ${latest} downloaded — run ${command} after all Hive teams stop`
       : `hive ${latest} downloaded — run ${command} to activate`;
   }
   return `hive ${latest} available (you have ${current}) — run ${command}`;

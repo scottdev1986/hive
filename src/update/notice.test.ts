@@ -55,9 +55,9 @@ describe("hive init session notice", () => {
     expect(line).not.toContain("hive update");
   });
 
-  test("a staged update says it is downloaded and waits for the team", () => {
+  test("a staged update names the all-team activation gate", () => {
     expect(start(available(), { staged: "0.0.7", liveAgents: 3 })).toEqual(
-      "hive 0.0.7 downloaded — activates when the current team finishes, or run hive update now",
+      "hive 0.0.7 downloaded — run hive update after all Hive teams stop",
     );
   });
 
