@@ -15,7 +15,7 @@ function agent(overrides: Partial<AgentRecord> = {}): AgentRecord {
     name: "david",
     tool: "codex",
     model: "gpt-5-codex",
-    tier: "deep",
+    category: "complex_coding",
     status: "dead",
     taskDescription: "Implement the Claude channels",
     worktreePath: null,

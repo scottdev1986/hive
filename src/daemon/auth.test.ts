@@ -33,7 +33,7 @@ function agentRecord(overrides: Partial<AgentRecord> = {}): AgentRecord {
     name: "maya",
     tool: "codex",
     model: "gpt-5-codex",
-    tier: "standard",
+    category: "simple_coding",
     status: "working",
     taskDescription: "Phase 0",
     worktreePath: "/tmp/hive-maya",
@@ -233,7 +233,7 @@ describe("a foreign agent cannot act on another tenant", () => {
     const { token } = daemon.capabilities.mint("maya", "writer");
 
     for (const [tool, args] of [
-      ["hive_spawn", { task: "probe", tier: "standard" }],
+      ["hive_spawn", { task: "probe", category: "simple_coding" }],
       ["hive_approve", { id: "any", decision: "approve" }],
       ["hive_approvals", {}],
       ["hive_recover", {}],
@@ -574,7 +574,7 @@ describe("legitimate workflows keep working", () => {
     db.upsertAgent(agentRecord());
     const { token } = daemon.capabilities.mint("orchestrator", "orchestrator");
 
-    expect((await callTool(daemon, token, "hive_spawn", { task: "do a thing", tier: "standard" })).ok).toBe(true);
+    expect((await callTool(daemon, token, "hive_spawn", { task: "do a thing", category: "simple_coding" })).ok).toBe(true);
     expect(spawner.requests).toHaveLength(1);
 
     const approvalId = await daemon.queueCodexApproval("maya", "run a command");
@@ -675,7 +675,7 @@ describe("audit", () => {
     const { token } = daemon.capabilities.mint("maya", "writer");
     const secret = token.split(".")[2]!;
 
-    await callTool(daemon, token, "hive_spawn", { task: "denied", tier: "standard" });
+    await callTool(daemon, token, "hive_spawn", { task: "denied", category: "simple_coding" });
     await callTool(daemon, token, "hive_land", { agent: "maya", capabilityEpoch: 0 });
 
     const serialized = JSON.stringify(listAuditEntries(db, 50));

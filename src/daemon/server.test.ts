@@ -35,7 +35,7 @@ function agent(overrides: Partial<AgentRecord> = {}): AgentRecord {
     name: "maya",
     tool: "codex",
     model: "gpt-5-codex",
-    tier: "standard",
+    category: "simple_coding",
     status: "working",
     taskDescription: "Build server",
     worktreePath: "/tmp/hive-maya",
@@ -123,7 +123,7 @@ class StubSpawner implements Spawner {
     return agent({
       id: "agent-sam",
       name: request.name ?? "sam",
-      tier: request.tier,
+      tier: request.category,
       taskDescription: request.task,
       tmuxSession: `hive-${request.name ?? "sam"}`,
       worktreePath: `/tmp/hive-${request.name ?? "sam"}`,
@@ -141,7 +141,7 @@ class FailedSpawner implements Spawner {
   async spawn(request: SpawnRequest): Promise<AgentRecord> {
     return agent({
       status: "failed",
-      tier: request.tier,
+      tier: request.category,
       taskDescription: request.task,
       failureReason: "Error: model not supported",
       failedAt: timestamp,
@@ -269,7 +269,7 @@ describe("HiveDaemon HTTP server", () => {
     );
     const decision = await quota.routeAndReserve({
       agentName: "maya",
-      tier: "standard",
+      category: "simple_coding",
       preferredTool: "codex",
       explicitTool: "codex",
       candidates: await authorizeForQuotaTest([
@@ -379,7 +379,7 @@ describe("HiveDaemon HTTP server", () => {
     );
     const prior = await quota.reserveControlRun({
       agentName: "maya",
-      tier: "standard",
+      category: "simple_coding",
       tool: "codex",
       model: "gpt-5-codex",
       controlMessageId: "prior-control",
@@ -432,7 +432,7 @@ describe("HiveDaemon HTTP server", () => {
     );
     const reservation = await quota.reserveControlRun({
       agentName: "maya",
-      tier: "standard",
+      category: "simple_coding",
       tool: "codex",
       model: "gpt-5-codex",
       controlMessageId: "recover-control",
@@ -495,7 +495,7 @@ describe("HiveDaemon HTTP server", () => {
     );
     const reservation = await quota.reserveControlRun({
       agentName: "maya",
-      tier: "standard",
+      category: "simple_coding",
       tool: "codex",
       model: "gpt-5-codex",
       controlMessageId: "ack-control",
@@ -572,7 +572,7 @@ describe("HiveDaemon HTTP server", () => {
     for (const [index, name] of cases.entries()) {
       const reservation = await quota.reserveControlRun({
         agentName: name,
-        tier: "standard",
+        category: "simple_coding",
         tool: "codex",
         model: "gpt-5-codex",
         controlMessageId: `${name}-control`,
@@ -645,7 +645,7 @@ describe("HiveDaemon HTTP server", () => {
     );
     const reservation = await quota.reserveControlRun({
       agentName: "maya",
-      tier: "standard",
+      category: "simple_coding",
       tool: "codex",
       model: "gpt-5-codex",
       controlMessageId: "timeout-control",
@@ -954,7 +954,7 @@ describe("HiveDaemon HTTP server", () => {
         name: "hive_spawn",
         arguments: {
           task: "Review auth",
-          tier: "review",
+          category: "code_review",
           name: "sam",
           tool: "claude",
         },
@@ -968,7 +968,7 @@ describe("HiveDaemon HTTP server", () => {
         name: "sam",
         tool: "codex",
         model: "gpt-5-codex",
-        tier: "review",
+        category: "code_review",
         status: "working",
         branch: "hive/sam-task",
         worktreePath: "/tmp/hive-sam",
@@ -980,7 +980,7 @@ describe("HiveDaemon HTTP server", () => {
       expect(spawner.requests).toEqual([
         {
           task: "Review auth",
-          tier: "review",
+          category: "code_review",
           name: "sam",
           tool: "claude",
         },
@@ -993,7 +993,7 @@ describe("HiveDaemon HTTP server", () => {
       expect(status).toEqual([agent({
         id: "agent-sam",
         name: "sam",
-        tier: "review",
+        category: "code_review",
         taskDescription: "Review auth",
         tmuxSession: "hive-sam",
         worktreePath: "/tmp/hive-sam",
@@ -1088,7 +1088,7 @@ describe("HiveDaemon HTTP server", () => {
       };
       expect(escalated.priorEscalations).toEqual(0);
       expect(escalated.escalation.agentName).toEqual("sam");
-      expect(escalated.escalation.tier).toEqual("review");
+      expect(escalated.escalation.category).toEqual("review");
       expect(escalated.escalation.model.length).toBeGreaterThan(0);
       expect(escalated.handoff.branch).toEqual("hive/sam-task");
 
@@ -1245,7 +1245,7 @@ describe("HiveDaemon HTTP server", () => {
         name: "hive_spawn",
         arguments: {
           task: longTask,
-          tier: "standard",
+          category: "simple_coding",
           name: "nia",
           tool: "claude",
         },
@@ -1881,7 +1881,7 @@ describe("HiveDaemon HTTP server", () => {
     );
     const decision = await quota.routeAndReserve({
       agentName: "maya",
-      tier: "standard",
+      category: "simple_coding",
       preferredTool: "codex",
       explicitTool: "codex",
       candidates: await authorizeForQuotaTest([
@@ -2184,7 +2184,7 @@ describe("HiveDaemon HTTP server", () => {
       await client.connect(transport);
       const result = await client.callTool({
         name: "hive_spawn",
-        arguments: { task: "Unsupported launch", tier: "standard" },
+        arguments: { task: "Unsupported launch", category: "simple_coding" },
       });
       const content = (result as {
         content: Array<{ type: string; text?: string }>;
@@ -2345,7 +2345,7 @@ describe("resource watchdog", () => {
       await client.connect(transport);
       const refused = await client.callTool({
         name: "hive_spawn",
-        arguments: { task: "More work", tier: "standard" },
+        arguments: { task: "More work", category: "simple_coding" },
       });
       expect(refused.isError).toBe(true);
       expect(JSON.stringify(refused.content)).toContain("memory pressure");
@@ -2612,7 +2612,7 @@ describe("the model an agent is actually running", () => {
       // names the booking. `sonnet` is an alias — which is the whole trigger.
       const decision = await quota.routeAndReserve({
         agentName: "probe",
-        tier: "standard",
+        category: "simple_coding",
         preferredTool: "claude",
         candidates: await authorizeForQuotaTest([{ tool: "claude", model: "sonnet" }]),
       });
@@ -3054,7 +3054,7 @@ describe("landed is not live", () => {
 
       const spawned = await client.callTool({
         name: "hive_spawn",
-        arguments: { task: "Test the fix that is not in this binary", tier: "review", name: "sam", tool: "claude" },
+        arguments: { task: "Test the fix that is not in this binary", category: "code_review", name: "sam", tool: "claude" },
       });
       expect(spawned.isError).toBeUndefined();
       expect(notes(spawned)).toEqual([stale.message]);
@@ -3076,7 +3076,7 @@ describe("landed is not live", () => {
       expect(notes(status)[0]).toContain("cannot tell");
       const spawned = await client.callTool({
         name: "hive_spawn",
-        arguments: { task: "Anything", tier: "review", name: "sam", tool: "claude" },
+        arguments: { task: "Anything", category: "code_review", name: "sam", tool: "claude" },
       });
       expect(notes(spawned)[0]).toContain("cannot tell");
     });
@@ -3096,7 +3096,7 @@ describe("landed is not live", () => {
         .toEqual([current.message]);
       const spawned = await client.callTool({
         name: "hive_spawn",
-        arguments: { task: "Anything", tier: "review", name: "sam", tool: "claude" },
+        arguments: { task: "Anything", category: "code_review", name: "sam", tool: "claude" },
       });
       expect(notes(spawned)).toEqual([]);
     });

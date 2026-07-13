@@ -22,7 +22,7 @@ function agent(status: AgentRecord["status"] = "working"): AgentRecord {
     name: "maya",
     tool: "codex",
     model: "gpt-test",
-    tier: "standard",
+    category: "simple_coding",
     status,
     taskDescription: "Build safely",
     worktreePath: "/tmp/hive-control-maya",

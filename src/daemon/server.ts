@@ -210,8 +210,8 @@ const MessageAcknowledgementSchema = z.object({
 });
 
 /**
- * A tier escalation is a typed claim with evidence, not a vibe: the reason says
- * why the task exceeds the tier, and `failedApproaches` must name at least one
+ * A capability escalation is a typed claim with evidence, not a vibe: the
+ * reason says why the task exceeds the model, and `failedApproaches` must name at least one
  * concrete attempt — an agent that has tried nothing has nothing to escalate.
  * The remaining fields are the handoff the replacement resumes from.
  */
@@ -766,8 +766,8 @@ export class HiveDaemon {
       send: (from, to, body, sendOptions) =>
         this.delivery.send(from, to, body, sendOptions),
       settleQuota: (agent) => this.settleAgentQuota(agent),
-      authorizeLaunch: async (identity, tier) =>
-        await this.spawner.authorizeLaunch?.(identity, tier) ?? null,
+      authorizeLaunch: async (identity) =>
+        await this.spawner.authorizeLaunch?.(identity) ?? null,
       flushQueued: (agentName) => this.delivery.flushQueued(agentName),
       terminal: options.terminal,
       onTerminalsChanged: () => this.layout?.requestLayout(),
@@ -3235,13 +3235,13 @@ export class HiveDaemon {
     server.registerTool("hive_escalate", {
       title: "Escalate: wrong model for this task",
       description:
-        "Raise a typed tier escalation: this task exceeds the model you were launched on. " +
+        "Raise a typed capability escalation: this task exceeds the model you were launched on. " +
         "Carry evidence (why, and at least one concrete failed approach) plus a handoff " +
         "(goal, done, remaining, decisions) the replacement resumes from. Commit your WIP " +
         "to your branch FIRST — the handoff points at it. The orchestrator decides: it may " +
         "respawn the task on a stronger route with your handoff, or tell you to continue. " +
         "Keep working until it answers. Escalations are recorded and measured per model " +
-        "and tier; escalate once per genuine wall, not to shop for a bigger model.",
+        "and category; escalate once per genuine wall, not to shop for a bigger model.",
       inputSchema: EscalationRequestSchema,
     }, async ({ agent, reason, goal, done, remaining, decisions, failedApproaches }) => {
       // The claimed identity is checked, not trusted, exactly as in hive_send:
@@ -3254,7 +3254,7 @@ export class HiveDaemon {
       if (record.branch === null) {
         throw new Error(
           `Cannot escalate: ${agent} has no branch to hand off. Only spawned ` +
-            "writer agents with a worktree can escalate a tier",
+            "writer agents with a worktree can escalate",
         );
       }
       const now = new Date().toISOString();
@@ -3277,7 +3277,7 @@ export class HiveDaemon {
         // The launch identity: the row must join the routing decision that
         // produced it, and that decision chose the launch model.
         model: record.model,
-        tier: record.tier,
+        category: record.category,
         reason,
         createdAt: now,
       });
@@ -3285,7 +3285,7 @@ export class HiveDaemon {
         agent,
         ORCHESTRATOR_NAME,
         [
-          `TIER ESCALATION from ${agent} (tier=${record.tier}, model=${record.model}` +
+          `CAPABILITY ESCALATION from ${agent} (category=${record.category}, model=${record.model}` +
           `${prior > 0 ? `; escalation #${prior + 1} from this agent` : ""}): ${reason}`,
           `Tried and failed: ${failedApproaches.join("; ")}`,
           `HANDOFF — goal: ${goal}`,
@@ -3293,7 +3293,7 @@ export class HiveDaemon {
           `  remaining: ${remaining.join("; ") || "unstated"}`,
           `  decisions: ${decisions.join("; ") || "none recorded"}`,
           `  branch: ${record.branch} (WIP committed by the agent before escalating)`,
-          "You decide: respawn the task at a higher tier with this handoff and " +
+          "You decide: respawn the task with a stronger chain or model and this handoff, " +
           `kill ${agent} once the replacement confirms pickup — or tell ${agent} ` +
           "to continue. Do not leave it unanswered; it keeps working meanwhile.",
         ].join("\n"),
@@ -3354,10 +3354,19 @@ export class HiveDaemon {
     server.registerTool("hive_spawn", {
       title: "Spawn Hive agent",
       description:
-        "Start a new Hive agent for a delegated task. Returns identity and " +
-        "state, not the task brief you just wrote — taskDescription comes " +
-        "back truncated (taskDescriptionLength carries the full count); read " +
-        "it in full via hive_status if ever needed.",
+        "Start a new Hive agent for a delegated task. Name the task's category " +
+        "— complex_coding (multi-file builds, hard changes), simple_coding " +
+        "(small mechanical edits), debugging (root-causing a defect), " +
+        "code_review (independent review), planning (design before code), " +
+        "heavy_research (deep investigation), light_research (quick lookups), " +
+        "summarization (condensing text) — and the user's routing policy " +
+        "chain for that category decides the model: first enabled link that " +
+        "clears the launch gate runs. Optional: tool/model pin an explicit " +
+        "user choice (never substituted); minContextTokens filters links for " +
+        "long-context work (any category); effort overrides the link's. " +
+        "Returns identity and state, not the task brief you just wrote — " +
+        "taskDescription comes back truncated (taskDescriptionLength carries " +
+        "the full count); read it in full via hive_status if ever needed.",
       inputSchema: SpawnRequestSchema,
     }, async (request: SpawnRequest) => {
       this.authorizeTool(capability, "hive_spawn", "agent:spawn");

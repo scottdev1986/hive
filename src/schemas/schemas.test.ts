@@ -164,7 +164,7 @@ describe("AgentRecordSchema", () => {
     name: "agent-3",
     tool: "codex",
     model: "gpt-5-codex",
-    tier: "standard",
+    category: "simple_coding",
     status: "working",
     taskDescription: "Implement schemas",
     worktreePath: "/tmp/hive-agent-3",

@@ -101,6 +101,25 @@ export const ModelPolicySchema = z.strictObject({
 export type ModelPolicy = z.infer<typeof ModelPolicySchema>;
 
 /**
+ * How a category picks among its chain's ELIGIBLE links (every link still
+ * passes the full launch gate first — selection never bypasses a gate):
+ *
+ * - `spread` (the default): pick by remaining quota headroom, rank-biased —
+ *   the chain is capability-and-preference, and the work spreads across the
+ *   capable models instead of burning the primary's pool to zero.
+ * - `strict`: always try in rank order — for a category where consistency
+ *   matters more than load balancing.
+ */
+export const SelectionModeSchema = z.enum(["spread", "strict"]);
+export type SelectionMode = z.infer<typeof SelectionModeSchema>;
+
+export const SelectionPolicySchema = z.strictObject({
+  global: SelectionModeSchema,
+  categories: z.partialRecord(RoutingCategorySchema, SelectionModeSchema),
+});
+export type SelectionPolicy = z.infer<typeof SelectionPolicySchema>;
+
+/**
  * The whole policy document. Only EXPLICIT settings appear: a provider or
  * model with no entry is unconfigured, and the reading helpers below say so
  * rather than inventing a state.
@@ -122,8 +141,11 @@ export const RoutingPolicySchema = z.strictObject({
   ),
   models: z.array(ModelPolicySchema),
   chains: z.partialRecord(RoutingCategorySchema, RoutingChainSchema),
+  /** Defaulted so documents written before selection existed still parse. */
+  selection: SelectionPolicySchema.prefault({ global: "spread", categories: {} }),
 });
 export type RoutingPolicy = z.infer<typeof RoutingPolicySchema>;
+
 
 /** The document an empty store reads as: revision 0, nothing configured —
  * and "nothing configured" is not "everything permitted". */
@@ -136,7 +158,16 @@ export function emptyRoutingPolicy(updatedAt: string): RoutingPolicy {
     providers: {},
     models: [],
     chains: {},
+    selection: { global: "spread", categories: {} },
   };
+}
+
+/** The mode governing one category: its override, else the global setting. */
+export function selectionModeFor(
+  policy: RoutingPolicy,
+  category: RoutingCategory,
+): SelectionMode {
+  return policy.selection.categories[category] ?? policy.selection.global;
 }
 
 /**
@@ -171,6 +202,16 @@ export const RoutingPolicyMutationSchema = z.discriminatedUnion("op", [
     expectedRevision: z.number().int().nonnegative(),
     category: RoutingCategorySchema,
     entries: RoutingChainSchema,
+  }),
+  z.strictObject({
+    op: z.literal("set-selection"),
+    expectedRevision: z.number().int().nonnegative(),
+    /** Absent category sets the global mode; "unset" (category only) removes
+     * the override so the category follows the global setting again. */
+    category: RoutingCategorySchema.optional(),
+    mode: z.union([SelectionModeSchema, z.literal("unset")]),
+  }).refine((mutation) => !(mutation.category === undefined && mutation.mode === "unset"), {
+    message: 'the global selection mode is always set; choose "spread" or "strict"',
   }),
 ]);
 export type RoutingPolicyMutation = z.infer<typeof RoutingPolicyMutationSchema>;

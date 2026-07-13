@@ -44,7 +44,7 @@ function agent(overrides: Partial<AgentRecord> = {}): AgentRecord {
     name: "maya",
     tool: "codex",
     model: "default",
-    tier: "standard",
+    category: "simple_coding",
     status: "working",
     taskDescription: "Build the event bridge",
     worktreePath: "/tmp/maya",

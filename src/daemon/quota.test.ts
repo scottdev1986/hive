@@ -122,7 +122,7 @@ describe("quota windows", () => {
       account: "personal",
       pool: "claude-premium",
       model: "claude-model",
-      tier: "standard",
+      category: "simple_coding",
       estimatedUnits: 10,
       now: "2026-07-09T07:00:00.000Z",
       expiresAt: "2026-07-10T00:00:00.000Z",
@@ -159,7 +159,7 @@ describe("quota persistence and reservations", () => {
     );
     const decision = await service.routeAndReserve({
       agentName: "maya",
-      tier: "standard",
+      category: "simple_coding",
       preferredTool: "codex",
       explicitTool: "codex",
       candidates: candidates(),
@@ -218,7 +218,7 @@ describe("quota persistence and reservations", () => {
     const results = await Promise.allSettled(services.map((service, index) =>
       service.routeAndReserve({
         agentName: index === 0 ? "maya" : "sam",
-        tier: "standard",
+        category: "simple_coding",
         preferredTool: "claude",
         explicitTool: "claude",
         candidates: candidates(),
@@ -240,7 +240,7 @@ describe("quota persistence and reservations", () => {
     const service = new QuotaService(ledger, quotaConfig, now);
     const original = await service.routeAndReserve({
       agentName: "maya",
-      tier: "standard",
+      category: "simple_coding",
       preferredTool: "codex",
       explicitTool: "codex",
       candidates: candidates(),
@@ -250,7 +250,7 @@ describe("quota persistence and reservations", () => {
 
     const control = await service.reserveControlRun({
       agentName: "maya",
-      tier: "standard",
+      category: "simple_coding",
       tool: "codex",
       model: "codex-model",
       controlMessageId: "control-1",
@@ -279,7 +279,7 @@ describe("quota persistence and reservations", () => {
     );
     const recovered = await restarted.reserveControlRun({
       agentName: "maya",
-      tier: "standard",
+      category: "simple_coding",
       tool: "codex",
       model: "codex-model",
       controlMessageId: "control-1",
@@ -328,7 +328,7 @@ describe("quota persistence and reservations", () => {
     const results = await Promise.allSettled(services.map((service, index) =>
       service.reserveControlRun({
         agentName: index === 0 ? "maya" : "sam",
-        tier: "standard",
+        category: "simple_coding",
         tool: "claude",
         model: "claude-model",
         controlMessageId: `control-${index}`,
@@ -354,7 +354,7 @@ describe("quota persistence and reservations", () => {
     );
     const unstarted = await service.routeAndReserve({
       agentName: "maya",
-      tier: "standard",
+      category: "simple_coding",
       preferredTool: "claude",
       explicitTool: "claude",
       candidates: candidates(),
@@ -366,7 +366,7 @@ describe("quota persistence and reservations", () => {
 
     const started = await service.routeAndReserve({
       agentName: "sam",
-      tier: "standard",
+      category: "simple_coding",
       preferredTool: "claude",
       explicitTool: "claude",
       candidates: candidates(),
@@ -400,7 +400,7 @@ describe("quota persistence and reservations", () => {
     );
     const decision = await service.routeAndReserve({
       agentName: "maya",
-      tier: "standard",
+      category: "simple_coding",
       preferredTool: "claude",
       explicitTool: "claude",
       candidates: candidates(),
@@ -410,7 +410,7 @@ describe("quota persistence and reservations", () => {
       name: "maya",
       tool: "claude",
       model: "claude-model",
-      tier: "standard",
+      category: "simple_coding",
       status: "spawning",
       taskDescription: "test",
       worktreePath: "/tmp/maya",
@@ -471,7 +471,7 @@ describe("quota-aware routing", () => {
     );
     const decision = await service.routeAndReserve({
       agentName: "maya",
-      tier: "deep",
+      category: "complex_coding",
       preferredTool: "claude",
       candidates: candidates(),
     });
@@ -493,7 +493,7 @@ describe("quota-aware routing", () => {
     try {
       await service.routeAndReserve({
         agentName: "maya",
-        tier: "cheap",
+        category: "summarization",
         preferredTool: "claude",
         explicitTool: "claude",
         candidates: candidates(),
@@ -519,7 +519,7 @@ describe("quota-aware routing", () => {
     );
     const decision = await service.routeAndReserve({
       agentName: "maya",
-      tier: "review",
+      category: "code_review",
       preferredTool: "claude",
       reviewOfTool: "claude",
       candidates: candidates(),
@@ -541,14 +541,14 @@ describe("quota-aware routing", () => {
     });
     const first = await service.routeAndReserve({
       agentName: "maya",
-      tier: "standard",
+      category: "simple_coding",
       preferredTool: "codex",
       candidates: candidates(),
     });
     await service.cancel(first.reservation.id);
     await service.routeAndReserve({
       agentName: "sam",
-      tier: "standard",
+      category: "simple_coding",
       preferredTool: "codex",
       candidates: candidates(),
     });
@@ -644,7 +644,7 @@ describe("quota telemetry and alerts", () => {
     );
     await expect(service.routeAndReserve({
       agentName: "maya",
-      tier: "standard",
+      category: "simple_coding",
       preferredTool: "claude",
       explicitTool: "claude",
       candidates: candidates(),
@@ -676,7 +676,7 @@ describe("quota telemetry and alerts", () => {
     });
     await service.routeAndReserve({
       agentName: "maya",
-      tier: "deep",
+      category: "complex_coding",
       preferredTool: "claude",
       explicitTool: "claude",
       candidates: candidates(),
@@ -736,7 +736,7 @@ describe("quota telemetry and alerts", () => {
     for (let index = 0; index < 4; index += 1) {
       const decision = await service.routeAndReserve({
         agentName: `agent-${index}`,
-        tier: "standard",
+        category: "simple_coding",
         preferredTool: "claude",
         explicitTool: "claude",
         candidates: candidates(),
@@ -746,7 +746,7 @@ describe("quota telemetry and alerts", () => {
     expect(alerts.filter((body) => body.includes("five-hour"))).toHaveLength(1);
     const critical = await service.routeAndReserve({
       agentName: "critical",
-      tier: "deep",
+      category: "complex_coding",
       preferredTool: "claude",
       explicitTool: "claude",
       candidates: candidates(),
@@ -759,7 +759,7 @@ describe("quota telemetry and alerts", () => {
     now = new Date("2026-07-09T18:00:00.000Z");
     const rearm = await service.routeAndReserve({
       agentName: "rearm",
-      tier: "standard",
+      category: "simple_coding",
       preferredTool: "claude",
       explicitTool: "claude",
       candidates: candidates(),
@@ -768,7 +768,7 @@ describe("quota telemetry and alerts", () => {
     for (let index = 0; index < 4; index += 1) {
       const decision = await service.routeAndReserve({
         agentName: `again-${index}`,
-        tier: "standard",
+        category: "simple_coding",
         preferredTool: "claude",
         explicitTool: "claude",
         candidates: candidates(),
@@ -802,7 +802,7 @@ describe("spend is ordered against a reading by sequence, not by the clock", () 
       agentName: "maya",
       ...scope,
       model: "claude-model",
-      tier: "standard",
+      category: "simple_coding",
       estimatedUnits: 1,
       estimatedWeeklyUnits: 1,
       now: at,

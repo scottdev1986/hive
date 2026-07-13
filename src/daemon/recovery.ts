@@ -98,7 +98,7 @@ export interface CrashRecoveryDependencies {
   /** PR5 wires the policy-backed full gate. Missing/unreadable refuses resume. */
   authorizeLaunch?: (
     identity: ExecutionIdentity,
-    tier: AgentRecord["tier"],
+    category: AgentRecord["category"],
   ) => Promise<AuthorizedLaunch | null>;
   flushQueued: (agentName: string) => Promise<unknown>;
   /** Drops a stale Claude Channels registration: the connection died with
@@ -417,7 +417,7 @@ export class CrashRecovery {
       }
       const authorized = await this.deps.authorizeLaunch?.(
         identity,
-        record.tier,
+        record.category,
       ) ?? null;
       if (authorized === null) {
         throw new Error(
@@ -510,7 +510,7 @@ export class CrashRecovery {
         : shellJoin(argv);
       const revalidated = await this.deps.authorizeLaunch?.(
         identity,
-        record.tier,
+        record.category,
       ) ?? null;
       if (
         revalidated === null || revalidated.tool !== authorized.tool ||

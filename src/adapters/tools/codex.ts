@@ -10,7 +10,6 @@ import { createReadStream } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
-import type { CodexRoute } from "../../schemas";
 import { buildCodexMcpExclusionArgs, HIVE_MCP_SERVERS } from "./mcp-scope";
 import {
   graphifyHookPath,
@@ -24,8 +23,8 @@ const CODEX_GRAPHIFY_HOOK_KIND: GraphifyHookKind = "codex";
 
 export interface CodexSpawnOptions {
   name: string;
-  model: CodexRoute["model"];
-  effort: NonNullable<CodexRoute["effort"]>;
+  model: string;
+  effort: string;
   worktreePath: string;
   daemonPort: number;
   readOnly: boolean;

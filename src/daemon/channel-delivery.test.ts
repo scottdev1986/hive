@@ -23,7 +23,7 @@ function agent(status: AgentRecord["status"]): AgentRecord {
     name: "maya",
     tool: "claude",
     model: "claude-fable-5",
-    tier: "standard",
+    category: "simple_coding",
     status,
     taskDescription: "Build delivery",
     worktreePath: "/tmp/hive-maya",

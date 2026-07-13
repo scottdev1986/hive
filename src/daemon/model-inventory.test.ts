@@ -69,7 +69,7 @@ const routing: DerivedRouting = {
   warnings: [],
   consentRequired: [],
   tiers: [{
-    tier: "deep",
+    category: "complex_coding",
     kind: "coding",
     tool: { value: "claude", layer: "derived", reason: "test" },
     claude: {
@@ -111,7 +111,7 @@ describe("model inventory", () => {
       .toMatchObject({
         hidden: "hidden",
         routedCandidate: true,
-        roles: [{ tier: "deep", use: "quota-fallback" }],
+        roles: [{ category: "complex_coding", use: "quota-fallback" }],
       });
   });
 
@@ -122,8 +122,8 @@ describe("model inventory", () => {
     const unroutedRouting = {
       ...routing,
       tiers: routing.tiers.map((tier) => ({
-        ...tier,
-        codex: { ...tier.codex, chain: [] },
+        ...category,
+        codex: { ...category.codex, chain: [] },
       })),
     };
     const unrouted = buildModelInventory({ discovery, routing: unroutedRouting });
@@ -175,7 +175,7 @@ describe("model inventory", () => {
     )!;
     expect(model.routedCandidate).toBeTrue();
     expect(model.roles).toContainEqual(
-      expect.objectContaining({ tier: "deep", use: "primary" }),
+      expect.objectContaining({ category: "complex_coding", use: "primary" }),
     );
     expect(model.effortLevels).toEqual({
       state: "known",

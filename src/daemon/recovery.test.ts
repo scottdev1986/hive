@@ -34,7 +34,7 @@ function agent(overrides: Partial<AgentRecord> = {}): AgentRecord {
       model: "claude-fable-5",
       effort: "high",
     },
-    tier: "standard",
+    category: "simple_coding",
     status: "working",
     taskDescription: "Build the server",
     worktreePath: "/repo/.hive/worktrees/maya",

@@ -221,7 +221,7 @@ describe("startup quota discovery", () => {
       await quota.refreshFromProviders(now);
       const decision = await quota.routeAndReserve({
         agentName: "sam",
-        tier: "deep",
+        category: "complex_coding",
         preferredTool: "codex",
         explicitCandidate: true,
         candidates: await authorizeForQuotaTest([{ tool: "codex", model: "gpt-5.3-codex" }]),
@@ -257,7 +257,7 @@ describe("startup quota discovery", () => {
       await quota.refreshFromProviders(now);
       await expect(quota.routeAndReserve({
         agentName: "sam",
-        tier: "deep",
+        category: "complex_coding",
         preferredTool: "codex",
         candidates: await authorizeForQuotaTest([{ tool: "codex", model: "gpt-5.3-codex" }]),
       })).rejects.toThrow(/Quota pressure/);
@@ -363,7 +363,7 @@ describe("per-window accounting", () => {
       // Spend a standard run: 4% of five-hour, 0.75% of weekly.
       const decision = await quota.routeAndReserve({
         agentName: "sam",
-        tier: "standard",
+        category: "simple_coding",
         preferredTool: "codex",
         explicitCandidate: true,
         candidates: await authorizeForQuotaTest([{ tool: "codex", model: "gpt-5.3-codex" }]),
@@ -404,7 +404,7 @@ describe("per-window accounting", () => {
       await quota.refreshFromProviders(now);
       const decision = await quota.routeAndReserve({
         agentName: "sam",
-        tier: "standard",
+        category: "simple_coding",
         preferredTool: "codex",
         explicitCandidate: true,
         candidates: await authorizeForQuotaTest([{ tool: "codex", model: "gpt-5.3-codex" }]),
@@ -431,7 +431,7 @@ describe("per-window accounting", () => {
       await quota.refreshFromProviders(now);
       const decision = await quota.routeAndReserve({
         agentName: "sam",
-        tier: "standard",
+        category: "simple_coding",
         preferredTool: "codex",
         explicitCandidate: true,
         candidates: await authorizeForQuotaTest([{ tool: "codex", model: "gpt-5.3-codex" }]),
@@ -616,7 +616,7 @@ describe("provider unavailable", () => {
       quota.setAlertSink(async (body) => void alerts.push(body));
       const decision = await quota.routeAndReserve({
         agentName: "sam",
-        tier: "deep",
+        category: "complex_coding",
         preferredTool: "codex",
         candidates: await authorizeForQuotaTest([{ tool: "codex", model: "gpt-5.3-codex" }]),
       });
@@ -869,7 +869,7 @@ describe("pools gate the models they actually meter", () => {
     ]);
     const automatic = await quota.routeAndReserve({
       agentName: "auto",
-      tier: "deep",
+      category: "complex_coding",
       preferredTool: "claude",
       candidates,
     });
@@ -877,7 +877,7 @@ describe("pools gate the models they actually meter", () => {
 
     const explicit = await quota.routeAndReserve({
       agentName: "pinned",
-      tier: "deep",
+      category: "complex_coding",
       preferredTool: "claude",
       explicitTool: "claude",
       explicitCandidate: true,
@@ -909,7 +909,7 @@ describe("pools gate the models they actually meter", () => {
     await quota.refreshFromProviders(now, { force: true });
     const spawn = quota.routeAndReserve({
       agentName: "deep-worker",
-      tier: "deep",
+      category: "complex_coding",
       preferredTool: "claude",
       explicitTool: "claude",
       candidates: await authorizeForQuotaTest([{ tool: "claude", model: "claude-fable-5" }]),
@@ -925,7 +925,7 @@ describe("pools gate the models they actually meter", () => {
     await quota.refreshFromProviders(now, { force: true });
     const decision = await quota.routeAndReserve({
       agentName: "deep-worker",
-      tier: "deep",
+      category: "complex_coding",
       preferredTool: "claude",
       explicitTool: "claude",
       candidates: await authorizeForQuotaTest([
@@ -1000,7 +1000,7 @@ describe("pools gate the models they actually meter", () => {
     await quota.refreshFromProviders(now, { force: true });
     await quota.routeAndReserve({
       agentName: "drifter",
-      tier: "deep",
+      category: "complex_coding",
       preferredTool: "claude",
       explicitTool: "claude",
       candidates: await authorizeForQuotaTest([{ tool: "claude", model: "claude-opus-4-8" }]),
@@ -1078,7 +1078,7 @@ describe("a route that cannot start is not a route", () => {
     const { quota } = await healthy();
     const decision = await quota.routeAndReserve({
       agentName: "deep-worker",
-      tier: "deep",
+      category: "complex_coding",
       preferredTool: "claude",
       candidates: both,
     });
@@ -1090,7 +1090,7 @@ describe("a route that cannot start is not a route", () => {
     const { quota } = await healthy();
     const first = await quota.routeAndReserve({
       agentName: "deep-worker",
-      tier: "deep",
+      category: "complex_coding",
       preferredTool: "claude",
       candidates: both,
     });
@@ -1104,7 +1104,7 @@ describe("a route that cannot start is not a route", () => {
 
     const second = await quota.routeAndReserve({
       agentName: "deep-worker-2",
-      tier: "deep",
+      category: "complex_coding",
       preferredTool: "claude",
       candidates: both,
     });
@@ -1120,7 +1120,7 @@ describe("a route that cannot start is not a route", () => {
     const low = { tool: "codex" as const, model: "gpt-5.6-sol", effort: "low" };
     const failed = await quota.routeAndReserve({
       agentName: "xhigh-run",
-      tier: "deep",
+      category: "complex_coding",
       preferredTool: "codex",
       candidates: await authorizeForQuotaTest([xhigh]),
     });
@@ -1133,7 +1133,7 @@ describe("a route that cannot start is not a route", () => {
 
     const next = await quota.routeAndReserve({
       agentName: "low-run",
-      tier: "deep",
+      category: "complex_coding",
       preferredTool: "codex",
       candidates: await authorizeForQuotaTest([xhigh, low]),
     });
@@ -1147,7 +1147,7 @@ describe("a route that cannot start is not a route", () => {
     const { quota } = await healthy();
     const failed = await quota.routeAndReserve({
       agentName: "a",
-      tier: "deep",
+      category: "complex_coding",
       preferredTool: "claude",
       candidates: both,
     });
@@ -1155,7 +1155,7 @@ describe("a route that cannot start is not a route", () => {
     expect(
       (await quota.routeAndReserve({
         agentName: "b",
-        tier: "deep",
+        category: "complex_coding",
         preferredTool: "claude",
         candidates: both,
       })).tool,
@@ -1166,7 +1166,7 @@ describe("a route that cannot start is not a route", () => {
     // concluded from the failure — no operator action, no expiry to wait out.
     const pinned = await quota.routeAndReserve({
       agentName: "c",
-      tier: "deep",
+      category: "complex_coding",
       preferredTool: "codex",
       explicitTool: "codex",
       candidates: await authorizeForQuotaTest([both[1]!]),
@@ -1176,7 +1176,7 @@ describe("a route that cannot start is not a route", () => {
     expect(
       (await quota.routeAndReserve({
         agentName: "d",
-        tier: "deep",
+        category: "complex_coding",
         preferredTool: "claude",
         candidates: both,
       })).tool,
@@ -1187,7 +1187,7 @@ describe("a route that cannot start is not a route", () => {
     const { quota } = await healthy();
     const failed = await quota.routeAndReserve({
       agentName: "a",
-      tier: "deep",
+      category: "complex_coding",
       preferredTool: "codex",
       explicitTool: "codex",
       candidates: await authorizeForQuotaTest([both[1]!]),
@@ -1199,7 +1199,7 @@ describe("a route that cannot start is not a route", () => {
     // own recent bad luck, which is a weaker fact than a human's explicit ask.
     const pinned = await quota.routeAndReserve({
       agentName: "b",
-      tier: "deep",
+      category: "complex_coding",
       preferredTool: "codex",
       explicitTool: "codex",
       candidates: await authorizeForQuotaTest([both[1]!]),
@@ -1236,7 +1236,7 @@ describe("a refusal names the way out, and never takes it", () => {
 
     const spawn = quota.routeAndReserve({
       agentName: "worker",
-      tier: "deep",
+      category: "complex_coding",
       preferredTool: "codex",
       explicitTool: "codex",
       candidates: await authorizeForQuotaTest([{ tool: "codex", model: "gpt-5.6-sol" }]),
@@ -1266,7 +1266,7 @@ describe("a spend belongs to the vendor whose model produced it", () => {
         // tool=codex while the caller had pinned a Claude model, and the ledger
         // recorded the impossible pair without ever asking whether it could exist.
         model: "claude-opus-4-8",
-        tier: "standard",
+        category: "simple_coding",
         estimatedUnits: 4,
         now: now.toISOString(),
         expiresAt: new Date(now.getTime() + 60_000).toISOString(),
@@ -1295,7 +1295,7 @@ describe("a spend belongs to the vendor whose model produced it", () => {
       account: "default",
       pool: "codex",
       model: "default",
-      tier: "standard",
+      category: "simple_coding",
       estimatedUnits: 4,
       now: now.toISOString(),
       expiresAt: new Date(now.getTime() + 60_000).toISOString(),

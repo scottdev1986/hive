@@ -1,9 +1,6 @@
-import { homedir } from "node:os";
-import { join } from "node:path";
 import {
   CapabilityProviderSchema,
   unknownVendor,
-  type Route,
 } from "../../schemas";
 
 // CLAUDE_BEST_MODEL and CLAUDE_OPUS_MODEL used to live here: compiled-in
@@ -36,79 +33,4 @@ export function modelVendor(model: string): "claude" | "codex" | null {
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-async function readConfiguredModel(
-  path: string,
-  parse: (source: string) => unknown,
-): Promise<string | undefined> {
-  const file = Bun.file(path);
-  try {
-    if (!(await file.exists())) {
-      return undefined;
-    }
-    const parsed = parse(await file.text());
-    if (isRecord(parsed) && typeof parsed.model === "string") {
-      return parsed.model;
-    }
-  } catch {
-    // Resolution is display-only; a broken tool config must not fail a spawn.
-  }
-  return undefined;
-}
 
-function claudeSettingsPath(): string {
-  const directory = Bun.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude");
-  return join(directory, "settings.json");
-}
-
-function codexConfigPath(): string {
-  const directory = Bun.env.CODEX_HOME ?? join(homedir(), ".codex");
-  return join(directory, "config.toml");
-}
-
-// The model stored on an AgentRecord (and shown in terminal titles and
-// hive_status) must be the model the tool actually runs, not a routing
-// alias. Routes with a concrete model pass through; "default" is resolved
-// from the tool's own user config — the same file the CLI itself reads when
-// hive omits the model flag. Only when that config names no model does the
-// alias survive, because the CLI's built-in default is not knowable locally.
-// (`best` used to resolve here through a compiled constant; that mapping is
-// the vendor's fact, not Hive's to hardcode, so the alias now passes through
-// verbatim — pin concrete IDs, as the docs have always said.)
-export async function resolveConcreteModel(
-  tool: Route["tool"],
-  route: Route,
-): Promise<string> {
-  if (!CapabilityProviderSchema.safeParse(tool).success) {
-    return unknownVendor(tool as never, "resolveConcreteModel");
-  }
-  const configured = route[tool]?.model;
-  if (configured === undefined) {
-    throw new Error(`No ${tool} route is configured`);
-  }
-  if (configured !== "default") {
-    return configured;
-  }
-  // Exhaustive: a vendor with no config file of its own must say so here. The
-  // old ternary would have read a third vendor's "default" out of
-  // ~/.codex/config.toml and launched it with Codex's pinned model — a model
-  // that vendor may not even have.
-  const resolved = await readVendorConfiguredModel(tool);
-  return resolved ?? configured;
-}
-
-function readVendorConfiguredModel(
-  tool: Route["tool"],
-): Promise<string | undefined> {
-  switch (tool) {
-    case "claude":
-      return readConfiguredModel(claudeSettingsPath(), JSON.parse);
-    case "codex":
-      return readConfiguredModel(codexConfigPath(), Bun.TOML.parse);
-    case "grok":
-      // Grok's effective default comes from the live `grok models` catalog.
-      // Project `[models]` config is ignored, so no file fallback is honest.
-      return Promise.resolve(undefined);
-    default:
-      return unknownVendor(tool, "resolveConcreteModel");
-  }
-}

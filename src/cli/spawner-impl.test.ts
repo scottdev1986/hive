@@ -35,7 +35,7 @@ import type {
   CapabilityRecord,
   QuotaPoolStatus,
   Route,
-  RoutingTier,
+  RoutingCategory,
   TerminalHandle,
 } from "../schemas";
 import {
@@ -180,7 +180,7 @@ function agent(
     name,
     tool: "codex",
     model: "gpt-test",
-    tier: "standard",
+    category: "simple_coding",
     status,
     taskDescription: "Test task",
     worktreePath: `/tmp/${name}`,
@@ -916,7 +916,7 @@ describe("HiveSpawner name pool", () => {
     // Every spawn is in flight at once, before any of them writes an agent row,
     // so only the reservation table can keep their names apart.
     const spawns = Array.from({ length: 8 }, (_, index) =>
-      spawner.spawn({ task: `Task ${index}`, tier: "standard" })
+      spawner.spawn({ task: `Task ${index}`, category: "simple_coding" })
     );
     const claimed = [...store.reservations];
     expect(claimed.length).toEqual(8);
@@ -955,13 +955,13 @@ describe("HiveSpawner name pool", () => {
 
     const first = spawner.spawn({
       task: "First task",
-      tier: "standard",
+      category: "simple_coding",
       name: "cara",
     });
     expect(store.reservations.has("cara")).toEqual(true);
     await expect(spawner.spawn({
       task: "Conflicting task",
-      tier: "standard",
+      category: "simple_coding",
       name: "cara",
     })).rejects.toThrow('"cara" is already being assigned');
 
@@ -994,7 +994,7 @@ describe("HiveSpawner name pool", () => {
       sleep: async () => {},
     });
 
-    await expect(spawner.spawn({ task: "One task too many", tier: "deep" }))
+    await expect(spawner.spawn({ task: "One task too many", category: "complex_coding" }))
       .rejects.toThrow("name pool exhausted");
     expect(attemptedWorktree).toEqual(false);
   });
@@ -1019,7 +1019,7 @@ describe("HiveSpawner name pool", () => {
 
     await expect(spawner.spawn({
       task: "Bad name",
-      tier: "standard",
+      category: "simple_coding",
       name: "1Maya",
     })).rejects.toThrow("must match /^[a-z][a-z0-9-]{1,20}$/");
     expect(attemptedWorktree).toEqual(false);
@@ -1043,7 +1043,7 @@ describe("HiveSpawner name pool", () => {
 
     await expect(spawner.spawn({
       task: "Duplicate name",
-      tier: "standard",
+      category: "simple_coding",
       name: "MAYA",
     })).rejects.toThrow('"maya" is already assigned to a live agent');
   });
@@ -1068,7 +1068,7 @@ describe("HiveSpawner name pool", () => {
 
     await expect(spawner.spawn({
       task: "Impersonate the boss",
-      tier: "standard",
+      category: "simple_coding",
       name: "Orchestrator",
     })).rejects.toThrow('"orchestrator" is reserved');
     expect(attemptedWorktree).toEqual(false);
@@ -1113,7 +1113,7 @@ describe("HiveSpawner wiring", () => {
       },
     });
 
-    await spawner.spawn({ task: "Visible interactive task", tier: "standard" });
+    await spawner.spawn({ task: "Visible interactive task", category: "simple_coding" });
     expect(probedAppServer).toEqual(false);
     expect(tmux.sessions).toHaveLength(1);
     expect(tmux.sessions[0]?.[2]).toContain("'codex'");
@@ -1173,7 +1173,7 @@ describe("HiveSpawner wiring", () => {
 
     const spawned = await spawner.spawn({
       task: "Implement native control",
-      tier: "standard",
+      category: "simple_coding",
     });
     expect(tmux.sessions[0]?.[2]).toContain("'codex-app-server-host'");
     expect(tmux.sessions[0]?.[2]).not.toContain("Implement native control");
@@ -1226,7 +1226,7 @@ describe("HiveSpawner wiring", () => {
       },
     });
 
-    await spawner.spawn({ task: "Fallback task", tier: "standard" });
+    await spawner.spawn({ task: "Fallback task", category: "simple_coding" });
     expect(disconnected).toEqual(["maya"]);
     expect(tmux.killed).toEqual([agentTmuxSession("maya")]);
     expect(tmux.sessions).toHaveLength(2);
@@ -1289,7 +1289,7 @@ describe("HiveSpawner wiring", () => {
       quota,
     });
 
-    const spawned = await spawner.spawn({ task: "Deep task", tier: "deep" });
+    const spawned = await spawner.spawn({ task: "Deep task", category: "complex_coding" });
     expect(spawned.tool).toEqual("codex");
     expect(spawned.model).toEqual("gpt-5.6-sol");
     expect(spawned.quotaReservationId).toBeString();
@@ -1386,7 +1386,7 @@ describe("HiveSpawner wiring", () => {
       quota,
     });
 
-    await spawner.spawn({ task: "Deep task", tier: "deep" });
+    await spawner.spawn({ task: "Deep task", category: "complex_coding" });
     expect(reservedOnCodex(quota)).toBeGreaterThan(0);
     expect(quota.ledger.activeReservations()).toHaveLength(1);
     quotaDb.close();
@@ -1419,7 +1419,7 @@ describe("HiveSpawner wiring", () => {
       quota,
     });
 
-    await expect(spawner.spawn({ task: "Deep task", tier: "deep" })).rejects
+    await expect(spawner.spawn({ task: "Deep task", category: "complex_coding" })).rejects
       .toThrow();
     expect(store.listAgents()).toEqual([]);
     expect(reservedOnCodex(quota)).toEqual(0);
@@ -1461,7 +1461,7 @@ describe("HiveSpawner wiring", () => {
       quota,
     });
 
-    await expect(spawner.spawn({ task: "Deep task", tier: "deep" })).rejects
+    await expect(spawner.spawn({ task: "Deep task", category: "complex_coding" })).rejects
       .toThrow("agents table write failed");
     expect(store.listAgents()).toEqual([]);
     expect(reservedOnCodex(quota)).toEqual(0);
@@ -1518,7 +1518,7 @@ describe("HiveSpawner wiring", () => {
     await expect(
       spawner.spawn({
         task: "Run on a model nobody has",
-        tier: "deep",
+        category: "complex_coding",
         tool: "claude",
         model: "grok-4-fast",
       }),
@@ -1533,7 +1533,7 @@ describe("HiveSpawner wiring", () => {
     // stops spawning, the refusal above is too broad.
     const spawned = await spawner.spawn({
       task: "A model the catalog does claim",
-      tier: "deep",
+      category: "complex_coding",
       tool: "claude",
       model: "claude-opus-4-8",
     });
@@ -1589,7 +1589,7 @@ describe("HiveSpawner wiring", () => {
 
     const spawned = await spawner.spawn({
       task: "Route only among effort-eligible candidates",
-      tier: "deep",
+      category: "complex_coding",
       effort: "ultra",
     });
     expect(probes.sort()).toEqual(["claude", "codex"]);
@@ -1633,7 +1633,7 @@ describe("HiveSpawner wiring", () => {
 
     const spawned = await spawner.spawn({
       task: "Open an Opus terminal",
-      tier: "deep",
+      category: "complex_coding",
       model: "claude-opus-4-8",
     });
     expect(spawned.tool).toEqual("claude");
@@ -1671,7 +1671,7 @@ describe("HiveSpawner wiring", () => {
 
     await expect(spawner.spawn({
       task: "Reject invalid effort",
-      tier: "deep",
+      category: "complex_coding",
       model: "claude-opus-4-8",
       effort: "max",
     })).rejects.toThrow(
@@ -1712,7 +1712,7 @@ describe("HiveSpawner wiring", () => {
 
     const spawned = await spawner.spawn({
       task: "Launch explicit effort",
-      tier: "deep",
+      category: "complex_coding",
       model: "claude-opus-4-8",
       effort: "low",
     });
@@ -1756,7 +1756,7 @@ describe("HiveSpawner wiring", () => {
 
     const spawned = await spawner.spawn({
       task: "Launch explicit Codex effort",
-      tier: "standard",
+      category: "simple_coding",
       tool: "codex",
       model: "gpt-test",
       effort: "ultra",
@@ -1799,7 +1799,7 @@ describe("HiveSpawner wiring", () => {
 
     const spawned = await spawner.spawn({
       task: "Audit only",
-      tier: "standard",
+      category: "simple_coding",
       tool: "codex",
       readOnly: true,
     });
@@ -1833,7 +1833,7 @@ describe("HiveSpawner wiring", () => {
 
     await expect(spawner.spawn({
       task: "Audit only",
-      tier: "standard",
+      category: "simple_coding",
       readOnly: true,
     })).rejects.toThrow("reader capability issuance is unavailable");
     expect(worktrees).toEqual(0);
@@ -1880,7 +1880,7 @@ describe("HiveSpawner wiring", () => {
 
     const spawned = await spawner.spawn({
       task: "Launch the catalog model",
-      tier: "standard",
+      category: "simple_coding",
       tool: "grok",
       model: "catalog-model",
       effort: "high",
@@ -1935,7 +1935,7 @@ describe("HiveSpawner wiring", () => {
 
     const spawned = await spawner.spawn({
       task: "Open an Opus terminal",
-      tier: "standard",
+      category: "simple_coding",
       model: "claude-opus-4-8",
     });
     expect(spawned.tool).toEqual("claude");
@@ -1969,7 +1969,7 @@ describe("HiveSpawner wiring", () => {
 
     await expect(spawner.spawn({
       task: "Impossible identity",
-      tier: "standard",
+      category: "simple_coding",
       tool: "codex",
       model: "claude-opus-4-8",
     })).rejects.toThrow(/claude model.*tool="codex"/s);
@@ -2036,7 +2036,7 @@ describe("HiveSpawner wiring", () => {
     await expect(
       spawner.spawn({
         task: "Deep task",
-        tier: "deep",
+        category: "complex_coding",
         model: "claude-fable-5",
       }),
     ).rejects.toThrow(/Quota pressure makes this spawn unsafe/);
@@ -2057,7 +2057,7 @@ describe("HiveSpawner wiring", () => {
         codex: { model: "gpt-test", effort: "medium" },
       },
     };
-    const routing = async (tier: RoutingTier): Promise<Route> => {
+    const routing = async (tier: RoutingCategory): Promise<Route> => {
       if (tier === "deep" || tier === "standard") {
         return routes[tier];
       }
@@ -2089,10 +2089,10 @@ describe("HiveSpawner wiring", () => {
       resolveModel: fakeResolveModel,
     });
 
-    const claude = await spawner.spawn({ task: "Build auth API", tier: "deep" });
+    const claude = await spawner.spawn({ task: "Build auth API", category: "complex_coding" });
     const codex = await spawner.spawn({
       task: "Add route tests",
-      tier: "standard",
+      category: "simple_coding",
     });
 
     expect(claude.name).toEqual("maya");
@@ -2225,7 +2225,7 @@ describe("HiveSpawner wiring", () => {
         sleep: signalReadiness(store),
       });
 
-      await spawner.spawn({ task: "Fix the flaky test", tier: "standard" });
+      await spawner.spawn({ task: "Fix the flaky test", category: "simple_coding" });
 
       const launched = await deliveredPrompt(tmux.sessions[0]?.[2] ?? "");
       expect(launched).toContain("Hive memory index");
@@ -2277,7 +2277,7 @@ describe("HiveSpawner wiring", () => {
 
     const spawned = await spawner.spawn({
       task: "Become ready during polling",
-      tier: "standard",
+      category: "simple_coding",
     });
 
     expect(spawned.status).toEqual("working");
@@ -2318,13 +2318,13 @@ describe("HiveSpawner wiring", () => {
 
     const claude = await spawner.spawn({
       task: "Use Claude",
-      tier: "standard",
+      category: "simple_coding",
       name: "Quinn-2",
       tool: "claude",
     });
     const codex = await spawner.spawn({
       task: "Use Codex",
-      tier: "deep",
+      category: "complex_coding",
       name: "Riley",
       tool: "codex",
     });
@@ -2369,7 +2369,7 @@ describe("HiveSpawner wiring", () => {
 
     const spawned = await spawner.spawn({
       task: "Use cheap Claude",
-      tier: "cheap",
+      category: "summarization",
       tool: "claude",
     });
 
@@ -2402,7 +2402,7 @@ describe("HiveSpawner wiring", () => {
 
     const spawned = await spawner.spawn({
       task: "Use configured review route",
-      tier: "review",
+      category: "code_review",
     });
 
     expect(spawned.tool).toEqual("claude");
@@ -2445,7 +2445,7 @@ describe("HiveSpawner wiring", () => {
 
     const failed = await spawner.spawn({
       task: "Fail at startup",
-      tier: "standard",
+      category: "simple_coding",
     });
 
     expect(failed.status).toEqual("failed");
@@ -2487,7 +2487,7 @@ describe("HiveSpawner wiring", () => {
 
     const failed = await spawner.spawn({
       task: "Fail before readiness",
-      tier: "standard",
+      category: "simple_coding",
     });
 
     expect(failed.status).toEqual("failed");
@@ -2538,7 +2538,7 @@ describe("HiveSpawner wiring", () => {
 
     const spawned = await spawner.spawn({
       task: "Fix the error handling",
-      tier: "standard",
+      category: "simple_coding",
     });
 
     expect(spawned.status).toEqual("working");
@@ -2584,7 +2584,7 @@ describe("HiveSpawner wiring", () => {
 
     const spawned = await spawner.spawn({
       task: "Survive cosmetic failures",
-      tier: "standard",
+      category: "simple_coding",
     });
 
     expect(spawned.status).toEqual("working");
@@ -2629,7 +2629,7 @@ describe("HiveSpawner wiring", () => {
 
     const spawned = await spawner.spawn({
       task: "Prove life through the rollout file",
-      tier: "standard",
+      category: "simple_coding",
     });
 
     expect(spawned.status).toEqual("spawning");
@@ -2669,7 +2669,7 @@ describe("HiveSpawner wiring", () => {
 
     const failed = await spawner.spawn({
       task: "Hang at launch forever",
-      tier: "standard",
+      category: "simple_coding",
     });
 
     // Exhausting the poll budget with no positive signal is a failed launch,
@@ -2716,7 +2716,7 @@ describe("HiveSpawner wiring", () => {
       readCodexActivity: async () => null,
     });
 
-    const failed = await spawner.spawn({ task: "Hang at launch", tier: "standard" });
+    const failed = await spawner.spawn({ task: "Hang at launch", category: "simple_coding" });
 
     expect(failed.status).toEqual("failed");
     expect(removed).toEqual(0);
@@ -2754,7 +2754,7 @@ describe("HiveSpawner wiring", () => {
       readCodexActivity: async () => null,
     });
 
-    const failed = await spawner.spawn({ task: "Hang at launch", tier: "standard" });
+    const failed = await spawner.spawn({ task: "Hang at launch", category: "simple_coding" });
     expect(failed.status).toEqual("failed");
     expect(removed).toEqual(1);
   });
@@ -2791,7 +2791,7 @@ describe("HiveSpawner wiring", () => {
       readCodexActivity: async () => null,
     });
 
-    const failed = await spawner.spawn({ task: "Hang at launch", tier: "standard" });
+    const failed = await spawner.spawn({ task: "Hang at launch", category: "simple_coding" });
     expect(failed.status).toEqual("failed");
     expect(removed).toEqual(0);
     expect(failed.failureReason).toContain("could not be checked");
@@ -2832,7 +2832,7 @@ describe("HiveSpawner wiring", () => {
 
     const suppressed = await spawner.spawn({
       task: "Spawn while the app watches",
-      tier: "standard",
+      category: "simple_coding",
     });
     expect(suppressed.status).toEqual("working");
     expect(terminal.windows).toEqual([]);
@@ -2843,7 +2843,7 @@ describe("HiveSpawner wiring", () => {
     present = false;
     const visible = await spawner.spawn({
       task: "Spawn after the app is gone",
-      tier: "standard",
+      category: "simple_coding",
     });
     expect(terminal.windows).toHaveLength(1);
     expect(terminal.windows[0]?.[0]).toEqual(visible.tmuxSession);
@@ -2926,7 +2926,7 @@ describe("HiveSpawner wiring", () => {
 
     const spawned = await spawner.spawn({
       task: "Race terminal launch with kill",
-      tier: "standard",
+      category: "simple_coding",
     });
 
     const handle = {
@@ -2972,13 +2972,13 @@ describe("HiveSpawner wiring", () => {
       });
 
     const spawned = await makeSpawner(new FakeTerminal(), new FakeStore())
-      .spawn({ task: "Announce the new viewer", tier: "standard" });
+      .spawn({ task: "Announce the new viewer", category: "simple_coding" });
     expect(spawned.terminalHandle).toBeDefined();
     expect(terminalsChanged).toEqual(1);
 
     // A viewer that never opened leaves the wall untouched.
     await makeSpawner(new FailingTerminal(), new FakeStore())
-      .spawn({ task: "Fail to open a viewer", tier: "standard" });
+      .spawn({ task: "Fail to open a viewer", category: "simple_coding" });
     expect(terminalsChanged).toEqual(1);
     expect(terminalErrors).toHaveLength(1);
     expect(terminalErrors[0]).toContain("could not open viewer for maya");
@@ -2992,7 +2992,7 @@ describe("HiveSpawner wiring", () => {
       }
     });
     await makeSpawner(racingTerminal, racingStore)
-      .spawn({ task: "Lose the attach race", tier: "standard" });
+      .spawn({ task: "Lose the attach race", category: "simple_coding" });
     expect(terminalsChanged).toEqual(1);
   });
 });
@@ -3267,7 +3267,7 @@ describe("coding guidelines are guaranteed in context at spawn", () => {
 
   test("the cheap tier is not exempt — a small model needs the rules most", () => {
     const prompt = buildAgentPrompt("maya", "Build auth API", worktree, "/repo", "", {
-      tier: "cheap",
+      category: "summarization",
     });
     for (const rule of RULES) expect(prompt).toContain(rule);
   });
@@ -3295,7 +3295,7 @@ describe("coding guidelines are guaranteed in context at spawn", () => {
       resolveModel: fakeResolveModel,
     });
 
-    await spawner.spawn({ task: "Build auth API", tier: "standard" });
+    await spawner.spawn({ task: "Build auth API", category: "simple_coding" });
     const command = tmux.sessions[0]?.[2] ?? "";
     // The executable resolves to an absolute path on a real machine.
     expect(command).toMatch(/^'[^']*claude'/);
@@ -3346,7 +3346,7 @@ describe("coding guidelines are guaranteed in context at spawn", () => {
 
     // Codex has no --append-system-prompt; the prompt IS the carrier, on both drivers.
     const tuiTmux = new FakeTmux();
-    await codexSpawner("tui", tuiTmux).spawn({ task: "Build auth API", tier: "standard" });
+    await codexSpawner("tui", tuiTmux).spawn({ task: "Build auth API", category: "simple_coding" });
     const tuiCommand = tuiTmux.sessions[0]?.[2] ?? "";
     expect(tuiCommand).toContain("'codex'");
     const tuiLaunched = await deliveredPrompt(tuiCommand);
@@ -3355,7 +3355,7 @@ describe("coding guidelines are guaranteed in context at spawn", () => {
     const hostTmux = new FakeTmux();
     await codexSpawner("app-server", hostTmux).spawn({
       task: "Build auth API",
-      tier: "standard",
+      category: "simple_coding",
     });
     expect(starts).toHaveLength(1);
     for (const rule of RULES) expect(starts[0]).toContain(rule);
@@ -3481,7 +3481,7 @@ describe("HiveSpawner launch prompt transport", () => {
 
     const spawned = await spawner.spawn({
       task: hugeBrief,
-      tier: "standard",
+      category: "simple_coding",
       model: "claude-opus-4-8",
     });
 
@@ -3512,7 +3512,7 @@ describe("HiveSpawner launch prompt transport", () => {
 
     const failed = await spawner.spawn({
       task: "Ship the thing",
-      tier: "standard",
+      category: "simple_coding",
       model: "claude-opus-4-8",
     });
 
@@ -3542,7 +3542,7 @@ describe("HiveSpawner launch prompt transport", () => {
 
     const failed = await spawner.spawn({
       task: "Ship the thing",
-      tier: "standard",
+      category: "simple_coding",
       model: "claude-opus-4-8",
     });
 
@@ -3567,7 +3567,7 @@ describe("HiveSpawner launch prompt transport", () => {
 
     const failed = await spawner.spawn({
       task: "Ship the thing",
-      tier: "standard",
+      category: "simple_coding",
       model: "claude-opus-4-8",
     });
 
@@ -3683,7 +3683,7 @@ describe("a refusal names the reason it actually refused for", () => {
     try {
       await spawner.spawn({
         task: "the spawn that was refused for a route that existed",
-        tier: "standard",
+        category: "simple_coding",
         tool: "grok",
       });
     } catch (error) {

@@ -41,6 +41,7 @@ import {
   setModelEffort,
   setModelPolicy,
   setProviderPolicy,
+  setSelectionMode,
 } from "./cli/routing-policy";
 import { printModelControlSnapshot } from "./cli/model-control";
 import { runStart } from "./cli/start";
@@ -404,6 +405,23 @@ export function createProgram(): Command {
       effort: string,
       options: { expectRevision: string },
     ) => setModelEffort(provider, model, effort, options.expectRevision));
+  routing
+    .command("set-selection <mode>")
+    .description(
+      "How a category picks among its chain's eligible links: spread " +
+        "(default — by remaining quota headroom, rank-biased) or strict " +
+        "(always in chain order). Global unless --category names an " +
+        "override; unset (with --category) removes the override.",
+    )
+    .option("--category <category>", "override for one category only")
+    .requiredOption(
+      "--expect-revision <revision>",
+      "the policy revision you read (compare-and-set; stale writes are rejected)",
+    )
+    .action((
+      mode: string,
+      options: { category?: string; expectRevision: string },
+    ) => setSelectionMode(mode, options, options.expectRevision));
   routing
     .command("set-chain <category> [entries...]")
     .description(

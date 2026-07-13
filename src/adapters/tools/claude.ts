@@ -12,7 +12,6 @@ import {
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
-import type { ClaudeRoute } from "../../schemas";
 import {
   GRAPHIFY_HOOK_SCRIPT,
   graphifyHookPath,
@@ -22,7 +21,7 @@ import {
 
 export interface ClaudeSpawnOptions {
   name: string;
-  model: ClaudeRoute["model"];
+  model: string;
   effort?: string;
   worktreePath: string;
   daemonPort: number;

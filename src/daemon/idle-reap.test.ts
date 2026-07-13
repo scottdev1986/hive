@@ -18,7 +18,7 @@ function agent(overrides: Partial<AgentRecord> = {}): AgentRecord {
     name: "maya",
     tool: "codex",
     model: "gpt-5-codex",
-    tier: "standard",
+    category: "simple_coding",
     status: "idle",
     taskDescription: "Build server",
     worktreePath: "/tmp/hive-maya",

@@ -287,6 +287,18 @@ function applyMutation(
       else chains[mutation.category] = mutation.entries;
       return { ...policy, chains };
     }
+    case "set-selection": {
+      if (mutation.category === undefined) {
+        return mutation.mode === "unset" ? policy : {
+          ...policy,
+          selection: { ...policy.selection, global: mutation.mode },
+        };
+      }
+      const categories = { ...policy.selection.categories };
+      if (mutation.mode === "unset") delete categories[mutation.category];
+      else categories[mutation.category] = mutation.mode;
+      return { ...policy, selection: { ...policy.selection, categories } };
+    }
   }
 }
 
@@ -381,12 +393,18 @@ export function canonicalRoutingPolicyJson(policy: RoutingPolicy): string {
     const chain = policy.chains[category];
     if (chain !== undefined) chains[category] = chain;
   }
+  const selectionCategories: Record<string, string> = {};
+  for (const category of ROUTING_CATEGORIES) {
+    const mode = policy.selection.categories[category];
+    if (mode !== undefined) selectionCategories[category] = mode;
+  }
   return JSON.stringify(
     {
       schemaVersion: policy.schemaVersion,
       revision: policy.revision,
       updatedAt: policy.updatedAt,
       provisional: policy.provisional,
+      selection: { global: policy.selection.global, categories: selectionCategories },
       providers,
       models,
       chains,

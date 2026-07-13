@@ -1,19 +1,16 @@
-import { homedir } from "node:os";
-import { join } from "node:path";
-import { loadRoutingFloors, loadRoutingPins } from "../config/load";
 import type {
   CapabilityProvider,
   CapabilityRecord,
-  DerivedCell,
-  DerivedRouting,
+  EffortTarget,
   ProviderDiscovery,
-  RoutingTier,
+  RoutingCategory,
+  RoutingPolicy,
 } from "../schemas";
 import {
-  deriveRouting,
+  emptyRoutingPolicy,
   forEachProvider,
   providersOf,
-  RoutingSnapshotSchema,
+  ROUTING_CATEGORIES,
   unknownVendor,
 } from "../schemas";
 import {
@@ -30,13 +27,12 @@ import {
   type AccountBillings,
 } from "./usage-credits";
 
-const hiveHome = (): string => Bun.env.HIVE_HOME ?? join(homedir(), ".hive");
-
 export type InventoryRole = {
-  tier: RoutingTier;
-  use: "primary" | "quota-fallback";
-  preferredProvider: boolean;
-  effort: string | null;
+  category: RoutingCategory;
+  /** The link's position in the user's chain: 0 is the primary, everything
+   * after is the fallback order the user wrote. */
+  position: number;
+  effort: EffortTarget;
 };
 
 export type InventoryModel = {
@@ -87,7 +83,8 @@ export type ModelInventory = {
 
 export type ModelInventoryInput = {
   discovery: Record<CapabilityProvider, ProviderDiscovery>;
-  routing: DerivedRouting;
+  /** The user's routing policy — roles are read from its chains, verbatim. */
+  policy: RoutingPolicy;
   billing?: AccountBillings | null;
   now?: Date;
 };
@@ -97,18 +94,12 @@ export type ModelInventoryReaderOptions = {
     provider: CapabilityProvider,
   ) => Promise<CapabilityDiscoveryResult>;
   readBilling?: typeof readBillingWithMemory;
-  readConsent?: (canonicalId: string) => "approved" | "denied" | "pending" | "none";
+  /** The policy store read. Absent means no policy is readable — models then
+   * carry no roles, they do not vanish. A corrupt store THROWS through here:
+   * the inventory refuses rather than rendering a permissive-looking blank. */
+  readPolicy?: () => RoutingPolicy;
   now?: () => Date;
 };
-
-async function readSnapshot() {
-  const file = Bun.file(join(hiveHome(), "routing-snapshot.json"));
-  if (!(await file.exists())) return null;
-  const parsed = RoutingSnapshotSchema.safeParse(
-    await file.json().catch(() => null),
-  );
-  return parsed.success ? parsed.data : null;
-}
 
 export async function readModelInventory(
   options: ModelInventoryReaderOptions = {},
@@ -131,80 +122,31 @@ export async function readModelInventory(
   });
   const readBilling = options.readBilling ?? readBillingWithMemory;
   // Every vendor Hive knows is probed and billed, not a hardcoded pair.
-  const [pins, floors, snapshot, discovery, billings] = await Promise.all([
-    loadRoutingPins(),
-    loadRoutingFloors(),
-    readSnapshot(),
+  const [discovery, billings] = await Promise.all([
     forEachProvider((provider) => discover(provider)),
     forEachProvider((provider) => readBilling(provider)),
   ]);
   const billing: AccountBillings = knownBillings(billings);
-  const routing = deriveRouting({
-    discovery,
-    pins,
-    floors,
-    snapshot,
-    billing,
-    costConsent: options.readConsent,
-    now,
-  });
-  const inventory = buildModelInventory({
-    discovery,
-    routing,
-    billing,
-    now,
-  });
-  return {
-    ...inventory,
-    warnings: [...routing.warnings, ...inventory.warnings],
-  };
+  const policy = options.readPolicy?.() ??
+    emptyRoutingPolicy(now.toISOString());
+  return buildModelInventory({ discovery, policy, billing, now });
 }
 
 const recordMatches = (record: CapabilityRecord, model: string): boolean =>
   record.canonicalId === model || record.launchToken === model ||
   record.aliases.includes(model);
 
-function concreteModel(
-  provider: CapabilityProvider,
-  model: string | null,
-  discovery: ProviderDiscovery,
-): string | null {
-  if (model === null) return null;
-  if (model !== "default") return model;
-  return discovery.status === "ok" &&
-      discovery.effectiveDefault.model.state === "known"
-    ? discovery.effectiveDefault.model.value
-    : null;
-}
-
+/** The roles the USER gave this model: its position in each category chain.
+ * Read from policy verbatim — Hive infers nothing. */
 function rolesFor(record: CapabilityRecord, input: ModelInventoryInput): InventoryRole[] {
   const roles: InventoryRole[] = [];
-  const discovery = input.discovery[record.provider];
-  for (const tier of input.routing.tiers) {
-    // A provider the derivation has no column for yet is unrouted, not
-    // unrenderable: its models still appear, with no roles.
-    const cell = tier[record.provider] as DerivedCell | undefined;
-    if (cell === undefined) continue;
-    const primary = concreteModel(record.provider, cell.model.value, discovery);
-    if (primary !== null && recordMatches(record, primary)) {
-      roles.push({
-        tier: tier.tier,
-        use: "primary",
-        preferredProvider: tier.tool.value === record.provider,
-        effort: cell.effort.value,
-      });
-    }
-    for (const alternative of cell.chain) {
-      const concrete = concreteModel(record.provider, alternative, discovery);
-      if (concrete !== null && recordMatches(record, concrete)) {
-        roles.push({
-          tier: tier.tier,
-          use: "quota-fallback",
-          preferredProvider: tier.tool.value === record.provider,
-          effort: cell.effort.value,
-        });
+  for (const category of ROUTING_CATEGORIES) {
+    const chain = input.policy.chains[category] ?? [];
+    chain.forEach((entry, position) => {
+      if (entry.provider === record.provider && recordMatches(record, entry.model)) {
+        roles.push({ category, position, effort: entry.effort });
       }
-    }
+    });
   }
   return roles;
 }
@@ -213,16 +155,13 @@ function whenUsed(record: CapabilityRecord, roles: readonly InventoryRole[]): st
   if (roles.length === 0) {
     return record.hidden.state === "known" && record.hidden.value
       ? "Not used automatically: the vendor marks this model hidden."
-      : "Not currently used by any automatic route; an explicit user request may still select it.";
+      : "Not in any category chain; an explicit user request may still select it.";
   }
-  return roles.map((role) => {
-    const route = role.preferredProvider
-      ? `${role.tier} work when ${record.provider} is the preferred provider`
-      : `${role.tier} work when ${record.provider} is explicitly requested or preferred routes lack capacity`;
-    return role.use === "primary"
-      ? `Primary for ${route}`
-      : `Quota fallback for ${route}`;
-  }).join("; ") + ".";
+  return roles.map((role) =>
+    role.position === 0
+      ? `Primary for ${role.category}`
+      : `Fallback ${role.position} for ${role.category}`
+  ).join("; ") + ".";
 }
 
 function planStatus(

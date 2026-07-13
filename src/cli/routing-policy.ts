@@ -207,6 +207,24 @@ export async function setModelEffort(
   }));
 }
 
+export async function setSelectionMode(
+  mode: string,
+  options: { category?: string },
+  expectRevision: string,
+): Promise<void> {
+  if (mode !== "spread" && mode !== "strict" && mode !== "unset") {
+    throw new Error(
+      `selection mode must be spread, strict, or unset; got ${JSON.stringify(mode)}`,
+    );
+  }
+  printPolicy(await applyPolicyMutation(requireDaemonPort(), {
+    op: "set-selection",
+    expectedRevision: parseExpectedRevision(expectRevision),
+    ...(options.category === undefined ? {} : { category: parseCategory(options.category) }),
+    mode,
+  }));
+}
+
 export async function setCategoryChain(
   category: string,
   entries: string[],

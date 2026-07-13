@@ -29,7 +29,7 @@ function agent(status: AgentRecord["status"]): AgentRecord {
     name: "maya",
     tool: "codex",
     model: "gpt-5-codex",
-    tier: "standard",
+    category: "simple_coding",
     status,
     taskDescription: "Build delivery",
     worktreePath: "/tmp/hive-maya",

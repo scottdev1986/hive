@@ -88,8 +88,8 @@ export const ApprovalSchema = z.object({
 export type Approval = z.infer<typeof ApprovalSchema>;
 
 /**
- * One tier escalation: an agent's typed claim that its task exceeds its model.
- * Recorded so the rate is MEASURED per model × tier — the routing inspection
+ * One category escalation: an agent's typed claim that its task exceeds its model.
+ * Recorded so the rate is MEASURED per model × category — the routing inspection
  * surface and the user's placement judgment read this; nothing re-routes on it.
  */
 export const EscalationSchema = z.object({
@@ -98,7 +98,7 @@ export const EscalationSchema = z.object({
   agentName: z.string().min(1),
   /** The launch identity (decision 6), so the count joins the routing that chose it. */
   model: z.string().min(1),
-  tier: z.string().min(1),
+  category: z.string().min(1),
   reason: z.string().min(1),
   createdAt: z.iso.datetime({ offset: true }),
 });
@@ -216,7 +216,7 @@ function agentsTableDdl(table: string, ifNotExists = false): string {
       tool TEXT NOT NULL,
       model TEXT NOT NULL,
       liveModel TEXT,
-      tier TEXT NOT NULL,
+      category TEXT NOT NULL,
       status TEXT NOT NULL,
       taskDescription TEXT NOT NULL,
       worktreePath TEXT,
@@ -277,6 +277,25 @@ const columnDefinition = (column: AgentColumn): string => {
   const dflt = hasDefault ? ` DEFAULT ${column.dflt_value}` : "";
   return `${quoteIdentifier(column.name)} ${type}${notNull}${dflt}`;
 };
+
+/** Rename a legacy `tier` column to `category` and map the four dead tier
+ * names onto the categories that inherited their work (§2.10 mapping). Tables
+ * created fresh already use `category`; this touches only pre-cutover files. */
+function migrateTierColumn(database: Database, table: string): void {
+  const columns = database.query(`PRAGMA table_info(${table})`).all() as {
+    name: string;
+  }[];
+  if (!columns.some((column) => column.name === "tier")) return;
+  database.exec(`ALTER TABLE ${table} RENAME COLUMN tier TO category`);
+  database.exec(`
+    UPDATE ${table} SET category = CASE category
+      WHEN 'deep' THEN 'complex_coding'
+      WHEN 'review' THEN 'code_review'
+      WHEN 'standard' THEN 'simple_coding'
+      WHEN 'cheap' THEN 'summarization'
+      ELSE category END
+  `);
+}
 
 export class HiveDatabase {
   readonly path: string;
@@ -345,7 +364,7 @@ export class HiveDatabase {
         agentId TEXT NOT NULL,
         agentName TEXT NOT NULL,
         model TEXT NOT NULL,
-        tier TEXT NOT NULL,
+        category TEXT NOT NULL,
         reason TEXT NOT NULL,
         createdAt TEXT NOT NULL
       );
@@ -390,6 +409,12 @@ export class HiveDatabase {
       );
       CREATE INDEX IF NOT EXISTS audit_log_at ON audit_log(at);
     `);
+    // 2026-07-13 cutover: tiers died; existing databases carry a `tier`
+    // column whose values are the old tier names. Renamed and mapped once,
+    // here, so every reader sees only categories.
+    for (const table of ["agents", "escalations", "quota_reservations"]) {
+      migrateTierColumn(this.database, table);
+    }
     const agentColumns = z.array(z.object({ name: z.string() })).parse(
       this.database.query("PRAGMA table_info(agents)").all(),
     );
@@ -697,7 +722,7 @@ export class HiveDatabase {
     const closedAt = this.resolveClosedAt(value);
     this.database.query(`
       INSERT INTO agents (
-        id, name, tool, model, liveModel, tier, status, taskDescription,
+        id, name, tool, model, liveModel, category, status, taskDescription,
         worktreePath, branch, tmuxSession, terminalHandle, contextPct,
         createdAt, lastEventAt, failureReason, failedAt,
         quotaReservationId, controlQuotaReservationId, controlMessageId,
@@ -709,7 +734,7 @@ export class HiveDatabase {
         tool = excluded.tool,
         model = excluded.model,
         liveModel = excluded.liveModel,
-        tier = excluded.tier,
+        category = excluded.category,
         status = excluded.status,
         taskDescription = excluded.taskDescription,
         worktreePath = excluded.worktreePath,
@@ -738,7 +763,7 @@ export class HiveDatabase {
       value.tool,
       value.model,
       value.liveModel ?? null,
-      value.tier,
+      value.category,
       value.status,
       value.taskDescription,
       value.worktreePath,
@@ -1413,14 +1438,14 @@ export class HiveDatabase {
     const value = EscalationSchema.parse(escalation);
     this.database.query(`
       INSERT INTO escalations (
-        id, agentId, agentName, model, tier, reason, createdAt
+        id, agentId, agentName, model, category, reason, createdAt
       ) VALUES (?, ?, ?, ?, ?, ?, ?)
     `).run(
       value.id,
       value.agentId,
       value.agentName,
       value.model,
-      value.tier,
+      value.category,
       value.reason,
       value.createdAt,
     );

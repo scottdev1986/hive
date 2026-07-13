@@ -212,7 +212,7 @@ export interface SpawnResultSummary {
   name: string;
   tool: AgentRecord["tool"];
   model: string;
-  tier: AgentRecord["tier"];
+  category: AgentRecord["category"];
   effort?: string;
   status: AgentRecord["status"];
   branch: string | null;
@@ -234,7 +234,7 @@ export function compactSpawnResult(agent: AgentRecord): SpawnResultSummary {
     name: agent.name,
     tool: agent.tool,
     model: agent.model,
-    tier: agent.tier,
+    category: agent.category,
     ...(agent.executionIdentity?.effort !== undefined
       ? { effort: agent.executionIdentity.effort }
       : {}),

@@ -11,7 +11,7 @@ describe("status table", () => {
       name: "maya",
       tool: "codex",
       model: "gpt-test",
-      tier: "standard",
+      category: "simple_coding",
       status: "working",
       failureReason: "A deliberately long startup failure explaining that the selected model is not supported",
       taskDescription: "Implement a deliberately long task description that cannot fit in the status table without truncation",
@@ -50,7 +50,7 @@ describe("status table", () => {
     const base = {
       tool: "codex",
       model: "gpt-test",
-      tier: "standard",
+      category: "simple_coding",
       taskDescription: "crash matrix",
       worktreePath: "/tmp/maya",
       branch: "hive/maya-task",

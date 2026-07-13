@@ -191,7 +191,7 @@ test("a review of an unknown vendor is not silently handed to claude", async () 
   // Today's pairing is unambiguous, and must not change.
   const reviewOfClaude = await service.routeAndReserve({
     agentName: "maya",
-    tier: "review",
+    category: "code_review",
     preferredTool: "claude",
     reviewOfTool: "claude",
     candidates,
@@ -204,7 +204,7 @@ test("a review of an unknown vendor is not silently handed to claude", async () 
   await expect(
     service.routeAndReserve({
       agentName: "sam",
-      tier: "review",
+      category: "code_review",
       preferredTool: "claude",
       reviewOfTool: UNKNOWN,
       candidates,
@@ -280,7 +280,7 @@ function reserve(
     account: "personal",
     pool: `${provider}-premium`,
     model,
-    tier: "standard",
+    category: "simple_coding",
     estimatedUnits: 4,
     now: now.toISOString(),
     expiresAt: new Date(now.getTime() + 60_000).toISOString(),
@@ -329,7 +329,7 @@ function unknownVendorSweep(
     name: "maya",
     tool: "codex",
     model: "gpt-5.6-sol",
-    tier: "standard",
+    category: "simple_coding",
     status: "working",
     taskDescription: "Build the server",
     worktreePath: join(home, "worktree"),

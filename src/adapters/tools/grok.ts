@@ -1,10 +1,9 @@
 import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import type { GrokRoute } from "../../schemas";
 
 export interface GrokSpawnOptions {
-  model: GrokRoute["model"];
+  model: string;
   effort?: string;
   worktreePath: string;
   readOnly: boolean;

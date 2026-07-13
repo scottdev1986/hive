@@ -126,7 +126,7 @@ async function boot(): Promise<void> {
     name: "maya",
     tool: "claude",
     model: "sonnet",
-    tier: "standard",
+    category: "simple_coding",
     status: "idle",
     taskDescription: "live channels verification",
     worktreePath: agentWorktree,

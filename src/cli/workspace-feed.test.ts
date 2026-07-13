@@ -16,7 +16,7 @@ function agent(name: string, overrides: Partial<AgentRecord> = {}): AgentRecord 
     name,
     tool: "claude",
     model: "claude-test",
-    tier: "standard",
+    category: "simple_coding",
     status: "working",
     taskDescription: "Feed test",
     worktreePath: `/tmp/${name}`,

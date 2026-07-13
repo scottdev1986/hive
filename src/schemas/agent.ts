@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { RoutingTierSchema } from "./routing";
+import { RoutingCategorySchema } from "./routing-policy";
 import { CapabilityProviderSchema, EffortLevelSchema } from "./capability";
 
 // Reserved recipient name for the root orchestrator. It is not a spawned
@@ -80,7 +80,9 @@ export const AgentRecordSchema = z.object({
    * means "no observation" — never "the same as spawn", because a guess is what
    * this field exists to stop. Quota accounting and `hive status` read it first. */
   liveModel: z.string().min(1).optional(),
-  tier: RoutingTierSchema,
+  /** The task category this agent was spawned under (was `tier` before the
+   * 2026-07-13 cutover; existing rows are migrated at database open). */
+  category: RoutingCategorySchema,
   status: z.enum([
     "spawning",
     "working",

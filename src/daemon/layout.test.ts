@@ -16,7 +16,7 @@ function agent(
     name,
     tool: "claude",
     model: "claude-test",
-    tier: "standard",
+    category: "simple_coding",
     status: "working",
     taskDescription: "Layout test",
     worktreePath: `/tmp/${name}`,

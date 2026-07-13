@@ -132,7 +132,7 @@ function input(overrides: Partial<DerivationInput> = {}): DerivationInput {
 }
 
 const tierOf = (derived: ReturnType<typeof deriveRouting>, tier: string) =>
-  derived.tiers.find((entry) => entry.tier === tier)!;
+  derived.tiers.find((entry) => entry.category === tier)!;
 
 describe("the derived route: the vendor's effective default, vouched live", () => {
   test("each cell derives the account's own effective default", () => {

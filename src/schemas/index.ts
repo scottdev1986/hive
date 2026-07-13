@@ -7,6 +7,5 @@ export * from "./memory";
 export * from "./message";
 export * from "./profile";
 export * from "./quota";
-export * from "./routing";
 export * from "./routing-derivation";
 export * from "./routing-policy";

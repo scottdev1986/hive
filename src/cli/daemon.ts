@@ -3,11 +3,7 @@ import { join } from "node:path";
 import { TmuxAdapter } from "../adapters/tmux";
 import { CodexAppServerManager } from "../adapters/tools/codex-app-server";
 import { resolveTerminal } from "../adapters/terminal";
-import {
-  loadHiveConfig,
-  loadQuotaConfig,
-  loadRoutingPins,
-} from "../config/load";
+import { loadHiveConfig, loadQuotaConfig } from "../config/load";
 import { HiveDatabase } from "../daemon/db";
 import {
   policyModelEnablement,
@@ -42,10 +38,8 @@ import {
   CodexCapabilityProbe,
   GrokCapabilityProbe,
 } from "../daemon/capability-discovery";
-import { resolveGoverningRoute } from "../daemon/routing-resolve";
 import { readBillingWithMemory } from "../daemon/usage-credits";
 import { persistAutonomy } from "../config/autonomy";
-import { readCostConsent } from "../daemon/cost-consent";
 import { readModelInventory } from "../daemon/model-inventory";
 
 export async function runDaemon(): Promise<void> {
@@ -161,12 +155,10 @@ export async function runDaemon(): Promise<void> {
     issueCredential: (name, role, epoch) =>
       daemon.issueCredential(name, role, epoch),
     config,
-    // Every live spawn is governed by the derivation engine: live discovery +
-    // the user's pins + the last-known-good derivation. No static `routing`
-    // table is wired — the binary ships no model knowledge, and a cell nothing
-    // can author refuses the spawn with its reason.
-    governingRoute: (tier, io) => resolveGoverningRoute(tier, io),
-    routingPins: loadRoutingPins,
+    // Every live spawn is governed by the user's routing policy: the spawn's
+    // category resolves to the user-authored chain, every link passes the
+    // launch gate, and a corrupt or absent policy refuses rather than routes.
+    readRoutingPolicy: () => routingPolicy.read(),
     discoverCapabilities: async (provider) => {
       switch (provider) {
         case "claude":
@@ -219,9 +211,7 @@ export async function runDaemon(): Promise<void> {
     workspacePresence,
     quota,
     modelInventory: () =>
-      readModelInventory({
-        readConsent: (model) => readCostConsent(db, model),
-      }),
+      readModelInventory({ readPolicy: () => routingPolicy.read() }),
     codexControl: codexAppServer,
     resources: config.resources,
     lifecycle: config.lifecycle,

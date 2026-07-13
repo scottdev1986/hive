@@ -92,7 +92,7 @@ describe("statusLine quota telemetry", () => {
       // Hive's own `estimatesPct` guess, not anything anybody measured.
       const reservation = await quota.reserveControlRun({
         agentName: "maya",
-        tier: "deep",
+        category: "complex_coding",
         controlMessageId: "control-1",
         ...claude,
       });
@@ -135,7 +135,7 @@ describe("statusLine quota telemetry", () => {
       // one thing a local estimate is legitimately for.
       const reservation = await quota.reserveControlRun({
         agentName: "maya",
-        tier: "deep",
+        category: "complex_coding",
         controlMessageId: "control-2",
         ...claude,
       });

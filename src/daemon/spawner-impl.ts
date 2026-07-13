@@ -31,7 +31,6 @@ import type { CodexAppServerManager } from "../adapters/tools/codex-app-server";
 import { provisionSkills } from "../adapters/skills";
 import {
   modelVendor,
-  resolveConcreteModel,
 } from "../adapters/tools/models";
 import {
   createWorktree,
@@ -53,13 +52,13 @@ import {
   type ExecutionIdentity,
   type CapabilityRecord,
   type HiveConfig,
-  type Route,
-  type RoutingPins,
-  type RoutingTier,
   splitVariant,
-  tierIsFloorBound,
+  type EffortTarget,
+  type RoutingCategory,
+  type RoutingPolicy,
+  selectionModeFor,
+  type ChainEntry,
 } from "../schemas";
-import { loadRoutingFloors } from "../config/load";
 import type { HiveDatabase } from "./db";
 import { readCodexTelemetry } from "./tool-telemetry";
 import { readinessFailureLayer } from "./launch-failure";
@@ -85,7 +84,6 @@ import {
 import { agentTmuxSession } from "./tmux-sessions";
 import { validateEffort } from "./effort";
 import type { CapabilityDiscoveryResult } from "./capability-discovery";
-import type { GoverningRoute, RoutingIo } from "./routing-resolve";
 import {
   poolAvailability,
   type AccountBilling,
@@ -215,7 +213,6 @@ type AgentStore = Pick<
   | "releaseAgentName"
   | "reserveAgentName"
 >;
-type RouteResolver = (tier: RoutingTier) => Promise<Route>;
 type WorktreeCreator = (
   repoRoot: string,
   agentName: string,
@@ -234,7 +231,6 @@ type TmuxSessionManager = Pick<
   | "listPanePids"
 >;
 type Sleep = (milliseconds: number) => Promise<void>;
-type ModelResolver = typeof resolveConcreteModel;
 type CapabilityDiscoverer = (
   provider: CapabilityProvider,
 ) => Promise<CapabilityDiscoveryResult>;
@@ -253,6 +249,16 @@ export type CredentialIssuer = (
   epoch: number,
 ) => string;
 
+/**
+ * The only context-window evidence the catalogs publish today: Claude's
+ * `[1m]` variant tag names a one-million-token entitlement. Everything else
+ * is unknown, and unknown FAILS a minimum-context requirement rather than
+ * guessing a window (governing doc: do not invent windows).
+ */
+function knownContextTokens(record: CapabilityRecord): number | null {
+  return record.variant === "1m" ? 1_000_000 : null;
+}
+
 export interface HiveSpawnerDependencies {
   db: AgentStore;
   repoRoot: string;
@@ -265,20 +271,12 @@ export interface HiveSpawnerDependencies {
     autonomy?: HiveConfig["autonomy"];
   };
   /**
-   * A static route table, for embedders and tests that construct their own.
-   * Production does not wire this: there is no shipped table to resolve from,
-   * so a live spawn is governed by `governingRoute` or refused.
+   * The user's routing policy — the ONLY route source. A spawn names a task
+   * category; the policy's ordered chain for that category decides what runs.
+   * Absent (unwired embedders) or throwing (corrupt store) REFUSES the spawn:
+   * not-configured is never a route.
    */
-  routing?: RouteResolver;
-  /**
-   * The derivation engine's answer for this spawn: per-column cells whose
-   * `model: null` means REFUSE with the cell's reason. There is no table to
-   * fall back to — a cell nothing could author fails the spawn, loudly.
-   */
-  governingRoute?: (
-    tier: RoutingTier,
-    io: RoutingIo,
-  ) => Promise<GoverningRoute | null>;
+  readRoutingPolicy?: () => RoutingPolicy;
   tmux: TmuxSessionManager;
   terminal: TerminalAdapter;
   createWorktree?: WorktreeCreator;
@@ -292,14 +290,11 @@ export interface HiveSpawnerDependencies {
   ) => Promise<{ dirtyFiles: string[]; unmergedCommits: number }>;
   keepWorktreeOnFailure?: boolean;
   sleep?: Sleep;
-  resolveModel?: ModelResolver;
   /** Live account capability records used only after the final model is chosen. */
   discoverCapabilities?: CapabilityDiscoverer;
   /** Free `grok --version` identity probe; injectable so tests bind the
    * undocumented session contract without requiring a machine installation. */
   grokIdentity?: typeof probeGrokCliVersion;
-  /** User pins before the shipped table is merged underneath them. */
-  routingPins?: () => Promise<RoutingPins>;
   /**
    * The account's live pool readings. The release valve is derived from these —
    * from the pools the provider actually meters — rather than from a model name.
@@ -457,7 +452,10 @@ export const LANDING_MAX_ATTEMPTS = 3;
  * rewrite, not a subset — no step, bound, or prohibition is dropped, because
  * the landing protocol is Hive's safety stack and a cheap model is exactly the
  * one that must not have to infer a missing step. */
-const CONCISE_TIERS: readonly RoutingTier[] = ["cheap"];
+const CONCISE_CATEGORIES: readonly RoutingCategory[] = [
+  "summarization",
+  "light_research",
+];
 
 /** Reporting a landing is not finishing. Agents were observed idling at their
  * prompt while still holding authorized work, needing a nudge per stage — the
@@ -579,7 +577,7 @@ export interface AgentPromptOptions {
   tool?: CapabilityProvider;
   readOnly?: boolean;
   /** Drives the prompt diet. Absent (tests, older callers) keeps the full text. */
-  tier?: RoutingTier;
+  category?: RoutingCategory;
   /** Doc sections the task named, extracted at spawn. See adapters/brief.ts. */
   brief?: string;
   /** Task-scoped knowledge-graph digest, injected by the daemon so the graph
@@ -657,8 +655,8 @@ export function buildAgentPrompt(
   options: AgentPromptOptions = {},
 ): string {
   const readOnly = options.readOnly === true;
-  const concise = options.tier !== undefined &&
-    CONCISE_TIERS.includes(options.tier);
+  const concise = options.category !== undefined &&
+    CONCISE_CATEGORIES.includes(options.category);
   const preamble = concise
     ? [
         `You are ${name}, a Hive ${readOnly ? "read-only" : "writer"} agent.`,
@@ -718,7 +716,6 @@ export class HiveSpawner implements Spawner {
     HiveSpawnerDependencies["assessStrandedWork"]
   >;
   private readonly wait: Sleep;
-  private readonly modelResolver: ModelResolver;
   private readonly claudeExecutable: string;
   private readonly readCodexActivity: (
     worktreePath: string,
@@ -729,7 +726,6 @@ export class HiveSpawner implements Spawner {
     this.cleanupWorktree = dependencies.removeWorktree ?? removeWorktree;
     this.assessStranded = dependencies.assessStrandedWork ?? assessStrandedWork;
     this.wait = dependencies.sleep ?? sleep;
-    this.modelResolver = dependencies.resolveModel ?? resolveConcreteModel;
     this.claudeExecutable = dependencies.claudeExecutable ??
       resolveWorkingClaudeExecutable().path;
     this.readCodexActivity = dependencies.readCodexActivity ??
@@ -809,90 +805,6 @@ export class HiveSpawner implements Spawner {
       : null;
   }
 
-  private async resolveSpawnEffort(
-    request: SpawnRequest,
-    route: Route | undefined,
-    tool: CapabilityProvider,
-    model: string,
-    observed?: {
-      pins: RoutingPins;
-      discovery: CapabilityDiscoveryResult | undefined;
-      /** The derivation engine governs, so the cell's effort is the engine's
-       * own ladder result rather than a table column. */
-      routeAuthoritative?: boolean;
-      /** The governed cell's effort, verbatim from the engine. */
-      routedEffort?: string;
-    },
-  ): Promise<string | undefined> {
-    const pins = observed?.pins ?? await this.dependencies.routingPins?.() ?? {};
-    const pinned = pins[request.tier]?.[tool]?.effort;
-    const discoveryConfigured = this.dependencies.discoverCapabilities !== undefined;
-    const discovery = observed?.discovery ?? await this.discoverOnce(tool);
-    const records = discovery?.status === "ok" ? discovery.records : [];
-    const base = splitVariant(model).base;
-    const record: CapabilityRecord | undefined = records.find((candidate) =>
-      candidate.launchToken === base || candidate.canonicalId === base ||
-      candidate.aliases.includes(model) || candidate.aliases.includes(base)
-    );
-
-    const requested = request.effort ?? pinned;
-    if (requested !== undefined) {
-      const validated = validateEffort(record, model, requested);
-      if (discoveryConfigured && validated.warning !== undefined) {
-        console.warn(validated.warning);
-      }
-      return validated.effort;
-    }
-    // Under the derivation engine the CELL's effort is authoritative. The
-    // engine already walked the effort ladder for the model it resolved (pin →
-    // tier effort policy, grounded in the live record → the pairing rungs) and
-    // its answer arrived with the cell. Re-deriving it here from the raw
-    // catalog would let `hive routing` print one effort while the argv carried
-    // another. Validation still runs: the router proposes, the model's own
-    // record disposes.
-    if (observed?.routeAuthoritative === true) {
-      const routed = observed.routedEffort;
-      if (routed === undefined) return undefined;
-      const validated = validateEffort(record, model, routed);
-      if (discoveryConfigured && validated.warning !== undefined) {
-        console.warn(validated.warning);
-      }
-      return validated.effort;
-    }
-
-    switch (tool) {
-      case "claude":
-        // Claude's effort is observed from its own statusline, never chosen
-        // here; undefined is the honest answer.
-        return undefined;
-      case "codex":
-        break;
-      case "grok": {
-        const discoveredDefault = record?.defaultEffort.state === "known"
-          ? record.defaultEffort.value
-          : undefined;
-        if (discoveredDefault === undefined) return undefined;
-        const validated = validateEffort(record, model, discoveredDefault);
-        return validated.effort;
-      }
-      default:
-        // The fallback chain below is Codex's own — its discovered default,
-        // its route column, and Codex's "medium". A vendor that fell through
-        // to it would launch at an effort nobody chose for it.
-        return unknownVendor(tool, "spawn effort");
-    }
-
-    const discoveredDefault = record?.defaultEffort.state === "known"
-      ? record.defaultEffort.value
-      : undefined;
-    const fallback = discoveredDefault ?? route?.codex.effort ?? "medium";
-    const validated = validateEffort(record, model, fallback);
-    if (discoveryConfigured && validated.warning !== undefined) {
-      console.warn(validated.warning);
-    }
-    return validated.effort;
-  }
-
   /**
    * Spawned agents never launch with Channels, and the reason is structural
    * rather than a version gate.
@@ -920,10 +832,8 @@ export class HiveSpawner implements Spawner {
 
   async authorizeLaunch(
     identity: ExecutionIdentity,
-    tier: RoutingTier,
   ): Promise<AuthorizedLaunch> {
     let record: CapabilityRecord | undefined;
-    const floors = await loadRoutingFloors();
     const result = await AuthorizedLaunch.gate(identity, {
       resolution: async (candidate) => {
         if (this.dependencies.discoverCapabilities === undefined) return null;
@@ -968,18 +878,10 @@ export class HiveSpawner implements Spawner {
       },
       availability: (candidate) =>
         this.availabilityRefusal(candidate.tool, candidate.model),
-      capabilityFloor: (candidate) => {
-        const allow = tierIsFloorBound(tier) ? floors[candidate.tool]?.allow : undefined;
-        if (allow === undefined) return null;
-        return allow.includes(candidate.model) ||
-            (record !== undefined && (
-              allow.includes(record.canonicalId) ||
-              allow.includes(record.launchToken) ||
-              record.aliases.some((alias) => allow.includes(alias))
-            ))
-          ? null
-          : `${candidate.model} does not clear the capability floor for ${candidate.tool}`;
-      },
+      // The routing.toml capability floor died with the file (retired at
+      // daemon start); per-category requirements return as policy, and a
+      // resume carries no minContextTokens request to enforce.
+      capabilityFloor: () => null,
       effort: (candidate) => {
         if (candidate.effort === undefined) return { refusal: null };
         try {
@@ -1034,13 +936,13 @@ export class HiveSpawner implements Spawner {
         `Cannot restart ${agent.name} for critical control: quota accounting is unavailable; capability remains revoked`,
       );
     }
-    let authorized = await this.authorizeLaunch(identity, agent.tier);
+    let authorized = await this.authorizeLaunch(identity);
 
     let reservationId: string;
     try {
       const reservation = await this.dependencies.quota.reserveControlRun({
         agentName: agent.name,
-        tier: agent.tier,
+        category: agent.category,
         tool: identity.tool,
         model: identity.model,
         controlMessageId: message.id,
@@ -1196,7 +1098,7 @@ export class HiveSpawner implements Spawner {
       // if the app-server handshake fails and the TUI takes over the session,
       // because readiness looks for *this* process and nothing else.
       let launchedCommand = launchedCommandName(argv);
-      authorized = await this.authorizeLaunch(identity, agent.tier);
+      authorized = await this.authorizeLaunch(identity);
       requireAuthorizedLaunch(authorized);
       this.dependencies.quota.requireActiveReservation(reservationId);
       await this.dependencies.tmux.newSession(
@@ -1206,7 +1108,7 @@ export class HiveSpawner implements Spawner {
       );
       if (nativeCodex) {
         try {
-          authorized = await this.authorizeLaunch(identity, agent.tier);
+          authorized = await this.authorizeLaunch(identity);
           requireAuthorizedLaunch(authorized);
           this.dependencies.quota.requireActiveReservation(reservationId);
           await this.dependencies.codexAppServer!.startAgent(
@@ -1247,7 +1149,7 @@ export class HiveSpawner implements Spawner {
               agent.worktreePath,
             )
             : fallbackCommand;
-          authorized = await this.authorizeLaunch(identity, agent.tier);
+          authorized = await this.authorizeLaunch(identity);
           requireAuthorizedLaunch(authorized);
           this.dependencies.quota.requireActiveReservation(reservationId);
           await this.dependencies.tmux.newSession(
@@ -1557,70 +1459,30 @@ export class HiveSpawner implements Spawner {
         `Cannot spawn ${name} read-only: reader capability issuance is unavailable`,
       );
     }
-    // What governs this spawn: the derivation engine (live discovery + pins +
-    // last-known-good), and nothing else. There is no shipped table — a cell
-    // the engine could not author arrives as `model: null` with its refusal
-    // reason, and this spawn fails on it rather than launching a baked-in
-    // guess. The static `routing` dependency survives only for embedders and
-    // tests that construct their own table.
-    const governing = (await this.dependencies.governingRoute?.(request.tier, {
-      discover: (provider) => this.discoverOnce(provider),
-      readBilling: async (provider) =>
-        (await this.dependencies.readBilling?.(provider)) ?? null,
-    })) ?? null;
-    // A conflict the router resolved silently is a lie: a pin it could not vouch
-    // for, a model it refused to pay for. Said out loud, on the launch it governs.
-    for (const note of governing?.notes ?? []) {
-      console.warn(`Routing ${request.tier}: ${note}`);
-    }
-    const configuredRoute = governing === null
-      ? await this.dependencies.routing?.(request.tier)
-      : undefined;
-    if (governing === null && configuredRoute === undefined) {
-      throw new Error(
-        `Cannot spawn ${name}: no routing source is configured (no derivation ` +
-          "engine and no static table)",
-      );
-    }
-    const preferredTool = governing?.tool ?? configuredRoute!.tool;
-    // Resolves one column's launch token. A governed cell carries the engine's
-    // value verbatim (`null` = refuse, with the cell's reason); the legacy path
-    // resolves a table entry through the tool's own config. `resolveConcreteModel`
-    // reads only `route[tool].model`, so the synthetic Route below is just an
-    // adapter around a single concrete string.
-    const columnModel = async (
-      candidateTool: CapabilityProvider,
-    ): Promise<string | null> => {
-      if (governing !== null) {
-        const cell = governing.cells[candidateTool];
-        if (cell.model === null) return null;
-        return await this.modelResolver(candidateTool, {
-          tool: candidateTool,
-          claude: { model: cell.model },
-          codex: { model: cell.model },
-          grok: { model: cell.model },
-        });
+    // What governs this spawn: the user's routing policy — the ordered
+    // fallback chain the user authored for this task category — and nothing
+    // else. No tier ladder, no preferred-vendor table, no vendor default to
+    // fall through to: the chain is walked IN USER ORDER, every link runs
+    // the full launch gate, the first link that passes wins, and a category
+    // whose links all refuse falls back to the user's global default chain
+    // before REFUSING with every reason. A corrupt policy store throws out
+    // of read() and the spawn refuses: "I could not read your policy" is
+    // never answered as "you have no policy" (unknown-read-as-permission).
+    const readPolicy = (): RoutingPolicy => {
+      if (this.dependencies.readRoutingPolicy === undefined) {
+        throw new Error(
+          `Cannot spawn ${name}: no routing policy source is configured`,
+        );
       }
-      if (candidateTool === "grok" && configuredRoute?.grok === undefined) {
-        // Persisted two-vendor routing tables predate Grok. Absence is no route,
-        // not permission to manufacture one from another vendor's column.
-        return null;
-      }
-      return await this.modelResolver(candidateTool, configuredRoute!);
+      return this.dependencies.readRoutingPolicy();
     };
-    let tool = request.tool ?? preferredTool;
-    // An explicit model is bound to its vendor before anything launches: the
-    // tier route must never carry a user-named model onto the other vendor's
-    // CLI (tier=standard once routed tool=codex under an explicit
-    // "claude-opus-4-8" and opened a TUI on a model it can never run).
-    //
-    // The vendor is read from the DISCOVERED CATALOG — the vendor's own list of
-    // what it can run, aliases included — and never from the shape of the name.
-    // The name-shape regex this used to ask returned null for anything it could
-    // not place, and null was read as permission: an unplaceable model kept the
-    // routed tool and opened a TUI that could never run it. That is the failure
-    // above, merely one step further along.
+    let tool: CapabilityProvider;
+    let explicitModel: string | undefined = request.model;
     if (request.model !== undefined) {
+      // An explicit model is bound to its vendor before anything launches.
+      // The vendor is read from the DISCOVERED CATALOG — the vendor's own
+      // list of what it can run, aliases included — never from the shape of
+      // the name (unknown-read-as-permission).
       const identified = identifyModelVendor(
         request.model,
         await forEachProvider((provider) => this.discoverOnce(provider)),
@@ -1633,18 +1495,12 @@ export class HiveSpawner implements Spawner {
             "Name a model one of them publishes.",
         );
       }
-      // Unreadable is not permission either, but it is not proof of absence:
-      // with no catalog to consult, the name's shape is the only evidence left,
-      // and it can still refuse an impossible pair (it just cannot bless one).
+      // Unreadable is not permission, and with no routed tool left to fall
+      // back on it is not a route either: an explicit model whose vendor
+      // cannot be verified needs an explicit tool from the caller.
       const vendor = identified.state === "claimed"
         ? identified.provider
         : modelVendor(request.model);
-      if (identified.state === "unreadable" && vendor === null) {
-        console.warn(
-          `Hive could not identify the vendor of model ${JSON.stringify(request.model)} ` +
-            `(${identified.reason}); it stays on the routed tool, unverified.`,
-        );
-      }
       if (vendor !== null) {
         if (request.tool !== undefined && request.tool !== vendor) {
           throw new Error(
@@ -1654,64 +1510,49 @@ export class HiveSpawner implements Spawner {
           );
         }
         tool = vendor;
-      }
-    }
-    // The process, durable identity, terminal title, and hive_status all use
-    // the same concrete model. A later control restart can therefore replay
-    // the launch without consulting aliases or mutable tool defaults.
-    // An explicit request model is a user directive: it launches verbatim
-    // (no alias resolution) on the spawn's tool and is never substituted.
-    let model: string;
-    if (request.model !== undefined) {
-      model = request.model;
-    } else {
-      const resolved = await columnModel(tool);
-      if (resolved === null) {
-        // THE REFUSAL. Nothing could author this cell and nothing is invented:
-        // the engine's reason names what Hive needs (a vendor CLI to discover
-        // from, or a pin), and the spawn fails with it instead of launching a
-        // model no source vouched for.
+      } else if (request.tool !== undefined) {
+        console.warn(
+          `Hive could not identify the vendor of model ${JSON.stringify(request.model)} ` +
+            `(${identified.state === "unreadable" ? identified.reason : "unclaimed"}); ` +
+            `it launches on the explicitly requested ${request.tool}, unverified.`,
+        );
+        tool = request.tool;
+      } else {
         throw new Error(
-          `Cannot spawn ${name}: no ${tool} route for ${request.tier} — ` +
-            `${governing!.cells[tool].reason}`,
+          `Cannot spawn ${name}: no vendor's catalog could be read to identify ` +
+            `${JSON.stringify(request.model)}, and no tool= was given. Pass the ` +
+            "vendor explicitly to launch it.",
         );
       }
-      model = resolved;
+    } else {
+      // Routed spawns get their tool from the chain walk below; this value is
+      // never read before the walk assigns the authorized launch.
+      tool = request.tool ?? "claude";
     }
     let executionIdentity: ExecutionIdentity | undefined;
     let quotaReservationId: string | undefined;
     let effort: string | undefined;
-    const effortPins = await this.dependencies.routingPins?.() ?? {};
-    const discoveries = new Map<
-      CapabilityProvider,
-      Promise<CapabilityDiscoveryResult | undefined>
-    >();
-    const resolveEffort = async (
-      candidateTool: CapabilityProvider,
-      candidateModel: string,
-    ): Promise<string | undefined> => {
-      let discovery = discoveries.get(candidateTool);
-      if (discovery === undefined) {
-        // One cache for every consumer of the catalog — the effort resolver and
-        // the release valve ask the same question, and a probe spawns a CLI.
-        discovery = this.discoverOnce(candidateTool);
-        discoveries.set(candidateTool, discovery);
-      }
-      const routedEffort = governing?.cells[candidateTool].effort;
-      return await this.resolveSpawnEffort(
-        request,
-        configuredRoute,
-        candidateTool,
-        candidateModel,
-        {
-          pins: effortPins,
-          discovery: await discovery,
-          routeAuthoritative: governing !== null,
-          ...(routedEffort === undefined ? {} : { routedEffort }),
-        },
+    /**
+     * Per-link effort, three-valued like the store: an exact level rides the
+     * candidate into the gate for validation; "none" and provider-controlled
+     * ride as undefined and the gate resolves the honest per-vendor answer.
+     * An explicit request.effort is the user's directive and outranks the
+     * link.
+     */
+    const linkEffort = (
+      entry: { provider: CapabilityProvider; model: string; effort: EffortTarget },
+      policy: RoutingPolicy,
+    ): string | undefined => {
+      if (request.effort !== undefined) return request.effort;
+      if (entry.effort.mode === "exact") return entry.effort.value;
+      if (entry.effort.mode === "none") return undefined;
+      // provider-controlled: the model row's standing effort choice, if the
+      // user made one, is the next-most-specific instruction.
+      const row = policy.models.find((candidate) =>
+        candidate.provider === entry.provider && candidate.model === entry.model
       );
+      return row?.effort?.mode === "exact" ? row.effort.value : undefined;
     };
-    const floors = await loadRoutingFloors();
     const authorizeCandidate = async (
       raw: RawLaunchCandidate,
     ): Promise<LaunchGateResult> => {
@@ -1724,13 +1565,11 @@ export class HiveSpawner implements Spawner {
           if (discovery === undefined || discovery.status !== "ok") {
             return `${candidate.tool}'s model catalog is unreadable`;
           }
-          record = discovery?.status === "ok"
-            ? discovery.records.find((entry) =>
-              entry.launchToken === candidate.model ||
-              entry.canonicalId === candidate.model ||
-              entry.aliases.includes(candidate.model)
-            )
-            : undefined;
+          record = discovery.records.find((entry) =>
+            entry.launchToken === candidate.model ||
+            entry.canonicalId === candidate.model ||
+            entry.aliases.includes(candidate.model)
+          );
           return record === undefined
             ? `${candidate.tool}'s readable catalog has no record for ${candidate.model}`
             : null;
@@ -1765,30 +1604,57 @@ export class HiveSpawner implements Spawner {
         availability: (candidate) =>
           this.availabilityRefusal(candidate.tool, candidate.model),
         capabilityFloor: (candidate) => {
-          const allow = tierIsFloorBound(request.tier)
-            ? floors[candidate.tool]?.allow
-            : undefined;
-          if (allow === undefined) return null;
-          const clears = allow.includes(candidate.model) ||
-            (record !== undefined && (
-              allow.includes(record.canonicalId) ||
-              allow.includes(record.launchToken) ||
-              record.aliases.some((alias) => allow.includes(alias))
-            ));
-          return clears
+          // The long-context requirement is a MODIFIER on whatever category
+          // was chosen, never a category of its own (governing doc §3.3). It
+          // fails closed: a model whose context window Hive has not measured
+          // does not clear a minimum, because a guessed window is how a long
+          // job lands on a model that cannot hold it.
+          if (request.minContextTokens === undefined) return null;
+          const window = record === undefined ? null : knownContextTokens(record);
+          if (window === null) {
+            return `${candidate.model} has no measured context window; ` +
+              `minContextTokens=${request.minContextTokens} fails closed rather than guessing`;
+          }
+          return window >= request.minContextTokens
             ? null
-            : `${candidate.model} does not clear the capability floor for ${candidate.tool}`;
+            : `${candidate.model} context window ${window} is below the required ` +
+              `${request.minContextTokens}`;
         },
         effort: async (candidate) => {
-          try {
-            return {
-              effort: await resolveEffort(candidate.tool, candidate.model),
-              refusal: null,
-            };
-          } catch (error) {
-            return {
-              refusal: error instanceof Error ? error.message : String(error),
-            };
+          // The candidate's effort is the user's instruction (request.effort
+          // or the chain link); validation against the model's own record
+          // disposes. Undefined means provider-controlled, resolved to the
+          // vendor's honest answer: Claude's effort is observed, never
+          // chosen; Grok and Codex take their discovered default; Codex's
+          // CLI requires a flag, so its last resort stays "medium".
+          const requested = candidate.effort;
+          if (requested !== undefined) {
+            const validated = validateEffort(record, candidate.model, requested);
+            if (validated.warning !== undefined) console.warn(validated.warning);
+            return { refusal: null, ...(validated.effort === undefined ? {} : { effort: validated.effort }) };
+          }
+          const discoveredDefault = record?.defaultEffort.state === "known"
+            ? record.defaultEffort.value
+            : undefined;
+          switch (candidate.tool) {
+            case "claude":
+              return { refusal: null };
+            case "grok": {
+              if (discoveredDefault === undefined) return { refusal: null };
+              const validated = validateEffort(record, candidate.model, discoveredDefault);
+              return { refusal: null, ...(validated.effort === undefined ? {} : { effort: validated.effort }) };
+            }
+            case "codex": {
+              const validated = validateEffort(
+                record,
+                candidate.model,
+                discoveredDefault ?? "medium",
+              );
+              if (validated.warning !== undefined) console.warn(validated.warning);
+              return { refusal: null, ...(validated.effort === undefined ? {} : { effort: validated.effort }) };
+            }
+            default:
+              return unknownVendor(candidate.tool, "spawn effort");
           }
         },
       };
@@ -1805,122 +1671,134 @@ export class HiveSpawner implements Spawner {
       return result.authorized;
     };
     let authorized: AuthorizedLaunch;
-    if (this.dependencies.quota?.config.enabled === true) {
-      let rawCandidates: RawLaunchCandidate[];
-      let candidates: AuthorizedLaunch[] | undefined;
-      if (request.model !== undefined) {
-        // The pinned model is the only candidate, and the spawn is bound to
-        // its vendor: switching vendors away from a user-named model would
-        // launch something other than what was asked for, and the Fable→Opus
-        // release valve is equally a substitution, so neither applies here.
-        // Unsafe quota still fails the spawn with the capacity report.
-        rawCandidates = [{
-          tool,
-          model: request.model,
-        }];
+    if (explicitModel !== undefined) {
+      // A user-named model is the only candidate and is never substituted:
+      // it passes the same gates as any link (a pin is a route, not a
+      // consent), and unsafe quota fails the spawn with the capacity report
+      // instead of sliding to a different model.
+      const raw: RawLaunchCandidate = {
+        tool,
+        model: explicitModel,
+        ...(request.effort === undefined ? {} : { effort: request.effort }),
+      };
+      const gated = await requireGate(raw);
+      if (this.dependencies.quota?.config.enabled === true) {
+        const decision = await this.dependencies.quota.routeAndReserve({
+          agentName: name,
+          category: request.category,
+          selection: "strict",
+          explicitTool: tool,
+          explicitCandidate: true,
+          ...(request.reviewOfTool === undefined
+            ? {}
+            : { reviewOfTool: request.reviewOfTool }),
+          candidates: [gated],
+        });
+        authorized = decision.authorized;
+        quotaReservationId = decision.reservation.id;
       } else {
-        const [claudeModel, codexModel, grokModel] = await Promise.all([
-          columnModel("claude"),
-          columnModel("codex"),
-          columnModel("grok"),
-        ]);
-        if (governing !== null) {
-          // A refused column contributes NO candidate — quota must never rank a
-          // cell whose own engine said "nothing vouches for this".
-          rawCandidates = [
-            ...(claudeModel === null ? [] : [
-              { tool: "claude" as const, model: claudeModel },
-            ]),
-            ...(codexModel === null ? [] : [
-              { tool: "codex" as const, model: codexModel },
-            ]),
-            ...(grokModel === null ? [] : [
-              { tool: "grok" as const, model: grokModel },
-            ]),
-          ];
-          if (rawCandidates.length === 0) {
-            throw new Error(
-              `Cannot spawn ${name}: no route for ${request.tier} — ` +
-                `claude: ${governing.cells.claude.reason}; ` +
-                `codex: ${governing.cells.codex.reason}; ` +
-                `grok: ${governing.cells.grok.reason}`,
-            );
-          }
-        } else {
-          // The legacy static-table path: both columns always resolve.
-          rawCandidates = [
-            { tool: "claude", model: claudeModel! },
-            { tool: "codex", model: codexModel! },
-            ...(grokModel === null
-              ? []
-              : [{ tool: "grok" as const, model: grokModel }]),
-          ];
-        }
-        const eligible: AuthorizedLaunch[] = [];
-        const excluded: { tool: CapabilityProvider; reason: string }[] = [];
-        for (const candidate of rawCandidates) {
-          const result = await authorizeCandidate(candidate);
-          if (result.refusal !== undefined) {
-            excluded.push({
-              tool: candidate.tool,
-              reason: `${result.refusal.reason}: ${result.refusal.detail}`,
-            });
-          } else {
-            eligible.push(result.authorized);
-          }
-        }
-        if (eligible.length === 0) {
-          throw new Error(
-            `No eligible route remains for ${request.tier}: ${
-              excluded.map((entry) => entry.reason).join("; ")
-            }`,
-          );
-        }
-        // A GUARD THAT REFUSES FOR REASON X MUST SAY X.
-        //
-        // When the spawn names its vendor, that vendor's own exclusion reason is
-        // the whole answer, and it dies here rather than downstream. It used to
-        // survive only as long as the OTHER vendors did: claude and codex stayed
-        // eligible, so the throw above never fired, `excluded` was dropped on the
-        // floor, and quota — which filters candidates down to the requested tool
-        // and finds nothing left — reported `no route for <tier>`. The route was
-        // never missing. The refusal was an eligibility policy decision, and
-        // the message sent the reader hunting for a routing bug that did not exist.
-        if (request.tool !== undefined) {
-          const why = excluded.filter((entry) => entry.tool === request.tool);
-          if (
-            why.length > 0 &&
-            !eligible.some((candidate) => candidate.tool === request.tool)
-          ) {
-            throw new Error(
-              `Cannot spawn ${name} on ${request.tool}: ${
-                why.map((entry) => entry.reason).join("; ")
-              }`,
-            );
-          }
-        }
-        candidates = eligible;
+        authorized = gated;
       }
-      candidates ??= await Promise.all(rawCandidates.map(requireGate));
-      const explicitTool = request.model !== undefined ? tool : request.tool;
-      const decision = await this.dependencies.quota.routeAndReserve({
-        agentName: name,
-        tier: request.tier,
-        preferredTool,
-        ...(explicitTool === undefined ? {} : { explicitTool }),
-        ...(request.model === undefined ? {} : { explicitCandidate: true }),
-        ...(request.reviewOfTool === undefined
-          ? {}
-          : { reviewOfTool: request.reviewOfTool }),
-        candidates,
-      });
-      authorized = decision.authorized;
-      quotaReservationId = decision.reservation.id;
     } else {
-      authorized = await requireGate({ tool, model });
+      // THE CHAIN SELECTION. The category's chain names the CAPABLE models,
+      // best first; it is not a strict always-try-#1 ladder, because a strict
+      // walk burns the primary's pool to zero while the others sit idle.
+      // EVERY link passes the full launch gate first — selection never
+      // bypasses a gate — and then the user's selection mode picks among the
+      // eligible: `spread` (default) by remaining headroom, rank-biased;
+      // `strict` in rank order. A chain whose links all refuse falls back to
+      // the user's global default chain, walked the same way; when that too
+      // is exhausted the spawn REFUSES with every link's reason.
+      const policy = readPolicy();
+      const category = request.category;
+      const selection = selectionModeFor(policy, category);
+      const attempts: string[] = [];
+      const tried = new Set<string>();
+      const gateChain = async (
+        entries: readonly ChainEntry[],
+        source: string,
+      ): Promise<AuthorizedLaunch[]> => {
+        const eligible: AuthorizedLaunch[] = [];
+        for (const entry of entries) {
+          const key = `${entry.provider}\0${entry.model}`;
+          if (tried.has(key)) continue;
+          tried.add(key);
+          const label = `${source}: ${entry.provider}/${entry.model}`;
+          if (request.tool !== undefined && entry.provider !== request.tool) {
+            attempts.push(
+              `${label} — skipped: tool=${request.tool} was explicitly requested`,
+            );
+            continue;
+          }
+          const effortValue = linkEffort(entry, policy);
+          const gate = await authorizeCandidate({
+            tool: entry.provider,
+            model: entry.model,
+            ...(effortValue === undefined ? {} : { effort: effortValue }),
+          });
+          if (gate.refusal !== undefined) {
+            attempts.push(`${label} — ${gate.refusal.reason}: ${gate.refusal.detail}`);
+            continue;
+          }
+          eligible.push(gate.authorized);
+        }
+        return eligible;
+      };
+      const selectFrom = async (
+        eligible: AuthorizedLaunch[],
+      ): Promise<{ authorized: AuthorizedLaunch; reservationId?: string } | null> => {
+        if (eligible.length === 0) return null;
+        if (this.dependencies.quota?.config.enabled !== true) {
+          // Without quota there is no headroom to spread by; rank order is
+          // the only honest signal left, for either mode.
+          return { authorized: eligible[0]! };
+        }
+        try {
+          const decision = await this.dependencies.quota.routeAndReserve({
+            agentName: name,
+            category,
+            selection,
+            ...(request.tool === undefined ? {} : { explicitTool: request.tool }),
+            ...(request.reviewOfTool === undefined
+              ? {}
+              : { reviewOfTool: request.reviewOfTool }),
+            candidates: eligible,
+          });
+          return {
+            authorized: decision.authorized,
+            reservationId: decision.reservation.id,
+          };
+        } catch (error) {
+          attempts.push(
+            `quota: ${error instanceof Error ? error.message : String(error)}`,
+          );
+          return null;
+        }
+      };
+      const categoryChain = policy.chains[category] ?? [];
+      const defaultChain = category === "default" ? [] : policy.chains.default ?? [];
+      if (categoryChain.length === 0 && defaultChain.length === 0) {
+        throw new Error(
+          `Cannot spawn ${name}: category ${category} has no chain and the ` +
+            "global default chain is empty. Configure a chain in the Model " +
+            "Control Center.",
+        );
+      }
+      let chosen = await selectFrom(await gateChain(categoryChain, category));
+      chosen ??= await selectFrom(await gateChain(defaultChain, "default"));
+      if (chosen === null) {
+        throw new Error(
+          `Cannot spawn ${name}: every link of the ${category} chain` +
+            `${defaultChain.length > 0 ? " and the global default chain" : ""} ` +
+            `was refused:\n  ${attempts.join("\n  ")}\n` +
+            "Enable a model or edit the chain in the Model Control Center.",
+        );
+      }
+      authorized = chosen.authorized;
+      quotaReservationId = chosen.reservationId;
     }
     tool = authorized.tool;
-    model = authorized.model;
+    const model: string = authorized.model;
     effort = authorized.effort;
     if (model !== "default") {
       switch (tool) {
@@ -2015,7 +1893,7 @@ export class HiveSpawner implements Spawner {
       {
         tool,
         readOnly,
-        tier: request.tier,
+        category: request.category,
         brief,
         ...(graphBrief === null ? {} : { graphBrief }),
         ...(graphifyUrl === null ? {} : { graphifyTools: true }),
@@ -2047,7 +1925,7 @@ export class HiveSpawner implements Spawner {
       name,
       tool,
       model,
-      tier: request.tier,
+      category: request.category,
       status: "spawning",
       taskDescription: request.task,
       worktreePath: worktree.path,

@@ -3,7 +3,7 @@ import {
   CapabilityProviderSchema,
   type CapabilityProvider,
 } from "./capability";
-import { RoutingTierSchema } from "./routing";
+import { RoutingCategorySchema, type RoutingCategory } from "./routing-policy";
 
 export const QuotaConfidenceSchema = z.enum([
   "authoritative",
@@ -50,7 +50,33 @@ export const QuotaLimitSchema = z.strictObject({
 });
 export type QuotaLimit = z.infer<typeof QuotaLimitSchema>;
 
-const EstimateSchema = z.record(RoutingTierSchema, z.number().positive());
+/**
+ * The one-release compatibility mapping from the dead tiers to categories
+ * (governing doc §2.10): an existing quota.toml keyed by tier still parses,
+ * its values landing on the tier's successor category. New files use
+ * category keys directly.
+ */
+const LEGACY_TIER_CATEGORY = {
+  deep: "complex_coding",
+  standard: "simple_coding",
+  cheap: "summarization",
+  review: "code_review",
+} as const;
+
+const legacyKeysMapped = <T>(
+  table: Record<string, T>,
+): Record<string, T> =>
+  Object.fromEntries(
+    Object.entries(table).map(([key, value]) => [
+      LEGACY_TIER_CATEGORY[key as keyof typeof LEGACY_TIER_CATEGORY] ?? key,
+      value,
+    ]),
+  );
+
+const EstimateSchema = z.record(
+  z.union([RoutingCategorySchema, z.enum(["deep", "standard", "cheap", "review"])]),
+  z.number().positive(),
+).transform(legacyKeysMapped);
 
 /**
  * How much of each window one run of a tier is expected to consume, as a percent
@@ -70,16 +96,27 @@ const PercentEstimateSchema = z.strictObject({
 });
 
 const PercentEstimateTableSchema = z.record(
-  RoutingTierSchema,
+  z.union([RoutingCategorySchema, z.enum(["deep", "standard", "cheap", "review"])]),
   PercentEstimateSchema,
-);
+).transform(legacyKeysMapped);
 
-export const DEFAULT_PERCENT_ESTIMATES = {
-  deep: { fiveHour: 8, weekly: 1.5 },
-  standard: { fiveHour: 4, weekly: 0.75 },
-  cheap: { fiveHour: 1.5, weekly: 0.3 },
-  review: { fiveHour: 3, weekly: 0.6 },
-} as const;
+export const DEFAULT_PERCENT_ESTIMATES: Record<
+  RoutingCategory,
+  { fiveHour: number; weekly: number }
+> = {
+  // The old tier guesses, carried onto the categories that inherited their
+  // work: deep-class categories keep deep's estimate, and so on. Workload
+  // guesses, never provider numbers; observations overwrite them.
+  complex_coding: { fiveHour: 8, weekly: 1.5 },
+  debugging: { fiveHour: 8, weekly: 1.5 },
+  heavy_research: { fiveHour: 8, weekly: 1.5 },
+  planning: { fiveHour: 4, weekly: 0.75 },
+  simple_coding: { fiveHour: 4, weekly: 0.75 },
+  default: { fiveHour: 4, weekly: 0.75 },
+  code_review: { fiveHour: 3, weekly: 0.6 },
+  light_research: { fiveHour: 1.5, weekly: 0.3 },
+  summarization: { fiveHour: 1.5, weekly: 0.3 },
+};
 
 export const QuotaConfigSchema = z.strictObject({
   enabled: z.boolean().default(true),
@@ -103,10 +140,15 @@ export const QuotaConfigSchema = z.strictObject({
    */
   launchQuarantineMinutes: z.number().positive().default(15),
   estimates: EstimateSchema.default({
-    deep: 20,
-    standard: 10,
-    cheap: 4,
-    review: 8,
+    complex_coding: 20,
+    debugging: 20,
+    heavy_research: 20,
+    planning: 10,
+    simple_coding: 10,
+    default: 10,
+    code_review: 8,
+    light_research: 4,
+    summarization: 4,
   }),
   limits: z.array(QuotaLimitSchema).default([]),
 }).superRefine((value, context) => {

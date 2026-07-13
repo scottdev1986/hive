@@ -15,7 +15,7 @@ function agent(
     name,
     tool: "codex",
     model: "gpt-test",
-    tier: "standard",
+    category: "simple_coding",
     status,
     taskDescription: `Task for ${name}`,
     worktreePath: `/tmp/${name}`,

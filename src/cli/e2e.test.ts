@@ -129,7 +129,7 @@ describe("CLI-to-daemon smoke", () => {
       };
       const spawned = await spawner.spawn({
         task: "Smoke test event wiring",
-        tier: "standard",
+        category: "simple_coding",
       });
       expect(spawned.name).toEqual("maya");
       expect((await fetchAgentStatus(port, daemonFetch))[0]?.status).toEqual(

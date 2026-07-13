@@ -16,7 +16,7 @@ function agent(overrides: Partial<AgentRecord> = {}): AgentRecord {
     name: "maya",
     tool: "claude",
     model: "claude-fable-5",
-    tier: "standard",
+    category: "simple_coding",
     status: "idle",
     taskDescription: "Build the daemon",
     worktreePath: "/tmp/hive-maya",

@@ -6,10 +6,10 @@ import {
   splitVariant,
   type CapabilityProvider,
   type ModelVendorVerdict,
-  RoutingTierSchema,
+  RoutingCategorySchema,
   type QuotaObservation,
   type QuotaScope,
-  type RoutingTier,
+  type RoutingCategory,
 } from "../schemas";
 import type { HiveDatabase } from "./db";
 import { modelVendor } from "../adapters/tools/models";
@@ -29,7 +29,7 @@ const ReservationSchema = z.object({
   pool: z.string(),
   model: z.string(),
   effort: z.string().nullable(),
-  tier: RoutingTierSchema,
+  category: RoutingCategorySchema,
   estimatedUnits: z.number(),
   // A percent-denominated (discovered) pool debits a different fraction of the
   // five-hour and weekly windows for the same run, because a week does not hold
@@ -94,7 +94,7 @@ export type ModelCatalogRow = z.infer<typeof ModelCatalogSchema>;
  * Whether a route actually starts, learned from what happened when Hive tried.
  *
  * Headroom is not eligibility. A route can have all the quota in the world and
- * still be incapable of producing a working agent — deep-tier Codex was exactly
+ * still be incapable of producing a working agent — deep-category Codex was exactly
  * this on 2026-07-11 — and a gate that refuses an exhausted model only to hand
  * the work to a route that cannot start has protected nothing. So a launch that
  * never proves life is recorded against its route, and a route that recently
@@ -163,7 +163,7 @@ export interface ReserveQuotaInput extends QuotaScope {
   agentName: string;
   model: string;
   effort?: string | null;
-  tier: RoutingTier;
+  category: RoutingCategory;
   estimatedUnits: number;
   estimatedWeeklyUnits?: number;
   now: string;
@@ -269,7 +269,7 @@ export class QuotaLedger {
         pool TEXT NOT NULL,
         model TEXT NOT NULL,
         effort TEXT,
-        tier TEXT NOT NULL,
+        category TEXT NOT NULL,
         estimatedUnits REAL NOT NULL CHECK(estimatedUnits >= 0),
         status TEXT NOT NULL,
         createdAt TEXT NOT NULL,
@@ -682,7 +682,7 @@ export class QuotaLedger {
    *
    * The ledger holds one such row today: agent `oscar`, `pool=codex`,
    * `model=claude-opus-4-8` — a Claude model's usage billed against the Codex
-   * meter, written when tier routing picked `tool=codex` while the caller had
+   * meter, written when category routing picked `tool=codex` while the caller had
    * pinned a Claude model. The spawner refuses that pairing now, but the ledger
    * took it without ever asking whether the pair could exist, and a ledger that
    * accepts an incoherent fact will accept the next one too. Cross-vendor billing
@@ -781,7 +781,7 @@ export class QuotaLedger {
     this.requireCoherent(input.provider, input.model);
     this.db.database.query(`
       INSERT INTO quota_reservations (
-        id, groupId, agentName, provider, account, pool, model, effort, tier,
+        id, groupId, agentName, provider, account, pool, model, effort, category,
         estimatedUnits, estimatedWeeklyUnits, status, createdAt, expiresAt,
         startedAt, reconciledAt, actualUnits, source, purpose,
         controlMessageId
@@ -795,7 +795,7 @@ export class QuotaLedger {
       input.pool,
       input.model,
       input.effort ?? null,
-      input.tier,
+      input.category,
       input.estimatedUnits,
       input.estimatedWeeklyUnits ?? null,
       input.now,
@@ -816,7 +816,7 @@ export class QuotaLedger {
    * A model with its own cap spends from two meters at once — the account-wide
    * pool and its own — and a run is only safe when *both* have room. Taking the
    * pools one at a time would admit a run that fits the general pool and blows
-   * the model's cap, which is exactly how two deep-tier agents landed on a model
+   * the model's cap, which is exactly how two deep-category agents landed on a model
    * whose weekly pool was already at 99%. The tightest pool governs, and the
    * caller is told which one refused so it can say so out loud.
    */

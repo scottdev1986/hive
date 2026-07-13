@@ -17,7 +17,7 @@ import {
   type QuotaStatus,
   type QuotaUnconfiguredStatus,
   type QuotaWindowStatus,
-  type RoutingTier,
+  type RoutingCategory,
 } from "../schemas";
 import {
   QuotaLedger,
@@ -46,10 +46,38 @@ type QuotaCandidateIdentity = Pick<
   "tool" | "model" | "effort"
 >;
 
+/**
+ * Light work leaves a reserve floor untouched so heavy work still has
+ * somewhere to land; the heavy categories spend down to the line. The old
+ * cheap/standard-preserve-deep rule, carried onto the categories that
+ * inherited each kind of work.
+ */
+/** Headroom two pools may differ by and still count as "even" — inside it
+ * the user's chain rank decides, which both favours the primary and stops
+ * per-spawn flip-flopping between near-equal pools. */
+const SPREAD_DEADBAND = 0.05;
+
+/** The fixed, deliberately modest headroom an UNMEASURED pool competes with:
+ * present enough to catch work when measured pools are nearly spent, never
+ * enough to beat a healthy one. An unknown must not resolve to "best". */
+const UNKNOWN_HEADROOM_SCORE = 0.15;
+
+const HEADROOM_PRESERVING_CATEGORIES: ReadonlySet<RoutingCategory> = new Set([
+  "simple_coding",
+  "summarization",
+  "light_research",
+  "default",
+]);
+
 export interface QuotaRouteRequest {
   agentName: string;
-  tier: RoutingTier;
-  preferredTool: CapabilityProvider;
+  category: RoutingCategory;
+  /**
+   * How to pick among the (already gated) candidates. `spread` — the default
+   * policy — picks by remaining headroom, rank-biased; `strict` preserves the
+   * caller's order exactly. Candidate ARRAY ORDER IS CHAIN RANK either way.
+   */
+  selection: "spread" | "strict";
   explicitTool?: CapabilityProvider;
   /** A human named this exact model; catalog quarantine warns but does not veto. */
   explicitCandidate?: boolean;
@@ -77,7 +105,7 @@ export interface QuotaRouteDecision {
 
 export interface ControlQuotaRequest extends QuotaCandidateIdentity {
   agentName: string;
-  tier: RoutingTier;
+  category: RoutingCategory;
   controlMessageId: string;
 }
 
@@ -645,7 +673,7 @@ export class QuotaService {
         held.agentName,
         candidate,
         entries,
-        held.tier,
+        held.category,
         now,
         held.purpose === "control" && held.controlMessageId !== null
           ? { purpose: "control", controlMessageId: held.controlMessageId }
@@ -670,14 +698,15 @@ export class QuotaService {
    */
   private estimateFor(
     limit: ResolvedQuotaLimit,
-    tier: RoutingTier,
+    category: RoutingCategory,
   ): { fiveHour: number; weekly: number } {
     if (limit.unit === "units") {
-      const estimate = this.config.estimates[tier]!;
+      const estimate = this.config.estimates[category] ??
+        this.config.estimates.default ?? 10;
       return { fiveHour: estimate, weekly: estimate };
     }
-    const percent = this.config.estimatesPct[tier] ??
-      DEFAULT_PERCENT_ESTIMATES[tier];
+    const percent = this.config.estimatesPct[category] ??
+      DEFAULT_PERCENT_ESTIMATES[category];
     return { fiveHour: percent.fiveHour, weekly: percent.weekly };
   }
 
@@ -686,15 +715,17 @@ export class QuotaService {
     agentName: string,
     candidate: QuotaCandidateIdentity,
     entries: { limit: ResolvedQuotaLimit; status: QuotaPoolStatus }[],
-    tier: RoutingTier,
+    category: RoutingCategory,
     now: Date,
     purpose?: { purpose: "control"; controlMessageId: string },
   ): ReserveQuotaInput[] {
-    // Cheap and standard work leaves a floor untouched so a deep run still has
-    // somewhere to land. A deep run itself is allowed to spend down to the line.
-    const preserveDeep = tier === "cheap" || tier === "standard";
+    // Light work leaves a floor untouched so a heavy run still has somewhere
+    // to land; the heavy categories themselves may spend down to the line —
+    // the old cheap/standard-preserve-deep rule, carried onto the categories
+    // that inherited the work.
+    const preserveDeep = HEADROOM_PRESERVING_CATEGORIES.has(category);
     return entries.map((entry) => {
-      const estimate = this.estimateFor(entry.limit, tier);
+      const estimate = this.estimateFor(entry.limit, category);
       const bounds = this.windowBounds(entry.limit, now);
       const supplemental = this.supplemental(entry.limit, entry.status, now);
       // A window this pool does not meter cannot refuse the run. Handing the
@@ -714,7 +745,7 @@ export class QuotaService {
         pool: entry.limit.pool,
         model: candidate.model,
         effort: candidate.effort ?? null,
-        tier,
+        category,
         estimatedUnits: estimate.fiveHour,
         estimatedWeeklyUnits: estimate.weekly,
         now: iso(now),
@@ -747,7 +778,7 @@ export class QuotaService {
    * model only to hand the work to a route that cannot start has protected
    * nothing.
    *
-   * Nothing here knows the name of a vendor or a tier. It reports what happened
+   * Nothing here knows the name of a vendor or a category. It reports what happened
    * when Hive last tried, and it forgets on a schedule.
    */
   private quarantinedUntil(
@@ -798,18 +829,18 @@ export class QuotaService {
    */
   private hasRoom(
     candidate: QuotaCandidateIdentity,
-    tier: RoutingTier,
+    category: RoutingCategory,
     now: Date,
   ): boolean {
     // A route that cannot start is not a fallback, whatever its headroom says.
     if (this.quarantinedUntil(candidate, now) !== null) return false;
     const limits = this.limitsFor(candidate);
-    const preserveDeep = tier === "cheap" || tier === "standard";
+    const preserveDeep = HEADROOM_PRESERVING_CATEGORIES.has(category);
     const checked = limits.map((limit) => {
       const status = this.statusForLimit(limit, now);
       const measured = this.measured(status, limit);
       if (measured === null) return null;
-      const estimate = this.estimateFor(limit, tier);
+      const estimate = this.estimateFor(limit, category);
       const fiveFloor = preserveDeep
         ? limit.fiveHourAllowance * this.config.reserveFiveHourPct
         : 0;
@@ -872,7 +903,7 @@ export class QuotaService {
   private pressureWarnings(
     candidate: QuotaCandidateIdentity,
     entries: { limit: ResolvedQuotaLimit; status: QuotaPoolStatus }[],
-    tier: RoutingTier,
+    category: RoutingCategory,
   ): string[] {
     const warnings: string[] = [];
     for (const entry of entries) {
@@ -886,7 +917,7 @@ export class QuotaService {
         }
         continue;
       }
-      const estimate = this.estimateFor(entry.limit, tier);
+      const estimate = this.estimateFor(entry.limit, category);
       const after = Math.min(
         (measured.fiveRemaining - estimate.fiveHour) /
           entry.limit.fiveHourAllowance,
@@ -906,7 +937,7 @@ export class QuotaService {
         `${describeRemaining(status, unit)} remaining ` +
         `(${tightWindow === "weekly" ? "weekly" : "5h"} window` +
         `${status.resetsAt === null ? "" : `, resets ${status.resetsAt}`}) ` +
-        `after this ${tier} run.`,
+        `after this ${category} run.`,
       );
     }
     return warnings;
@@ -1105,7 +1136,7 @@ export class QuotaService {
       reservation.agentName !== request.agentName ||
       reservation.provider !== request.tool ||
       reservation.model !== request.model ||
-      reservation.tier !== request.tier || reservation.purpose !== "control"
+      reservation.category !== request.category || reservation.purpose !== "control"
     ) {
       throw new Error(
         `Control reservation ${reservation.id} does not match the recorded execution identity for ${request.agentName}`,
@@ -1446,21 +1477,14 @@ export class QuotaService {
     let candidates = request.candidates.filter((candidate) =>
       request.explicitTool === undefined || candidate.tool === request.explicitTool
     );
-    if (request.reviewOfTool !== undefined && request.tier === "review") {
+    if (request.reviewOfTool !== undefined && request.category === "code_review") {
       candidates = candidates.filter((candidate) =>
         candidate.tool !== request.reviewOfTool
       );
     }
-    // Candidate order is the ordinary derived ranking. Review removes the
-    // producer, then uses that same ranking instead of inventing "the other"
-    // vendor now that more than one alternate can exist.
-    const preferred = request.reviewOfTool !== undefined &&
-        request.tier === "review"
-      ? candidates[0]?.tool ?? request.preferredTool
-      : request.preferredTool;
     if (candidates.length === 0) {
       throw new QuotaExhaustedError(
-        `Requested provider ${request.explicitTool} has no route for ${request.tier}`,
+        `Requested provider ${request.explicitTool} has no route for ${request.category}`,
       );
     }
 
@@ -1494,7 +1518,7 @@ export class QuotaService {
       candidates = eligible;
     }
 
-    const evaluated = candidates.map((candidate) => {
+    const evaluated = candidates.map((candidate, rank) => {
       const entries = this.limitsFor(candidate).map((limit) => ({
         limit,
         status: this.statusForLimit(limit, now),
@@ -1510,13 +1534,25 @@ export class QuotaService {
         this.measured(entry.status, entry.limit) !== null
       );
       if (entries.length === 0 || known.length === 0) {
-        return { candidate, entries: [], score: -1, unknown: true };
+        // UNKNOWN IS NOT INFINITE HEADROOM. A pool Hive cannot read (grok's
+        // money-guard surface, a silent usage feed) participates with a fixed
+        // conservative weight: it can catch work when the measured pools are
+        // nearly spent, and it can never win against a healthy one. Treating
+        // unknown as free would send everything to the darkest pool forever
+        // (unknown-read-as-permission, wearing a scheduling hat).
+        return {
+          candidate,
+          entries: [],
+          score: UNKNOWN_HEADROOM_SCORE,
+          unknown: true,
+          rank,
+        };
       }
       let score = Number.POSITIVE_INFINITY;
       for (const entry of entries) {
         const measured = this.measured(entry.status, entry.limit);
         if (measured === null) continue;
-        const estimate = this.estimateFor(entry.limit, request.tier);
+        const estimate = this.estimateFor(entry.limit, request.category);
         score = Math.min(
           score,
           (measured.fiveRemaining - estimate.fiveHour) /
@@ -1525,14 +1561,22 @@ export class QuotaService {
             entry.limit.weeklyAllowance,
         );
       }
-      return { candidate, entries, score, unknown: false };
+      return { candidate, entries, score, unknown: false, rank };
     });
-    evaluated.sort((left, right) =>
-      right.score - left.score ||
-      Number(right.candidate.tool === preferred) -
-        Number(left.candidate.tool === preferred) ||
-      left.candidate.tool.localeCompare(right.candidate.tool)
-    );
+    // SELECTION. `strict` keeps the caller's chain rank untouched — quota
+    // then vetoes and reserves in that order. `spread` picks by remaining
+    // headroom (already net of outstanding reservations, so concurrent
+    // spawns see each other) with the chain rank as tie-break inside a
+    // deadband: two pools within DEADBAND of each other are "even" and the
+    // user's preferred link wins, which is also what stops per-spawn
+    // flip-flopping between near-equal pools.
+    if (request.selection === "spread") {
+      evaluated.sort((left, right) =>
+        Math.round(right.score / SPREAD_DEADBAND) -
+          Math.round(left.score / SPREAD_DEADBAND) ||
+        left.rank - right.rank
+      );
+    }
 
     // Viability, before headroom gets a vote. A route Hive has just watched fail
     // to produce a working agent is not a route, however much quota it has.
@@ -1575,7 +1619,7 @@ export class QuotaService {
     let safeFallback: QuotaRouteCandidate | undefined;
     for (const item of attemptable) {
       if (item.unknown) {
-        const fallbackEstimate = this.config.estimates[request.tier]!;
+        const fallbackEstimate = this.config.estimates[request.category]!;
         const reservation = this.ledger.insertUnboundedReservation({
           id: crypto.randomUUID(),
           agentName: request.agentName,
@@ -1584,7 +1628,7 @@ export class QuotaService {
           pool: `unconfigured:${item.candidate.model}`,
           model: item.candidate.model,
           effort: item.candidate.effort ?? null,
-          tier: request.tier,
+          category: request.category,
           estimatedUnits: fallbackEstimate,
           now: iso(now),
           expiresAt: add(now, this.config.reservationTtlMinutes * 60_000),
@@ -1613,7 +1657,7 @@ export class QuotaService {
           request.agentName,
           item.candidate,
           item.entries,
-          request.tier,
+          request.category,
           now,
         ),
       );
@@ -1645,11 +1689,9 @@ export class QuotaService {
           authorized: item.candidate,
           reservation: primary,
           status: this.statusForLimit(governing.limit, now),
-          reason: item.candidate.tool === preferred
-            ? "preferred provider has the best safe headroom"
-            : "preferred provider lacks safe headroom",
+          reason: "safe headroom for the user's chosen link",
           warnings: [
-            ...this.pressureWarnings(item.candidate, item.entries, request.tier),
+            ...this.pressureWarnings(item.candidate, item.entries, request.category),
             ...quarantineWarnings,
           ],
         };
@@ -1662,7 +1704,7 @@ export class QuotaService {
       const other = request.candidates.find((candidate) =>
         candidate.tool !== request.explicitTool
       );
-      if (other !== undefined && this.hasRoom(other, request.tier, now)) {
+      if (other !== undefined && this.hasRoom(other, request.category, now)) {
         safeFallback ??= other;
       }
     }
@@ -1745,8 +1787,8 @@ export class QuotaService {
         pool: `unconfigured:${request.model}`,
         model: request.model,
         effort: request.effort ?? null,
-        tier: request.tier,
-        estimatedUnits: this.config.estimates[request.tier]!,
+        category: request.category,
+        estimatedUnits: this.config.estimates[request.category]!,
         now: iso(now),
         expiresAt: add(now, this.config.reservationTtlMinutes * 60_000),
         purpose: "control",
@@ -1759,12 +1801,12 @@ export class QuotaService {
     // A critical acknowledgement may use the last safe capacity. It never falls
     // back to another provider or model, but it also must not preserve a
     // deep-work reserve at the expense of delivering the control — so the floors
-    // the tier would normally protect are dropped to zero here.
+    // the category would normally protect are dropped to zero here.
     const inputs = this.reservationInputs(
       request.agentName,
       request,
       entries,
-      request.tier,
+      request.category,
       now,
       { purpose: "control", controlMessageId: request.controlMessageId },
     ).map((input, index) => ({
@@ -1786,7 +1828,7 @@ export class QuotaService {
         entry.limit.account === group.blockedBy.account
       ) ?? governing;
       const unit = blocked.limit.unit === "percent" ? "%" : "";
-      const estimate = this.estimateFor(blocked.limit, request.tier);
+      const estimate = this.estimateFor(blocked.limit, request.category);
       throw new QuotaExhaustedError(
         `Insufficient quota for critical control ${request.controlMessageId}: ` +
           `${this.describeBlock(request, blocked.limit, blocked.status)}; ` +
