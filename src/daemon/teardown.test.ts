@@ -1,5 +1,20 @@
 import { describe, expect, test } from "bun:test";
-import { reapProcessTree, type ReapDependencies } from "./teardown";
+import {
+  captureProcessTree,
+  reapCapturedTree,
+  type ReapDependencies,
+} from "./teardown";
+
+/** capture + reap, the way every caller uses them when nothing reparents. */
+const reapProcessTree = async (
+  roots: readonly number[],
+  dependencies: ReapDependencies,
+  selfPid: number,
+) =>
+  reapCapturedTree(
+    await captureProcessTree(roots, dependencies, selfPid),
+    dependencies,
+  );
 
 /**
  * A fake process table. `ps` output is the only thing the reaper reads, so the
@@ -104,6 +119,49 @@ describe("reapProcessTree", () => {
 
     expect(signalled).not.toContain(7);
     expect(outcome.killed).toEqual([]);
+  });
+
+  test("kills a detached child that tmux reparented to init", async () => {
+    // THE BUG OBSERVATION CAUGHT, and the reason capture is a separate step.
+    //
+    // The agent nohup'ed a command (101). Killing the tmux session tears the
+    // pane down: the shell (100) dies, and 101 — which ignored the SIGHUP —
+    // is reparented to init, so its ppid becomes 1. A tree walk performed
+    // AFTER the session died finds nothing under 100 and reports a clean kill
+    // over a process that is still running. Capturing first is what makes 101
+    // killable, because at capture time it was still a child of the pane.
+    const { dependencies, alive } = world([
+      { pid: 100, ppid: 1, command: "-zsh" },
+      { pid: 101, ppid: 100, command: "nohup long-build" },
+    ]);
+
+    const captured = await captureProcessTree([100], dependencies, 1);
+
+    // tmux kills the pane. The shell dies; the nohup'ed child is reparented.
+    alive.delete(100);
+    const orphan = alive.get(101)!;
+    orphan.ppid = 1;
+
+    const outcome = await reapCapturedTree(captured, dependencies);
+
+    expect(outcome.killed.map((p) => p.pid).sort()).toEqual([100, 101]);
+    expect(outcome.survivors).toEqual([]);
+    expect(alive.has(101)).toBe(false);
+  });
+
+  test("a tree walked AFTER the session dies misses the orphan entirely", async () => {
+    // The negative control for the test above: this is what the broken version
+    // did, and it is why "the tests passed" was not "the process is dead".
+    const { dependencies, alive } = world([
+      { pid: 100, ppid: 1, command: "-zsh" },
+      { pid: 101, ppid: 100, command: "nohup long-build" },
+    ]);
+
+    alive.delete(100);
+    alive.get(101)!.ppid = 1;
+
+    // Capturing from the roots only now, after the pane is gone, finds nothing.
+    expect(await captureProcessTree([100], dependencies, 1)).toEqual([]);
   });
 
   test("no roots is a no-op, not a sweep of everything", async () => {

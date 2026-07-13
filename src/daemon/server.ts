@@ -134,8 +134,9 @@ import {
   type ReapOrphanDependencies,
 } from "../adapters/tools/codex-app-server";
 import {
+  captureProcessTree,
   defaultReapDependencies,
-  reapProcessTree,
+  reapCapturedTree,
   type ReapDependencies,
   type ReapOutcome,
 } from "./teardown";
@@ -1742,9 +1743,15 @@ export class HiveDaemon {
     this.capabilities.revokeSubject(agent.name);
     removeCredential(agent.name);
 
-    const roots = await this.agentProcessRoots(agent);
+    // Capture the TREE, not just the roots, and do it before the session dies:
+    // a detached child outlives the pane and is reparented to init, which
+    // destroys the very parent links a later walk would need to find it.
+    const captured = await captureProcessTree(
+      await this.agentProcessRoots(agent),
+      this.reapDependencies,
+    );
     await this.tmux.killSession(agent.tmuxSession, { ignoreMissing: true });
-    const reaped = await reapProcessTree(roots, this.reapDependencies);
+    const reaped = await reapCapturedTree(captured, this.reapDependencies);
     const timestamp = new Date().toISOString();
     const killed = this.db.markAgentDeadAndDetachTerminal(agent.id, timestamp);
     if (killed === null) {
@@ -1950,12 +1957,15 @@ export class HiveDaemon {
       // The orchestrator has no agents row, so it is not in killAllAgents. Its
       // pane holds a vendor CLI and that CLI's MCP children exactly like an
       // agent's does, and killing the session alone would leave them behind.
-      const roots = await this.panePids(orchestratorTmuxSession())
-        .catch(() => [] as number[]);
+      const captured = await captureProcessTree(
+        await this.panePids(orchestratorTmuxSession())
+          .catch(() => [] as number[]),
+        this.reapDependencies,
+      );
       await this.tmux.killSession(orchestratorTmuxSession(), {
         ignoreMissing: true,
       });
-      await reapProcessTree(roots, this.reapDependencies);
+      await reapCapturedTree(captured, this.reapDependencies);
       cleanupLifecycleFiles();
     }
     if (this.ownsDatabase) {

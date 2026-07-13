@@ -30,7 +30,9 @@ hive > david finished the routes and is waiting; maya is mid-way
        through the middleware. Merging david's work…
 ```
 
-Panes tile in as agents spawn and leave as they finish. Typing into a pane talks directly to that agent's own interface. The agents themselves live in background tmux sessions, so closing the window never stops one — running `hive` again reattaches the Workspace, and `hive watch <name>` opens a plain terminal window on a single agent.
+Panes tile in as agents spawn and leave as they finish. Typing into a pane talks directly to that agent's own interface. The agents themselves live in background tmux sessions, so closing the *window* never stops one — running `hive` again reattaches the Workspace, and `hive watch <name>` opens a plain terminal window on a single agent.
+
+Closing a **pane** is different, and it means it: the pane's X kills that agent immediately — no confirmation — along with everything it started, including the processes it left running outside its tmux session. If the agent was holding work that is not on main, the branch is preserved and the orchestrator is told where to find it; immediate never means your work is discarded. **Quitting the app closes every agent and stops the daemon**, so nothing is left running behind your back.
 
 ### Status dot
 
@@ -119,7 +121,8 @@ To update later, run `hive update` — it repeats those checks and additionally 
 | `hive watch <name>` | Open a terminal window viewing one agent |
 | `hive recover [name]` | Resume crashed agent sessions |
 | `hive memory <search\|read\|write\|delete\|reindex>` | Inspect and edit the durable facts Hive has learned about the repo |
-| `hive stop` | Stop live agents and the daemon |
+| `hive kill <name>` | Close one agent immediately and reap everything it started; unlanded work is preserved, never discarded |
+| `hive stop` | Stop every live agent and the daemon, leaving no stray processes |
 | `hive update` | Install the latest release (`check`, `status`, `rollback`, `skip`) |
 
 `hive quota` shows what routing sees — each provider window Hive can read, plus what's already reserved for running agents. A window the provider does not meter is labeled `not metered`; a meter Hive expected but could not read is `unknown`. Those are different facts:

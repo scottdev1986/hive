@@ -39,6 +39,10 @@ export interface ReapedProcess {
   command: string;
 }
 
+/** A process tree sampled at a moment in time. Not a live query — the point of
+ * this type is that it OUTLIVES the parent links it was derived from. */
+export type CapturedTree = readonly ReapedProcess[];
+
 export interface ReapOutcome {
   /** Processes that were signalled and are now gone. */
   killed: ReapedProcess[];
@@ -58,48 +62,68 @@ export const defaultReapDependencies = (): ReapDependencies => ({
 const REAP_SETTLE_MS = 250;
 
 /**
- * SIGKILL every process reachable from `rootPids`, then verify.
+ * Snapshot every process under `rootPids`. MUST be called BEFORE the tmux
+ * session is torn down, and the reason is the whole bug.
  *
- * SIGKILL rather than SIGTERM because this path is only ever reached when the
- * user has already decided: the X and the app quit both mean "now", and a
- * vendor CLI that traps SIGTERM to flush a transcript would turn "immediate"
- * into "eventually". The graceful shutdown of an agent's *conversation* is the
- * database's job, and it has already happened by the time we get here.
+ * A detached child — anything an agent `nohup`ed or backgrounded, which SPEC
+ * §12 says they do routinely — ignores the SIGHUP tmux sends when it kills the
+ * pane, survives, and is REPARENTED TO INIT. Its ppid becomes 1. From that
+ * moment it is not a descendant of the pane, of the agent, or of anything else
+ * Hive can name: the parent links that made it findable are gone, and no
+ * later `ps` walk can ever attribute it again.
  *
- * Deepest-first, so a supervisor cannot notice a dead child and respawn it
- * inside the window. `selfPid` is never killed: a bad root (an empty tmux
- * query, a recycled pid) must not let the daemon shoot itself.
+ * So the tree is captured while those links still exist, and the captured pid
+ * list — not a live query — is what gets killed afterwards. This was measured,
+ * not reasoned: an earlier version of this file captured only the ROOT pids
+ * before the kill and walked the tree afterwards. It reported "1 process
+ * reaped" and left the `nohup`ed child running with ppid 1, which is precisely
+ * the leak the whole path exists to close. Every unit test passed, because a
+ * fake process table does not reparent anything.
  */
-export async function reapProcessTree(
+export async function captureProcessTree(
   rootPids: readonly number[],
   dependencies: ReapDependencies = defaultReapDependencies(),
   selfPid: number = process.pid,
-): Promise<ReapOutcome> {
+): Promise<CapturedTree> {
   const roots = rootPids.filter((pid) =>
     Number.isSafeInteger(pid) && pid > 1 && pid !== selfPid
   );
-  if (roots.length === 0) return { killed: [], survivors: [] };
+  if (roots.length === 0) return [];
+  return descendantsOf(parseProcessTable(await dependencies.ps()), [...roots])
+    .filter((sample) => sample.pid > 1 && sample.pid !== selfPid)
+    .map((sample) => ({ pid: sample.pid, command: sample.command }));
+}
 
-  const tree = descendantsOf(
-    parseProcessTable(await dependencies.ps()),
-    [...roots],
-  ).filter((sample) => sample.pid > 1 && sample.pid !== selfPid);
-  if (tree.length === 0) return { killed: [], survivors: [] };
+/**
+ * SIGKILL a captured tree, then LOOK AGAIN.
+ *
+ * SIGKILL rather than SIGTERM because this path is only reached once the user
+ * has already decided: the X and the app quit both mean "now", and a vendor CLI
+ * that traps SIGTERM to flush a transcript would turn "immediate" into
+ * "eventually". The graceful shutdown of an agent's *conversation* is the
+ * database's job, and it has already happened by the time we get here.
+ *
+ * Deepest-last is irrelevant to SIGKILL, but leaves are signalled first anyway
+ * so a supervisor cannot notice a dead child and respawn it inside the window.
+ */
+export async function reapCapturedTree(
+  captured: CapturedTree,
+  dependencies: ReapDependencies = defaultReapDependencies(),
+): Promise<ReapOutcome> {
+  if (captured.length === 0) return { killed: [], survivors: [] };
 
-  // descendantsOf returns breadth-first from the roots, so reversing it puts
-  // the leaves first.
-  for (const sample of [...tree].reverse()) {
+  for (const entry of [...captured].reverse()) {
     try {
-      dependencies.kill(sample.pid, "SIGKILL");
+      dependencies.kill(entry.pid, "SIGKILL");
     } catch {
-      // Already gone between the sample and the signal. That is a success.
+      // Already gone between the capture and the signal. That is a success.
     }
   }
 
   await dependencies.wait(REAP_SETTLE_MS);
 
-  // Look again. A zombie is an exit its parent has not reaped, so it counts as
-  // dead — the process is not running anyone's code.
+  // A zombie is an exit its parent has not reaped, so it counts as dead — the
+  // process is not running anyone's code.
   const alive = new Set(
     parseStateTable(await dependencies.psState())
       .filter((sample) => !sample.stat.startsWith("Z"))
@@ -107,9 +131,8 @@ export async function reapProcessTree(
   );
   const killed: ReapedProcess[] = [];
   const survivors: ReapedProcess[] = [];
-  for (const sample of tree) {
-    const entry = { pid: sample.pid, command: sample.command };
-    if (alive.has(sample.pid)) survivors.push(entry);
+  for (const entry of captured) {
+    if (alive.has(entry.pid)) survivors.push(entry);
     else killed.push(entry);
   }
   return { killed, survivors };
