@@ -288,6 +288,32 @@ describe("quota persistence and reservations", () => {
     restartedDb.close();
   });
 
+  test("idempotently reserves a multi-pool critical control run", async () => {
+    const { db } = await fileDatabase("multi-pool-control");
+    const ledger = new QuotaLedger(db);
+    const service = new QuotaService(
+      ledger,
+      config([
+        limit("codex", 100, { pool: "general", models: ["*"] }),
+        limit("codex", 100, { pool: "model", models: ["codex-model"] }),
+      ]),
+      () => new Date("2026-07-09T12:00:00.000Z"),
+    );
+    const request = {
+      agentName: "maya",
+      tier: "standard" as const,
+      tool: "codex" as const,
+      model: "codex-model",
+      controlMessageId: "control-multi-pool",
+    };
+    const reservation = await service.reserveControlRun(request);
+    const retried = await service.reserveControlRun(request);
+    expect(retried.id).toEqual(reservation.id);
+    expect(ledger.activeReservations().filter((row) => row.agentName === "maya"))
+      .toHaveLength(2);
+    db.close();
+  });
+
   test("atomically prevents concurrent control restarts from overcommitting headroom", async () => {
     const { path, db } = await fileDatabase("control-concurrency");
     const secondDb = new HiveDatabase(path);

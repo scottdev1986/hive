@@ -660,7 +660,30 @@ export class HiveDaemon {
               `Spawner cannot restart ${agent.name} for critical control`,
             );
           }
-          await this.spawner.restartForControl(agent, message);
+          try {
+            await this.spawner.restartForControl(agent, message);
+          } catch (error) {
+            // The old writer is already gone, so rolling back across the OS
+            // boundary is impossible. Finish the control into a coherent,
+            // terminal fail-closed state and release what the ledger says this
+            // agent still holds; a queued control must not strand capacity or
+            // invite an identical recovery attempt forever.
+            await this.settleAgentQuota(
+              this.db.getAgentById(agent.id) ?? agent,
+            ).catch(() => undefined);
+            const reason = error instanceof Error
+              ? error.message
+              : "control acknowledgement process failed to launch";
+            this.db.insertAgent({
+              ...(this.db.getAgentById(agent.id) ?? agent),
+              status: "failed",
+              writeRevoked: true,
+              failureReason: `Critical control ${message.id} restart failed: ${reason}`,
+              failedAt: new Date().toISOString(),
+              lastEventAt: new Date().toISOString(),
+            });
+            throw error;
+          }
         },
       },
       this.codexControl,
@@ -1565,11 +1588,8 @@ export class HiveDaemon {
     agent: AgentRecord,
     at?: string,
   ): Promise<void> {
-    const reservationId = agent.controlQuotaReservationId ??
-      agent.quotaReservationId;
-    if (reservationId !== undefined) {
-      await this.quota?.cancel(reservationId, at);
-    }
+    const held = this.quota?.ledger.getActiveReservationForAgent(agent.name);
+    if (held !== null && held !== undefined) await this.quota?.cancel(held.id, at);
   }
 
   /**

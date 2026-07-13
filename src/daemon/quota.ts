@@ -1767,7 +1767,14 @@ export class QuotaService {
       request.tier,
       now,
       { purpose: "control", controlMessageId: request.controlMessageId },
-    ).map((input) => ({ ...input, fiveHourFloor: 0, weeklyFloor: 0 }));
+    ).map((input, index) => ({
+      ...input,
+      fiveHourFloor: 0,
+      weeklyFloor: 0,
+      // One control run may hold several pool rows. The group primary owns
+      // the idempotency key; stamping every row violates its unique index.
+      ...(index === 0 ? {} : { controlMessageId: undefined }),
+    }));
     const group = this.ledger.tryReserveGroup(inputs);
     const governing = this.tightest(entries);
     const limit = governing.limit;

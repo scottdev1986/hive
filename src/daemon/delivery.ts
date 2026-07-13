@@ -367,7 +367,7 @@ export class MessageDelivery {
             ORCHESTRATOR_NAME,
             `Critical control ${message.id} revoked ${to}'s capability epoch but process restart failed: ${
               error instanceof Error ? error.message : "unknown error"
-            }. Worktree was preserved; operator attention is required.`,
+            }. The agent was stopped in a terminal failed state, its quota hold was released, and automatic recovery will not retry this control. Worktree was preserved; operator attention is required.`,
             { idempotencyKey: `control-restart-failed:${message.id}` },
           ).catch(() => undefined);
           return this.getStoredMessage(message.id);
@@ -1170,6 +1170,7 @@ export class MessageDelivery {
       let message = queued;
       let recipient = this.db.getAgentByName(message.to);
       if (recipient === null) continue;
+      if (["dead", "done", "failed"].includes(recipient.status)) continue;
       if (!recipient.writeRevoked) {
         recipient = this.db.revokeAgentCapabilities(
           recipient.name,

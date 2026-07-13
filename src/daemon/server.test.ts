@@ -308,6 +308,67 @@ describe("HiveDaemon HTTP server", () => {
     }
   });
 
+  test("failed critical restart becomes terminal, releases its ledger hold, and is not retried", async () => {
+    const db = new HiveDatabase(join(home, "critical-restart-failure.db"));
+    const ledger = new QuotaLedger(db);
+    const quota = new QuotaService(
+      ledger,
+      QuotaConfigSchema.parse({ enabled: false }),
+      () => new Date(timestamp),
+    );
+    class ReservingFailureSpawner extends StubSpawner {
+      attempts = 0;
+      async restartForControl(
+        value: AgentRecord,
+        message: import("../schemas").AgentMessage,
+      ): Promise<AgentRecord> {
+        this.attempts += 1;
+        await quota.reserveControlRun({
+          agentName: value.name,
+          tier: value.tier,
+          tool: value.tool,
+          model: value.model,
+          controlMessageId: message.id,
+        });
+        throw new Error("restart fixture failed");
+      }
+    }
+    const spawner = new ReservingFailureSpawner();
+    const tmux = new FakeDaemonTmux();
+    tmux.sessions.add("hive-maya");
+    const daemon = new HiveDaemon({
+      db,
+      spawner,
+      tmux,
+      tmuxSender: new SilentTmuxSender(db),
+      quota,
+    });
+    try {
+      db.insertAgent(agent());
+      const positiveControl = await quota.reserveControlRun({
+        agentName: "maya",
+        tier: "standard",
+        tool: "codex",
+        model: "gpt-5-codex",
+        controlMessageId: "original-run",
+      });
+      expect(ledger.getReservation(positiveControl.id)?.status).toEqual("active");
+      await daemon.delivery.send("orchestrator", "maya", "Pause.", {
+        priority: "critical",
+        intent: "pause",
+      });
+      expect(db.getAgentByName("maya")).toMatchObject({
+        status: "failed",
+        writeRevoked: true,
+      });
+      expect(ledger.getActiveReservationForAgent("maya")).toBeNull();
+      expect(await daemon.delivery.recoverCriticalControls()).toEqual(0);
+      expect(spawner.attempts).toEqual(1);
+    } finally {
+      db.close();
+    }
+  });
+
   test("repeated critical interruption settles the prior control run before starting the next", async () => {
     const db = new HiveDatabase(join(home, "repeated-critical.db"));
     const ledger = new QuotaLedger(db);
@@ -635,7 +696,7 @@ describe("HiveDaemon HTTP server", () => {
     }
   });
 
-  test("quota-blocked control remains revoked and emits a durable actionable alert", async () => {
+  test("quota-blocked control stops terminally and emits a durable actionable alert", async () => {
     const db = new HiveDatabase(join(home, "control-quota-blocked.db"));
     const quota = new QuotaService(
       new QuotaLedger(db),
@@ -663,7 +724,7 @@ describe("HiveDaemon HTTP server", () => {
       );
       expect(control.state).toEqual("queued");
       expect(db.getAgentByName("maya")).toMatchObject({
-        status: "control-paused",
+        status: "failed",
         writeRevoked: true,
         worktreePath: "/tmp/hive-maya",
       });
@@ -671,6 +732,7 @@ describe("HiveDaemon HTTP server", () => {
         message.to === "orchestrator" && message.from === "hive-control"
       );
       expect(alert?.body).toContain("Insufficient quota");
+      expect(alert?.body).toContain("automatic recovery will not retry");
       expect(alert?.body).toContain("Worktree was preserved");
       expect(alert?.idempotencyKey).toContain("control-restart-failed:");
     } finally {
