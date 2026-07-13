@@ -42,8 +42,7 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
             contentRect: NSRect(x: 120, y: 80, width: 1280, height: 800),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered, defer: false)
-        window.title = state.displayName
-        window.subtitle = "Hive Workspace"
+        window.title = "Hive Workspace - \(state.displayName)"
         window.tabbingMode = .disallowed
         window.minSize = NSSize(width: 720, height: 480)
 

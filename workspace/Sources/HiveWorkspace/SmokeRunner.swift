@@ -95,7 +95,8 @@ final class SmokeRunner {
         // 1. Window created for the project.
         let projectName = ((config.projectDirectory ?? "") as NSString).lastPathComponent
         check(controller.window != nil, "project window exists")
-        check(controller.window?.title == projectName, "window titled after the project directory")
+        check(controller.window?.title == "Hive Workspace - \(projectName)",
+              "window titled after the project directory")
         controller.window?.layoutIfNeeded()
 
         // 2. A pane per live agent in the feed, plus the orchestrator master.
