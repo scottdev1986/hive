@@ -286,6 +286,24 @@ describe("legacy flat-memory migration", () => {
     });
   });
 
+  test("refuses a migration marker whose backup key is unknown", async () => {
+    const root = await makeRoot();
+    const directory = getRepoMemoryRoot(root);
+    await Bun.write(
+      join(directory, "router.md"),
+      "---\ntitle: Router\ndate: 2026-07-11\n---\n\nSource.\n",
+    );
+    await migrateLegacyMemory(root);
+    await writeFile(
+      join(directory, "wiki", ".legacy-migration-v1.json"),
+      JSON.stringify({ bakcup: "/tmp/legacy-backup" }),
+    );
+
+    expect(migrateLegacyMemory(root)).rejects.toThrow(
+      "Invalid legacy memory migration marker",
+    );
+  });
+
   test("backs up the whole corpus before a failed first compile write", async () => {
     const root = await makeRoot();
     const directory = getRepoMemoryRoot(root);

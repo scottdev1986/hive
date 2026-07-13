@@ -5,6 +5,30 @@ interface FileLockOwner {
   readonly token: string;
 }
 
+const isMissingFileError = (error: unknown): boolean =>
+  typeof error === "object" && error !== null && "code" in error &&
+  error.code === "ENOENT";
+
+function parseLockOwner(source: string, path: string): FileLockOwner | null {
+  if (source.trim() === "") return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(source);
+  } catch {
+    return null;
+  }
+  if (
+    typeof parsed !== "object" || parsed === null || Array.isArray(parsed)
+  ) throw new Error(`Invalid lock owner in ${path}`);
+  const record = parsed as Record<string, unknown>;
+  if (
+    Object.keys(record).some((key) => key !== "pid" && key !== "token") ||
+    !Number.isSafeInteger(record.pid) || Number(record.pid) <= 0 ||
+    typeof record.token !== "string" || record.token.length === 0
+  ) throw new Error(`Invalid lock owner in ${path}`);
+  return { pid: Number(record.pid), token: record.token };
+}
+
 const isAlive = (pid: number): boolean => {
   try {
     process.kill(pid, 0);
@@ -30,15 +54,21 @@ export async function withFileLock<T>(
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
     }
+    let source: string;
     try {
-      const current = JSON.parse(await readFile(path, "utf8")) as Partial<FileLockOwner>;
-      if (!Number.isSafeInteger(current.pid) || !isAlive(current.pid!)) {
+      source = await readFile(path, "utf8");
+    } catch (error) {
+      if (isMissingFileError(error)) continue;
+      throw error;
+    }
+    const current = parseLockOwner(source, path);
+    if (current !== null && !isAlive(current.pid)) {
+      const unchanged = await readFile(path, "utf8").catch(() => null);
+      if (unchanged === source) {
         await unlink(path).catch(() => undefined);
-        continue;
+        const after = await readFile(path, "utf8").catch(() => null);
+        if (after === null) continue;
       }
-    } catch {
-      await unlink(path).catch(() => undefined);
-      continue;
     }
     if (Date.now() >= deadline) throw new Error(`Timed out waiting for lock ${path}`);
     await Bun.sleep(20);
@@ -48,6 +78,11 @@ export async function withFileLock<T>(
     return await operation();
   } finally {
     const current = await readFile(path, "utf8").catch(() => "");
-    if (current === encoded) await unlink(path).catch(() => undefined);
+    if (current === encoded) {
+      await unlink(path).catch(() => undefined);
+      if (await readFile(path, "utf8").catch(() => null) === encoded) {
+        throw new Error(`Failed to release lock ${path}`);
+      }
+    }
   }
 }

@@ -554,9 +554,18 @@ async function migrationMarker(
   scope: MemoryScope,
 ): Promise<{ backup: string } | null> {
   try {
-    return JSON.parse(
+    const parsed: unknown = JSON.parse(
       await readFile(join(wikiRoot(root, scope), LEGACY_MIGRATION_MARKER), "utf8"),
-    ) as { backup: string };
+    );
+    if (
+      typeof parsed !== "object" || parsed === null || Array.isArray(parsed)
+    ) throw new Error("Invalid legacy memory migration marker");
+    const record = parsed as Record<string, unknown>;
+    if (
+      Object.keys(record).some((key) => key !== "backup") ||
+      typeof record.backup !== "string" || record.backup.length === 0
+    ) throw new Error("Invalid legacy memory migration marker");
+    return { backup: record.backup };
   } catch (error) {
     if (isMissingFileError(error)) return null;
     throw error;
