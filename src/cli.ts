@@ -232,7 +232,7 @@ export function createProgram(): Command {
   const program = new Command();
   program
     .name("hive")
-    .description("Coordinate named Claude and Codex agents")
+    .description("Coordinate named Claude, Codex, and Grok agents")
     .option("--instance <name>", "use a named isolated Hive instance")
     .showHelpAfterError()
     .exitOverride();
