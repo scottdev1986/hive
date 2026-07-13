@@ -20,6 +20,7 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
     private let animator = LayoutAnimator()
     private var paneViews: [PaneID: PaneView] = [:]
     private var pendingCloses: Set<PaneID> = []
+    private var killFailureSheets: [String: NSWindow] = [:]
 
     /// Set by the app delegate to tear the feed down with the window (the
     /// app usually quits on last-window-close, but a floating panel can keep
@@ -108,6 +109,10 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
 
     /// One feed snapshot in, pane set reconciled.
     func applyFeed(_ agents: [AgentSnapshot], orchestrator: OrchestratorSnapshot? = nil) {
+        let liveAgents = Set(agents.lazy.filter { $0.closedAt == nil }.map(\.name))
+        for agent in Array(killFailureSheets.keys) where !liveAgents.contains(agent) {
+            dismissKillFailure(for: agent)
+        }
         react(to: state.apply(feed: agents, orchestrator: orchestrator))
     }
 
@@ -185,8 +190,9 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
     /// went away but something is still on screen" failure this app already had.
     /// The sheet rides the window, so the teardown takes it down with everything
     /// else.
-    private func reportKillFailure(agent: String, reason: String) {
+    func reportKillFailure(agent: String, reason: String) {
         state.clearUserClosed(ProjectState.paneID(forAgent: agent))
+        dismissKillFailure(for: agent)
         let alert = NSAlert()
         alert.alertStyle = .warning
         alert.messageText = "Could not close \(agent)"
@@ -196,7 +202,17 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
             : detail
         alert.addButton(withTitle: "OK")
         guard let window else { return }
-        alert.beginSheetModal(for: window)
+        let sheet = alert.window
+        killFailureSheets[agent] = sheet
+        alert.beginSheetModal(for: window) { [weak self, weak sheet] _ in
+            guard let self, self.killFailureSheets[agent] === sheet else { return }
+            self.killFailureSheets.removeValue(forKey: agent)
+        }
+    }
+
+    private func dismissKillFailure(for agent: String) {
+        guard let sheet = killFailureSheets.removeValue(forKey: agent) else { return }
+        sheet.sheetParent?.endSheet(sheet)
     }
 
     private func react(to changes: [StateChange]) {

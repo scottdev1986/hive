@@ -71,6 +71,29 @@ final class AppDelegateLifecycleTests: XCTestCase {
         XCTAssertEqual(abortCount, 1)
     }
 
+    func testAgentClosureDismissesItsKillFailureSheet() throws {
+        _ = NSApplication.shared
+        let state = ProjectState(projectID: "project", displayName: "Project")
+        let controller = ProjectWindowController(
+            state: state, attentionCenter: AttentionCenter(),
+            projectDirectory: "/tmp", hivePath: "/usr/bin/false", daemonPort: 1,
+            orchestrator: "claude", orchestratorSession: nil,
+            instanceID: "instance", instanceHome: "/tmp")
+        controller.window?.isReleasedWhenClosed = false
+        defer { controller.close() }
+
+        controller.reportKillFailure(agent: "worker", reason: "daemon unavailable")
+        XCTAssertEqual(controller.window?.sheets.count, 1)
+
+        controller.applyFeed([
+            AgentSnapshot(
+                name: "worker", status: "done",
+                closedAt: "2026-07-13T23:00:00.000Z"),
+        ])
+
+        XCTAssertEqual(controller.window?.sheets.count, 0)
+    }
+
     func testStatusAndFocusOverlaysAreAboveTheOpaquePaneBackground() throws {
         let pane = PaneView(paneID: "worker", title: "worker") { _ in }
         let backgroundIndex = try XCTUnwrap(
