@@ -12,8 +12,8 @@ final class SettingsWindowController: NSWindowController, NSToolbarDelegate {
     private var modelsController: ModelsSettingsController!
     private let container = NSViewController()
 
-    convenience init(hivePath: String?, initialWidth: Double? = nil) {
-        let dataSource = ModelControlDataSource(hivePath: hivePath)
+    convenience init(hivePath: String?, daemonPort: Int?, initialWidth: Double? = nil) {
+        let dataSource = ModelControlDataSource(hivePath: hivePath, daemonPort: daemonPort)
         let tasks = TasksSettingsController(dataSource: dataSource)
         let models = ModelsSettingsController(dataSource: dataSource)
 

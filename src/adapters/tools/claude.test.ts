@@ -402,6 +402,7 @@ describe("Claude adapter", () => {
         "Read",
         "Glob",
         "Grep",
+        "mcp__hive__*",
       ],
     });
     expect(settings.enableAllProjectMcpServers).toEqual(true);

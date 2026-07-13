@@ -463,6 +463,10 @@ export async function writeClaudeAgentConfig(
           "Read",
           "Glob",
           "Grep",
+          // Vendor permission prompts are outside Hive's approval queue. The
+          // reader capability still denies write/land server-side, while this
+          // rule lets the agent report, acknowledge, and escalate unattended.
+          "mcp__hive__*",
         ],
       }
     : (options.dangerous ?? false)

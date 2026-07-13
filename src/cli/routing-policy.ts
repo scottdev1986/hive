@@ -152,15 +152,15 @@ export function parseChainEntryArg(raw: string): ChainEntry {
   };
 }
 
-export async function printRoutingPolicy(): Promise<void> {
-  printPolicy(await fetchPolicy(requireDaemonPort()));
+export async function printRoutingPolicy(port?: number): Promise<void> {
+  printPolicy(await fetchPolicy(requireDaemonPort(port)));
 }
 
 /** Deterministic dump: stable key and row order, byte-identical for identical
  * policy — the inspectability half of the SQLite ruling. */
-export async function exportRoutingPolicy(): Promise<void> {
+export async function exportRoutingPolicy(port?: number): Promise<void> {
   process.stdout.write(
-    canonicalRoutingPolicyJson(await fetchPolicy(requireDaemonPort())),
+    canonicalRoutingPolicyJson(await fetchPolicy(requireDaemonPort(port))),
   );
 }
 
@@ -168,8 +168,9 @@ export async function setProviderPolicy(
   provider: string,
   state: string,
   expectRevision: string,
+  port?: number,
 ): Promise<void> {
-  printPolicy(await applyPolicyMutation(requireDaemonPort(), {
+  printPolicy(await applyPolicyMutation(requireDaemonPort(port), {
     op: "set-provider",
     expectedRevision: parseExpectedRevision(expectRevision),
     provider: parseProvider(provider),
@@ -182,8 +183,9 @@ export async function setModelPolicy(
   model: string,
   state: string,
   expectRevision: string,
+  port?: number,
 ): Promise<void> {
-  printPolicy(await applyPolicyMutation(requireDaemonPort(), {
+  printPolicy(await applyPolicyMutation(requireDaemonPort(port), {
     op: "set-model",
     expectedRevision: parseExpectedRevision(expectRevision),
     provider: parseProvider(provider),
@@ -197,8 +199,9 @@ export async function setModelEffort(
   model: string,
   effort: string,
   expectRevision: string,
+  port?: number,
 ): Promise<void> {
-  printPolicy(await applyPolicyMutation(requireDaemonPort(), {
+  printPolicy(await applyPolicyMutation(requireDaemonPort(port), {
     op: "set-effort",
     expectedRevision: parseExpectedRevision(expectRevision),
     provider: parseProvider(provider),
@@ -209,7 +212,7 @@ export async function setModelEffort(
 
 export async function setSelectionMode(
   mode: string,
-  options: { category?: string },
+  options: { category?: string; port?: number },
   expectRevision: string,
 ): Promise<void> {
   if (mode !== "spread" && mode !== "strict" && mode !== "unset") {
@@ -217,10 +220,12 @@ export async function setSelectionMode(
       `selection mode must be spread, strict, or unset; got ${JSON.stringify(mode)}`,
     );
   }
-  printPolicy(await applyPolicyMutation(requireDaemonPort(), {
+  printPolicy(await applyPolicyMutation(requireDaemonPort(options.port), {
     op: "set-selection",
     expectedRevision: parseExpectedRevision(expectRevision),
-    ...(options.category === undefined ? {} : { category: parseCategory(options.category) }),
+    ...(options.category === undefined
+      ? {}
+      : { category: parseCategory(options.category) }),
     mode,
   }));
 }
@@ -229,8 +234,9 @@ export async function setCategoryChain(
   category: string,
   entries: string[],
   expectRevision: string,
+  port?: number,
 ): Promise<void> {
-  printPolicy(await applyPolicyMutation(requireDaemonPort(), {
+  printPolicy(await applyPolicyMutation(requireDaemonPort(port), {
     op: "set-chain",
     expectedRevision: parseExpectedRevision(expectRevision),
     category: parseCategory(category),

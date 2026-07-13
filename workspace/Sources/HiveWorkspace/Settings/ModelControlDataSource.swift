@@ -47,6 +47,7 @@ final class ModelControlDataSource {
 
     private var observers: [() -> Void] = []
     private let hivePath: String?
+    private let daemonPort: Int?
     private let workQueue = DispatchQueue(
         label: "dev.hive.workspace.model-control", qos: .userInitiated)
     /// Writes persist strictly in order; each uses the revision produced by
@@ -56,8 +57,9 @@ final class ModelControlDataSource {
     private var refreshing = false
     private var pendingWrites = 0
 
-    init(hivePath: String?) {
+    init(hivePath: String?, daemonPort: Int?) {
         self.hivePath = hivePath
+        self.daemonPort = daemonPort
     }
 
     func addObserver(_ handler: @escaping () -> Void) {
@@ -364,7 +366,9 @@ final class ModelControlDataSource {
             }
             let result = Self.run(
                 hivePath: hivePath,
-                arguments: arguments + ["--expect-revision", String(revision)])
+                arguments: ModelControlCommand.arguments(
+                    arguments + ["--expect-revision", String(revision)],
+                    daemonPort: self.daemonPort))
             DispatchQueue.main.async {
                 self.pendingWrites -= 1
                 switch result {
@@ -410,11 +414,16 @@ final class ModelControlDataSource {
         loadState = .loading
         notify()
 
+        let daemonPort = self.daemonPort
         workQueue.async { [weak self] in
             let snapshotResult = Self.run(
-                hivePath: hivePath, arguments: ["model-control-snapshot"])
+                hivePath: hivePath,
+                arguments: ModelControlCommand.arguments(
+                    ["model-control-snapshot"], daemonPort: daemonPort))
             let policyResult = Self.run(
-                hivePath: hivePath, arguments: ["routing", "export"])
+                hivePath: hivePath,
+                arguments: ModelControlCommand.arguments(
+                    ["routing", "export"], daemonPort: daemonPort))
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.refreshing = false

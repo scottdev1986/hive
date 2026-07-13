@@ -423,6 +423,7 @@ describe("quota persistence and reservations", () => {
       lastEventAt: "2026-07-09T12:00:00.000Z",
       recoveryAttempts: 0,
       capabilityEpoch: 0,
+      readOnly: false,
       writeRevoked: false,
       channelsEnabled: false,
     });

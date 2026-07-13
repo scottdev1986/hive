@@ -1916,6 +1916,11 @@ export class HiveDaemon {
         `Cannot land ${name}: it has no branch — it was spawned without a worktree, so there is nothing to merge.`,
       );
     }
+    if (agent.readOnly) {
+      throw new Error(
+        `Cannot land ${name}: it was launched read-only and has no landing authority.`,
+      );
+    }
     if (agent.writeRevoked) {
       throw new Error(
         `Cannot land ${name}: its write authority was revoked by a critical control message, so it may not merge.\n` +
@@ -2909,7 +2914,8 @@ export class HiveDaemon {
       ) {
         const updated: AgentRecord = {
           ...agent,
-          status: agent.writeRevoked && value.kind !== "dead"
+          status: agent.writeRevoked && agent.controlMessageId !== undefined &&
+              value.kind !== "dead"
             ? "control-paused"
             : value.kind === "dead"
             ? "dead"

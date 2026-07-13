@@ -55,6 +55,7 @@ function agent(overrides: Partial<AgentRecord> = {}): AgentRecord {
     lastEventAt: timestamp,
     recoveryAttempts: 0,
     capabilityEpoch: 0,
+    readOnly: false,
     writeRevoked: false,
     channelsEnabled: false,
     ...overrides,

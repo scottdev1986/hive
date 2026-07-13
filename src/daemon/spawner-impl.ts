@@ -1259,6 +1259,7 @@ export class HiveSpawner implements Spawner {
     const record = this.dependencies.db.insertAgent({
       ...current,
       status: "control-paused",
+      readOnly: true,
       writeRevoked: true,
       terminalHandle: undefined,
       controlMessageId: message.id,
@@ -1947,10 +1948,10 @@ export class HiveSpawner implements Spawner {
       ...(executionIdentity === undefined ? {} : { executionIdentity }),
       recoveryAttempts: 0,
       capabilityEpoch: 0,
-      // Reader spawns enter the same durable authority state as a process
-      // restarted after critical write revocation. Capability authorization
-      // and hive_land both re-read this bit; it is not a prompt convention.
-      writeRevoked: readOnly,
+      readOnly,
+      // Revocation is reserved for a writer stripped by critical control.
+      // Reader authority is represented independently above.
+      writeRevoked: false,
       channelsEnabled: channels,
     });
 

@@ -103,8 +103,8 @@ export async function stopAgentSessions(
   return hiveSessions.length;
 }
 
-export function requireDaemonPort(): number {
-  const port = readDaemonPort();
+export function requireDaemonPort(explicitPort?: number): number {
+  const port = explicitPort ?? readDaemonPort();
   if (port === null || port <= 0 || port > 65_535) {
     throw new Error(
       "no daemon is running\nFix: run `hive init` in the project first",

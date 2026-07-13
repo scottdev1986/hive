@@ -167,9 +167,7 @@ export function compactActiveTeam(
         .map((other) => other.name);
       return {
       name: agent.name,
-      // This is the durable authority bit consulted by both capability auth
-      // and the landing gate, not an inference from task prose.
-      readOnly: agent.writeRevoked,
+      readOnly: agent.readOnly,
       tool: agent.tool,
       // The model it is running, not the one it was spawned with — this is the
       // view the orchestrator routes off.
@@ -242,7 +240,7 @@ export function compactSpawnResult(agent: AgentRecord): SpawnResultSummary {
     branch: agent.branch,
     worktreePath: agent.worktreePath,
     contextPct: agent.contextPct,
-    readOnly: agent.writeRevoked,
+    readOnly: agent.readOnly,
     ...(agent.quotaReservationId !== undefined
       ? { quotaReservationId: agent.quotaReservationId }
       : {}),

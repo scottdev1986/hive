@@ -114,6 +114,7 @@ function agent(): AgentRecord {
     lastEventAt: "2026-07-10T12:00:00.000Z",
     recoveryAttempts: 0,
     capabilityEpoch: 0,
+    readOnly: false,
     writeRevoked: false,
     channelsEnabled: false,
   };
@@ -280,6 +281,7 @@ describe("codexAgentSocketPath", () => {
       lastEventAt: "2026-07-10T12:00:00.000Z",
       recoveryAttempts: 0,
       capabilityEpoch: 0,
+      readOnly: false,
       writeRevoked: false,
       channelsEnabled: false,
     };
@@ -307,6 +309,7 @@ describe("codexAgentSocketPath", () => {
       lastEventAt: "2026-07-10T12:00:00.000Z",
       recoveryAttempts: 0,
       capabilityEpoch: 0,
+      readOnly: false,
       writeRevoked: false,
       channelsEnabled: false,
     };
@@ -335,6 +338,7 @@ describe("codexAgentSocketPath", () => {
       lastEventAt: "2026-07-10T12:00:00.000Z",
       recoveryAttempts: 0,
       capabilityEpoch: 0,
+      readOnly: false,
       writeRevoked: false,
       channelsEnabled: false,
     };
@@ -360,6 +364,7 @@ describe("codexAgentSocketPath", () => {
       lastEventAt: "2026-07-10T12:00:00.000Z",
       recoveryAttempts: 0,
       capabilityEpoch: 0,
+      readOnly: false,
       writeRevoked: false,
       channelsEnabled: false,
     };

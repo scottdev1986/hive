@@ -94,6 +94,7 @@ describe("CLI-to-daemon smoke", () => {
         chains: { default: [{ provider: "codex", model: "gpt-test", effort: { mode: "exact", value: "medium" } }] },
         selection: { global: "strict", categories: {} },
       }),
+      issueCredential: () => "test-reader-capability",
       tmux,
       terminal: new FakeTerminal(),
       createWorktree: async (_repoRoot, name, slug) => ({
@@ -133,10 +134,12 @@ describe("CLI-to-daemon smoke", () => {
         return daemon!.fetch(new Request(input, { ...init, headers }));
       };
       const spawned = await spawner.spawn({
-        task: "Smoke test event wiring",
+        task: "Smoke test read-only event wiring",
         category: "simple_coding",
+        readOnly: true,
       });
       expect(spawned.name).toEqual("maya");
+      expect(spawned).toMatchObject({ readOnly: true, writeRevoked: false });
       expect((await fetchAgentStatus(port, daemonFetch))[0]?.status).toEqual(
         "spawning",
       );

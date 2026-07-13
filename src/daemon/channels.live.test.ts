@@ -137,6 +137,7 @@ async function boot(): Promise<void> {
     lastEventAt: now,
     recoveryAttempts: 0,
     capabilityEpoch: 0,
+    readOnly: false,
     writeRevoked: false,
     channelsEnabled: true,
   });

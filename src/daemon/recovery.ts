@@ -454,7 +454,7 @@ export class CrashRecovery {
           await this.writeClaudeConfig(worktreePath, {
             daemonPort: this.deps.port,
             name: record.name,
-            readOnly: record.writeRevoked,
+            readOnly: record.readOnly,
             dangerous,
           });
           argv = buildClaudeResumeCommand({
@@ -464,7 +464,7 @@ export class CrashRecovery {
               ? { effort: identity.effort }
               : {}),
             name: record.name,
-            readOnly: record.writeRevoked,
+            readOnly: record.readOnly,
             dangerous,
             worktreePath,
             executable: this.claudeExecutable,
@@ -475,14 +475,14 @@ export class CrashRecovery {
           await this.writeCodexConfig(worktreePath, {
             daemonPort: this.deps.port,
             name: record.name,
-            readOnly: record.writeRevoked,
+            readOnly: record.readOnly,
           });
           argv = buildCodexResumeCommand({
             daemonPort: this.deps.port,
             effort: identity?.tool === "codex" ? identity.effort : "medium",
             model,
             name: record.name,
-            readOnly: record.writeRevoked,
+            readOnly: record.readOnly,
             dangerous,
             worktreePath,
           }, sessionId);
@@ -498,7 +498,7 @@ export class CrashRecovery {
               ? { effort: identity.effort }
               : {}),
             worktreePath,
-            readOnly: record.writeRevoked,
+            readOnly: record.readOnly,
           }, sessionId);
           break;
         }

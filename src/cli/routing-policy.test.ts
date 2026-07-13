@@ -1,5 +1,13 @@
-import { describe, expect, test } from "bun:test";
-import { parseChainEntryArg, parseEffortTargetArg } from "./routing-policy";
+import { describe, expect, spyOn, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { OPERATOR_SUBJECT, writeCredential } from "../daemon/credentials";
+import {
+  parseChainEntryArg,
+  parseEffortTargetArg,
+  setProviderPolicy,
+} from "./routing-policy";
 
 describe("chain entry syntax — the CLI half of the Control Center contract", () => {
   test("provider/model parses as a specific target with provider-controlled effort", () => {
@@ -41,5 +49,59 @@ describe("chain entry syntax — the CLI half of the Control Center contract", (
       .toEqual({ mode: "provider-controlled" });
     expect(() => parseEffortTargetArg("exact:")).toThrow(/effort must be/);
     expect(() => parseEffortTargetArg("high")).toThrow(/effort must be/);
+  });
+});
+
+describe("Model Control Center daemon pinning", () => {
+  test("an explicit port wins over another daemon's global pointer", async () => {
+    const home = mkdtempSync(join(tmpdir(), "hive-routing-port-"));
+    const previousHome = process.env.HIVE_HOME;
+    process.env.HIVE_HOME = home;
+    mkdirSync(home, { recursive: true });
+    writeFileSync(join(home, "daemon.port"), "4317\n");
+    writeCredential(OPERATOR_SUBJECT, "operator-test-token");
+
+    const policy = {
+      schemaVersion: 1,
+      revision: 9,
+      updatedAt: "2026-07-13T12:00:00.000Z",
+      provisional: false,
+      providers: { claude: "enabled" },
+      models: [{
+        provider: "claude",
+        model: "claude-test",
+        state: "enabled",
+        effort: { mode: "provider-controlled" },
+      }],
+      chains: {
+        default: [{
+          provider: "claude",
+          model: "claude-test",
+          effort: { mode: "provider-controlled" },
+        }],
+      },
+      selection: { global: "spread", categories: {} },
+    };
+    let requestedUrl = "";
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((
+      async (input) => {
+        requestedUrl = String(input);
+        return new Response(JSON.stringify(policy), {
+          headers: { "content-type": "application/json" },
+        });
+      }
+    ) as typeof fetch);
+    const logSpy = spyOn(console, "log").mockImplementation(() => {});
+
+    try {
+      await setProviderPolicy("claude", "enabled", "8", 4483);
+      expect(requestedUrl).toEqual("http://127.0.0.1:4483/routing/policy");
+    } finally {
+      fetchSpy.mockRestore();
+      logSpy.mockRestore();
+      if (previousHome === undefined) delete process.env.HIVE_HOME;
+      else process.env.HIVE_HOME = previousHome;
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 });

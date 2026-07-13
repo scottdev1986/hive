@@ -155,6 +155,8 @@ export async function buildModelControlSnapshot(
   };
 }
 
-export async function printModelControlSnapshot(): Promise<void> {
-  console.log(JSON.stringify(await buildModelControlSnapshot()));
+export async function printModelControlSnapshot(port?: number): Promise<void> {
+  console.log(JSON.stringify(await buildModelControlSnapshot(
+    port === undefined ? {} : { daemonPort: () => port },
+  )));
 }

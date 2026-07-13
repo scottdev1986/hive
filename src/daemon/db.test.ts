@@ -39,6 +39,7 @@ function agent(overrides: Partial<AgentRecord> = {}): AgentRecord {
     lastEventAt: timestamp,
     recoveryAttempts: 0,
     capabilityEpoch: 0,
+    readOnly: false,
     writeRevoked: false,
     channelsEnabled: false,
     ...overrides,
@@ -74,6 +75,45 @@ describe("HiveDatabase", () => {
       expect(db.listAgents()).toEqual([closed]);
       expect(deleteAgentRow(db, updated.id)).toEqual(true);
       expect(db.getAgentById(updated.id)).toEqual(null);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("migrates legacy readers without clearing genuine control revocation", () => {
+    const path = join(home, "legacy-reader-authority.db");
+    const initial = new HiveDatabase(path);
+    initial.insertAgent(agent({
+      id: "legacy-reader",
+      name: "reader",
+      status: "control-paused",
+    }));
+    initial.insertAgent(agent({
+      id: "critical-writer",
+      name: "writer",
+      status: "control-paused",
+      controlMessageId: "critical-1",
+    }));
+    initial.close();
+
+    const legacy = new Database(path);
+    legacy.exec("ALTER TABLE agents DROP COLUMN readOnly");
+    legacy.exec("UPDATE agents SET writeRevoked = 1");
+    legacy.close();
+
+    const db = new HiveDatabase(path);
+    try {
+      expect(db.getAgentByName("reader")).toMatchObject({
+        readOnly: true,
+        writeRevoked: false,
+        status: "idle",
+      });
+      expect(db.getAgentByName("writer")).toMatchObject({
+        readOnly: false,
+        writeRevoked: true,
+        status: "control-paused",
+        controlMessageId: "critical-1",
+      });
     } finally {
       db.close();
     }

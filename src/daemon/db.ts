@@ -121,6 +121,7 @@ const AgentDatabaseRowSchema = AgentRecordSchema.extend({
   contextWindow: z.number().int().positive().nullable().default(null),
   recoveryAttempts: z.number().int().nonnegative().default(0),
   capabilityEpoch: z.number().int().nonnegative().default(0),
+  readOnly: z.union([z.boolean(), z.number().int()]).default(0),
   writeRevoked: z.union([z.boolean(), z.number().int()]).default(0),
   channelsEnabled: z.union([z.boolean(), z.number().int()]).default(0),
 });
@@ -144,6 +145,7 @@ function parseAgentRow(row: unknown): AgentRecord {
     terminalHandle: value.terminalHandle === null
       ? undefined
       : TerminalHandleSchema.parse(JSON.parse(value.terminalHandle)),
+    readOnly: value.readOnly === true || value.readOnly === 1,
     writeRevoked: value.writeRevoked === true || value.writeRevoked === 1,
     channelsEnabled: value.channelsEnabled === true ||
       value.channelsEnabled === 1,
@@ -239,6 +241,7 @@ function agentsTableDdl(table: string, ifNotExists = false): string {
       toolSessionId TEXT,
       recoveryAttempts INTEGER NOT NULL DEFAULT 0,
       capabilityEpoch INTEGER NOT NULL DEFAULT 0,
+      readOnly INTEGER NOT NULL DEFAULT 0,
       writeRevoked INTEGER NOT NULL DEFAULT 0,
       channelsEnabled INTEGER NOT NULL DEFAULT 0,
       closedAt TEXT
@@ -494,6 +497,22 @@ export class HiveDatabase {
         "ALTER TABLE agents ADD COLUMN writeRevoked INTEGER NOT NULL DEFAULT 0",
       );
     }
+    if (!agentColumnNames.has("readOnly")) {
+      this.database.exec(
+        "ALTER TABLE agents ADD COLUMN readOnly INTEGER NOT NULL DEFAULT 0",
+      );
+      // Before readOnly had its own representation, fresh readers were stored
+      // as revoked writers. Critical revocation advances the capability epoch
+      // before its replacement launches (and then records the control message),
+      // so only the untouched epoch-zero legacy reader shape is safe to unpark.
+      this.database.exec(`
+        UPDATE agents
+        SET readOnly = 1,
+            writeRevoked = 0,
+            status = CASE WHEN status = 'control-paused' THEN 'idle' ELSE status END
+        WHERE writeRevoked = 1 AND capabilityEpoch = 0 AND controlMessageId IS NULL
+      `);
+    }
     if (!agentColumnNames.has("channelsEnabled")) {
       this.database.exec(
         "ALTER TABLE agents ADD COLUMN channelsEnabled INTEGER NOT NULL DEFAULT 0",
@@ -727,8 +746,8 @@ export class HiveDatabase {
         createdAt, lastEventAt, failureReason, failedAt,
         quotaReservationId, controlQuotaReservationId, controlMessageId,
         executionIdentity, toolSessionId, contextWindow, recoveryAttempts,
-        capabilityEpoch, writeRevoked, channelsEnabled, closedAt
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        capabilityEpoch, readOnly, writeRevoked, channelsEnabled, closedAt
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         name = excluded.name,
         tool = excluded.tool,
@@ -754,6 +773,7 @@ export class HiveDatabase {
         contextWindow = excluded.contextWindow,
         recoveryAttempts = excluded.recoveryAttempts,
         capabilityEpoch = excluded.capabilityEpoch,
+        readOnly = excluded.readOnly,
         writeRevoked = excluded.writeRevoked,
         channelsEnabled = excluded.channelsEnabled,
         closedAt = excluded.closedAt
@@ -787,6 +807,7 @@ export class HiveDatabase {
       value.contextWindow ?? null,
       value.recoveryAttempts,
       value.capabilityEpoch,
+      value.readOnly ? 1 : 0,
       value.writeRevoked ? 1 : 0,
       value.channelsEnabled ? 1 : 0,
       closedAt,

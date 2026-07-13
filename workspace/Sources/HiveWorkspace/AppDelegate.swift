@@ -279,7 +279,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             // data; a bare Dock launch has no binary path and the screen says
             // so instead of guessing.
             settingsController = SettingsWindowController(
-                hivePath: config.hivePath, initialWidth: config.settingsWidth)
+                hivePath: config.hivePath, daemonPort: config.port,
+                initialWidth: config.settingsWidth)
         }
         if let page = config.settingsPage {
             settingsController?.select(section: page)

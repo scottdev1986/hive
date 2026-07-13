@@ -139,6 +139,10 @@ export const AgentRecordSchema = z.object({
   createdAt: z.iso.datetime(),
   lastEventAt: z.iso.datetime(),
   capabilityEpoch: z.number().int().nonnegative().default(0),
+  // Durable launch posture. A reader was intentionally launched without
+  // write/land authority; that is distinct from a writer whose authority was
+  // later revoked by critical control.
+  readOnly: z.boolean().default(false),
   writeRevoked: z.boolean().default(false),
   // True only when hive launched this agent's CLI with the Channels research
   // preview enabled; channel delivery is never trusted for other sessions.

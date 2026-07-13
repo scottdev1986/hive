@@ -46,6 +46,7 @@ function agent(overrides: Partial<AgentRecord> = {}): AgentRecord {
     lastEventAt: timestamp,
     recoveryAttempts: 0,
     capabilityEpoch: 0,
+    readOnly: false,
     writeRevoked: false,
     channelsEnabled: false,
     ...overrides,
@@ -779,6 +780,31 @@ describe("HiveDaemon HTTP server", () => {
       );
       expect(landed).toHaveLength(1);
     } finally {
+      db.close();
+    }
+  });
+
+  test("an intentionally read-only agent cannot land through operator authority", async () => {
+    const db = new HiveDatabase(join(home, "read-only-land.db"));
+    const landed: string[] = [];
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new StubSpawner(),
+      tmuxSender: new SilentTmuxSender(db),
+      repoRoot: "/repo",
+      landBranch: async (_root, branch) => {
+        landed.push(branch);
+        return { commit: "unreachable" };
+      },
+    });
+    db.insertAgent(agent({ readOnly: true }));
+    try {
+      await expect(daemon.landAgent("maya", 0)).rejects.toThrow(
+        /launched read-only/,
+      );
+      expect(landed).toEqual([]);
+    } finally {
+      await daemon.stop();
       db.close();
     }
   });

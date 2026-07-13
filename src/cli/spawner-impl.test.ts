@@ -219,6 +219,7 @@ function agent(
     lastEventAt: timestamp,
     recoveryAttempts: 0,
     capabilityEpoch: 0,
+    readOnly: false,
     writeRevoked: false,
     channelsEnabled: false,
   };
@@ -1816,7 +1817,8 @@ describe("HiveSpawner wiring", () => {
       readOnly: true,
     });
 
-    expect(spawned.writeRevoked).toBeTrue();
+    expect(spawned.readOnly).toBeTrue();
+    expect(spawned.writeRevoked).toBeFalse();
     expect(issued).toEqual([[spawned.name, "reader", 0]]);
     const shell = tmux.sessions[0]?.[2] ?? "";
     expect(shell).toContain("'--sandbox' 'read-only'");

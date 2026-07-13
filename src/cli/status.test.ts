@@ -23,6 +23,7 @@ describe("status table", () => {
       lastEventAt: timestamp,
       recoveryAttempts: 0,
       capabilityEpoch: 0,
+      readOnly: false,
       writeRevoked: false,
       channelsEnabled: false,
     }];
@@ -59,6 +60,7 @@ describe("status table", () => {
       createdAt: timestamp,
       recoveryAttempts: 0,
       capabilityEpoch: 0,
+      readOnly: false,
       writeRevoked: false,
       channelsEnabled: false,
     } as const;

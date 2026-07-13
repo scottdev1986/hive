@@ -353,13 +353,23 @@ export function createProgram(): Command {
       "Print the routing policy document (the Model Control Center's read surface). " +
         "Absent entries mean NOT CONFIGURED, never enabled.",
     )
-    .action(printRoutingPolicy);
+    .option("--port <number>", "daemon port")
+    .action((options: { port?: string }) =>
+      printRoutingPolicy(
+        options.port === undefined ? undefined : parsePort(options.port),
+      )
+    );
   routing
     .command("export")
     .description(
       "Deterministic, diff-stable dump of the routing policy (same document, canonical order)",
     )
-    .action(exportRoutingPolicy);
+    .option("--port <number>", "daemon port")
+    .action((options: { port?: string }) =>
+      exportRoutingPolicy(
+        options.port === undefined ? undefined : parsePort(options.port),
+      )
+    );
   routing
     .command("set-provider <provider> <state>")
     .description(
@@ -370,8 +380,18 @@ export function createProgram(): Command {
       "--expect-revision <revision>",
       "the policy revision you read (compare-and-set; stale writes are rejected)",
     )
-    .action((provider: string, state: string, options: { expectRevision: string }) =>
-      setProviderPolicy(provider, state, options.expectRevision)
+    .option("--port <number>", "daemon port")
+    .action((
+      provider: string,
+      state: string,
+      options: { expectRevision: string; port?: string },
+    ) =>
+      setProviderPolicy(
+        provider,
+        state,
+        options.expectRevision,
+        options.port === undefined ? undefined : parsePort(options.port),
+      )
     );
   routing
     .command("set-model <provider> <model> <state>")
@@ -383,12 +403,19 @@ export function createProgram(): Command {
       "--expect-revision <revision>",
       "the policy revision you read (compare-and-set; stale writes are rejected)",
     )
+    .option("--port <number>", "daemon port")
     .action((
       provider: string,
       model: string,
       state: string,
-      options: { expectRevision: string },
-    ) => setModelPolicy(provider, model, state, options.expectRevision));
+      options: { expectRevision: string; port?: string },
+    ) => setModelPolicy(
+      provider,
+      model,
+      state,
+      options.expectRevision,
+      options.port === undefined ? undefined : parsePort(options.port),
+    ));
   routing
     .command("set-effort <provider> <model> <effort>")
     .description(
@@ -399,12 +426,19 @@ export function createProgram(): Command {
       "--expect-revision <revision>",
       "the policy revision you read (compare-and-set; stale writes are rejected)",
     )
+    .option("--port <number>", "daemon port")
     .action((
       provider: string,
       model: string,
       effort: string,
-      options: { expectRevision: string },
-    ) => setModelEffort(provider, model, effort, options.expectRevision));
+      options: { expectRevision: string; port?: string },
+    ) => setModelEffort(
+      provider,
+      model,
+      effort,
+      options.expectRevision,
+      options.port === undefined ? undefined : parsePort(options.port),
+    ));
   routing
     .command("set-selection <mode>")
     .description(
@@ -414,14 +448,22 @@ export function createProgram(): Command {
         "override; unset (with --category) removes the override.",
     )
     .option("--category <category>", "override for one category only")
+    .option("--port <number>", "daemon port")
     .requiredOption(
       "--expect-revision <revision>",
       "the policy revision you read (compare-and-set; stale writes are rejected)",
     )
     .action((
       mode: string,
-      options: { category?: string; expectRevision: string },
-    ) => setSelectionMode(mode, options, options.expectRevision));
+      options: { category?: string; expectRevision: string; port?: string },
+    ) => setSelectionMode(
+      mode,
+      {
+        ...(options.category === undefined ? {} : { category: options.category }),
+        ...(options.port === undefined ? {} : { port: parsePort(options.port) }),
+      },
+      options.expectRevision,
+    ));
   routing
     .command("set-chain <category> [entries...]")
     .description(
@@ -433,11 +475,17 @@ export function createProgram(): Command {
       "--expect-revision <revision>",
       "the policy revision you read (compare-and-set; stale writes are rejected)",
     )
+    .option("--port <number>", "daemon port")
     .action((
       category: string,
       entries: string[],
-      options: { expectRevision: string },
-    ) => setCategoryChain(category, entries, options.expectRevision));
+      options: { expectRevision: string; port?: string },
+    ) => setCategoryChain(
+      category,
+      entries,
+      options.expectRevision,
+      options.port === undefined ? undefined : parsePort(options.port),
+    ));
 
   program
     .command("autonomy [mode]")
@@ -716,7 +764,12 @@ export function createProgram(): Command {
   // because only the app spawns it.
   program
     .command("model-control-snapshot", { hidden: true })
-    .action(printModelControlSnapshot);
+    .option("--port <number>", "daemon port")
+    .action((options: { port?: string }) =>
+      printModelControlSnapshot(
+        options.port === undefined ? undefined : parsePort(options.port),
+      )
+    );
 
   // The Workspace app's status wire: NDJSON agent snapshots on stdout plus the
   // daemon-side viewer lease. Hidden because only the app spawns it.

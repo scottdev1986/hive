@@ -9,6 +9,23 @@ import XCTest
 /// - a provider-off model row still reading as enabled
 final class ModelControlTests: XCTestCase {
 
+    func testMCCCommandsCarryTheWindowDaemonPort() {
+        XCTAssertEqual(
+            ModelControlCommand.arguments(
+                ["model-control-snapshot"], daemonPort: 4317),
+            ["model-control-snapshot", "--port", "4317"])
+        XCTAssertEqual(
+            ModelControlCommand.arguments(
+                ["routing", "export"], daemonPort: 4317),
+            ["routing", "export", "--port", "4317"])
+        XCTAssertEqual(
+            ModelControlCommand.arguments(
+                ["routing", "set-provider", "claude", "enabled",
+                 "--expect-revision", "8"], daemonPort: 4483),
+            ["routing", "set-provider", "claude", "enabled",
+             "--expect-revision", "8", "--port", "4483"])
+    }
+
     // MARK: Meter derivation — unknown is not zero
 
     private func window(
