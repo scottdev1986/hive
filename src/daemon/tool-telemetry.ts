@@ -1,10 +1,7 @@
 import { open, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { claudeProjectDirectory } from "../adapters/tools/claude";
-import {
-  findCodexRolloutBySessionId,
-  findLatestCodexRollout,
-} from "../adapters/tools/codex";
+import { findCodexRolloutBySessionId } from "../adapters/tools/codex";
 import { findLatestGrokSessionDirectory } from "../adapters/tools/grok";
 import { type CapabilityProvider, unknownVendor } from "../schemas/capability";
 
@@ -265,6 +262,7 @@ export async function readGrokTelemetry(
   toolSessionId?: string,
   home?: string,
 ): Promise<GrokTelemetry> {
+  if (toolSessionId === undefined) return NO_GROK_TELEMETRY;
   const directory = await findLatestGrokSessionDirectory(
     worktreePath,
     toolSessionId,
@@ -410,13 +408,11 @@ function countGrokGraphifyCalls(slice: string): number {
 }
 
 /**
- * Advance a call-count cursor against the agent's own artifact. Claude reads
- * are keyed by `toolSessionId` — never "newest file in the directory", which
- * inherits a dead predecessor's transcript across respawns. The Codex rollout
- * is still discovered per worktree and carries that known aliasing; the
- * changed-path reset above bounds it to one rollout's worth. Returns the
- * cursor unchanged when there is nothing new, and null when there is nothing
- * to read at all — unknown, not zero.
+ * Advance a call-count cursor against the agent's own artifact. Every reader
+ * requires `toolSessionId`: reused worktrees retain dead predecessors'
+ * artifacts, so a latest-by-directory lookup cannot identify this agent.
+ * Returns the cursor unchanged when there is nothing new, and null when there
+ * is nothing to read at all — unknown, not zero.
  */
 export async function readGraphifyCalls(
   tool: CapabilityProvider,
@@ -436,7 +432,7 @@ export async function readGraphifyCalls(
       break;
     }
     case "codex": {
-      if (toolSessionId === undefined) return cursor ?? null;
+      if (toolSessionId === undefined) return null;
       const rollout = home === undefined
         ? await findCodexRolloutBySessionId(worktreePath, toolSessionId)
         : await findCodexRolloutBySessionId(worktreePath, toolSessionId, home);
@@ -445,6 +441,7 @@ export async function readGraphifyCalls(
       break;
     }
     case "grok": {
+      if (toolSessionId === undefined) return null;
       // updates.jsonl is Grok's measured source — never a transcript parser
       // from another vendor. No session directory yet is unknown, not zero.
       const directory = await findLatestGrokSessionDirectory(

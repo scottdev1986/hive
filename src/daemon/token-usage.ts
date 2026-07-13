@@ -3,13 +3,8 @@ import { open, readdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
-import {
-  claudeProjectDirectory,
-  findLatestClaudeSessionId,
-} from "../adapters/tools/claude";
-import {
-  findCodexRolloutBySessionId,
-} from "../adapters/tools/codex";
+import { claudeProjectDirectory } from "../adapters/tools/claude";
+import { findCodexRolloutBySessionId } from "../adapters/tools/codex";
 import { findLatestGrokSessionDirectory } from "../adapters/tools/grok";
 import {
   TokenUsageSnapshotSchema,
@@ -138,9 +133,8 @@ class ClaudeTokenUsageAdapter implements TokenUsageAdapter {
   constructor(private readonly home = homedir()) {}
 
   async discover(subject: SubjectRow, knownPaths: string[]) {
-    const sessionId = subject.providerSessionId ??
-      await findLatestClaudeSessionId(subject.cwd, this.home) ?? undefined;
-    if (sessionId === undefined) return { paths: knownPaths };
+    const sessionId = subject.providerSessionId;
+    if (sessionId === null) return { paths: [] };
     const directory = claudeProjectDirectory(subject.cwd, this.home);
     const main = join(directory, `${sessionId}.jsonl`);
     const nested = await jsonlFiles(join(directory, sessionId, "subagents"));
@@ -265,9 +259,10 @@ class GrokTokenUsageAdapter implements TokenUsageAdapter {
 
   async discover(subject: SubjectRow, knownPaths: string[]) {
     if (knownPaths.length > 0) return { paths: knownPaths };
+    if (subject.providerSessionId === null) return { paths: [] };
     const directory = await findLatestGrokSessionDirectory(
       subject.cwd,
-      subject.providerSessionId ?? undefined,
+      subject.providerSessionId,
       this.home,
     );
     if (directory === null) return { paths: [] };
@@ -534,6 +529,15 @@ export class TokenUsageStore {
       this.database.query(
         "UPDATE token_usage_subjects SET unknownReason = ? WHERE id = ?",
       ).run(`No token collector is installed for provider ${subject.provider}`, id);
+      return;
+    }
+    if (subject.providerSessionId === null) {
+      this.database.query(
+        "UPDATE token_usage_subjects SET unknownReason = ? WHERE id = ?",
+      ).run(
+        `${subject.provider} provider session id has not been observed`,
+        id,
+      );
       return;
     }
     const artifacts = ArtifactRowSchema.array().parse(

@@ -285,8 +285,9 @@ describe("grok session telemetry", () => {
     expect(telemetry.turnCompleted).toEqual(true);
   });
 
-  test("no session at all reports unknown, not an empty agent", async () => {
+  test("a missing session id ignores a predecessor's session", async () => {
     const home = makeHome();
+    writeGrokSession(home, "dead-predecessor", GROK_UPDATES, GROK_SIGNALS);
     expect(await readGrokTelemetry(WORKTREE, undefined, home)).toEqual({
       contextPct: null,
       lastActivityAt: null,
@@ -392,10 +393,15 @@ describe("graphify call counting", () => {
     expect(cursor?.path.endsWith("updates.jsonl")).toBe(true);
   });
 
-  test("a grok agent with no session yet is unknown, never zero", async () => {
+  test("a missing session id clears stale cursors instead of reading a predecessor", async () => {
     const home = makeHome();
+    writeGrokSession(home, "dead-predecessor", GROK_UPDATES, GROK_SIGNALS);
+    const stale = { path: "/dead/session.jsonl", offset: 10, count: 3 };
     expect(
-      await readGraphifyCalls("grok", WORKTREE, undefined, undefined, home),
+      await readGraphifyCalls("codex", WORKTREE, undefined, stale, home),
+    ).toBeNull();
+    expect(
+      await readGraphifyCalls("grok", WORKTREE, undefined, stale, home),
     ).toBeNull();
   });
 

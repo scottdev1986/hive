@@ -82,6 +82,7 @@ describe("TokenUsageStore", () => {
       },
     }) + "\n");
     const claude = store.startOrchestrator(session, "claude", repo, at);
+    store.registerOrchestratorProviderSession("claude-session", repo);
     await store.refreshSubject(claude);
     appendFileSync(claudePath, JSON.stringify({
       type: "assistant",
@@ -126,6 +127,7 @@ describe("TokenUsageStore", () => {
       } },
     }) + "\n");
     const grok = store.startOrchestrator(session, "grok", repo, at);
+    store.registerOrchestratorProviderSession(grokSession, repo);
     await store.endSubject(grok);
 
     const snapshot = await store.snapshot(repo);
@@ -147,6 +149,59 @@ describe("TokenUsageStore", () => {
       ["claude", 66],
       ["grok", 49],
     ]);
+  });
+
+  test("a missing provider session id never aliases a predecessor's tokens", async () => {
+    const home = mkdtempSync(join(tmpdir(), "hive-token-alias-"));
+    const repo = join(home, "repo");
+    mkdirSync(repo);
+    const directory = claudeProjectDirectory(repo, home);
+    mkdirSync(directory, { recursive: true });
+    const assistant = (id: string, input: number, output: number) =>
+      JSON.stringify({
+        type: "assistant",
+        uuid: id,
+        timestamp: at,
+        message: {
+          id,
+          usage: {
+            input_tokens: input,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 0,
+            output_tokens: output,
+          },
+        },
+      }) + "\n";
+    writeFileSync(
+      join(directory, "dead-predecessor.jsonl"),
+      assistant("predecessor-message", 1_000, 100),
+    );
+
+    const store = new TokenUsageStore(
+      new HiveDatabase(":memory:"),
+      defaultTokenUsageAdapters(home),
+    );
+    const session = await store.startSession(repo, at);
+    const subject = store.startOrchestrator(session, "claude", repo, at);
+
+    await store.refreshSubject(subject);
+    let reading = (await store.snapshot(repo)).sessions[0]!.subjects[0]!.reading;
+    expect(reading).toEqual({
+      state: "unknown",
+      reason: "claude provider session id has not been observed",
+    });
+
+    writeFileSync(
+      join(directory, "current-session.jsonl"),
+      assistant("current-message", 6, 1),
+    );
+    store.registerOrchestratorProviderSession("current-session", repo);
+    await store.refreshSubject(subject);
+    reading = (await store.snapshot(repo)).sessions[0]!.subjects[0]!.reading;
+    expect(reading.state).toBe("measured");
+    if (reading.state === "measured") {
+      expect(reading.counts.totalTokens).toBe(7);
+    }
   });
 
   test("a new CLI is one adapter, not a ledger or wire-schema change", async () => {
@@ -173,6 +228,7 @@ describe("TokenUsageStore", () => {
     const store = new TokenUsageStore(new HiveDatabase(":memory:"), [adapter]);
     const session = await store.startSession(repo, at);
     store.startOrchestrator(session, "opencode", repo, at);
+    store.registerOrchestratorProviderSession("opencode-session", repo);
 
     const snapshot = await store.snapshot(repo);
     expect(snapshot.sessions[0]!.subjects[0]!.provider).toBe("opencode");
@@ -205,8 +261,10 @@ describe("TokenUsageStore", () => {
     const store = new TokenUsageStore(db, [adapter]);
     const session = await store.startSession(repo, at);
     const first = store.startOrchestrator(session, "codex", repo, at);
+    store.registerOrchestratorProviderSession("first-codex-session", repo);
     await store.endSubject(first, "2026-07-13T12:01:00.000Z");
     store.startOrchestrator(session, "codex", repo, "2026-07-13T12:01:01.000Z");
+    store.registerOrchestratorProviderSession("second-codex-session", repo);
     db.insertAgent({
       id: "agent-maya",
       name: "maya",
@@ -226,6 +284,7 @@ describe("TokenUsageStore", () => {
       readOnly: false,
       writeRevoked: false,
       channelsEnabled: false,
+      toolSessionId: "worker-codex-session",
     });
 
     const snapshot = await store.snapshot(repo);
@@ -250,6 +309,7 @@ describe("TokenUsageStore", () => {
     const store = new TokenUsageStore(new HiveDatabase(":memory:"), [adapter]);
     const session = await store.startSession(repo, at);
     store.startOrchestrator(session, "quiet-cli", repo, at);
+    store.registerOrchestratorProviderSession("quiet-session", repo);
 
     const snapshot = await store.snapshot(repo);
     expect(snapshot.sessions[0]!.complete).toBe(false);
@@ -291,6 +351,7 @@ describe("TokenUsageStore", () => {
     const store = new TokenUsageStore(new HiveDatabase(":memory:"), [adapter]);
     const session = await store.startSession(repo, at);
     const subject = store.startOrchestrator(session, "flaky-cli", repo, at);
+    store.registerOrchestratorProviderSession("flaky-session", repo);
     await store.refreshSubject(subject);
     readable = false;
 

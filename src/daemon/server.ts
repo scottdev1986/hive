@@ -822,7 +822,9 @@ export class HiveDaemon {
         readLiveClaudeModel(worktreePath, toolSessionId));
     this.readGrokLiveModel = options.telemetryReaders?.grokLiveModel ??
       ((worktreePath, toolSessionId) =>
-        readLiveGrokModel(worktreePath, toolSessionId));
+        toolSessionId === undefined
+          ? Promise.resolve(null)
+          : readLiveGrokModel(worktreePath, toolSessionId));
     this.handshake = () => expectedDaemonHandshake(this.repoRoot);
     this.buildFreshness = options.buildFreshness ??
       (() => checkBuildFreshness(this.repoRoot));
@@ -1365,8 +1367,8 @@ export class HiveDaemon {
           unknownVendor(agent.tool, "refreshToolTelemetry");
       }
       // Layer-3 graphify adoption count, off the same artifacts. Only when
-      // this daemon has a graphify service at all; a failed read keeps the
-      // previous cursor rather than inventing a zero.
+      // this daemon has a graphify service at all. An unreadable known
+      // artifact keeps its measured cursor; no exact session clears it.
       if (this.graphify !== undefined) {
         const cursor = await readGraphifyCalls(
           agent.tool,
@@ -1374,7 +1376,8 @@ export class HiveDaemon {
           agent.toolSessionId,
           this.graphifyCalls.get(agent.id),
         ).catch(() => null);
-        if (cursor !== null) this.graphifyCalls.set(agent.id, cursor);
+        if (cursor === null) this.graphifyCalls.delete(agent.id);
+        else this.graphifyCalls.set(agent.id, cursor);
       }
       // Re-read after the file I/O: hook events may have advanced the row.
       const current = this.db.getAgentById(agent.id);
