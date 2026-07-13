@@ -23,6 +23,17 @@ export interface RemoveWorktreeOptions {
   deleteBranch?: boolean;
   discardTracked?: boolean;
   force?: boolean;
+  /**
+   * The branch to delete, from the caller that knows it.
+   *
+   * Without it, deleteBranch can only delete what `git worktree list` still
+   * reports — and once the worktree directory is gone and its registration
+   * pruned, that list is empty, so the delete silently deletes nothing and
+   * still returns success. The caller then records the branch as removed while
+   * it is still sitting in the repo. Git's worktree list is not the authority
+   * on which branch an agent held; the caller is.
+   */
+  branch?: string;
 }
 
 export interface StrandedWork {
@@ -209,6 +220,16 @@ export async function listWorktrees(repoRoot: string): Promise<Worktree[]> {
     .filter((worktree) => worktree.path.length > 0);
 }
 
+/** Delete a branch, tolerating one that is already gone. */
+async function deleteBranch(
+  repoRoot: string,
+  branch: string | null,
+): Promise<void> {
+  if (branch === null || !await branchExists(repoRoot, branch)) return;
+  const result = await runGit(repoRoot, ["branch", "-D", branch]);
+  assertGitSuccess(result, "branch delete");
+}
+
 async function branchExists(repoRoot: string, branch: string): Promise<boolean> {
   const result = await runGit(repoRoot, [
     "rev-parse",
@@ -344,7 +365,7 @@ export async function removeWorktree(
 ): Promise<void> {
   const normalizedOptions: RemoveWorktreeOptions =
     typeof options === "boolean" ? { deleteBranch: options } : options;
-  const deleteBranch = normalizedOptions.deleteBranch ?? false;
+  const shouldDeleteBranch = normalizedOptions.deleteBranch ?? false;
   const discardTracked = normalizedOptions.discardTracked ?? false;
   const force = discardTracked || (normalizedOptions.force ?? true);
   const requestedPath = await canonicalizePotentialPath(worktreePath);
@@ -364,13 +385,11 @@ export async function removeWorktree(
     const pruneResult = await runGit(repoRoot, ["worktree", "prune"]);
     assertGitSuccess(pruneResult, "worktree prune");
 
-    if (deleteBranch && staleWorktree?.branch !== null && staleWorktree?.branch !== undefined) {
-      const branchResult = await runGit(repoRoot, [
-        "branch",
-        "-D",
-        staleWorktree.branch,
-      ]);
-      assertGitSuccess(branchResult, "branch delete");
+    if (shouldDeleteBranch) {
+      await deleteBranch(
+        repoRoot,
+        normalizedOptions.branch ?? staleWorktree?.branch ?? null,
+      );
     }
     return;
   }
@@ -379,7 +398,7 @@ export async function removeWorktree(
     (candidate) =>
       candidate.path === canonicalPath || candidate.path === requestedPath,
   );
-  const branch = worktree?.branch ?? null;
+  const branch = normalizedOptions.branch ?? worktree?.branch ?? null;
 
   if (!discardTracked) {
     const statusResult = await runGit(canonicalPath, [
@@ -407,8 +426,7 @@ export async function removeWorktree(
   const removeResult = await runGit(repoRoot, removeArgs);
   assertGitSuccess(removeResult, "worktree remove");
 
-  if (deleteBranch && branch !== null) {
-    const branchResult = await runGit(repoRoot, ["branch", "-D", branch]);
-    assertGitSuccess(branchResult, "branch delete");
+  if (shouldDeleteBranch) {
+    await deleteBranch(repoRoot, branch);
   }
 }

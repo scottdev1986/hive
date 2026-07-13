@@ -1836,16 +1836,37 @@ export class HiveDaemon {
       }
     }
 
-    await this.reportKill(agent, reaped, preserved, stranded);
+    const discarding = (options.discardWork ?? false) && stranded !== null;
 
     if (
       (options.removeWorktree ?? false) && agent.worktreePath !== null &&
-      (stranded === null || (options.discardWork ?? false))
+      (stranded === null || discarding)
     ) {
       await this.cleanupWorktree(this.repoRoot, agent.worktreePath, {
         deleteBranch: true,
         discardTracked: options.discardWork ?? false,
+        // The branch comes from the agent record, not from git's worktree
+        // list: once the worktree directory is gone that list is empty, and a
+        // delete that can only see the list deletes nothing at all.
+        ...(agent.branch !== null ? { branch: agent.branch } : {}),
       });
+      // discardWork means delete the work, so the preservation ref goes too.
+      // Left behind, it still points at every commit the branch held: the
+      // caller who asked for a discard would get a rename.
+      if (discarding && stranded !== null) {
+        if (preserved !== null) {
+          await markBranchPreserved(this.repoRoot, preserved.branch, false);
+          preserved = null;
+        }
+        stranded = {
+          ...stranded,
+          note: `${agent.name} left work that is not on main; it was DELETED ` +
+            "as requested (discardWork)" +
+            (agent.branch !== null
+              ? `: branch ${agent.branch} and its preservation ref are gone.`
+              : "."),
+        };
+      }
       cleaned.worktreePath = agent.worktreePath;
       cleaned.branch = agent.branch;
       updated = this.db.upsertAgent({
@@ -1854,6 +1875,11 @@ export class HiveDaemon {
         branch: null,
       });
     }
+
+    // Reported last, so it reports what happened: a discard deletes the branch
+    // and its ref, and telling the orchestrator "Nothing was deleted" over the
+    // top of that is how a kill that obeyed reads as a kill that refused.
+    await this.reportKill(agent, reaped, preserved, stranded);
 
     return { agent: updated, cleaned, reaped, preserved, stranded };
   }

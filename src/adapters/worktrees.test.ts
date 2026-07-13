@@ -241,6 +241,34 @@ describe("git worktree manager", () => {
     await removeWorktree(repoRoot, created.path, { deleteBranch: true, discardTracked: true });
   });
 
+  // Measured on the real agent dominic: its worktree directory was already
+  // gone and its registration already pruned when the kill arrived, so
+  // `git worktree list` had nothing to look up -- and a branch delete that can
+  // only see that list deleted nothing, returned success, and left the branch
+  // (1 unmerged commit) sitting in the repo while the caller recorded it as
+  // removed. The branch the caller passes is the authority.
+  test("deletes the branch even when the worktree registration is already gone", async () => {
+    const created = await createWorktree(repoRoot, "agent-vanished", "gone");
+    await writeFile(join(created.path, "wip.txt"), "unmerged\n");
+    await git("-C", created.path, "add", "wip.txt");
+    await git("-C", created.path, "commit", "-m", "unmerged wip");
+
+    // The directory disappears and git forgets the worktree ever existed.
+    await rm(created.path, { recursive: true, force: true });
+    await git("worktree", "prune");
+    expect(await listWorktrees(repoRoot)).not.toContainEqual(
+      expect.objectContaining({ branch: created.branch }),
+    );
+
+    await removeWorktree(repoRoot, created.path, {
+      deleteBranch: true,
+      discardTracked: true,
+      branch: created.branch,
+    });
+
+    expect((await git("branch", "--list", created.branch)).trim()).toEqual("");
+  });
+
   test("treats a deleted worktree directory and missing branch as nothing stranded", async () => {
     expect(await assessStrandedWork(
       repoRoot,

@@ -3,8 +3,10 @@ import { Database } from "bun:sqlite";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { mkdtempSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createWorktree } from "../adapters/worktrees";
 import {
   QuotaConfigSchema,
   type AgentRecord,
@@ -1652,6 +1654,84 @@ describe("HiveDaemon HTTP server", () => {
       await client.close();
       await daemon.stop();
       db.close();
+    }
+  });
+
+  // Against REAL git, because a stubbed removeWorktree is what hid this: it
+  // cannot model the repo dominic was actually killed in, where the worktree
+  // directory was gone and its registration pruned. hive_kill discardWork:true
+  // removed the worktree, reported "Nothing was deleted", and left the branch
+  // AND refs/hive-preserved/* holding every commit it was told to discard.
+  test("hive_kill discardWork leaves no branch and no preserved ref", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "hive-kill-discard-"));
+    const git = async (cwd: string, ...args: string[]): Promise<string> => {
+      const process = Bun.spawn(["git", "-C", cwd, ...args], {
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, exitCode] = await Promise.all([
+        new Response(process.stdout).text(),
+        process.exited,
+      ]);
+      if (exitCode !== 0) throw new Error(`git ${args.join(" ")} failed`);
+      return stdout.trim();
+    };
+    await git(repoRoot, "init", "-b", "main");
+    await git(repoRoot, "config", "user.name", "Hive Test");
+    await git(repoRoot, "config", "user.email", "hive@example.test");
+    await git(repoRoot, "commit", "--allow-empty", "-m", "initial");
+
+    const created = await createWorktree(repoRoot, "maya", "server");
+    await Bun.write(join(created.path, "wip.ts"), "throwaway\n");
+    await git(created.path, "add", "wip.ts");
+    await git(created.path, "commit", "-m", "wip nobody wants");
+
+    // dominic's repo state: the worktree directory is already gone.
+    await rm(created.path, { recursive: true, force: true });
+    await git(repoRoot, "worktree", "prune");
+
+    const db = new HiveDatabase(join(home, "discard-real-git.db"));
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new StubSpawner(),
+      tmuxSender: new SilentTmuxSender(db),
+      tmux: new FakeDaemonTmux(),
+      repoRoot,
+    });
+    db.insertAgent(
+      agent({ worktreePath: created.path, branch: created.branch }),
+    );
+    const transport = new StreamableHTTPClientTransport(
+      new URL("http://hive/mcp"),
+      { fetch: actingAs(daemon, "operator") },
+    );
+    const client = new Client({ name: "hive-test", version: "1.0.0" });
+    try {
+      await client.connect(transport);
+
+      const discarded = textValue(await client.callTool({
+        name: "hive_kill",
+        arguments: { name: "maya", removeWorktree: true, discardWork: true },
+      })) as {
+        preserved: { ref: string } | null;
+        stranded: { unmergedCommits: number; note: string } | null;
+      };
+
+      // The work existed, so the discard was a real decision, not a no-op.
+      expect(discarded.stranded?.unmergedCommits).toEqual(1);
+      // And it was carried out: nothing of the branch survives, anywhere.
+      expect(await git(repoRoot, "branch", "--list", created.branch))
+        .toEqual("");
+      expect(await git(repoRoot, "for-each-ref", "refs/hive-preserved/"))
+        .toEqual("");
+      // Nor does the report claim work was preserved that no longer exists.
+      expect(discarded.preserved).toEqual(null);
+      expect(discarded.stranded?.note).toContain("DELETED");
+    } finally {
+      await client.close();
+      await daemon.stop();
+      db.close();
+      await rm(repoRoot, { recursive: true, force: true });
     }
   });
 
