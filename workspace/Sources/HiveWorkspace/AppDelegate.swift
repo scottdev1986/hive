@@ -29,7 +29,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     private var feedRestartDelay: TimeInterval = 1
     private static let feedRestartCeiling: TimeInterval = 15
     /// Restarts are capped so a feed that can never run — a missing binary, a
-    /// daemon that is gone for good — stops thrashing and says so instead.
+    /// daemon that is gone for good — stops thrashing.
     private static let feedRestartLimit = 5
     private var feedRestartsLeft = AppDelegate.feedRestartLimit
     /// How long a quit waits for `hive stop` before going ahead without it.
@@ -37,8 +37,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// Set once the app has decided the feed should stay dead (window closing,
     /// app quitting), so a restart already in flight cannot resurrect it.
     private var feedRetired = false
-    /// The unrecoverable-feed alert is shown once, not once per retry.
-    private var feedFailureAnnounced = false
     /// Whichever menu is tracking right now, if any. An open NSMenu runs a
     /// nested tracking loop and belongs to no window, so closing the windows
     /// cannot dismiss it — the instance has to cancel it by hand on the way
@@ -177,7 +175,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     private func scheduleFeedRestart() {
         guard !feedRetired, config.feedInvocation != nil else { return }
         guard feedRestartsLeft > 0 else {
-            announceFeedFailure()
+            terminateAfterFeedFailure()
             return
         }
         feedRestartsLeft -= 1
@@ -190,22 +188,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         }
     }
 
-    /// A feed that cannot restart leaves every agent status frozen. Announce
-    /// that loss once rather than leaving a healthy-looking stale screen.
-    private func announceFeedFailure() {
-        guard !feedFailureAnnounced, !config.smoke else { return }
-        feedFailureAnnounced = true
-        NSLog("workspace-feed could not be restarted; the workspace is blind")
-        let alert = NSAlert()
-        alert.alertStyle = .critical
-        alert.messageText = "Hive lost its status feed"
-        alert.informativeText = """
-            This workspace can no longer see your agents, so their status is frozen.
-
-            Quit Hive to end this instance, then relaunch it to restore live status.
-            """
-        alert.addButton(withTitle: "OK")
-        alert.runModal()
+    /// A permanently lost feed makes this instance unable to own its agent UI
+    /// honestly. End its nested UI sessions and windows before terminating.
+    func terminateAfterFeedFailure(terminate: () -> Void = { NSApp.terminate(nil) }) {
+        NSLog("workspace-feed could not be restarted; terminating the workspace")
+        closeOwnedSurfaces()
+        retireFeed()
+        terminate()
     }
 
     /// Stop the feed and suppress restart callbacks once its workspace closes.

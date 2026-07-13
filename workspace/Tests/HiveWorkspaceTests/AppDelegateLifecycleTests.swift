@@ -18,6 +18,28 @@ final class AppDelegateLifecycleTests: XCTestCase {
         XCTAssertEqual(menu.cancellationCount, 1)
     }
 
+    func testExhaustedFeedRetriesCloseSurfacesBeforeTermination() {
+        _ = NSApplication.shared
+        let owner = AppDelegate(config: LaunchConfig())
+        let menu = RecordingMenu(title: "Tracked")
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 120, height: 80),
+            styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.orderFront(nil)
+        NotificationCenter.default.post(
+            name: NSMenu.didBeginTrackingNotification, object: menu)
+        var didTerminate = false
+
+        owner.terminateAfterFeedFailure {
+            XCTAssertEqual(menu.cancellationCount, 1)
+            XCTAssertFalse(window.isVisible)
+            didTerminate = true
+        }
+
+        XCTAssertTrue(didTerminate)
+    }
+
     func testProjectCloseEndsEverySheetBeforeClosingOtherWindows() {
         let project = NSObject()
         let settings = NSObject()
