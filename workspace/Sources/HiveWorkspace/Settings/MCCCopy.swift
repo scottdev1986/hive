@@ -1,4 +1,5 @@
 import Foundation
+import WorkspaceCore
 
 /// The Model Control Center copy catalog — exact strings from the spec (§13).
 /// Do not rephrase in ways that soften "unknown". There is deliberately no
@@ -103,29 +104,40 @@ enum MCCCopy {
     }
     static let modelPreferenceOnOverridden = "Your preference: on (not effective)"
     static let modelDisabledSelf = "Disabled"
-    /// The distribution semantics (user decision 2026-07-13): the chain is
-    /// capability + preference, NOT a strict walk. One model per task, chosen
-    /// by remaining capacity weighted by rank.
-    static let subtitleSpread =
-        "Each task runs on ONE of these models — never several at once. Hive favours " +
-        "whichever has the most capacity left, weighted by rank, so work spreads across " +
-        "your plans instead of draining the top one. Rank sets preference and breaks ties."
+    static let selectionSubtitle =
+        "Each task runs on ONE model. Preference follows your ranking; No preference " +
+        "lets Hive spread work among enabled models that fit the task."
     static let rankTooltip =
-        "Rank is preference and tie-break, not a strict order — the model with the most " +
-        "remaining capacity is favoured."
-    static let spreadControlLabel = "Distribute work:"
-    static let spreadByCapacity = "Spread by remaining capacity"
-    static let spreadStrictOrder = "Strict order"
-    static let spreadUseGlobal = "Use global setting"
-    static let spreadStrictCaption =
-        "Strict order: Hive always tries these models top to bottom, regardless of capacity."
-    static let spreadByCapacityCaption =
-        "Spread: among these models, the one with the most remaining capacity runs the task."
-    /// The daemon stores a selection setting this version of Hive cannot read
-    /// or write. Say exactly that — do not render a mode we did not read.
-    static let spreadUnreadable =
-        "This version of Hive cannot read how the daemon distributes work — update Hive to "
+        "In Preference mode, Hive honors this ranking."
+    static let selectionControlLabel = "Model selection:"
+    static let selectionPreference = "Preference (choice)"
+    static let selectionNoPreference = "No preference (auto)"
+    static let selectionUseGlobal = "Use global selection"
+    static let selectionUnconfigured = "Unconfigured — choose one"
+    static let selectionUnreadable =
+        "This version of Hive cannot read the daemon's model selection — update Hive to "
         + "see and change this. Your other settings still save normally."
+
+    static func selectionTitle(_ mode: SelectionMode) -> String {
+        switch mode {
+        case .neverConfigured: return selectionUnconfigured
+        case .auto: return selectionNoPreference
+        case .choice: return selectionPreference
+        }
+    }
+
+    static func selectionCaption(_ mode: SelectionMode) -> String {
+        switch mode {
+        case .neverConfigured:
+            return "Routed spawns refuse until you choose Preference or No preference."
+        case .auto:
+            return "No preference: Hive spreads work across your enabled models."
+        case .choice:
+            return "Preference: Hive honors your ranking, then tries other enabled models "
+                + "when the preferred ones are exhausted. A spawn can still refuse if every "
+                + "eligible model is unavailable or out of capacity."
+        }
+    }
     static let chainEmptyUsesDefault = "No chain of its own — uses your Global fallback chain."
     static let chainAllIneffective = "Every model in this chain is off or unavailable."
     static let chainExhaustionRefuse =

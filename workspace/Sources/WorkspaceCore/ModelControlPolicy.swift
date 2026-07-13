@@ -107,33 +107,32 @@ public enum ExhaustionBehavior: String, Codable, Sendable {
     case useGlobalFallback = "use_global_fallback"
 }
 
-/// How work is distributed among a chain's capable models (user decision
-/// 2026-07-13): a strict walk burns the top model's pool to zero while the
-/// others idle, so the DEFAULT spreads — among the models that pass the
-/// gates, the one with the most remaining quota headroom runs the task,
-/// weighted by rank so the preferred model still wins when pools are even.
-/// Strict order remains available where consistency matters more than load.
-public enum SpreadMode: String, Codable, Sendable {
-    // Raw values are the daemon's wire spellings (selection.global /
-    // selection.categories values; `hive routing set-selection`).
-    case spreadByCapacity = "spread"
-    case strictOrder = "strict"
+/// The daemon's selection vocabulary, verbatim. `neverConfigured` is a state
+/// the user may need to escape, never an option the control offers.
+public enum SelectionMode: String, Codable, Sendable {
+    case neverConfigured = "never-configured"
+    case auto
+    case choice
+
+    /// The two decisions a user can make. This is deliberately not all cases:
+    /// unanswered is shown as a warning, not offered as a choice.
+    public static let userChoices: [SelectionMode] = [.choice, .auto]
 }
 
 public struct CategoryPolicy: Equatable, Codable, Sendable {
     public var chain: [ChainEntry]
     public var exhaustionBehavior: ExhaustionBehavior
-    /// Per-category override of the global spread mode; nil = use global.
-    public var spreadOverride: SpreadMode?
+    /// Per-category override of the global selection; nil = use global.
+    public var selectionOverride: SelectionMode?
 
     public init(
         chain: [ChainEntry] = [],
         exhaustionBehavior: ExhaustionBehavior = .refuse,
-        spreadOverride: SpreadMode? = nil
+        selectionOverride: SelectionMode? = nil
     ) {
         self.chain = chain
         self.exhaustionBehavior = exhaustionBehavior
-        self.spreadOverride = spreadOverride
+        self.selectionOverride = selectionOverride
     }
 }
 
@@ -201,38 +200,38 @@ public struct ModelControlPolicy: Equatable, Codable, Sendable {
     public var defaultChain: [ChainEntry]
     /// True until the user edits — drives the provisional banner (§8.5).
     public var provisional: Bool
-    /// How work distributes among a chain's capable models, app-wide;
-    /// categories may override. Spread is the default — the point is to
-    /// drain pools evenly, not to hammer the preferred model.
-    public var globalSpread: SpreadMode
+    /// How Hive selects a model, app-wide; categories may override.
+    public var globalSelection: SelectionMode
 
     public init(
         providers: [String: ProviderPolicy] = [:],
         categories: [String: CategoryPolicy] = [:],
         defaultChain: [ChainEntry] = [],
         provisional: Bool = true,
-        globalSpread: SpreadMode = .spreadByCapacity
+        globalSelection: SelectionMode = .neverConfigured
     ) {
         self.providers = providers
         self.categories = categories
         self.defaultChain = defaultChain
         self.provisional = provisional
-        self.globalSpread = globalSpread
+        self.globalSelection = globalSelection
     }
 
-    public func effectiveSpread(_ category: TaskCategory) -> SpreadMode {
-        categoryPolicy(category).spreadOverride ?? globalSpread
+    public func effectiveSelection(_ category: TaskCategory) -> SelectionMode {
+        categoryPolicy(category).selectionOverride ?? globalSelection
     }
 
-    public mutating func setGlobalSpread(_ mode: SpreadMode) {
-        globalSpread = mode
+    public mutating func setGlobalSelection(_ mode: SelectionMode) {
+        globalSelection = mode
         provisional = false
     }
 
     /// nil clears the override — the category falls back to the global mode.
-    public mutating func setCategorySpread(_ category: TaskCategory, _ mode: SpreadMode?) {
+    public mutating func setCategorySelection(
+        _ category: TaskCategory, _ mode: SelectionMode?
+    ) {
         var policy = categories[category.rawValue] ?? CategoryPolicy()
-        policy.spreadOverride = mode
+        policy.selectionOverride = mode
         categories[category.rawValue] = policy
         provisional = false
     }

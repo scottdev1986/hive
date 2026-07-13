@@ -166,24 +166,24 @@ final class ModelControlDataSource {
             resolvedInCatalog: resolved)
     }
 
-    var globalSpread: SpreadMode {
+    var globalSelection: SelectionMode? {
         switch backend {
-        case .daemon(let document): return document.globalSpread
-        case .placeholder(let policy, _): return policy.globalSpread
-        case nil: return .spreadByCapacity
-        }
-    }
-
-    func spreadOverride(_ category: TaskCategory) -> SpreadMode? {
-        switch backend {
-        case .daemon(let document): return document.spreadOverride(for: category)
-        case .placeholder(let policy, _): return policy.categoryPolicy(category).spreadOverride
+        case .daemon(let document): return document.globalSelection
+        case .placeholder(let policy, _): return policy.globalSelection
         case nil: return nil
         }
     }
 
-    func effectiveSpread(_ category: TaskCategory) -> SpreadMode {
-        spreadOverride(category) ?? globalSpread
+    func selectionOverride(_ category: TaskCategory) -> SelectionMode? {
+        switch backend {
+        case .daemon(let document): return document.selectionOverride(for: category)
+        case .placeholder(let policy, _): return policy.categoryPolicy(category).selectionOverride
+        case nil: return nil
+        }
+    }
+
+    func effectiveSelection(_ category: TaskCategory) -> SelectionMode? {
+        selectionOverride(category) ?? globalSelection
     }
 
     /// Whether the backend can PERSIST selection modes. A daemon that never
@@ -298,20 +298,20 @@ final class ModelControlDataSource {
         }, persist: ["routing", "set-chain", key] + arguments.compactMap { $0 })
     }
 
-    func setGlobalSpread(_ mode: SpreadMode) {
+    func setGlobalSelection(_ mode: SelectionMode) {
         mutate(applyToDocument: { document in
             document.selection.global = mode.rawValue
         }, applyToPlaceholder: { policy in
-            policy.setGlobalSpread(mode)
+            policy.setGlobalSelection(mode)
         }, persist: ["routing", "set-selection", mode.rawValue])
     }
 
     /// nil clears the override — back to the global mode ("unset" on the wire).
-    func setCategorySpread(_ category: TaskCategory, _ mode: SpreadMode?) {
+    func setCategorySelection(_ category: TaskCategory, _ mode: SelectionMode?) {
         mutate(applyToDocument: { document in
             document.selection.categories[category.rawValue] = mode?.rawValue
         }, applyToPlaceholder: { policy in
-            policy.setCategorySpread(category, mode)
+            policy.setCategorySelection(category, mode)
         }, persist: [
             "routing", "set-selection", mode?.rawValue ?? "unset",
             "--category", category.rawValue,

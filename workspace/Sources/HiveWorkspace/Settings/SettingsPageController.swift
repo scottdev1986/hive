@@ -279,12 +279,12 @@ final class TasksSettingsController: SettingsPageController {
         addHeader(
             title: "Tasks",
             subtitle: "Which models are good enough for each kind of work, and at which "
-                + "effort. " + MCCCopy.subtitleSpread)
+                + "effort. " + MCCCopy.selectionSubtitle)
         addBanners()
 
         guard dataSource.snapshot != nil, dataSource.policyLoaded else { return }
 
-        buildSpreadControl()
+        buildSelectionControl()
 
         for category in TaskCategory.allCases {
             let card = CardView()
@@ -304,22 +304,28 @@ final class TasksSettingsController: SettingsPageController {
         pinToContent(defaultCard)
     }
 
-    /// The one prominent distribution control: the global mode, plus the
+    /// The one prominent selection control: the global mode, plus the
     /// place per-category overrides are created (each overridden card then
     /// shows its own badge with a clear way back to global).
-    private func buildSpreadControl() {
-        let label = NSTextField(labelWithString: MCCCopy.spreadControlLabel)
+    private func buildSelectionControl() {
+        let label = NSTextField(labelWithString: MCCCopy.selectionControlLabel)
         label.font = Theme.Font.headline
 
         let popup = NSPopUpButton(frame: .zero, pullsDown: false)
         popup.controlSize = .small
         popup.font = NSFont.systemFont(ofSize: 11)
-        popup.addItem(withTitle: MCCCopy.spreadByCapacity)
-        popup.addItem(withTitle: MCCCopy.spreadStrictOrder)
-        popup.selectItem(at: dataSource.globalSpread == .spreadByCapacity ? 0 : 1)
+        for mode in SelectionMode.userChoices {
+            popup.addItem(withTitle: MCCCopy.selectionTitle(mode))
+        }
+        if let mode = dataSource.globalSelection,
+           let index = SelectionMode.userChoices.firstIndex(of: mode) {
+            popup.selectItem(at: index)
+        } else {
+            popup.select(nil)
+        }
         popup.target = self
-        popup.action = #selector(globalSpreadChanged(_:))
-        popup.setAccessibilityLabel("How Hive picks among a category's models")
+        popup.action = #selector(globalSelectionChanged(_:))
+        popup.setAccessibilityLabel("Who picks the model for a task")
         popup.isEnabled = dataSource.canEditSelection
 
         let overrides = NSPopUpButton(frame: .zero, pullsDown: true)
@@ -330,44 +336,47 @@ final class TasksSettingsController: SettingsPageController {
         for category in TaskCategory.allCases {
             let item = NSMenuItem(title: category.label, action: nil, keyEquivalent: "")
             let submenu = NSMenu(title: category.label)
-            for (title, mode) in [
-                (MCCCopy.spreadByCapacity, SpreadMode.spreadByCapacity),
-                (MCCCopy.spreadStrictOrder, SpreadMode.strictOrder),
-            ] {
+            for mode in SelectionMode.userChoices {
                 let modeItem = NSMenuItem(
-                    title: title, action: #selector(categoryOverridePicked(_:)),
+                    title: MCCCopy.selectionTitle(mode),
+                    action: #selector(categoryOverridePicked(_:)),
                     keyEquivalent: "")
                 modeItem.target = self
                 modeItem.representedObject = [category.rawValue, mode.rawValue]
-                modeItem.state = dataSource.spreadOverride(category) == mode ? .on : .off
+                modeItem.state = dataSource.selectionOverride(category) == mode ? .on : .off
                 submenu.addItem(modeItem)
             }
+            submenu.addItem(.separator())
             let clearItem = NSMenuItem(
-                title: MCCCopy.spreadUseGlobal,
+                title: MCCCopy.selectionUseGlobal,
                 action: #selector(categoryOverridePicked(_:)), keyEquivalent: "")
             clearItem.target = self
             clearItem.representedObject = [category.rawValue]
-            clearItem.state = dataSource.spreadOverride(category) == nil ? .on : .off
+            clearItem.state = dataSource.selectionOverride(category) == nil ? .on : .off
             submenu.addItem(clearItem)
             item.submenu = submenu
             overrides.menu?.addItem(item)
         }
 
-        let row = NSStackView(views: [label, popup, overrides, NSView.spacer()])
+        var rowViews: [NSView] = [label]
+        if dataSource.canEditSelection,
+           dataSource.globalSelection == .neverConfigured {
+            rowViews.append(CapsuleBadge(
+                text: MCCCopy.selectionUnconfigured,
+                symbol: "exclamationmark.triangle.fill", style: .warning))
+        }
+        rowViews.append(contentsOf: [popup, overrides, NSView.spacer()])
+        let row = NSStackView(views: rowViews)
         row.orientation = .horizontal
         row.alignment = .centerY
         row.spacing = Theme.Space.m
         contentStack.addArrangedSubview(row)
         pinToContent(row)
 
-        // When the daemon's selection setting is one this build cannot read or
-        // write, the caption must not ASSERT a mode — the popup's selection is
-        // a fallback, not the stored truth, and claiming it would be the same
-        // silent lie as the placeholder store.
         let captionText = dataSource.canEditSelection
-            ? (dataSource.globalSpread == .spreadByCapacity
-                ? MCCCopy.spreadByCapacityCaption : MCCCopy.spreadStrictCaption)
-            : MCCCopy.spreadUnreadable
+            ? dataSource.globalSelection.map(MCCCopy.selectionCaption)
+                ?? MCCCopy.selectionUnreadable
+            : MCCCopy.selectionUnreadable
         let caption = NSTextField(wrappingLabelWithString: captionText)
         caption.font = Theme.Font.caption
         caption.textColor = .tertiaryLabelColor
@@ -375,17 +384,20 @@ final class TasksSettingsController: SettingsPageController {
         pinToContent(caption)
     }
 
-    @objc private func globalSpreadChanged(_ sender: NSPopUpButton) {
-        dataSource.setGlobalSpread(
-            sender.indexOfSelectedItem == 0 ? .spreadByCapacity : .strictOrder)
+    @objc private func globalSelectionChanged(_ sender: NSPopUpButton) {
+        guard SelectionMode.userChoices.indices.contains(sender.indexOfSelectedItem) else {
+            return
+        }
+        dataSource.setGlobalSelection(
+            SelectionMode.userChoices[sender.indexOfSelectedItem])
     }
 
     @objc private func categoryOverridePicked(_ sender: NSMenuItem) {
         guard let payload = sender.representedObject as? [String],
               let rawCategory = payload.first,
               let category = TaskCategory(rawValue: rawCategory) else { return }
-        let mode = payload.count > 1 ? SpreadMode(rawValue: payload[1]) : nil
-        dataSource.setCategorySpread(category, mode)
+        let mode = payload.count > 1 ? SelectionMode(rawValue: payload[1]) : nil
+        dataSource.setCategorySelection(category, mode)
     }
 }
 

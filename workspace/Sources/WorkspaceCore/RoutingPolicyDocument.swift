@@ -117,15 +117,17 @@ public struct RoutingPolicyDocument: Codable, Equatable, Sendable {
         }
     }
 
-    /// How work distributes among a chain's capable models: "spread" (by
-    /// remaining capacity, the default) or "strict" (always in rank order).
-    /// Per-category entries are OVERRIDES of the global mode. Prefaulted at
-    /// decode, mirroring the daemon's parse-time prefault.
+    /// How Hive selects a model: never-configured / auto / choice, exactly as
+    /// `SelectionModeSchema` spells them. Strings stay verbatim so a newer
+    /// daemon's mode costs only this control, never the whole document.
     public struct Selection: Codable, Equatable, Sendable {
         public var global: String
         public var categories: [String: String]
 
-        public init(global: String = "spread", categories: [String: String] = [:]) {
+        public init(
+            global: String = SelectionMode.neverConfigured.rawValue,
+            categories: [String: String] = [:]
+        ) {
             self.global = global
             self.categories = categories
         }
@@ -163,8 +165,8 @@ public struct RoutingPolicyDocument: Codable, Equatable, Sendable {
         providers = try container.decode([String: String].self, forKey: .providers)
         models = try container.decode([ModelRow].self, forKey: .models)
         chains = try container.decode([String: [WireChainEntry]].self, forKey: .chains)
-        // Prefaulted, like the daemon's parse: an older document without the
-        // field reads as global spread with no overrides.
+        // An older daemon has no selection field. Keep its absence explicit
+        // through selectionOnWire; never invent a writable mode for it.
         let sent = try container.decodeIfPresent(Selection.self, forKey: .selection)
         selection = sent ?? Selection()
         selectionOnWire = sent != nil
@@ -174,16 +176,16 @@ public struct RoutingPolicyDocument: Codable, Equatable, Sendable {
         try JSONDecoder().decode(RoutingPolicyDocument.self, from: data)
     }
 
-    public var globalSpread: SpreadMode {
-        SpreadMode(rawValue: selection.global) ?? .spreadByCapacity
+    public var globalSelection: SelectionMode? {
+        SelectionMode(rawValue: selection.global)
     }
 
-    public func spreadOverride(for category: TaskCategory) -> SpreadMode? {
-        selection.categories[category.rawValue].flatMap(SpreadMode.init(rawValue:))
+    public func selectionOverride(for category: TaskCategory) -> SelectionMode? {
+        selection.categories[category.rawValue].flatMap(SelectionMode.init(rawValue:))
     }
 
-    public func effectiveSpread(_ category: TaskCategory) -> SpreadMode {
-        spreadOverride(for: category) ?? globalSpread
+    public func effectiveSelection(_ category: TaskCategory) -> SelectionMode? {
+        selectionOverride(for: category) ?? globalSelection
     }
 
     // MARK: Fail-closed reading (mirrors providerPolicyState / modelPolicyState)
@@ -240,16 +242,13 @@ public struct RoutingPolicyDocument: Codable, Equatable, Sendable {
 
     /// Whether this build can actually WRITE the daemon's selection setting.
     ///
-    /// The daemon's selection vocabulary changed with capability-first routing
-    /// (never-configured / auto / choice); `SpreadMode` here still speaks the
-    /// older spread/strict. Reading a mode we cannot name would render as a
-    /// setting the user never chose, and writing ours back would be refused by
-    /// the daemon on every click — so the UI disables the control and says why.
+    /// A newer daemon's unrecognised mode is preserved in `selection` but
+    /// disables this control; the app never coerces it to a value it can write.
     public var selectionWritable: Bool {
-        guard selectionOnWire, SpreadMode(rawValue: selection.global) != nil else {
+        guard selectionOnWire, SelectionMode(rawValue: selection.global) != nil else {
             return false
         }
-        return selection.categories.values.allSatisfy { SpreadMode(rawValue: $0) != nil }
+        return selection.categories.values.allSatisfy { SelectionMode(rawValue: $0) != nil }
     }
 
     public func chain(for category: TaskCategory) -> [WireChainEntry] {

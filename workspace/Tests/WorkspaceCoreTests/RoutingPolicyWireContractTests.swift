@@ -135,16 +135,52 @@ final class RoutingPolicyWireContractTests: XCTestCase {
             "revision is the CAS token — a document without it is unusable, not tolerable")
     }
 
-    /// SELECTION: the daemon's vocabulary (never-configured/auto/choice)
-    /// is not one this build can write (it speaks spread/strict). It must not
-    /// offer a control whose every persist the daemon would refuse — and it
-    /// must not silently show "Spread by capacity" for a mode that is really
-    /// "never-configured".
-    func testSelectionThisBuildCannotSpeakIsNotEditable() throws {
+    /// SELECTION: these are the values emitted by the daemon and sent back by
+    /// `hive routing set-selection`. The control offers only the two decisions;
+    /// never-configured remains a readable state the user can escape.
+    func testSelectionMirrorsTheDaemonContractAndIsWritable() throws {
         let document = try RoutingPolicyDocument.decode(from: try wireFixture())
         XCTAssertTrue(document.selectionOnWire)
-        XCTAssertFalse(
-            document.selectionWritable,
-            "the daemon speaks a selection vocabulary this build cannot write")
+        XCTAssertTrue(document.selectionWritable)
+        XCTAssertEqual(document.globalSelection, .neverConfigured)
+        XCTAssertEqual(document.selectionOverride(for: .complexCoding), .choice)
+        XCTAssertEqual(document.selectionOverride(for: .lightResearch), .auto)
+        XCTAssertEqual(SelectionMode.neverConfigured.rawValue, "never-configured")
+        XCTAssertEqual(SelectionMode.auto.rawValue, "auto")
+        XCTAssertEqual(SelectionMode.choice.rawValue, "choice")
+        XCTAssertEqual(
+            SelectionMode.userChoices, [.choice, .auto],
+            "never-configured is legible state, not a third user choice")
+    }
+
+    /// A future selection mode is preserved in the document without blanking
+    /// Settings, but this build must not offer a control that would rewrite it.
+    func testUnknownSelectionModeDisablesOnlyItsControl() throws {
+        var json = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: try wireFixture()) as? [String: Any])
+        var selection = try XCTUnwrap(json["selection"] as? [String: Any])
+        selection["global"] = "future-selection"
+        json["selection"] = selection
+
+        let document = try RoutingPolicyDocument.decode(
+            from: JSONSerialization.data(withJSONObject: json))
+        XCTAssertEqual(document.revision, 6, "the document still decoded")
+        XCTAssertNil(document.globalSelection)
+        XCTAssertEqual(document.selection.global, "future-selection")
+        XCTAssertFalse(document.selectionWritable)
+    }
+
+    /// A daemon predating selection modes never receives a write it cannot
+    /// accept. The rest of its policy document remains readable.
+    func testOlderDaemonWithoutSelectionDisablesOnlyItsControl() throws {
+        var json = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: try wireFixture()) as? [String: Any])
+        json.removeValue(forKey: "selection")
+
+        let document = try RoutingPolicyDocument.decode(
+            from: JSONSerialization.data(withJSONObject: json))
+        XCTAssertEqual(document.revision, 6, "the document still decoded")
+        XCTAssertFalse(document.selectionOnWire)
+        XCTAssertFalse(document.selectionWritable)
     }
 }

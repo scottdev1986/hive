@@ -87,16 +87,17 @@ final class ChainSectionView: NSView {
             return
         }
 
-        // ── Spread override: visible only when this category DIFFERS from
+        // ── Selection override: visible only when this category DIFFERS from
         // the global mode (creation lives beside the global control).
-        if let category, let override = dataSource.spreadOverride(category) {
+        if let category, let override = dataSource.selectionOverride(category) {
             let badge = CapsuleBadge(
-                text: override == .strictOrder
-                    ? MCCCopy.spreadStrictOrder : MCCCopy.spreadByCapacity,
-                symbol: "arrow.triangle.branch", style: .neutral)
+                text: MCCCopy.selectionTitle(override),
+                symbol: override == .neverConfigured
+                    ? "exclamationmark.triangle.fill" : "arrow.triangle.branch",
+                style: override == .neverConfigured ? .warning : .neutral)
             let clear = NSButton(
-                title: MCCCopy.spreadUseGlobal, target: self,
-                action: #selector(clearSpreadOverride(_:)))
+                title: MCCCopy.selectionUseGlobal, target: self,
+                action: #selector(clearSelectionOverride(_:)))
             clear.controlSize = .small
             clear.bezelStyle = .inline
             let row = NSStackView(views: [badge, clear])
@@ -104,9 +105,8 @@ final class ChainSectionView: NSView {
             row.alignment = .centerY
             row.spacing = Theme.Space.s
             stack.addArrangedSubview(row)
-            let caption = NSTextField(wrappingLabelWithString:
-                override == .strictOrder
-                    ? MCCCopy.spreadStrictCaption : MCCCopy.spreadByCapacityCaption)
+            let caption = NSTextField(
+                wrappingLabelWithString: MCCCopy.selectionCaption(override))
             caption.font = Theme.Font.caption
             caption.textColor = .tertiaryLabelColor
             stack.addArrangedSubview(caption)
@@ -224,9 +224,9 @@ final class ChainSectionView: NSView {
             category, sender.indexOfSelectedItem == 0 ? .refuse : .useGlobalFallback)
     }
 
-    @objc private func clearSpreadOverride(_ sender: Any?) {
+    @objc private func clearSelectionOverride(_ sender: Any?) {
         guard let category else { return }
-        dataSource.setCategorySpread(category, nil)
+        dataSource.setCategorySelection(category, nil)
     }
 
     // MARK: Add
