@@ -74,7 +74,7 @@ else
 fi
 
 OUT="$(mktemp -d)"
-BUILD_ARGS="--version 0.0.0-dryrun --commit dryrun --out $OUT"
+BUILD_ARGS="--version 0.0.0 --commit dryrun --out $OUT"
 [ "$FULL" = 1 ] || BUILD_ARGS="$BUILD_ARGS --skip-workspace"
 
 say "Building and signing via the production build.ts"

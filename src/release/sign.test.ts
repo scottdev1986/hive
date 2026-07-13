@@ -10,7 +10,13 @@
  */
 import { describe, expect, test } from "bun:test";
 import { generateKeyPairSync } from "node:crypto";
-import { readFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { verifyManifest } from "./manifest";
 import { signingConfigFromEnv } from "./sign";
@@ -185,5 +191,31 @@ describe("the release workflow's signing steps", () => {
     expect(verify).toBeGreaterThan(0);
     expect(tag).toBeGreaterThan(verify);
     expect(workflow).toContain("--require-notarization");
+  });
+
+  test("the verification gate rejects a malformed manifest even when signing is off", () => {
+    const root = mkdtempSync(join(tmpdir(), "hive-manifest-gate-"));
+    const path = join(root, "hive-release.json");
+    try {
+      writeFileSync(path, JSON.stringify({
+        schema: 1,
+        version: "../../invalid",
+      }));
+      const result = Bun.spawnSync([
+        process.execPath,
+        "run",
+        join(repoRoot, "scripts/signing/verify-manifest.ts"),
+        path,
+      ], {
+        cwd: repoRoot,
+        env: { ...process.env, HIVE_RELEASE_PUBLIC_KEY: "" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      expect(result.exitCode).not.toBe(0);
+      expect(result.stderr.toString()).toContain("invalid release manifest");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });

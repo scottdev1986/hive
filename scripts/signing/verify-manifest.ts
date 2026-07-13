@@ -19,12 +19,25 @@
  * the release instead of burning a version number on an uninstallable one.
  */
 import { readFileSync } from "node:fs";
-import { verifyManifest, releaseKeys } from "../../src/release/manifest";
+import {
+  parseReleaseManifest,
+  releaseKeys,
+  verifyManifest,
+} from "../../src/release/manifest";
 
 const manifestPath = process.argv[2];
 if (manifestPath === undefined) {
   console.error("usage: verify-manifest.ts <manifest.json>");
   process.exit(2);
+}
+
+const manifestBytes = new Uint8Array(readFileSync(manifestPath));
+try {
+  parseReleaseManifest(JSON.parse(Buffer.from(manifestBytes).toString("utf8")));
+} catch (error) {
+  const message = error instanceof Error ? error.message : String(error);
+  console.error(`::error::invalid release manifest: ${message}`);
+  process.exit(1);
 }
 
 const publicKey = process.env.HIVE_RELEASE_PUBLIC_KEY?.trim();
@@ -35,7 +48,6 @@ if (publicKey === undefined || publicKey === "") {
   process.exit(0);
 }
 
-const manifestBytes = new Uint8Array(readFileSync(manifestPath));
 let signature: string | null;
 try {
   signature = readFileSync(`${manifestPath}.sig`, "utf8").trim();

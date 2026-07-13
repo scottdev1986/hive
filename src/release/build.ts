@@ -32,6 +32,7 @@ import { currentBuildHash } from "../daemon/handshake";
 import { DAEMON_SCHEMA_EPOCH, DAEMON_WIRE_PROTOCOL } from "../daemon/handshake";
 import {
   MANIFEST_ASSET,
+  parseReleaseManifest,
   RELEASE_MANIFEST_SCHEMA,
   type ReleaseArtifact,
   type ReleaseManifest,
@@ -276,7 +277,7 @@ export async function build(options: Options): Promise<ReleaseManifest> {
     artifacts.push(...(await finalizeWorkspace(options, appBundle)));
   }
 
-  const manifest: ReleaseManifest = {
+  const manifest = parseReleaseManifest({
     schema: RELEASE_MANIFEST_SCHEMA,
     version: options.version,
     tag: `v${options.version}`,
@@ -287,7 +288,7 @@ export async function build(options: Options): Promise<ReleaseManifest> {
     wireProtocol: { ...DAEMON_WIRE_PROTOCOL },
     schemaEpoch: DAEMON_SCHEMA_EPOCH,
     artifacts,
-  };
+  });
   await writeFile(
     join(options.out, MANIFEST_ASSET),
     `${JSON.stringify(manifest, null, 2)}\n`,
