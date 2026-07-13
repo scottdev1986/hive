@@ -76,17 +76,25 @@ export function defaultConfigPath(): string {
   return join(Bun.env.HIVE_HOME ?? join(homedir(), ".hive"), "config.toml");
 }
 
+let pendingPersistence: Promise<void> = Promise.resolve();
+
 /** Write the autonomy key into the user's config file, atomically: the new
  * text lands under a temp name and a rename makes it the file, so no reader
  * ever sees a half-written config. */
-export async function persistAutonomy(
+export function persistAutonomy(
   value: Autonomy,
   path = defaultConfigPath(),
 ): Promise<void> {
-  const file = Bun.file(path);
-  const text = (await file.exists()) ? await file.text() : "";
-  const next = upsertAutonomy(text, value);
-  const temp = `${path}.tmp-${process.pid}`;
-  await Bun.write(temp, next);
-  await rename(temp, path);
+  // Concurrent HTTP requests must commit in call order; sharing the process's
+  // staging name without this queue can rename another request's contents.
+  const write = pendingPersistence.then(async () => {
+    const file = Bun.file(path);
+    const text = (await file.exists()) ? await file.text() : "";
+    const next = upsertAutonomy(text, value);
+    const temp = `${path}.tmp-${process.pid}`;
+    await Bun.write(temp, next);
+    await rename(temp, path);
+  });
+  pendingPersistence = write.catch(() => undefined);
+  return write;
 }

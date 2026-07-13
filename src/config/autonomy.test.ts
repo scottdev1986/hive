@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { persistAutonomy, upsertAutonomy } from "./autonomy";
@@ -67,5 +67,23 @@ describe("persistAutonomy", () => {
     expect(text.match(/autonomy/g)).toHaveLength(1);
     expect((Bun.TOML.parse(text) as Record<string, unknown>).autonomy)
       .toEqual("sandboxed");
+  });
+
+  test("concurrent writes resolve in request order and leave no staging file", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-autonomy-concurrent-"));
+    roots.push(root);
+    const path = join(root, "config.toml");
+
+    await Promise.all([
+      persistAutonomy("dangerous", path),
+      persistAutonomy("sandboxed", path),
+    ]);
+
+    const parsed = Bun.TOML.parse(await readFile(path, "utf8")) as Record<
+      string,
+      unknown
+    >;
+    expect(parsed.autonomy).toBe("sandboxed");
+    expect(await readdir(root)).toEqual(["config.toml"]);
   });
 });
