@@ -386,6 +386,14 @@ final class ProjectStateTests: XCTestCase {
         XCTAssertNil(decoded.orchestrator)
     }
 
+    func testUnknownAutonomyDoesNotEnableKnownControls() throws {
+        let line = #"{"v":1,"agents":[],"autonomy":"future-mode"}"#
+
+        let decoded = try XCTUnwrap(FeedLine.parse(line))
+
+        XCTAssertNil(decoded.autonomy)
+    }
+
     func testFeedLineRejectsOnlyTheAgentFieldWhenAnyIdentityIsMalformed() throws {
         let line = #"{"v":1,"agents":[{"name":"good"},{"name":17}]}"#
 

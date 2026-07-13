@@ -91,7 +91,11 @@ public struct FeedLine: Decodable {
         } else {
             agents = nil
         }
-        autonomy = (try? container.decodeIfPresent(String.self, forKey: .autonomy)) ?? nil
+        let reportedAutonomy =
+            (try? container.decodeIfPresent(String.self, forKey: .autonomy)) ?? nil
+        autonomy = reportedAutonomy.flatMap {
+            ["sandboxed", "dangerous"].contains($0) ? $0 : nil
+        }
         orchestrator = (try? container.decodeIfPresent(
             OrchestratorSnapshot.self, forKey: .orchestrator)) ?? nil
         error = (try? container.decodeIfPresent(String.self, forKey: .error)) ?? nil
