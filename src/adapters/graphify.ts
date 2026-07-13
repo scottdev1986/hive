@@ -32,6 +32,7 @@ import {
   type GraphifyArtifact,
 } from "./graphify-artifacts";
 import { projectStateDir } from "./profile";
+import { withFileLock } from "./file-lock";
 
 /** The exact version the embedded lock pins. The lock is the single source of
  * truth; a lock that stops naming graphifyy is a build error, not a fallback. */
@@ -1001,22 +1002,24 @@ export async function ensureGraphifyIgnored(
     "exclude",
   );
 
-  let existing = "";
-  try {
-    existing = await readFile(excludePath, "utf8");
-  } catch {
-    // No exclude file yet; git treats it as optional and so do we.
-  }
-  const lines = existing.split("\n").map((line) => line.trim());
-  const missing = EXCLUDE_ENTRIES.filter((entry) => !lines.includes(entry));
-  if (missing.length > 0) {
-    await mkdir(dirname(excludePath), { recursive: true });
-    const lead = existing.length === 0 || existing.endsWith("\n") ? "" : "\n";
-    await writeFile(
-      excludePath,
-      `${existing}${lead}${EXCLUDE_COMMENT}\n${missing.join("\n")}\n`,
-    );
-  }
+  await mkdir(dirname(excludePath), { recursive: true });
+  await withFileLock(`${excludePath}.hive.lock`, async () => {
+    let existing = "";
+    try {
+      existing = await readFile(excludePath, "utf8");
+    } catch {
+      // No exclude file yet; git treats it as optional and so do we.
+    }
+    const lines = existing.split("\n").map((line) => line.trim());
+    const missing = EXCLUDE_ENTRIES.filter((entry) => !lines.includes(entry));
+    if (missing.length > 0) {
+      const lead = existing.length === 0 || existing.endsWith("\n") ? "" : "\n";
+      await writeFile(
+        excludePath,
+        `${existing}${lead}${EXCLUDE_COMMENT}\n${missing.join("\n")}\n`,
+      );
+    }
+  });
 
   const verify = await run(
     ["git", "check-ignore", "--no-index", "graphify-out/probe", ".graphifyignore"],

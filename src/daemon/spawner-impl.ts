@@ -16,6 +16,7 @@ import {
 } from "../adapters/tools/claude";
 import {
   buildCodexSpawnCommand,
+  findLatestCodexRollout,
   wrapCodexSpawnWithCapabilityEnv,
   writeCodexAgentConfig,
 } from "../adapters/tools/codex";
@@ -36,6 +37,8 @@ import {
   createWorktree,
   removeWorktree,
   slugify,
+  unavailableAgentNames,
+  WorktreeNameCollisionError,
   type CreatedWorktree,
   assessStrandedWork,
 } from "../adapters/worktrees";
@@ -62,7 +65,6 @@ import {
   type ChainEntry,
 } from "../schemas";
 import type { HiveDatabase } from "./db";
-import { readCodexTelemetry } from "./tool-telemetry";
 import { readinessFailureLayer } from "./launch-failure";
 import type { LaunchFailureLayer } from "./launch-failure";
 import { promptArgument, writeLaunchPrompt } from "./launch-prompt";
@@ -282,6 +284,7 @@ export interface HiveSpawnerDependencies {
   tmux: TmuxSessionManager;
   terminal: TerminalAdapter;
   createWorktree?: WorktreeCreator;
+  unavailableAgentNames?: typeof unavailableAgentNames;
   removeWorktree?: WorktreeRemover;
   /** Asks whether a worktree holds work worth keeping. Injectable for tests;
    * defaults to the real git probe. */
@@ -723,6 +726,7 @@ export class HiveSpawner implements Spawner {
   private readonly readCodexActivity: (
     worktreePath: string,
   ) => Promise<string | null>;
+  private readonly repoUnavailableNames: typeof unavailableAgentNames;
 
   constructor(private readonly dependencies: HiveSpawnerDependencies) {
     this.makeWorktree = dependencies.createWorktree ?? createWorktree;
@@ -732,8 +736,14 @@ export class HiveSpawner implements Spawner {
     this.claudeExecutable = dependencies.claudeExecutable ??
       resolveWorkingClaudeExecutable().path;
     this.readCodexActivity = dependencies.readCodexActivity ??
-      (async (worktreePath) =>
-        (await readCodexTelemetry(worktreePath)).lastActivityAt);
+      (async (worktreePath) => {
+        const rollout = await findLatestCodexRollout(worktreePath);
+        return rollout === null ? null : new Date(rollout.mtimeMs).toISOString();
+      });
+    this.repoUnavailableNames = dependencies.unavailableAgentNames ??
+      (dependencies.createWorktree === undefined
+        ? unavailableAgentNames
+        : async () => new Set());
   }
 
   /** Servers a Codex spawn would inherit from the user's global config. Read
@@ -1369,14 +1379,35 @@ export class HiveSpawner implements Spawner {
   }
 
   async spawn(request: SpawnRequest): Promise<AgentRecord> {
-    const name = this.claimAgentName(request.name);
-    try {
-      return await this.spawnReserved(request, name);
-    } catch (error) {
-      await this.settleStrandedReservation(name);
-      throw error;
-    } finally {
-      this.dependencies.db.releaseAgentName(name);
+    const blocked = new Set<string>();
+    for (;;) {
+      const name = this.claimAgentName(request.name, blocked);
+      try {
+        const repoUnavailable = await this.repoUnavailableNames(
+          this.dependencies.repoRoot,
+          NAME_POOL,
+        );
+        if (repoUnavailable.has(name)) {
+          if (request.name !== undefined) {
+            throw new Error(
+              `Agent name collision: "${name}" already has a worktree or branch in this repository`,
+            );
+          }
+          throw new WorktreeNameCollisionError(
+            `Agent name ${name} is already claimed in this repository`,
+          );
+        }
+        return await this.spawnReserved(request, name);
+      } catch (error) {
+        await this.settleStrandedReservation(name);
+        if (request.name === undefined && error instanceof WorktreeNameCollisionError) {
+          blocked.add(name);
+          continue;
+        }
+        throw error;
+      } finally {
+        this.dependencies.db.releaseAgentName(name);
+      }
     }
   }
 
@@ -1427,7 +1458,10 @@ export class HiveSpawner implements Spawner {
    * unavailable as a live one — reuse can never race a spawning or recovering
    * agent.
    */
-  private claimAgentName(requestedName: string | undefined): string {
+  private claimAgentName(
+    requestedName: string | undefined,
+    blocked: ReadonlySet<string>,
+  ): string {
     const db = this.dependencies.db;
     if (requestedName !== undefined) {
       const name = resolveAgentName(requestedName, db.listAgents());
@@ -1441,18 +1475,18 @@ export class HiveSpawner implements Spawner {
 
     // Each pass either claims a name or rules one out, so this terminates:
     // `blocked` only grows, and selectAgentName throws once the pool is spent.
-    const blocked = new Set<string>();
+    const unavailable = new Set(blocked);
     for (;;) {
-      const candidate = selectAgentName(db.listAgents(), blocked);
+      const candidate = selectAgentName(db.listAgents(), unavailable);
       if (!db.reserveAgentName(candidate)) {
-        blocked.add(candidate);
+        unavailable.add(candidate);
         continue;
       }
       // Holding the reservation, no concurrent spawn can create a live holder
       // for this name, so this check is authoritative rather than racy.
       if (db.getLiveAgentByName(candidate) === null) return candidate;
       db.releaseAgentName(candidate);
-      blocked.add(candidate);
+      unavailable.add(candidate);
     }
   }
 

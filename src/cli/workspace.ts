@@ -43,6 +43,11 @@ import {
 import { renderStartNotice } from "../update/notice";
 import { IS_RELEASE_BUILD } from "../version";
 import { orchestratorTmuxSession } from "../daemon/tmux-sessions";
+import {
+  hiveInstanceSuffix,
+  isDefaultHiveHome,
+} from "../daemon/tmux-sessions";
+import { getHiveHome } from "../daemon/db";
 import { isRepoInitialized, runInitCli } from "./init";
 import { startSession, type StartDeps, type StartedSession } from "./start";
 import { resolveProjectRoot } from "./project-root";
@@ -84,7 +89,13 @@ const openApp = (app: string, args: readonly string[]): Promise<number> =>
   new Promise((resolvePromise, reject) => {
     // `open -a` hands off to LaunchServices, which reuses a running instance —
     // the Workspace multiplexes project windows in one process by design.
-    const child = spawn("open", ["-a", app, "--args", ...args], {
+    const child = spawn("open", [
+      ...(isDefaultHiveHome() ? [] : ["-n"]),
+      "-a",
+      app,
+      "--args",
+      ...args,
+    ], {
       stdio: "ignore",
     });
     child.on("error", reject);
@@ -109,6 +120,10 @@ export async function launchWorkspace(deps: LaunchDeps): Promise<number> {
         deps.session.cwd,
         "--port",
         String(deps.session.port),
+        "--instance-id",
+        hiveInstanceSuffix(),
+        "--instance-home",
+        getHiveHome(),
         "--hive",
         deps.session.hivePath ?? process.execPath,
         "--orchestrator-session",

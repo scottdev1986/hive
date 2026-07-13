@@ -5,6 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { repairLeakedProjectConfig } from "./project-config-cleanup";
 
+const TEST_SCOPE = { instanceId: "test-instance", port: null, allowLegacy: true };
+
 describe("repairLeakedProjectConfig", () => {
   test("removes stale orchestrator runtime files", async () => {
     const root = await mkdtemp(join(tmpdir(), "hive-config-repair-"));
@@ -44,7 +46,7 @@ describe("repairLeakedProjectConfig", () => {
       await writeFile(join(root, ".codex", "hive-notify.sh"),
         '#!/bin/sh\nexec hive event turn-end --agent orchestrator --port 4483 --payload "$1"\n');
 
-      expect(await repairLeakedProjectConfig(root)).toEqual([
+      expect(await repairLeakedProjectConfig(root, TEST_SCOPE)).toEqual([
         ".mcp.json",
         ".claude/settings.local.json",
         ".codex/config.toml",
@@ -94,7 +96,7 @@ describe("repairLeakedProjectConfig", () => {
         "",
       ].join("\n"));
 
-      await repairLeakedProjectConfig(root);
+      await repairLeakedProjectConfig(root, TEST_SCOPE);
 
       expect(await readFile(join(root, ".mcp.json"), "utf8")).toContain('"mine"');
       const settings = await readFile(join(root, ".claude", "settings.local.json"), "utf8");
@@ -114,7 +116,7 @@ describe("repairLeakedProjectConfig", () => {
       await mkdir(join(root, ".codex"), { recursive: true });
       const config = "[mcp_servers.hive]\nurl = 'https://example.com/mcp'\n";
       await writeFile(join(root, ".codex", "config.toml"), config);
-      expect(await repairLeakedProjectConfig(root)).toEqual([]);
+      expect(await repairLeakedProjectConfig(root, TEST_SCOPE)).toEqual([]);
       expect(await readFile(join(root, ".codex", "config.toml"), "utf8"))
         .toEqual(config);
     } finally {

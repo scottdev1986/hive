@@ -9,7 +9,11 @@ import {
   runWorkspace,
   type LaunchDeps,
 } from "./workspace";
-import { orchestratorTmuxSession } from "../daemon/tmux-sessions";
+import {
+  hiveInstanceSuffix,
+  orchestratorTmuxSession,
+} from "../daemon/tmux-sessions";
+import { getHiveHome } from "../daemon/db";
 
 let root: string;
 beforeEach(() => {
@@ -63,6 +67,8 @@ describe("hive opens the installed release Workspace", () => {
     expect(argLists).toEqual([[
       "--project", "/tmp/proj",
       "--port", "4567",
+      "--instance-id", hiveInstanceSuffix(),
+      "--instance-home", getHiveHome(),
       "--hive", "/opt/hive/bin/hive",
       "--orchestrator-session", orchestratorTmuxSession(),
     ]]);
@@ -84,6 +90,8 @@ describe("hive opens the installed release Workspace", () => {
     expect(argLists).toEqual([[
       "--project", "/tmp/proj",
       "--port", "4567",
+      "--instance-id", hiveInstanceSuffix(),
+      "--instance-home", getHiveHome(),
       "--hive", "/opt/hive/bin/hive",
       "--orchestrator-session", orchestratorTmuxSession(),
       "--orchestrator", "codex",
@@ -101,6 +109,8 @@ describe("hive opens the installed release Workspace", () => {
     expect(argLists).toEqual([[
       "--project", "/tmp/proj",
       "--port", "4567",
+      "--instance-id", hiveInstanceSuffix(),
+      "--instance-home", getHiveHome(),
       "--hive", process.execPath,
       "--orchestrator-session", orchestratorTmuxSession(),
     ]]);

@@ -8,6 +8,7 @@ import {
   parseDaemonHandshake,
   type DaemonHandshake,
 } from "./handshake";
+import { hiveInstanceSuffix } from "./tmux-sessions";
 
 export function getPidFilePath(): string {
   return resolve(getHiveHome(), "daemon.pid");
@@ -15,6 +16,114 @@ export function getPidFilePath(): string {
 
 export function getPortFilePath(): string {
   return resolve(getHiveHome(), "daemon.port");
+}
+
+export function getDaemonLockPath(): string {
+  return resolve(getHiveHome(), "daemon.lock");
+}
+
+interface DaemonLock {
+  readonly pid: number;
+  readonly instanceId: string;
+  readonly startedAt: string;
+}
+
+function readDaemonLock(): DaemonLock | null {
+  try {
+    const value: unknown = JSON.parse(readFileSync(getDaemonLockPath(), "utf8"));
+    if (typeof value !== "object" || value === null) return null;
+    const lock = value as Record<string, unknown>;
+    if (
+      !Number.isSafeInteger(lock.pid) || typeof lock.instanceId !== "string" ||
+      typeof lock.startedAt !== "string"
+    ) return null;
+    return lock as unknown as DaemonLock;
+  } catch {
+    return null;
+  }
+}
+
+function processIsAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+function removeLockIfOwned(lock: DaemonLock): boolean {
+  const current = readDaemonLock();
+  if (
+    current?.pid !== lock.pid || current.instanceId !== lock.instanceId ||
+    current.startedAt !== lock.startedAt
+  ) return false;
+  rmSync(getDaemonLockPath(), { force: true });
+  return true;
+}
+
+async function lockHasLiveHandshake(lock: DaemonLock): Promise<boolean> {
+  const port = readDaemonPort();
+  if (port === null || port <= 0 || port > 65_535) return false;
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/handshake`, {
+      signal: AbortSignal.timeout(250),
+    });
+    const handshake = response.ok
+      ? parseDaemonHandshake(await response.json())
+      : null;
+    return handshake?.instanceId === lock.instanceId;
+  } catch {
+    return false;
+  }
+}
+
+/** Acquire the one-daemon-per-HIVE_HOME mutex before opening daemon state. */
+export async function acquireDaemonLock(
+  pid = process.pid,
+  isAlive: (pid: number) => boolean = processIsAlive,
+): Promise<void> {
+  mkdirSync(getHiveHome(), { recursive: true });
+  const lock: DaemonLock = {
+    pid,
+    instanceId: hiveInstanceSuffix(),
+    startedAt: new Date().toISOString(),
+  };
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      writeFileSync(getDaemonLockPath(), `${JSON.stringify(lock)}\n`, {
+        flag: "wx",
+        mode: 0o600,
+      });
+      return;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    }
+
+    const existing = readDaemonLock();
+    if (existing === null) {
+      rmSync(getDaemonLockPath(), { force: true });
+      continue;
+    }
+    const liveHandshake = await lockHasLiveHandshake(existing);
+    const startedAt = Date.parse(existing.startedAt);
+    const recentlyStarted = Number.isFinite(startedAt) &&
+      Date.now() - startedAt < 30_000;
+    if (liveHandshake || (isAlive(existing.pid) && recentlyStarted)) {
+      throw new Error(
+        `Hive daemon for instance ${existing.instanceId} is already starting or running (pid ${existing.pid})`,
+      );
+    }
+    removeLockIfOwned(existing);
+  }
+  throw new Error(`Could not acquire Hive daemon lock at ${getDaemonLockPath()}`);
+}
+
+export function releaseDaemonLock(pid = process.pid): void {
+  const lock = readDaemonLock();
+  if (lock?.pid === pid && lock.instanceId === hiveInstanceSuffix()) {
+    removeLockIfOwned(lock);
+  }
 }
 
 function readNumber(path: string): number | null {
@@ -31,7 +140,7 @@ export function readDaemonPort(): number | null {
 }
 
 export function readConfiguredPort(): number {
-  const port = Number.parseInt(process.env.HIVE_PORT ?? "4483", 10);
+  const port = Number.parseInt(process.env.HIVE_PORT ?? "0", 10);
   if (!Number.isInteger(port) || port < 0 || port > 65_535) {
     throw new Error(`Invalid HIVE_PORT: ${process.env.HIVE_PORT}`);
   }
@@ -94,6 +203,10 @@ export function writeLifecycleFiles(
   pid = process.pid,
 ): void {
   mkdirSync(getHiveHome(), { recursive: true });
+  const recordedPid = readNumber(getPidFilePath());
+  if (recordedPid !== null && recordedPid !== pid && processIsAlive(recordedPid)) {
+    throw new Error(`Refusing to overwrite lifecycle files for live daemon pid ${recordedPid}`);
+  }
   writeFileSync(getPidFilePath(), `${pid}\n`);
   writeFileSync(getPortFilePath(), `${port}\n`);
 }
@@ -105,6 +218,7 @@ export function cleanupLifecycleFiles(pid = process.pid): void {
   }
   rmSync(getPidFilePath(), { force: true });
   rmSync(getPortFilePath(), { force: true });
+  releaseDaemonLock(pid);
 }
 
 /**
@@ -138,7 +252,6 @@ export async function ensureStarted(): Promise<number> {
     );
   }
 
-  cleanupLifecycleFiles();
   const port = readConfiguredPort();
   const child = Bun.spawn(daemonSpawnArgv(IS_RELEASE_BUILD, process.execPath), {
     cwd: process.cwd(),

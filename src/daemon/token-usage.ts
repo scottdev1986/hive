@@ -7,7 +7,9 @@ import {
   claudeProjectDirectory,
   findLatestClaudeSessionId,
 } from "../adapters/tools/claude";
-import { findLatestCodexRollout } from "../adapters/tools/codex";
+import {
+  findCodexRolloutBySessionId,
+} from "../adapters/tools/codex";
 import { findLatestGrokSessionDirectory } from "../adapters/tools/grok";
 import {
   TokenUsageSnapshotSchema,
@@ -203,7 +205,12 @@ class CodexTokenUsageAdapter implements TokenUsageAdapter {
 
   async discover(subject: SubjectRow, knownPaths: string[]) {
     if (knownPaths.length > 0) return { paths: knownPaths };
-    const rollout = await findLatestCodexRollout(subject.cwd, this.home);
+    if (subject.providerSessionId === null) return { paths: [] };
+    const rollout = await findCodexRolloutBySessionId(
+      subject.cwd,
+      subject.providerSessionId,
+      this.home,
+    );
     if (rollout === null) return { paths: [] };
     return {
       providerSessionId: rollout.sessionId,

@@ -16,6 +16,7 @@ import {
   writeGraphifyHook,
   type GraphifyHookKind,
 } from "./graphify-hook";
+import { hiveInstanceSuffix } from "../../daemon/tmux-sessions";
 
 /** Typed, not a bare string in a template: the token the generated hook
  * dispatches on. A kind the script has no arm for silently never nudges. */
@@ -250,12 +251,10 @@ export interface CodexRolloutLocation {
   mtimeMs: number;
 }
 
-// The newest rollout recorded for a worktree — the shared discovery for
-// crash-recovery resume (session id) and the daemon's rollout telemetry
-// sensor (file path and freshness).
-export async function findLatestCodexRollout(
+async function findCodexRollout(
   worktreePath: string,
-  home = homedir(),
+  home: string,
+  sessionId?: string,
 ): Promise<CodexRolloutLocation | null> {
   const target = resolve(worktreePath);
   const rollouts: { path: string; mtimeMs: number }[] = [];
@@ -284,11 +283,31 @@ export async function findLatestCodexRollout(
   rollouts.sort((a, b) => b.mtimeMs - a.mtimeMs);
   for (const rollout of rollouts.slice(0, ROLLOUT_SCAN_LIMIT)) {
     const meta = await readRolloutSessionMeta(rollout.path);
-    if (meta !== null && meta.cwd === target) {
+    if (
+      meta !== null && meta.cwd === target &&
+      (sessionId === undefined || meta.sessionId === sessionId)
+    ) {
       return { path: rollout.path, sessionId: meta.sessionId, mtimeMs: rollout.mtimeMs };
     }
   }
   return null;
+}
+
+// The newest rollout recorded for a worktree — used only when no durable
+// session id has been captured yet (crash-recovery discovery).
+export async function findLatestCodexRollout(
+  worktreePath: string,
+  home = homedir(),
+): Promise<CodexRolloutLocation | null> {
+  return findCodexRollout(worktreePath, home);
+}
+
+export async function findCodexRolloutBySessionId(
+  worktreePath: string,
+  sessionId: string,
+  home = homedir(),
+): Promise<CodexRolloutLocation | null> {
+  return findCodexRollout(worktreePath, home, sessionId);
 }
 
 export async function findLatestCodexSessionId(
@@ -352,6 +371,8 @@ export async function writeCodexAgentConfig(
       shellToken(options.name),
       "--port",
       String(options.daemonPort),
+      "--instance-id",
+      hiveInstanceSuffix(),
     ].join(" "),
     "",
   ].join("\n");

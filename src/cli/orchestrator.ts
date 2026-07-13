@@ -177,7 +177,7 @@ export async function prepareOrchestratorConfig(
       return;
     case "grok": {
       const authorization = operatorHeaders().Authorization;
-      await writeGrokAgentConfig(cwd, {
+      await writeGrokAgentConfig(orchestratorConfigRoot(), {
         daemonPort: port,
         capabilityToken: authorization?.replace(/^Bearer\s+/, ""),
       });
@@ -418,6 +418,7 @@ export function buildOrchestratorLaunchCommand(
         "-c",
         cwd,
         "env",
+        `GROK_HOME=${join(orchestratorConfigRoot(), ".grok")}`,
         ...Object.entries(GROK_COMPATIBILITY_ENV).map(([key, value]) =>
           `${key}=${value}`
         ),

@@ -14,6 +14,8 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
     private let daemonPort: Int
     private let orchestrator: String
     private let orchestratorSession: String?
+    private let instanceID: String
+    private let instanceHome: String
     private let container = LayoutContainerView()
     private let animator = LayoutAnimator()
     private var paneViews: [PaneID: PaneView] = [:]
@@ -29,7 +31,8 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
 
     init(state: ProjectState, attentionCenter: AttentionCenter,
          projectDirectory: String, hivePath: String, daemonPort: Int,
-         orchestrator: String, orchestratorSession: String?) {
+         orchestrator: String, orchestratorSession: String?,
+         instanceID: String, instanceHome: String) {
         self.state = state
         self.attentionCenter = attentionCenter
         self.projectDirectory = projectDirectory
@@ -37,6 +40,8 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
         self.daemonPort = daemonPort
         self.orchestrator = orchestrator
         self.orchestratorSession = orchestratorSession
+        self.instanceID = instanceID
+        self.instanceHome = instanceHome
 
         let window = WorkspaceWindow(
             contentRect: NSRect(x: 120, y: 80, width: 1280, height: 800),
@@ -141,10 +146,13 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
     /// same way the Agents menu reaches the daemon (`hive <verb> --port`).
     /// Overridable so the smoke harness can assert that a close asks for a kill
     /// without ending a real agent.
-    lazy var killAgent: (String) -> Void = { [weak self, hivePath, daemonPort] name in
+    lazy var killAgent: (String) -> Void = { [weak self, hivePath, daemonPort, instanceHome] name in
         let process = Process()
         process.executableURL = URL(fileURLWithPath: hivePath)
         process.arguments = ["kill", name, "--port", String(daemonPort)]
+        var environment = ProcessInfo.processInfo.environment
+        environment["HIVE_HOME"] = instanceHome
+        process.environment = environment
         process.standardOutput = FileHandle.nullDevice
         let stderr = Pipe()
         process.standardError = stderr
@@ -254,7 +262,7 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
     private func terminalCommand(for pane: PaneState) -> String {
         switch pane.kind {
         case .orchestrator:
-            return "exec \(shellQuoted(hivePath)) workspace-orchestrator --tool \(shellQuoted(orchestrator)) --port \(daemonPort)"
+            return "exec env HIVE_HOME=\(shellQuoted(instanceHome)) \(shellQuoted(hivePath)) workspace-orchestrator --tool \(shellQuoted(orchestrator)) --port \(daemonPort) --instance-id \(shellQuoted(instanceID))"
         case .agent:
             let session = pane.tmuxSession ?? pane.title
             let target = shellQuoted("=\(session):")

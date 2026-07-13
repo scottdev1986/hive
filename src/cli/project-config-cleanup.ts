@@ -1,6 +1,18 @@
 import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { removeGrokAgentConfig } from "../adapters/tools/grok";
+import { readDaemonPort } from "../daemon/lifecycle";
+import { listInstances } from "../daemon/instances";
+import {
+  hiveInstanceSuffix,
+  isDefaultHiveHome,
+} from "../daemon/tmux-sessions";
+
+interface RepairScope {
+  readonly instanceId: string;
+  readonly port: number | null;
+  readonly allowLegacy: boolean;
+}
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -25,16 +37,19 @@ async function writeJsonOrRemove(
   }
 }
 
-const localHiveUrl = (value: unknown): boolean =>
-  typeof value === "string" && /^http:\/\/127\.0\.0\.1:\d+\/mcp$/.test(value);
+const localHiveUrl = (value: unknown, scope: RepairScope): boolean => {
+  if (typeof value !== "string") return false;
+  if (scope.port !== null && value === `http://127.0.0.1:${scope.port}/mcp`) return true;
+  return scope.allowLegacy && /^http:\/\/127\.0\.0\.1:\d+\/mcp$/.test(value);
+};
 
-function isHiveMcpServer(value: unknown): boolean {
+function isHiveMcpServer(value: unknown, scope: RepairScope): boolean {
   return isRecord(value) &&
-    localHiveUrl(value.url) &&
+    localHiveUrl(value.url, scope) &&
     value.headersHelper === "hive credential --agent orchestrator";
 }
 
-async function cleanClaudeMcp(root: string): Promise<boolean> {
+async function cleanClaudeMcp(root: string, scope: RepairScope): Promise<boolean> {
   const path = join(root, ".mcp.json");
   const text = await readText(path);
   if (text === null) return false;
@@ -47,14 +62,16 @@ async function cleanClaudeMcp(root: string): Promise<boolean> {
   if (!isRecord(parsed) || !isRecord(parsed.mcpServers)) return false;
   const servers = { ...parsed.mcpServers };
   let changed = false;
-  if (isHiveMcpServer(servers.hive)) {
+  if (isHiveMcpServer(servers.hive, scope)) {
     delete servers.hive;
     changed = true;
   }
   const channel = servers["hive-channel"];
   if (isRecord(channel) && channel.command === "hive" &&
     Array.isArray(channel.args) && channel.args[0] === "channel-bridge" &&
-    channel.args.includes("orchestrator")) {
+    channel.args.includes("orchestrator") &&
+    (channel.args.includes(scope.instanceId) ||
+      (scope.allowLegacy && !channel.args.includes("--instance-id")))) {
     delete servers["hive-channel"];
     changed = true;
   }
@@ -66,9 +83,14 @@ async function cleanClaudeMcp(root: string): Promise<boolean> {
   return true;
 }
 
-const hiveOrchestratorCommand = (value: unknown): boolean =>
-  typeof value === "string" &&
-  /^hive (?:event [a-z-]+|statusline) --agent orchestrator --port \d+$/.test(value);
+const hiveOrchestratorCommand = (value: unknown, scope: RepairScope): boolean => {
+  if (typeof value !== "string") return false;
+  if (!/^hive (?:event [a-z-]+|statusline) --agent orchestrator --port \d+/.test(value)) {
+    return false;
+  }
+  const owner = /--instance-id (\S+)/.exec(value)?.[1];
+  return owner === scope.instanceId || (owner === undefined && scope.allowLegacy);
+};
 
 function knownReadOnlyPermissions(value: unknown): boolean {
   if (!isRecord(value) || value.defaultMode !== "default" ||
@@ -83,7 +105,10 @@ function knownReadOnlyPermissions(value: unknown): boolean {
       .every((entry) => deny.has(entry));
 }
 
-function removeHiveHooks(value: unknown): { value: unknown; changed: boolean } {
+function removeHiveHooks(
+  value: unknown,
+  scope: RepairScope,
+): { value: unknown; changed: boolean } {
   if (!isRecord(value)) return { value, changed: false };
   const hooks: Record<string, unknown> = {};
   let changed = false;
@@ -99,7 +124,7 @@ function removeHiveHooks(value: unknown): { value: unknown; changed: boolean } {
         continue;
       }
       const handlers = groupValue.hooks.filter((handler) =>
-        !isRecord(handler) || !hiveOrchestratorCommand(handler.command));
+        !isRecord(handler) || !hiveOrchestratorCommand(handler.command, scope));
       if (handlers.length !== groupValue.hooks.length) changed = true;
       if (handlers.length > 0) groups.push({ ...groupValue, hooks: handlers });
     }
@@ -108,7 +133,7 @@ function removeHiveHooks(value: unknown): { value: unknown; changed: boolean } {
   return { value: hooks, changed };
 }
 
-async function cleanClaudeSettings(root: string): Promise<boolean> {
+async function cleanClaudeSettings(root: string, scope: RepairScope): Promise<boolean> {
   const path = join(root, ".claude", "settings.local.json");
   const text = await readText(path);
   if (text === null) return false;
@@ -121,11 +146,11 @@ async function cleanClaudeSettings(root: string): Promise<boolean> {
   if (!isRecord(parsed)) return false;
   const next = { ...parsed };
   let changed = false;
-  if (isRecord(next.statusLine) && hiveOrchestratorCommand(next.statusLine.command)) {
+  if (isRecord(next.statusLine) && hiveOrchestratorCommand(next.statusLine.command, scope)) {
     delete next.statusLine;
     changed = true;
   }
-  const hooks = removeHiveHooks(next.hooks);
+  const hooks = removeHiveHooks(next.hooks, scope);
   if (hooks.changed) {
     if (isRecord(hooks.value) && Object.keys(hooks.value).length === 0) delete next.hooks;
     else next.hooks = hooks.value;
@@ -143,13 +168,14 @@ async function cleanClaudeSettings(root: string): Promise<boolean> {
   return true;
 }
 
-async function cleanCodexConfig(root: string): Promise<boolean> {
+async function cleanCodexConfig(root: string, scope: RepairScope): Promise<boolean> {
   const path = join(root, ".codex", "config.toml");
   const text = await readText(path);
   if (text === null) return false;
   const blocks = text.split(/(?=^\s*\[)/m);
   const base = blocks.find((block) => /^\s*\[mcp_servers\.hive\]\s*$/m.test(block));
-  if (base === undefined || !/^url\s*=\s*["']http:\/\/127\.0\.0\.1:\d+\/mcp["']\s*$/m.test(base)) {
+  const url = /^url\s*=\s*["'](http:\/\/127\.0\.0\.1:\d+\/mcp)["']\s*$/m.exec(base ?? "")?.[1];
+  if (base === undefined || !localHiveUrl(url, scope)) {
     return false;
   }
   const next = blocks.filter((block) =>
@@ -159,10 +185,11 @@ async function cleanCodexConfig(root: string): Promise<boolean> {
   return true;
 }
 
-async function cleanCodexNotify(root: string): Promise<boolean> {
+async function cleanCodexNotify(root: string, scope: RepairScope): Promise<boolean> {
   const path = join(root, ".codex", "hive-notify.sh");
   const text = await readText(path);
-  if (text === null || !/^#!\/bin\/sh\nexec hive event turn-end --agent orchestrator --port \d+ --payload "\$1"\n$/.test(text)) {
+  if (text === null || !text.startsWith("#!/bin/sh\nexec ") ||
+    !hiveOrchestratorCommand(text.slice("#!/bin/sh\nexec ".length).replace(/ --payload "\$1"\n$/, ""), scope)) {
     return false;
   }
   await rm(path, { force: true });
@@ -170,13 +197,22 @@ async function cleanCodexNotify(root: string): Promise<boolean> {
 }
 
 /** Remove only stale project runtime entries carrying Hive's exact signatures. */
-export async function repairLeakedProjectConfig(root: string): Promise<string[]> {
+export async function repairLeakedProjectConfig(
+  root: string,
+  providedScope?: RepairScope,
+): Promise<string[]> {
+  const scope = providedScope ?? {
+    instanceId: hiveInstanceSuffix(),
+    port: readDaemonPort(),
+    allowLegacy: isDefaultHiveHome() && !(await listInstances())
+      .some((instance) => instance.name !== "default" && instance.running),
+  };
   const repairs = await Promise.all([
-    cleanClaudeMcp(root),
-    cleanClaudeSettings(root),
-    cleanCodexConfig(root),
-    cleanCodexNotify(root),
-    removeGrokAgentConfig(root),
+    cleanClaudeMcp(root, scope),
+    cleanClaudeSettings(root, scope),
+    cleanCodexConfig(root, scope),
+    cleanCodexNotify(root, scope),
+    scope.allowLegacy ? removeGrokAgentConfig(root) : Promise.resolve(false),
   ]);
   return [".mcp.json", ".claude/settings.local.json", ".codex/config.toml", ".codex/hive-notify.sh", ".grok/config.toml"]
     .filter((_, index) => repairs[index]);

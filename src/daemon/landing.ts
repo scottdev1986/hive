@@ -32,9 +32,9 @@
  * over the user's original. When the bytes differ, that proof is gone and the
  * usual rule holds absolutely: name both versions and let the human choose.
  */
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { unlink } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 export type LandBranch = (
   repoRoot: string,
@@ -90,6 +90,67 @@ const lines = (out: string): string[] =>
 
 const plural = (n: number, one: string, many: string): string =>
   n === 1 ? one : many;
+
+async function gitPath(repoRoot: string, name: string): Promise<string> {
+  const result = await runGit(repoRoot, ["rev-parse", "--git-path", name]);
+  if (result.exitCode !== 0 || trimmed(result) === "") return join(repoRoot, ".git", name);
+  const path = trimmed(result);
+  return path.startsWith("/") ? path : resolve(repoRoot, path);
+}
+
+interface LandingLease {
+  readonly pid: number;
+  readonly token: string;
+}
+
+function processIsAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+async function acquireLandingLease(repoRoot: string): Promise<() => void> {
+  const common = await runGit(repoRoot, ["rev-parse", "--git-common-dir"]);
+  if (common.exitCode !== 0 || trimmed(common) === "") {
+    throw new Error(`Cannot land: could not resolve git common directory for ${repoRoot}`);
+  }
+  const commonPath = trimmed(common).startsWith("/")
+    ? trimmed(common)
+    : resolve(repoRoot, trimmed(common));
+  const path = join(commonPath, "hive-landing.lock");
+  const lease: LandingLease = { pid: process.pid, token: crypto.randomUUID() };
+  const encoded = `${JSON.stringify(lease)}\n`;
+  const deadline = Date.now() + LAND_GIT_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    try {
+      writeFileSync(path, encoded, { flag: "wx", mode: 0o600 });
+      return () => {
+        try {
+          if (readFileSync(path, "utf8") === encoded) rmSync(path, { force: true });
+        } catch {
+          // A lease already removed or replaced is not ours to clean up.
+        }
+      };
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    }
+    try {
+      const existing = JSON.parse(readFileSync(path, "utf8")) as Partial<LandingLease>;
+      if (!Number.isSafeInteger(existing.pid) || !processIsAlive(existing.pid!)) {
+        rmSync(path, { force: true });
+        continue;
+      }
+    } catch {
+      rmSync(path, { force: true });
+      continue;
+    }
+    await Bun.sleep(25);
+  }
+  throw new Error(`Cannot land: timed out waiting for the repository landing lease at ${path}`);
+}
 
 /** `git status --porcelain` split into the tracked-but-modified paths that
  * could block a merge. A rename's `XY orig -> new` form is reduced to the
@@ -240,7 +301,7 @@ export async function diagnoseLand(
 ): Promise<LandBlocker | null> {
   // A lock is the one thing that would genuinely make git *wait*, so it is the
   // one worth catching before we start a 30-second deadline running.
-  const lock = join(repoRoot, ".git", "index.lock");
+  const lock = await gitPath(repoRoot, "index.lock");
   if (existsSync(lock)) {
     return blocked(
       `another git process holds the index lock in the primary checkout (${lock})`,
@@ -364,7 +425,7 @@ export function landError(branch: string, blocker: LandBlocker): Error {
   );
 }
 
-export const landBranch: LandBranch = async (repoRoot, branch) => {
+const landBranchUnlocked: LandBranch = async (repoRoot, branch) => {
   const blocker = await diagnoseLand(repoRoot, branch);
   if (blocker !== null) throw landError(branch, blocker);
 
@@ -410,4 +471,13 @@ export const landBranch: LandBranch = async (repoRoot, branch) => {
     );
   }
   return { commit: trimmed(revision) };
+};
+
+export const landBranch: LandBranch = async (repoRoot, branch) => {
+  const release = await acquireLandingLease(repoRoot);
+  try {
+    return await landBranchUnlocked(repoRoot, branch);
+  } finally {
+    release();
+  }
 };

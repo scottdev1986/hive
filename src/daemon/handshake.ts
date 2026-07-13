@@ -3,6 +3,7 @@ import { resolveHandshakeProject } from "./project-identity";
 import { readdir, readFile } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { HIVE_BUILD_HASH, HIVE_VERSION } from "../version";
+import { hiveInstanceSuffix } from "./tmux-sessions";
 
 /**
  * This is intentionally separate from product version. A wire change must not
@@ -20,6 +21,7 @@ export interface DaemonHandshake {
   wireProtocol: { min: number; max: number };
   schemaEpoch: number;
   capabilities: readonly string[];
+  instanceId: string;
   hiveUuid: string;
   identityKey: string;
   repoFamilyKey: string | null;
@@ -74,6 +76,7 @@ export async function expectedDaemonHandshake(
     wireProtocol: DAEMON_WIRE_PROTOCOL,
     schemaEpoch: DAEMON_SCHEMA_EPOCH,
     capabilities: DAEMON_CAPABILITIES,
+    instanceId: hiveInstanceSuffix(),
     ...resolveHandshakeProject(projectRoot),
     generation: DAEMON_GENERATION,
   };
@@ -89,7 +92,8 @@ export function parseDaemonHandshake(value: unknown): DaemonHandshake | null {
   const wire = body.wireProtocol;
   if (
     typeof body.productVersion !== "string" || typeof body.buildHash !== "string" ||
-    typeof body.schemaEpoch !== "number" || typeof body.hiveUuid !== "string" || typeof body.identityKey !== "string" ||
+    typeof body.schemaEpoch !== "number" || typeof body.instanceId !== "string" ||
+    typeof body.hiveUuid !== "string" || typeof body.identityKey !== "string" ||
     !(typeof body.repoFamilyKey === "string" || body.repoFamilyKey === null) ||
     typeof body.generation !== "number" || !Array.isArray(body.capabilities) ||
     !body.capabilities.every((capability) => typeof capability === "string") ||
@@ -103,6 +107,7 @@ export function parseDaemonHandshake(value: unknown): DaemonHandshake | null {
     wireProtocol: { min: protocol.min, max: protocol.max },
     schemaEpoch: body.schemaEpoch,
     capabilities: body.capabilities as string[],
+    instanceId: body.instanceId,
     hiveUuid: body.hiveUuid,
     identityKey: body.identityKey,
     repoFamilyKey: body.repoFamilyKey as string | null,
@@ -110,10 +115,36 @@ export function parseDaemonHandshake(value: unknown): DaemonHandshake | null {
   };
 }
 
+export async function readDaemonHandshake(port: number): Promise<DaemonHandshake> {
+  const response = await fetch(`http://127.0.0.1:${port}/handshake`, {
+    signal: AbortSignal.timeout(1_000),
+  });
+  const handshake = response.ok
+    ? parseDaemonHandshake(await response.json())
+    : null;
+  if (handshake === null) {
+    throw new Error(`Hive daemon on port ${port} returned no valid handshake`);
+  }
+  return handshake;
+}
+
+export async function verifyDaemonInstance(
+  port: number,
+  instanceId: string,
+): Promise<void> {
+  const handshake = await readDaemonHandshake(port);
+  if (handshake.instanceId !== instanceId) {
+    throw new Error(
+      `Refusing daemon on port ${port}: expected Hive instance ${instanceId}, got ${handshake.instanceId}`,
+    );
+  }
+}
+
 export function handshakeMismatch(
   expected: DaemonHandshake,
   actual: DaemonHandshake,
 ): string | null {
+  if (actual.instanceId !== expected.instanceId) return "instance identity";
   if (actual.productVersion !== expected.productVersion) return "product version";
   if (actual.buildHash !== expected.buildHash) return "content-addressed build hash";
   if (actual.hiveUuid !== expected.hiveUuid) return "project identity (HiveUUID)";

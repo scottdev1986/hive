@@ -413,6 +413,8 @@ export class CodexAppServerManager {
       agent.worktreePath,
       "--port",
       String(daemonPort),
+      "--instance-id",
+      hiveInstanceSuffix(),
       "--agent",
       agent.name,
     ];

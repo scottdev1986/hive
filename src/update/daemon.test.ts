@@ -18,6 +18,7 @@ const expected: DaemonHandshake = {
   wireProtocol: { min: 1, max: 1 },
   schemaEpoch: 1,
   capabilities: ["daemon-handshake-v1"],
+  instanceId: "instance-a",
   hiveUuid: "hive-project-a",
   identityKey: "project-a",
   repoFamilyKey: null,

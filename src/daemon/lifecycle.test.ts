@@ -3,10 +3,14 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  acquireDaemonLock,
   daemonSpawnArgv,
+  getDaemonLockPath,
   getPidFilePath,
   isRunning,
   probeDaemonReuse,
+  readConfiguredPort,
+  releaseDaemonLock,
   writeLifecycleFiles,
 } from "./lifecycle";
 import type { DaemonHandshake } from "./handshake";
@@ -18,6 +22,7 @@ const handshake: DaemonHandshake = {
   wireProtocol: { min: 1, max: 1 },
   schemaEpoch: 1,
   capabilities: ["daemon-handshake-v1"],
+  instanceId: "instance-a",
   hiveUuid: "hive-project-a",
   identityKey: "project-a",
   repoFamilyKey: null,
@@ -40,6 +45,42 @@ describe("respawning as the daemon", () => {
 });
 
 describe("daemon lifecycle", () => {
+  test("defaults to an ephemeral port", () => {
+    const previousPort = process.env.HIVE_PORT;
+    delete process.env.HIVE_PORT;
+    try {
+      expect(readConfiguredPort()).toBe(0);
+    } finally {
+      if (previousPort === undefined) delete process.env.HIVE_PORT;
+      else process.env.HIVE_PORT = previousPort;
+    }
+  });
+
+  test("refuses a second daemon lock for one instance", async () => {
+    const previousHome = process.env.HIVE_HOME;
+    const home = mkdtempSync(join(tmpdir(), "hive-lifecycle-lock-"));
+    process.env.HIVE_HOME = home;
+    try {
+      await acquireDaemonLock(10101, () => true);
+      expect(getDaemonLockPath()).toEqual(join(home, "daemon.lock"));
+      await expect(acquireDaemonLock(20202, () => true)).rejects.toThrow(
+        "already starting or running",
+      );
+      releaseDaemonLock(10101);
+      await acquireDaemonLock(20202, () => true);
+      releaseDaemonLock(20202);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      if (previousHome === undefined) delete process.env.HIVE_HOME;
+      else process.env.HIVE_HOME = previousHome;
+    }
+  });
+
+  test("instance identity is part of daemon reuse", () => {
+    expect(handshakeMismatch(handshake, { ...handshake, instanceId: "instance-b" }))
+      .toEqual("instance identity");
+  });
+
   test("a confirmed move retains its opaque handshake identity", () => {
     const moved = { ...handshake, identityKey: "project-b" };
     expect(handshakeMismatch(handshake, moved)).toEqual("project identity key");

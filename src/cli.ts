@@ -66,7 +66,12 @@ import {
 import { repairIdentityFromStagedVersionProbe } from "./update/bootstrap";
 import { runWorkspace } from "./cli/workspace";
 import { runWorkspaceFeedCli } from "./cli/workspace-feed";
+import {
+  printInstances,
+  selectInstanceFromArgv,
+} from "./daemon/instances";
 import { versionLine } from "./version";
+import { verifyDaemonInstance } from "./daemon/handshake";
 import type {
   MemoryScope,
   MemorySource,
@@ -80,6 +85,7 @@ import {
 export interface EventCliOptions {
   agent?: string;
   port?: string;
+  instanceId?: string;
   payload?: string;
   description?: string;
   usageUnits?: string;
@@ -102,6 +108,7 @@ interface CodexAppServerHostCliOptions {
   worktree: string;
   port: string;
   agent: string;
+  instanceId: string;
 }
 
 function parseNonnegative(value: string, label: string): number {
@@ -226,6 +233,7 @@ export function createProgram(): Command {
   program
     .name("hive")
     .description("Coordinate named Claude and Codex agents")
+    .option("--instance <name>", "use a named isolated Hive instance")
     .showHelpAfterError()
     .exitOverride();
 
@@ -240,6 +248,11 @@ export function createProgram(): Command {
   program.action(async () => {
     process.exitCode = await runWorkspace();
   });
+
+  program
+    .command("instances")
+    .description("List the default and named Hive instances")
+    .action(printInstances);
 
   program
     .command("init")
@@ -705,6 +718,7 @@ export function createProgram(): Command {
     .description("Post an agent hook event")
     .option("--agent <name>", "agent name")
     .option("--port <number>", "daemon port")
+    .requiredOption("--instance-id <id>", "expected Hive instance identity")
     .option("--payload <json>", "tool hook JSON payload")
     .option("--description <text>", "approval description")
     .option("--usage-units <number>", "provider or gateway usage units")
@@ -716,6 +730,7 @@ export function createProgram(): Command {
       try {
         // Claude hooks deliver session identity on stdin; explicit CLI and
         // payload options always win over the captured value.
+        await verifyDaemonInstance(parsePort(options.port), options.instanceId!);
         const captured = await readHookStdin();
         await runHiveEvent(
           kind,
@@ -732,7 +747,9 @@ export function createProgram(): Command {
     .description("Render an agent status line and forward subscriber quota")
     .requiredOption("--agent <name>", "agent name")
     .requiredOption("--port <number>", "daemon port")
-    .action(async (options: { agent: string; port: string }) => {
+    .requiredOption("--instance-id <id>", "expected Hive instance identity")
+    .action(async (options: { agent: string; port: string; instanceId: string }) => {
+      await verifyDaemonInstance(parsePort(options.port), options.instanceId);
       const stdin = await Bun.stdin.text().catch(() => "");
       process.stdout.write(
         await runStatusline(options.agent, parsePort(options.port), stdin),
@@ -758,7 +775,9 @@ export function createProgram(): Command {
     )
     .requiredOption("--agent <name>", "agent name")
     .requiredOption("--port <number>", "daemon port")
-    .action(async (options: { agent: string; port: string }) => {
+    .requiredOption("--instance-id <id>", "expected Hive instance identity")
+    .action(async (options: { agent: string; port: string; instanceId: string }) => {
+      await verifyDaemonInstance(parsePort(options.port), options.instanceId);
       await runChannelBridge(options.agent, parsePort(options.port));
     });
 
@@ -793,7 +812,9 @@ export function createProgram(): Command {
   program
     .command("workspace-feed", { hidden: true })
     .requiredOption("--port <number>", "daemon port")
-    .action(async (options: { port: string }) => {
+    .requiredOption("--instance-id <id>", "expected Hive instance identity")
+    .action(async (options: { port: string; instanceId: string }) => {
+      await verifyDaemonInstance(parsePort(options.port), options.instanceId);
       process.exitCode = await runWorkspaceFeedCli(parsePort(options.port));
     });
 
@@ -804,7 +825,9 @@ export function createProgram(): Command {
     .command("workspace-orchestrator", { hidden: true })
     .requiredOption("--tool <tool>", "claude, codex, or grok")
     .requiredOption("--port <number>", "daemon port")
-    .action(async (options: { tool: string; port: string }) => {
+    .requiredOption("--instance-id <id>", "expected Hive instance identity")
+    .action(async (options: { tool: string; port: string; instanceId: string }) => {
+      await verifyDaemonInstance(parsePort(options.port), options.instanceId);
       const tool = CapabilityProviderSchema.safeParse(options.tool);
       if (!tool.success) {
         throw new Error(`unsupported orchestrator tool: ${options.tool}`);
@@ -821,7 +844,9 @@ export function createProgram(): Command {
     .requiredOption("--worktree <path>")
     .requiredOption("--port <number>")
     .requiredOption("--agent <name>")
+    .requiredOption("--instance-id <id>")
     .action(async (options: CodexAppServerHostCliOptions) => {
+      await verifyDaemonInstance(parsePort(options.port), options.instanceId);
       process.exitCode = await runCodexAppServerHost({
         socket: options.socket,
         worktree: options.worktree,
@@ -835,6 +860,7 @@ export function createProgram(): Command {
 
 export async function main(argv = process.argv): Promise<number> {
   try {
+    selectInstanceFromArgv(argv);
     repairIdentityFromStagedVersionProbe(argv);
     // The passive update notice trails user-facing commands (npm/gh shape):
     // the check runs alongside the command, the line prints after it, and a

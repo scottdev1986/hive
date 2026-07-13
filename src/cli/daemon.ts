@@ -14,7 +14,11 @@ import { BunTmuxSender } from "../daemon/delivery";
 import { buildGraphBrief } from "../adapters/graphify";
 import { GraphifyService } from "../daemon/graphify-service";
 import { TerminalLayoutManager } from "../daemon/layout";
-import { readConfiguredPort } from "../daemon/lifecycle";
+import {
+  acquireDaemonLock,
+  readConfiguredPort,
+  releaseDaemonLock,
+} from "../daemon/lifecycle";
 import { HiveDaemon } from "../daemon/server";
 import { HiveSpawner } from "../daemon/spawner-impl";
 import { QuotaLedger } from "../daemon/quota-ledger";
@@ -45,6 +49,8 @@ import { persistAutonomy } from "../config/autonomy";
 import { readModelInventory } from "../daemon/model-inventory";
 
 export async function runDaemon(): Promise<void> {
+  await acquireDaemonLock();
+  process.once("exit", () => releaseDaemonLock());
   const repoRoot = process.env.HIVE_PROJECT_ROOT ?? process.cwd();
   const config = await loadHiveConfig();
   const quotaConfig = await loadQuotaConfig();

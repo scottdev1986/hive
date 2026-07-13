@@ -18,6 +18,8 @@ import {
   writeGraphifyHook,
   type GraphifyHookKind,
 } from "./graphify-hook";
+import { hiveInstanceSuffix } from "../../daemon/tmux-sessions";
+import { withFileLock } from "../file-lock";
 
 export interface ClaudeSpawnOptions {
   name: string;
@@ -252,6 +254,27 @@ function deepMerge(
   return merged;
 }
 
+function removeOwnedHiveHooks(
+  settings: Record<string, unknown>,
+  instanceId: string,
+): void {
+  if (!isRecord(settings.hooks)) return;
+  for (const [kind, entries] of Object.entries(settings.hooks)) {
+    if (!Array.isArray(entries)) continue;
+    settings.hooks[kind] = entries.filter((entry) => {
+      if (!isRecord(entry) || !Array.isArray(entry.hooks)) return true;
+      return !entry.hooks.some((hook) => {
+        if (!isRecord(hook) || typeof hook.command !== "string") return false;
+        if (!/^hive event [a-z-]+ --agent \S+ --port \d+/.test(hook.command)) {
+          return false;
+        }
+        const owner = /--instance-id (\S+)/.exec(hook.command)?.[1];
+        return owner === undefined || owner === instanceId;
+      });
+    });
+  }
+}
+
 export function buildClaudeSpawnCommand(
   options: ClaudeSpawnOptions,
 ): string[] {
@@ -408,7 +431,7 @@ export async function seedClaudeWorktreeTrust(
   const key = await realpath(worktreePath).catch(() => resolve(worktreePath));
   const configPath = claudeConfigPath(home);
 
-  const seed = async (): Promise<void> => {
+  const seed = async (): Promise<void> => withFileLock(`${configPath}.hive.lock`, async () => {
     const config = await readJsonObject(configPath);
     const projects = isRecord(config.projects) ? config.projects : {};
     const existing = isRecord(projects[key]) ? projects[key] : {};
@@ -440,7 +463,7 @@ export async function seedClaudeWorktreeTrust(
       await unlink(temporaryPath).catch(() => undefined);
       throw error;
     }
-  };
+  });
 
   // Chain even on failure so one bad seed cannot wedge later spawns.
   const next = trustSeedQueue.then(seed, seed);
@@ -460,6 +483,7 @@ export async function writeClaudeAgentConfig(
     readJsonObject(settingsPath),
     readJsonObject(mcpPath),
   ]);
+  removeOwnedHiveHooks(existingSettings, hiveInstanceSuffix());
 
   const eventCommand = (kind: string): string =>
     [
@@ -470,6 +494,8 @@ export async function writeClaudeAgentConfig(
       shellToken(options.name),
       "--port",
       String(options.daemonPort),
+      "--instance-id",
+      hiveInstanceSuffix(),
     ].join(" ");
 
   // What makes a session read-only, in either mode. Denial is the guarantee:
@@ -605,6 +631,8 @@ export async function writeClaudeAgentConfig(
         shellToken(options.name),
         "--port",
         String(options.daemonPort),
+        "--instance-id",
+        hiveInstanceSuffix(),
       ].join(" "),
     },
     permissions,
@@ -631,6 +659,8 @@ export async function writeClaudeAgentConfig(
                 options.name,
                 "--port",
                 String(options.daemonPort),
+                "--instance-id",
+                hiveInstanceSuffix(),
               ],
             },
           }

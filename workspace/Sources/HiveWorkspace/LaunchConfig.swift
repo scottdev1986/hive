@@ -3,6 +3,7 @@ import Foundation
 /// Arguments the CLI passes at launch:
 ///
 ///     open -a HiveWorkspace --args --project <abs dir> --port <daemon port>
+///       --instance-id <id> --instance-home <abs dir>
 ///       --hive <abs hive binary> --orchestrator-session <tmux session>
 ///       [--orchestrator claude|codex|grok]
 ///
@@ -16,6 +17,8 @@ import Foundation
 struct LaunchConfig {
     var projectDirectory: String?
     var port: Int?
+    var instanceID: String?
+    var instanceHome: String?
     var hivePath: String?
     var orchestrator = "claude"
     var orchestratorSession: String?
@@ -35,18 +38,22 @@ struct LaunchConfig {
     /// A window can only open with the full contract; anything less gets the
     /// explainer window.
     var isComplete: Bool {
-        projectDirectory != nil && port != nil && hivePath != nil
+        projectDirectory != nil && port != nil && instanceID != nil
+            && instanceHome != nil && hivePath != nil
     }
 
     /// The feed subprocess invocation: the override binary verbatim, or
     /// `<hive> workspace-feed`, always with the daemon port appended.
-    var feedInvocation: (executable: String, arguments: [String])? {
-        guard let port else { return nil }
+    var feedInvocation: (executable: String, arguments: [String], environment: [String: String])? {
+        guard let port, let instanceID, let instanceHome else { return nil }
+        var environment = ProcessInfo.processInfo.environment
+        environment["HIVE_HOME"] = instanceHome
         if let feedOverride {
-            return (feedOverride, ["--port", String(port)])
+            return (feedOverride, ["--port", String(port), "--instance-id", instanceID], environment)
         }
         guard let hivePath else { return nil }
-        return (hivePath, ["workspace-feed", "--port", String(port)])
+        return (hivePath, ["workspace-feed", "--port", String(port),
+                           "--instance-id", instanceID], environment)
     }
 
     static func parse(_ arguments: [String]) -> LaunchConfig {
@@ -68,6 +75,10 @@ struct LaunchConfig {
                 config.projectDirectory = iterator.next()
             case "--port":
                 config.port = iterator.next().flatMap(Int.init)
+            case "--instance-id":
+                config.instanceID = iterator.next()
+            case "--instance-home":
+                config.instanceHome = iterator.next()
             case "--hive":
                 config.hivePath = iterator.next()
             case "--orchestrator":

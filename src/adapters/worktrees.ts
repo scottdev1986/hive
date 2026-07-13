@@ -1,5 +1,6 @@
 import { mkdir, realpath } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
+import { hiveInstanceSuffix } from "../daemon/tmux-sessions";
 
 interface GitResult {
   stdout: string;
@@ -81,10 +82,46 @@ export interface UnmergedBranch {
   tip: string;
   unmergedCommits: number;
   preserved?: boolean;
+  ownerInstanceId?: string;
 }
+
+export class WorktreeNameCollisionError extends Error {}
 
 const preservedRef = (branch: string): string =>
   `refs/hive-preserved/${branch}`;
+
+const ownerRef = (branch: string, instanceId = hiveInstanceSuffix()): string =>
+  `refs/hive-owner/${instanceId}/${branch}`;
+
+async function markBranchOwned(
+  repoRoot: string,
+  branch: string,
+  owned: boolean,
+): Promise<void> {
+  const result = owned
+    ? await runGit(repoRoot, ["update-ref", ownerRef(branch), branch])
+    : await runGit(repoRoot, ["update-ref", "-d", ownerRef(branch)]);
+  assertGitSuccess(result, "update-ref");
+}
+
+async function branchOwner(
+  repoRoot: string,
+  branch: string,
+): Promise<string | undefined> {
+  const result = await runGit(repoRoot, [
+    "for-each-ref",
+    "--format=%(refname)",
+    "refs/hive-owner",
+  ]);
+  if (result.exitCode !== 0) return undefined;
+  const suffix = `/${branch}`;
+  for (const ref of result.stdout.split("\n")) {
+    if (!ref.endsWith(suffix)) continue;
+    const owner = ref.slice("refs/hive-owner/".length, -suffix.length);
+    if (owner !== "") return owner;
+  }
+  return undefined;
+}
 
 export async function markBranchPreserved(
   repoRoot: string,
@@ -190,7 +227,18 @@ export async function createWorktree(
     branch,
     path,
   ]);
+  if (result.exitCode !== 0) {
+    const branchTaken = await branchExists(repoRoot, branch);
+    const pathTaken = (await listWorktrees(repoRoot).catch(() => []))
+      .some((worktree) => worktree.path === resolve(path));
+    if (branchTaken || pathTaken) {
+      throw new WorktreeNameCollisionError(
+        `Agent name ${agentName} is already claimed in ${repoRoot}`,
+      );
+    }
+  }
   assertGitSuccess(result, "worktree add");
+  await markBranchOwned(repoRoot, branch, true);
 
   return { path, branch };
 }
@@ -225,9 +273,39 @@ async function deleteBranch(
   repoRoot: string,
   branch: string | null,
 ): Promise<void> {
-  if (branch === null || !await branchExists(repoRoot, branch)) return;
-  const result = await runGit(repoRoot, ["branch", "-D", branch]);
-  assertGitSuccess(result, "branch delete");
+  if (branch === null) return;
+  if (await branchExists(repoRoot, branch)) {
+    const result = await runGit(repoRoot, ["branch", "-D", branch]);
+    assertGitSuccess(result, "branch delete");
+  }
+  await markBranchOwned(repoRoot, branch, false);
+}
+
+export async function unavailableAgentNames(
+  repoRoot: string,
+  candidates: readonly string[],
+): Promise<Set<string>> {
+  const [worktrees, branchResult] = await Promise.all([
+    listWorktrees(repoRoot),
+    runGit(repoRoot, [
+      "for-each-ref",
+      "--format=%(refname:short)",
+      "refs/heads/hive",
+    ]),
+  ]);
+  const marker = `${join(".hive", "worktrees")}/`;
+  const worktreeNames = new Set(
+    worktrees
+      .filter((worktree) => worktree.path.includes(marker))
+      .map((worktree) => basename(worktree.path)),
+  );
+  const branches = branchResult.exitCode === 0
+    ? branchResult.stdout.split("\n")
+    : [];
+  return new Set(candidates.filter((name) =>
+    worktreeNames.has(name) ||
+    branches.some((branch) => branch.startsWith(`hive/${name}-`))
+  ));
 }
 
 async function branchExists(repoRoot: string, branch: string): Promise<boolean> {
@@ -348,11 +426,13 @@ export async function listUnmergedHiveBranches(
       mainBranch,
     );
     const preserved = await isBranchPreserved(repoRoot, branch);
+    const ownerInstanceId = await branchOwner(repoRoot, branch);
     branches.push({
       branch,
       tip,
       unmergedCommits,
       ...(preserved ? { preserved } : {}),
+      ...(ownerInstanceId === undefined ? {} : { ownerInstanceId }),
     });
   }
   return branches;

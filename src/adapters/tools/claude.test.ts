@@ -32,6 +32,7 @@ import {
   HIVE_CHANNEL_SERVER_NAME,
 } from "./claude";
 import { GRAPHIFY_HOOK_SCRIPT } from "./graphify-hook";
+import { hiveInstanceSuffix } from "../../daemon/tmux-sessions";
 
 let tempRoot = "";
 let worktreePath = "";
@@ -445,13 +446,13 @@ describe("Claude adapter", () => {
     });
     expect(settings.enableAllProjectMcpServers).toEqual(true);
     expect(settings.hooks.SessionStart?.[0]?.hooks[0]?.command).toEqual(
-      "hive event session-start --agent orchestrator --port 4317",
+      `hive event session-start --agent orchestrator --port 4317 --instance-id ${hiveInstanceSuffix()}`,
     );
     expect(settings.hooks.Stop?.[0]?.hooks[0]?.command).toEqual(
-      "hive event turn-end --agent orchestrator --port 4317",
+      `hive event turn-end --agent orchestrator --port 4317 --instance-id ${hiveInstanceSuffix()}`,
     );
     expect(settings.hooks.Notification?.[0]?.hooks[0]?.command).toEqual(
-      "hive event notification --agent orchestrator --port 4317",
+      `hive event notification --agent orchestrator --port 4317 --instance-id ${hiveInstanceSuffix()}`,
     );
     expect(mcp).toEqual({
       mcpServers: {
@@ -617,7 +618,7 @@ describe("Claude adapter", () => {
       settings.hooks.UserPromptSubmit?.map((entry) => entry.hooks[0]?.command),
     ).toEqual([
       undefined,
-      "hive event turn-start --agent agent-merge --port 5000",
+      `hive event turn-start --agent agent-merge --port 5000 --instance-id ${hiveInstanceSuffix()}`,
     ]);
     expect(settings.hooks.SessionStart).toHaveLength(2);
     expect(
@@ -626,7 +627,7 @@ describe("Claude adapter", () => {
       ),
     ).toEqual([
       "user-session-start",
-      "hive event session-start --agent agent-merge --port 5000",
+      `hive event session-start --agent agent-merge --port 5000 --instance-id ${hiveInstanceSuffix()}`,
     ]);
     expect(mcp.projectSetting).toEqual("preserved");
     expect(mcp.mcpServers.existing).toBeDefined();
@@ -664,7 +665,7 @@ describe("Claude adapter", () => {
       entry.hooks[0]?.command
     );
     expect(turnStartCommands).toContain(
-      "hive event turn-start --agent orchestrator --port 4483",
+      `hive event turn-start --agent orchestrator --port 4483 --instance-id ${hiveInstanceSuffix()}`,
     );
   });
 
@@ -701,7 +702,7 @@ describe("Claude adapter", () => {
 
     expect(settings.statusLine).toEqual({
       type: "command",
-      command: "hive statusline --agent maya --port 4317",
+      command: `hive statusline --agent maya --port 4317 --instance-id ${hiveInstanceSuffix()}`,
     });
   });
 });
@@ -775,7 +776,10 @@ describe("Claude Channels", () => {
     expect(mcp.mcpServers[HIVE_CHANNEL_SERVER_NAME]).toEqual({
       type: "stdio",
       command: "hive",
-      args: ["channel-bridge", "--agent", "maya", "--port", "4317"],
+      args: [
+        "channel-bridge", "--agent", "maya", "--port", "4317",
+        "--instance-id", hiveInstanceSuffix(),
+      ],
     });
   });
 

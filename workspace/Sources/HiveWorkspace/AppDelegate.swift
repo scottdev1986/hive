@@ -60,7 +60,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         guard config.isComplete,
               let projectDirectory = config.projectDirectory,
               let hivePath = config.hivePath,
-              let daemonPort = config.port else {
+              let daemonPort = config.port,
+              let instanceID = config.instanceID,
+              let instanceHome = config.instanceHome else {
             NSApp.mainMenu = MainMenuBuilder.build()
             if config.smoke {
                 // Smoke must never hang on a bad invocation.
@@ -79,7 +81,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             state: state, attentionCenter: attentionCenter,
             projectDirectory: projectDirectory, hivePath: hivePath,
             daemonPort: daemonPort, orchestrator: config.orchestrator,
-            orchestratorSession: config.orchestratorSession)
+            orchestratorSession: config.orchestratorSession,
+            instanceID: instanceID, instanceHome: instanceHome)
         self.controller = controller
         NSApp.mainMenu = MainMenuBuilder.build(paneTarget: controller)
 
@@ -134,7 +137,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// external terminal windows. It dies with the app (`retireFeed()` below).
     private func startFeed() {
         guard let invocation = config.feedInvocation else { return }
-        let feed = FeedClient(executable: invocation.executable, arguments: invocation.arguments)
+        let feed = FeedClient(executable: invocation.executable,
+                              arguments: invocation.arguments,
+                              environment: invocation.environment)
         feed.onSnapshot = { [weak self] agents, orchestrator in
             // A snapshot is the feed proving it works: the budget is for a feed
             // that cannot run, not for one that was killed five times.
@@ -247,10 +252,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// (stdout names the confirmed mode); the feed reconciles it afterwards
     /// regardless, so the menu never claims a state the daemon doesn't hold.
     private func setAutonomy(_ mode: String) {
-        guard let hivePath = config.hivePath, let port = config.port else { return }
+        guard let hivePath = config.hivePath, let port = config.port,
+              let instanceHome = config.instanceHome else { return }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: hivePath)
         process.arguments = ["autonomy", mode, "--port", String(port)]
+        var environment = ProcessInfo.processInfo.environment
+        environment["HIVE_HOME"] = instanceHome
+        process.environment = environment
         let stdout = Pipe()
         process.standardOutput = stdout
         process.standardError = FileHandle.standardError
@@ -351,10 +360,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// child outlives this process — the wait is to observe it, not to power
     /// it).
     private func stopSession() {
-        guard let hivePath = config.hivePath, !config.smoke else { return }
+        guard let hivePath = config.hivePath, let instanceHome = config.instanceHome,
+              !config.smoke else { return }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: hivePath)
         process.arguments = ["stop"]
+        var environment = ProcessInfo.processInfo.environment
+        environment["HIVE_HOME"] = instanceHome
+        process.environment = environment
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.standardError
         do {

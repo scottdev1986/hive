@@ -39,9 +39,10 @@ final class FeedClient {
     var onError: ((String) -> Void)?
     var onExit: (() -> Void)?
 
-    init(executable: String, arguments: [String]) {
+    init(executable: String, arguments: [String], environment: [String: String]? = nil) {
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = arguments
+        process.environment = environment
         process.standardInput = stdinPipe
         process.standardOutput = stdout
         process.standardError = FileHandle.standardError

@@ -1,4 +1,4 @@
-import { readdir, readFile, rm } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -25,6 +25,7 @@ import {
   writeMemoryFact as writeMemoryFactFile,
 } from "../adapters/memory";
 import { ensureProfile } from "../adapters/profile";
+import { withFileLock } from "../adapters/file-lock";
 import { graphLocate, readGraphifyState } from "../adapters/graphify";
 import { GraphifyService } from "./graphify-service";
 import {
@@ -114,6 +115,8 @@ import {
   writeLifecycleFiles,
 } from "./lifecycle";
 import { expectedDaemonHandshake } from "./handshake";
+import { listInstances } from "./instances";
+import { hiveInstanceSuffix } from "./tmux-sessions";
 import {
   compactActiveTeam,
   compactApprovalDescription,
@@ -490,6 +493,7 @@ export interface HiveDaemonOptions {
     branch: string | null,
   ) => Promise<StrandedWork>;
   listUnmergedHiveBranches?: (repoRoot: string) => Promise<UnmergedBranch[]>;
+  liveInstanceIds?: () => Promise<ReadonlySet<string>>;
   landBranch?: LandBranch;
   readLandReadiness?: ReadLandReadiness;
   port?: number;
@@ -615,6 +619,7 @@ export class HiveDaemon {
   private readonly listUnmergedBranches: NonNullable<
     HiveDaemonOptions["listUnmergedHiveBranches"]
   >;
+  private readonly liveInstanceIds: () => Promise<ReadonlySet<string>>;
   /** Stranded branches already reported this boot, keyed by branch and tip.
    * In memory on purpose: a restart must re-report, because the orchestrator
    * that heard the first alert did not survive it. */
@@ -808,6 +813,12 @@ export class HiveDaemon {
     this.assessStranded = options.assessStrandedWork ?? assessStrandedWork;
     this.listUnmergedBranches = options.listUnmergedHiveBranches ??
       listUnmergedHiveBranches;
+    this.liveInstanceIds = options.liveInstanceIds ?? (async () =>
+      new Set(
+        (await listInstances())
+          .filter((instance) => instance.running)
+          .map((instance) => instance.instanceId),
+      ));
     this.recovery = new CrashRecovery({
       db: this.db,
       tmux: this.tmux,
@@ -1039,7 +1050,12 @@ export class HiveDaemon {
   // MCP calls never race on slug generation or interleave a rebuild with an
   // in-flight upsert.
   private serializeMemory<T>(operation: () => Promise<T>): Promise<T> {
-    const run = this.memoryLock.then(operation, operation);
+    const locked = async (): Promise<T> => {
+      const directory = join(this.repoRoot, ".hive");
+      await mkdir(directory, { recursive: true });
+      return withFileLock(join(directory, "memory.lock"), operation);
+    };
+    const run = this.memoryLock.then(locked, locked);
     this.memoryLock = run.then(() => undefined, () => undefined);
     return run;
   }
@@ -1310,7 +1326,10 @@ export class HiveDaemon {
           break;
         case "codex":
           try {
-            telemetry = await this.readCodexTelemetry(worktree);
+            telemetry = await this.readCodexTelemetry(
+              worktree,
+              agent.toolSessionId,
+            );
           } catch {
             continue;
           }
@@ -2124,9 +2143,15 @@ export class HiveDaemon {
     const branches = await this.listUnmergedBranches(this.repoRoot);
     if (branches.length === 0) return;
     const agents = this.db.listAgents();
+    const liveInstances = await this.liveInstanceIds().catch(() => new Set<string>());
+    const ownInstanceId = hiveInstanceSuffix();
 
-    for (const { branch, tip, unmergedCommits, preserved } of branches) {
+    for (const { branch, tip, unmergedCommits, preserved, ownerInstanceId } of branches) {
       if (preserved) continue;
+      if (
+        ownerInstanceId !== undefined && ownerInstanceId !== ownInstanceId &&
+        liveInstances.has(ownerInstanceId)
+      ) continue;
       const owners = agents.filter((agent) => agent.branch === branch);
       // A live agent is still working on its own branch; that is not stranded
       // work, it is work in progress.

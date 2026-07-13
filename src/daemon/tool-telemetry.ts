@@ -1,7 +1,10 @@
 import { open, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { claudeProjectDirectory } from "../adapters/tools/claude";
-import { findLatestCodexRollout } from "../adapters/tools/codex";
+import {
+  findCodexRolloutBySessionId,
+  findLatestCodexRollout,
+} from "../adapters/tools/codex";
 import { findLatestGrokSessionDirectory } from "../adapters/tools/grok";
 import { type CapabilityProvider, unknownVendor } from "../schemas/capability";
 
@@ -29,7 +32,10 @@ export interface ToolTelemetry {
   lastActivityAt: string | null;
 }
 
-export type TelemetryReader = (worktreePath: string) => Promise<ToolTelemetry>;
+export type TelemetryReader = (
+  worktreePath: string,
+  toolSessionId?: string,
+) => Promise<ToolTelemetry>;
 
 const NO_TELEMETRY: ToolTelemetry = { contextPct: null, lastActivityAt: null };
 
@@ -179,11 +185,13 @@ export async function readClaudeTelemetry(
 
 export async function readCodexTelemetry(
   worktreePath: string,
+  toolSessionId: string | undefined,
   home?: string,
 ): Promise<ToolTelemetry> {
+  if (toolSessionId === undefined) return NO_TELEMETRY;
   const rollout = home === undefined
-    ? await findLatestCodexRollout(worktreePath)
-    : await findLatestCodexRollout(worktreePath, home);
+    ? await findCodexRolloutBySessionId(worktreePath, toolSessionId)
+    : await findCodexRolloutBySessionId(worktreePath, toolSessionId, home);
   if (rollout === null) return NO_TELEMETRY;
   const lastActivityAt = new Date(rollout.mtimeMs).toISOString();
   const tail = await readFileTail(rollout.path);
@@ -428,9 +436,10 @@ export async function readGraphifyCalls(
       break;
     }
     case "codex": {
+      if (toolSessionId === undefined) return cursor ?? null;
       const rollout = home === undefined
-        ? await findLatestCodexRollout(worktreePath)
-        : await findLatestCodexRollout(worktreePath, home);
+        ? await findCodexRolloutBySessionId(worktreePath, toolSessionId)
+        : await findCodexRolloutBySessionId(worktreePath, toolSessionId, home);
       if (rollout === null) return cursor ?? null;
       path = rollout.path;
       break;
