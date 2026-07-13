@@ -2053,6 +2053,38 @@ describe("HiveDaemon HTTP server", () => {
     }
   });
 
+  test("a read-only agent reaches working without becoming control-paused", async () => {
+    const db = new HiveDatabase(join(home, "reader-lifecycle.db"));
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new StubSpawner(),
+      tmuxSender: new SilentTmuxSender(db),
+    });
+    db.insertAgent(agent({
+      status: "spawning",
+      readOnly: true,
+      writeRevoked: false,
+    }));
+    try {
+      await daemon.processEvent({
+        kind: "turn-start",
+        agentName: "maya",
+        timestamp: "2026-07-10T10:00:00.000Z",
+        toolSessionId: "reader-session",
+      });
+
+      expect(db.getAgentByName("maya")).toMatchObject({
+        status: "working",
+        readOnly: true,
+        writeRevoked: false,
+        toolSessionId: "reader-session",
+      });
+    } finally {
+      await daemon.stop();
+      db.close();
+    }
+  });
+
   test("a dead hook reaps the process tree and closes its viewer", async () => {
     const db = new HiveDatabase(join(home, "dead-hook-teardown.db"));
     const tmux = new FakeDaemonTmux();

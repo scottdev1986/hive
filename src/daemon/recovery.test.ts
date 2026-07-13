@@ -489,6 +489,36 @@ describe("crash resume", () => {
     expect(h.db.getAgentByName("maya")?.toolSessionId).toEqual("disk-session");
   });
 
+  test("manual recovery resumes a read-only agent as a reader", async () => {
+    let configuredReadOnly: boolean | undefined;
+    const h = harness({
+      writeClaudeConfig: async (_worktreePath, options) => {
+        configuredReadOnly = options.readOnly;
+      },
+    });
+    h.signalProofOfLife();
+    h.db.insertAgent(agent({
+      status: "dead",
+      readOnly: true,
+      writeRevoked: false,
+      toolSessionId: "reader-session",
+    }));
+
+    const outcome = await h.recovery.recoverAgent("maya");
+
+    expect(outcome).toEqual({
+      agent: "maya",
+      action: "resumed",
+      sessionId: "reader-session",
+    });
+    expect(h.db.getAgentByName("maya")).toMatchObject({
+      status: "idle",
+      readOnly: true,
+      writeRevoked: false,
+    });
+    expect(configuredReadOnly).toBe(true);
+  });
+
   test("the auto-resume attempt cap converts a crash-looping agent into an explicit death", async () => {
     const h = harness();
     h.db.insertAgent(agent({
