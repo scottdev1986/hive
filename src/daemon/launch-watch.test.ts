@@ -41,7 +41,8 @@ const tmuxBinary = Bun.which("tmux");
 const runnable = claudeBinary !== null && tmuxBinary !== null;
 const suite = runnable ? describe : describe.skip;
 
-let temporaryRoot = "";
+// One root per case, all removed at the end.
+const temporaryRoots: string[] = [];
 
 const run = async (argv: string[], cwd?: string): Promise<void> => {
   const child = Bun.spawn(argv, {
@@ -71,16 +72,30 @@ const capturePane = async (): Promise<string> => {
 afterAll(async () => {
   if (!runnable) return;
   await tmux("kill-session", "-t", SESSION).catch(() => undefined);
-  if (temporaryRoot !== "") {
-    await rm(temporaryRoot, { recursive: true, force: true });
+  for (const root of temporaryRoots) {
+    await rm(root, { recursive: true, force: true });
   }
 });
 
+// Both roles launch identically except for their authority, so the watch is
+// written once and run for each. `readOnly` is the axis that regressed: a
+// reader was pinned to manual approval regardless of autonomy, and — because a
+// reader still reaches its first *turn* perfectly well, and only stalls later
+// at its first *tool* — reaching the turn is not on its own enough to prove the
+// fix. Each case therefore also names the mode it must launch in, which is the
+// assertion the broken build actually fails.
+const CASES = [
+  { role: "writer", agent: "maya", readOnly: false },
+  { role: "read-only", agent: "dennis", readOnly: true },
+] as const;
+
 suite("Claude spawn launch watch", () => {
+  for (const { role, agent, readOnly } of CASES) {
   test(
-    "a fresh agent worktree reaches its first turn with no interactive prompt",
+    `a fresh ${role} worktree reaches its first turn with no interactive prompt`,
     async () => {
-      temporaryRoot = await mkdtemp(join(tmpdir(), "hive-launch-watch-"));
+      const temporaryRoot = await mkdtemp(join(tmpdir(), "hive-launch-watch-"));
+      temporaryRoots.push(temporaryRoot);
       const repository = join(temporaryRoot, "repo");
       const worktree = join(temporaryRoot, "worktree");
       const home = join(temporaryRoot, "home");
@@ -121,21 +136,22 @@ suite("Claude spawn launch watch", () => {
       await writeFile(shim, `#!/bin/sh\necho "$@" >> ${JSON.stringify(hookLog)}\nexit 0\n`);
       await chmod(shim, 0o755);
 
-      // Exactly what a real spawn of a dangerous writer does.
+      // Exactly what a real spawn does under full autonomy ("dangerous"), for
+      // this role.
       await seedClaudeWorktreeTrust(worktree, home);
       await writeClaudeAgentConfig(worktree, {
-        name: "maya",
+        name: agent,
         daemonPort: 41999,
-        readOnly: false,
+        readOnly,
         dangerous: true,
         channels: false,
       });
       const argv = buildClaudeSpawnCommand({
-        name: "maya",
+        name: agent,
         model: "default",
         worktreePath: worktree,
         daemonPort: 41999,
-        readOnly: false,
+        readOnly,
         dangerous: true,
         channels: false,
         executable: claudeBinary!,
@@ -177,11 +193,35 @@ suite("Claude spawn launch watch", () => {
       expect(reachedTurn).toBe(true);
 
       const hooks = await readFile(hookLog, "utf8");
-      expect(hooks).toContain("event session-start --agent maya");
-      expect(hooks).toContain("event turn-start --agent maya");
-      // The worktree settings really took effect, so the writer is autonomous.
+      expect(hooks).toContain(`event session-start --agent ${agent}`);
+      expect(hooks).toContain(`event turn-start --agent ${agent}`);
+      // The worktree settings really took effect, so the agent is autonomous.
+      // This is the line that fails for the read-only case on the build that
+      // shipped the bug: it launched with `--permission-mode default`, whose
+      // pane never says this, and its first WebFetch then raised a dialog
+      // while Hive went on reporting the agent as "working".
       expect(pane).toContain("bypass permissions on");
+
+      if (readOnly) {
+        // Autonomy bought no write authority. Under bypassPermissions a denied
+        // tool is absent from the session, not merely unprompted (claude
+        // 2.1.207), so the reader still cannot touch the worktree — and the
+        // reader capability refuses its landing server-side.
+        const settings = JSON.parse(
+          await readFile(
+            join(worktree, ".claude", "settings.local.json"),
+            "utf8",
+          ),
+        ) as { permissions: { deny: string[] } };
+        expect(settings.permissions.deny).toEqual([
+          "Edit",
+          "Write",
+          "NotebookEdit",
+          "Bash",
+        ]);
+      }
     },
     60_000,
   );
+  }
 });

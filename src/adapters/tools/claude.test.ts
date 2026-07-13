@@ -350,9 +350,9 @@ describe("Claude adapter", () => {
     ).not.toContain("--dangerously-skip-permissions");
   });
 
-  test("a read-only session ignores dangerous autonomy", async () => {
+  test("a read-only session under autonomy bypasses prompts but keeps its deny list", async () => {
     await writeClaudeAgentConfig(worktreePath, {
-      name: "orchestrator",
+      name: "reader",
       daemonPort: 4317,
       readOnly: true,
       dangerous: true,
@@ -363,10 +363,48 @@ describe("Claude adapter", () => {
         join(worktreePath, ".claude", "settings.local.json"),
         "utf8",
       ),
-    ) as { permissions: { defaultMode: string; deny: string[] } };
+    ) as {
+      skipDangerousModePermissionPrompt?: boolean;
+      permissions: { defaultMode: string; deny: string[]; allow?: string[] };
+    };
 
-    expect(settings.permissions.defaultMode).toEqual("default");
-    expect(settings.permissions.deny).toContain("Write");
+    // The user asked for full autonomy and gets it: nothing prompts, so the
+    // first WebFetch cannot park the agent on a dialog no one is watching.
+    expect(settings.permissions.defaultMode).toEqual("bypassPermissions");
+    // The bypass dialog is itself a launch blocker; the mode needs this key.
+    expect(settings.skipDangerousModePermissionPrompt).toBe(true);
+    // Autonomy must not have bought any write authority. Denial, not the
+    // permission mode, is what makes the session read-only.
+    expect(settings.permissions.deny).toEqual([
+      "Edit",
+      "Write",
+      "NotebookEdit",
+      "Bash",
+    ]);
+    // No allow list: an allow list is what broke this, by having to name every
+    // readable tool up front. Under bypass there is nothing left to gate.
+    expect(settings.permissions.allow).toBeUndefined();
+  });
+
+  test("an autonomous reader is not pinned to manual approval by argv", () => {
+    const base = {
+      name: "reader",
+      model: "sonnet",
+      worktreePath: "/tmp/worktree",
+      daemonPort: 4317,
+      readOnly: true,
+    };
+
+    // The flag outranks the settings file, so passing it would silently undo
+    // the bypassPermissions mode written above and restore manual approval.
+    expect(
+      buildClaudeSpawnCommand({ ...base, dangerous: true }),
+    ).not.toContain("--permission-mode");
+    // An attended reader (orchestrator, or the read-only restart of a revoked
+    // writer) passes no autonomy and still gets manual approval.
+    expect(buildClaudeSpawnCommand({ ...base, dangerous: false })).toContain(
+      "--permission-mode",
+    );
   });
 
   test("writes read-only hooks, Bash rules, and HTTP MCP registration", async () => {

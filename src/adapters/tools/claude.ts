@@ -26,13 +26,23 @@ export interface ClaudeSpawnOptions {
   worktreePath: string;
   daemonPort: number;
   readOnly: boolean;
-  /** Writer autonomy: bypass every permission prompt so the session needs no
-   * human input. Applied through the worktree's settings
-   * (permissions.defaultMode "bypassPermissions"). That mode raises a blocking
-   * acceptance dialog on its own — the CLI keys the disclaimer on the mode, not
-   * on the `--dangerously-skip-permissions` flag — so writeClaudeAgentConfig
-   * pairs it with skipDangerousModePermissionPrompt in the same file. Verified
-   * against claude 2.1.206. Ignored for read-only sessions. */
+  /** Autonomy: bypass every permission prompt so the session needs no human
+   * input. Applied through the worktree's settings (permissions.defaultMode
+   * "bypassPermissions"). That mode raises a blocking acceptance dialog on its
+   * own — the CLI keys the disclaimer on the mode, not on the
+   * `--dangerously-skip-permissions` flag — so writeClaudeAgentConfig pairs it
+   * with skipDangerousModePermissionPrompt in the same file. Verified against
+   * claude 2.1.206.
+   *
+   * Applies to READ-ONLY sessions too. It does not widen their authority:
+   * "bypassPermissions" suppresses the prompt, while permissions.deny removes
+   * the write tools outright, and the two are independent. Measured against
+   * claude 2.1.207 — under bypassPermissions a denied tool is not merely
+   * unprompted but absent ("No such tool available: Write. Write exists but is
+   * not enabled in this context"), and the deny list reaches Task subagents as
+   * well, so a reader cannot delegate around it. Landing is refused separately
+   * by the reader capability server-side. Leaving this off for a reader is what
+   * parked one on a WebFetch dialog while Hive reported it "working". */
   dangerous?: boolean;
   /** Launch with the Channels research preview so the hive-channel bridge can
    * push daemon messages into the running session. Attended sessions only: the
@@ -252,7 +262,14 @@ export function buildClaudeSpawnCommand(
   if (options.effort !== undefined) {
     command.push("--effort", options.effort);
   }
-  if (options.readOnly) {
+  // A reader under autonomy takes its mode from the worktree settings
+  // ("bypassPermissions", paired there with a deny list that keeps it unable to
+  // write). The flag would win over that file, so it must not be passed: it is
+  // what pinned autonomous readers to manual approval, where the first WebFetch
+  // raised a dialog no one was watching. An attended reader — the orchestrator,
+  // and the read-only restart of a revoked writer — passes no autonomy and
+  // still gets manual approval here.
+  if (options.readOnly && !(options.dangerous ?? false)) {
     command.push("--permission-mode", "default");
   }
   if (options.scopedSettingsPath !== undefined) {
@@ -455,20 +472,38 @@ export async function writeClaudeAgentConfig(
       String(options.daemonPort),
     ].join(" ");
 
+  // What makes a session read-only, in either mode. Denial is the guarantee:
+  // measured against claude 2.1.207, a denied tool is stripped from the session
+  // (and from its Task subagents) rather than merely prompted for, so it holds
+  // even under "bypassPermissions". The permission MODE only decides who gets
+  // asked — it was never what kept a reader from writing.
+  const readOnlyDeny = ["Edit", "Write", "NotebookEdit", "Bash"];
+
   const permissions = options.readOnly
-    ? {
-        defaultMode: "default",
-        deny: ["Edit", "Write", "NotebookEdit", "Bash"],
-        allow: [
-          "Read",
-          "Glob",
-          "Grep",
-          // Vendor permission prompts are outside Hive's approval queue. The
-          // reader capability still denies write/land server-side, while this
-          // rule lets the agent report, acknowledge, and escalate unattended.
-          "mcp__hive__*",
-        ],
-      }
+    ? (options.dangerous ?? false)
+      ? {
+          // Autonomy means no human input, for a reader as much as a writer.
+          // Everything the deny list leaves standing is a read: Read/Glob/Grep,
+          // WebFetch/WebSearch, and the MCP servers. There is no allow list
+          // because there is nothing left to gate — and an allow list is how
+          // this broke, since it had to enumerate every read tool in advance
+          // and WebFetch was not among them.
+          defaultMode: "bypassPermissions",
+          deny: readOnlyDeny,
+        }
+      : {
+          defaultMode: "default",
+          deny: readOnlyDeny,
+          allow: [
+            "Read",
+            "Glob",
+            "Grep",
+            // Vendor permission prompts are outside Hive's approval queue. The
+            // reader capability still denies write/land server-side, while this
+            // rule lets the agent report, acknowledge, and escalate unattended.
+            "mcp__hive__*",
+          ],
+        }
     : (options.dangerous ?? false)
     ? { defaultMode: "bypassPermissions" }
     : {
@@ -498,7 +533,10 @@ export async function writeClaudeAgentConfig(
   // the agent's worktree instead of relying on the operator's ~/.claude
   // settings. Measured against claude 2.1.206; without this key an unattended
   // writer stalls on the dialog forever.
-  const dangerousWriter = !options.readOnly && (options.dangerous ?? false);
+  //
+  // Keyed on the MODE, not on who holds it: an autonomous reader is in
+  // bypassPermissions too, so it meets the same dialog and needs the same key.
+  const bypassingPermissions = options.dangerous ?? false;
   const graphifyHook = graphifyHookPath(worktreePath, ".claude");
   // The kind is typed, not a free string: it is the token the generated hook
   // dispatches on, and a spelling the script has no arm for silently never
@@ -508,7 +546,7 @@ export async function writeClaudeAgentConfig(
 
   const settings = {
     enableAllProjectMcpServers: true,
-    ...(dangerousWriter ? { skipDangerousModePermissionPrompt: true } : {}),
+    ...(bypassingPermissions ? { skipDangerousModePermissionPrompt: true } : {}),
     hooks: {
       SessionStart: hook(eventCommand("session-start")),
       // Always written, like every other hook kind. This used to be skipped
