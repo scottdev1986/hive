@@ -25,7 +25,7 @@ import {
   runHiveEvent,
   type HookEventOptions,
 } from "./cli/event";
-import { launchOrchestrator } from "./cli/orchestrator";
+import { runWorkspaceOrchestrator } from "./cli/orchestrator-supervisor";
 import {
   runGraphifyDisable,
   runGraphifyEnable,
@@ -792,7 +792,7 @@ export function createProgram(): Command {
       if (!tool.success) {
         throw new Error(`unsupported orchestrator tool: ${options.tool}`);
       }
-      process.exitCode = await launchOrchestrator(
+      process.exitCode = await runWorkspaceOrchestrator(
         tool.data,
         parsePort(options.port),
       );

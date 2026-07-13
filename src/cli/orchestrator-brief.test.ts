@@ -140,6 +140,35 @@ describe("orchestrator brief", () => {
     ]);
   });
 
+  test("places a backup identity and recovery state in the new root prompt", () => {
+    const recovery = "RECOVERY MODE — BACKUP ORCHESTRATOR\n- maya | working";
+    const claude = buildOrchestratorLaunchCommand(
+      "claude",
+      4317,
+      "/repo",
+      "",
+      "",
+      "claude",
+      "",
+      recovery,
+    );
+    const prompt = claude[claude.indexOf("--append-system-prompt") + 1];
+    expect(prompt).toContain(ORCHESTRATOR_BRIEF);
+    expect(prompt).toContain(recovery);
+
+    const codex = buildOrchestratorLaunchCommand(
+      "codex",
+      4317,
+      "/repo",
+      "",
+      "",
+      "claude",
+      "",
+      recovery,
+    );
+    expect(codex[codex.indexOf(";") - 1]).toContain(recovery);
+  });
+
   test("runs Codex root through an app-server authority and remote TUI", () => {
     const memory = "Hive memory index — durable facts.\n- [repo] launch fact";
     const guidance = "DESIGN.md is the primary design doc.";

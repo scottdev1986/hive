@@ -207,8 +207,9 @@ export function buildOrchestratorCommand(
   docGuidance = "",
   executable = "claude",
   codexTokenFile = "",
+  recoveryBrief = "",
 ): string[] {
-  const brief = [ORCHESTRATOR_BRIEF, docGuidance, memoryIndex]
+  const brief = [ORCHESTRATOR_BRIEF, recoveryBrief, docGuidance, memoryIndex]
     .filter((part) => part !== "")
     .join("\n\n");
   switch (tool) {
@@ -365,6 +366,7 @@ export function buildOrchestratorLaunchCommand(
   docGuidance = "",
   executable = "claude",
   codexTokenFile = "",
+  recoveryBrief = "",
 ): string[] {
   switch (tool) {
     case "codex": {
@@ -378,6 +380,7 @@ export function buildOrchestratorLaunchCommand(
         docGuidance,
         "claude",
         codexTokenFile,
+        recoveryBrief,
       );
       return ["tmux", "new-session", "-s", orchestratorTmuxSession(), "-c", cwd,
         ...buildCodexRootAuthorityCommand(undefined, codexCommand.slice(1)),
@@ -397,6 +400,8 @@ export function buildOrchestratorLaunchCommand(
           memoryIndex,
           docGuidance,
           executable,
+          "",
+          recoveryBrief,
         ),
         ";",
         "set-option",
@@ -416,7 +421,15 @@ export function buildOrchestratorLaunchCommand(
         ...Object.entries(GROK_COMPATIBILITY_ENV).map(([key, value]) =>
           `${key}=${value}`
         ),
-        ...buildOrchestratorCommand(tool, port, memoryIndex, docGuidance),
+        ...buildOrchestratorCommand(
+          tool,
+          port,
+          memoryIndex,
+          docGuidance,
+          "claude",
+          "",
+          recoveryBrief,
+        ),
         ";",
         "set-option",
         "-g",
@@ -439,6 +452,7 @@ export async function launchOrchestrator(
   detectVersion?: () => Promise<string | null>,
   resolveExecutable: () => ResolvedClaudeExecutable = resolveWorkingClaudeExecutable,
   tmux: OrchestratorTmux = new TmuxAdapter(),
+  recoveryBrief = "",
 ): Promise<number> {
   // Resolve and gate Claude only for the Claude path. A Codex orchestrator
   // must not require an unrelated Claude installation.
@@ -540,6 +554,7 @@ export async function launchOrchestrator(
         docGuidance,
         claudePath,
         codexTokenFile,
+        recoveryBrief,
       ),
       {
         cwd,

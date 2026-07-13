@@ -9,7 +9,7 @@ import type { TmuxSender } from "../daemon/delivery";
 import { HiveDaemon } from "../daemon/server";
 import { HiveSpawner } from "../daemon/spawner-impl";
 import { runHiveEvent } from "./event";
-import { fetchAgentStatus } from "./mcp";
+import { fetchAgentStatus, sendOrchestratorMessage } from "./mcp";
 
 class FakeTmux implements TmuxSender {
   readonly sessions: string[] = [];
@@ -160,6 +160,25 @@ describe("CLI-to-daemon smoke", () => {
       }, daemonFetch)).toEqual(0);
       const [finished] = await fetchAgentStatus(port, daemonFetch);
       expect(finished?.status).toEqual("idle");
+
+      expect(await runHiveEvent(
+        "turn-start",
+        port,
+        { agent: "maya" },
+        daemonFetch,
+      )).toEqual(0);
+      await sendOrchestratorMessage(
+        port,
+        "maya",
+        "Report your current work to the backup orchestrator.",
+        daemonFetch,
+      );
+      expect(db.listMessages().at(-1)).toMatchObject({
+        from: "orchestrator",
+        to: "maya",
+        priority: "steer",
+        body: "Report your current work to the backup orchestrator.",
+      });
     } finally {
       await daemon?.stop();
       db.close();

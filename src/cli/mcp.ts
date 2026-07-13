@@ -74,6 +74,22 @@ export async function fetchAgentStatus(
   );
 }
 
+export async function sendOrchestratorMessage(
+  port: number,
+  to: string,
+  body: string,
+  fetcher?: McpFetcher,
+): Promise<void> {
+  await callHiveTool(
+    port,
+    "hive_send",
+    { from: "orchestrator", to, body, priority: "steer" },
+    "message",
+    fetcher,
+    `hive_send to ${to}`,
+  );
+}
+
 export async function markAgentDead(
   port: number,
   agentName: string,
