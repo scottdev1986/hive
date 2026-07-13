@@ -77,6 +77,35 @@ describe("manifest parsing", () => {
       })
     ).toThrow();
   });
+
+  test("rejects path-bearing versions and tags that disagree with them", () => {
+    expect(() => parseReleaseManifest({
+      ...manifest,
+      version: "../../tmp/owned",
+      tag: "v../../tmp/owned",
+    })).toThrow();
+    expect(() => parseReleaseManifest({ ...manifest, tag: "v9.9.9" })).toThrow();
+  });
+
+  test("rejects ambiguous artifact targets and reversed wire ranges", () => {
+    expect(() => parseReleaseManifest({
+      ...manifest,
+      artifacts: [...manifest.artifacts, { ...manifest.artifacts[0] }],
+    })).toThrow();
+    expect(() => parseReleaseManifest({
+      ...manifest,
+      wireProtocol: { min: 3, max: 2 },
+    })).toThrow();
+  });
+
+  test("rejects unknown fields within the current schema version", () => {
+    expect(() => parseReleaseManifest({ ...manifest, securtyCritical: true }))
+      .toThrow();
+    expect(() => parseReleaseManifest({
+      ...manifest,
+      artifacts: [{ ...manifest.artifacts[0], downloadUrl: "file:///tmp/owned" }],
+    })).toThrow();
+  });
 });
 
 describe("artifact selection", () => {

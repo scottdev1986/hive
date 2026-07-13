@@ -39,9 +39,16 @@ export const RELEASE_MANIFEST_SCHEMA = 1;
 export const MANIFEST_ASSET = "hive-release.json";
 export const SIGNATURE_ASSET = "hive-release.json.sig";
 
-const ArtifactSchema = z.object({
+const AssetNameSchema = z.string().regex(
+  /^[A-Za-z0-9][A-Za-z0-9._-]*$/,
+  "artifact name must be a file name, not a path",
+);
+
+const ReleaseVersionSchema = z.string().regex(/^\d+\.\d+\.\d+$/);
+
+const ArtifactSchema = z.strictObject({
   /** Release asset name, e.g. `hive-darwin-arm64`. */
-  name: z.string().min(1),
+  name: AssetNameSchema,
   kind: z.enum(["cli", "workspace"]),
   platform: z.literal("darwin"),
   arch: z.enum(["arm64", "x64"]),
@@ -51,18 +58,48 @@ const ArtifactSchema = z.object({
   buildHash: z.string().min(1),
 });
 
-const ManifestSchema = z.object({
+const ManifestSchema = z.strictObject({
   schema: z.literal(RELEASE_MANIFEST_SCHEMA),
-  version: z.string().min(1),
+  version: ReleaseVersionSchema,
   tag: z.string().min(1),
   channel: z.enum(["stable", "beta"]),
   commit: z.string().min(1),
-  publishedAt: z.string().min(1),
+  publishedAt: z.iso.datetime({ offset: true }),
   /** Overrides every notice rate limit. See docs/release/versioning-and-release.md. */
   securityCritical: z.boolean(),
-  wireProtocol: z.object({ min: z.number().int(), max: z.number().int() }),
-  schemaEpoch: z.number().int(),
+  wireProtocol: z.strictObject({
+    min: z.number().int().nonnegative(),
+    max: z.number().int().nonnegative(),
+  }),
+  schemaEpoch: z.number().int().nonnegative(),
   artifacts: z.array(ArtifactSchema).min(1),
+}).superRefine((manifest, context) => {
+  if (manifest.tag !== `v${manifest.version}`) {
+    context.addIssue({
+      code: "custom",
+      path: ["tag"],
+      message: "tag must name the manifest version",
+    });
+  }
+  if (manifest.wireProtocol.min > manifest.wireProtocol.max) {
+    context.addIssue({
+      code: "custom",
+      path: ["wireProtocol"],
+      message: "wire protocol minimum must not exceed its maximum",
+    });
+  }
+  const targets = new Set<string>();
+  for (const [index, artifact] of manifest.artifacts.entries()) {
+    const target = `${artifact.kind}\0${artifact.platform}\0${artifact.arch}`;
+    if (targets.has(target)) {
+      context.addIssue({
+        code: "custom",
+        path: ["artifacts", index],
+        message: `duplicate artifact target ${artifact.kind}/${artifact.platform}-${artifact.arch}`,
+      });
+    }
+    targets.add(target);
+  }
 });
 
 export type ReleaseArtifact = z.infer<typeof ArtifactSchema>;
