@@ -142,25 +142,62 @@ final class ModelControlTests: XCTestCase {
 
     // The bug: Codex's five-hour slot was rendered "no reading for this window"
     // — the copy §7.4 reserves for a probe that failed closed — when the probe
-    // had in fact succeeded and reported, authoritatively, that this plan has no
-    // five-hour window. A window the vendor does not meter gets no meter (§7.6),
-    // exactly as an unmetered provider gets no gauge.
-    func testPlanWithNoFiveHourWindowMountsNoFiveHourMeter() {
+    // had in fact succeeded and reported, authoritatively, that this plan has
+    // no five-hour window. It must say "not metered", not "unknown": one blames
+    // the plan (true), the other blames the probe (false).
+    func testPlanWithNoFiveHourWindowSaysNotMeteredNotUnknown() {
         let usage = MeterDerivation.usage(
             provider: .codex, surface: .metered,
             quota: [codexProlitePool()], quotaError: nil)
         guard case .metered(let windows) = usage else {
             return XCTFail("expected meters, got \(usage)")
         }
+        XCTAssertEqual(windows.map(\.label), ["5 hour window", "7 day window"])
+
         XCTAssertEqual(
-            windows.map(\.label), ["7 day window"],
-            "a plan that meters one window must mount one meter — a hollow "
-                + "five-hour meter claims a read failure that never happened")
-        guard case .measured(let percent, _, _, let confidence) = windows[0].state else {
-            return XCTFail("the weekly window IS measured, got \(windows[0].state)")
+            windows[0].state, .notMetered,
+            "a window this plan does not have must say so — .unknown would "
+                + "claim a read failure that never happened")
+
+        // And the window the plan DOES meter carries its real measured value.
+        guard case .measured(let percent, _, _, let confidence) = windows[1].state else {
+            return XCTFail("the weekly window IS measured, got \(windows[1].state)")
         }
         XCTAssertEqual(percent, 31)
         XCTAssertEqual(confidence, "authoritative")
+    }
+
+    // The two absences must never collapse into each other: "this plan has no
+    // such window" and "this window has no reading" are different facts, and
+    // rendering one as the other is the whole bug.
+    func testNotMeteredAndUnknownAreDistinct() {
+        XCTAssertNotEqual(MeterState.notMetered, .unknown(reason: "no reading for this window"))
+    }
+
+    // Nothing here encodes "Codex has no five-hour window" — the decision is
+    // made from what the payload reports. The SAME provider on a plan that does
+    // expose a five-hour window must light it up with no code change, or we have
+    // just hardcoded today's plan into tomorrow's bug.
+    func testSameProviderOnAPlanThatDoesMeterFiveHoursLightsItUp() {
+        let plus = QuotaEntry.pool(QuotaPool(
+            provider: "codex", pool: "codex", origin: "discovered", label: "plus",
+            confidence: "authoritative", freshness: "fresh", source: "provider",
+            fiveHour: window(
+                used: 57, allowance: 100,
+                confidence: "authoritative", windowMinutes: 300),
+            weekly: window(
+                used: 40, allowance: 100,
+                confidence: "authoritative", windowMinutes: 10_080)))
+        let usage = MeterDerivation.usage(
+            provider: .codex, surface: .metered, quota: [plus], quotaError: nil)
+        guard case .metered(let windows) = usage else {
+            return XCTFail("expected meters, got \(usage)")
+        }
+        guard case .measured(let percent, _, _, _) = windows[0].state else {
+            return XCTFail("a plan that reports a five-hour window must meter it, "
+                + "got \(windows[0].state)")
+        }
+        XCTAssertEqual(percent, 57)
     }
 
     // The other half of the distinction, and the one that must not regress: a

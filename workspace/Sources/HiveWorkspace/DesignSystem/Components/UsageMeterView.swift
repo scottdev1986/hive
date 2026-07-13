@@ -122,12 +122,24 @@ final class UsageMeterView: NSView {
         case .unknown(let reason):
             // No determinate track. The truth is "we cannot tell", and a bar —
             // even an empty one — would claim measured emptiness.
+            track.isHidden = false
             track.state = .indeterminate
             valueLabel.stringValue = MCCCopy.badgeUsageUnknown
             valueLabel.textColor = .secondaryLabelColor
             captionLabel.stringValue = reason.isEmpty ? MCCCopy.meterUnknownBody : reason
             captionLabel.isHidden = false
             setAccessibilityLabel(MCCCopy.a11yMeterUnknown(window.label))
+
+        case .notMetered:
+            // No track AT ALL — not even the indeterminate one, which reads as
+            // "unknown" and would blame a probe that answered. The plan has no
+            // such window, so there is nothing to gauge and we say so instead.
+            track.isHidden = true
+            valueLabel.stringValue = MCCCopy.badgeNotMetered
+            valueLabel.textColor = .secondaryLabelColor
+            captionLabel.stringValue = MCCCopy.meterNotMeteredBody(window.label)
+            captionLabel.isHidden = false
+            setAccessibilityLabel("\(window.label), not metered on this plan")
         }
     }
 

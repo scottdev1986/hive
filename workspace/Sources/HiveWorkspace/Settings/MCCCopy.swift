@@ -48,6 +48,16 @@ enum MCCCopy {
     static let meterWindow7d = "7 day window"
     static func meterResetsIn(_ relative: String) -> String { "Resets in \(relative)" }
     static let meterUnknownBody = "Hive has no reading for this window"
+    /// A window the plan does not have — NOT a window Hive failed to read. The
+    /// absence is attributed to the PLAN, positively and confidently, because
+    /// the probe answered: saying "unknown" here would blame a read that
+    /// worked, and saying nothing at all would leave a reader who came looking
+    /// for this window unable to tell the two apart (§2.3).
+    static let badgeNotMetered = "Not metered"
+    static func meterNotMeteredBody(_ windowLabel: String) -> String {
+        "Your plan does not meter a \(windowLabel.lowercased()). " +
+        "Hive read this account's limits — there is no such window to report."
+    }
     static func meterSilentFeed(_ providerTitle: String) -> String {
         "\(providerTitle) reported no usage data. This surface is experimental and " +
         "sometimes goes quiet — \(providerTitle) itself is still available."

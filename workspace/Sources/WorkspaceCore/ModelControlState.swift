@@ -21,6 +21,13 @@ public enum MeterState: Equatable, Sendable {
     case stale(usedPercent: Double, observedAt: Date?, resetsAt: Date?)
     /// No reading. NOT zero. Rendered with no determinate track.
     case unknown(reason: String)
+    /// The provider answered, authoritatively, and reported no such window on
+    /// this plan — Codex's `prolite` meters a single weekly bucket. Deliberate,
+    /// not a failed read, and a different thing from `.unknown`: one is "the
+    /// vendor has no such window", the other is "the vendor has one and we could
+    /// not read it". Rendered as a statement with NO track at all, the way an
+    /// unmetered vendor gets no gauge (§2.3, §7.6).
+    case notMetered
 }
 
 public struct MeterWindow: Equatable, Sendable {
@@ -136,31 +143,25 @@ public enum MeterDerivation {
             // Not every plan meters both windows. Codex's `prolite` reports a
             // single weekly window (`secondary` is null on the wire), so its
             // five-hour slot is empty because the vendor HAS no five-hour
-            // window — not because a read failed. Mounting a hollow meter there
-            // says "no reading for this window", which is the copy §7.4 reserves
-            // for a probe that failed closed, and the probe did not fail. A
-            // window the provider does not meter gets no component at all (§7.6).
+            // window — not because a read failed. Rendering that as .unknown
+            // says "no reading for this window", the copy §7.4 reserves for a
+            // probe that failed closed, and the probe did not fail. It derives
+            // .notMetered instead: absent by the vendor's design, and SAID so,
+            // because a deliberate absence has to look deliberate (§2.3).
             //
             // `windowMinutes == nil` only proves that when the pool demonstrably
             // ANSWERED: a reading on the other window is the positive control. A
             // pool with no reading anywhere is genuinely unknown, and both
-            // windows stay mounted so the silence still shows.
+            // windows keep saying unknown so the silence still shows.
             let answered = pool.fiveHour.used != nil || pool.weekly.used != nil
-            let metered = { (window: QuotaWindow) in
-                !(answered && window.windowMinutes == nil)
+            func state(_ window: QuotaWindow) -> MeterState {
+                if answered && window.windowMinutes == nil { return .notMetered }
+                return meterState(for: window, parseDate: parseDate)
             }
-            var windows: [MeterWindow] = []
-            if metered(pool.fiveHour) {
-                windows.append(MeterWindow(
-                    label: "5 hour window",
-                    state: meterState(for: pool.fiveHour, parseDate: parseDate)))
-            }
-            if metered(pool.weekly) {
-                windows.append(MeterWindow(
-                    label: "7 day window",
-                    state: meterState(for: pool.weekly, parseDate: parseDate)))
-            }
-            return .metered(windows)
+            return .metered([
+                MeterWindow(label: "5 hour window", state: state(pool.fiveHour)),
+                MeterWindow(label: "7 day window", state: state(pool.weekly)),
+            ])
         }
         let unconfigured = quota.compactMap { entry -> QuotaUnconfigured? in
             if case .unconfigured(let status) = entry, status.provider == provider.rawValue {
