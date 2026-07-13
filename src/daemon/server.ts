@@ -159,6 +159,7 @@ import type { LifecycleConfig, ResourceLimits } from "../schemas";
 import { HIVE_VERSION } from "../version";
 import type { ModelInventory } from "./model-inventory";
 import { TokenUsageStore } from "./token-usage";
+import { MachineMutationCoordinator } from "./mutation-lease";
 
 export { HIVE_VERSION };
 
@@ -499,6 +500,7 @@ export interface HiveDaemonOptions {
   port?: number;
   hostname?: string;
   manageLifecycle?: boolean;
+  machineMutations?: Pick<MachineMutationCoordinator, "beginOperation">;
   layout?: LayoutCoordinator;
   /** The Workspace-app viewer lease (`POST /workspace`). Shared with the
    * spawner and layout so external viewer windows pause while the app is
@@ -593,6 +595,10 @@ export class HiveDaemon {
   private readonly port: number;
   private readonly hostname: string;
   private readonly manageLifecycle: boolean;
+  private readonly machineMutations:
+    | Pick<MachineMutationCoordinator, "beginOperation">
+    | null;
+  private readonly ownedMachineMutations: MachineMutationCoordinator | null;
   private readonly tmux: Pick<
     TmuxAdapter,
     "hasSession" | "killSession" | "capturePane" | "newSession"
@@ -672,6 +678,17 @@ export class HiveDaemon {
     this.port = options.port ?? readConfiguredPort();
     this.hostname = options.hostname ?? "127.0.0.1";
     this.manageLifecycle = options.manageLifecycle ?? false;
+    if (options.machineMutations !== undefined) {
+      this.machineMutations = options.machineMutations;
+      this.ownedMachineMutations = null;
+    } else if (this.manageLifecycle) {
+      const coordinator = new MachineMutationCoordinator();
+      this.machineMutations = coordinator;
+      this.ownedMachineMutations = coordinator;
+    } else {
+      this.machineMutations = null;
+      this.ownedMachineMutations = null;
+    }
     this.tmux = options.tmux ?? new TmuxAdapter();
     this.quota = options.quota;
     this.tokenUsage = options.tokenUsage ?? new TokenUsageStore(this.db);
@@ -2039,6 +2056,7 @@ export class HiveDaemon {
     if (this.ownsDatabase) {
       this.db.close();
     }
+    this.ownedMachineMutations?.close();
   }
 
   // Crash detection and recovery: any agent whose status claims a process
@@ -2249,12 +2267,17 @@ export class HiveDaemon {
           `Fix: call hive_land again with capabilityEpoch ${agent.capabilityEpoch}.`,
       );
     }
-    const landed = await this.land(this.repoRoot, agent.branch);
-    // The graph tracks main, and this is the one choke point every landing
-    // passes through. Fire-and-forget: the merge result is already decided
-    // and a graph rebuild must never appear in landing latency.
-    this.graphify?.scheduleRebuild();
-    return landed;
+    const operation = await this.machineMutations?.beginOperation("landing");
+    try {
+      const landed = await this.land(this.repoRoot, agent.branch);
+      // The graph tracks main, and this is the one choke point every landing
+      // passes through. Fire-and-forget: the merge result is already decided
+      // and a graph rebuild must never appear in landing latency.
+      this.graphify?.scheduleRebuild();
+      return landed;
+    } finally {
+      operation?.release();
+    }
   }
 
   async acknowledgeControlMessage(
@@ -3987,28 +4010,33 @@ export class HiveDaemon {
             "pressure has cleared.",
         );
       }
-      const agent = await this.spawner.spawn(request);
-      const current = this.db.getAgentById(agent.id);
-      const persisted = current !== null &&
-          current.lastEventAt >= agent.lastEventAt
-        ? current
-        : this.db.upsertAgent(agent);
-      if (persisted.status === "failed") {
-        throw new Error(
-          `Hive agent ${persisted.name} failed to spawn: ${
-            persisted.failureReason ?? "unknown launch failure"
-          }`,
+      const operation = await this.machineMutations?.beginOperation("spawn");
+      try {
+        const agent = await this.spawner.spawn(request);
+        const current = this.db.getAgentById(agent.id);
+        const persisted = current !== null &&
+            current.lastEventAt >= agent.lastEventAt
+          ? current
+          : this.db.upsertAgent(agent);
+        if (persisted.status === "failed") {
+          throw new Error(
+            `Hive agent ${persisted.name} failed to spawn: ${
+              persisted.failureReason ?? "unknown launch failure"
+            }`,
+          );
+        }
+        // An agent spawned to test a fix that is not in the running binary is
+        // wasted money, so a spawn that Hive cannot vouch for carries the reason
+        // with it. Warn, never block: the caller stays in control.
+        const build = await this.buildFreshness();
+        return toolResult(
+          compactSpawnResult(persisted),
+          "agent",
+          build.state === "current" ? null : build.message,
         );
+      } finally {
+        operation?.release();
       }
-      // An agent spawned to test a fix that is not in the running binary is
-      // wasted money, so a spawn that Hive cannot vouch for carries the reason
-      // with it. Warn, never block: the caller stays in control.
-      const build = await this.buildFreshness();
-      return toolResult(
-        compactSpawnResult(persisted),
-        "agent",
-        build.state === "current" ? null : build.message,
-      );
     });
 
     server.registerTool("hive_approvals", {

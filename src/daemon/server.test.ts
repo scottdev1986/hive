@@ -26,11 +26,32 @@ import { actingAs, submitPaste } from "./testing";
 import type { BuildFreshness } from "./build-freshness";
 import type { SpawnRequest, Spawner } from "./spawner";
 import { orchestratorTmuxSession } from "./tmux-sessions";
+import {
+  MachineMutationCoordinator,
+  type ProcessIdentityState,
+} from "./mutation-lease";
 
 const home = mkdtempSync(join(tmpdir(), "hive-server-test-"));
 process.env.HIVE_HOME = home;
 
 const timestamp = "2026-07-09T12:00:00.000Z";
+
+function machineCoordinator(
+  path: string,
+  instanceId: string,
+  instanceLiveness: "live" | "dead" | "unknown" = "unknown",
+): MachineMutationCoordinator {
+  return new MachineMutationCoordinator({
+    path,
+    instanceId,
+    instanceHome: `/hive/${instanceId}`,
+    processIdentity: async (): Promise<ProcessIdentityState> => ({
+      state: "live",
+      startedAt: "server-test-process",
+    }),
+    instanceLiveness: async () => instanceLiveness,
+  });
+}
 
 function agent(overrides: Partial<AgentRecord> = {}): AgentRecord {
   return {
@@ -825,6 +846,84 @@ describe("HiveDaemon HTTP server", () => {
       db.close();
     }
   });
+
+  test("a machine mutation lease blocks spawn before the spawner runs", async () => {
+    const path = join(home, "spawn-mutation-lease.db");
+    const updater = machineCoordinator(path, "default");
+    const daemonMutations = machineCoordinator(path, "server");
+    const lease = await updater.acquireLease("update");
+    const db = new HiveDatabase(join(home, "spawn-mutation-daemon.db"));
+    const spawner = new StubSpawner();
+    const daemon = new HiveDaemon({ db, spawner, machineMutations: daemonMutations });
+    const transport = new StreamableHTTPClientTransport(
+      new URL("http://hive/mcp"),
+      { fetch: actingAs(daemon, "operator") },
+    );
+    const client = new Client({ name: "mutation-test", version: "1.0.0" });
+    try {
+      await client.connect(transport);
+      const refused = await client.callTool({
+        name: "hive_spawn",
+        arguments: { task: "Must wait", category: "simple_coding" },
+      });
+      expect(refused.isError).toBe(true);
+      expect(JSON.stringify(refused.content)).toMatch(/machine update.*progress/i);
+      expect(spawner.requests).toEqual([]);
+    } finally {
+      await client.close();
+      await daemon.stop();
+      lease.release();
+      updater.close();
+      daemonMutations.close();
+      db.close();
+    }
+  });
+
+  test("an in-flight landing blocks a machine mutation lease", async () => {
+    const path = join(home, "landing-mutation-lease.db");
+    const daemonMutations = machineCoordinator(path, "server", "live");
+    const updater = machineCoordinator(path, "default", "live");
+    const db = new HiveDatabase(join(home, "landing-mutation-daemon.db"));
+    let announceLanding!: () => void;
+    let finishLanding!: () => void;
+    const landingStarted = new Promise<void>((resolve) => {
+      announceLanding = resolve;
+    });
+    const landingMayFinish = new Promise<void>((resolve) => {
+      finishLanding = resolve;
+    });
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new StubSpawner(),
+      machineMutations: daemonMutations,
+      repoRoot: "/repo",
+      landBranch: async () => {
+        announceLanding();
+        await landingMayFinish;
+        return { commit: "abc123" };
+      },
+    });
+    db.insertAgent(agent());
+    const landing = daemon.landAgent("maya", 0);
+    try {
+      await landingStarted;
+      await expect(updater.acquireLease("rollback")).rejects.toThrow(
+        /landing.*server.*in progress/i,
+      );
+      finishLanding();
+      await expect(landing).resolves.toEqual({ commit: "abc123" });
+      const lease = await updater.acquireLease("rollback");
+      lease.release();
+    } finally {
+      finishLanding();
+      await landing.catch(() => undefined);
+      await daemon.stop();
+      updater.close();
+      daemonMutations.close();
+      db.close();
+    }
+  });
+
   test("only approval requests block agents and enter the approval queue", async () => {
     const db = new HiveDatabase(join(home, "events.db"));
     const daemon = new HiveDaemon({
