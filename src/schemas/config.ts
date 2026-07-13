@@ -52,8 +52,8 @@ export const HiveConfigSchema = z.strictObject({
   // directive (2026-07-12): the binary ships no model knowledge, so there is
   // nothing left for either value to revert to. They remain in the schema so a
   // config.toml written for an older build still parses; setting them changes
-  // nothing, and the escape from a bad derivation is a routing.toml pin, which
-  // is user policy and always wins.
+  // nothing, and the escape from a bad derivation is an explicit model policy,
+  // which is user policy and always wins.
   routingManifest: z.enum(["auto", "off"]).default("auto"),
   router: z.enum(["derived", "shipped"]).default("derived"),
   // VESTIGIAL, parsed for compatibility only. The external benchmark ranker

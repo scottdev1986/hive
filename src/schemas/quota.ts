@@ -80,6 +80,12 @@ const legacyKeysMapped = <T>(
     ]),
   );
 
+const legacyKeyCollisions = (table: Record<string, unknown>) =>
+  Object.entries(LEGACY_TIER_CATEGORY).filter(
+    ([legacy, category]) =>
+      table[legacy] !== undefined && table[category] !== undefined,
+  );
+
 const DEFAULT_ESTIMATES: Record<RoutingCategory, number> = {
   complex_coding: 20,
   debugging: 20,
@@ -98,14 +104,12 @@ const EstimateSchema = z.partialRecord(
   z.number().positive(),
 ).superRefine((table, context) => {
   const values = table as Record<string, unknown>;
-  for (const [legacy, category] of Object.entries(LEGACY_TIER_CATEGORY)) {
-    if (values[legacy] !== undefined && values[category] !== undefined) {
-      context.addIssue({
-        code: "custom",
-        path: [category],
-        message: `cannot set both legacy ${legacy} and ${category}`,
-      });
-    }
+  for (const [legacy, category] of legacyKeyCollisions(values)) {
+    context.addIssue({
+      code: "custom",
+      path: [category],
+      message: `cannot set both legacy ${legacy} and ${category}`,
+    });
   }
 }).transform((table): Record<RoutingCategory, number> => ({
   ...DEFAULT_ESTIMATES,
@@ -153,14 +157,12 @@ const PercentEstimateTableSchema = z.partialRecord(
   PercentEstimateSchema,
 ).superRefine((table, context) => {
   const values = table as Record<string, unknown>;
-  for (const [legacy, category] of Object.entries(LEGACY_TIER_CATEGORY)) {
-    if (values[legacy] !== undefined && values[category] !== undefined) {
-      context.addIssue({
-        code: "custom",
-        path: [category],
-        message: `cannot set both legacy ${legacy} and ${category}`,
-      });
-    }
+  for (const [legacy, category] of legacyKeyCollisions(values)) {
+    context.addIssue({
+      code: "custom",
+      path: [category],
+      message: `cannot set both legacy ${legacy} and ${category}`,
+    });
   }
 }).transform((table): Record<RoutingCategory, { fiveHour: number; weekly: number }> => ({
   ...DEFAULT_PERCENT_ESTIMATES,

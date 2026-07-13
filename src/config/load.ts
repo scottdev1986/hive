@@ -8,12 +8,6 @@ import {
   type QuotaConfig,
 } from "../schemas";
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
-
-const mergeOwn = (...sources: object[]): Record<string, unknown> =>
-  Object.assign(Object.create(null), ...sources);
-
 const errorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 
