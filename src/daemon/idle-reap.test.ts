@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createWorktree, listWorktrees } from "../adapters/worktrees";
 import { loadHiveConfig } from "../config/load";
 import type { AgentRecord } from "../schemas";
 import { HiveDatabase } from "./db";
@@ -75,6 +76,29 @@ const TOO_RECENT = new Date(
   Date.now() - 2 * 60_000,
 ).toISOString();
 
+async function git(repoRoot: string, ...args: string[]): Promise<string> {
+  const child = Bun.spawn(["git", "-C", repoRoot, ...args], {
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+    child.exited,
+  ]);
+  if (exitCode !== 0) throw new Error(stderr.trim());
+  return stdout.trim();
+}
+
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function reapDaemon(overrides: {
   idleReap?: boolean;
   idleReapMinutes?: number;
@@ -126,6 +150,60 @@ describe("idle-agent reap sweep", () => {
     } finally {
       await daemon.stop();
       db.close();
+    }
+  });
+
+  test("the reap sweep removes the real worktree and branch, and only those", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-idle-reap-git-"));
+    const repoRoot = join(root, "repo");
+    await mkdir(repoRoot, { recursive: true });
+    await git(repoRoot, "init", "-b", "main");
+    await git(repoRoot, "config", "user.name", "Hive Test");
+    await git(repoRoot, "config", "user.email", "hive@example.test");
+    await writeFile(join(repoRoot, "README.md"), "# idle reap\n");
+    await git(repoRoot, "add", "README.md");
+    await git(repoRoot, "commit", "-m", "initial");
+    const target = await createWorktree(repoRoot, "agent-maya", "idle-reap");
+    const unrelated = await createWorktree(repoRoot, "agent-zara", "keep");
+    const db = new HiveDatabase(":memory:");
+    const tmux = new FakeDaemonTmux();
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new StubSpawner(),
+      tmuxSender: new SilentTmuxSender(db),
+      tmux,
+      repoRoot,
+      lifecycle: { idleReap: true, idleReapMinutes: 10 },
+      resourceRunners: { panePids: async () => [], orphans: null },
+    });
+    db.insertAgent(agent({
+      lastEventAt: OLD_ENOUGH,
+      worktreePath: target.path,
+      branch: target.branch,
+    }));
+    try {
+      await daemon.reapIdleAgents();
+      const warning = db.listMessages().find((message) => message.to === "maya");
+      db.transitionMessage(warning!.id, "applied", new Date().toISOString());
+      await daemon.reapIdleAgents();
+
+      const standing = await listWorktrees(repoRoot);
+      expect(standing.some(({ branch }) => branch === target.branch)).toBe(false);
+      expect(standing.some(({ branch }) => branch === unrelated.branch)).toBe(true);
+      expect(await pathExists(target.path)).toBe(false);
+      expect(await pathExists(unrelated.path)).toBe(true);
+      expect(await git(repoRoot, "branch", "--list", target.branch)).toEqual("");
+      expect(await git(repoRoot, "branch", "--list", unrelated.branch))
+        .toContain(unrelated.branch);
+      expect(db.getAgentByName("maya")).toMatchObject({
+        status: "dead",
+        worktreePath: null,
+        branch: null,
+      });
+    } finally {
+      await daemon.stop();
+      db.close();
+      await rm(root, { recursive: true, force: true });
     }
   });
 
