@@ -512,6 +512,9 @@ function provisionalBaselineChains(
   assign("planning", claudeLed);
   assign("debugging", claudeLed);
   assign("summarization", grokLed);
+  // Profiling reads a codebase to describe it: code-shaped input, so the
+  // coding specialist leads, as it does for the other code-shaped categories.
+  assign("profiling", codexLed);
   assign("default", codexLed);
   return chains;
 }

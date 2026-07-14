@@ -58,6 +58,9 @@ const HEADROOM_PRESERVING_CATEGORIES: ReadonlySet<RoutingCategory> = new Set([
   "standard_coding",
   "summarization",
   "light_research",
+  // Hive launches profiling itself, per project; work the user did not ask for
+  // must not spend the reserve the work they did ask for still needs.
+  "profiling",
   "default",
 ]);
 

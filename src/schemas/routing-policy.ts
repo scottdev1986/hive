@@ -31,6 +31,7 @@ export const ROUTING_CATEGORIES = [
   "planning",
   "debugging",
   "summarization",
+  "profiling",
   "default",
 ] as const;
 export const RoutingCategorySchema = z.enum(ROUTING_CATEGORIES);

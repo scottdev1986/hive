@@ -3615,7 +3615,9 @@ export class HiveDaemon {
         "(small mechanical edits), debugging (root-causing a defect), " +
         "code_review (independent review), planning (design before code), " +
         "heavy_research (deep investigation), light_research (quick lookups), " +
-        "summarization (condensing text) — and the user's routing policy " +
+        "summarization (condensing text), profiling (Hive's own read-only " +
+        "project profiling, launched per project — you do not normally name " +
+        "it) — and the user's routing policy " +
         "chain for that category decides the model: first enabled link that " +
         "clears the launch gate runs. Optional: tool/model pin an explicit " +
         "user choice (never substituted); minContextTokens filters links for " +

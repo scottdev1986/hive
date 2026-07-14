@@ -66,6 +66,21 @@ final class RoutingPolicyWireContractTests: XCTestCase {
         XCTAssertNil(complex[1].effort.asEffortTarget)
     }
 
+    /// A CATEGORY the daemon can emit must reach this decoder too — the same
+    /// failure the effort modes had, one axis over: a category the app cannot
+    /// name is a chain the user can neither see nor edit in Settings, while
+    /// the daemon routes real work through it.
+    func testTheProfilingCategoryCrossesTheWire() throws {
+        let document = try RoutingPolicyDocument.decode(from: try wireFixture())
+
+        let profiling = document.chain(for: .profiling)
+        XCTAssertEqual(profiling.count, 1, "the daemon's profiling chain must decode")
+        XCTAssertEqual(profiling[0].model, "gpt-5.6-sol")
+        XCTAssertTrue(
+            TaskCategory.allCases.contains(.profiling),
+            "Settings enumerates allCases; a category missing there is uneditable")
+    }
+
     /// FORWARD COMPATIBILITY: a future daemon adds an effort mode and a field
     /// this build has never heard of. The document must still decode — one
     /// unknown value must never disable persistence for everything else.

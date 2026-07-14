@@ -54,6 +54,7 @@ export function codingTierForCategory(category: RoutingCategory): CodingTier {
     case "standard_coding":
     case "code_review":
     case "planning":
+    case "profiling":
     case "default":
       return "standard";
   }

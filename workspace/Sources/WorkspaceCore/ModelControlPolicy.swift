@@ -21,6 +21,7 @@ public enum TaskCategory: String, CaseIterable, Codable, Sendable {
     case planning = "planning"
     case debugging = "debugging"
     case summarization = "summarization"
+    case profiling = "profiling"
 
     public var label: String {
         switch self {
@@ -32,6 +33,7 @@ public enum TaskCategory: String, CaseIterable, Codable, Sendable {
         case .planning: return "Planning"
         case .debugging: return "Debugging"
         case .summarization: return "Summarization"
+        case .profiling: return "Project profiling"
         }
     }
 }
@@ -462,6 +464,7 @@ public enum ProvisionalPolicyStore {
             (.simpleCoding, "medium", "Vendor defaults at medium effort for routine changes."),
             (.lightResearch, "low", "Cheap and fast first; spreads work off the coding pools."),
             (.summarization, "low", "Cheapest competent choice first."),
+            (.profiling, "medium", "Read-only pass over a codebase; mid effort."),
         ]
         var categories: [String: CategoryPolicy] = [:]
         for (category, effortIntent, why) in plans {

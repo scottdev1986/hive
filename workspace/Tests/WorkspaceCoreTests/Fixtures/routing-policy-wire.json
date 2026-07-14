@@ -52,6 +52,13 @@
         "effort": { "mode": "never-configured" }
       }
     ],
+    "profiling": [
+      {
+        "provider": "codex",
+        "model": "gpt-5.6-sol",
+        "effort": { "mode": "hive-decides" }
+      }
+    ],
     "default": [
       {
         "provider": "claude",
