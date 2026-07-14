@@ -98,7 +98,10 @@ async function inspectInstance(name: string, home: string): Promise<HiveInstance
 
 export async function listInstances(): Promise<HiveInstance[]> {
   const named = await readdir(instancesRoot(), { withFileTypes: true })
-    .catch(() => []);
+    .catch((error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") return [];
+      throw error;
+    });
   const candidates = [
     { name: "default", home: defaultHiveHome() },
     ...named
