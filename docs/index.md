@@ -12,7 +12,7 @@ How Hive chooses a model, and what stops it choosing quietly.
 | Article | Summary | Updated |
 | --- | --- | --- |
 | [Routing policy](routing/routing-policy.md) | Hive derives no routes: the user's revisioned policy of categories and ordered chains is the router, and the spawner is the sole unconditional net. | 2026-07-13 |
-| [Quota and headroom](routing/quota-and-headroom.md) | Quota is an affordability gate on every candidate, and under `auto` it also reorders them — including the unknown-headroom score of 0.15, an invented number competing against measured ones. | 2026-07-13 |
+| [Quota and headroom](routing/quota-and-headroom.md) | Quota is an affordability gate on every candidate; under `auto`, weighted-fair dispatch balances Hive-observed assignments without comparing unlike provider windows or inventing a score for unknown capacity. | 2026-07-13 |
 | [Model Control Center](routing/model-control-center.md) | The settings surface that makes the user the router, and the honesty contract it must not break: percent is the only honest meter, and unknown never renders as zero. | 2026-07-13 |
 | [Rejected approaches](routing/rejected-approaches.md) | Six routing designs that were adopted and then killed — tiers, the signed manifest, external benchmark ranking — and why each died, so nobody rebuilds them. | 2026-07-13 |
 

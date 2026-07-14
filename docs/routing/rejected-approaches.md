@@ -159,7 +159,8 @@ See the max-risk rule in [quota-and-headroom.md](quota-and-headroom.md#the-task-
 
 **Permanently rejected in the same breath:** letting the orchestrator name models
 outright. The founding reason — **an LLM's model knowledge froze at training**
-(SPEC §6). This is also why `src/adapters/tools/models.ts:6-11` ships no model ids.
+(SPEC §6). Exact ids therefore come from discovery; the remaining helper only
+recognizes Claude- and Codex-shaped names (`src/adapters/tools/models.ts:1-15`).
 
 ## 6. Inferring capability from the vendor catalog
 
@@ -175,7 +176,8 @@ failure as `modelVendor`'s regex, dressed up. It would make Hive the ranker agai
 looking like measurement.
 
 **What the catalog *is* good for**, and is used for: exact model ids, aliases, advertised
-effort levels, `supportsEffort`, entitlement, hidden flags, context windows — all
+effort levels, `supportsEffort`, entitlement-by-presence, hidden flags, and Claude's
+advertised context variant — all
 **facts the vendor publishes about itself**. That is `identifyModelVendor` and
 `CapabilityRecord`. See
 [../providers/capability-discovery.md](../providers/capability-discovery.md).

@@ -51,11 +51,11 @@ The pin has a second consequence worth knowing: 1.11.2 misencodes no-button SGR 
 
 ### One legend, not two
 
-There is exactly **one** status legend. `AgentActivity.appearance` returns a `StatusAppearance(color:symbol:border:)` — the single table at `WorkspaceCore/AgentFeed.swift:150-186` — and the AppKit layer renders it through `Theme.statusColor(for:subdued:)` at `HiveWorkspace/Theme.swift:11-23`. The `border` is `.solid` or `.dashed`: **dashed means "we cannot see it"** (`disconnected`, `unknown`), so an unreachable agent is distinguishable without relying on color at all.
+There is exactly **one** status legend. `AgentActivity.appearance` returns a `StatusAppearance(color:symbol:border:)` — the single table at `WorkspaceCore/AgentFeed.swift:163-215` — and the AppKit layer renders it through `Theme.statusColor(for:subdued:)` at `HiveWorkspace/Theme.swift:9-23`. The `border` is `.solid` or `.dashed`: **dashed means "we cannot see it"** (`disconnected`, `unknown`), so an unreachable agent is distinguishable without relying on color at all.
 
 This replaced a *dual* legend — separate `Theme.dotColor(for:)` and `Theme.statusSymbol(for:)` mappings feeding the header dot while a different mapping fed the border. Two legends is not a style problem, it is a **correctness** problem: two tables drift, and the app then shows a green dot beside a red border and asks the user to adjudicate. Commit 6b286e0 ("make agent status honest and visible") collapsed them. Neither `dotColor` nor `statusSymbol` exists anywhere in `workspace/` today — zero hits. Any doc that names them predates the fix. **A state's color, symbol, and border must come from one place or they will eventually disagree.**
 
-The pane-level counterpart: `PaneStatus.unknown` exists explicitly (`WorkspaceCore/Status.swift:16`) so an unrecognized feed word can never be silently upgraded to a healthy state. **Unknown never renders as zero or healthy.**
+The pane-level counterpart: `PaneStatus.unknown` exists explicitly (`WorkspaceCore/Status.swift:8-17`) so an unrecognized feed word can never be silently upgraded to a healthy state. **Unknown never renders as zero or healthy.**
 
 ### Meters have four states, not three
 
@@ -64,7 +64,7 @@ The pane-level counterpart: `PaneStatus.unknown` exists explicitly (`WorkspaceCo
 - **measured** — a fill. `0%` means a measured zero.
 - **stale** — the last percent, desaturated, labelled with its age.
 - **unknown** — an *indeterminate* track, no value. "We asked and could not tell."
-- **notMetered** — **no track at all** (`UsageMeterView.swift:133`; state at `WorkspaceCore/ModelControlState.swift:30`).
+- **notMetered** — **no track at all** (`DesignSystem/Components/UsageMeterView.swift:139-148`; state at `WorkspaceCore/ModelControlState.swift:30`).
 
 `.notMetered` exists because *"not metered on this plan"* is a different honesty claim than *"no reading"*. Rendering an absent window as `unknown` blames a probe that answered perfectly: the vendor's plan simply has no such window. The comment in the code is the rule — an indeterminate track "reads as unknown and would blame a probe that answered." **An absence by design must not render as a failure to measure.** (This is the same class of bug as a UI that renders a vendor's missing 5-hour window as a broken reading.)
 
@@ -80,7 +80,7 @@ Near-limit coloring comes from the **remaining** fraction, not a hardcoded used-
 
 **Iconography.** SF Symbols, sized to the text they accompany. Vendor marks are **official assets only**, bundled under `Resources/VendorMarks/` and rendered as template images tinted `labelColor` (`ProviderMarkView`). A missing mark falls back to an SF Symbol plus the text name — never a broken frame, and **never a hand-drawn approximation** of someone else's logo.
 
-**Distribution language (Tasks).** Chains are capability + preference, not a strict walk: work spreads across a category's models by remaining capacity, and rank sets preference and breaks ties. Copy must never say "fallback order", never imply the top model always runs, and never suggest an ensemble — one model per task.
+**Distribution language (Tasks).** The UI must distinguish the selection modes. Under `choice`, Hive walks the authored category and default chains in order and quota may veto but not reorder a link. Under `auto`, Hive selects among enabled models that fit the category by weighted-fair observed assignments, not by comparing unlike capacity percentages. Never suggest an ensemble — one model runs each task.
 
 **Responsive.** Two-column pages collapse below `Metric.twoColumnBreakpoint`; windows enforce `Metric.minContentWidth` instead of rendering broken. Pages scroll in one `NSScrollView` with a flipped document view; nothing nests scroll views.
 
@@ -90,12 +90,12 @@ Near-limit coloring comes from the **remaining** fraction, not a hardcoded used-
 
 ## Honest open work
 
-The design system is currently **the Model Control Center's**, not the app's. `Theme.Space` / `Metric` / `Font` are referenced only under `Settings/` and `DesignSystem/`; no pane-level surface imports them. Verified still unbuilt as of 2026-07-13:
+The token ramp is still concentrated in the Model Control Center. Pane chrome uses the legacy top-level `Theme` font aliases but does not use `Theme.Space` or `Theme.Metric`. Verified still unbuilt as of 2026-07-13:
 
 - **Pane metrics are not tokenised.** `PaneView.swift` hardcodes `cornerRadius = 10` (:43, :50), `headerStack.spacing = 6` (:100), and a 14 pt status icon (:144-145). These duplicate `Metric.cardCornerRadius` and `Space.xs`/`s` by coincidence, not by reference — they will drift the first time a token moves.
-- **Off-system fonts in shipped chrome.** The project switcher hardcodes 14-semibold (`ProjectSwitcher.swift:61`); the placeholder window hardcodes 15-semibold (`AppDelegate.swift:332`). Neither size exists in `Theme.Font`.
+- **Off-ramp fonts in shipped chrome.** The project switcher hardcodes 14-semibold (`ProjectSwitcher.swift:66`), a size absent from `Theme.Font`; the placeholder window hardcodes 15-semibold (`AppDelegate.swift:413-415`) instead of using the equal-valued `Theme.Font.title` token.
 - **The Attention panel has no empty state.** Nothing renders when the queue is clear.
-- **No titlebar feed-health indicator.** The feed can die, retry five times, and give up, and until the critical alert fires the window chrome shows nothing. Given that the 2026-07-12 incident *was* a blind workspace looking exactly like a healthy one (see [blueprint.md](blueprint.md)), a persistent, glanceable feed-health signal is the highest-value missing piece of chrome in the app.
+- **No titlebar feed-health indicator.** A feed loss marks every pane disconnected, retries five times, and terminates the Workspace if the feed never returns (`AppDelegate.swift:138-197`), but the titlebar itself carries no glanceable retry-health signal.
 
 ## See Also
 

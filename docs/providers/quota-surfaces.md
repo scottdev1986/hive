@@ -46,7 +46,7 @@ A **null slot in this authoritative response is a positive statement** that the 
 
 ## Claude — the `get_usage` control request, and its statusline twin
 
-`claude -p --input-format stream-json --output-format stream-json` speaks a bidirectional control protocol. Send `control_request` subtype `initialize`, then `get_usage`, and close stdin **without ever sending a user message**: the account's plan usage comes back at `total_cost_usd: 0`. The CLI's own schema calls `get_usage` *"Experimental — the response shape may change"*, which is why Hive records its readings as **`reported`**, not `authoritative` (`quota-sources.ts:617-660`).
+`claude -p --input-format stream-json --output-format stream-json` speaks a bidirectional control protocol. Send `control_request` subtype `initialize`, then `get_usage`, and close stdin **without ever sending a user message**: the account's plan usage comes back at `total_cost_usd: 0`. The CLI's own schema calls `get_usage` *"Experimental — the response shape may change"*, which is why Hive records its readings as **`reported`**, not `authoritative` (`quota-sources.ts:617-669`).
 
 ```jsonc
 {
@@ -113,7 +113,7 @@ Three consequences, and they are the whole point:
 
 > **A model is gated by every pool that meters it, and the tightest one governs.**
 
-Checking only the *first* matching pool is what put two deep-tier agents onto a model whose own weekly pool sat at **99%**: the general pool had 39% of its week left and said yes, while the model's dedicated pool had 1% and was never asked. A run that spends from two meters holds a reservation in **each**, and they settle together (`src/daemon/quota-ledger.ts:934`).
+Checking only the *first* matching pool is what put two deep-tier agents onto a model whose own weekly pool sat at **99%**: the general pool had 39% of its week left and said yes, while the model's dedicated pool had 1% and was never asked. A run that spends from two meters holds a reservation in **each**, reserved atomically only after every pool fits (`src/daemon/quota-ledger.ts:1178-1215`).
 
 **A model with no cap of its own is metered by the general pool — never by nothing.** Minting a phantom per-model pool for it and reporting "usage unknown, routing unconstrained" invents a meter *and* does the worst possible thing with it: an unconstrained model is the most attractive route there is, so the phantom actively pulls traffic toward itself.
 
@@ -144,7 +144,7 @@ The rule is not "never be conservative." It is: **name what each direction of er
 
 ## The model-vendor / pool-provider guard
 
-A spend belongs to the vendor whose model produced it. The ledger holds one row that disagrees — a Claude model's usage billed to the Codex meter, written when routing chose `tool=codex` while the caller had pinned a Claude model. The guard now lives at the **write** (`src/daemon/quota-ledger.ts:816-830`), and its states are kept carefully apart:
+A spend belongs to the vendor whose model produced it. The ledger holds one row that disagrees — a Claude model's usage billed to the Codex meter, written when routing chose `tool=codex` while the caller had pinned a Claude model. The guard now lives at the **write** (`src/daemon/quota-ledger.ts:1041-1103`), and its states are kept carefully apart:
 
 - **claimed** by a catalog, and the vendor disagrees with the pool → **throw**.
 - **unclaimed** — every vendor's catalog was read and *none* lists the model → **throw**. That is a measurement.

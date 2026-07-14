@@ -8,7 +8,7 @@ Raw: [Cross-vendor architecture review](../../raw/reviews/cross-vendor-architect
 
 Every vendor CLI Hive drives will tell you, for free and without buying an inference, which models the signed-in account can launch and which effort levels each accepts. None of them will tell you which model is *good*. This article records what the wire actually says, what it conspicuously does not, and the reading discipline that keeps an absent field from becoming a fabricated `false`.
 
-Wire behavior verified 2026-07-11 against claude 2.1.207 and codex-cli 0.144.1; the Grok surface verified 2026-07-13 against grok 0.2.99. Model ids below are **examples observed on those dates**, never things the code depends on: Hive's binary ships with no model knowledge (`src/adapters/tools/models.ts:6-11`), so vendor model ids live only in tests and fixtures. They rot. The mechanisms do not.
+Wire behavior verified 2026-07-11 against claude 2.1.207 and codex-cli 0.144.1; the Grok surface verified 2026-07-13 against grok 0.2.99. Model ids below are **examples observed on those dates**, never a shipped catalog: exact ids come from discovery. A legacy name-shape helper can recognize Claude- and Codex-shaped names but carries no concrete catalog (`src/adapters/tools/models.ts:1-15`). Observed ids rot. The mechanisms do not.
 
 ## The probe matrix
 
@@ -82,7 +82,7 @@ Four traps, each a plausible mistake:
 
 The sharpest limit on everything above. **`--model totally-bogus-model-xyz` is ACCEPTED at launch.** Claude's `initialize` takes it, and `system/init` echoes the garbage back verbatim as the effective model. Only the **first turn** fails — `is_error: true`, `total_cost_usd: 0`, *"There's an issue with the selected model … It may not exist or you may not have access to it."*
 
-> **A model pin cannot fail closed at spawn.** A launch that looks validated can still be a dead session.
+> **The vendor accepting a model argument is not validation.** A launch that looks valid to the CLI can still fail on its first turn.
 
 So a model id has **three** states, and conflating any two of them is a bug:
 
@@ -92,7 +92,7 @@ So a model id has **three** states, and conflating any two of them is a bug:
 | `providerReportedSelectable` | an authenticated, account-scoped call offers it (Claude's `initialize.models[]`, Codex's `model/list`, Grok's `models_cache.json`) | **what every surface in this article yields** |
 | `launchValidated` | a real session accepted it and a real turn came back | proof — and it costs a turn |
 
-Everything discovery gives you is the **middle** state. It is stronger than anything a public catalog offers and it is *weaker than proof*. The consequence for routing is direct and load-bearing: **a route entry that "launched" is not evidence the model exists.** A validating session must accept no task until the first-turn outcome lands, and must fail closed on mismatch — never substitute. See [../routing/routing-policy.md](../routing/routing-policy.md).
+Everything discovery gives you is the **middle** state. It is stronger than anything a public catalog offers and it is *weaker than first-turn proof*. Hive still uses that evidence to fail closed before creating a tmux session: the launch gate requires a readable catalog record for the exact model and explicit enablement (`src/daemon/spawner-impl.ts:1571-1605`). That prevents guessed or quietly substituted pins, but it cannot turn the catalog into proof that the vendor will complete a turn. See [../routing/routing-policy.md](../routing/routing-policy.md).
 
 Hive records this honestly today: a discovered model carries `entitled: known(true)` because it was *seen in the account's catalog* — that is the middle rung asserted as exactly what it is, not as launch proof.
 
@@ -125,7 +125,7 @@ Grok publishes no app-server metadata RPC. Its catalog is read in two steps (`sr
 1. run `grok models` (a **real** subcommand — see the billable-subcommand warning above),
 2. then parse the file it refreshes, `~/.grok/models_cache.json` (or `$GROK_HOME`).
 
-The cache entries the code consumes are `id`, `name`, `hidden`, `supports_reasoning_effort`, and `reasoning_efforts[]` (each `{value, default?}`) — schema at `capability-discovery.ts:661-667`. The schemas are `passthrough`, so unknown vendor keys survive; a `context_window` field is **not** among the ones Hive reads today.
+The cache entries the code consumes are `id`, `name`, `hidden`, `supports_reasoning_effort`, and `reasoning_efforts[]` (each `{value, default?}`) — schema at `capability-discovery.ts:661-677`. The schemas are `passthrough`, so unknown vendor keys do not invalidate the payload; a `context_window` field is **not** among the ones Hive records today.
 
 The code is **stricter than the research docs were**, in three ways that are all load-bearing:
 

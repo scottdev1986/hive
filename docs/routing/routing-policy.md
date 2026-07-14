@@ -49,7 +49,7 @@ memory: *vendor-default-model-moves-under-you*). An indirection that cannot be
 
 ### Absence is never permission
 
-The fail-closed reading every consumer inherits (:270-309): an absent provider or
+The fail-closed reading every consumer inherits (:283-322): an absent provider or
 model row means **not configured**, and not-configured never means allowed.
 `providerPolicyState` and `modelPolicyState` are the single implementation of that
 rule — a consumer that re-derives it by hand is how a null becomes permission again.
@@ -64,10 +64,10 @@ it. Every write path in the store is therefore a safety surface.
 ## Selection: never-configured | auto | choice
 
 `SelectionModeSchema` (:115-119) is three-valued, per-category with a global
-default (`selectionModeFor`, :171-176):
+default (`selectionModeFor`, :183-189):
 
 - **`never-configured`** — the user has not answered. The spawn **refuses**
-  (`spawner-impl.ts:1757-1762`). Absence does not acquire an automatic meaning.
+  (`spawner-impl.ts:1734-1741`). Absence does not acquire an automatic meaning.
 - **`choice`** — the category's exact chain is the user's ordered preference,
   walked in rank order.
 - **`auto`** — Hive considers every explicitly enabled model whose *policy-authored*
@@ -78,12 +78,12 @@ reserve in user order; it never reorders" — true only under `choice`. Under `a
 quota **does** choose among eligible candidates by weighted-fair deficit. And a
 schema revision that used `spread | strict` as the *policy* vocabulary is gone;
 those words survive only as the quota layer's dispatch mode, mapped at
-`spawner-impl.ts:1814` (`auto`→`spread`, `choice`→`strict`). See
+`spawner-impl.ts:1779-1794` (`auto`→`spread`, `choice`→`strict`). See
 [quota-and-headroom.md](quota-and-headroom.md).
 
 ### Fit is authored, never inferred
 
-`modelCategoryFit` (:189-221) answers "may this model do this category's work?"
+`modelCategoryFit` (:196-239) answers "may this model do this category's work?"
 purely from the user's own chain placements. Coding tiers are monotonic — a model
 placed in `complex_coding` is proven for `standard_coding` and `simple_coding`;
 `standard_coding` proves `simple_coding`. Every other category requires exact
@@ -107,7 +107,7 @@ The private constructor is not ceremony (governing doc :121-128):
 > that is not module-private. The only real bar is a class with a private constructor.
 
 `requireAuthorizedLaunch` (:83-88) is the runtime half at the adapter boundary —
-`spawner-impl.ts:1108, 1118, 1159, 2145, 2151, 2169` — so a structural impostor
+`spawner-impl.ts:1099, 1109, 1151, 2133, 2139, 2157` — so a structural impostor
 throws rather than launching.
 
 ### The invariant that must never be forgotten
@@ -189,10 +189,10 @@ not place — and **both callers read that null as PERMISSION.**
   global default chain (`spawner-impl.ts:1793-1829`). Under `auto` there is **no
   widening at all**. The doc's "**empty ≠ exhausted**" distinction is real, and unbuilt.
 - **There is no coding-capability floor of any kind.** The only floor is
-  `minContextTokens` (`spawner-impl.ts:1607-1617`), which fails closed on an unmeasured
+  `minContextTokens` (`spawner-impl.ts:1625-1634`), which fails closed on an unmeasured
   window. The invariant "a capability floor blocks even a pin" has nothing to enforce.
 - **Identity-from-name-shape survives, in one place.** When `identifyModelVendor`
-  returns `unreadable`, `spawner-impl.ts:1452-1489` falls back to the name-shape regex
+  returns `unreadable`, `spawner-impl.ts:1470-1487` falls back to the name-shape regex
   `modelVendor()` — which (`src/adapters/tools/models.ts:3-15`) knows only `claude`
   and `codex`, **not Grok**. This is exactly the inference the design forbids. Live hole.
 

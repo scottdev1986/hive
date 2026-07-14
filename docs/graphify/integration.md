@@ -19,7 +19,7 @@ So absent (not installed, consent declined, no bundle for this platform), broken
 
 **`.git/info/exclude`, never `.gitignore`.** Graphify enablement is a per-machine choice; `.gitignore` is a tracked file the whole team shares. Hive writing to it would be uninvited repo mutation on behalf of one developer's local opt-in. The entry goes to the git *common* dir, so one write covers every linked worktree.
 
-**Only `check-ignore --no-index` is evidence.** Plain `git check-ignore` consults the index, so it reports "not ignored" for anything already tracked — it will happily confirm nothing while the exclusion silently failed. The enable step verifies with `--no-index` on fresh probe names, and counts the echoed matches rather than trusting the exit code, because `check-ignore` exits 0 when *any* path matches (`src/adapters/graphify.ts:1022-1030`).
+**Only `check-ignore --no-index` is evidence.** Plain `git check-ignore` consults the index, so it reports "not ignored" for anything already tracked — it will happily confirm nothing while the exclusion silently failed. The enable step verifies with `--no-index` on fresh probe names, and counts the echoed matches rather than trusting the exit code, because `check-ignore` exits 0 when *any* path matches (`src/adapters/graphify.ts:926-982`).
 
 ## The vendored-code flood
 
@@ -27,7 +27,7 @@ Measured on this repo: **51% of all graph nodes were vendored Swift** under `wor
 
 The pinned binary honors gitignore rules **only at the scan root** (`_load_graphifyignore` walks ancestors, never descendants), so the nested `workspace/.gitignore: .build/` that git itself respects was invisible to extraction. And `extract` has no `--exclude` flag: `.graphifyignore` at the repo root is the only exclusion lever that exists.
 
-Hive therefore generates that file before every build: a short static floor of commonly *committed* vendored dirs (`vendor/`, `third_party/`, `Pods/`, `.build/`, …) plus, verbatim, the directories the repo's own gitignore machinery already excludes, taken from `git ls-files --others --ignored --exclude-standard --directory` (`src/adapters/graphify.ts:1080-1100`). The team's own gitignore is the general signal — it is their declaration of "not our code," per-repo and ecosystem-free — which is what makes the rule portable instead of a hand-maintained ecosystem list that is always one ecosystem behind. Rebuilt, this repo went from 10,033 nodes (51.3% vendored, 25.3% `src/`) to 4,895 (0% vendored, 51.8% `src/`), and start nodes stopped resolving into SwiftTerm.
+Hive therefore generates that file before every build: a short static floor of commonly *committed* vendored dirs (`vendor/`, `third_party/`, `Pods/`, `.build/`, …) plus, verbatim, the directories the repo's own gitignore machinery already excludes, taken from `git ls-files --others --ignored --exclude-standard --directory` (`src/adapters/graphify.ts:1024-1108`). The team's own gitignore is the general signal — it is their declaration of "not our code," per-repo and ecosystem-free — which is what makes the rule portable instead of a hand-maintained ecosystem list that is always one ecosystem behind. Rebuilt, this repo went from 10,033 nodes (51.3% vendored, 25.3% `src/`) to 4,895 (0% vendored, 51.8% `src/`), and start nodes stopped resolving into SwiftTerm.
 
 Two guards, both because over-exclusion is a *silent* failure: a `.graphifyignore` not starting with Hive's marker line is user-authored and never touched, and the build says out loud what it excluded.
 
@@ -39,7 +39,7 @@ The server is pointed at a snapshot under Hive's project state dir, never at the
 
 ## Why Hive wrote its own locate
 
-The layer-1 spawn digest is **Hive's own locate over `graph.json`** (`buildTargetedGraphBrief`), not the binary's `query` (`src/adapters/graphify.ts:867-874`). The binary's `query` anchors its BFS on its own keyword matcher and **accepts no explicit start nodes** — so when the matcher is wrong there is no lever to correct it. On the acceptance question it anchored "spawning" on vendored Swift; even de-poisoned and de-truncated, it ranked the graphify implementation cluster above the files that answer. Better anchoring had to happen on Hive's side.
+The layer-1 spawn digest is **Hive's own locate over `graph.json`** (`buildTargetedGraphBrief`, `src/adapters/graphify.ts:447-752`), not the binary's `query`. The subprocess query is only the oversized, malformed, or matchless fallback (`:831-879`). The binary's `query` anchors its BFS on its own keyword matcher and **accepts no explicit start nodes** — so when the matcher is wrong there is no lever to correct it. On the acceptance question it anchored "spawning" on vendored Swift; even de-poisoned and de-truncated, it ranked the graphify implementation cluster above the files that answer. Better anchoring had to happen on Hive's side.
 
 Hive's locate scores files by IDF-weighted name/symbol/path match, expands one hop through the graph's own edges hub-normalized (so `db.ts`-shaped files cannot win on raw connectivity), and adds the matched-symbol rule — a seed imports a symbol whose *name* matches the task, so the file *defining* it surfaces — which is what finds the config writer that no locate-question ever names by name. ~10ms, no subprocess. The binary's `query` + selection path remains only as the fallback for malformed, matchless, or >50MB graphs.
 
@@ -54,13 +54,13 @@ No constants were changed in response to those four misses. A flip-one-question 
 
 The serializer writes **all nodes before any edge**, and both of Hive's truncation limits cut from the head. So the relational payload — the only provenance-tagged, `file:line`-cited content in the output — is always the part that falls off the end. Measured on this repo's graph: budget 1200 → 51 nodes / **0 edges**; budget 2000 (the schema default) → 86 / **0**; 8000 → 325 / **0**; edges only start appearing near **16000**. Raising the budget alone was a no-op while a 6KB character cap re-truncated the same head — both limits fail in the same direction, and both had to move.
 
-This is why the spawn directive explicitly tells agents `query_graph` with `token_budget: 16000` and names the 2000 default as a trap that "cuts the output off before the cited EDGE lines" (`src/daemon/spawner-impl.ts:605-619`). An agent calling the tool with defaults gets the degraded shape every time and has no way to know it.
+This is why the spawn directive explicitly tells agents `query_graph` with `token_budget: 16000` and names the 2000 default as a trap that "cuts the output off before the cited EDGE lines" (`src/daemon/spawner-impl.ts:591-605`). An agent calling the tool with defaults gets the degraded shape every time and has no way to know it.
 
 ## Vendor trap: the Codex hook-shape inversion
 
 The installed upstream Codex hook emits nothing, on the claim that Codex rejects Claude's `additionalContext` shape. Measured against **codex 0.144.1** with a mock model provider, the truth is the exact opposite: a PreToolUse `{"systemMessage": …}` is **parsed and then silently dropped** — no error, the text simply never reaches a model request — while the Claude-style `hookSpecificOutput.additionalContext` **is** injected, as a developer message, in both `exec` and the TUI.
 
-Hive shipped the `systemMessage` shape first, and **no Codex agent ever received a nudge.** Both harnesses now get the one shape both honor (`src/adapters/tools/graphify-hook.ts:56-78`). The general lesson is a Hive recurring theme: a vendor accepting your payload without error is not evidence it consumed it.
+Hive shipped the `systemMessage` shape first, and **no Codex agent ever received a nudge.** Both harnesses now get the one shape both honor (`src/adapters/tools/graphify-hook.ts:45-68`). The general lesson is a Hive recurring theme: a vendor accepting your payload without error is not evidence it consumed it.
 
 ## Why the daemon owns one HTTP server per repo
 
@@ -70,13 +70,11 @@ The child is *held*, not detached: it must die with the daemon rather than leak,
 
 ## Enforced code-only, twice
 
-Lock one: every build runs `extract --code-only`, the binary's own zero-LLM switch. Lock two, the backstop: every graphify invocation runs under a **scrubbed allowlist environment** — `PATH`, a `HOME` pointed into Hive's tools dir (so upstream's `~/.graphify` global state is never read or written), `TMPDIR`, nothing else (`src/adapters/graphify.ts:77`). An allowlist rather than a `*_API_KEY` scrub, **so a provider key Hive has never heard of still cannot leak.** Upstream errors rather than degrades when a doc file needs a backend and no key exists, so a pin bump that drifts what `--code-only` covers fails loud (graphless, noted) instead of exfiltrating quietly.
+Lock one: every build runs `extract --code-only`, the binary's own zero-LLM switch. Lock two, the backstop: every graphify invocation runs under a **scrubbed allowlist environment** — `PATH`, a `HOME` pointed into Hive's tools dir (so upstream's `~/.graphify` global state is never read or written), `TMPDIR`, nothing else (`src/adapters/graphify.ts:73-85`). An allowlist rather than a `*_API_KEY` scrub, **so a provider key Hive has never heard of still cannot leak.** Upstream errors rather than degrades when a doc file needs a backend and no key exists, so a pin bump that drifts what `--code-only` covers fails loud (graphless, noted) instead of exfiltrating quietly.
 
 ## Known limitations (verified still true, 2026-07-13)
 
-- **Codex spawns through the experimental app-server host do not attach graphify** — that launch path has no graphify wiring at all (`src/adapters/tools/codex-app-server.ts`); the default TUI driver does. They still receive the layer-1 digest.
-- **The capability rights matrix has no `/graphify` row** — nor the older `/autonomy` it is modeled on. Both carry operator-only write actions; `graphify:write` exists and is granted to the operator alone (`src/daemon/capabilities.ts:50,86`), which is the binding source. Opting a repo into a code-indexing service is consent only the human's own CLI may express.
-- **Codex call counts inherit the worktree-scoped rollout aliasing** across respawns (Claude reads are keyed by `toolSessionId`, the fixed form; the Codex rollout is still discovered per worktree). Pre-existing Hive bug class, not a graphify one.
+- **Codex spawns through the experimental app-server host do not attach graphify** — the host starts app-server with only Hive's MCP URL (`src/adapters/tools/codex-app-server.ts:779-798`); the default TUI driver also receives graphify. App-server agents still receive the layer-1 digest.
 
 ## See Also
 

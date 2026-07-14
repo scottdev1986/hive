@@ -69,43 +69,43 @@ Enumerated from `capabilities.ts:21-48`. `O` operator, `R` orchestrator, `W` wri
 
 ## The routes and tools
 
-Every HTTP route below `/handshake` in `server.ts:2380-2442` authenticates first. **Audit** is whether an *allow* is written to `audit_log`; denials are always audited (`capabilities.ts:426-449`).
+Every HTTP route below `/handshake` in `server.ts:2325-2388` authenticates first. **Audit** is whether an *allow* is written to `audit_log`; denials are always audited (`capabilities.ts:426-449`).
 
 | Route / tool | Action | Subject | Audit allow | Gate |
 |---|---|---|---|---|
-| `GET /health` | — public | — | — | `server.ts:2349-2375` (runs `quickCheck`) |
-| `GET /handshake` | — public | — | — | `server.ts:2377-2379` |
-| `POST /event` | `event:report` | self | no | `server.ts:2382-2384` |
-| `POST /statusline` | `telemetry:report` | self | no | `server.ts:2385-2387` |
-| `POST /channel/{register,poll,ack,permission-request}` | `channel:use` | self | register + permission-request only | `server.ts:2426-2428`, `:2474-2540` |
-| `GET /autonomy` | `autonomy:read` | — | no | `server.ts:2388-2393` |
-| `POST /autonomy` | `autonomy:write` | — | yes | `server.ts:2388-2393` |
-| `GET /routing/policy` | `routing-policy:read` | — | no | `server.ts:2394-2399` |
-| `POST /routing/policy` | `routing-policy:write` | — | yes | `server.ts:2394-2399` |
-| `POST /graphify` | `graphify:write` | — | yes | `server.ts:2423-2425` |
-| `GET /orchestrator-status` | `status:read` | — | no | `server.ts:2400-2402` |
-| `GET /token-usage` | `token-usage:read` | — | no | `server.ts:2403-2405` |
-| `POST /token-usage/**` | `token-usage:write` | — | yes | `server.ts:2406-2422` |
-| `POST /recover` | `agent:recover` | any | yes | `server.ts:2429-2431` |
-| `POST /agents/:name/kill` | `agent:kill` | any | yes | `server.ts:2435-2439` |
-| `POST /codex-root-token` | `root-token:mint` | — | yes | `server.ts:2447-2472` |
-| `hive_status`, `hive_models`, `graph_locate` | `status:read` | — | no | `server.ts:3458`, `:3564`, `:4072` |
-| `hive_quota_status` | `quota:read` | — | no | `server.ts:3536` |
-| `hive_quota_reconcile` | `quota:write` | — | yes | `server.ts:3577` |
-| `hive_token_usage` | `token-usage:read` | — | no | `server.ts:3546` |
-| `hive_spawn` | `agent:spawn` | — | yes | `server.ts:3795` |
-| `hive_kill`, `hive_preserve_branch` | `agent:kill` | any | kill yes, preserve no | `server.ts:3623`, `:3519` |
-| `hive_mark_dead` | `agent:mark-dead` | any | yes | `server.ts:3604` |
-| `hive_recover` | `agent:recover` | any | yes | `server.ts:3594` |
-| `hive_approvals` | `approval:read` | — | no | `server.ts:3850` |
-| `hive_approve` | `approval:decide` | any | yes | `server.ts:3868` |
-| `hive_send`, `hive_escalate` | `message:send` | self (`from` / `agent`) | no | `server.ts:3643`, `:3676` |
-| `hive_inbox` | `inbox:read` | self | no | `server.ts:3764` |
-| `hive_ack_message` | `message:ack` | self | yes, **epoch** | `server.ts:3748` |
-| `hive_read_message` | `message:read` | — | no | `server.ts:3781` |
-| `hive_land` | `branch:land` | self | yes, **epoch + once** | `server.ts:3946` |
-| `memory_search`, `memory_read` | `memory:read` | — | no | `server.ts:4009`, `:4033` |
-| `memory_write`, `memory_delete`, `memory_reindex` | `memory:write` | — | yes | `server.ts:4019`, `:4047`, `:4057` |
+| `GET /health` | — public | — | — | `server.ts:2294-2320` (runs `quickCheck`) |
+| `GET /handshake` | — public | — | — | `server.ts:2322-2324` |
+| `POST /event` | `event:report` | self | no | `server.ts:2327-2329` |
+| `POST /statusline` | `telemetry:report` | self | no | `server.ts:2330-2332` |
+| `POST /channel/{register,poll,ack,permission-request}` | `channel:use` | self | register + permission-request only | `server.ts:2371-2373`, `:2419-2480` |
+| `GET /autonomy` | `autonomy:read` | — | no | `server.ts:2333-2338` |
+| `POST /autonomy` | `autonomy:write` | — | yes | `server.ts:2333-2338` |
+| `GET /routing/policy` | `routing-policy:read` | — | no | `server.ts:2339-2344` |
+| `POST /routing/policy` | `routing-policy:write` | — | yes | `server.ts:2339-2344` |
+| `POST /graphify` | `graphify:write` | — | yes | `server.ts:2368-2370` |
+| `GET /orchestrator-status` | `status:read` | — | no | `server.ts:2345-2347` |
+| `GET /token-usage` | `token-usage:read` | — | no | `server.ts:2348-2350` |
+| `POST /token-usage/**` | `token-usage:write` | — | yes | `server.ts:2351-2366` |
+| `POST /recover` | `agent:recover` | any | yes | `server.ts:2374-2376` |
+| `POST /agents/:name/kill` | `agent:kill` | any | yes | `server.ts:2380-2385` |
+| `POST /codex-root-token` | `root-token:mint` | — | yes | `server.ts:2392-2417` |
+| `hive_status`, `hive_models`, `graph_locate` | `status:read` | — | no | `server.ts:3403`, `:3509`, `:4020` |
+| `hive_quota_status` | `quota:read` | — | no | `server.ts:3481` |
+| `hive_quota_reconcile` | `quota:write` | — | yes | `server.ts:3522` |
+| `hive_token_usage` | `token-usage:read` | — | no | `server.ts:3491` |
+| `hive_spawn` | `agent:spawn` | — | yes | `server.ts:3740` |
+| `hive_kill`, `hive_preserve_branch` | `agent:kill` | any | kill yes, preserve no | `server.ts:3568`, `:3464` |
+| `hive_mark_dead` | `agent:mark-dead` | any | yes | `server.ts:3549` |
+| `hive_recover` | `agent:recover` | any | yes | `server.ts:3539` |
+| `hive_approvals` | `approval:read` | — | no | `server.ts:3798` |
+| `hive_approve` | `approval:decide` | any | yes | `server.ts:3816` |
+| `hive_send`, `hive_escalate` | `message:send` | self (`from` / `agent`) | no | `server.ts:3588`, `:3621` |
+| `hive_inbox` | `inbox:read` | self | no | `server.ts:3709` |
+| `hive_ack_message` | `message:ack` | self | yes, **epoch** | `server.ts:3693` |
+| `hive_read_message` | `message:read` | — | no | `server.ts:3726` |
+| `hive_land` | `branch:land` | self | yes, **epoch + once** | `server.ts:3894` |
+| `memory_search`, `memory_read` | `memory:read` | — | no | `server.ts:3957`, `:3981` |
+| `memory_write`, `memory_delete`, `memory_reindex` | `memory:write` | — | yes | `server.ts:3967`, `:3995`, `:4005` |
 
 `/health` and `/handshake` are public and non-authorizing. Health proves liveness; the handshake proves *identity* (build hash, project, protocol range) so a launcher can decide whether this daemon is the right one to talk to. **Neither may ever grow a side effect** — a handshake that writes is a handshake that needs a capability, and the launcher has none by construction: it is trying to find out whether a capability would even be worth minting.
 
@@ -121,7 +121,7 @@ Burning the grant on a *failed* attempt — stricter, simpler, and the third alt
 
 Something must re-arm the grant, because a working agent lands more than once. That something used to be a human, every lap, and it was the most expensive thing in the system: **one orchestrator cleared nine re-arm approvals in a single session**, and the more productive the agent, the more often it stalled. Most of those approvals granted nothing — the agent had already landed, `main..branch` was empty, and a human was being spent on merging a diff that did not exist.
 
-So the daemon now *measures the branch* first (`server.ts:1190-1246`). Three answers:
+So the daemon now *measures the branch* first (`server.ts:1225-1280`). Three answers:
 
 - **`nothing-to-land`** — `main..branch` is empty. Nothing to merge, so nothing to grant, so **no approval is filed at all**. A grant to merge nothing is not a right anybody needs.
 - **`rearmed`** — the branch has commits the primary lacks *and* is rebased on current `main`, so the merge is a genuine fast-forward. Those are the two facts the human was being asked to eyeball, and git can state both. Audited as `capability.auto-rearm`, and bounded: `AUTO_REARM_BUDGET = 3` (`server.ts:384-385`) per agent, counted from the audit log itself.
@@ -135,7 +135,7 @@ What is deliberately *not* claimed is that the suite is green. The daemon cannot
 
 **Epoch** is the revocation primitive. Every agent row carries a `capabilityEpoch`; every token freezes the epoch it was minted at. Revoking authority means advancing the epoch — one integer write, no token list to walk. Because the critical-control path already advances the epoch when it revokes writes, `hive_send --priority critical` becomes, for free, a credential revocation.
 
-Only `branch:land` and `message:ack` check it (`EPOCH_CHECKED`, `capabilities.ts:135-142`). This is a deliberate narrowing, not an oversight: epoch checks exist to stop *stale authority*, so only the actions that **commit** carry one — merging a branch, and confirming a control instruction landed. Gating reads on the epoch would fail every status poll during a rotation and buy nothing. The operator is exempt because it has no agent row (`capabilities.ts:241-245`) — the same invariant [orchestrator-status.md](orchestrator-status.md) depends on for the root.
+Only `branch:land` and `message:ack` check it (`EPOCH_CHECKED`, `capabilities.ts:135-142`). This is a deliberate narrowing, not an oversight: epoch checks exist to stop *stale authority*, so only the actions that **commit** carry one — merging a branch, and confirming a control instruction landed. Gating reads on the epoch would fail every status poll during a rotation and buy nothing. The operator is exempt because it has no agent row (`src/daemon/credentials.ts:26-27`, `capabilities.ts:329-345`) — the same invariant [orchestrator-status.md](orchestrator-status.md) depends on for the root.
 
 Separately, `WRITE_ACTIONS = {branch:land, memory:write}` (`capabilities.ts:144-148`) are refused for a `writeRevoked` agent even at a current epoch.
 
@@ -143,7 +143,7 @@ Separately, `WRITE_ACTIONS = {branch:land, memory:write}` (`capabilities.ts:144-
 
 **Delegation is not supported, and this is a feature.** No capability mints another; there is no attenuation grammar. The authority graph is exactly one level deep and can be reasoned about by reading the agents table. A macaroon-style attenuable token is strictly more expressive and was rejected because Hive has no use case for it and every delegation edge is a place for authority to escape.
 
-**The one carve-out is `POST /codex-root-token`** (`server.ts:2447-2472`, gated `root-token:mint` at `:2459`). The operator's launcher asks the *daemon* to mint the orchestrator credential a Codex root will present, because that root has no spawn path of its own. Still daemon-minted, still one level deep, and deliberately short-lived: a 60-second TTL that covers the hand-off window and nothing more. (An earlier version of this document flatly claimed no token-exchange endpoint exists. It did not survive contact with Codex.)
+**The one carve-out is `POST /codex-root-token`** (`server.ts:2392-2417`, gated `root-token:mint` at `:2401-2407`). The operator's launcher asks the *daemon* to mint the orchestrator credential a Codex root will present, because that root has no spawn path of its own. Still daemon-minted, still one level deep, and deliberately short-lived: a 60-second TTL that covers the hand-off window and nothing more. (An earlier version of this document flatly claimed no token-exchange endpoint exists. It did not survive contact with Codex.)
 
 ## What a stolen credential buys
 

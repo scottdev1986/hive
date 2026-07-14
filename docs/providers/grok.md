@@ -8,7 +8,7 @@ Raw: [Grok spend-sensitivity experiment](../../raw/grok/grok-spend-sensitivity-e
 
 Grok is a **peer vendor** in Hive, launched into a tmux pane like Claude and Codex, and metered like them. Almost everything Hive knows about it was bought with measured prompts against a live account: the permission semantics, the sandbox's non-enforcement, the session-artifact layout, and the fact that its MCP calls arrive under a wrapper name. This article is that knowledge.
 
-Measured against **grok 0.2.93 (`f00f96316d4b`)** on 2026-07-12 and **grok 0.2.99 (`b1b49ccb71a7`)** on 2026-07-13. Model ids named here are **examples observed on those dates**; the binary carries no model knowledge (`src/adapters/tools/models.ts:6-11`) and Grok's default flipped server-side once already.
+Measured against **grok 0.2.93 (`f00f96316d4b`)** on 2026-07-12 and **grok 0.2.99 (`b1b49ccb71a7`)** on 2026-07-13. Model ids named here are **examples observed on those dates**; Hive ships no Grok catalog or Grok name heuristic (`src/adapters/tools/models.ts:1-15`), and Grok's default flipped server-side once already.
 
 ## What the retired spec got wrong
 
@@ -26,7 +26,7 @@ fixed, so it described code that no longer exists.
 
 ## Launch argv
 
-Built at `src/adapters/tools/grok.ts:105-134`:
+Built at `src/adapters/tools/grok.ts:104-138`:
 
 ```
 grok -m <model> [--reasoning-effort <e>]
@@ -36,11 +36,11 @@ grok -m <model> [--reasoning-effort <e>]
      [--session-id <uuid>]                               # NEW sessions only
 ```
 
-Resume swaps in the short flag: `grok -r <session-id> …` (`grok.ts:136-144`), and **`--session-id` is forbidden on resume** — it *creates*. Every launch is wrapped in the compatibility env below (`spawner-impl.ts:2121`).
+Resume swaps in the short flag: `grok -r <session-id> …` (`grok.ts:130-138`), and **`--session-id` is forbidden on resume** — it *creates*. Every launch is wrapped in the compatibility env below (`spawner-impl.ts:2107-2112`).
 
 ## Hive names the session up front
 
-`crypto.randomUUID()` → `--session-id` (`src/daemon/spawner-impl.ts:1984`, threaded to the spawn at `:2098-2103`).
+`crypto.randomUUID()` → `--session-id` (`src/daemon/spawner-impl.ts:1963-1978`, threaded to the spawn at `:2080-2092`).
 
 The reason is preserved in the adapter at `grok.ts:11-15`: **Grok drives no hook channel and never reports its session id back.** Without naming it up front, every reader has to *guess* which session directory on disk belongs to this agent — and a reused worktree still holds its dead predecessor's. (That failure mode is a known recurring bug class in this codebase: path-keyed reads aliasing across respawns.) Naming it is the only way a reader can key on identity instead of on a directory.
 
@@ -80,7 +80,7 @@ Measured: `--sandbox read-only` (documented as *"FS Write: `~/.grok/` only"*) wi
 
 > **Permission rules are the only measured-real write barrier.** Treat `--sandbox` as unproven defense-in-depth, never as the enforcement layer.
 
-This is exactly why `GROK_SAFETY_DIRECTIVE` (`src/daemon/spawner-impl.ts:623-632`) is **injected into every Grok agent's prompt** (`:704`) rather than shipped as a skill: safety cannot depend on the ~22% of agents that open a shipped skill. The directive tells the agent (a) the sandbox is not a barrier so its assigned scope is a rule it must keep, (b) a "User cancelled…" result with no prompt is a Hive launch-configuration bug — report it, do not retry, and (c) a `--deny` refusal is normal operation.
+This is exactly why `GROK_SAFETY_DIRECTIVE` (`src/daemon/spawner-impl.ts:607-621`) is **injected into every Grok agent's prompt** (`:690`) rather than shipped as a skill: safety cannot depend on the ~22% of agents that open a shipped skill. The directive tells the agent (a) the sandbox is not a barrier so its assigned scope is a rule it must keep, (b) a "User cancelled…" result with no prompt is a Hive launch-configuration bug — report it, do not retry, and (c) a `--deny` refusal is normal operation.
 
 ## Permissions are evaluated per-invocation
 
@@ -104,20 +104,20 @@ Those files are not addressed to a Grok agent. The gap is therefore closed the o
 
 ## MCP: `.grok/config.toml`, never `.mcp.json`
 
-`.mcp.json` is Claude's file (`spawner-impl.ts:709-713`) and Grok never receives one. Hive writes `[mcp_servers]` tables into the **worktree's** `.grok/config.toml` (`grok.ts:190-262`, called at `spawner-impl.ts:1058`, `:2093`), mode `0600`.
+`.mcp.json` is Claude's file (`spawner-impl.ts:695-699`) and Grok never receives one. Hive writes `[mcp_servers]` tables into the **worktree's** `.grok/config.toml` (`grok.ts:184-255`, called at `spawner-impl.ts:1049`, `:2081`), mode `0600`.
 
 The writer is **key-preserving**: it strips only the tables Hive owns (`mcp_servers.hive*`, `mcp_servers.graphify*`), keeps everything the user wrote, and — when no fresh capability token is supplied — **re-reads and re-uses the existing `Authorization` header** rather than dropping it (`grok.ts:178-189`). The removal path is equally narrow: it refuses to touch a file whose `mcp_servers.hive.url` does not match `http://127.0.0.1:<port>/mcp`.
 
 ## Session artifacts live in two layouts
 
-The resolver must accept **both**, and it does (`grok.ts:280-322`):
+The resolver must accept **both**, and it does (`grok.ts:278-411`):
 
 - a directory named for the **urlencoded cwd** (`encodeURIComponent(worktree)`), and
 - a **long-path slug** directory carrying a `.cwd` file whose contents are the real path.
 
 Matching the directory name is only the *filter*. The actual selection is on the session's own `summary.json`: `info.cwd === worktree`, `info.id` present, and — when Hive knows the id it named — `info.id === sessionId`. Newest `summary.json` mtime wins. A directory listing is not identity; the summary is.
 
-Per-session artifacts under `~/.grok/sessions/<project>/<session-uuid>/` (`$GROK_HOME` respected, `grok.ts:264-268`):
+Per-session artifacts under `~/.grok/sessions/<project>/<session-uuid>/` (`$GROK_HOME` respected, `grok.ts:258-262`):
 
 - `events.jsonl` — `permission_resolved` (with `decision` and `wait_ms`), `turn_ended` (`outcome`, `cancellation_category`)
 - `updates.jsonl` — the append-only ACP-shaped stream; `turn_completed` carries `stop_reason`
@@ -132,7 +132,7 @@ Per-session artifacts under `~/.grok/sessions/<project>/<session-uuid>/` (`$GROK
 {"sessionUpdate":"tool_call","title":"use_tool","rawInput":{"tool_name":"graphify__query_graph", …}}
 ```
 
-`title` is the literal string `use_tool` **for all of them**. The real tool name is at `rawInput.tool_name`. A counter keyed on the record's own name therefore reads **zero forever** — which is why the telemetry reads `rawInput.tool_name` and nothing else (`src/daemon/tool-telemetry.ts:380-401`). This is the same failure shape as the guessed-JSON-key lesson in [capability-discovery.md](capability-discovery.md): nothing errors, the column is just empty.
+`title` is the literal string `use_tool` **for all of them**. The real tool name is at `rawInput.tool_name`. A counter keyed on the record's own name therefore reads **zero forever** — which is why the telemetry reads `rawInput.tool_name` and nothing else (`src/daemon/tool-telemetry.ts:386-407`). This is the same failure shape as the guessed-JSON-key lesson in [capability-discovery.md](capability-discovery.md): nothing errors, the column is just empty.
 
 ## `.agents/skills` is shared by Grok AND Codex
 
@@ -146,7 +146,7 @@ The evidence discipline is worth copying: measured by planting uniquely-named pr
 
 ## Version identity
 
-`grok --version` is parsed by a regex pinned verbatim at `grok.ts:59`:
+`grok --version` is parsed by a regex pinned verbatim at `grok.ts:58-65`:
 
 ```
 /^grok (\S+) \(([0-9a-f]+)\) \[(\w+)\]$/

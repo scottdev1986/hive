@@ -37,7 +37,7 @@ Liveness is deliberately three-valued:
 - `dead`: the lock is absent or its owner is positively dead;
 - `unknown`: the lock is malformed, the identity differs, the live owner is unreachable, or the handshake does not match.
 
-A live PID is not ownership proof because PIDs are reused. Unknown state preserves work and blocks destructive operations (`src/daemon/lifecycle.ts:48-82`).
+A live PID is not ownership proof because PIDs are reused. Unknown state preserves work and blocks destructive operations (`src/daemon/lifecycle.ts:48-83`).
 
 ## Per-instance and shared state
 

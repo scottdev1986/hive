@@ -9,7 +9,7 @@ What a user sees when a new Hive exists: at most one dim line at the end of a co
 
 ## The shape, as shipped
 
-The check runs **in the CLI**, not the daemon. `withTrailingUpdateNotice(wantsUpdateNotice(argv), …)` wraps the whole command in `src/cli.ts:868-873`: the check starts when the command starts and runs concurrently, the line prints only after the command finishes *normally* (a failed command's error is the last thing the user reads, not a version advertisement), and a failed or slow check is silence, never an error.
+The check runs **in the CLI**, not the daemon. `withTrailingUpdateNotice(wantsUpdateNotice(argv), …)` wraps the whole command in `src/cli.ts:843-853`: the check starts when the command starts and runs concurrently, the line prints only after the command finishes *normally* (a failed command's error is the last thing the user reads, not a version advertisement), and a failed or slow check is silence, never an error.
 
 The network budget is **300 ms** (`cli/update-notice.ts:33`, `:96-105`): a cold fetch aborts fast rather than keeping the process alive after the command is done, and the result still lands in the on-disk cache so the *next* command shows it instantly. `checkForUpdate` itself allows 2.5 s (`update/check.ts:21`) on the surfaces that can afford it.
 
@@ -18,7 +18,7 @@ This contradicts the original design, and the contradiction is the most importan
 - `update-check.json` — `{latestVersion, checkedAt, securityCritical, dismissedVersion}` (`update/check.ts:25-34`): what we know about releases.
 - `update-notice.json` — `{lastNoticeAt}` (`cli/update-notice.ts:53-54`): when we last interrupted the user. **Deliberately a separate file**: one records the world, the other records our own rudeness, and they change on different schedules.
 
-The consequence, stated plainly: a long-running daemon learns about a release only when a human types a command. The structural advantage of having a resident process is designed but unclaimed.
+The consequence, stated plainly: a long-running daemon learns about a release only when a human types a command. The structural advantage of having a resident process is designed but unclaimed. Both cache files live below the selected `HIVE_HOME`; `~/.hive` is the default instance.
 
 ## Where the notice surfaces, and where it deliberately does not
 
@@ -26,9 +26,9 @@ Hive has three possible surfaces and only one is right by default. The daemon ha
 
 The passive trailing notice appears only on the human-facing commands in `USER_FACING_COMMANDS` (`cli/update-notice.ts:38-49`). Session boundaries and machine-facing protocol commands are deliberately absent from that allowlist.
 
-**`claude`, `codex`, `init`, and bare `hive` are excluded on purpose** (`cli/update-notice.ts:13-16`). They are **session boundaries**, and they already print the richer *start* notice through `startSession` → `printStartNotice` (`cli/start.ts:51-70`, `cli/start.ts:118`) and, for the standalone Workspace launch, `cli/workspace.ts:176-190`. Two version lines on one command is one too many, and the start notice is strictly better on those surfaces: it is the last moment Hive owns the terminal before an orchestrator takes it, so it always says *something* — including `could not check for updates (…)`, which is the whole point of asking. Everything not on either list — `hive event`, the hidden app-server host, hooks, bridges — never speaks at all, because a surprise stderr line inside an agent turn corrupts a protocol.
+**`claude`, `codex`, `init`, and bare `hive` are excluded on purpose** (`src/cli/update-notice.ts:13-16`). Repo-backed session boundaries already print the richer *start* notice through `startSession` → `printStartNotice` (`src/cli/start.ts:53-72`, `:108-122`). Two version lines on one command is one too many, and that start notice is strictly better: it is the last moment Hive owns the terminal before an orchestrator takes it, so it says what the check found, including `could not check for updates (…)`. A standalone Workspace launch has no repo session to start; it performs its own forced check and prints only when a non-dismissed update is available (`src/cli/workspace.ts:191-208`). Everything not on either list — `hive event`, the hidden app-server host, hooks, bridges — never speaks at all, because a surprise stderr line inside an agent turn corrupts a protocol.
 
-The gate is **stdout is a TTY** and `CI` is unset (`cli/update-notice.ts:80-88`); the line itself is written to **stderr** (`cli/update-notice.ts:143-144`). The research doc said "stderr is a TTY" and even `notice.ts:100` still carries that comment; the code gates on stdout. The practical difference is real — `hive status | jq` prints no notice (stdout is a pipe), which is the behavior you want.
+The gate is **stdout is a TTY** and `CI` is unset (`src/cli/update-notice.ts:78-88`); the line itself is written to **stderr** (`src/cli/update-notice.ts:139-150`). The practical difference is real — `hive status | jq` prints no notice because stdout is a pipe.
 
 The line, dim, one line, ending the command:
 
@@ -53,7 +53,7 @@ Two levels of off, mirroring Claude Code, plus the ecosystem variable (`update/c
 | variable | effect |
 |---|---|
 | `HIVE_NO_UPDATE_CHECK=1` | background checks and notices off; `hive update` still works |
-| `HIVE_DISABLE_UPDATES=1` | blocks even a manual `hive update` (`cli/update.ts:84-88`) |
+| `HIVE_DISABLE_UPDATES=1` | blocks even a manual `hive update` (`src/cli/update.ts:94-117`) |
 | `NO_UPDATE_NOTIFIER` | honored, any value. Costs one `||` and respects a convention users already export |
 
 Per-version dismissal is `hive update skip`, Codex's politest-rate-limit-in-the-survey, one field in a cache file.
@@ -71,7 +71,7 @@ hive update rollback         reactivate the retained previous version
 hive update skip             silence notices for the currently offered version
 ```
 
-`hive update channel stable` and `hive update off | on` **do not exist** — the research doc listed both. Channels: the manifest carries a `channel` enum (`release/manifest.ts:58`) but **nothing reads it**; `update/source.ts:112-116` resolves `releases/latest` unconditionally. `off`/`on` are the environment variables above.
+`hive update channel stable` and `hive update off | on` **do not exist** — the research doc listed both. Channels: the manifest carries a `channel` enum (`src/release/manifest.ts:61-75`) but **nothing reads it**; `src/update/source.ts:112-116` resolves `releases/latest` unconditionally. `off`/`on` are the environment variables above.
 
 Claude Code splits pinning into a separate `claude install`; Hive folds it into `hive update <version>` because a second installer-flavored verb earns its keep only when install and update genuinely differ, and under versioned directories they are the same operation: fetch, verify, stage, activate.
 
@@ -79,7 +79,7 @@ Claude Code splits pinning into a separate `claude install`; Hive folds it into 
 
 ### The three checks, named out loud
 
-`hive update` prints what it actually verified (`cli/update.ts:259-279`, `:327-350`):
+`hive update` prints what it actually verified (`src/cli/update.ts:276-289`, `:325-350`):
 
 ```
 hive 0.0.9 staged — verified: Ed25519 signature, SHA-256, binary probed
@@ -99,7 +99,7 @@ The download is **visible**: a binary that asks to replace itself, over tens of 
 
 **Daemon auto-activation at quiescence is not built.** A staged update waits for a human to re-run `hive update`; the one-shot completion line from the design does not exist.
 
-Activation is a machine-wide mutation. It holds the mutation lease, repeats the all-instance liveness check, and refuses while any instance has a live or unobservable team. Spawn and landing use the same coordinator, so a new operation cannot enter between the final check and the `current` change (`cli/update.ts:281-325`, `daemon/mutation-lease.ts:162-305`). The refusal names each blocking instance and the observed agent names or unknown marker (`cli/update.ts:224-231`). Downloading, signature verification, hashing, probing, and staging happen before that lease because they do not change the active install.
+Activation is a machine-wide mutation. It holds the mutation lease, repeats the all-instance liveness check, and refuses while any instance has a live or unobservable team. Spawn and landing use the same coordinator, so a new operation cannot enter between the final check and the `current` change (`src/cli/update.ts:291-323`, `src/daemon/mutation-lease.ts:162-305`). The refusal names each blocking instance and the observed agent names or unknown marker (`src/cli/update.ts:224-231`). Downloading, signature verification, hashing, probing, and staging happen before that lease because they do not change the active install.
 
 **Wire compatibility is not N/N−1.** The research doc promised "N/N−1 wire compatibility by policy"; `daemon/handshake.ts:11` is `{min: 1, max: 1}` — one wire version, refuse on mismatch. That is the conservative half of the contract and not yet the useful half.
 

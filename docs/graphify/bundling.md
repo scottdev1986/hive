@@ -15,7 +15,7 @@ The bundle closes all three at once: **one origin** (Hive's own releases — the
 
 It is also not "vendoring," which was and remains rejected: upstream's *source tree* never enters Hive's repo. Upstream's churn reaches a user only when a Hive developer deliberately bumps the pin and ships new artifacts.
 
-There is no venv anywhere. The daemon invokes `$HIVE_HOME/tools/graphify/<pin>/graphify` and `…/graphify-mcp` by absolute path (`src/adapters/graphify.ts:56-61`) — nothing on `PATH`, and a `graphify` the user installed themselves is neither touched nor trusted. Uninstall is the acceptance test for the whole posture: delete that directory and the repo's `graphify-out/`, and that is the entire footprint. No uv cache, no managed Python, no venv.
+There is no venv anywhere. The daemon invokes `$HIVE_HOME/tools/graphify/<pin>/graphify` and `…/graphify-mcp` by absolute path (`src/adapters/graphify.ts:51-63`) — nothing on `PATH`, and a `graphify` the user installed themselves is neither touched nor trusted. Purging removes that tool directory, the repo's `graphify-out/`, its serving snapshot, and Hive's generated `.graphifyignore`; user-authored ignore files are left alone (`src/adapters/graphify.ts:1111-1135`). No uv cache, managed Python, or venv exists.
 
 ## Freezing survives tree-sitter (this was the gate)
 

@@ -161,7 +161,7 @@ Verified against the tree on 2026-07-13, and it is a real, current gap.
 
 Two structural commitments SPEC already ratified and the code has not yet expressed: the ceiling must be **absolute tokens, per model, tuned by measurement, and subordinate to the error-state trigger**; and **admit and retire must be two different lines**. One number doing both jobs means an agent can accept a task at 64% and be killed at 66% while still holding it. The gap between the lines is the room an agent needs to finish what it accepted.
 
-The sensing layer has already been fixed the right way: `src/daemon/tool-telemetry.ts:87-100` now reports the **numerator only** — resident tokens, summed from the transcript — because the model id cannot supply the window (the 1M upgrade is a property of the *account's plan*, so `claude-opus-4-8` is 200K on one plan and 1M on another with a byte-identical string). The sweep divides by the window the statusline payload actually measured, or reports unknown. Sensing is correct; the actuator is missing; the brief still speaks the old language.
+The sensing layer has already been fixed the right way: `src/daemon/tool-telemetry.ts:90-109` reports the **numerator only** — resident tokens, summed from the transcript — because the model id cannot supply the window (the 1M upgrade is a property of the *account's plan*, so `claude-opus-4-8` is 200K on one plan and 1M on another with a byte-identical string). The sweep divides by the window the statusline payload actually measured, or reports unknown (`src/daemon/server.ts:1390-1409`). Sensing is correct; the actuator is missing; the brief still speaks the old language.
 
 ## Open questions
 
