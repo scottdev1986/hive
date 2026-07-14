@@ -55,9 +55,9 @@ The default home remains compatible with pre-instance state. Legacy unsuffixed t
 
 The repository is the common arbiter for names and work:
 
-- Before allocating an agent name, Hive reads existing worktrees and `hive/*` branches. `git worktree add` remains the atomic backstop when two instances race for the same name (`src/adapters/worktrees.ts:225-250`, `:291-321`).
-- Creating a writer branch also writes `refs/hive-owner/<instanceId>/<branch>`. Branch deletion clears that ownership ref (`src/adapters/worktrees.ts:90-130`, `:278-289`).
-- Stranded-work reconciliation skips an unpreserved branch owned by a live sibling. It never deletes stranded work itself (`src/daemon/server.ts:2180-2208`).
+- Before allocating an agent name, Hive reads existing worktrees and `hive/*` branches. `git worktree add` remains the atomic backstop when two instances race for the same name (`src/adapters/worktrees.ts:306-351`, `:403-429`).
+- Creating a writer branch also writes `refs/hive-owner/<instanceId>/<branch>`. Branch deletion clears that ownership ref (`src/adapters/worktrees.ts:88-143`, `:306-351`).
+- Stranded-work reconciliation skips an unpreserved branch owned by a live sibling. It never deletes stranded work itself (`src/daemon/server.ts:2187-2213`).
 - Landing holds `hive-landing.lock` in the Git common directory across the complete fast-forward-only landing operation. Release is token-scoped, so one process cannot remove a successor's lease (`src/daemon/landing.ts:115-152`, `:476-482`).
 - `hive uninstall --repo` stops only the selected instance and removes only worktrees and branches owned by that instance. The default instance may claim legacy branches that predate ownership refs; named instances may not (`src/cli/uninstall.ts:195-273`, `:275-332`).
 
@@ -77,7 +77,7 @@ Every reservation records `instanceId` and `instanceHome`. This prevents same-na
 - a live owner keeps its reservations;
 - an unknown owner is preserved.
 
-An instance between lock acquisition and handshake publication is therefore protected (`src/daemon/quota-ledger.ts:1615-1641`). The default instance's legacy quota tables are copied once into the shared ledger without deleting the old rows (`src/daemon/quota-ledger.ts:47-142`).
+An instance between lock acquisition and handshake publication is therefore protected (`src/daemon/quota-ledger.ts:1621-1639`). The default instance's legacy quota tables are copied once into the shared ledger without deleting the old rows (`src/daemon/quota-ledger.ts:65-144`).
 
 `hive.db` remains a per-instance, single-process database. `quota.db` is the deliberate multi-process exception; see [Database resilience](database-resilience.md).
 
@@ -96,9 +96,9 @@ The final gate enumerates every instance:
 
 The refusal names the instance and the observed agents or unknown marker (`src/daemon/instances.ts:115-143`, `src/cli/update.ts:224-231`).
 
-Update may download, verify, and stage bytes while teams are working, because staging does not change `current`. Activation holds the lease, repeats the blocker check, and only then changes the active version (`src/cli/update.ts:291-367`). Rollback follows the same lease and final check (`src/cli/update.ts:200-221`).
+Update may download, verify, and stage bytes while teams are working, because staging does not change `current`. Activation holds the lease, repeats the blocker check, and only then changes the active version (`src/cli/update.ts:291-365`). Rollback follows the same lease and final check (`src/cli/update.ts:199-221`).
 
-Machine uninstall also checks before its prompt, acquires the lease after confirmation, checks again, and stops every idle daemon before removing machine state. If a daemon will not stop, uninstall refuses instead of deleting the binary underneath it (`src/cli/uninstall.ts:335-380`). Repository uninstall does not acquire the machine lease because it does not mutate the global `current` pointer.
+Machine uninstall also checks before its prompt, acquires the lease after confirmation, checks again, and stops every idle daemon before removing machine state. If a daemon will not stop, uninstall refuses instead of deleting the binary underneath it (`src/cli/uninstall.ts:335-410`). Repository uninstall does not acquire the machine lease because it does not mutate the global `current` pointer.
 
 ## Failure rules
 

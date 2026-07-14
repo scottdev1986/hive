@@ -36,7 +36,7 @@ The line, dim, one line, ending the command:
 hive 0.0.9 available (you have 0.0.7) — run hive update
 ```
 
-When the version is already staged and this is a native install, the line says what is actually true (`update/notice.ts:48-53`): `hive 0.0.9 downloaded — run hive update to activate`, or `— activates when the current team finishes, or run hive update now` when agents are live. On a Homebrew-owned path the command in the line becomes `brew upgrade hive` (`update/paths.ts:77-79`), per the ownership rule.
+When the version is already staged and this is a native install, the line says what is actually true (`update/notice.ts:49-53`): `hive 0.0.9 downloaded — run hive update to activate`, or `— run hive update after all Hive teams stop` when agents are live. It promises no automatic activation and names no nonexistent force command. On a Homebrew-owned path the command in the line becomes `brew upgrade hive` (`update/paths.ts:77-79`), per the ownership rule.
 
 ### Rate limit, dismissal, and the security escalation
 
