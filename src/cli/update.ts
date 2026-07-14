@@ -296,14 +296,12 @@ export async function activateStagedUpdate(
   try {
     const blockers = await deps.blockers();
     if (blockers.length > 0) {
-      deps.log(`hive ${version} activates when every instance's team finishes`);
       deps.log(globalMutationRefusal(blockers));
       return;
     }
     const daemon = await deps.inspectDaemon();
     const refusal = explainRefusal(daemon);
     if (refusal !== null) {
-      deps.log(`hive ${version} activates when the team finishes`);
       deps.log(refusal);
       return;
     }

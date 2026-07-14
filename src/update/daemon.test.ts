@@ -187,7 +187,9 @@ describe("the daemon left behind by an update", () => {
       stopped: false,
       reason: "3 agent(s) live (leo, maya, sam)",
     });
-    expect(explainRefusal(state)).toContain("hive stop");
+    expect(explainRefusal(state)).toContain(
+      "run `hive stop`, then rerun `hive update`",
+    );
   });
 
   test("an unreadable agent list is treated as a live team, not an idle one", async () => {

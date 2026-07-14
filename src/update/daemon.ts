@@ -218,7 +218,7 @@ export function explainRefusal(state: DaemonUpdateState): string | null {
     case "busy":
       return `${state.liveAgents.length} agent(s) still working (${state.liveAgents.join(", ")}); ` +
         "the running daemon and team are unaffected\n" +
-        "Fix: run `hive stop` to activate now";
+        "Fix: run `hive stop`, then rerun `hive update`";
     case "foreign":
       return `port ${state.port} serves a different project (${state.reason})\n` +
         "Fix: stop that daemon, then update this project";

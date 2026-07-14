@@ -135,6 +135,7 @@ describe("machine mutation leases in update commands", () => {
     expect(order).toEqual(["acquire", "release"]);
     expect(lines.join("\n")).toContain("review: new-agent");
     expect(lines.join("\n")).toContain("Fix:");
+    expect(lines.join("\n")).not.toContain("activates when");
   });
 
   test("an activation error still releases the update lease", async () => {
