@@ -1652,26 +1652,30 @@ export class HiveDaemon {
 
   async recoverQuotaReservations(): Promise<number> {
     if (this.quota === undefined) return 0;
-    const expired = await this.quota.recoverExpiredReservations();
+    const expired = await this.quota.listExpiredReservations();
     for (const reservation of expired) {
-      if (reservation.purpose !== "control") continue;
-      const agent = this.db.getAgentByName(reservation.agentName);
-      if (agent?.controlQuotaReservationId !== reservation.id) continue;
-      const teardown = await this.killAgentTeardown(agent, {
-        failureReason:
-          `Critical control acknowledgement process timed out (reservation ${reservation.id})`,
-      });
-      const processOutcome = teardown.reaped.survivors.length === 0
-        ? "all captured processes were stopped"
-        : `${teardown.reaped.survivors.length} captured process(es) survived SIGKILL and remain running`;
-      await this.delivery.send(
-        "hive-control",
-        ORCHESTRATOR_NAME,
-        `Critical control acknowledgement process for ${agent.name} timed out. ` +
-          `Reservation ${reservation.id} settled conservatively; ${processOutcome}, ` +
-          "write and landing capability remain revoked, and the worktree is preserved.",
-        { idempotencyKey: `control-quota-timeout:${reservation.id}` },
-      ).catch(logAlertDeliveryFailure);
+      if (reservation.purpose === "control") {
+        const agent = this.db.getAgentByName(reservation.agentName);
+        if (agent?.controlQuotaReservationId === reservation.id) {
+          const teardown = await this.killAgentTeardown(agent, {
+            failureReason:
+              `Critical control acknowledgement process timed out (reservation ${reservation.id})`,
+          });
+          const processOutcome = teardown.reaped.survivors.length === 0
+            ? "all captured processes were stopped"
+            : `${teardown.reaped.survivors.length} captured process(es) survived SIGKILL and remain running`;
+          await this.delivery.send(
+            "hive-control",
+            ORCHESTRATOR_NAME,
+            `Critical control acknowledgement process for ${agent.name} timed out. ` +
+              `Reservation ${reservation.id} settled conservatively; ${processOutcome}, ` +
+              "write and landing capability remain revoked, and the worktree is preserved.",
+            { idempotencyKey: `control-quota-timeout:${reservation.id}` },
+          ).catch(logAlertDeliveryFailure);
+          continue;
+        }
+      }
+      await this.quota.cancel(reservation.id);
     }
     await this.settleReservationsOfDeadAgents();
     return expired.length;
