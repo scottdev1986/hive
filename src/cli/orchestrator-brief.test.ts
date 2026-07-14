@@ -258,10 +258,16 @@ describe("orchestrator brief", () => {
       "Prefer a follow-up to a live agent over a new spawn",
     );
     expect(ORCHESTRATOR_BRIEF).toContain("re-reads the repo from zero");
-    // The reuse test is the two facts hive_status already reports, so no
-    // second source of truth about reusability can go stale.
-    expect(ORCHESTRATOR_BRIEF).toContain("contextPct is a number under 65");
-    expect(ORCHESTRATOR_BRIEF).toContain("file scopes would collide");
+    // SPEC deliberately leaves the numeric threshold absent; the brief must
+    // preserve that absence instead of quietly reintroducing one.
+    expect(ORCHESTRATOR_BRIEF).toContain("SPEC decision 7");
+    expect(ORCHESTRATOR_BRIEF).toContain("no numeric contextPct threshold");
+    expect(ORCHESTRATOR_BRIEF).toContain(
+      "weigh task size against remaining room qualitatively",
+    );
+    expect(ORCHESTRATOR_BRIEF).toContain("file scopes do not collide");
+    expect(ORCHESTRATOR_BRIEF).not.toContain("under 65");
+    expect(ORCHESTRATOR_BRIEF).not.toContain("recycle line");
     // An unobserved context is not an empty one. The rule has to say so, or the
     // orchestrator reads null as room and loads work onto an agent it cannot see.
     expect(ORCHESTRATOR_BRIEF).toContain("NOT eligible for reuse");
@@ -275,7 +281,7 @@ describe("orchestrator brief", () => {
     );
     // The rule is generic: no hive-repo-specific doc name is compiled into the
     // brief. The actual doc names are fed from the profile at launch.
-    expect(ORCHESTRATOR_BRIEF).not.toContain("SPEC");
+    expect(ORCHESTRATOR_BRIEF).not.toContain("SPEC.md");
     expect(ORCHESTRATOR_BRIEF).not.toContain("docs/research");
     expect(ORCHESTRATOR_BRIEF).toContain("Cite this repo's own documents by the names listed below");
   });
