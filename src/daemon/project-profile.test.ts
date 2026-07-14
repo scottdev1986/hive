@@ -940,6 +940,12 @@ describe("commit-time proof", () => {
     expect((await readCurrentProfile(root))?.commands[0]?.command).toBe(
       "cargo test --workspace",
     );
+    // The bytes staged before the proof are removed when the proof rejects —
+    // a rejected refresh leaves nothing half-written behind.
+    const leftovers = (await readdir(projectProfileDir(root))).filter((name) =>
+      name.endsWith(".tmp"),
+    );
+    expect(leftovers).toEqual([]);
   }, 20_000);
 
   test("proveProfileStillHolds catches a deleted citation and a moved tree", async () => {

@@ -49,41 +49,47 @@ describe("withFileLock", () => {
     );
   });
 
-  test("reclaims an abandoned lock whose owner never wrote its record", async () => {
+  test("does not steal an unreadable lock — it may be a live owner mid-write", async () => {
     const root = await mkdtemp(join(tmpdir(), "hive-file-lock-empty-"));
     roots.push(root);
     const path = join(root, "state.lock");
-    // The corpse of a process that died between creating the lock and writing
-    // who it was: no owner to check for liveness, so nothing used to reclaim it.
-    // The lock was held by nobody, forever.
+    // An unreadable lock: no owner record to check for liveness. It might be a
+    // corpse, or an owner still writing — a clock cannot tell them apart, so it
+    // must never be reclaimed. A build that reclaimed it on a timer would enter
+    // while the writer was still finishing, and two holders is the one thing a
+    // lock may not produce.
     await writeFile(path, "");
 
-    expect(await withFileLock(path, async () => "acquired")).toBe("acquired");
+    let clearedAt = 0;
+    const clearer = (async () => {
+      // Longer than any grace a timed reclaim would have used (the build under
+      // review reclaimed at 1s): if this lock is stolen, it is stolen before
+      // here, and the ordering assertion below catches it.
+      await Bun.sleep(1_500);
+      clearedAt = Date.now();
+      await unlink(path);
+    })();
+
+    const acquiredAt = await withFileLock(path, async () => Date.now());
+    await clearer;
+    // The only way in was to wait for the unreadable lock to be cleared, never
+    // to reclaim it.
+    expect(acquiredAt).toBeGreaterThanOrEqual(clearedAt);
   }, 15_000);
 
-  test("never publishes a lock name without its owner record", async () => {
+  test("a held lock always has a legible owner record", async () => {
     const root = await mkdtemp(join(tmpdir(), "hive-file-lock-atomic-"));
     roots.push(root);
     const path = join(root, "state.lock");
 
-    // Whatever a concurrent reader catches, it never catches an empty lock:
-    // the name and the contents appear in the same instant.
-    const seen: string[] = [];
-    const reader = (async () => {
-      for (let index = 0; index < 200; index += 1) {
-        const source = await readFile(path, "utf8").catch(() => null);
-        if (source !== null) seen.push(source);
-        await Bun.sleep(1);
-      }
-    })();
-    for (let index = 0; index < 40; index += 1) {
-      await withFileLock(path, async () => undefined);
-    }
-    await reader;
-
-    expect(seen.length).toBeGreaterThan(0);
-    expect(seen.every((source) => source.trim().length > 0)).toBe(true);
-  }, 15_000);
+    // Publication is atomic: the lock's name and its full owner record appear in
+    // the same instant, so a held lock is never empty for a reader to trip over.
+    await withFileLock(path, async () => {
+      const source = await readFile(path, "utf8");
+      expect(source.trim().length).toBeGreaterThan(0);
+      expect(() => JSON.parse(source)).not.toThrow();
+    });
+  });
 
   test("reclaims a well-formed lock whose owner is dead", async () => {
     const root = await mkdtemp(join(tmpdir(), "hive-file-lock-stale-"));

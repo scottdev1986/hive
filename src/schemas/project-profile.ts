@@ -229,7 +229,26 @@ export type ProjectProfileConflict = z.infer<
  * be wrong. Deliberately not "the Git tree" — hashing the tree is what made the
  * old profile look stale on every unrelated commit (SPEC §14). `notes` carries
  * an observation that is not a single path ("the set of crates under crates/"),
- * which drift detection reads as prose, not as a hash input. */
+ * which drift detection reads as prose, not as a hash input.
+ *
+ * FOUNDATION CONTRACT — the freshness guarantee, and its explicit limit. The
+ * daemon proves, under lock and immediately before commit, that every path a
+ * profile cites exists and that the repository digest still matches the one the
+ * profiler read (`proveProfileStillHolds`). What it CANNOT prove is that those
+ * facts still hold one instant later: nothing that edits the repository takes
+ * the profile lock — the repository does not know the lock exists — so a cited
+ * file deleted in the moment after the commit, or in the final unclosable
+ * instant between the proof and the rename, lands in `current.json` and stays
+ * there. The guarantee is therefore "valid as of the commit", not "valid now".
+ *
+ * Closing the gap is drift detection's job (P7), and this is the interface it
+ * inherits: a consumer that acts on a profile is entitled to assume its
+ * citations were real at commit time and no stronger; drift detection MUST,
+ * on observing that a `staleness.paths` entry or any cited path has gone
+ * missing or changed, drive the profile to `stale` via `markProfileStale` so the
+ * lifecycle reprofiles it. `stale` keeps the profile readable and in use until a
+ * replacement is accepted, so this backstop never leaves a consumer with
+ * nothing — it leaves them with a profile flagged as due for refresh. */
 export const ProjectProfileStalenessSchema = z.strictObject({
   paths: z.array(RepoRelativePath),
   notes: z.array(z.string().min(1)),

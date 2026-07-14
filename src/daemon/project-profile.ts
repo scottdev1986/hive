@@ -22,6 +22,7 @@ import {
   readdir,
   readlink,
   rename,
+  unlink,
 } from "node:fs/promises";
 import { dirname, join, relative } from "node:path";
 import {
@@ -206,9 +207,12 @@ export async function computeProfileInventory(
  * before the rename, so a power cut cannot leave a renamed-but-empty file; and
  * the rename is atomic within the directory, so `current.json` is the old bytes
  * until the instant it is all of the new ones. */
-async function writeJsonAtomic(path: string, value: unknown): Promise<void> {
-  const directory = dirname(path);
-  await mkdir(directory, { recursive: true });
+/** Write the bytes to a private temp file and fsync them, returning its path.
+ * The result is fully on disk but not yet visible under `path`; `commitStaged`
+ * makes it visible. Splitting the two is what lets the caller run a last check
+ * *after* the expensive write and *immediately before* the rename. */
+async function stageJson(path: string, value: unknown): Promise<string> {
+  await mkdir(dirname(path), { recursive: true });
   const temporary = `${path}.${process.pid}.${randomUUID()}.tmp`;
   const handle = await open(temporary, "w");
   try {
@@ -217,17 +221,26 @@ async function writeJsonAtomic(path: string, value: unknown): Promise<void> {
   } finally {
     await handle.close();
   }
+  return temporary;
+}
+
+/** Make a staged file the live contents of `path`, atomically and durably. */
+async function commitStaged(temporary: string, path: string): Promise<void> {
   await rename(temporary, path);
   // The file's own bytes being on disk is not enough: the rename is a directory
   // change, and an unsynced directory can lose the new name in a power cut while
   // keeping the fully-written data nobody can now reach. Syncing the file and
   // not the directory it lands in is a durability claim the code does not honour.
-  const entry = await open(directory, "r");
+  const entry = await open(dirname(path), "r");
   try {
     await entry.sync();
   } finally {
     await entry.close();
   }
+}
+
+async function writeJsonAtomic(path: string, value: unknown): Promise<void> {
+  await commitStaged(await stageJson(path, value), path);
 }
 
 async function readJson(path: string): Promise<unknown | null> {
@@ -523,20 +536,37 @@ export async function submitProfile(
     // rename a cited file can be deleted, and committing then would persist a
     // profile citing a path that is not there — exactly the hallucinated-manifest
     // failure the citation rule exists to catch, arriving through the back door.
-    const proof = await proveProfileStillHolds(profile, {
-      root,
-      run: fresh.run,
-      inventoryDigest: (await computeProfileInventory(root)).digest,
-    });
-    if (proof.length > 0) {
-      return {
-        status: "rejected" as const,
-        rejections: proof,
-        lifecycle: await recordRejection(root, fresh, proof),
-      };
+    //
+    // The bytes are staged (written and fsynced) BEFORE the proof so that after
+    // the proof's last stat only the rename remains: the window in which the
+    // repo could change between "the citations hold" and "the profile is live"
+    // is one rename, not a write plus an fsync plus a rename. It is not zero.
+    // Nothing takes `profile.lock` when it edits the repo — the repo does not
+    // know this lock exists — so a file deleted in that final instant, or in the
+    // instant after the commit, still lands. That residual is unclosable at this
+    // layer and is the same event as a deletion the moment after any commit; it
+    // belongs to drift detection, which marks a profile stale when a cited path
+    // is observed missing. See the staleness contract on ProjectProfileSchema.
+    const staged = await stageJson(currentProfilePath(root), profile);
+    let committed = false;
+    try {
+      const proof = await proveProfileStillHolds(profile, {
+        root,
+        run: fresh.run,
+        inventoryDigest: (await computeProfileInventory(root)).digest,
+      });
+      if (proof.length > 0) {
+        return {
+          status: "rejected" as const,
+          rejections: proof,
+          lifecycle: await recordRejection(root, fresh, proof),
+        };
+      }
+      await commitStaged(staged, currentProfilePath(root));
+      committed = true;
+    } finally {
+      if (!committed) await unlink(staged).catch(() => undefined);
     }
-
-    await writeJsonAtomic(currentProfilePath(root), profile);
     await writeProfileState(root, {
       ...fresh,
       lifecycle: "current",

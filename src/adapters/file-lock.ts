@@ -29,12 +29,6 @@ function parseLockOwner(source: string, path: string): FileLockOwner | null {
   return { pid: Number(record.pid), token: record.token };
 }
 
-/** How long a lock whose owner record cannot be read is given to become
- * readable before it is treated as a corpse. Generous: writing the record is a
- * single write of a few dozen bytes, and the cost of being wrong in the other
- * direction is two processes in one critical section. */
-const UNREADABLE_LOCK_GRACE_MS = 1_000;
-
 const isAlive = (pid: number): boolean => {
   try {
     process.kill(pid, 0);
@@ -71,7 +65,8 @@ async function publish(
   }
 }
 
-/** Reclaim a lock whose owner is gone, without ever unlinking the lock's name.
+/** Reclaim a lock whose owner is provably dead, without ever unlinking the
+ * lock's name.
  *
  * The old code compared the file's contents to what it had read and then called
  * `unlink(path)` — but the comparison and the unlink are two steps, and a live
@@ -87,12 +82,24 @@ async function publish(
  * between the read and the rename — it puts it back with `link`, which refuses
  * to overwrite whatever may now be there.
  *
- * The residual: if a *third* contender publishes in the instant between the
- * rename and the restore, the restore fails and the live owner's file is gone
- * while another process holds the name. Both would then be inside the section.
- * Closing that last window needs a lock the kernel releases on death (`flock` /
- * `O_EXLOCK`), which no Node/Bun API exposes portably; this is strictly narrower
- * than what it replaces, and it is the honest limit of an advisory file lock. */
+ * This is only ever called for a lock whose owner pid is dead, so there is no
+ * live original owner to strand. What it narrows, versus the old unconditional
+ * unlink, is the case where the dead owner's slot was reused by a live one
+ * between our inspection and our rename.
+ *
+ * TWO RESIDUALS REMAIN, and neither is closable with the primitives a POSIX
+ * filesystem exposes; both belong to whoever owns full cross-process lock
+ * hardening, not to this slice:
+ *  - If this process crashes between the rename and the restore, a live owner
+ *    that had republished into `path` is left with its lock moved aside — it is
+ *    stranded until a human clears the `.stale.` file.
+ *  - If a third contender publishes into `path` in the instant between the
+ *    rename and the restore, the restore takes the EEXIST branch and the moved
+ *    owner's file is gone while another process holds the name.
+ * Closing either needs a lock the kernel releases on process death (`flock` /
+ * `O_EXLOCK`), which no portable Node/Bun API offers. What is here is strictly
+ * safer than the unconditional unlink it replaces; it is not airtight, and it
+ * does not pretend to be. */
 async function reclaim(
   path: string,
   source: string,
@@ -106,10 +113,25 @@ async function reclaim(
     throw error;
   }
   const moved = await readFile(staged, "utf8").catch(() => null);
-  if (moved !== source) {
-    // Not the corpse we inspected. Restore it; `link` will not clobber a lock
-    // that has appeared in the meantime.
-    await link(staged, path).catch(() => undefined);
+  if (moved === source) {
+    // The corpse we inspected, now ours alone. Drop it.
+    await unlink(staged).catch(() => undefined);
+    return;
+  }
+  // Not the corpse: a live owner published into `path` between our read and our
+  // rename, and we have moved their lock aside. Put it back.
+  try {
+    await link(staged, path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
+      // The restore failed and `path` is, as far as we know, still free.
+      // Deleting `staged` now would destroy a live owner's only lock file and
+      // admit a second holder — exactly the fault this function exists to avoid.
+      // Leave it on disk (it sits at a private name and blocks nothing at
+      // `path`) and surface the fault instead of papering over it by unlinking.
+      throw error;
+    }
+    // EEXIST: a newer lock already holds `path`; our staged copy is redundant.
   }
   await unlink(staged).catch(() => undefined);
 }
@@ -121,7 +143,6 @@ export async function withFileLock<T>(
   const owner: FileLockOwner = { pid: process.pid, token: crypto.randomUUID() };
   const encoded = `${JSON.stringify(owner)}\n`;
   const deadline = Date.now() + 10_000;
-  let unreadableSince: number | null = null;
   while (true) {
     // Checked on every path through the loop, not just the one that sleeps: a
     // contender that keeps losing races would otherwise spin past its deadline.
@@ -137,26 +158,18 @@ export async function withFileLock<T>(
       throw error;
     }
     const current = parseLockOwner(source, path);
-    if (current === null) {
-      // A lock with no legible owner is one of two things, and they look
-      // identical: an owner still writing its record — which this protocol no
-      // longer does, but a process running an older build still might — or the
-      // corpse of one that died inside that window, which nothing would ever
-      // reclaim. Time tells them apart. Writing the record takes microseconds; a
-      // corpse stays unreadable forever. So wait, and reclaim only what is still
-      // unreadable long after any writer would have finished.
-      const now = Date.now();
-      unreadableSince ??= now;
-      if (now - unreadableSince >= UNREADABLE_LOCK_GRACE_MS) {
-        await reclaim(path, source, owner.token);
-        unreadableSince = null;
-      } else {
-        await Bun.sleep(20);
-      }
-      continue;
-    }
-    unreadableSince = null;
-    if (!isAlive(current.pid)) {
+    // An unreadable lock (no legible owner) is NEVER reclaimed. It is one of two
+    // things and no amount of waiting can tell them apart: the corpse of a
+    // process that died before writing its record, or a live one still writing
+    // it. A clock cannot discriminate them — a paused writer and a corpse look
+    // identical for any grace you pick — and stealing a lock a live writer is
+    // about to hold puts two processes in one critical section, which is the one
+    // outcome a lock may never produce. So we wait, and if it never clears we
+    // time out: a lock unowned until a human clears it is a liveness failure,
+    // strictly safer than a mutual-exclusion failure. This protocol's own
+    // `publish` never creates an unreadable lock (the name and its contents
+    // appear together), so this can only be an artifact of an older build.
+    if (current !== null && !isAlive(current.pid)) {
       await reclaim(path, source, owner.token);
       continue;
     }
