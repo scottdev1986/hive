@@ -1,13 +1,15 @@
 import { describe, expect, spyOn, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   acquireDaemonLock,
+  cleanupLifecycleFiles,
   daemonInstanceLiveness,
   daemonSpawnArgv,
   getDaemonLockPath,
   getPidFilePath,
+  getPortFilePath,
   isRunning,
   probeDaemonReuse,
   readConfiguredPort,
@@ -71,6 +73,151 @@ describe("daemon lifecycle", () => {
       releaseDaemonLock(10101);
       await acquireDaemonLock(20202, () => true);
       releaseDaemonLock(20202);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      if (previousHome === undefined) delete process.env.HIVE_HOME;
+      else process.env.HIVE_HOME = previousHome;
+    }
+  });
+
+  test("preserves a malformed daemon lock instead of reclaiming unknown ownership", async () => {
+    const previousHome = process.env.HIVE_HOME;
+    const home = mkdtempSync(join(tmpdir(), "hive-lifecycle-malformed-lock-"));
+    process.env.HIVE_HOME = home;
+    try {
+      writeFileSync(getDaemonLockPath(), "not-json\n");
+      await expect(acquireDaemonLock(20202, () => false)).rejects.toThrow(
+        "ownership is unknown",
+      );
+      expect(readFileSync(getDaemonLockPath(), "utf8")).toBe("not-json\n");
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      if (previousHome === undefined) delete process.env.HIVE_HOME;
+      else process.env.HIVE_HOME = previousHome;
+    }
+  });
+
+  test("preserves an unreachable lock whose recorded process is still live", async () => {
+    const previousHome = process.env.HIVE_HOME;
+    const home = mkdtempSync(join(tmpdir(), "hive-lifecycle-unreachable-lock-"));
+    process.env.HIVE_HOME = home;
+    const lock = {
+      pid: 10101,
+      instanceId: hiveInstanceSuffix(home),
+      startedAt: "2020-01-01T00:00:00.000Z",
+    };
+    try {
+      writeFileSync(getDaemonLockPath(), `${JSON.stringify(lock)}\n`);
+      await expect(acquireDaemonLock(20202, () => true)).rejects.toThrow(
+        "ownership is unknown",
+      );
+      expect(JSON.parse(readFileSync(getDaemonLockPath(), "utf8"))).toEqual(lock);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      if (previousHome === undefined) delete process.env.HIVE_HOME;
+      else process.env.HIVE_HOME = previousHome;
+    }
+  });
+
+  test("never probes a non-positive pid from an invalid daemon lock", async () => {
+    const previousHome = process.env.HIVE_HOME;
+    const home = mkdtempSync(join(tmpdir(), "hive-lifecycle-invalid-lock-pid-"));
+    process.env.HIVE_HOME = home;
+    const probed: number[] = [];
+    try {
+      writeFileSync(getDaemonLockPath(), `${JSON.stringify({
+        pid: -1,
+        instanceId: hiveInstanceSuffix(home),
+        startedAt: "2020-01-01T00:00:00.000Z",
+      })}\n`);
+      await expect(acquireDaemonLock(20202, (pid) => {
+        probed.push(pid);
+        return false;
+      })).rejects.toThrow("ownership is unknown");
+      expect(probed).toEqual([]);
+      expect(existsSync(getDaemonLockPath())).toBe(true);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      if (previousHome === undefined) delete process.env.HIVE_HOME;
+      else process.env.HIVE_HOME = previousHome;
+    }
+  });
+
+  test("refuses to overwrite lifecycle files when pid ownership is unknown", () => {
+    const previousHome = process.env.HIVE_HOME;
+    const home = mkdtempSync(join(tmpdir(), "hive-lifecycle-malformed-pid-write-"));
+    process.env.HIVE_HOME = home;
+    try {
+      writeFileSync(getPidFilePath(), "not-a-pid\n");
+      writeFileSync(getPortFilePath(), "4317\n");
+      expect(() => writeLifecycleFiles(8123)).toThrow("pid ownership is unknown");
+      expect(readFileSync(getPidFilePath(), "utf8")).toBe("not-a-pid\n");
+      expect(readFileSync(getPortFilePath(), "utf8")).toBe("4317\n");
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      if (previousHome === undefined) delete process.env.HIVE_HOME;
+      else process.env.HIVE_HOME = previousHome;
+    }
+  });
+
+  test("refuses lifecycle cleanup when pid ownership is unknown", async () => {
+    const previousHome = process.env.HIVE_HOME;
+    const home = mkdtempSync(join(tmpdir(), "hive-lifecycle-malformed-pid-cleanup-"));
+    process.env.HIVE_HOME = home;
+    try {
+      await acquireDaemonLock();
+      writeFileSync(getPidFilePath(), "not-a-pid\n");
+      writeFileSync(getPortFilePath(), "4317\n");
+      expect(() => cleanupLifecycleFiles()).toThrow("pid ownership is unknown");
+      expect(readFileSync(getPidFilePath(), "utf8")).toBe("not-a-pid\n");
+      expect(readFileSync(getPortFilePath(), "utf8")).toBe("4317\n");
+      expect(existsSync(getDaemonLockPath())).toBe(true);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      if (previousHome === undefined) delete process.env.HIVE_HOME;
+      else process.env.HIVE_HOME = previousHome;
+    }
+  });
+
+  test("refuses to overwrite lifecycle files owned by another daemon lock", () => {
+    const previousHome = process.env.HIVE_HOME;
+    const home = mkdtempSync(join(tmpdir(), "hive-lifecycle-foreign-lock-write-"));
+    process.env.HIVE_HOME = home;
+    const lock = {
+      pid: 10101,
+      instanceId: "another-instance",
+      startedAt: "2020-01-01T00:00:00.000Z",
+    };
+    try {
+      writeFileSync(getDaemonLockPath(), `${JSON.stringify(lock)}\n`);
+      writeFileSync(getPortFilePath(), "4317\n");
+      expect(() => writeLifecycleFiles(8123)).toThrow("another daemon");
+      expect(existsSync(getPidFilePath())).toBe(false);
+      expect(readFileSync(getPortFilePath(), "utf8")).toBe("4317\n");
+      expect(JSON.parse(readFileSync(getDaemonLockPath(), "utf8"))).toEqual(lock);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      if (previousHome === undefined) delete process.env.HIVE_HOME;
+      else process.env.HIVE_HOME = previousHome;
+    }
+  });
+
+  test("a missing pid file does not authorize cleanup of another daemon lock", () => {
+    const previousHome = process.env.HIVE_HOME;
+    const home = mkdtempSync(join(tmpdir(), "hive-lifecycle-foreign-lock-cleanup-"));
+    process.env.HIVE_HOME = home;
+    const lock = {
+      pid: process.pid,
+      instanceId: "another-instance",
+      startedAt: "2020-01-01T00:00:00.000Z",
+    };
+    try {
+      writeFileSync(getDaemonLockPath(), `${JSON.stringify(lock)}\n`);
+      writeFileSync(getPortFilePath(), "4317\n");
+      expect(() => cleanupLifecycleFiles()).toThrow("another daemon");
+      expect(existsSync(getPidFilePath())).toBe(false);
+      expect(readFileSync(getPortFilePath(), "utf8")).toBe("4317\n");
+      expect(JSON.parse(readFileSync(getDaemonLockPath(), "utf8"))).toEqual(lock);
     } finally {
       rmSync(home, { recursive: true, force: true });
       if (previousHome === undefined) delete process.env.HIVE_HOME;
