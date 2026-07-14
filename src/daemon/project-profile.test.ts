@@ -615,7 +615,38 @@ describe("validation", () => {
   test("another agent cannot submit for this run", async () => {
     const root = await polyglotRepo();
     const result = await profile(root, (p) => p, "mallory");
-    expect(rejectionCodes(result)).toContain("unauthorized");
+    expect(rejectionCodes(result)).toEqual(["unauthorized"]);
+    expect(await readCurrentProfile(root)).toBeNull();
+  });
+
+  test("an unauthorized caller learns nothing about run state from a stale runId", async () => {
+    // Subject must be checked before runId. mallory + stale runId must not get
+    // `superseded` (which discloses that a run is live and, in the message, its
+    // UUID) — only `unauthorized`, with no run identifiers in the payload.
+    const root = await polyglotRepo();
+    const first = await beginProfiling(root, PROFILER);
+    const second = await beginProfiling(root, PROFILER);
+
+    const result = await submitProfile(
+      root,
+      polyglotCandidate(),
+      "mallory",
+      first.runId,
+    );
+    expect(result.status).toBe("rejected");
+    if (result.status !== "rejected") return;
+    expect(rejectionCodes(result)).toEqual(["unauthorized"]);
+    const payload = JSON.stringify(result.rejections);
+    expect(payload).not.toContain(first.runId);
+    expect(payload).not.toContain(second.runId);
+    expect(payload).not.toContain("erica");
+    expect(payload.toLowerCase()).not.toContain("superseded");
+
+    // Active run is undisturbed.
+    const state = await readProfileState(root);
+    expect(state.lifecycle).toBe("profiling");
+    expect(state.run?.runId).toBe(second.runId);
+    expect(state.failure).toBeNull();
     expect(await readCurrentProfile(root)).toBeNull();
   });
 
@@ -625,6 +656,12 @@ describe("validation", () => {
 
     const result = await submitProfile(root, { not: "a profile" }, "mallory", run.runId);
     expect(result.status).toBe("rejected");
+    expect(rejectionCodes(result)).toEqual(["unauthorized"]);
+    if (result.status === "rejected") {
+      const payload = JSON.stringify(result.rejections);
+      expect(payload).not.toContain(run.runId);
+      expect(payload).not.toContain("erica");
+    }
 
     // The run erica is still working on is untouched: an authenticated caller
     // who does not own the run cannot fail it out from under her.

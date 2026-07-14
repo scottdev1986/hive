@@ -213,7 +213,9 @@ export async function proveProfileStillHolds(
 
 /** The credential the daemon authenticated must own the active run. Identity
  * fields on the payload are not consulted — they are not present on a
- * candidate — so a stolen or wrong credential is the only unauthorized path. */
+ * candidate — so a stolen or wrong credential is the only unauthorized path.
+ * The message deliberately names neither the run id nor the owner agent: an
+ * unauthorized caller must learn nothing about run state. */
 function checkIdentity(
   context: ProfileValidationContext,
 ): ProfileRejection[] {
@@ -222,8 +224,7 @@ function checkIdentity(
     return [
       {
         code: "unauthorized",
-        message: `${subject} is not the profiler for run ${run.runId} (${run.agent} is).`,
-        at: "profiler.agent",
+        message: "Caller is not the profiler for the active run.",
       },
     ];
   }

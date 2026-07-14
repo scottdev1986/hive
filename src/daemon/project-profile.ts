@@ -894,11 +894,13 @@ export type ProfileSubmitResult =
 /** Submit a *candidate* profile.
  *
  * `subject` and `runId` are daemon-authenticated credentials — never taken from
- * the model payload. The payload may only carry model-authored content; the
- * daemon assembles schema version, timestamps, project identity/digest,
- * profiler provenance, and request guidance from the active run before
- * validation and commit. A candidate that tries to choose those fields fails
- * the schema boundary.
+ * the model payload. Subject is checked against the active run *before* any
+ * runId or lifecycle comparison: an unauthorized caller always gets
+ * `unauthorized` and learns nothing about whether a run is live or what its id
+ * is. The payload may only carry model-authored content; the daemon assembles
+ * schema version, timestamps, project identity/digest, profiler provenance, and
+ * request guidance from the active run before validation and commit. A
+ * candidate that tries to choose those fields fails the schema boundary.
  *
  * On acceptance: `profiling → current`, and the profile becomes readable in the
  * same instant its state says so. `current.json` is written before `state.json`
@@ -934,6 +936,22 @@ export async function submitProfile(
         {
           code: "no-active-run",
           message: `No profiling run is in flight for this project (lifecycle: ${state.lifecycle}).`,
+        },
+      ],
+      lifecycle: state.lifecycle,
+    };
+  }
+  // Authenticate first. An unauthorized caller must learn nothing about run
+  // state — not whether a run is live, not its id, not who owns it. Checking
+  // runId before subject would return `superseded` for mallory+stale and leak
+  // the active run's existence/UUID via the rejection code and message.
+  if (state.run.agent !== subject) {
+    return {
+      status: "rejected",
+      rejections: [
+        {
+          code: "unauthorized",
+          message: "Caller is not the profiler for the active run.",
         },
       ],
       lifecycle: state.lifecycle,
