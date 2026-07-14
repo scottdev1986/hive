@@ -77,6 +77,44 @@ describe("runGit", () => {
   });
 });
 
+describe("the repository landing lease", () => {
+  test("malformed ownership evidence is preserved and blocks landing", async () => {
+    const root = await repo();
+    const lock = join(root, ".git", "hive-landing.lock");
+    try {
+      await writeFile(lock, "not-json\n");
+      const message = await landFails(root);
+      expect(message).toContain("landing lease ownership is unknown");
+      expect(await Bun.file(lock).text()).toBe("not-json\n");
+      expect(git(root, ["rev-parse", "--abbrev-ref", "HEAD"])).toBe("main");
+      expect(await Bun.file(join(root, "feature.ts")).exists()).toBe(false);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("a positively dead lease owner can be reclaimed", async () => {
+    const root = await repo();
+    const lock = join(root, ".git", "hive-landing.lock");
+    const owner = Bun.spawn([process.execPath, "-e", ""], {
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    await owner.exited;
+    try {
+      await writeFile(lock, `${JSON.stringify({
+        pid: owner.pid,
+        token: crypto.randomUUID(),
+      })}\n`);
+      const { commit } = await landBranch(root, "hive/writer");
+      expect(commit).toBe(git(root, ["rev-parse", "HEAD"]));
+      expect(await Bun.file(lock).exists()).toBe(false);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("a blocked land says which file blocked it", () => {
   test("a modified file the merge would overwrite is named", async () => {
     const root = await repo();
