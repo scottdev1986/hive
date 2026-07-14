@@ -40,7 +40,9 @@ export type ProfileRejectionCode =
   /** The same thing is claimed twice. */
   | "duplicate"
   /** Two claims disagree and the profile does not say so. */
-  | "contradiction";
+  | "contradiction"
+  /** The profile asserts nothing and explains nothing. */
+  | "missing-unknowns";
 
 export interface ProfileRejection {
   code: ProfileRejectionCode;
@@ -98,11 +100,41 @@ export async function validateProfileSubmission(
   const rejections = [
     ...checkDuplicates(profile),
     ...checkScopes(profile),
+    ...checkSilence(profile),
     ...(await checkPaths(profile, context.root)),
   ];
   return rejections.length > 0
     ? { ok: false, rejections }
     : { ok: true, profile };
+}
+
+/** Prove, at commit time, that the profile is still true of the repo.
+ *
+ * `validateProfileSubmission` runs outside the lock — it hashes the tree and
+ * stats every cited path, and holding a lock through that would stall every
+ * other caller. But a check is only worth what it is worth *when the bytes
+ * land*: between validation and the rename, a file the profile cites can be
+ * deleted, and the old code would have committed a profile citing a path that no
+ * longer existed. So the parts of validation that depend on the tree — the input
+ * digest, and every cited path — are re-run inside the lock, immediately before
+ * `current.json` is replaced.
+ *
+ * The two checks are not redundant. The digest proves the tree is byte-for-byte
+ * the one the profiler read; the path checks say *which* claim broke when it is
+ * not, and they cover the handful of paths a profile may cite that the inventory
+ * deliberately does not hash. */
+export async function proveProfileStillHolds(
+  profile: ProjectProfile,
+  context: {
+    root: string;
+    run: ProjectProfileRun;
+    /** The inventory digest as observed inside the lock. */
+    inventoryDigest: string;
+  },
+): Promise<ProfileRejection[]> {
+  const digest = checkDigest(profile, context);
+  if (digest.length > 0) return digest;
+  return checkPaths(profile, context.root);
 }
 
 /** The credential the daemon authenticated must own the active run, and the run
@@ -145,7 +177,57 @@ function checkIdentity(
       at: "project.hiveUuid",
     });
   }
+  // Provenance is not the model's to assert. The daemon spawned this profiler
+  // and knows what it is; a payload naming a different provider or model is
+  // either confused or lying, and either way persisting it would put a false
+  // provenance in front of everyone who later asks "who profiled this repo, and
+  // can I trust it?".
+  if (profile.profiler.provider !== run.provider) {
+    rejections.push({
+      code: "unauthorized",
+      message: `Profile claims provider ${profile.profiler.provider}; run ${run.runId} is ${run.provider}.`,
+      at: "profiler.provider",
+    });
+  }
+  if (profile.profiler.model !== run.model) {
+    rejections.push({
+      code: "unauthorized",
+      message: `Profile claims model ${profile.profiler.model}; run ${run.runId} is ${run.model}.`,
+      at: "profiler.model",
+    });
+  }
   return rejections;
+}
+
+/** A profile that asserts nothing must say why it asserts nothing.
+ *
+ * An empty repo has no test command, and "no test command" is the correct
+ * profile — but so is a profiler that gave up, or ran out of context, or read
+ * nothing. Those look identical on disk unless the profile says which it is, and
+ * the difference decides whether anything should be run again. `unknowns` is
+ * where that goes: it is the field that makes emptiness a finding rather than an
+ * absence, which is the whole point of an agent-authored profile over a
+ * deterministic one that would simply have guessed `npm test`. */
+function checkSilence(profile: ProjectProfile): ProfileRejection[] {
+  const assertsSomething =
+    profile.languages.length > 0 ||
+    profile.packageManagers.length > 0 ||
+    profile.buildSystems.length > 0 ||
+    profile.workspaces.length > 0 ||
+    profile.commands.length > 0 ||
+    profile.entryPoints.length > 0 ||
+    profile.conventionFiles.length > 0 ||
+    profile.docs.briefable.length > 0 ||
+    profile.docs.primary !== null;
+  if (assertsSomething || profile.unknowns.length > 0) return [];
+  return [
+    {
+      code: "missing-unknowns",
+      message:
+        "The profile states no languages, commands, workspaces, docs or entry points, and lists no unknowns. An empty repository profiles to explicit unknowns; a silent profile is indistinguishable from a profiler that read nothing.",
+      at: "unknowns",
+    },
+  ];
 }
 
 /** The repo the profiler read must still be the repo on disk. Two ways it might
@@ -155,7 +237,7 @@ function checkIdentity(
  * no profile, because something will act on it. */
 function checkDigest(
   profile: ProjectProfile,
-  context: ProfileValidationContext,
+  context: { run: ProjectProfileRun; inventoryDigest: string },
 ): ProfileRejection[] {
   const { run, inventoryDigest } = context;
   if (profile.project.inputDigest !== run.inputDigest) {
@@ -266,7 +348,11 @@ function checkDuplicates(profile: ProjectProfile): ProfileRejection[] {
     "Convention file",
     (i) => `conventionFiles.${i}.path`,
   );
-  seen(profile.docs.briefable, "Briefable doc", (i) => `docs.briefable.${i}`);
+  seen(
+    profile.docs.briefable.map((doc) => doc.path),
+    "Briefable doc",
+    (i) => `docs.briefable.${i}.path`,
+  );
 
   // A command is identified by what it is for and where it runs. Two commands
   // sharing that identity are either the same command written twice, or two
@@ -417,9 +503,11 @@ async function checkPaths(
   }
   for (const [index, convention] of profile.conventionFiles.entries()) {
     await check(convention.path, `conventionFiles.${index}.path`, "file");
+    await checkEvidence(convention.evidence, `conventionFiles.${index}.evidence`);
   }
   for (const [index, doc] of profile.docs.briefable.entries()) {
-    await check(doc, `docs.briefable.${index}`, "file");
+    await check(doc.path, `docs.briefable.${index}.path`, "file");
+    await checkEvidence(doc.evidence, `docs.briefable.${index}.evidence`);
   }
   if (profile.docs.primary !== null) {
     await check(profile.docs.primary.path, "docs.primary.path", "file");
@@ -431,6 +519,13 @@ async function checkPaths(
 
   // A command's working directory must be inside the workspace it claims —
   // otherwise `scope` is decoration and the command is repo-wide after all.
+  //
+  // Resolved through realpath, per target. Checking the two *lexical* paths
+  // against each other proves nothing once symlinks are in play: `backend/here`
+  // is lexically inside `backend` while being a link to `frontend`, and a
+  // command that lexically satisfies its workspace can still run somewhere else
+  // entirely. Both sides have already been proved to exist and to lie inside the
+  // project, so what is left to prove is that they are really in each other.
   const workspacePaths = new Map(
     profile.workspaces.map((workspace) => [workspace.name, workspace.path]),
   );
@@ -438,12 +533,18 @@ async function checkPaths(
     if (command.scope === REPO_SCOPE) continue;
     const workspacePath = workspacePaths.get(command.scope);
     if (workspacePath === undefined) continue; // already an unknown-scope rejection
-    const workspaceRoot = resolve(root, workspacePath);
-    const commandRoot = resolve(root, command.cwd);
+    let workspaceRoot: string;
+    let commandRoot: string;
+    try {
+      workspaceRoot = await realpath(resolve(root, workspacePath));
+      commandRoot = await realpath(resolve(root, command.cwd));
+    } catch {
+      continue; // one of them does not exist: already a missing-path rejection
+    }
     if (!contains(workspaceRoot, commandRoot)) {
       rejections.push({
         code: "invalid-cwd",
-        message: `Command "${command.command}" is scoped to workspace ${command.scope} (${workspacePath}) but runs in "${command.cwd}".`,
+        message: `Command "${command.command}" is scoped to workspace ${command.scope} (${workspacePath}) but "${command.cwd}" resolves to ${commandRoot}, outside it.`,
         at: `commands.${index}.cwd`,
       });
     }

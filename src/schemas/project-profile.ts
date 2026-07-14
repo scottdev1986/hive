@@ -135,6 +135,18 @@ export const ProjectProfileCommandSchema = z.strictObject({
 });
 export type ProjectProfileCommand = z.infer<typeof ProjectProfileCommandSchema>;
 
+/** A briefable doc: one a spawn brief may quote from. This is a *claim*, not a
+ * file listing — `brief.ts` acts on it, so "this doc is worth a spawn's tokens"
+ * has to cite why, exactly like every other conclusion a reader will act on. */
+export const ProjectProfileBriefableDocSchema = z.strictObject({
+  path: RepoRelativePath,
+  evidence: ProjectProfileEvidenceSchema,
+  confidence: ProjectProfileConfidenceSchema,
+});
+export type ProjectProfileBriefableDoc = z.infer<
+  typeof ProjectProfileBriefableDocSchema
+>;
+
 /** The doc set a spawn brief may quote from, and which doc earns the bare-name
  * `§`-selector rule that `brief.ts` hardcodes for "SPEC" today. `primary` is
  * null in a repo with no single design doc — the special case drops away rather
@@ -147,16 +159,23 @@ export const ProjectProfileDocsSchema = z.strictObject({
       confidence: ProjectProfileConfidenceSchema,
     })
     .nullable(),
-  briefable: z.array(RepoRelativePath),
+  briefable: z.array(ProjectProfileBriefableDocSchema),
 });
 export type ProjectProfileDocs = z.infer<typeof ProjectProfileDocsSchema>;
 
 /** A pointer to conventions, never a copy of them: `AGENTS.md` and `CLAUDE.md`
  * are loaded natively by the vendor. The profile records only that they exist
- * and where. */
+ * and where.
+ *
+ * `kind` is load-bearing — it is what tells a spawner "this is the file this
+ * vendor loads natively" — so it is evidenced like any other claim. A file named
+ * `CONVENTIONS.md` claimed as `kind: agents` is a claim about what reads it, not
+ * a fact about its name. */
 export const ProjectProfileConventionFileSchema = z.strictObject({
   path: RepoRelativePath,
   kind: z.enum(["agents", "claude", "other"]),
+  evidence: ProjectProfileEvidenceSchema,
+  confidence: ProjectProfileConfidenceSchema,
 });
 export type ProjectProfileConventionFile = z.infer<
   typeof ProjectProfileConventionFileSchema

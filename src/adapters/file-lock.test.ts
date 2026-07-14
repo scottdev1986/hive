@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm, unlink, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { withFileLock } from "./file-lock";
@@ -48,6 +48,42 @@ describe("withFileLock", () => {
       "Invalid lock owner",
     );
   });
+
+  test("reclaims an abandoned lock whose owner never wrote its record", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-file-lock-empty-"));
+    roots.push(root);
+    const path = join(root, "state.lock");
+    // The corpse of a process that died between creating the lock and writing
+    // who it was: no owner to check for liveness, so nothing used to reclaim it.
+    // The lock was held by nobody, forever.
+    await writeFile(path, "");
+
+    expect(await withFileLock(path, async () => "acquired")).toBe("acquired");
+  }, 15_000);
+
+  test("never publishes a lock name without its owner record", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-file-lock-atomic-"));
+    roots.push(root);
+    const path = join(root, "state.lock");
+
+    // Whatever a concurrent reader catches, it never catches an empty lock:
+    // the name and the contents appear in the same instant.
+    const seen: string[] = [];
+    const reader = (async () => {
+      for (let index = 0; index < 200; index += 1) {
+        const source = await readFile(path, "utf8").catch(() => null);
+        if (source !== null) seen.push(source);
+        await Bun.sleep(1);
+      }
+    })();
+    for (let index = 0; index < 40; index += 1) {
+      await withFileLock(path, async () => undefined);
+    }
+    await reader;
+
+    expect(seen.length).toBeGreaterThan(0);
+    expect(seen.every((source) => source.trim().length > 0)).toBe(true);
+  }, 15_000);
 
   test("reclaims a well-formed lock whose owner is dead", async () => {
     const root = await mkdtemp(join(tmpdir(), "hive-file-lock-stale-"));

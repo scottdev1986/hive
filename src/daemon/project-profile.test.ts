@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { existsSync } from "node:fs";
 import { readdir, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -20,7 +21,9 @@ import {
   submitProfile,
   type ProfileSubmitResult,
 } from "./project-profile";
+import { proveProfileStillHolds } from "./project-profile-validate";
 import { projectHiveUuid } from "./project-state";
+import { withFileLock } from "../adapters/file-lock";
 
 // The profile lives in Hive's own per-project state, so every test here runs
 // against a throwaway HIVE_HOME: nothing lands in the synthetic repos, which is
@@ -163,9 +166,27 @@ function polyglotProfile(
         evidence: { path: "README.md", basis: "the only design doc" },
         confidence: "derived",
       },
-      briefable: ["README.md", "AGENTS.md"],
+      briefable: [
+        {
+          path: "README.md",
+          evidence: { path: "README.md", basis: "the repo's design doc" },
+          confidence: "observed",
+        },
+        {
+          path: "AGENTS.md",
+          evidence: { path: "AGENTS.md", basis: "agent conventions" },
+          confidence: "observed",
+        },
+      ],
     },
-    conventionFiles: [{ path: "AGENTS.md", kind: "agents" }],
+    conventionFiles: [
+      {
+        path: "AGENTS.md",
+        kind: "agents",
+        evidence: { path: "AGENTS.md", basis: "conventions loaded natively by the vendor" },
+        confidence: "observed",
+      },
+    ],
     entryPoints: [
       {
         path: "backend/src/main.rs",
@@ -704,6 +725,100 @@ describe("validation", () => {
     expect(rejectionCodes(result)).toEqual(["invalid-cwd"]);
   });
 
+  test("a cwd that is lexically inside its workspace but symlinked elsewhere is refused", async () => {
+    const root = await polyglotRepo();
+    // `backend/elsewhere` is lexically under `backend` and resolves to
+    // `frontend` — inside the repo, so containment passes, and inside the
+    // workspace only if you never look. A command scoped to the Rust backend
+    // would run `cargo test` in the TypeScript package.
+    await symlink(join(root, "frontend"), join(root, "backend", "elsewhere"));
+
+    const result = await profile(root, (p) => {
+      p.commands[0]!.cwd = "backend/elsewhere";
+      return p;
+    });
+    expect(rejectionCodes(result)).toEqual(["invalid-cwd"]);
+    expect(await readCurrentProfile(root)).toBeNull();
+  });
+
+  test("a profile claiming a provider or model the run does not have is refused", async () => {
+    const root = await polyglotRepo();
+
+    const wrongProvider = await profile(root, (p) => ({
+      ...p,
+      profiler: { ...p.profiler, provider: "codex" },
+    }));
+    expect(rejectionCodes(wrongProvider)).toContain("unauthorized");
+
+    const wrongModel = await profile(root, (p) => ({
+      ...p,
+      profiler: { ...p.profiler, model: "gpt-9-ultra" },
+    }));
+    expect(rejectionCodes(wrongModel)).toContain("unauthorized");
+
+    // Provenance is the daemon's, not the model's: nothing false was persisted.
+    expect(await readCurrentProfile(root)).toBeNull();
+  });
+
+  test("a profile that asserts nothing and explains nothing is refused", async () => {
+    const root = await emptyRepo();
+    const run = await beginProfiling(root, PROFILER);
+    const silent: ProjectProfile = {
+      schemaVersion: PROJECT_PROFILE_SCHEMA_VERSION,
+      generatedAt: new Date().toISOString(),
+      project: { hiveUuid: projectHiveUuid(root), inputDigest: run.inputDigest },
+      profiler: { ...PROFILER, runId: run.runId, toolSessionId: null },
+      languages: [],
+      packageManagers: [],
+      buildSystems: [],
+      workspaces: [],
+      commands: [],
+      docs: { primary: null, briefable: [] },
+      conventionFiles: [],
+      entryPoints: [],
+      unknowns: [], // <- the whole finding: silence with nothing said about it
+      ambiguities: [],
+      conflicts: [],
+      staleness: { paths: [], notes: [] },
+    };
+
+    // An empty repo profiles to explicit unknowns. A profile that says nothing
+    // at all is indistinguishable from a profiler that read nothing.
+    const result = await submitProfile(root, silent, "erica");
+    expect(rejectionCodes(result)).toEqual(["missing-unknowns"]);
+    expect(await readCurrentProfile(root)).toBeNull();
+  });
+
+  test("a briefable doc is a claim, and carries its evidence", async () => {
+    const root = await polyglotRepo();
+
+    // No evidence: not expressible.
+    const bare = await profile(root, (p) => ({
+      ...p,
+      docs: { ...p.docs, briefable: [{ path: "README.md" }] },
+    }) as unknown as ProjectProfile);
+    expect(rejectionCodes(bare)).toContain("schema");
+
+    // Evidence that cites a file which is not there: refused like any other.
+    const invented = await profile(root, (p) => {
+      p.docs.briefable[0]!.evidence = {
+        path: "docs/ARCHITECTURE.md",
+        basis: "the design doc",
+      };
+      return p;
+    });
+    expect(rejectionCodes(invented)).toEqual(["missing-path"]);
+  });
+
+  test("a convention file's kind carries its evidence", async () => {
+    const root = await polyglotRepo();
+    const result = await profile(root, (p) => ({
+      ...p,
+      conventionFiles: [{ path: "AGENTS.md", kind: "agents" }],
+    }) as unknown as ProjectProfile);
+    expect(rejectionCodes(result)).toContain("schema");
+  });
+
   test("a cwd that is a file, not a directory, is refused", async () => {
     const root = await polyglotRepo();
     const result = await profile(root, (p) => {
@@ -781,6 +896,134 @@ describe("validation", () => {
     expect(state.failure?.code).toBe("missing-path");
     expect(state.failure?.detail).toContain("nonexistent.rs");
     expect(state.profiled).not.toBeNull();
+  });
+});
+
+// --- the commit-time proof --------------------------------------------------
+
+describe("commit-time proof", () => {
+  test("a cited path deleted while the submission is in flight never lands", async () => {
+    const root = await polyglotRepo();
+    expect((await profile(root)).status).toBe("accepted");
+    const landed = await readFile(currentProfilePath(root), "utf8");
+
+    const run = await beginProfiling(root, PROFILER);
+    const payload = polyglotProfile(root, run.runId, run.inputDigest);
+    payload.commands[0]!.command = "cargo test --all-features";
+
+    // Hold the profile lock from outside, so the submission validates (which
+    // happens outside the lock) and then blocks on it. Everything it checked is
+    // now history: the window between a check and the bytes landing is exactly
+    // where a repo can change under an already-validated profile.
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const lockPath = join(projectProfileDir(root), "profile.lock");
+    const lock = withFileLock(lockPath, async () => {
+      await held;
+    });
+    while (!existsSync(lockPath)) await Bun.sleep(5);
+
+    const inFlight = submitProfile(root, payload, "erica");
+    await Bun.sleep(500); // past validation, now waiting for the lock we hold
+    await rm(join(root, "backend", "Cargo.toml"));
+    release();
+    await lock;
+    const result = await inFlight;
+
+    // The profile cites backend/Cargo.toml five times over. It must not be
+    // committed now that the file is gone.
+    expect(result.status).toBe("rejected");
+    expect(rejectionCodes(result).length).toBeGreaterThan(0);
+    expect(await readFile(currentProfilePath(root), "utf8")).toBe(landed);
+    expect((await readCurrentProfile(root))?.commands[0]?.command).toBe(
+      "cargo test --workspace",
+    );
+  }, 20_000);
+
+  test("proveProfileStillHolds catches a deleted citation and a moved tree", async () => {
+    const root = await polyglotRepo();
+    const run = await beginProfiling(root, PROFILER);
+    const profileToProve = polyglotProfile(root, run.runId, run.inputDigest);
+    const asRun = {
+      runId: run.runId,
+      agent: PROFILER.agent,
+      provider: PROFILER.provider,
+      model: PROFILER.model,
+      inputDigest: run.inputDigest,
+      startedAt: new Date().toISOString(),
+    };
+
+    // Nothing has changed: the profile still holds.
+    expect(
+      await proveProfileStillHolds(profileToProve, {
+        root,
+        run: asRun,
+        inventoryDigest: run.inputDigest,
+      }),
+    ).toEqual([]);
+
+    // The tree moved: the digest alone condemns it.
+    const moved = await proveProfileStillHolds(profileToProve, {
+      root,
+      run: asRun,
+      inventoryDigest: "f".repeat(64),
+    });
+    expect(moved.map((rejection) => rejection.code)).toEqual(["digest-mismatch"]);
+
+    // A citation is gone: the path check says which claim broke.
+    await rm(join(root, "backend", "src", "main.rs"));
+    const deleted = await proveProfileStillHolds(profileToProve, {
+      root,
+      run: asRun,
+      inventoryDigest: (await computeProfileInventory(root)).digest,
+    });
+    expect(deleted.map((rejection) => rejection.code)).toContain("digest-mismatch");
+  });
+});
+
+// --- crash recovery ---------------------------------------------------------
+
+describe("crash recovery", () => {
+  test("a profile that landed but whose state write was lost heals on read", async () => {
+    const root = await polyglotRepo();
+    const run = await beginProfiling(root, PROFILER);
+    const accepted = polyglotProfile(root, run.runId, run.inputDigest);
+
+    // Exactly the disk left by a crash between the two renames: current.json is
+    // the new profile, state.json still says this run is in flight. Before the
+    // reader reconciled, begin({ifIdle}) saw a run that would never end and
+    // refused to start another one — forever. A profile that landed would have
+    // blocked every future profile of the project.
+    await mkdir(projectProfileDir(root), { recursive: true });
+    await writeFile(
+      currentProfilePath(root),
+      `${JSON.stringify(accepted, null, 2)}\n`,
+    );
+
+    const state = await readProfileState(root);
+    expect(state.lifecycle).toBe("current");
+    expect(state.run).toBeNull();
+    expect(state.profiled?.profiler.runId).toBe(run.runId);
+    expect(state.profiled?.inputDigest).toBe(run.inputDigest);
+
+    // And the project is profilable again.
+    expect(await beginProfiling(root, PROFILER, { ifIdle: true })).not.toBeNull();
+  });
+
+  test("a profile from a different run does not heal an in-flight one", async () => {
+    const root = await polyglotRepo();
+    expect((await profile(root)).status).toBe("accepted");
+
+    // A run is genuinely in flight, and current.json holds an *older* run's
+    // profile. That is not a lagging state file — it is a refresh in progress,
+    // and healing it would silently cancel the run.
+    const run = await beginProfiling(root, PROFILER);
+    const state = await readProfileState(root);
+    expect(state.lifecycle).toBe("profiling");
+    expect(state.run?.runId).toBe(run.runId);
+    expect(await beginProfiling(root, PROFILER, { ifIdle: true })).toBeNull();
   });
 });
 

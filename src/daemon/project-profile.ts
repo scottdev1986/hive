@@ -35,6 +35,7 @@ import {
 import { withFileLock } from "../adapters/file-lock";
 import { projectHiveUuid, projectStateDir } from "./project-state";
 import {
+  proveProfileStillHolds,
   validateProfileSubmission,
   type ProfileRejection,
 } from "./project-profile-validate";
@@ -206,7 +207,8 @@ export async function computeProfileInventory(
  * the rename is atomic within the directory, so `current.json` is the old bytes
  * until the instant it is all of the new ones. */
 async function writeJsonAtomic(path: string, value: unknown): Promise<void> {
-  await mkdir(dirname(path), { recursive: true });
+  const directory = dirname(path);
+  await mkdir(directory, { recursive: true });
   const temporary = `${path}.${process.pid}.${randomUUID()}.tmp`;
   const handle = await open(temporary, "w");
   try {
@@ -216,6 +218,16 @@ async function writeJsonAtomic(path: string, value: unknown): Promise<void> {
     await handle.close();
   }
   await rename(temporary, path);
+  // The file's own bytes being on disk is not enough: the rename is a directory
+  // change, and an unsynced directory can lose the new name in a power cut while
+  // keeping the fully-written data nobody can now reach. Syncing the file and
+  // not the directory it lands in is a durability claim the code does not honour.
+  const entry = await open(directory, "r");
+  try {
+    await entry.sync();
+  } finally {
+    await entry.close();
+  }
 }
 
 async function readJson(path: string): Promise<unknown | null> {
@@ -248,14 +260,62 @@ export async function readProfileState(
 ): Promise<ProjectProfileState> {
   const raw = await readJson(profileStatePath(root));
   const parsed = ProjectProfileStateSchema.safeParse(raw);
-  if (parsed.success) return parsed.data;
+  if (!parsed.success) {
+    return {
+      schemaVersion: PROJECT_PROFILE_SCHEMA_VERSION,
+      lifecycle: "unprofiled",
+      hiveUuid: projectHiveUuid(root),
+      updatedAt: new Date().toISOString(),
+      run: null,
+      profiled: null,
+      reprofile: null,
+      failure: null,
+    };
+  }
+  return reconcile(root, parsed.data);
+}
+
+/** Heal the one inconsistency the write order can produce.
+ *
+ * `current.json` is written before `state.json` on purpose: a crash between them
+ * leaves a valid new profile that the state has not caught up with, where the
+ * other order would leave a state file swearing a profile is current when
+ * `current.json` still holds the old one. But "recoverable" is not "recovered",
+ * and nothing was recovering it: the state said `profiling`, the run in it was
+ * finished and gone, and `beginProfiling({ ifIdle: true })` — seeing a run in
+ * flight that would never end — refused to start another one, forever. A profile
+ * that landed would have blocked every future profile of that project.
+ *
+ * The lag is provable, which is why it is safe to heal: `current.json` carries
+ * the run id it was authored for. If that is the run the state still thinks is
+ * in flight, then the submission was accepted and only the bookkeeping was lost.
+ * Nothing else can put that run id in that file. */
+async function reconcile(
+  root: string,
+  state: ProjectProfileState,
+): Promise<ProjectProfileState> {
+  if (state.lifecycle !== "profiling" || state.run === null) return state;
+  const current = await readCurrentProfile(root);
+  if (current === null || current.profiler.runId !== state.run.runId) {
+    return state;
+  }
+  let acceptedAt = current.generatedAt;
+  try {
+    acceptedAt = (await lstat(currentProfilePath(root))).mtime.toISOString();
+  } catch {
+    // The profile parsed a moment ago; if it is gone now, its own timestamp is
+    // the best evidence of when it landed.
+  }
   return {
-    schemaVersion: PROJECT_PROFILE_SCHEMA_VERSION,
-    lifecycle: "unprofiled",
-    hiveUuid: projectHiveUuid(root),
+    ...state,
+    lifecycle: "current",
     updatedAt: new Date().toISOString(),
     run: null,
-    profiled: null,
+    profiled: {
+      at: acceptedAt,
+      inputDigest: current.project.inputDigest,
+      profiler: current.profiler,
+    },
     reprofile: null,
     failure: null,
   };
@@ -458,6 +518,24 @@ export async function submitProfile(
     }
 
     const profile = validation.profile;
+    // The proof has to be taken here, not where validation ran. A check made
+    // before the lock is a statement about a repo that was; between it and this
+    // rename a cited file can be deleted, and committing then would persist a
+    // profile citing a path that is not there — exactly the hallucinated-manifest
+    // failure the citation rule exists to catch, arriving through the back door.
+    const proof = await proveProfileStillHolds(profile, {
+      root,
+      run: fresh.run,
+      inventoryDigest: (await computeProfileInventory(root)).digest,
+    });
+    if (proof.length > 0) {
+      return {
+        status: "rejected" as const,
+        rejections: proof,
+        lifecycle: await recordRejection(root, fresh, proof),
+      };
+    }
+
     await writeJsonAtomic(currentProfilePath(root), profile);
     await writeProfileState(root, {
       ...fresh,
