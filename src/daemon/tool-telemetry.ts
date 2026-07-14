@@ -6,19 +6,14 @@ import { findLatestGrokSessionDirectory } from "../adapters/tools/grok";
 import { type CapabilityProvider, unknownVendor } from "../schemas/capability";
 
 /**
- * Context and activity read from each tool's durable artifacts (SPEC
- * decision 2): Claude's transcript is its context source, and the default
- * Codex TUI driver reads rollout files. Hook traffic carries neither —
- * Claude's Stop payload has no usage and Codex's notify has no tokens — so
- * without this sensor every agent's context% sits at 0 forever and the
- * decision-7 recycle threshold can never fire. Both readers are pull-based,
- * bounded (one tail read per agent per sweep), and best-effort: a missing or
- * unparseable artifact reports nulls, never an error.
+ * Hook payloads carry neither context nor activity, so these readers use each
+ * tool's durable artifacts. Reads are bounded and missing or malformed
+ * artifacts report nulls rather than invented measurements.
  */
 export interface ToolTelemetry {
   /** 0-100, or null for *unknown* — no usage record in the rollout. Null is
-   * not zero and not full: an agent whose occupancy is unknown must not be
-   * recycled on the strength of it, and must not be read as having room.
+   * not zero and not full: unknown occupancy must not be read as available
+   * context.
    * Codex only — the Claude reader reports tokens, not a percentage
    * (ClaudeContextTelemetry below), because its transcript never states the
    * window they fill. */
