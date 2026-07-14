@@ -323,17 +323,29 @@ interface PendingApproval {
   resolve: (approved: boolean) => void;
 }
 
+const UUID_AGENT_ID =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+function socketAgentId(id: string): string {
+  if (UUID_AGENT_ID.test(id)) {
+    return `~${Buffer.from(id.replaceAll("-", ""), "hex").toString("base64url")}`;
+  }
+  return id.replaceAll(/[^A-Za-z0-9_-]/g, "-");
+}
+
 /** The per-agent Codex app-server socket. It lives in the per-user temp dir
  * (0700 on macOS), never world-writable /tmp where any local user could
  * pre-bind the name, and is keyed by the resolved-home hash to deduplicate
- * when multiple HIVE_HOME spellings name the same place. */
+ * when multiple HIVE_HOME spellings name the same place. UUID agent ids use a
+ * reversible 22-character encoding so the normal macOS temp dir stays within
+ * the 104-byte AF_UNIX sun_path limit. */
 export function codexAgentSocketPath(
   agent: AgentRecord,
   hiveHome?: string,
 ): string {
   const socket = join(
     tmpdir(),
-    `hive-codex-${hiveInstanceSuffix(hiveHome)}-${agent.id.replaceAll(/[^A-Za-z0-9_-]/g, "-")}.sock`,
+    `hive-codex-${hiveInstanceSuffix(hiveHome)}-${socketAgentId(agent.id)}.sock`,
   );
   // macOS caps sun_path at 104 bytes; an over-long TMPDIR must fail here with
   // its cause, not as an inscrutable bind error inside a subprocess.
@@ -919,7 +931,18 @@ export function hostPidfileAgentId(
   const suffix = ".sock.pid";
   if (!name.startsWith(prefix) || !name.endsWith(suffix)) return null;
   const id = name.slice(prefix.length, -suffix.length);
-  return id === "" ? null : id;
+  if (id === "") return null;
+  if (!id.startsWith("~")) return id;
+  if (!/^~[A-Za-z0-9_-]{22}$/.test(id)) return null;
+  const hex = Buffer.from(id.slice(1), "base64url").toString("hex");
+  if (hex.length !== 32) return null;
+  return [
+    hex.slice(0, 8),
+    hex.slice(8, 12),
+    hex.slice(12, 16),
+    hex.slice(16, 20),
+    hex.slice(20),
+  ].join("-");
 }
 
 export interface ReapOrphanDependencies {
@@ -961,8 +984,8 @@ export async function reapOrphanCodexHosts(
 ): Promise<number[]> {
   const reaped: number[] = [];
   for (const name of await dependencies.listSocketDir()) {
-    // Socket paths flatten the agent id with the same substitution as
-    // defaultSocketPath, and uuids survive it unchanged.
+    // Socket paths flatten non-UUID ids and reversibly compact UUIDs with the
+    // same rules as the writer.
     const agentId = hostPidfileAgentId(name, hiveHome);
     if (agentId === null) continue;
     const status = agentIdStatus(agentId);

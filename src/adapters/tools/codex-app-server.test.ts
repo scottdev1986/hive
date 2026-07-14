@@ -326,6 +326,33 @@ describe("codexAgentSocketPath", () => {
     expect(filename).not.toContain("#");
   });
 
+  test("compacts UUID agent IDs and recovers them from the pidfile name", () => {
+    const agent: AgentRecord = {
+      id: "ba8f86b7-de0c-4ddb-b493-2aea2a978d48",
+      name: "test",
+      tool: "codex",
+      model: "gpt-5-codex",
+      category: "simple_coding",
+      status: "spawning",
+      taskDescription: "test",
+      worktreePath: "/tmp/test",
+      branch: "main",
+      tmuxSession: "hive-test",
+      contextPct: 0,
+      createdAt: "2026-07-10T12:00:00.000Z",
+      lastEventAt: "2026-07-10T12:00:00.000Z",
+      recoveryAttempts: 0,
+      capabilityEpoch: 0,
+      readOnly: false,
+      writeRevoked: false,
+      channelsEnabled: false,
+    };
+    const path = codexAgentSocketPath(agent);
+    expect(Buffer.byteLength(path)).toBeLessThan(104);
+    expect(basename(path)).not.toContain(agent.id);
+    expect(hostPidfileAgentId(basename(`${path}.pid`))).toEqual(agent.id);
+  });
+
   test("throws when socket path would exceed AF_UNIX length limit", () => {
     const agent: AgentRecord = {
       id: "x".repeat(200),

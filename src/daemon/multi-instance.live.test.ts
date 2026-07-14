@@ -78,13 +78,17 @@ async function spawnDaemon(
 
 async function stopDaemon(child: DaemonChild): Promise<void> {
   if (child.exitCode !== null) return;
-  child.kill("SIGTERM");
-  await Promise.race([
+  process.kill(child.pid, "SIGTERM");
+  const exitCode = await Promise.race([
     child.exited,
     Bun.sleep(5_000).then(() => {
       throw new Error("acceptance daemon did not exit after SIGTERM");
     }),
   ]);
+  if (exitCode !== 0) {
+    const stderr = await new Response(child.stderr).text();
+    throw new Error(`acceptance daemon exited ${exitCode}: ${stderr.trim()}`);
+  }
 }
 
 async function connect(ready: ChildReady): Promise<Client> {
