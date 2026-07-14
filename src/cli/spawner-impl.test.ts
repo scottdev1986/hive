@@ -67,8 +67,15 @@ const positivelyVerifiedStop: StopAgentSession = async () => ({
   survivors: [],
 });
 
-function newTestSpawner(dependencies: HiveSpawnerDependencies): HiveSpawner {
-  return new HiveSpawner({ stopSession: positivelyVerifiedStop, ...dependencies });
+function newTestSpawner(
+  dependencies: Omit<HiveSpawnerDependencies, "stopSession"> & {
+    stopSession?: StopAgentSession;
+  },
+): HiveSpawner {
+  return new HiveSpawner({
+    ...dependencies,
+    stopSession: dependencies.stopSession ?? positivelyVerifiedStop,
+  });
 }
 
 type TestRoute = {
@@ -608,6 +615,63 @@ describe("HiveSpawner name pool", () => {
     controlQuota.db.close();
   });
 
+  test("an unverified failed control stop stays stuck and holds its quota", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-control-unverified-stop-"));
+    tempRoots.push(root);
+    const controlled = {
+      ...agent("maya", "control-paused"),
+      worktreePath: root,
+      capabilityEpoch: 1,
+      writeRevoked: true,
+      executionIdentity: {
+        tool: "codex",
+        model: "removed-model",
+        effort: "high",
+      },
+      model: "removed-model",
+    } satisfies AgentRecord;
+    const store = new FakeStore([controlled]);
+    const tmux = new FakeTmux("Error: model not supported");
+    const controlQuota = makeControlQuota(root);
+    let stopAttempts = 0;
+    const spawner = newTestSpawner({
+      isModelEnabled: async () => true,
+      db: store,
+      repoRoot: root,
+      port: 4317,
+      config: {},
+      readRoutingPolicy: () => policyFromRoute(CHEAP_ROUTE),
+      tmux,
+      stopSession: async () => {
+        stopAttempts += 1;
+        throw new Error("verified stop could not prove process exit");
+      },
+      sleep: async () => {},
+      quota: controlQuota.quota,
+    });
+
+    await expect(spawner.restartForControl(
+      controlled,
+      controlMessage("unverified-stop"),
+    )).rejects.toThrow();
+
+    const stuck = store.getAgentById(controlled.id)!;
+    expect(stopAttempts).toBeGreaterThanOrEqual(1);
+    expect(stuck).toMatchObject({
+      status: "stuck",
+      writeRevoked: true,
+      controlMessageId: "unverified-stop",
+    });
+    expect(stuck.failureReason).toContain("verified stop could not prove process exit");
+    expect(tmux.killed).toEqual([]);
+    expect(
+      controlQuota.quota.ledger.getReservation(
+        stuck.controlQuotaReservationId!,
+      )?.status,
+    ).toEqual("active");
+    controlQuota.db.close();
+  });
+
   test("legacy rows without immutable launch fields remain revoked and visibly pending", async () => {
     const root = await mkdtemp(join(tmpdir(), "hive-control-legacy-"));
     tempRoots.push(root);
@@ -1099,6 +1163,7 @@ describe("HiveSpawner wiring", () => {
     const store = new FakeStore();
     const tmux = new FakeTmux();
     const disconnected: string[] = [];
+    const stopped: string[] = [];
     const spawner = newTestSpawner({
       isModelEnabled: async () => true,
       db: store,
@@ -1113,6 +1178,10 @@ describe("HiveSpawner wiring", () => {
         codex: { model: "gpt-test", effort: "medium" },
       }),
       tmux,
+      stopSession: async (agent) => {
+        stopped.push(agent.tmuxSession);
+        return { killed: [], survivors: [] };
+      },
       createWorktree: async (_repoRoot, name, slug) => {
         const path = join(root, name);
         await mkdir(path, { recursive: true });
@@ -1134,7 +1203,7 @@ describe("HiveSpawner wiring", () => {
 
     await spawner.spawn({ task: "Fallback task", category: "simple_coding" });
     expect(disconnected).toEqual(["maya"]);
-    expect(tmux.killed).toEqual([agentTmuxSession("maya")]);
+    expect(stopped).toEqual([agentTmuxSession("maya")]);
     expect(tmux.sessions).toHaveLength(2);
     expect(tmux.sessions[1]?.[2]).toContain("'codex'");
     expect(tmux.sessions[1]?.[2]).toContain("--dangerously-bypass-hook-trust");
@@ -1142,6 +1211,62 @@ describe("HiveSpawner wiring", () => {
     expect(await deliveredPrompt(tmux.sessions[1]?.[2] ?? "")).toContain(
       "Fallback task",
     );
+  });
+
+  test("does not launch a TUI fallback when the app-server stop is unverified", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-spawner-app-stop-failed-"));
+    tempRoots.push(root);
+    const store = new FakeStore();
+    const tmux = new FakeTmux();
+    const disconnected: string[] = [];
+    let stopAttempts = 0;
+    const spawner = newTestSpawner({
+      isModelEnabled: async () => true,
+      db: store,
+      repoRoot: root,
+      port: 4317,
+      config: { codex: { driver: "app-server" } },
+      readRoutingPolicy: () => policyFromRoute({
+        ...CODEX_ROUTE,
+        tool: "codex",
+        codex: { model: "gpt-test", effort: "medium" },
+      }),
+      tmux,
+      stopSession: async () => {
+        stopAttempts += 1;
+        throw new Error("verified stop could not prove app-server exit");
+      },
+      createWorktree: async (_repoRoot, name, slug) => {
+        const path = join(root, name);
+        await mkdir(path, { recursive: true });
+        return { path, branch: `hive/${name}-${slug}` };
+      },
+      sleep: signalReadiness(store),
+      codexAppServer: {
+        isAvailable: async () => true,
+        buildHostCommand: () => ["hive", "codex-app-server-host"],
+        startAgent: async () => {
+          throw new Error("handshake failed");
+        },
+        disconnect: (name) => {
+          disconnected.push(name);
+        },
+      },
+    });
+
+    const stuck = await spawner.spawn({
+      task: "Do not fallback over an unverified stop",
+      category: "simple_coding",
+    });
+
+    expect(stopAttempts).toBeGreaterThanOrEqual(1);
+    expect(stuck.status).toEqual("stuck");
+    expect(disconnected).toEqual(["maya"]);
+    expect(tmux.killed).toEqual([]);
+    expect(tmux.sessions).toHaveLength(1);
+    expect(tmux.sessions[0]?.[2]).toContain("codex-app-server-host");
+    expect(tmux.sessions.some(([, , command]) => command.includes("'codex'")))
+      .toBeFalse();
   });
 
   test("reserves quota before worktree creation and launches the selected fallback model", async () => {
@@ -2266,6 +2391,7 @@ describe("HiveSpawner wiring", () => {
     const store = new FakeStore();
     const tmux = new FakeTmux(pane);
     const removals: Array<[string, string]> = [];
+    const stopped: string[] = [];
     const spawner = newTestSpawner({
       isModelEnabled: async () => true,
       db: store,
@@ -2274,6 +2400,10 @@ describe("HiveSpawner wiring", () => {
       config: {},
       readRoutingPolicy: () => policyFromRoute(CODEX_ROUTE),
       tmux,
+      stopSession: async (agent) => {
+        stopped.push(agent.tmuxSession);
+        return { killed: [], survivors: [] };
+      },
       createWorktree: async () => ({
         path: worktreePath,
         branch: "hive/maya-failing-launch",
@@ -2294,8 +2424,79 @@ describe("HiveSpawner wiring", () => {
     expect(failed.failureReason).not.toContain("startup line 1\n");
     expect(failed.failedAt).toBeDefined();
     expect(store.agents).toEqual([failed]);
-    expect(tmux.killed).toEqual([agentTmuxSession("maya")]);
+    expect(stopped).toEqual([agentTmuxSession("maya")]);
     expect(removals).toEqual([[root, worktreePath]]);
+  });
+
+  test("an unverified failed spawn stop stays stuck and preserves work and quota", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-spawner-unverified-stop-"));
+    tempRoots.push(root);
+    const worktreePath = join(root, "maya");
+    await mkdir(worktreePath, { recursive: true });
+    const quotaDb = new HiveDatabase(join(root, "quota.db"));
+    const quota = new QuotaService(
+      new QuotaLedger(quotaDb),
+      QuotaConfigSchema.parse({
+        discovery: false,
+        limits: [{
+          provider: "codex",
+          pool: "codex",
+          models: ["gpt-5.6-sol"],
+          fiveHourAllowance: 500,
+          weeklyAllowance: 500,
+        }],
+      }),
+      () => new Date(timestamp),
+    );
+    const store = new FakeStore();
+    const tmux = new FakeTmux("Error: model not supported for this account");
+    let removals = 0;
+    let stopAttempts = 0;
+    const spawner = newTestSpawner({
+      isModelEnabled: async () => true,
+      db: store,
+      repoRoot: root,
+      port: 4317,
+      config: {},
+      readRoutingPolicy: () => policyFromRoute(CODEX_ROUTE),
+      tmux,
+      stopSession: async () => {
+        stopAttempts += 1;
+        throw new Error("verified stop could not prove process exit");
+      },
+      createWorktree: async () => ({
+        path: worktreePath,
+        branch: "hive/maya-unverified-stop",
+      }),
+      assessStrandedWork: async () => ({
+        dirtyFiles: [],
+        unmergedCommits: 0,
+      }),
+      removeWorktree: async () => {
+        removals += 1;
+      },
+      sleep: async () => {},
+      quota,
+    });
+
+    const stuck = await spawner.spawn({
+      task: "Fail without proving the process stopped",
+      category: "simple_coding",
+    });
+
+    expect(stopAttempts).toBeGreaterThanOrEqual(1);
+    expect(stuck).toMatchObject({
+      status: "stuck",
+      writeRevoked: true,
+      worktreePath,
+    });
+    expect(store.getAgentById(stuck.id)).toEqual(stuck);
+    expect(stuck.failureReason).toContain("verified stop could not prove process exit");
+    expect(removals).toEqual(0);
+    expect(tmux.killed).toEqual([]);
+    expect(quota.ledger.getReservation(stuck.quotaReservationId!)?.status)
+      .toEqual("active");
+    quotaDb.close();
   });
 
   test("reports a short-lived process exit marker instead of a raw tmux exit", async () => {
@@ -2490,6 +2691,7 @@ describe("HiveSpawner wiring", () => {
     tempRoots.push(root);
     const store = new FakeStore();
     const tmux = new FakeTmux();
+    const stopped: string[] = [];
     const spawner = newTestSpawner({
       isModelEnabled: async () => true,
       db: store,
@@ -2502,6 +2704,10 @@ describe("HiveSpawner wiring", () => {
         codex: { model: "gpt-test", effort: "medium" },
       }),
       tmux,
+      stopSession: async (agent) => {
+        stopped.push(agent.tmuxSession);
+        return { killed: [], survivors: [] };
+      },
       createWorktree: async (_repoRoot, name, slug) => {
         const path = join(root, name);
         await mkdir(path, { recursive: true });
@@ -2522,7 +2728,7 @@ describe("HiveSpawner wiring", () => {
     expect(failed.status).toEqual("failed");
     expect(failed.failureReason).toContain("no sign of life");
     expect(failed.failedAt).toBeDefined();
-    expect(tmux.killed).toEqual([agentTmuxSession("maya")]);
+    expect(stopped).toEqual([agentTmuxSession("maya")]);
   });
 
   test("a failed spawn never deletes a worktree that holds work", async () => {
