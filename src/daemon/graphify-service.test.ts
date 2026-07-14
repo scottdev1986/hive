@@ -33,14 +33,16 @@ async function gitRepo(): Promise<string> {
   return root;
 }
 
-async function installFakeMcp(): Promise<void> {
+async function installFakeMcp(ignoreSigterm = false): Promise<void> {
   const bin = join(hiveHome, "tools", "graphify", graphifyPin());
   await mkdir(bin, { recursive: true });
   const source = [
     `#!${process.execPath}`,
     "const flag = process.argv.indexOf('--port');",
     "const server = Bun.serve({ hostname: '127.0.0.1', port: Number(process.argv[flag + 1]), fetch: () => new Response('', { status: 406 }) });",
-    "process.on('SIGTERM', () => { server.stop(true); process.exit(0); });",
+    ignoreSigterm
+      ? "process.on('SIGTERM', () => {});"
+      : "process.on('SIGTERM', () => { server.stop(true); process.exit(0); });",
     "",
   ].join("\n");
   const path = join(bin, "graphify-mcp");
@@ -106,6 +108,51 @@ describe("GraphifyService", () => {
     await service.stop();
     expect(service.serverUrl()).toBeNull();
     await rm(root, { recursive: true, force: true });
+  });
+
+  test("stop cannot be held open by a TERM-resistant server", async () => {
+    const root = await gitRepo();
+    await installFakeMcp(true);
+    await writeGraphifyState(root, { enabled: true, pin: "0.9.12" });
+    await mkdir(join(root, "graphify-out"));
+    await writeFile(join(root, "graphify-out", "graph.json"), "{}");
+    const service = new GraphifyService(root, async () => ({
+      exitCode: 0,
+      stdout: "",
+      stderr: "",
+      timedOut: false,
+    }), () => {});
+    const unrelated = Bun.spawn(["/bin/sleep", "30"], {
+      stdin: "ignore",
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    let child: Subprocess | null = null;
+    try {
+      await service.start();
+      child = (service as unknown as { child: Subprocess }).child;
+      expect(() => process.kill(child!.pid, 0)).not.toThrow();
+      expect(() => process.kill(unrelated.pid, 0)).not.toThrow();
+
+      const stopping = service.stop();
+      const stopped = await Promise.race([
+        stopping.then(() => true),
+        Bun.sleep(500).then(() => false),
+      ]);
+      if (!stopped) {
+        child.kill("SIGKILL");
+        await stopping;
+      }
+
+      expect(stopped).toBe(true);
+      expect(() => process.kill(child!.pid, 0)).toThrow();
+      expect(() => process.kill(unrelated.pid, 0)).not.toThrow();
+      expect(service.serverUrl()).toBeNull();
+    } finally {
+      if (child?.exitCode === null) child.kill("SIGKILL");
+      unrelated.kill("SIGKILL");
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   test("rebuild keeps the advertised endpoint stable; a crash withdraws it", async () => {
