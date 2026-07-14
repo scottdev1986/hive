@@ -44,7 +44,7 @@ uses `spread` over the remaining enabled models. Every candidate handed to quota
 ### `strict` (the authored portion of `choice`)
 
 Walk the category and Default chains in the user's order; reserve the first link with
-safe headroom (`src/daemon/quota.ts:1671-1753`). Quota may veto a link, never reorder
+safe headroom (`src/daemon/quota.ts:1711-1753`). Quota may veto a link, never reorder
 either authored list.
 
 > Authored preference order bypasses distribution. **Reordering an explicit
@@ -52,12 +52,12 @@ either authored list.
 > link is refused may Hive use fair dispatch across the remaining enabled models.
 
 A strict candidate whose capacity Hive cannot read still runs, in **compatibility mode**
-(`src/daemon/quota.ts:1671-1705`): an unbounded reservation, a loud "running unconstrained" warning, and no
+(`src/daemon/quota.ts:1677-1709`): an unbounded reservation, a loud "running unconstrained" warning, and no
 pretense of a number. **Meter uncertainty is not capability revocation.**
 
 ### `spread` (`auto`, and exhausted-`choice` last resort)
 
-`QuotaLedger.tryReserveFairGroups` (`src/daemon/quota-ledger.ts:1218-1303`) chooses and reserves
+`QuotaLedger.tryReserveFairGroups` (`src/daemon/quota-ledger.ts:1205-1283`) chooses and reserves
 **atomically** — one decision, so two concurrent spawns cannot both see the same
 provider as under-share — by **weighted-fair deficit**. Each historical dispatch
 credits every *eligible* provider an equal share and charges the selected provider one
@@ -78,7 +78,7 @@ to a provider, even one that publishes no capacity number. Consequences worth kn
   instruction must not distort the next automatic choice.
 - **No catch-up bursts.** A vendor unavailable for a week earned no credit and does not
   return with a week of debt to repay.
-- **Unknown capacity is excluded from `spread`, not scored** (`src/daemon/quota.ts:1624-1634`):
+- **Unknown capacity is excluded from `spread`, not scored** (`src/daemon/quota.ts:1628-1638`):
   *"AUTO excludes unreadable capacity, while an explicit choice may still run it."*
 
 Its cost is deliberate: it does not optimize consumption near a reset. Quota gates

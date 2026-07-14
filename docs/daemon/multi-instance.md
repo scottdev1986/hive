@@ -57,7 +57,7 @@ The repository is the common arbiter for names and work:
 
 - Before allocating an agent name, Hive reads existing worktrees and `hive/*` branches. `git worktree add` remains the atomic backstop when two instances race for the same name (`src/adapters/worktrees.ts:306-351`, `:403-429`).
 - Creating a writer branch also writes `refs/hive-owner/<instanceId>/<branch>`. Branch deletion clears that ownership ref (`src/adapters/worktrees.ts:88-143`, `:306-351`).
-- Stranded-work reconciliation skips an unpreserved branch owned by a live sibling. It never deletes stranded work itself (`src/daemon/server.ts:2132-2173`).
+- Stranded-work reconciliation skips an unpreserved branch owned by a live sibling. It never deletes stranded work itself (`src/daemon/server.ts:2142-2195`).
 - Landing holds `hive-landing.lock` in the Git common directory across the complete fast-forward-only landing operation. Release is token-scoped, so one process cannot remove a successor's lease (`src/daemon/landing.ts:115-152`, `:476-482`).
 - `hive uninstall --repo` stops only the selected instance and removes only worktrees and branches owned by that instance. The default instance may claim legacy branches that predate ownership refs; named instances may not (`src/cli/uninstall.ts:195-273`, `:275-332`).
 
@@ -69,15 +69,15 @@ The provider account is machine-wide. Partitioning the ledger per instance would
 
 **Decision: one machine-wide quota ledger,** `~/.hive/quota.db`. The ledger moves as a unit; only quota configuration and routing policy stay per-instance. Quota is a property of the logged-in vendor account, not of a Hive instance, so usage, observations, reservations, provider catalogs, and their integrity state all describe one machine-wide resource.
 
-Splitting only reservations and observations would break the current transactional invariants. Reservation reconciliation, usage sequencing, integrity triggers, and observation watermarks form one atomic system. The shared database uses WAL, a five-second busy timeout, and `BEGIN IMMEDIATE` transactions so concurrent daemons serialize check-and-reserve (`src/daemon/quota-ledger.ts:29-44`, `:931-933`, `:1178-1215`).
+Splitting only reservations and observations would break the current transactional invariants. Reservation reconciliation, usage sequencing, integrity triggers, and observation watermarks form one atomic system. The shared database uses WAL, a five-second busy timeout, and `BEGIN IMMEDIATE` transactions so concurrent daemons serialize check-and-reserve (`src/daemon/quota-ledger.ts:29-44`, `:930-932`, `:1167-1195`).
 
-Every reservation records `instanceId` and `instanceHome`. This prevents same-named agents in sibling instances from aliasing and gives reclamation an owner to check (`src/daemon/quota-ledger.ts:145-165`, `:1143-1161`). Reclamation follows lock-and-handshake liveness, never elapsed time:
+Every reservation records `instanceId` and `instanceHome`. This prevents same-named agents in sibling instances from aliasing and gives reclamation an owner to check (`src/daemon/quota-ledger.ts:145-165`, `:1594-1617`). Reclamation follows lock-and-handshake liveness, never elapsed time:
 
 - a positively dead owner makes its active reservations reclaimable;
 - a live owner keeps its reservations;
 - an unknown owner is preserved.
 
-An instance between lock acquisition and handshake publication is therefore protected (`src/daemon/quota-ledger.ts:1621-1639`). The default instance's legacy quota tables are copied once into the shared ledger without deleting the old rows (`src/daemon/quota-ledger.ts:65-144`).
+An instance between lock acquisition and handshake publication is therefore protected (`src/daemon/quota-ledger.ts:1600-1617`). The default instance's legacy quota tables are copied once into the shared ledger without deleting the old rows (`src/daemon/quota-ledger.ts:65-144`).
 
 `hive.db` remains a per-instance, single-process database. `quota.db` is the deliberate multi-process exception; see [Database resilience](database-resilience.md).
 

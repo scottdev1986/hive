@@ -65,7 +65,7 @@ We accept it because it is bounded, self-evidently wrong to anyone looking at th
 
 ## Authorization
 
-`GET /orchestrator-status` (`src/daemon/server.ts:2802-2831`) is gated on `status:read` — the same action `hive_status` needs, and one every role already holds. **No new `Action` was added.** This is the root's status, not a new kind of authority, and the feed that polls it every second already carries a capability that permits it. The allow is not audited, for the same reason no poll surface is: it would bury every row that matters. See [authorization.md](authorization.md#the-routes-and-tools).
+`GET /orchestrator-status` (`src/daemon/server.ts:2828-2857`) is gated on `status:read` — the same action `hive_status` needs, and one every role already holds. **No new `Action` was added.** This is the root's status, not a new kind of authority, and the feed that polls it every second already carries a capability that permits it. The allow is not audited, for the same reason no poll surface is: it would bury every row that matters. See [authorization.md](authorization.md#the-routes-and-tools).
 
 ## See Also
 

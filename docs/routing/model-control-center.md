@@ -210,7 +210,7 @@ from [../workspace/ui-design-system.md](../workspace/ui-design-system.md).
 **Routing boundary:** under `choice`, authored category and Default chains express
 preference order inside the enabled-model set. If those non-empty chains are exhausted,
 Hive spreads across the remaining enabled models; if both chains are empty, it refuses
-without widening. Empty and exhausted are intentionally different (`src/daemon/spawner-impl.ts:1811-1849`; `src/cli/spawner-impl.test.ts:3505-3674`). Under `auto`, the enabled models that fit the category are the candidate set directly.
+without widening. Empty and exhausted are intentionally different (`src/daemon/spawner-impl.ts:1811-1849`; `src/cli/spawner-impl.test.ts:3538-3674`, `:3827-3838`). Under `auto`, the enabled models that fit the category are the candidate set directly.
 
 ## See Also
 

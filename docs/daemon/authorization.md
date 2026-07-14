@@ -69,43 +69,43 @@ Enumerated from `src/daemon/capabilities.ts:21-48`. `O` operator, `R` orchestrat
 
 ## The routes and tools
 
-Every HTTP route below `/handshake` in `src/daemon/server.ts:2325-2388` authenticates first. **Audit** is whether an *allow* is written to `audit_log`; denials are always audited (`src/daemon/capabilities.ts:426-449`).
+Every HTTP route below `/handshake` in `src/daemon/server.ts:2349-2411` authenticates first. **Audit** is whether an *allow* is written to `audit_log`; denials are always audited (`src/daemon/capabilities.ts:426-449`).
 
 | Route / tool | Action | Subject | Audit allow | Gate |
 |---|---|---|---|---|
-| `GET /health` | — public | — | — | `src/daemon/server.ts:2294-2320` (runs `quickCheck`) |
-| `GET /handshake` | — public | — | — | `src/daemon/server.ts:2322-2324` |
-| `POST /event` | `event:report` | self | no | `src/daemon/server.ts:2327-2329` |
-| `POST /statusline` | `telemetry:report` | self | no | `src/daemon/server.ts:2330-2332` |
-| `POST /channel/{register,poll,ack,permission-request}` | `channel:use` | self | register + permission-request only | `src/daemon/server.ts:2371-2373`, `:2419-2480` |
-| `GET /autonomy` | `autonomy:read` | — | no | `src/daemon/server.ts:2333-2338` |
-| `POST /autonomy` | `autonomy:write` | — | yes | `src/daemon/server.ts:2333-2338` |
-| `GET /routing/policy` | `routing-policy:read` | — | no | `src/daemon/server.ts:2339-2344` |
-| `POST /routing/policy` | `routing-policy:write` | — | yes | `src/daemon/server.ts:2339-2344` |
-| `POST /graphify` | `graphify:write` | — | yes | `src/daemon/server.ts:2368-2370` |
-| `GET /orchestrator-status` | `status:read` | — | no | `src/daemon/server.ts:2345-2347` |
-| `GET /token-usage` | `token-usage:read` | — | no | `src/daemon/server.ts:2348-2350` |
-| `POST /token-usage/**` | `token-usage:write` | — | yes | `src/daemon/server.ts:2351-2366` |
-| `POST /recover` | `agent:recover` | any | yes | `src/daemon/server.ts:2374-2376` |
-| `POST /agents/:name/kill` | `agent:kill` | any | yes | `src/daemon/server.ts:2380-2385` |
-| `POST /codex-root-token` | `root-token:mint` | — | yes | `src/daemon/server.ts:2392-2417` |
-| `hive_status`, `hive_models`, `graph_locate` | `status:read` | — | no | `src/daemon/server.ts:3403`, `:3509`, `:4020` |
-| `hive_quota_status` | `quota:read` | — | no | `src/daemon/server.ts:3481` |
-| `hive_quota_reconcile` | `quota:write` | — | yes | `src/daemon/server.ts:3522` |
-| `hive_token_usage` | `token-usage:read` | — | no | `src/daemon/server.ts:3491` |
-| `hive_spawn` | `agent:spawn` | — | yes | `src/daemon/server.ts:3740` |
-| `hive_kill`, `hive_preserve_branch` | `agent:kill` | any | kill yes, preserve no | `src/daemon/server.ts:3568`, `:3464` |
-| `hive_mark_dead` | `agent:mark-dead` | any | yes | `src/daemon/server.ts:3549` |
-| `hive_recover` | `agent:recover` | any | yes | `src/daemon/server.ts:3539` |
-| `hive_approvals` | `approval:read` | — | no | `src/daemon/server.ts:3798` |
-| `hive_approve` | `approval:decide` | any | yes | `src/daemon/server.ts:3816` |
-| `hive_send`, `hive_escalate` | `message:send` | self (`from` / `agent`) | no | `src/daemon/server.ts:3588`, `:3621` |
-| `hive_inbox` | `inbox:read` | self | no | `src/daemon/server.ts:3709` |
-| `hive_ack_message` | `message:ack` | self | yes, **epoch** | `src/daemon/server.ts:3693` |
-| `hive_read_message` | `message:read` | — | no | `src/daemon/server.ts:3726` |
-| `hive_land` | `branch:land` | self | yes, **epoch + once** | `src/daemon/server.ts:3894` |
-| `memory_search`, `memory_read` | `memory:read` | — | no | `src/daemon/server.ts:3957`, `:3981` |
-| `memory_write`, `memory_delete`, `memory_reindex` | `memory:write` | — | yes | `src/daemon/server.ts:3967`, `:3995`, `:4005` |
+| `GET /health` | — public | — | — | `src/daemon/server.ts:2315-2345` (runs `quickCheck`) |
+| `GET /handshake` | — public | — | — | `src/daemon/server.ts:2346-2348` |
+| `POST /event` | `event:report` | self | no | `src/daemon/server.ts:2351-2353` |
+| `POST /statusline` | `telemetry:report` | self | no | `src/daemon/server.ts:2354-2356` |
+| `POST /channel/{register,poll,ack,permission-request}` | `channel:use` | self | register + permission-request only | `src/daemon/server.ts:2395-2397`, `:2443-2505` |
+| `GET /autonomy` | `autonomy:read` | — | no | `src/daemon/server.ts:2357-2362` |
+| `POST /autonomy` | `autonomy:write` | — | yes | `src/daemon/server.ts:2357-2362` |
+| `GET /routing/policy` | `routing-policy:read` | — | no | `src/daemon/server.ts:2363-2368` |
+| `POST /routing/policy` | `routing-policy:write` | — | yes | `src/daemon/server.ts:2363-2368` |
+| `POST /graphify` | `graphify:write` | — | yes | `src/daemon/server.ts:2392-2394` |
+| `GET /orchestrator-status` | `status:read` | — | no | `src/daemon/server.ts:2369-2371` |
+| `GET /token-usage` | `token-usage:read` | — | no | `src/daemon/server.ts:2372-2374` |
+| `POST /token-usage/**` | `token-usage:write` | — | yes | `src/daemon/server.ts:2375-2390` |
+| `POST /recover` | `agent:recover` | any | yes | `src/daemon/server.ts:2398-2400` |
+| `POST /agents/:name/kill` | `agent:kill` | any | yes | `src/daemon/server.ts:2404-2409` |
+| `POST /codex-root-token` | `root-token:mint` | — | yes | `src/daemon/server.ts:2401-2403`, `:2416-2441` |
+| `hive_status`, `hive_models`, `graph_locate` | `status:read` | — | no | `src/daemon/server.ts:3427-3433`, `:3533-3539`, `:4044-4054` |
+| `hive_quota_status` | `quota:read` | — | no | `src/daemon/server.ts:3505-3512` |
+| `hive_quota_reconcile` | `quota:write` | — | yes | `src/daemon/server.ts:3546-3553` |
+| `hive_token_usage` | `token-usage:read` | — | no | `src/daemon/server.ts:3515-3525` |
+| `hive_spawn` | `agent:spawn` | — | yes | `src/daemon/server.ts:3764-3785` |
+| `hive_kill`, `hive_preserve_branch` | `agent:kill` | any | kill yes, preserve no | `src/daemon/server.ts:3592-3599`, `:3488-3494` |
+| `hive_mark_dead` | `agent:mark-dead` | any | yes | `src/daemon/server.ts:3573-3579` |
+| `hive_recover` | `agent:recover` | any | yes | `src/daemon/server.ts:3563-3569` |
+| `hive_approvals` | `approval:read` | — | no | `src/daemon/server.ts:3822-3833` |
+| `hive_approve` | `approval:decide` | any | yes | `src/daemon/server.ts:3840-3850` |
+| `hive_send`, `hive_escalate` | `message:send` | self (`from` / `agent`) | no | `src/daemon/server.ts:3612-3620`, `:3645-3659` |
+| `hive_inbox` | `inbox:read` | self | no | `src/daemon/server.ts:3733-3743` |
+| `hive_ack_message` | `message:ack` | self | yes, **epoch** | `src/daemon/server.ts:3717-3724` |
+| `hive_read_message` | `message:read` | — | no | `src/daemon/server.ts:3750-3757` |
+| `hive_land` | `branch:land` | self | yes, **epoch + once** | `src/daemon/server.ts:3918-3927` |
+| `memory_search`, `memory_read` | `memory:read` | — | no | `src/daemon/server.ts:3981-3988`, `:4005-4012` |
+| `memory_write`, `memory_delete`, `memory_reindex` | `memory:write` | — | yes | `src/daemon/server.ts:3991-3998`, `:4019-4026`, `:4029-4036` |
 
 `/health` and `/handshake` are public and non-authorizing. Health proves liveness; the handshake proves *identity* (build hash, project, protocol range) so a launcher can decide whether this daemon is the right one to talk to. **Neither may ever grow a side effect** — a handshake that writes is a handshake that needs a capability, and the launcher has none by construction: it is trying to find out whether a capability would even be worth minting.
 
@@ -121,10 +121,10 @@ Burning the grant on a *failed* attempt — stricter, simpler, and the third alt
 
 Something must re-arm the grant, because a working agent lands more than once. That something used to be a human, every lap, and it was the most expensive thing in the system: **one orchestrator cleared nine re-arm approvals in a single session**, and the more productive the agent, the more often it stalled. Most of those approvals granted nothing — the agent had already landed, `main..branch` was empty, and a human was being spent on merging a diff that did not exist.
 
-So the daemon now *measures the branch* first (`src/daemon/server.ts:1225-1280`). Three answers:
+So the daemon now *measures the branch* first (`src/daemon/server.ts:1246-1300`). Three answers:
 
 - **`nothing-to-land`** — `main..branch` is empty. Nothing to merge, so nothing to grant, so **no approval is filed at all**. A grant to merge nothing is not a right anybody needs.
-- **`rearmed`** — the branch has commits the primary lacks *and* is rebased on current `main`, so the merge is a genuine fast-forward. Those are the two facts the human was being asked to eyeball, and git can state both. Audited as `capability.auto-rearm`, and bounded: `AUTO_REARM_BUDGET = 3` (`src/daemon/server.ts:384-385`) per agent, counted from the audit log itself.
+- **`rearmed`** — the branch has commits the primary lacks *and* is rebased on current `main`, so the merge is a genuine fast-forward. Those are the two facts the human was being asked to eyeball, and git can state both. Audited as `capability.auto-rearm`, and bounded: `AUTO_REARM_BUDGET = 3` (`src/daemon/server.ts:399-404`) per agent, counted from the audit log itself.
 - **`ask`** — everything else, and **every unknown**: an unreadable branch, a `null` from either measurement, a diverged branch, an exhausted budget.
 
 `readLandReadiness` is three-valued on purpose (`src/daemon/landing.ts:225-278`): `pending` and `rebased` are `null` when git could not answer, and **null routes to ask, never to grant**. An unreadable branch is no evidence, and **no evidence must never be converted into permission** — the failure mode that once disarmed both of the guards whose entire purpose was to refuse. This is the same invariant as the absence test in [database-resilience.md](database-resilience.md).
@@ -143,7 +143,7 @@ Separately, `WRITE_ACTIONS = {branch:land, memory:write}` (`src/daemon/capabilit
 
 **Delegation is not supported, and this is a feature.** No capability mints another; there is no attenuation grammar. The authority graph is exactly one level deep and can be reasoned about by reading the agents table. A macaroon-style attenuable token is strictly more expressive and was rejected because Hive has no use case for it and every delegation edge is a place for authority to escape.
 
-**The one carve-out is `POST /codex-root-token`** (`src/daemon/server.ts:2392-2417`, gated `root-token:mint` at `:2401-2407`). The operator's launcher asks the *daemon* to mint the orchestrator credential a Codex root will present, because that root has no spawn path of its own. Still daemon-minted, still one level deep, and deliberately short-lived: a 60-second TTL that covers the hand-off window and nothing more. (An earlier version of this document flatly claimed no token-exchange endpoint exists. It did not survive contact with Codex.)
+**The one carve-out is `POST /codex-root-token`** (`src/daemon/server.ts:2401-2403`, handler at `:2416-2441`). The operator's launcher asks the *daemon* to mint the orchestrator credential a Codex root will present, because that root has no spawn path of its own. Still daemon-minted, still one level deep, and deliberately short-lived: a 60-second TTL that covers the hand-off window and nothing more. (An earlier version of this document flatly claimed no token-exchange endpoint exists. It did not survive contact with Codex.)
 
 ## What a stolen credential buys
 

@@ -33,7 +33,7 @@ After the fix, the same staged agent: `killed testagent — 5 process(es) reaped
 
 ## The order, and what each step destroys
 
-`killAgentTeardown` (`src/daemon/server.ts:1735-1889`):
+`killAgentTeardown` (`src/daemon/server.ts:1735-1913`):
 
 1. **Capture the process tree** — pane pids (`tmux list-panes`) *and* the Codex host pid, read from the pidfile beside its socket. Must precede everything: the pane pids die with the session.
 2. **Kill the tmux session.**
@@ -55,7 +55,7 @@ The agent dies at once — no confirmation, no blocking prompt. Nobody is asked 
 - Worktree removal still **refuses** to delete stranded work unless the caller passes `discardWork`.
 - A preserve that *fails* says so in the result rather than proceeding quietly.
 
-`discardWork` is the deliberately destructive exception, not another name for cleanup. When the caller asks both to remove the worktree and to discard stranded work, Hive removes tracked and untracked changes, deletes the branch, removes the preservation ref it just created, and reports that deletion (`src/daemon/server.ts:1844-1889`). A preserved ref left behind would still retain every commit and would make “discard” a rename rather than a discard.
+`discardWork` is the deliberately destructive exception, not another name for cleanup. When the caller asks both to remove the worktree and to discard stranded work, Hive removes tracked and untracked changes, deletes the branch, removes the preservation ref it just created, and reports that deletion (`src/daemon/server.ts:1868-1897`). A preserved ref left behind would still retain every commit and would make “discard” a rename rather than a discard.
 
 ## Quitting stops the machine, not just the process
 

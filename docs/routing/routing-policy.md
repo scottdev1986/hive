@@ -188,7 +188,7 @@ inside it. Under `choice`, Hive tries the category chain, then Default. If those
 non-empty authored chains are exhausted because every link is refused, it spreads the
 last-resort attempt across the remaining enabled models. A disabled or unconfigured
 model never enters that fallback. If both category and Default are empty, Hive refuses
-before constructing the fallback: **empty is not exhausted** (`src/daemon/spawner-impl.ts:1811-1849`; `src/cli/spawner-impl.test.ts:3505-3674`, `:3794-3804`). Under `auto`, enabled models that fit the category form the candidate set directly.
+before constructing the fallback: **empty is not exhausted** (`src/daemon/spawner-impl.ts:1811-1849`; `src/cli/spawner-impl.test.ts:3538-3674`, `:3827-3838`). Under `auto`, enabled models that fit the category form the candidate set directly.
 
 ## Known gaps (real, and unimplemented)
 

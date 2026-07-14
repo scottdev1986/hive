@@ -60,7 +60,7 @@ Deleting a doc that cites `SPEC.md` *lowers* SPEC.md's inbound count. A doc corp
 
 ## The profile is a cache, not a document
 
-`ensureProfile` runs at every session boundary — bare `hive` and the vendor-specific Workspace commands through `startSession` (`src/cli/start.ts:125`), the orchestrator (`src/cli/orchestrator.ts:192`), the daemon (`src/daemon/server.ts:1048-1057`), every spawn (`src/daemon/spawner-impl.ts:1893-1910`), and `loadBriefConfig` itself (`src/adapters/brief.ts:26`). It is **silent** when successful: there is no init step to run and no refresh to remember.
+`ensureProfile` runs at every session boundary — bare `hive` and the vendor-specific Workspace commands through `startSession` (`src/cli/start.ts:125`), the orchestrator (`src/cli/orchestrator.ts:192`), the daemon (`src/daemon/server.ts:1068-1077`), every spawn (`src/daemon/spawner-impl.ts:1893-1910`), and `loadBriefConfig` itself (`src/adapters/brief.ts:26`). It is **silent** when successful: there is no init step to run and no refresh to remember.
 
 It lives in Hive's own per-project state directory — `~/.hive/projects/<hiveUuid>/profile.toml` (`src/adapters/profile.ts:59-79`) — keyed by the identity the project registry already mints, so it survives the repo being moved or renamed, and **every linked worktree of a repo reads the one project profile** rather than quietly profiling its own branch. It is not in the repo, not in anyone's diff, and not anyone's business.
 

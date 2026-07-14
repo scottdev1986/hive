@@ -113,7 +113,7 @@ Three consequences, and they are the whole point:
 
 > **A model is gated by every pool that meters it, and the tightest one governs.**
 
-Checking only the *first* matching pool is what put two deep-tier agents onto a model whose own weekly pool sat at **99%**: the general pool had 39% of its week left and said yes, while the model's dedicated pool had 1% and was never asked. A run that spends from two meters holds a reservation in **each**, reserved atomically only after every pool fits (`src/daemon/quota-ledger.ts:1178-1215`).
+Checking only the *first* matching pool is what put two deep-tier agents onto a model whose own weekly pool sat at **99%**: the general pool had 39% of its week left and said yes, while the model's dedicated pool had 1% and was never asked. A run that spends from two meters holds a reservation in **each**, reserved atomically only after every pool fits (`src/daemon/quota-ledger.ts:1157-1195`).
 
 **A model with no cap of its own is metered by the general pool — never by nothing.** Minting a phantom per-model pool for it and reporting "usage unknown, routing unconstrained" invents a meter *and* does the worst possible thing with it: an unconstrained model is the most attractive route there is, so the phantom actively pulls traffic toward itself.
 
