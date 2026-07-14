@@ -75,7 +75,15 @@ export interface ProfileValidationContext {
 }
 
 export type ProfileValidation =
-  | { ok: true; profile: ProjectProfile }
+  | {
+      ok: true;
+      /** Model-authored content; envelope fields are re-read at commit. */
+      candidate: ProjectProfileCandidate;
+      /** Candidate assembled against the run observed at validation start.
+       * Content checks ran on this; commit must reassemble against the fresh
+       * run so coalesced request provenance is not lost. */
+      profile: ProjectProfile;
+    }
   | { ok: false; rejections: ProfileRejection[] };
 
 /** Assemble a full profile from a model-authored candidate and the daemon-owned
@@ -160,7 +168,7 @@ export async function validateProfileSubmission(
   ];
   return rejections.length > 0
     ? { ok: false, rejections }
-    : { ok: true, profile };
+    : { ok: true, candidate, profile };
 }
 
 /** Prove, at commit time, that the profile is still true of the repo.

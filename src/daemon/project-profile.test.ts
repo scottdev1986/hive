@@ -1300,6 +1300,79 @@ describe("guidance provenance", () => {
       "still only advice",
     );
   });
+
+  test("coalesced guidance merged during validation is committed, not the pre-merge snapshot", async () => {
+    // submitProfile validates outside the lock using a run snapshot. A second
+    // requester can append guidance under the lock while that runs. Commit must
+    // re-read the run's request provenance — checking only runId would land the
+    // stale pre-merge envelope (alice/"first") and drop the merge.
+    const root = await polyglotRepo();
+    const run = await beginProfiling(root, PROFILER, {
+      request: {
+        source: "operator",
+        requestedBy: "alice",
+        guidance: "first",
+      },
+    });
+
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const lockPath = join(projectProfileDir(root), "profile.lock");
+    const lock = withFileLock(lockPath, async () => {
+      await held;
+    });
+    while (!existsSync(lockPath)) await Bun.sleep(5);
+
+    const inFlight = submitProfile(root, polyglotCandidate(), "erica", run.runId);
+    await Bun.sleep(500); // past out-of-lock validation; submit is waiting on our lock
+
+    // Simulate what appendProfilingGuidance would write under the lock: merge
+    // while submit still holds the pre-merge envelope from validation.
+    const blocked = await readProfileState(root);
+    expect(blocked.run?.runId).toBe(run.runId);
+    expect(blocked.run?.request.guidance).toBe("first");
+    await writeFile(
+      profileStatePath(root),
+      `${JSON.stringify(
+        {
+          ...blocked,
+          run: {
+            ...blocked.run!,
+            request: {
+              source: "orchestrator",
+              requestedAt: blocked.run!.request.requestedAt,
+              requestedBy: "bob",
+              guidance: "first\nsecond",
+            },
+          },
+        },
+        null,
+        2,
+      )}\n`,
+    );
+
+    release();
+    await lock;
+    const result = await inFlight;
+
+    expect(result.status).toBe("accepted");
+    if (result.status !== "accepted") return;
+    expect(result.profile.profiler.request).toMatchObject({
+      requestedBy: "bob",
+      guidance: "first\nsecond",
+    });
+    const stored = await readCurrentProfile(root);
+    expect(stored?.profiler.request).toMatchObject({
+      requestedBy: "bob",
+      guidance: "first\nsecond",
+    });
+    expect(stored?.profiler.request).not.toMatchObject({
+      requestedBy: "alice",
+      guidance: "first",
+    });
+  }, 20_000);
 });
 
 // --- inventory --------------------------------------------------------------

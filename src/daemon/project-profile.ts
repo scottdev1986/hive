@@ -40,6 +40,7 @@ import {
 import { withFileLock } from "../adapters/file-lock";
 import { projectHiveUuid, projectStateDir } from "./project-state";
 import {
+  assembleProfileEnvelope,
   proveProfileStillHolds,
   validateProfileSubmission,
   type ProfileRejection,
@@ -904,7 +905,12 @@ export type ProfileSubmitResult =
  * decision is locked, and inside it the run is re-read: whatever was true when
  * validation started, the profile lands only if the run it was authored for is
  * still the live one. A run superseded while its profile was being checked
- * cannot land on top of the run that replaced it. */
+ * cannot land on top of the run that replaced it.
+ *
+ * Envelope fields are also re-read at commit. Request provenance can gain
+ * coalesced guidance under the lock while validation runs (`appendProfilingGuidance`);
+ * committing the pre-validation snapshot would drop that merge. Same pattern as
+ * supersession: the lock-time re-read is authority, not the out-of-lock snapshot. */
 export async function submitProfile(
   root: string,
   payload: unknown,
@@ -938,11 +944,12 @@ export async function submitProfile(
     };
   }
   const validatedAgainst = state.run;
+  const hiveUuid = projectHiveUuid(root);
 
   const inventory = await computeProfileInventory(root);
   const validation = await validateProfileSubmission(payload, {
     root,
-    hiveUuid: projectHiveUuid(root),
+    hiveUuid,
     run: validatedAgainst,
     subject,
     inventoryDigest: inventory.digest,
@@ -985,7 +992,13 @@ export async function submitProfile(
       };
     }
 
-    const profile = validation.profile;
+    // Reassemble against the run as it is *now*. Content was validated from the
+    // candidate; envelope fields (request guidance, toolSessionId, …) may have
+    // been updated under the lock while validation ran.
+    const profile = assembleProfileEnvelope(validation.candidate, {
+      hiveUuid,
+      run: fresh.run,
+    });
     // The proof has to be taken here, not where validation ran. A check made
     // before the lock is a statement about a repo that was; between it and this
     // rename a cited file can be deleted, and committing then would persist a
