@@ -35,7 +35,7 @@ human's preference.
 > **A tier system that lowers the effort flag but not the model is not a tier system.**
 
 This is the origin of the entire no-quiet-defaults rule, and why `ExactModelIdSchema`
-(`routing-policy.ts:60-66`) now refuses the literal string `"default"` as a model id.
+(`src/schemas/routing-policy.ts:60-66`) now refuses the literal string `"default"` as a model id.
 
 **Replaced by** nine categories plus a user-authored `default` chain. Note the diagnosis:
 the failure was **never "four tiers is too few"** — it was *the values behind the tiers*.
@@ -131,7 +131,7 @@ me on this vendor's current default"* — without a compiled model id.
 
 > "we are specific on the models that we choose"
 
-Commit `0dc25c0` removed it. `ChainEntrySchema` (`routing-policy.ts:77-81`) now has
+Commit `0dc25c0` removed it. `ChainEntrySchema` (`src/schemas/routing-policy.ts:77-81`) now has
 **only** the exact form. The schema comment records the reasoning: **a vendor default
 is a quiet default, and quiet defaults are the defect this store exists to delete.**
 Vendors also move their defaults server-side mid-session (repo memory:

@@ -9,8 +9,8 @@
 # at it. It never touches a Homebrew-owned install.
 #
 # Releases without Hive manifest signature material are refused. Portable shell
-# does not verify Ed25519; it preserves the exact bytes for Hive to verify before
-# an offline rollback. See docs/release/versioning-and-release.md.
+# does not verify Ed25519; it preserves the exact manifest bytes and normalized
+# signature for Hive to verify before offline rollback. See the release docs.
 set -eu
 
 REPO="${HIVE_REPO:-scottdev1986/hive}"
@@ -99,9 +99,9 @@ mv "$TMP/hive-darwin-$ARCH" "$STAGING_DIR/hive"
 chmod 755 "$STAGING_DIR/hive"
 tar -xzf "$TMP/HiveWorkspace.tar.gz" -C "$STAGING_DIR"
 
-# Preserve the exact provenance bytes for a future offline rollback. The shell
-# installer requires this material but does not verify Ed25519 itself; the
-# installed Hive binary re-verifies it against its embedded key before rollback.
+# Preserve the exact manifest bytes and normalized signature for a future
+# offline rollback. The shell installer requires this material but does not
+# verify Ed25519 itself; the installed binary does so before rollback.
 manifest_base64="$(base64 < "$TMP/hive-release.json" | tr -d '\n')"
 printf '{\n  "schema": 1,\n  "manifestBase64": "%s",\n  "signature": "%s"\n}\n' "$manifest_base64" "$signature" > "$STAGING_DIR/release-verification.json"
 

@@ -11,15 +11,15 @@ This document is the binding contract for `src/daemon/capabilities.ts`; if the c
 
 ## Authentication and authorization are different problems
 
-Authentication answers "which capability is speaking" (`capabilities.ts:277-304`). Authorization answers "may that capability do this, to this subject, right now" (`capabilities.ts:306-365`). Conflating them is how control planes grow confused deputies: a caller proves it is *someone*, then names *anyone* in the request body, and the server obliges.
+Authentication answers "which capability is speaking" (`src/daemon/capabilities.ts:277-304`). Authorization answers "may that capability do this, to this subject, right now" (`src/daemon/capabilities.ts:306-365`). Conflating them is how control planes grow confused deputies: a caller proves it is *someone*, then names *anyone* in the request body, and the server obliges.
 
-So the daemon does two things in order. It authenticates the bearer token and resolves it to exactly one capability record — **before it parses the body**, so a caller with no credential is turned away without the daemon ever reading what it asked for (`capabilities.ts:406-424`). Then, for every request that names a subject (`agent`, `from`, `agentName`), it compares that name against the subject bound into the capability. A mismatch is a denial (`capability.foreign-subject`), not a coercion.
+So the daemon does two things in order. It authenticates the bearer token and resolves it to exactly one capability record — **before it parses the body**, so a caller with no credential is turned away without the daemon ever reading what it asked for (`src/daemon/capabilities.ts:406-424`). Then, for every request that names a subject (`agent`, `from`, `agentName`), it compares that name against the subject bound into the capability. A mismatch is a denial (`capability.foreign-subject`), not a coercion.
 
 The blueprint's XPC design gets this for free by omitting tenant IDs from method signatures. HTTP has no such affordance — the body is attacker-controlled and there is nowhere else to put the subject — so the daemon rejects on mismatch and audits the attempt. Same boundary, different road.
 
 ## The four roles
 
-Four roles exist (`capabilities.ts:94-133`), and the interesting property of each is what it *cannot* do.
+Four roles exist (`src/daemon/capabilities.ts:94-133`), and the interesting property of each is what it *cannot* do.
 
 **Operator** — the human's `hive` CLI and the Workspace acting for them. Holds 26 of the 27 actions; the one it lacks is `channel:use`, which is an agent-bridge transport, not a control-plane right. Unrestricted subject scope, deliberately: a caller that can already spawn and kill any agent gains no new authority from also being allowed to name one, so narrowing it would cost clarity and buy nothing.
 
@@ -29,11 +29,11 @@ Four roles exist (`capabilities.ts:94-133`), and the interesting property of eac
 
 **Reader** — read-only: talks and reports on itself. No `branch:land`, no `memory:write`.
 
-The asymmetry is the design. **Neither orchestrator nor writer is a superset of the other**, so a captured credential of either kind buys a strict subset of the control plane. There is no role that both decides and merges (`capabilities.ts:93-95`).
+The asymmetry is the design. **Neither orchestrator nor writer is a superset of the other**, so a captured credential of either kind buys a strict subset of the control plane. There is no role that both decides and merges (`src/daemon/capabilities.ts:93-95`).
 
 ## The 27 actions
 
-Enumerated from `capabilities.ts:21-48`. `O` operator, `R` orchestrator, `W` writer, `r` reader.
+Enumerated from `src/daemon/capabilities.ts:21-48`. `O` operator, `R` orchestrator, `W` writer, `r` reader.
 
 | Action | Roles | Notes |
 |---|---|---|
@@ -65,53 +65,53 @@ Enumerated from `capabilities.ts:21-48`. `O` operator, `R` orchestrator, `W` wri
 | `routing-policy:write` | O | an agent rewriting the router is self-authorization |
 | `graphify:write` | O | opting a repo into an indexing service is consent |
 
-`anySubject` (`capabilities.ts:59-64`): the operator for everything it holds; the orchestrator for exactly the four agent-directed actions. Writers and readers may only ever name themselves.
+`anySubject` (`src/daemon/capabilities.ts:59-64`): the operator for everything it holds; the orchestrator for exactly the four agent-directed actions. Writers and readers may only ever name themselves.
 
 ## The routes and tools
 
-Every HTTP route below `/handshake` in `server.ts:2325-2388` authenticates first. **Audit** is whether an *allow* is written to `audit_log`; denials are always audited (`capabilities.ts:426-449`).
+Every HTTP route below `/handshake` in `src/daemon/server.ts:2325-2388` authenticates first. **Audit** is whether an *allow* is written to `audit_log`; denials are always audited (`src/daemon/capabilities.ts:426-449`).
 
 | Route / tool | Action | Subject | Audit allow | Gate |
 |---|---|---|---|---|
-| `GET /health` | — public | — | — | `server.ts:2294-2320` (runs `quickCheck`) |
-| `GET /handshake` | — public | — | — | `server.ts:2322-2324` |
-| `POST /event` | `event:report` | self | no | `server.ts:2327-2329` |
-| `POST /statusline` | `telemetry:report` | self | no | `server.ts:2330-2332` |
-| `POST /channel/{register,poll,ack,permission-request}` | `channel:use` | self | register + permission-request only | `server.ts:2371-2373`, `:2419-2480` |
-| `GET /autonomy` | `autonomy:read` | — | no | `server.ts:2333-2338` |
-| `POST /autonomy` | `autonomy:write` | — | yes | `server.ts:2333-2338` |
-| `GET /routing/policy` | `routing-policy:read` | — | no | `server.ts:2339-2344` |
-| `POST /routing/policy` | `routing-policy:write` | — | yes | `server.ts:2339-2344` |
-| `POST /graphify` | `graphify:write` | — | yes | `server.ts:2368-2370` |
-| `GET /orchestrator-status` | `status:read` | — | no | `server.ts:2345-2347` |
-| `GET /token-usage` | `token-usage:read` | — | no | `server.ts:2348-2350` |
-| `POST /token-usage/**` | `token-usage:write` | — | yes | `server.ts:2351-2366` |
-| `POST /recover` | `agent:recover` | any | yes | `server.ts:2374-2376` |
-| `POST /agents/:name/kill` | `agent:kill` | any | yes | `server.ts:2380-2385` |
-| `POST /codex-root-token` | `root-token:mint` | — | yes | `server.ts:2392-2417` |
-| `hive_status`, `hive_models`, `graph_locate` | `status:read` | — | no | `server.ts:3403`, `:3509`, `:4020` |
-| `hive_quota_status` | `quota:read` | — | no | `server.ts:3481` |
-| `hive_quota_reconcile` | `quota:write` | — | yes | `server.ts:3522` |
-| `hive_token_usage` | `token-usage:read` | — | no | `server.ts:3491` |
-| `hive_spawn` | `agent:spawn` | — | yes | `server.ts:3740` |
-| `hive_kill`, `hive_preserve_branch` | `agent:kill` | any | kill yes, preserve no | `server.ts:3568`, `:3464` |
-| `hive_mark_dead` | `agent:mark-dead` | any | yes | `server.ts:3549` |
-| `hive_recover` | `agent:recover` | any | yes | `server.ts:3539` |
-| `hive_approvals` | `approval:read` | — | no | `server.ts:3798` |
-| `hive_approve` | `approval:decide` | any | yes | `server.ts:3816` |
-| `hive_send`, `hive_escalate` | `message:send` | self (`from` / `agent`) | no | `server.ts:3588`, `:3621` |
-| `hive_inbox` | `inbox:read` | self | no | `server.ts:3709` |
-| `hive_ack_message` | `message:ack` | self | yes, **epoch** | `server.ts:3693` |
-| `hive_read_message` | `message:read` | — | no | `server.ts:3726` |
-| `hive_land` | `branch:land` | self | yes, **epoch + once** | `server.ts:3894` |
-| `memory_search`, `memory_read` | `memory:read` | — | no | `server.ts:3957`, `:3981` |
-| `memory_write`, `memory_delete`, `memory_reindex` | `memory:write` | — | yes | `server.ts:3967`, `:3995`, `:4005` |
+| `GET /health` | — public | — | — | `src/daemon/server.ts:2294-2320` (runs `quickCheck`) |
+| `GET /handshake` | — public | — | — | `src/daemon/server.ts:2322-2324` |
+| `POST /event` | `event:report` | self | no | `src/daemon/server.ts:2327-2329` |
+| `POST /statusline` | `telemetry:report` | self | no | `src/daemon/server.ts:2330-2332` |
+| `POST /channel/{register,poll,ack,permission-request}` | `channel:use` | self | register + permission-request only | `src/daemon/server.ts:2371-2373`, `:2419-2480` |
+| `GET /autonomy` | `autonomy:read` | — | no | `src/daemon/server.ts:2333-2338` |
+| `POST /autonomy` | `autonomy:write` | — | yes | `src/daemon/server.ts:2333-2338` |
+| `GET /routing/policy` | `routing-policy:read` | — | no | `src/daemon/server.ts:2339-2344` |
+| `POST /routing/policy` | `routing-policy:write` | — | yes | `src/daemon/server.ts:2339-2344` |
+| `POST /graphify` | `graphify:write` | — | yes | `src/daemon/server.ts:2368-2370` |
+| `GET /orchestrator-status` | `status:read` | — | no | `src/daemon/server.ts:2345-2347` |
+| `GET /token-usage` | `token-usage:read` | — | no | `src/daemon/server.ts:2348-2350` |
+| `POST /token-usage/**` | `token-usage:write` | — | yes | `src/daemon/server.ts:2351-2366` |
+| `POST /recover` | `agent:recover` | any | yes | `src/daemon/server.ts:2374-2376` |
+| `POST /agents/:name/kill` | `agent:kill` | any | yes | `src/daemon/server.ts:2380-2385` |
+| `POST /codex-root-token` | `root-token:mint` | — | yes | `src/daemon/server.ts:2392-2417` |
+| `hive_status`, `hive_models`, `graph_locate` | `status:read` | — | no | `src/daemon/server.ts:3403`, `:3509`, `:4020` |
+| `hive_quota_status` | `quota:read` | — | no | `src/daemon/server.ts:3481` |
+| `hive_quota_reconcile` | `quota:write` | — | yes | `src/daemon/server.ts:3522` |
+| `hive_token_usage` | `token-usage:read` | — | no | `src/daemon/server.ts:3491` |
+| `hive_spawn` | `agent:spawn` | — | yes | `src/daemon/server.ts:3740` |
+| `hive_kill`, `hive_preserve_branch` | `agent:kill` | any | kill yes, preserve no | `src/daemon/server.ts:3568`, `:3464` |
+| `hive_mark_dead` | `agent:mark-dead` | any | yes | `src/daemon/server.ts:3549` |
+| `hive_recover` | `agent:recover` | any | yes | `src/daemon/server.ts:3539` |
+| `hive_approvals` | `approval:read` | — | no | `src/daemon/server.ts:3798` |
+| `hive_approve` | `approval:decide` | any | yes | `src/daemon/server.ts:3816` |
+| `hive_send`, `hive_escalate` | `message:send` | self (`from` / `agent`) | no | `src/daemon/server.ts:3588`, `:3621` |
+| `hive_inbox` | `inbox:read` | self | no | `src/daemon/server.ts:3709` |
+| `hive_ack_message` | `message:ack` | self | yes, **epoch** | `src/daemon/server.ts:3693` |
+| `hive_read_message` | `message:read` | — | no | `src/daemon/server.ts:3726` |
+| `hive_land` | `branch:land` | self | yes, **epoch + once** | `src/daemon/server.ts:3894` |
+| `memory_search`, `memory_read` | `memory:read` | — | no | `src/daemon/server.ts:3957`, `:3981` |
+| `memory_write`, `memory_delete`, `memory_reindex` | `memory:write` | — | yes | `src/daemon/server.ts:3967`, `:3995`, `:4005` |
 
 `/health` and `/handshake` are public and non-authorizing. Health proves liveness; the handshake proves *identity* (build hash, project, protocol range) so a launcher can decide whether this daemon is the right one to talk to. **Neither may ever grow a side effect** — a handshake that writes is a handshake that needs a capability, and the launcher has none by construction: it is trying to find out whether a capability would even be worth minting.
 
 ## Landing: reserve before merge
 
-`branch:land` is the only one-shot right in the system (`capabilities.ts:116-124`). The daemon **reserves** the right before it touches git and releases it only if the merge failed (`consumeOneShot` / `releaseOneShot`, `capabilities.ts:367-383`).
+`branch:land` is the only one-shot right in the system (`src/daemon/capabilities.ts:116-124`). The daemon **reserves** the right before it touches git and releases it only if the merge failed (`consumeOneShot` / `releaseOneShot`, `src/daemon/capabilities.ts:367-383`).
 
 Reserving up front rather than consuming afterwards is what makes two concurrent lands safe: the reservation is a primary-key insert, so the second request loses the race inside SQLite and never reaches `git merge`. Consuming *after* the merge would let both callers merge and only then discover one was a replay.
 
@@ -121,10 +121,10 @@ Burning the grant on a *failed* attempt — stricter, simpler, and the third alt
 
 Something must re-arm the grant, because a working agent lands more than once. That something used to be a human, every lap, and it was the most expensive thing in the system: **one orchestrator cleared nine re-arm approvals in a single session**, and the more productive the agent, the more often it stalled. Most of those approvals granted nothing — the agent had already landed, `main..branch` was empty, and a human was being spent on merging a diff that did not exist.
 
-So the daemon now *measures the branch* first (`server.ts:1225-1280`). Three answers:
+So the daemon now *measures the branch* first (`src/daemon/server.ts:1225-1280`). Three answers:
 
 - **`nothing-to-land`** — `main..branch` is empty. Nothing to merge, so nothing to grant, so **no approval is filed at all**. A grant to merge nothing is not a right anybody needs.
-- **`rearmed`** — the branch has commits the primary lacks *and* is rebased on current `main`, so the merge is a genuine fast-forward. Those are the two facts the human was being asked to eyeball, and git can state both. Audited as `capability.auto-rearm`, and bounded: `AUTO_REARM_BUDGET = 3` (`server.ts:384-385`) per agent, counted from the audit log itself.
+- **`rearmed`** — the branch has commits the primary lacks *and* is rebased on current `main`, so the merge is a genuine fast-forward. Those are the two facts the human was being asked to eyeball, and git can state both. Audited as `capability.auto-rearm`, and bounded: `AUTO_REARM_BUDGET = 3` (`src/daemon/server.ts:384-385`) per agent, counted from the audit log itself.
 - **`ask`** — everything else, and **every unknown**: an unreadable branch, a `null` from either measurement, a diverged branch, an exhausted budget.
 
 `readLandReadiness` is three-valued on purpose (`src/daemon/landing.ts:225-278`): `pending` and `rebased` are `null` when git could not answer, and **null routes to ask, never to grant**. An unreadable branch is no evidence, and **no evidence must never be converted into permission** — the failure mode that once disarmed both of the guards whose entire purpose was to refuse. This is the same invariant as the absence test in [database-resilience.md](database-resilience.md).
@@ -135,19 +135,19 @@ What is deliberately *not* claimed is that the suite is green. The daemon cannot
 
 **Epoch** is the revocation primitive. Every agent row carries a `capabilityEpoch`; every token freezes the epoch it was minted at. Revoking authority means advancing the epoch — one integer write, no token list to walk. Because the critical-control path already advances the epoch when it revokes writes, `hive_send --priority critical` becomes, for free, a credential revocation.
 
-Only `branch:land` and `message:ack` check it (`EPOCH_CHECKED`, `capabilities.ts:135-142`). This is a deliberate narrowing, not an oversight: epoch checks exist to stop *stale authority*, so only the actions that **commit** carry one — merging a branch, and confirming a control instruction landed. Gating reads on the epoch would fail every status poll during a rotation and buy nothing. The operator is exempt because it has no agent row (`src/daemon/credentials.ts:26-27`, `capabilities.ts:329-345`) — the same invariant [orchestrator-status.md](orchestrator-status.md) depends on for the root.
+Only `branch:land` and `message:ack` check it (`EPOCH_CHECKED`, `src/daemon/capabilities.ts:135-142`). This is a deliberate narrowing, not an oversight: epoch checks exist to stop *stale authority*, so only the actions that **commit** carry one — merging a branch, and confirming a control instruction landed. Gating reads on the epoch would fail every status poll during a rotation and buy nothing. The operator is exempt because it has no agent row (`src/daemon/credentials.ts:26-27`, `src/daemon/capabilities.ts:329-345`) — the same invariant [orchestrator-status.md](orchestrator-status.md) depends on for the root.
 
-Separately, `WRITE_ACTIONS = {branch:land, memory:write}` (`capabilities.ts:144-148`) are refused for a `writeRevoked` agent even at a current epoch.
+Separately, `WRITE_ACTIONS = {branch:land, memory:write}` (`src/daemon/capabilities.ts:144-148`) are refused for a `writeRevoked` agent even at a current epoch.
 
-**Expiry is absolute, not sliding.** A token dies at `expiresAt` regardless of use (default 24h, `capabilities.ts:201-202`). A sliding window was rejected because it lets a stolen credential keep itself alive forever simply by being used — exactly the credential we most want to expire.
+**Expiry is absolute, not sliding.** A token dies at `expiresAt` regardless of use (default 24h, `src/daemon/capabilities.ts:201-202`). A sliding window was rejected because it lets a stolen credential keep itself alive forever simply by being used — exactly the credential we most want to expire.
 
 **Delegation is not supported, and this is a feature.** No capability mints another; there is no attenuation grammar. The authority graph is exactly one level deep and can be reasoned about by reading the agents table. A macaroon-style attenuable token is strictly more expressive and was rejected because Hive has no use case for it and every delegation edge is a place for authority to escape.
 
-**The one carve-out is `POST /codex-root-token`** (`server.ts:2392-2417`, gated `root-token:mint` at `:2401-2407`). The operator's launcher asks the *daemon* to mint the orchestrator credential a Codex root will present, because that root has no spawn path of its own. Still daemon-minted, still one level deep, and deliberately short-lived: a 60-second TTL that covers the hand-off window and nothing more. (An earlier version of this document flatly claimed no token-exchange endpoint exists. It did not survive contact with Codex.)
+**The one carve-out is `POST /codex-root-token`** (`src/daemon/server.ts:2392-2417`, gated `root-token:mint` at `:2401-2407`). The operator's launcher asks the *daemon* to mint the orchestrator credential a Codex root will present, because that root has no spawn path of its own. Still daemon-minted, still one level deep, and deliberately short-lived: a 60-second TTL that covers the hand-off window and nothing more. (An earlier version of this document flatly claimed no token-exchange endpoint exists. It did not survive contact with Codex.)
 
 ## What a stolen credential buys
 
-A token is `hv1.<capabilityId>.<secret>` (`capabilities.ts:214-225`). The daemon stores only `sha256(secret)` and compares with `timingSafeEqual` (`capabilities.ts:204-211`), so a database or WAL leak yields no usable credential. An id that exists with a wrong secret is denied `capability.unknown` — indistinguishable, to the caller, from an id that never existed.
+A token is `hv1.<capabilityId>.<secret>` (`src/daemon/capabilities.ts:214-225`). The daemon stores only `sha256(secret)` and compares with `timingSafeEqual` (`src/daemon/capabilities.ts:204-211`), so a database or WAL leak yields no usable credential. An id that exists with a wrong secret is denied `capability.unknown` — indistinguishable, to the caller, from an id that never existed.
 
 Tokens travel by file, never by environment variable and never by argv: `$HIVE_HOME/credentials/<subject>.cap`, mode `0600`, inside a `0700` directory outside every worktree (`src/daemon/credentials.ts:29-42`), read with `O_CLOEXEC` (`:45-60`). Claude Code fetches its header through `headersHelper` rather than `${ENV_VAR}` expansion — the env-var form is documented and simpler, and was rejected because an environment variable is inherited by every descendant of the agent process, which is precisely the grandchild we are trying to starve. Codex has no headers-helper, so its token goes into a `0600` `config.toml`; `bearer_token_env_var` was rejected for the same reason.
 
@@ -163,7 +163,7 @@ Every mutating decision appends an `audit_log` row: timestamp, route, action, ca
 
 ## Keeping the matrix from drifting
 
-This document declares itself binding and `capabilities.ts:1-3` declares the code must not drift from it. Between those two statements, the code grew six actions (`root-token:mint`, `autonomy:read/write`, `routing-policy:read/write`, `graphify:write`), seven routes, and four MCP tools that this table had no rows for. The contract did not fail loudly; it failed by **omission**, which is the failure mode a "binding table" is least able to detect.
+This document declares itself binding and `src/daemon/capabilities.ts:1-3` declares the code must not drift from it. Between those two statements, the code grew six actions (`root-token:mint`, `autonomy:read/write`, `routing-policy:read/write`, `graphify:write`), seven routes, and four MCP tools that this table had no rows for. The contract did not fail loudly; it failed by **omission**, which is the failure mode a "binding table" is least able to detect.
 
 So, the rule the drift itself teaches:
 

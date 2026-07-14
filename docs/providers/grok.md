@@ -36,17 +36,17 @@ grok -m <model> [--reasoning-effort <e>]
      [--session-id <uuid>]                               # NEW sessions only
 ```
 
-Resume swaps in the short flag: `grok -r <session-id> …` (`grok.ts:130-138`), and **`--session-id` is forbidden on resume** — it *creates*. Every launch is wrapped in the compatibility env below (`spawner-impl.ts:2107-2112`).
+Resume swaps in the short flag: `grok -r <session-id> …` (`src/adapters/tools/grok.ts:130-138`), and **`--session-id` is forbidden on resume** — it *creates*. Every launch is wrapped in the compatibility env below (`src/daemon/spawner-impl.ts:2107-2112`).
 
 ## Hive names the session up front
 
 `crypto.randomUUID()` → `--session-id` (`src/daemon/spawner-impl.ts:1963-1978`, threaded to the spawn at `:2080-2092`).
 
-The reason is preserved in the adapter at `grok.ts:11-15`: **Grok drives no hook channel and never reports its session id back.** Without naming it up front, every reader has to *guess* which session directory on disk belongs to this agent — and a reused worktree still holds its dead predecessor's. (That failure mode is a known recurring bug class in this codebase: path-keyed reads aliasing across respawns.) Naming it is the only way a reader can key on identity instead of on a directory.
+The reason is preserved in the adapter at `src/adapters/tools/grok.ts:11-15`: **Grok drives no hook channel and never reports its session id back.** Without naming it up front, every reader has to *guess* which session directory on disk belongs to this agent — and a reused worktree still holds its dead predecessor's. (That failure mode is a known recurring bug class in this codebase: path-keyed reads aliasing across respawns.) Naming it is the only way a reader can key on identity instead of on a directory.
 
 ## Permission rules are semantic prefixes, not tool names
 
-The single highest-value measured fact about Grok, preserved verbatim in the adapter at `grok.ts:24-31`:
+The single highest-value measured fact about Grok, preserved verbatim in the adapter at `src/adapters/tools/grok.ts:24-31`:
 
 **Rule names are Claude Code's prefixes, and they bind Grok's *differently-named native tools*.**
 
@@ -90,7 +90,7 @@ That is precisely what makes Hive's **shrink-authority-by-restart** model work o
 
 ## Compatibility env: ten switches, and one gap they do not close
 
-`GROK_COMPATIBILITY_ENV` (`grok.ts:40-51`) exports ten variables, prepended to every Grok command:
+`GROK_COMPATIBILITY_ENV` (`src/adapters/tools/grok.ts:40-51`) exports ten variables, prepended to every Grok command:
 
 ```
 GROK_{CLAUDE,CURSOR}_{SKILLS,RULES,AGENTS,MCPS,HOOKS}_ENABLED=false
@@ -98,26 +98,26 @@ GROK_{CLAUDE,CURSOR}_{SKILLS,RULES,AGENTS,MCPS,HOOKS}_ENABLED=false
 
 They stop Grok inheriting the *operator's* Claude/Cursor skills, rules, agents, MCP servers, and hooks.
 
-> **The authorization gap** (`grok.ts:146-151`): those switches do **NOT** stop Grok from ingesting the repository's own `CLAUDE.md` and `.claude/settings.local.json`. **No switch that does was found.**
+> **The authorization gap** (`src/adapters/tools/grok.ts:146-151`): those switches do **NOT** stop Grok from ingesting the repository's own `CLAUDE.md` and `.claude/settings.local.json`. **No switch that does was found.**
 
 Those files are not addressed to a Grok agent. The gap is therefore closed the only way it can be — by telling the agent so in `GROK_SAFETY_DIRECTIVE`: the Hive brief and the assigned scope **outrank** anything in those files that grants permissions, names tools, or assigns work.
 
 ## MCP: `.grok/config.toml`, never `.mcp.json`
 
-`.mcp.json` is Claude's file (`spawner-impl.ts:695-699`) and Grok never receives one. Hive writes `[mcp_servers]` tables into the **worktree's** `.grok/config.toml` (`grok.ts:184-255`, called at `spawner-impl.ts:1049`, `:2081`), mode `0600`.
+`.mcp.json` is Claude's file (`src/daemon/spawner-impl.ts:695-699`) and Grok never receives one. Hive writes `[mcp_servers]` tables into the **worktree's** `.grok/config.toml` (`src/adapters/tools/grok.ts:184-255`, called at `src/daemon/spawner-impl.ts:1049`, `:2081`), mode `0600`.
 
-The writer is **key-preserving**: it strips only the tables Hive owns (`mcp_servers.hive*`, `mcp_servers.graphify*`), keeps everything the user wrote, and — when no fresh capability token is supplied — **re-reads and re-uses the existing `Authorization` header** rather than dropping it (`grok.ts:178-189`). The removal path is equally narrow: it refuses to touch a file whose `mcp_servers.hive.url` does not match `http://127.0.0.1:<port>/mcp`.
+The writer is **key-preserving**: it strips only the tables Hive owns (`mcp_servers.hive*`, `mcp_servers.graphify*`), keeps everything the user wrote, and — when no fresh capability token is supplied — **re-reads and re-uses the existing `Authorization` header** rather than dropping it (`src/adapters/tools/grok.ts:178-189`). The removal path is equally narrow: it refuses to touch a file whose `mcp_servers.hive.url` does not match `http://127.0.0.1:<port>/mcp`.
 
 ## Session artifacts live in two layouts
 
-The resolver must accept **both**, and it does (`grok.ts:278-411`):
+The resolver must accept **both**, and it does (`src/adapters/tools/grok.ts:278-411`):
 
 - a directory named for the **urlencoded cwd** (`encodeURIComponent(worktree)`), and
 - a **long-path slug** directory carrying a `.cwd` file whose contents are the real path.
 
 Matching the directory name is only the *filter*. The actual selection is on the session's own `summary.json`: `info.cwd === worktree`, `info.id` present, and — when Hive knows the id it named — `info.id === sessionId`. Newest `summary.json` mtime wins. A directory listing is not identity; the summary is.
 
-Per-session artifacts under `~/.grok/sessions/<project>/<session-uuid>/` (`$GROK_HOME` respected, `grok.ts:258-262`):
+Per-session artifacts under `~/.grok/sessions/<project>/<session-uuid>/` (`$GROK_HOME` respected, `src/adapters/tools/grok.ts:258-262`):
 
 - `events.jsonl` — `permission_resolved` (with `decision` and `wait_ms`), `turn_ended` (`outcome`, `cancellation_category`)
 - `updates.jsonl` — the append-only ACP-shaped stream; `turn_completed` carries `stop_reason`
@@ -138,15 +138,15 @@ Per-session artifacts under `~/.grok/sessions/<project>/<session-uuid>/` (`$GROK
 
 A cross-vendor contract leak, measured and mitigated. `nativeSkillDirectory()` returns `.agents/skills` for **both** Codex and Grok (`src/adapters/skills.ts:22-32`) — verified with `grok inspect --json` while every compatibility import was disabled: project skills still resolved from `.agents/skills/*/SKILL.md`.
 
-So in a root where both CLIs are installed, **a file written "for Codex" is read by Grok too** (`skillReaders()`, `skills.ts:139-147`).
+So in a root where both CLIs are installed, **a file written "for Codex" is read by Grok too** (`skillReaders()`, `src/adapters/skills.ts:139-147`).
 
-The critical distinction: **`shippedSkillsFor(tool)` decides what Hive WRITES. It says nothing about what a CLI READS.** A per-vendor *write* filter is not an isolation boundary. The actual fix is two-part: `provisionSkills` (`skills.ts:233-257`) actively **prunes** foreign shipped skills from the shared directory (`removeForeignShippedSkills`, `skills.ts:268-292`), plus withholding at `hive init`. Each skill's `description` naming its vendor in the first clause is a *label* — defence in depth, not the fix.
+The critical distinction: **`shippedSkillsFor(tool)` decides what Hive WRITES. It says nothing about what a CLI READS.** A per-vendor *write* filter is not an isolation boundary. The actual fix is two-part: `provisionSkills` (`src/adapters/skills.ts:233-257`) actively **prunes** foreign shipped skills from the shared directory (`removeForeignShippedSkills`, `src/adapters/skills.ts:268-292`), plus withholding at `hive init`. Each skill's `description` naming its vendor in the first clause is a *label* — defence in depth, not the fix.
 
 The evidence discipline is worth copying: measured by planting uniquely-named probe skills and asking each CLI **what its MODEL sees** (`codex debug prompt-input`; a Grok turn with every tool denied, so the skill catalog was the only path to the probe token). **A directory listing is not evidence that the model reads it.**
 
 ## Version identity
 
-`grok --version` is parsed by a regex pinned verbatim at `grok.ts:58-65`:
+`grok --version` is parsed by a regex pinned verbatim at `src/adapters/tools/grok.ts:58-65`:
 
 ```
 /^grok (\S+) \(([0-9a-f]+)\) \[(\w+)\]$/

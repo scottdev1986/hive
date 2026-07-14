@@ -38,15 +38,15 @@ Wire format is **camelCase**. `resetsAt` is **unix epoch seconds**. `usedPercent
 }
 ```
 
-**`primary`/`secondary` are positional names, not semantic ones.** Hive sorts by `windowDurationMins` (`quota-sources.ts:142-162`) so a snapshot that lists its weekly bucket first cannot invert the two. A window sorted by a *guessed* duration lands in the wrong bucket silently.
+**`primary`/`secondary` are positional names, not semantic ones.** Hive sorts by `windowDurationMins` (`src/daemon/quota-sources.ts:142-162`) so a snapshot that lists its weekly bucket first cannot invert the two. A window sorted by a *guessed* duration lands in the wrong bucket silently.
 
-A **null slot in this authoritative response is a positive statement** that the plan has no second meter — but a slot that was non-null and failed to parse is `unknown`, never confident absence. That distinction is one comparison in the code (`quota-sources.ts:204-208`: `reported > parsed ? "unknown" : "not-metered"`). It is not decoration: the live prolite account reports **no five-hour window at all** ([raw verification](../../raw/grok/grok-quota-live-verification.txt) — `codex … 5h: not metered`). Rendering that absence as a *failure* is a bug this exact rule prevents.
+A **null slot in this authoritative response is a positive statement** that the plan has no second meter — but a slot that was non-null and failed to parse is `unknown`, never confident absence. That distinction is one comparison in the code (`src/daemon/quota-sources.ts:204-208`: `reported > parsed ? "unknown" : "not-metered"`). It is not decoration: the live prolite account reports **no five-hour window at all** ([raw verification](../../raw/grok/grok-quota-live-verification.txt) — `codex … 5h: not metered`). Rendering that absence as a *failure* is a bug this exact rule prevents.
 
 `rateLimitResetCredits` is real headroom Hive deliberately does **not** count: the live account carries unspent full-reset grants, redeemable via `account/rateLimitResetCredit/consume`. Burning a human's finite reset grant to admit a spawn is a decision a human should make.
 
 ## Claude — the `get_usage` control request, and its statusline twin
 
-`claude -p --input-format stream-json --output-format stream-json` speaks a bidirectional control protocol. Send `control_request` subtype `initialize`, then `get_usage`, and close stdin **without ever sending a user message**: the account's plan usage comes back at `total_cost_usd: 0`. The CLI's own schema calls `get_usage` *"Experimental — the response shape may change"*, which is why Hive records its readings as **`reported`**, not `authoritative` (`quota-sources.ts:617-669`).
+`claude -p --input-format stream-json --output-format stream-json` speaks a bidirectional control protocol. Send `control_request` subtype `initialize`, then `get_usage`, and close stdin **without ever sending a user message**: the account's plan usage comes back at `total_cost_usd: 0`. The CLI's own schema calls `get_usage` *"Experimental — the response shape may change"*, which is why Hive records its readings as **`reported`**, not `authoritative` (`src/daemon/quota-sources.ts:617-669`).
 
 ```jsonc
 {
@@ -69,7 +69,7 @@ Hive calls the control request rather than the `api.anthropic.com/api/oauth/usag
 
 ## Grok — ACP `_x.ai/billing` (gauge + guard)
 
-`grok agent stdio` speaks ACP JSON-RPC. After the same free `initialize` + `initialized`, the extension method **`_x.ai/billing` with params `{}`** returns the SuperGrok account's weekly usage (`quota-sources.ts:1100-1106`). **No session, no prompt, no turn** — the probe is spend-insensitive, confirmed by a three-run probe-only control that never moved the number ([spend-sensitivity experiment](../../raw/grok/grok-spend-sensitivity-experiment.md)).
+`grok agent stdio` speaks ACP JSON-RPC. After the same free `initialize` + `initialized`, the extension method **`_x.ai/billing` with params `{}`** returns the SuperGrok account's weekly usage (`src/daemon/quota-sources.ts:1100-1106`). **No session, no prompt, no turn** — the probe is spend-insensitive, confirmed by a three-run probe-only control that never moved the number ([spend-sensitivity experiment](../../raw/grok/grok-spend-sensitivity-experiment.md)).
 
 **The leading underscore is mandatory.** Bare `x.ai/billing` returns `-32601 Method not found`.
 
@@ -99,11 +99,11 @@ Hive calls the control request rather than the `api.anthropic.com/api/oauth/usag
 
 ### Five-hour is a positive `not-metered`
 
-No five-hour field has ever been observed on `_x.ai/billing`. That is **absence by design**, and Hive records `fiveHourMeterState: "not-metered"` (`quota-sources.ts:976-978`) — a positive statement.
+No five-hour field has ever been observed on `_x.ai/billing`. That is **absence by design**, and Hive records `fiveHourMeterState: "not-metered"` (`src/daemon/quota-sources.ts:976-978`) — a positive statement.
 
-But: **a missing percent on a *recognized* surface is `unknown`, never `not-metered`** (`quota-sources.ts:979-982`). The vendor *does* meter the weekly pool; a payload that parses but carries no usable number means Hive failed to read it, not that the vendor said "unlimited." The two states are one line apart in the code and they mean opposite things. (`weeklyMeterState: weekly === null ? "unknown" : "metered"`.)
+But: **a missing percent on a *recognized* surface is `unknown`, never `not-metered`** (`src/daemon/quota-sources.ts:979-982`). The vendor *does* meter the weekly pool; a payload that parses but carries no usable number means Hive failed to read it, not that the vendor said "unlimited." The two states are one line apart in the code and they mean opposite things. (`weeklyMeterState: weekly === null ? "unknown" : "metered"`.)
 
-Grok's weekly pool binds account-wide as `models: ["*"]` (`quota-sources.ts:975`), so **it needs no display-name join** — unlike the two below.
+Grok's weekly pool binds account-wide as `models: ["*"]` (`src/daemon/quota-sources.ts:975`), so **it needs no display-name join** — unlike the two below.
 
 ## Binding a pool to the models it meters
 
@@ -144,13 +144,14 @@ The rule is not "never be conservative." It is: **name what each direction of er
 
 ## The model-vendor / pool-provider guard
 
-A spend belongs to the vendor whose model produced it. The ledger holds one row that disagrees — a Claude model's usage billed to the Codex meter, written when routing chose `tool=codex` while the caller had pinned a Claude model. The guard now lives at the **write** (`src/daemon/quota-ledger.ts:1041-1103`), and its states are kept carefully apart:
+A spend belongs to the vendor whose model produced it. The ledger holds one row that disagrees — a Claude model's usage billed to the Codex meter, written when routing chose `tool=codex` while the caller had pinned a Claude model. The guard now lives at the **write** (`src/daemon/quota-ledger.ts:1050-1082`), and positive catalog evidence is the only state that permits attribution:
 
+- **claimed** by exactly one catalog, and that vendor matches the pool → accept.
 - **claimed** by a catalog, and the vendor disagrees with the pool → **throw**.
 - **unclaimed** — every vendor's catalog was read and *none* lists the model → **throw**. That is a measurement.
-- **no catalog read at all** → absence of evidence, which may not be converted into a yes *or* a no. Hive falls back to the name's shape, which can still prove a contradiction but can never *grant* permission.
+- **missing or conflicting catalog evidence** → **throw** with the unread providers and a catalog-refresh remedy. A name-shaped guess is not billing authority.
 
-The predecessor asked a regex (`modelVendor()`) and treated its null — "I cannot place this name" — as **permission**. Unknown read as yes, in the one guard whose entire purpose is to refuse. The bad row stays in the ledger, visible: a misattributed past that can be seen is better than a smoothed one that cannot.
+The predecessor asked a regex (`modelVendor()`) and treated its null — "I cannot place this name" — as **permission**. A compatibility fallback then still recorded the spend when no catalog had been read. Both paths are gone: unknown evidence refuses rather than inventing attribution or silently discarding the observation. The bad historical row stays visible; a misattributed past that can be seen is better than a smoothed one that cannot.
 
 ## Probing safely
 

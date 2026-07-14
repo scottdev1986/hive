@@ -125,15 +125,15 @@ Grok publishes no app-server metadata RPC. Its catalog is read in two steps (`sr
 1. run `grok models` (a **real** subcommand — see the billable-subcommand warning above),
 2. then parse the file it refreshes, `~/.grok/models_cache.json` (or `$GROK_HOME`).
 
-The cache entries the code consumes are `id`, `name`, `hidden`, `supports_reasoning_effort`, and `reasoning_efforts[]` (each `{value, default?}`) — schema at `capability-discovery.ts:661-677`. The schemas are `passthrough`, so unknown vendor keys do not invalidate the payload; a `context_window` field is **not** among the ones Hive records today.
+The cache entries the code consumes are `id`, `name`, `hidden`, `supports_reasoning_effort`, and `reasoning_efforts[]` (each `{value, default?}`) — schema at `src/daemon/capability-discovery.ts:661-677`. The schemas are `passthrough`, so unknown vendor keys do not invalidate the payload; a `context_window` field is **not** among the ones Hive records today.
 
 The code is **stricter than the research docs were**, in three ways that are all load-bearing:
 
-- **Liveness, not exit code.** `grok models` run offline prints the *cached* catalog and exits 0. So the transport runs it with `--debug --debug-file <tmp>` and requires a measured settings-fetch success line in that debug log before it will trust anything (`grokModelsProvedLive`, `capability-discovery.ts:754-758`, gated at `:736`). Exit 0 is explicitly not accepted as evidence of a live read — the same discipline the billable-subcommand rule teaches, applied to a subcommand that is real.
-- **Version-pinned trust.** `isMeasuredGrokCatalogIdentity()` (`capability-discovery.ts:761-766`) admits **only builds whose catalog behavior was actually measured** — currently 0.2.93 (`f00f96316d4b`) and 0.2.99 (`b1b49ccb71a7`). Any other build throws rather than being trusted by analogy. The identity itself comes from a `grok --version` parse whose regex is pinned verbatim in the adapter (`src/adapters/tools/grok.ts:59`).
-- **Cache/CLI coherence.** A cache whose `grok_version` does not equal the CLI's own version yields *no records at all* (`capability-discovery.ts:783-787`), and an entry whose `info.id` disagrees with its map key is dropped (`:795`). A stale cache is not a catalog.
+- **Liveness, not exit code.** `grok models` run offline prints the *cached* catalog and exits 0. So the transport runs it with `--debug --debug-file <tmp>` and requires a measured settings-fetch success line in that debug log before it will trust anything (`grokModelsProvedLive`, `src/daemon/capability-discovery.ts:754-758`, gated at `:736`). Exit 0 is explicitly not accepted as evidence of a live read — the same discipline the billable-subcommand rule teaches, applied to a subcommand that is real.
+- **Version-pinned trust.** `isMeasuredGrokCatalogIdentity()` (`src/daemon/capability-discovery.ts:761-766`) admits **only builds whose catalog behavior was actually measured** — currently 0.2.93 (`f00f96316d4b`) and 0.2.99 (`b1b49ccb71a7`). Any other build throws rather than being trusted by analogy. The identity itself comes from a `grok --version` parse whose regex is pinned verbatim in the adapter (`src/adapters/tools/grok.ts:59`).
+- **Cache/CLI coherence.** A cache whose `grok_version` does not equal the CLI's own version yields *no records at all* (`src/daemon/capability-discovery.ts:783-787`), and an entry whose `info.id` disagrees with its map key is dropped (`:795`). A stale cache is not a catalog.
 
-Grok's `defaultEffort` is `known` only when some entry in `reasoning_efforts[]` carries `default: true`; otherwise it is `unknown("field-absent")` (`capability-discovery.ts:817-820`) — never `"medium"`.
+Grok's `defaultEffort` is `known` only when some entry in `reasoning_efforts[]` carries `default: true`; otherwise it is `unknown("field-absent")` (`src/daemon/capability-discovery.ts:817-820`) — never `"medium"`.
 
 ## What no free surface gives you
 

@@ -67,7 +67,7 @@ it. Every write path in the store is therefore a safety surface.
 default (`selectionModeFor`, :183-189):
 
 - **`never-configured`** — the user has not answered. The spawn **refuses**
-  (`spawner-impl.ts:1734-1741`). Absence does not acquire an automatic meaning.
+  (`src/daemon/spawner-impl.ts:1734-1741`). Absence does not acquire an automatic meaning.
 - **`choice`** — the category's exact chain is the user's ordered preference,
   walked in rank order.
 - **`auto`** — Hive considers every explicitly enabled model whose *policy-authored*
@@ -78,7 +78,7 @@ reserve in user order; it never reorders" — true only under `choice`. Under `a
 quota **does** choose among eligible candidates by weighted-fair deficit. And a
 schema revision that used `spread | strict` as the *policy* vocabulary is gone;
 those words survive only as the quota layer's dispatch mode, mapped at
-`spawner-impl.ts:1779-1794` (`auto`→`spread`, `choice`→`strict`). See
+`src/daemon/spawner-impl.ts:1779-1794` (`auto`→`spread`, `choice`→`strict`). See
 [quota-and-headroom.md](quota-and-headroom.md).
 
 ### Fit is authored, never inferred
@@ -107,7 +107,7 @@ The private constructor is not ceremony (governing doc :121-128):
 > that is not module-private. The only real bar is a class with a private constructor.
 
 `requireAuthorizedLaunch` (:83-88) is the runtime half at the adapter boundary —
-`spawner-impl.ts:1099, 1109, 1151, 2133, 2139, 2157` — so a structural impostor
+`src/daemon/spawner-impl.ts:1099, 1109, 1151, 2133, 2139, 2157` — so a structural impostor
 throws rather than launching.
 
 ### The invariant that must never be forgotten
@@ -193,10 +193,10 @@ before constructing the fallback: **empty is not exhausted** (`src/daemon/spawne
 ## Known gaps (real, and unimplemented)
 
 - **There is no coding-capability floor of any kind.** The only floor is
-  `minContextTokens` (`spawner-impl.ts:1625-1634`), which fails closed on an unmeasured
+  `minContextTokens` (`src/daemon/spawner-impl.ts:1625-1634`), which fails closed on an unmeasured
   window. The invariant "a capability floor blocks even a pin" has nothing to enforce.
 - **Identity-from-name-shape survives, in one place.** When `identifyModelVendor`
-  returns `unreadable`, `spawner-impl.ts:1470-1487` falls back to the name-shape regex
+  returns `unreadable`, `src/daemon/spawner-impl.ts:1470-1487` falls back to the name-shape regex
   `modelVendor()` — which (`src/adapters/tools/models.ts:3-15`) knows only `claude`
   and `codex`, **not Grok**. This is exactly the inference the design forbids. Live hole.
 

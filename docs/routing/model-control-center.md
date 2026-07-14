@@ -69,7 +69,7 @@ money rails, and they answer different questions. See
 Two further sections of that spec were wrong, and the UI must not build them:
 
 - **The `vendor-default` chain mode and its `ChainEntryPicker`.** Deleted from the schema
-  (commit `0dc25c0`; `routing-policy.ts:68-81`). A UI offering it builds a form the daemon
+  (commit `0dc25c0`; `src/schemas/routing-policy.ts:68-81`). A UI offering it builds a form the daemon
   will reject.
 - **Per-category `exhaustion_behavior`.** No such field exists. (The
   `chain.exhaustion_refuse` / `chain.exhaustion_widen` copy strings below therefore have
@@ -92,7 +92,7 @@ Conflating two of the values is a lie the UI renders.
 > "This model has no effort axis" and "we could not read this model's effort axis" are
 > different facts. **One greyed-out control for both claims knowledge we do not have.**
 
-The policy schema is richer (`routing-policy.ts:49-55`): `never-configured`,
+The policy schema is richer (`src/schemas/routing-policy.ts:49-55`): `never-configured`,
 `hive-decides`, `exact`, `none`, `provider-controlled`. The last two are *not*
 interchangeable with the first two — `provider-controlled` omits the flag and does not
 claim to know the vendor's default, while `hive-decides` picks an exact advertised level
@@ -170,7 +170,7 @@ Primary / 2nd / 3rd — never an icon implying parallelism.
 ## The real wire shape
 
 The spec's §9 contract was **wrong**; a UI built to it will not parse the live document.
-The truth is `RoutingPolicySchema` (`routing-policy.ts:133-152`):
+The truth is `RoutingPolicySchema` (`src/schemas/routing-policy.ts:133-152`):
 
 - `providers` is a **partial record** of `"enabled" | "disabled"` — absence is a third
   state, `unconfigured`, and it is not permission.
@@ -196,7 +196,7 @@ is the sole writer.
   set-selection | set-chain | export` (`src/cli/routing-policy.ts`, dispatched from
   `src/cli.ts:357-501`).
 
-The Settings controller keeps one data source while the window exists, but `show()` refreshes the model-control snapshot every time the window is shown before restoring the selected page (`HiveWorkspace/Settings/SettingsWindowController.swift:90-112`). Reopening Settings therefore cannot present the process's launch-time catalog or quota as if it were current; the in-window Refresh control is an additional explicit refresh, not the only one.
+The Settings controller keeps one data source while the window exists, but `show()` refreshes the model-control snapshot every time the window is shown before restoring the selected page (`workspace/Sources/HiveWorkspace/Settings/SettingsWindowController.swift:90-112`). Reopening Settings therefore cannot present the process's launch-time catalog or quota as if it were current; the in-window Refresh control is an additional explicit refresh, not the only one.
 
 ## Status: partly built, not "not started"
 

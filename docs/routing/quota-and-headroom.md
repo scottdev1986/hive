@@ -91,7 +91,7 @@ real dispatch: *unknown headroom scored as exactly 15%*. It was a genuine
 disagreement between two defensible positions, and both are worth preserving
 because the shape recurs.
 
-**The defense** (the constant's own deleted comment, last at `5b565ae:quota.ts:59-63`):
+**The defense** (the constant's own deleted comment, last at `5b565ae:src/daemon/quota.ts:59-63`):
 
 > The fixed, deliberately modest headroom an UNMEASURED pool competes with:
 > present enough to catch work when measured pools are nearly spent, never enough
@@ -115,19 +115,19 @@ Two adjacent constants died with it and are recorded here so they are not rebuil
 `SPREAD_DEADBAND = 0.05` (headroom two pools could differ by and still count as
 "even") existed only to stop the headroom sort from flip-flopping between
 near-equal pools — a symptom of the sort, not a feature.
-`HEADROOM_PRESERVING_CATEGORIES` survives (`quota.ts:56-62`): light work leaves a
+`HEADROOM_PRESERVING_CATEGORIES` survives (`src/daemon/quota.ts:56-62`): light work leaves a
 reserve floor untouched so heavy work still has somewhere to land.
 
 ## Effort
 
-Five-valued in policy (`routing-policy.ts:49-55`), resolved per chain link
-(`spawner-impl.ts:1519-1565`). An explicit `request.effort` outranks the link.
+Five-valued in policy (`src/schemas/routing-policy.ts:49-55`), resolved per chain link
+(`src/daemon/spawner-impl.ts:1519-1565`). An explicit `request.effort` outranks the link.
 `exact` is validated against the model's own record; `none` means the vendor stated
 there is no effort axis; `never-configured` refuses.
 
 **`provider-controlled`** omits the link-level flag unless the model row carries a
-standing exact or Hive-decides choice (`spawner-impl.ts:1549-1564`). Otherwise the
-launch gate uses the vendor's honest default (`spawner-impl.ts:1636-1668`): Claude
+standing exact or Hive-decides choice (`src/daemon/spawner-impl.ts:1549-1564`). Otherwise the
+launch gate uses the vendor's honest default (`src/daemon/spawner-impl.ts:1636-1668`): Claude
 passes no flag; Grok and Codex take
 their *discovered* default; Codex's CLI requires a flag, so it last-resorts to
 `"medium"` — the one remaining invented value, scoped to a CLI that will not start

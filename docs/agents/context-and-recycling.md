@@ -5,7 +5,7 @@ Sources: Hive source tree, 2026-07-14; [SPEC decision 7](../../SPEC.md); linked 
 
 ## Summary
 
-Hive used to recycle agents at 65% of the context window, justified by "quality dies around ~140K tokens." Both numbers were fabricated, and the percentage was not merely mis-tuned — it was the wrong *unit*. This article records the evidence that retired them, the economics that say recycling early is a recurring tax rather than caution, and the one live inconsistency that survives: the retired rule is still what the orchestrator brief tells agents.
+Hive used to describe agent reuse through a 65% context threshold, justified by "quality dies around ~140K tokens." Both numbers were fabricated, and the percentage was not merely mis-tuned — it was the wrong *unit*. This article records the evidence that retired them, the economics that say recycling early is a recurring tax rather than caution, and the remaining implementation gap: Hive still has no automatic recycle actuator.
 
 ## The 140K had no provenance
 
@@ -151,13 +151,13 @@ And the reasoning discipline that produced the rest of this article:
 
 > **A too-late recycle costs one bad commit that review can catch; a too-early recycle costs quota on every agent, forever, and silently drops constraints.** Erring early is not caution. It is a recurring tax with a correctness risk attached.
 
-## The live inconsistency: the actuator does not exist
+## The remaining gap: the actuator does not exist
 
-Verified against the tree on 2026-07-13, and it is a real, current gap.
+Verified against the tree on 2026-07-14, and it is a real, current gap.
 
 **There is no recycle actuator.** No token ceiling, no recycle threshold, no kill-on-depth path exists anywhere in `src/`. `HandoffSchema` (`src/schemas/handoff.ts:3-12`) *is* now live — but not as a recycle artifact: it is produced in the `hive_escalate` path (imported at `src/daemon/server.ts:48`, parsed at `src/daemon/server.ts:3647-3656`), where an agent claims its task exceeds its model and hands the orchestrator a goal/done/remaining/decisions/failedApproaches/branch envelope. Escalation, not recycling. So "recycled too late" remains **structurally unreachable**; the single live failure mode is spawn-churn.
 
-**And the only live use of the number `65` is a prose sentence in `src/cli/orchestrator-brief.ts:3`**, which tells the orchestrator to reuse an agent when "its contextPct is a number under 65." That is a *percentage of the window* — the exact unit this research proved unsound, still shipping in the instruction every orchestrator reads, still pointing at "the recycle line" that does not exist. **The rule this research retired is what Hive currently tells its agents.** SPEC decision 7 is written from the conclusion; the orchestrator brief is not. Fixing that is the outstanding work.
+The orchestrator brief no longer turns the percentage into an admission threshold. It prefers a same-scope live agent when the next task fits its remaining room, keeps unobserved `contextPct` ineligible, and says explicitly that SPEC decision 7 defines no numeric threshold until an absolute-token admission actuator exists (`src/cli/orchestrator-brief.ts:3`; `src/cli/orchestrator-brief.test.ts:256-276`). This is qualitative dispatch guidance, not automatic recycling.
 
 Two structural commitments SPEC already ratified and the code has not yet expressed: the ceiling must be **absolute tokens, per model, tuned by measurement, and subordinate to the error-state trigger**; and **admit and retire must be two different lines**. One number doing both jobs means an agent can accept a task at 64% and be killed at 66% while still holding it. The gap between the lines is the room an agent needs to finish what it accepted.
 

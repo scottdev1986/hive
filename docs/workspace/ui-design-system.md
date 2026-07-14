@@ -9,7 +9,7 @@ One visual language for the Workspace app: system semantic colors, native contro
 
 ## Where the system lives, and what this doc owns
 
-`ThemeTokens.swift` defines `Theme.Space`, `Theme.Metric`, `Theme.Font`, and `Theme.Motion`. Read the values there. The Model Control Center (`HiveWorkspace/Settings/`) is the reference implementation: when in doubt, copy what that screen does. If you need a token or component the system lacks, **extend the system, do not invent a private one** — otherwise the app becomes five apps.
+`ThemeTokens.swift` defines `Theme.Space`, `Theme.Metric`, `Theme.Font`, and `Theme.Motion`. Read the values there. The Model Control Center (`workspace/Sources/HiveWorkspace/Settings/`) is the reference implementation: when in doubt, copy what that screen does. If you need a token or component the system lacks, **extend the system, do not invent a private one** — otherwise the app becomes five apps.
 
 What this doc owns is everything the code cannot say: why a rule exists, and which plausible-looking implementation is silently wrong.
 
@@ -31,15 +31,15 @@ These three cost real incidents. They are not stylistic preferences.
 
 **AppKit paints a view's `layer` and its sublayers *beneath* the layers of that view's own subviews.** A decoration added with `parent.layer.addSublayer(...)` while an opaque subview — especially an `NSVisualEffectView` background — covers the bounds is **invisible**. Not dim. Not subtle. Absent.
 
-The pane focus ring and the pane status border were both designed, both built, both reviewed, and neither had ever appeared on screen. The fix is a sibling **NSView** added last, hit-test transparent, drawing in `draw(_:)`: `PaneFocusRingView.swift` and `PaneStatusBorderView.swift`, both held as siblings by `PaneView.swift:20-21`. Drawing in `draw(_:)` with semantic `NSColor`s also means light/dark and accent changes come free — AppKit resolves them against the view's effective appearance on every redraw. Both views observe `systemColorsDidChangeNotification`.
+The pane focus ring and the pane status border were both designed, both built, both reviewed, and neither had ever appeared on screen. The fix is a sibling **NSView** added last, hit-test transparent, drawing in `draw(_:)`: `PaneFocusRingView.swift` and `PaneStatusBorderView.swift`, both held as siblings by `workspace/Sources/HiveWorkspace/PaneView.swift:20-21`. Drawing in `draw(_:)` with semantic `NSColor`s also means light/dark and accent changes come free — AppKit resolves them against the view's effective appearance on every redraw. Both views observe `systemColorsDidChangeNotification`.
 
-The historical warning survives in the code at `PaneFocusRingView.swift:8`. **Before shipping any decoration, look at it.** A design that has never been seen is not a design.
+The historical warning survives in the code at `workspace/Sources/HiveWorkspace/PaneFocusRingView.swift:8`. **Before shipping any decoration, look at it.** A design that has never been seen is not a design.
 
 ### A truncating label can resize the window
 
 **A label whose compression resistance is ≥ `NSLayoutPriorityWindowSizeStayPut` (500) grows the WINDOW instead of truncating.** The AppKit default is **750**. So a perfectly ordinary "this long model id truncates with a tooltip" label, left at its defaults, silently instructed the layout pass to widen the window to fit — and the settings window opened absurdly wide (thousands of points, past the screen).
 
-Any soft "fill the available width" constraint must therefore sit **below 500**. The settings reading column is pinned at priority **490** (`Settings/SettingsPageController.swift:49-54`), yielding to the hard 720 pt cap so narrow windows get margins and wide windows get a column, never a sprawl. Truncation + `toolTip` is the correct treatment; it just cannot be requested at a priority that outranks the window's right to stay put.
+Any soft "fill the available width" constraint must therefore sit **below 500**. The settings reading column is pinned at priority **490** (`workspace/Sources/HiveWorkspace/Settings/SettingsPageController.swift:49-54`), yielding to the hard 720 pt cap so narrow windows get margins and wide windows get a column, never a sprawl. Truncation + `toolTip` is the correct treatment; it just cannot be requested at a priority that outranks the window's right to stay put.
 
 ### The SwiftTerm pin is load-bearing
 
@@ -51,11 +51,11 @@ The pin has a second consequence worth knowing: 1.11.2 misencodes no-button SGR 
 
 ### One legend, not two
 
-There is exactly **one** status legend. `AgentActivity.appearance` returns a `StatusAppearance(color:symbol:border:)` — the single table at `WorkspaceCore/AgentFeed.swift:163-215` — and the AppKit layer renders it through `Theme.statusColor(for:subdued:)` at `HiveWorkspace/Theme.swift:9-23`. The `border` is `.solid` or `.dashed`: **dashed means "we cannot see it"** (`disconnected`, `unknown`), so an unreachable agent is distinguishable without relying on color at all.
+There is exactly **one** status legend. `AgentActivity.appearance` returns a `StatusAppearance(color:symbol:border:)` — the single table at `workspace/Sources/WorkspaceCore/AgentFeed.swift:163-215` — and the AppKit layer renders it through `Theme.statusColor(for:subdued:)` at `workspace/Sources/HiveWorkspace/Theme.swift:9-23`. The `border` is `.solid` or `.dashed`: **dashed means "we cannot see it"** (`disconnected`, `unknown`), so an unreachable agent is distinguishable without relying on color at all.
 
 This replaced a *dual* legend — separate `Theme.dotColor(for:)` and `Theme.statusSymbol(for:)` mappings feeding the header dot while a different mapping fed the border. Two legends is not a style problem, it is a **correctness** problem: two tables drift, and the app then shows a green dot beside a red border and asks the user to adjudicate. Commit 6b286e0 ("make agent status honest and visible") collapsed them. Neither `dotColor` nor `statusSymbol` exists anywhere in `workspace/` today — zero hits. Any doc that names them predates the fix. **A state's color, symbol, and border must come from one place or they will eventually disagree.**
 
-The pane-level counterpart: `PaneStatus.unknown` exists explicitly (`WorkspaceCore/Status.swift:8-17`) so an unrecognized feed word can never be silently upgraded to a healthy state. **Unknown never renders as zero or healthy.**
+The pane-level counterpart: `PaneStatus.unknown` exists explicitly (`workspace/Sources/WorkspaceCore/Status.swift:8-17`) so an unrecognized feed word can never be silently upgraded to a healthy state. **Unknown never renders as zero or healthy.**
 
 ### Meters have four states, not three
 
@@ -64,7 +64,7 @@ The pane-level counterpart: `PaneStatus.unknown` exists explicitly (`WorkspaceCo
 - **measured** — a fill. `0%` means a measured zero.
 - **stale** — the last percent, desaturated, labelled with its age.
 - **unknown** — an *indeterminate* track, no value. "We asked and could not tell."
-- **notMetered** — **no track at all** (`DesignSystem/Components/UsageMeterView.swift:139-148`; state at `WorkspaceCore/ModelControlState.swift:30`).
+- **notMetered** — **no track at all** (`workspace/Sources/HiveWorkspace/DesignSystem/Components/UsageMeterView.swift:139-148`; state at `workspace/Sources/WorkspaceCore/ModelControlState.swift:30`).
 
 `.notMetered` exists because *"not metered on this plan"* is a different honesty claim than *"no reading"*. Rendering an absent window as `unknown` blames a probe that answered perfectly: the vendor's plan simply has no such window. The comment in the code is the rule — an indeterminate track "reads as unknown and would blame a probe that answered." **An absence by design must not render as a failure to measure.** (This is the same class of bug as a UI that renders a vendor's missing 5-hour window as a broken reading.)
 
@@ -93,9 +93,9 @@ Near-limit coloring comes from the **remaining** fraction, not a hardcoded used-
 The token ramp is still concentrated in the Model Control Center. Pane chrome uses the legacy top-level `Theme` font aliases but does not use `Theme.Space` or `Theme.Metric`. Verified still unbuilt as of 2026-07-14:
 
 - **Pane metrics are not tokenised.** `PaneView.swift` hardcodes `cornerRadius = 10` (:43, :50), `headerStack.spacing = 6` (:95), and a 14 pt status icon (:139-140). These duplicate `Metric.cardCornerRadius` and `Space.xs`/`s` by coincidence, not by reference — they will drift the first time a token moves.
-- **Off-ramp fonts in shipped chrome.** The project switcher hardcodes 14-semibold (`ProjectSwitcher.swift:66`), a size absent from `Theme.Font`; the placeholder window hardcodes 15-semibold (`AppDelegate.swift:413-415`) instead of using the equal-valued `Theme.Font.title` token.
+- **Off-ramp fonts in shipped chrome.** The project switcher hardcodes 14-semibold (`workspace/Sources/HiveWorkspace/ProjectSwitcher.swift:66`), a size absent from `Theme.Font`; the placeholder window hardcodes 15-semibold (`workspace/Sources/HiveWorkspace/AppDelegate.swift:413-415`) instead of using the equal-valued `Theme.Font.title` token.
 - **The Attention panel has no empty state.** Nothing renders when the queue is clear.
-- **No titlebar feed-health indicator.** A feed loss marks every pane disconnected, retries five times, and terminates the Workspace if the feed never returns (`AppDelegate.swift:138-197`), but the titlebar itself carries no glanceable retry-health signal.
+- **No titlebar feed-health indicator.** A feed loss marks every pane disconnected, retries five times, and terminates the Workspace if the feed never returns (`workspace/Sources/HiveWorkspace/AppDelegate.swift:138-197`), but the titlebar itself carries no glanceable retry-health signal.
 
 ## See Also
 
