@@ -103,12 +103,57 @@ interface LandingLease {
   readonly token: string;
 }
 
-function processIsAlive(pid: number): boolean {
+type LandingLeaseEvidence =
+  | { readonly state: "absent" }
+  | { readonly state: "valid"; readonly lease: LandingLease }
+  | { readonly state: "unknown" };
+
+function readLandingLease(path: string): LandingLeaseEvidence {
+  let contents: string;
+  try {
+    contents = readFileSync(path, "utf8");
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "ENOENT"
+      ? { state: "absent" }
+      : { state: "unknown" };
+  }
+  try {
+    const value: unknown = JSON.parse(contents);
+    if (typeof value !== "object" || value === null) return { state: "unknown" };
+    const lease = value as Record<string, unknown>;
+    if (
+      typeof lease.pid !== "number" || !Number.isSafeInteger(lease.pid) ||
+      lease.pid <= 0 || typeof lease.token !== "string" || lease.token === ""
+    ) return { state: "unknown" };
+    return { state: "valid", lease: lease as unknown as LandingLease };
+  } catch {
+    return { state: "unknown" };
+  }
+}
+
+function sameLandingLease(left: LandingLease, right: LandingLease): boolean {
+  return left.pid === right.pid && left.token === right.token;
+}
+
+function removeLandingLease(path: string, lease: LandingLease): boolean {
+  const current = readLandingLease(path);
+  if (current.state !== "valid" || !sameLandingLease(current.lease, lease)) {
+    return false;
+  }
+  rmSync(path, { force: true });
+  const remaining = readLandingLease(path);
+  return remaining.state === "absent" ||
+    (remaining.state === "valid" && !sameLandingLease(remaining.lease, lease));
+}
+
+function processLiveness(pid: number): "live" | "dead" | "unknown" {
   try {
     process.kill(pid, 0);
-    return true;
+    return "live";
   } catch (error) {
-    return (error as NodeJS.ErrnoException).code === "EPERM";
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ESRCH") return "dead";
+    return code === "EPERM" ? "live" : "unknown";
   }
 }
 
@@ -128,23 +173,27 @@ async function acquireLandingLease(repoRoot: string): Promise<() => void> {
     try {
       writeFileSync(path, encoded, { flag: "wx", mode: 0o600 });
       return () => {
-        try {
-          if (readFileSync(path, "utf8") === encoded) rmSync(path, { force: true });
-        } catch {
-          // A lease already removed or replaced is not ours to clean up.
-        }
+        removeLandingLease(path, lease);
       };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
     }
-    try {
-      const existing = JSON.parse(readFileSync(path, "utf8")) as Partial<LandingLease>;
-      if (!Number.isSafeInteger(existing.pid) || !processIsAlive(existing.pid!)) {
-        rmSync(path, { force: true });
-        continue;
-      }
-    } catch {
-      rmSync(path, { force: true });
+
+    const evidence = readLandingLease(path);
+    if (evidence.state === "absent") continue;
+    if (evidence.state === "unknown") {
+      throw new Error(
+        `Cannot land: landing lease ownership is unknown at ${path}; refusing to replace it`,
+      );
+    }
+    const liveness = processLiveness(evidence.lease.pid);
+    if (liveness === "unknown") {
+      throw new Error(
+        `Cannot land: process liveness for landing lease pid ${evidence.lease.pid} is unknown; refusing to replace ${path}`,
+      );
+    }
+    if (liveness === "dead") {
+      removeLandingLease(path, evidence.lease);
       continue;
     }
     await Bun.sleep(25);
