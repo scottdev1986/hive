@@ -304,6 +304,59 @@ describe("lifecycle", () => {
     expect(state.reprofile).toBeNull();
   });
 
+  test("ifIdle refuses to begin a second run and leaves the first alone", async () => {
+    const root = await polyglotRepo();
+    const first = await beginProfiling(root, PROFILER);
+
+    // One profiling job per project: the daemon says no, rather than trusting
+    // the caller to have looked first.
+    expect(await beginProfiling(root, PROFILER, { ifIdle: true })).toBeNull();
+
+    const state = await readProfileState(root);
+    expect(state.lifecycle).toBe("profiling");
+    expect(state.run?.runId).toBe(first.runId);
+    expect(state.run?.inputDigest).toBe(first.inputDigest);
+
+    // The refusal did not disturb the run in flight: it still lands.
+    const landed = await submitProfile(
+      root,
+      polyglotProfile(root, first.runId, first.inputDigest),
+      "erica",
+    );
+    expect(landed.status).toBe("accepted");
+  });
+
+  test("ifIdle begins when nothing is in flight, in every resting state", async () => {
+    const root = await polyglotRepo();
+
+    // unprofiled
+    const first = await beginProfiling(root, PROFILER, { ifIdle: true });
+    expect(first).not.toBeNull();
+    await submitProfile(
+      root,
+      polyglotProfile(root, first!.runId, first!.inputDigest),
+      "erica",
+    );
+
+    // current
+    const second = await beginProfiling(root, PROFILER, { ifIdle: true });
+    expect(second).not.toBeNull();
+    await failProfiling(root, second!.runId, "gave up");
+
+    // failed
+    const third = await beginProfiling(root, PROFILER, { ifIdle: true });
+    expect(third).not.toBeNull();
+    await submitProfile(
+      root,
+      polyglotProfile(root, third!.runId, third!.inputDigest),
+      "erica",
+    );
+
+    // stale
+    await markProfileStale(root, "drift", "backend/Cargo.toml changed");
+    expect(await beginProfiling(root, PROFILER, { ifIdle: true })).not.toBeNull();
+  });
+
   test("a dead run cannot fail the run that replaced it", async () => {
     const root = await polyglotRepo();
     const first = await beginProfiling(root, PROFILER);

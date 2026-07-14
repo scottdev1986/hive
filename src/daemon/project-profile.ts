@@ -285,17 +285,44 @@ export interface ProfileRunHandle {
 /** Start a profiling run: `unprofiled | stale | failed | current → profiling`.
  *
  * The daemon observes the inventory here, and *it* — not the model — decides
- * what the profiler was looking at. Beginning a second run supersedes the first:
- * the new run id is the only one that can land, so a slow profiler cannot
- * overwrite the work of the one that replaced it. Nothing is destroyed; a
- * profile already in `current.json` stays exactly where it is and stays readable
- * for the whole run. */
+ * what the profiler was looking at. Nothing is destroyed either way: a profile
+ * already in `current.json` stays exactly where it is, and stays readable, for
+ * the whole run.
+ *
+ * Two ways to begin, because there are two honest answers to "a run is already
+ * in flight":
+ *
+ * - By default, beginning supersedes. The new run id is the only one that can
+ *   land, so a slow profiler cannot overwrite the work of the run that replaced
+ *   it — supersession is enforced at submit, not merely announced here.
+ * - With `{ ifIdle: true }`, beginning *refuses* and returns null while a run is
+ *   in flight. One profiling job per project is an invariant the daemon owns, so
+ *   the primitive that mints runs is what enforces it: a caller that must check
+ *   first is a caller that can forget to. Whose job it is, when a dead run may be
+ *   taken over, and what counts as dead are policy, and stay out of here. */
+export function beginProfiling(
+  root: string,
+  profiler: ProfilerIdentity,
+): Promise<ProfileRunHandle>;
+export function beginProfiling(
+  root: string,
+  profiler: ProfilerIdentity,
+  options: { ifIdle: true },
+): Promise<ProfileRunHandle | null>;
 export async function beginProfiling(
   root: string,
   profiler: ProfilerIdentity,
-): Promise<ProfileRunHandle> {
-  const inventory = await computeProfileInventory(root);
+  options?: { ifIdle?: boolean },
+): Promise<ProfileRunHandle | null> {
   const previous = await readProfileState(root);
+  if (
+    options?.ifIdle === true &&
+    previous.lifecycle === "profiling" &&
+    previous.run !== null
+  ) {
+    return null;
+  }
+  const inventory = await computeProfileInventory(root);
   const runId = randomUUID();
   await writeProfileState(root, {
     ...previous,
