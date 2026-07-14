@@ -8,9 +8,9 @@
 # release manifest, proves the binary runs, and only then points ~/.local/bin/hive
 # at it. It never touches a Homebrew-owned install.
 #
-# A signed and notarized release runs without a Gatekeeper prompt. An unsigned
-# release (none of the signing secrets configured) is quarantined on first run;
-# see docs/release/versioning-and-release.md.
+# Releases without Hive manifest signature material are refused. Portable shell
+# does not verify Ed25519; it preserves the exact bytes for Hive to verify before
+# an offline rollback. See docs/release/versioning-and-release.md.
 set -eu
 
 REPO="${HIVE_REPO:-scottdev1986/hive}"
@@ -72,12 +72,10 @@ fetch() { curl -fsSL "$BASE/$1" -o "$TMP/$1" || die "could not download $1"; }
 fetch_optional() { curl -fsSL "$BASE/$1" -o "$TMP/$1"; }
 
 fetch hive-release.json
-if fetch_optional hive-release.json.sig 2>/dev/null; then
-  HAS_RELEASE_SIGNATURE=1
-else
-  HAS_RELEASE_SIGNATURE=0
-  printf '%s\n' 'install: release has no Hive manifest signature; install will continue, but rollback to this version will require reinstall' >&2
-fi
+fetch_optional hive-release.json.sig 2>/dev/null ||
+  die "release has no Hive manifest signature"
+signature="$(tr -d '[:space:]' < "$TMP/hive-release.json.sig")"
+[ -n "$signature" ] || die "release manifest signature is empty"
 fetch "hive-darwin-$ARCH"
 fetch HiveWorkspace.tar.gz
 
@@ -102,17 +100,10 @@ chmod 755 "$STAGING_DIR/hive"
 tar -xzf "$TMP/HiveWorkspace.tar.gz" -C "$STAGING_DIR"
 
 # Preserve the exact provenance bytes for a future offline rollback. The shell
-# installer does not verify Ed25519; the installed Hive binary re-verifies this
-# material against its embedded key before it will reactivate the version.
-if [ "$HAS_RELEASE_SIGNATURE" = "1" ]; then
-  signature="$(tr -d '[:space:]' < "$TMP/hive-release.json.sig")"
-  if [ -n "$signature" ]; then
-    manifest_base64="$(base64 < "$TMP/hive-release.json" | tr -d '\n')"
-    printf '{\n  "schema": 1,\n  "manifestBase64": "%s",\n  "signature": "%s"\n}\n' "$manifest_base64" "$signature" > "$STAGING_DIR/release-verification.json"
-  else
-    printf '%s\n' 'install: release manifest signature is empty; rollback to this version will require reinstall' >&2
-  fi
-fi
+# installer requires this material but does not verify Ed25519 itself; the
+# installed Hive binary re-verifies it against its embedded key before rollback.
+manifest_base64="$(base64 < "$TMP/hive-release.json" | tr -d '\n')"
+printf '{\n  "schema": 1,\n  "manifestBase64": "%s",\n  "signature": "%s"\n}\n' "$manifest_base64" "$signature" > "$STAGING_DIR/release-verification.json"
 
 # Run it before it can ever be `current`.
 reported="$("$STAGING_DIR/hive" --version 2>/dev/null || true)"

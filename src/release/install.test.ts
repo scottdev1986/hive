@@ -247,21 +247,27 @@ describe("the standalone installer", () => {
       .toBe("versions/1.2.4");
   });
 
-  test("a release without a signature installs but names the rollback limitation", async () => {
+  test("a release without a signature is refused before installation", async () => {
     const fixture = await createInstallerFixture("1.2.3", false);
     const installed = await runInstaller(fixture, "1.2.3");
 
-    expect(installed.exitCode).toBe(0);
-    expect(installed.stderr).toContain(
-      "rollback to this version will require reinstall",
-    );
+    expect(installed.exitCode).toBe(1);
+    expect(installed.stderr).toContain("release has no Hive manifest signature");
     expect(
-      await Bun.file(join(
-        fixture.installRoot,
-        "versions",
-        "1.2.3",
-        "release-verification.json",
-      )).exists(),
+      await Bun.file(join(fixture.installRoot, "versions", "1.2.3")).exists(),
+    ).toBe(false);
+  });
+
+  test("a release with an empty signature is refused before installation", async () => {
+    const fixture = await createInstallerFixture("1.2.3");
+    await writeFile(join(fixture.fixtures, "hive-release.json.sig"), "\n");
+
+    const installed = await runInstaller(fixture, "1.2.3");
+
+    expect(installed.exitCode).toBe(1);
+    expect(installed.stderr).toContain("release manifest signature is empty");
+    expect(
+      await Bun.file(join(fixture.installRoot, "versions", "1.2.3")).exists(),
     ).toBe(false);
   });
 
@@ -298,20 +304,22 @@ describe("the standalone installer", () => {
     const workspaceBytes = new Uint8Array(
       await Bun.file(join(fixtures, "HiveWorkspace.tar.gz")).arrayBuffer(),
     );
+    const manifestBytes = new TextEncoder().encode(JSON.stringify({
+      artifacts: [
+        {
+          name: "hive-darwin-arm64",
+          sha256: sha256(badBinary),
+        },
+        {
+          name: "HiveWorkspace.tar.gz",
+          sha256: sha256(workspaceBytes),
+        },
+      ],
+    }));
+    await writeFile(join(fixtures, "hive-release.json"), manifestBytes);
     await writeFile(
-      join(fixtures, "hive-release.json"),
-      JSON.stringify({
-        artifacts: [
-          {
-            name: "hive-darwin-arm64",
-            sha256: sha256(badBinary),
-          },
-          {
-            name: "HiveWorkspace.tar.gz",
-            sha256: sha256(workspaceBytes),
-          },
-        ],
-      }),
+      join(fixtures, "hive-release.json.sig"),
+      `${RELEASE_KEY.sign(manifestBytes)}\n`,
     );
     await writeFile(join(fixtures, "release.json"), '{"tag_name":"v1.2.3"}\n');
 
