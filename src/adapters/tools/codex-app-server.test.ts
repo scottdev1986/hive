@@ -384,6 +384,7 @@ describe("reapOrphanCodexHosts", () => {
   interface FakeWorld {
     files: Map<string, string>;
     commands: Map<number, string>;
+    processStates?: Map<number, "live" | "dead" | "unknown">;
     killed: number[];
   }
 
@@ -397,7 +398,12 @@ describe("reapOrphanCodexHosts", () => {
     removeFile: async (name: string) => {
       world.files.delete(name);
     },
+    fileState: async (name: string) =>
+      world.files.has(name) ? "present" as const : "absent" as const,
     processCommand: async (pid: number) => world.commands.get(pid) ?? null,
+    processState: async (pid: number) =>
+      world.processStates?.get(pid) ??
+        (world.commands.has(pid) ? "live" as const : "dead" as const),
     kill: (pid: number) => {
       world.killed.push(pid);
       world.commands.delete(Math.abs(pid));
@@ -480,6 +486,67 @@ describe("reapOrphanCodexHosts", () => {
     )).rejects.toThrow("still running after reap");
   });
 
+  test("preserves host files when process identity is unreadable", async () => {
+    const name = pidfileFor("unreadable");
+    const socket = socketFor("unreadable");
+    const world: FakeWorld = {
+      files: new Map([[name, "7474\n"], [socket, ""]]),
+      commands: new Map(),
+      processStates: new Map([[7474, "unknown"]]),
+      killed: [],
+    };
+
+    await expect(reapOrphanCodexHosts(
+      status({ unreadable: "dead" }),
+      dependencies(world),
+    )).rejects.toThrow("cannot verify process 7474");
+    expect(world.killed).toEqual([]);
+    expect([...world.files.keys()].sort()).toEqual([name, socket].sort());
+  });
+
+  test("unknown after signaling is not proof of exit", async () => {
+    const name = pidfileFor("unverified-exit");
+    const socket = socketFor("unverified-exit");
+    const world: FakeWorld = {
+      files: new Map([[name, "7575\n"], [socket, ""]]),
+      commands: new Map([[7575, "codex app-server --stdio"]]),
+      processStates: new Map([[7575, "unknown"]]),
+      killed: [],
+    };
+
+    await expect(reapOrphanCodexHosts(
+      status({ "unverified-exit": "dead" }),
+      {
+        ...dependencies(world),
+        kill: (pid) => {
+          world.killed.push(pid);
+          world.commands.delete(Math.abs(pid));
+        },
+      },
+    )).rejects.toThrow("cannot verify exit of Codex app-server 7575");
+    expect(world.killed).toEqual([-7575]);
+    expect([...world.files.keys()].sort()).toEqual([name, socket].sort());
+  });
+
+  test("does not accept a no-op file removal as cleanup", async () => {
+    const name = pidfileFor("stale-files");
+    const socket = socketFor("stale-files");
+    const world: FakeWorld = {
+      files: new Map([[name, "7676\n"], [socket, ""]]),
+      commands: new Map(),
+      killed: [],
+    };
+
+    await expect(reapOrphanCodexHosts(
+      status({ "stale-files": "dead" }),
+      {
+        ...dependencies(world),
+        removeFile: async () => {},
+      },
+    )).rejects.toThrow(`Codex app-server cleanup left ${socket} behind`);
+    expect([...world.files.keys()].sort()).toEqual([name, socket].sort());
+  });
+
   // Prompt text can name codex app-server; argv[0] cannot be forged by it.
   test("does not reap a process that only mentions codex in its prompt", async () => {
     const claudeAgent =
@@ -513,6 +580,7 @@ describe("reapOrphanCodexHosts", () => {
     const childPidPath = join(root, "child.pid");
     let childPid = 0;
     let appServer: ReturnType<typeof Bun.spawn> | null = null;
+    let unrelated: ReturnType<typeof Bun.spawn> | null = null;
     try {
       await symlink("/bin/sh", executable);
       await writeFile(
@@ -523,6 +591,11 @@ describe("reapOrphanCodexHosts", () => {
       appServer = Bun.spawn([executable, "app-server", childPidPath], {
         cwd: root,
         detached: true,
+        stdin: "ignore",
+        stdout: "ignore",
+        stderr: "ignore",
+      });
+      unrelated = Bun.spawn(["/bin/sleep", "30"], {
         stdin: "ignore",
         stdout: "ignore",
         stderr: "ignore",
@@ -546,9 +619,23 @@ describe("reapOrphanCodexHosts", () => {
         ]);
         return exitCode === 0 ? command.trim() : null;
       };
+      const processState = async (
+        pid: number,
+      ): Promise<"live" | "dead" | "unknown"> => {
+        try {
+          process.kill(pid, 0);
+          return "live";
+        } catch (error) {
+          return (error as NodeJS.ErrnoException).code === "ESRCH"
+            ? "dead"
+            : "unknown";
+        }
+      };
       expect(await processCommand(appServer.pid)).toStartWith(
         `${executable} app-server`,
       );
+      expect(await processState(appServer.pid)).toBe("live");
+      expect(await processState(unrelated.pid)).toBe("live");
       const name = pidfileFor("real-orphan");
       const files = new Map([[name, `${appServer.pid}\n`]]);
       expect(await reapOrphanCodexHosts(
@@ -559,11 +646,17 @@ describe("reapOrphanCodexHosts", () => {
           removeFile: async (file) => {
             files.delete(file);
           },
+          fileState: async (file) =>
+            files.has(file) ? "present" : "absent",
           processCommand,
+          processState,
           kill: (pid) => process.kill(pid, "SIGKILL"),
         },
       )).toEqual([appServer.pid]);
       await appServer.exited;
+      expect(await processState(appServer.pid)).toBe("dead");
+      expect(await processState(unrelated.pid)).toBe("live");
+      expect(files.size).toBe(0);
 
       let childAlive = true;
       for (let attempt = 0; attempt < 50 && childAlive; attempt += 1) {
@@ -581,6 +674,13 @@ describe("reapOrphanCodexHosts", () => {
           process.kill(-appServer.pid, "SIGKILL");
         } catch {
           // The reaper already killed the group.
+        }
+      }
+      if (unrelated !== null) {
+        try {
+          unrelated.kill("SIGKILL");
+        } catch {
+          // The control process exited independently.
         }
       }
       await rm(root, { recursive: true, force: true });
