@@ -176,6 +176,7 @@ export type DenialReason =
   | "capability.unknown"
   | "capability.expired"
   | "capability.revoked"
+  | "capability.authority-unknown"
   | "capability.stale-epoch"
   | "capability.forbidden-action"
   | "capability.foreign-subject"
@@ -330,6 +331,18 @@ export class CapabilityStore {
     // a self-bound action is the caller and for an operator is someone else.
     const authorityOf = subject ?? capability.subject;
     const authority = this.agentAuthority(authorityOf);
+
+    if (
+      authority === null &&
+      (capability.role === "writer" || capability.role === "reader") &&
+      (WRITE_ACTIONS.has(request.action) || EPOCH_CHECKED.has(request.action))
+    ) {
+      return deny(
+        "capability.authority-unknown",
+        403,
+        `No live authority record exists for ${authorityOf}`,
+      );
+    }
 
     if (WRITE_ACTIONS.has(request.action) && authority?.writeRevoked === true) {
       return deny(
