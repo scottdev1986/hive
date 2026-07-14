@@ -83,6 +83,7 @@ describe("CLI-to-daemon smoke", () => {
       }),
       issueCredential: () => "test-reader-capability",
       tmux,
+      stopSession: async () => ({ killed: [], survivors: [] }),
       createWorktree: async (_repoRoot, name, slug) => ({
         path: worktreePath,
         branch: `hive/${name}-${slug}`,

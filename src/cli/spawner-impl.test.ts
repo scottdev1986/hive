@@ -44,6 +44,7 @@ import {
   CODING_GUIDELINES,
   HIVE_PROTOCOL_RULES,
   HiveSpawner,
+  type HiveSpawnerDependencies,
   LANDING_MAX_ATTEMPTS,
   SEARCH_HYGIENE,
   NAME_POOL,
@@ -59,6 +60,16 @@ import { QuotaLedger } from "../daemon/quota-ledger";
 import { QuotaService } from "../daemon/quota";
 import { agentTmuxSession } from "../daemon/tmux-sessions";
 import type { CapabilityDiscoveryResult } from "../daemon/capability-discovery";
+import type { StopAgentSession } from "../daemon/teardown";
+
+const positivelyVerifiedStop: StopAgentSession = async () => ({
+  killed: [],
+  survivors: [],
+});
+
+function newTestSpawner(dependencies: HiveSpawnerDependencies): HiveSpawner {
+  return new HiveSpawner({ stopSession: positivelyVerifiedStop, ...dependencies });
+}
 
 type TestRoute = {
   tool: "claude" | "codex" | "grok";
@@ -489,7 +500,7 @@ describe("HiveSpawner name pool", () => {
       const controlQuota = makeControlQuota(root);
       const store = new FakeStore([controlled]);
       const tmux = new FakeTmux();
-      const spawner = new HiveSpawner({
+      const spawner = newTestSpawner({
         isModelEnabled: async () => true,
         db: store,
         repoRoot: root,
@@ -566,7 +577,7 @@ describe("HiveSpawner name pool", () => {
     const store = new FakeStore([controlled]);
     const tmux = new FakeTmux("Error: model not supported");
     const controlQuota = makeControlQuota(root);
-    const spawner = new HiveSpawner({
+    const spawner = newTestSpawner({
       isModelEnabled: async () => true,
       db: store,
       repoRoot: root,
@@ -608,7 +619,7 @@ describe("HiveSpawner name pool", () => {
     } satisfies AgentRecord;
     const store = new FakeStore([controlled]);
     let routeReads = 0;
-    const spawner = new HiveSpawner({
+    const spawner = newTestSpawner({
       isModelEnabled: async () => true,
       db: store,
       repoRoot: root,
@@ -667,7 +678,7 @@ describe("HiveSpawner name pool", () => {
     } satisfies AgentRecord;
     const store = new FakeStore([controlled]);
     const tmux = new FakeTmux();
-    const spawner = new HiveSpawner({
+    const spawner = newTestSpawner({
       isModelEnabled: async () => true,
       db: store,
       repoRoot: root,
@@ -804,7 +815,7 @@ describe("HiveSpawner name pool", () => {
     const gate = new Promise<void>((resolve) => {
       releaseRouting = resolve;
     });
-    const spawner = new HiveSpawner({
+    const spawner = newTestSpawner({
       isModelEnabled: async () => true,
       db: store,
       repoRoot: "/tmp/hive-concurrent-names",
@@ -844,7 +855,7 @@ describe("HiveSpawner name pool", () => {
     const routingGate = new Promise<void>((resolve) => {
       continueRouting = resolve;
     });
-    const spawner = new HiveSpawner({
+    const spawner = newTestSpawner({
       isModelEnabled: async () => true,
       db: store,
       repoRoot: "/tmp/hive-reservation-race",
@@ -887,7 +898,7 @@ describe("HiveSpawner name pool", () => {
   test("fails from the fake database before creating a worktree when exhausted", async () => {
     const store = new FakeStore(NAME_POOL.map((name) => agent(name)));
     let attemptedWorktree = false;
-    const spawner = new HiveSpawner({
+    const spawner = newTestSpawner({
       isModelEnabled: async () => true,
       db: store,
       repoRoot: "/tmp/hive-exhausted",
@@ -909,7 +920,7 @@ describe("HiveSpawner name pool", () => {
 
   test("rejects an invalid requested name before creating a worktree", async () => {
     let attemptedWorktree = false;
-    const spawner = new HiveSpawner({
+    const spawner = newTestSpawner({
       isModelEnabled: async () => true,
       db: new FakeStore(),
       repoRoot: "/tmp/hive-invalid-name",
@@ -933,7 +944,7 @@ describe("HiveSpawner name pool", () => {
   });
 
   test("rejects a requested name held by a live agent", async () => {
-    const spawner = new HiveSpawner({
+    const spawner = newTestSpawner({
       isModelEnabled: async () => true,
       db: new FakeStore([agent("maya")]),
       repoRoot: "/tmp/hive-collision",
@@ -956,7 +967,7 @@ describe("HiveSpawner name pool", () => {
 
   test("rejects the reserved orchestrator name before creating a worktree", async () => {
     let attemptedWorktree = false;
-    const spawner = new HiveSpawner({
+    const spawner = newTestSpawner({
       isModelEnabled: async () => true,
       db: new FakeStore(),
       repoRoot: "/tmp/hive-reserved-name",
@@ -987,7 +998,7 @@ describe("HiveSpawner wiring", () => {
     const tmux = new FakeTmux();
     const store = new FakeStore();
     let probedAppServer = false;
-    const spawner = new HiveSpawner({
+    const spawner = newTestSpawner({
       isModelEnabled: async () => true,
       db: store,
       repoRoot: root,
@@ -1034,7 +1045,7 @@ describe("HiveSpawner wiring", () => {
     const store = new FakeStore();
     const tmux = new FakeTmux();
     const starts: Array<{ name: string; prompt: string; effort: string }> = [];
-    const spawner = new HiveSpawner({
+    const spawner = newTestSpawner({
       isModelEnabled: async () => true,
       db: store,
       repoRoot: root,
@@ -1088,7 +1099,7 @@ describe("HiveSpawner wiring", () => {
     const store = new FakeStore();
     const tmux = new FakeTmux();
     const disconnected: string[] = [];
-    const spawner = new HiveSpawner({
+    const spawner = newTestSpawner({
       isModelEnabled: async () => true,
       db: store,
       repoRoot: root,
@@ -1165,7 +1176,7 @@ describe("HiveSpawner wiring", () => {
     );
     const store = new FakeStore();
     const tmux = new FakeTmux();
-    const spawner = new HiveSpawner({
+    const spawner = newTestSpawner({
       isModelEnabled: async () => true,
       db: store,
       repoRoot: root,
@@ -1263,7 +1274,7 @@ describe("HiveSpawner wiring", () => {
     tempRoots.push(root);
     const { db: quotaDb, quota } = strandingQuota(root);
     const store = new FakeStore();
-    const spawner = new HiveSpawner({
+    const spawner = newTestSpawner({
       isModelEnabled: async () => true,
       db: store,
       repoRoot: root,
@@ -1291,7 +1302,7 @@ describe("HiveSpawner wiring", () => {
     tempRoots.push(root);
     const { db: quotaDb, quota } = strandingQuota(root);
     const store = new FakeStore();
-    const spawner = new HiveSpawner({
+    const spawner = newTestSpawner({
       isModelEnabled: async () => true,
       db: store,
       repoRoot: root,
@@ -1334,7 +1345,7 @@ describe("HiveSpawner wiring", () => {
       }
     }
     const store = new RefusingStore();
-    const spawner = new HiveSpawner({
+    const spawner = newTestSpawner({
       isModelEnabled: async () => true,
       db: store,
       repoRoot: root,
@@ -1376,7 +1387,7 @@ describe("HiveSpawner wiring", () => {
     );
     const store = new FakeStore();
     const tmux = new FakeTmux();
-    const spawner = new HiveSpawner({
+    const spawner = newTestSpawner({
       isModelEnabled: async () => true,
       db: store,
       repoRoot: root,
@@ -1442,7 +1453,7 @@ describe("HiveSpawner wiring", () => {
     const store = new FakeStore();
     const tmux = new FakeTmux();
     const probes: Array<"claude" | "codex" | "grok"> = [];
-    const spawner = new HiveSpawner({
+    const spawner = newTestSpawner({
       isModelEnabled: async () => true,
       db: store,
       repoRoot: root,
@@ -1501,7 +1512,7 @@ describe("HiveSpawner wiring", () => {
     tempRoots.push(root);
     const store = new FakeStore();
     const tmux = new FakeTmux();
-    const spawner = new HiveSpawner({
+    const spawner = newTestSpawner({
       isModelEnabled: async () => true,
       db: store,
       repoRoot: root,
@@ -1538,7 +1549,7 @@ describe("HiveSpawner wiring", () => {
       "claude-opus-4-8",
       ["low", "medium", "high"],
     );
-    const spawner = new HiveSpawner({
+    const spawner = newTestSpawner({
       isModelEnabled: async () => true,
       db: new FakeStore(),
       repoRoot: "/tmp/hive-effort-reject",
@@ -1574,7 +1585,7 @@ describe("HiveSpawner wiring", () => {
       "claude-opus-4-8",
       ["low", "medium", "high"],
     );
-    const spawner = new HiveSpawner({
+    const spawner = newTestSpawner({
       isModelEnabled: async () => true,
       db: store,
       repoRoot: root,
@@ -1615,7 +1626,7 @@ describe("HiveSpawner wiring", () => {
       "gpt-test",
       ["low", "medium", "high", "ultra"],
     );
-    const spawner = new HiveSpawner({
+    const spawner = newTestSpawner({
       isModelEnabled: async () => true,
       db: store,
       repoRoot: root,
@@ -1653,7 +1664,7 @@ describe("HiveSpawner wiring", () => {
     const store = new FakeStore();
     const tmux = new FakeTmux();
     const issued: Array<[string, string, number]> = [];
-    const spawner = new HiveSpawner({
+    const spawner = newTestSpawner({
       isModelEnabled: async () => true,
       db: store,
       repoRoot: root,
@@ -1692,7 +1703,7 @@ describe("HiveSpawner wiring", () => {
     const root = await mkdtemp(join(tmpdir(), "hive-spawner-reader-refuse-"));
     tempRoots.push(root);
     let worktrees = 0;
-    const spawner = new HiveSpawner({
+    const spawner = newTestSpawner({
       isModelEnabled: async () => true,
       db: new FakeStore(),
       repoRoot: root,
@@ -1724,7 +1735,7 @@ describe("HiveSpawner wiring", () => {
       "catalog-model",
       ["low", "medium", "high"],
     );
-    const spawner = new HiveSpawner({
+    const spawner = newTestSpawner({
       isModelEnabled: async () => true,
       db: store,
       repoRoot: root,
@@ -1785,7 +1796,7 @@ describe("HiveSpawner wiring", () => {
     tempRoots.push(root);
     const store = new FakeStore();
     const tmux = new FakeTmux();
-    const spawner = new HiveSpawner({
+    const spawner = newTestSpawner({
       isModelEnabled: async () => true,
       db: store,
       repoRoot: root,
@@ -1819,7 +1830,7 @@ describe("HiveSpawner wiring", () => {
     const root = await mkdtemp(join(tmpdir(), "hive-spawner-vendor-conflict-"));
     tempRoots.push(root);
     const store = new FakeStore();
-    const spawner = new HiveSpawner({
+    const spawner = newTestSpawner({
       isModelEnabled: async () => true,
       db: store,
       repoRoot: root,
@@ -1882,7 +1893,7 @@ describe("HiveSpawner wiring", () => {
     );
     const store = new FakeStore();
     const tmux = new FakeTmux();
-    const spawner = new HiveSpawner({
+    const spawner = newTestSpawner({
       isModelEnabled: async () => true,
       db: store,
       repoRoot: root,
@@ -1934,7 +1945,7 @@ describe("HiveSpawner wiring", () => {
       await Bun.write(join(skillPath, "SKILL.md"), "# Test skill\n");
       return { path, branch: `hive/${name}-${slug}` };
     };
-    const spawner = new HiveSpawner({
+    const spawner = newTestSpawner({
       isModelEnabled: async () => true,
       db: store,
       repoRoot: root,
@@ -2040,7 +2051,7 @@ describe("HiveSpawner wiring", () => {
 
       const store = new FakeStore();
       const tmux = new FakeTmux();
-      const spawner = new HiveSpawner({
+      const spawner = newTestSpawner({
         isModelEnabled: async () => true,
         db: store,
         repoRoot: root,
@@ -2082,7 +2093,7 @@ describe("HiveSpawner wiring", () => {
     const store = new FakeStore();
     const tmux = new FakeTmux();
     let polls = 0;
-    const spawner = new HiveSpawner({
+    const spawner = newTestSpawner({
       isModelEnabled: async () => true,
       db: store,
       repoRoot: root,
@@ -2129,7 +2140,7 @@ describe("HiveSpawner wiring", () => {
       await mkdir(path, { recursive: true });
       return { path, branch: `hive/${name}-${slug}` };
     };
-    const spawner = new HiveSpawner({
+    const spawner = newTestSpawner({
       isModelEnabled: async () => true,
       db: store,
       repoRoot: root,
@@ -2182,7 +2193,7 @@ describe("HiveSpawner wiring", () => {
     tempRoots.push(root);
     const tmux = new FakeTmux();
     const store = new FakeStore();
-    const spawner = new HiveSpawner({
+    const spawner = newTestSpawner({
       isModelEnabled: async () => true,
       db: store,
       repoRoot: root,
@@ -2217,7 +2228,7 @@ describe("HiveSpawner wiring", () => {
     tempRoots.push(root);
     const tmux = new FakeTmux();
     const store = new FakeStore();
-    const spawner = new HiveSpawner({
+    const spawner = newTestSpawner({
       isModelEnabled: async () => true,
       db: store,
       repoRoot: root,
@@ -2255,7 +2266,7 @@ describe("HiveSpawner wiring", () => {
     const store = new FakeStore();
     const tmux = new FakeTmux(pane);
     const removals: Array<[string, string]> = [];
-    const spawner = new HiveSpawner({
+    const spawner = newTestSpawner({
       isModelEnabled: async () => true,
       db: store,
       repoRoot: root,
@@ -2297,7 +2308,7 @@ describe("HiveSpawner wiring", () => {
       "The provider CLI could not initialize.",
       "[hive] process exited with status 1",
     ].join("\n"));
-    const spawner = new HiveSpawner({
+    const spawner = newTestSpawner({
       isModelEnabled: async () => true,
       db: store,
       repoRoot: root,
@@ -2333,7 +2344,7 @@ describe("HiveSpawner wiring", () => {
       "Task: fix the error handling",
       "typecheck complete: 2 errors found",
     ].join("\n"));
-    const spawner = new HiveSpawner({
+    const spawner = newTestSpawner({
       isModelEnabled: async () => true,
       db: store,
       repoRoot: root,
@@ -2378,7 +2389,7 @@ describe("HiveSpawner wiring", () => {
     await mkdir(worktreePath, { recursive: true });
     const tmux = new FlakyCaptureTmux();
     const store = new FakeStore();
-    const spawner = new HiveSpawner({
+    const spawner = newTestSpawner({
       isModelEnabled: async () => true,
       db: store,
       repoRoot: root,
@@ -2431,7 +2442,7 @@ describe("HiveSpawner wiring", () => {
     }();
     let rolloutReads = 0;
     let processReads = 0;
-    const spawner = new HiveSpawner({
+    const spawner = newTestSpawner({
       isModelEnabled: async () => true,
       db: store,
       repoRoot: root,
@@ -2479,7 +2490,7 @@ describe("HiveSpawner wiring", () => {
     tempRoots.push(root);
     const store = new FakeStore();
     const tmux = new FakeTmux();
-    const spawner = new HiveSpawner({
+    const spawner = newTestSpawner({
       isModelEnabled: async () => true,
       db: store,
       repoRoot: root,
@@ -2524,7 +2535,7 @@ describe("HiveSpawner wiring", () => {
     const store = new FakeStore();
     const tmux = new FakeTmux();
     let removed = 0;
-    const spawner = new HiveSpawner({
+    const spawner = newTestSpawner({
       isModelEnabled: async () => true,
       db: store,
       repoRoot: root,
@@ -2563,7 +2574,7 @@ describe("HiveSpawner wiring", () => {
     tempRoots.push(root);
     const store = new FakeStore();
     let removed = 0;
-    const spawner = new HiveSpawner({
+    const spawner = newTestSpawner({
       isModelEnabled: async () => true,
       db: store,
       repoRoot: root,
@@ -2596,7 +2607,7 @@ describe("HiveSpawner wiring", () => {
     tempRoots.push(root);
     const store = new FakeStore();
     let removed = 0;
-    const spawner = new HiveSpawner({
+    const spawner = newTestSpawner({
       isModelEnabled: async () => true,
       db: store,
       repoRoot: root,
@@ -2829,7 +2840,7 @@ describe("coding guidelines are guaranteed in context at spawn", () => {
     tempRoots.push(root);
     const store = new FakeStore();
     const tmux = new FakeTmux();
-    const spawner = new HiveSpawner({
+    const spawner = newTestSpawner({
       isModelEnabled: async () => true,
       db: store,
       repoRoot: root,
@@ -2860,7 +2871,7 @@ describe("coding guidelines are guaranteed in context at spawn", () => {
     tempRoots.push(root);
     const starts: string[] = [];
     const codexSpawner = (driver: "tui" | "app-server", tmux: FakeTmux) =>
-      new HiveSpawner({
+      newTestSpawner({
         isModelEnabled: async () => true,
         db: new FakeStore(),
         repoRoot: root,
@@ -2991,7 +3002,7 @@ describe("HiveSpawner launch prompt transport", () => {
     store: FakeStore,
     sleep: () => Promise<void>,
   ): HiveSpawner {
-    return new HiveSpawner({
+    return newTestSpawner({
       isModelEnabled: async () => true,
       db: store,
       repoRoot: root,
@@ -3182,7 +3193,7 @@ describe("a refusal names the reason it actually refused for", () => {
     const store = new FakeStore();
     const db = new HiveDatabase(join(root, "refusal-quota.db"));
     const tmux = new FakeTmux();
-    const spawner = new HiveSpawner({
+    const spawner = newTestSpawner({
       ...(enabled === undefined
         ? {}
         : {

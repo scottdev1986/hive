@@ -47,6 +47,7 @@ import {
 import { readBillingWithMemory } from "../daemon/usage-credits";
 import { persistAutonomy } from "../config/autonomy";
 import { readModelInventory } from "../daemon/model-inventory";
+import { verifiedAgentStop } from "../daemon/teardown";
 
 export async function runDaemon(): Promise<void> {
   await acquireDaemonLock();
@@ -161,6 +162,7 @@ export async function runDaemon(): Promise<void> {
     // The release valve reads the provider's own metering, not a model name.
     readBilling: (provider) => readBillingWithMemory(provider),
     tmux,
+    stopSession: verifiedAgentStop(tmux),
     channelsEnabled: config.channels === "auto",
     // Even when quota-aware routing is disabled, critical read-only restarts
     // require a durable accounting lifecycle.
