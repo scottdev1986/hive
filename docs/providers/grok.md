@@ -136,11 +136,11 @@ Per-session artifacts under `~/.grok/sessions/<project>/<session-uuid>/` (`$GROK
 
 ## `.agents/skills` is shared by Grok AND Codex
 
-A cross-vendor contract leak, measured and mitigated. `nativeSkillDirectory()` returns `.agents/skills` for **both** Codex and Grok (`src/adapters/skills.ts:43-57`) — verified with `grok inspect --json` while every compatibility import was disabled: project skills still resolved from `.agents/skills/*/SKILL.md`.
+A cross-vendor contract leak, measured and mitigated. `nativeSkillDirectory()` returns `.agents/skills` for **both** Codex and Grok (`src/adapters/skills.ts:22-32`) — verified with `grok inspect --json` while every compatibility import was disabled: project skills still resolved from `.agents/skills/*/SKILL.md`.
 
-So in a root where both CLIs are installed, **a file written "for Codex" is read by Grok too** (`skillReaders()`, `skills.ts:161-172`).
+So in a root where both CLIs are installed, **a file written "for Codex" is read by Grok too** (`skillReaders()`, `skills.ts:139-147`).
 
-The critical distinction: **`shippedSkillsFor(tool)` decides what Hive WRITES. It says nothing about what a CLI READS.** A per-vendor *write* filter is not an isolation boundary. The actual fix is two-part: `provisionSkills` (`skills.ts:300`) actively **prunes** foreign shipped skills from the shared directory (`removeForeignShippedSkills`, `skills.ts:407-425`), plus withholding at `hive init`. Each skill's `description` naming its vendor in the first clause is a *label* — defence in depth, not the fix.
+The critical distinction: **`shippedSkillsFor(tool)` decides what Hive WRITES. It says nothing about what a CLI READS.** A per-vendor *write* filter is not an isolation boundary. The actual fix is two-part: `provisionSkills` (`skills.ts:233-257`) actively **prunes** foreign shipped skills from the shared directory (`removeForeignShippedSkills`, `skills.ts:268-292`), plus withholding at `hive init`. Each skill's `description` naming its vendor in the first clause is a *label* — defence in depth, not the fix.
 
 The evidence discipline is worth copying: measured by planting uniquely-named probe skills and asking each CLI **what its MODEL sees** (`codex debug prompt-input`; a Grok turn with every tool denied, so the skill catalog was the only path to the probe token). **A directory listing is not evidence that the model reads it.**
 

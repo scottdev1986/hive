@@ -186,14 +186,14 @@ not place — and **both callers read that null as PERMISSION.**
 - **`exhaustion_behavior` does not exist.** The governing doc specified a per-category
   `refuse | use_global_fallback`. There is no such field. Under `choice`, an empty
   category chain and a fully-refused one behave *identically* — both widen to the
-  global default chain (`spawner-impl.ts:1843-1854`). Under `auto` there is **no
+  global default chain (`spawner-impl.ts:1793-1829`). Under `auto` there is **no
   widening at all**. The doc's "**empty ≠ exhausted**" distinction is real, and unbuilt.
 - **There is no coding-capability floor of any kind.** The only floor is
-  `minContextTokens` (`spawner-impl.ts:1642-1658`), which fails closed on an unmeasured
+  `minContextTokens` (`spawner-impl.ts:1607-1617`), which fails closed on an unmeasured
   window. The invariant "a capability floor blocks even a pin" has nothing to enforce.
 - **Identity-from-name-shape survives, in one place.** When `identifyModelVendor`
-  returns `unreadable`, `spawner-impl.ts:1510` falls back to the name-shape regex
-  `modelVendor()` — which (`src/adapters/tools/models.ts:19-31`) knows only `claude`
+  returns `unreadable`, `spawner-impl.ts:1452-1489` falls back to the name-shape regex
+  `modelVendor()` — which (`src/adapters/tools/models.ts:3-15`) knows only `claude`
   and `codex`, **not Grok**. This is exactly the inference the design forbids. Live hole.
 
 ## See Also
