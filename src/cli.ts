@@ -410,7 +410,7 @@ export function createProgram(): Command {
     .command("set-model <provider> <model> <state>")
     .description(
       "Set one model's enablement. Enabling IS the consent to spend on it; " +
-        "unset deletes the row so the model inherits its provider's state.",
+        "unset leaves the model unconfigured even when its provider is enabled.",
     )
     .requiredOption(
       "--expect-revision <revision>",
