@@ -9,12 +9,6 @@ describe("who owns this install", () => {
     expect(method(`${ROOT}/versions/0.0.7/hive`)).toEqual("native");
   });
 
-  test("a Homebrew Cellar binary belongs to Homebrew", () => {
-    expect(method("/opt/homebrew/Cellar/hive/0.0.7/bin/hive")).toEqual("homebrew");
-    expect(method("/usr/local/Cellar/hive/0.0.7/bin/hive")).toEqual("homebrew");
-    expect(method("/opt/homebrew/bin/hive")).toEqual("homebrew");
-  });
-
   test("a release binary somewhere else is unmanaged, not assumed ours", () => {
     // Guessing here means rewriting a file we did not install.
     expect(method("/usr/local/bin/hive")).toEqual("unmanaged");
@@ -26,15 +20,14 @@ describe("who owns this install", () => {
     // dev build copied into the install root is still a dev build.
     expect(detectInstallMethod(`${ROOT}/versions/0.0.7/hive`, ROOT, false))
       .toEqual("source");
-    expect(detectInstallMethod("/opt/homebrew/bin/bun", ROOT, false)).toEqual("source");
+    expect(detectInstallMethod("/usr/local/bin/bun", ROOT, false)).toEqual("source");
   });
 
   test("a path that merely starts with the versions prefix is not inside it", () => {
     expect(method(`${ROOT}/versions-backup/0.0.7/hive`)).toEqual("unmanaged");
   });
 
-  test("each owner is told the command that actually works for them", () => {
+  test("the native owner is told the native update command", () => {
     expect(updateCommand("native")).toEqual("hive update");
-    expect(updateCommand("homebrew")).toEqual("brew upgrade hive");
   });
 });

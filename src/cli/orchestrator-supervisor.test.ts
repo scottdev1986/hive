@@ -27,7 +27,6 @@ function agent(
     capabilityEpoch: 0,
     readOnly: false,
     writeRevoked: false,
-    channelsEnabled: false,
   };
 }
 
@@ -35,6 +34,7 @@ describe("orchestrator session supervisor", () => {
   test("does not replace a startup or finished-session root when no agents are live", async () => {
     const launches: string[] = [];
     const pings: string[] = [];
+    const reports: string[] = [];
     const exitCode = await superviseOrchestratorSession({
       launch: async (brief) => {
         launches.push(brief);
@@ -47,12 +47,15 @@ describe("orchestrator session supervisor", () => {
         let now = 0;
         return () => (now += 60_000);
       })(),
-      report: () => {},
+      report: (message) => { reports.push(message); },
     });
 
     expect(exitCode).toEqual(17);
     expect(launches).toEqual([""]);
     expect(pings).toEqual([]);
+    expect(reports).toEqual([
+      "[hive] orchestrator exited with code 17; no live agents remain",
+    ]);
   });
 
   test("starts a labelled backup and asks every live agent for current work", async () => {

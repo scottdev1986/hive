@@ -23,7 +23,7 @@ final class FeedClient {
     /// passed through as nil rather than dropped, because "we do not know" is a
     /// value the pane must act on, not an absence it may ignore.
     var onSnapshot: (([AgentSnapshot], OrchestratorSnapshot?) -> Void)?
-    /// The daemon's live writer-autonomy dial ("sandboxed"/"dangerous"),
+    /// The daemon's live agent-autonomy dial ("sandboxed"/"dangerous"),
     /// fired for every snapshot line that carries it.
     var onAutonomy: ((String) -> Void)?
     var onError: ((String) -> Void)?

@@ -21,7 +21,7 @@ The blueprint's XPC design gets this for free by omitting tenant IDs from method
 
 Four roles exist (`src/daemon/capabilities.ts:94-133`), and the interesting property of each is what it *cannot* do.
 
-**Operator** — the human's `hive` CLI and the Workspace acting for them. Holds 26 of the 27 actions; the one it lacks is `channel:use`, which is an agent-bridge transport, not a control-plane right. Unrestricted subject scope, deliberately: a caller that can already spawn and kill any agent gains no new authority from also being allowed to name one, so narrowing it would cost clarity and buy nothing.
+**Operator** — the human's `hive` CLI and the Workspace acting for them. Holds all 26 actions. Unrestricted subject scope, deliberately: a caller that can already spawn and kill any agent gains no new authority from also being allowed to name one, so narrowing it would cost clarity and buy nothing.
 
 **Orchestrator** — the root agent. Spawns, approves, kills, recovers, reads the global inbox, reads autonomy. It holds **no landing right and no autonomy/routing/graphify write**, ever. This is the single most important line in the matrix: the process that decides *what work happens* must not be the process that can *put code on `main`*. An orchestrator compromised by prompt injection can waste money; it cannot merge.
 
@@ -31,7 +31,7 @@ Four roles exist (`src/daemon/capabilities.ts:94-133`), and the interesting prop
 
 The asymmetry is the design. **Neither orchestrator nor writer is a superset of the other**, so a captured credential of either kind buys a strict subset of the control plane. There is no role that both decides and merges (`src/daemon/capabilities.ts:93-95`).
 
-## The 27 actions
+## The 26 actions
 
 Enumerated from `src/daemon/capabilities.ts:21-48`. `O` operator, `R` orchestrator, `W` writer, `r` reader.
 
@@ -57,7 +57,6 @@ Enumerated from `src/daemon/capabilities.ts:21-48`. `O` operator, `R` orchestrat
 | `memory:write` | O R W | blocked when `writeRevoked` |
 | `event:report` | O R W r | |
 | `telemetry:report` | O R W r | |
-| `channel:use` | R W r | **operator does not hold it** |
 | `root-token:mint` | O | the one minting carve-out |
 | `autonomy:read` | O R | agents may observe the dial |
 | `autonomy:write` | O | an agent raising it is a sandbox escape |
@@ -77,7 +76,6 @@ Every HTTP route below `/handshake` in `src/daemon/server.ts:2349-2411` authenti
 | `GET /handshake` | — public | — | — | `src/daemon/server.ts:2346-2348` |
 | `POST /event` | `event:report` | self | no | `src/daemon/server.ts:2351-2353` |
 | `POST /statusline` | `telemetry:report` | self | no | `src/daemon/server.ts:2354-2356` |
-| `POST /channel/{register,poll,ack,permission-request}` | `channel:use` | self | register + permission-request only | `src/daemon/server.ts:2395-2397`, `:2443-2505` |
 | `GET /autonomy` | `autonomy:read` | — | no | `src/daemon/server.ts:2357-2362` |
 | `POST /autonomy` | `autonomy:write` | — | yes | `src/daemon/server.ts:2357-2362` |
 | `GET /routing/policy` | `routing-policy:read` | — | no | `src/daemon/server.ts:2363-2368` |

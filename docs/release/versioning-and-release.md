@@ -17,7 +17,7 @@ One push to `main` bumps the patch by exactly one. A push carrying a hundred loc
 
 A commit that already carries a release tag is never released again. That single rule is what makes the pipeline idempotent: re-running the workflow, re-triggering it by hand, or force-pushing a tip that is already tagged all resolve to "nothing to do" (`src/release/plan.ts:94-107`). The tag push itself is a compare-and-swap — `git push` of a ref that exists fails — so two concurrent runs can never both mint `v0.0.7`.
 
-Everything above lives in `src/release/plan.ts` as a pure function, is tested in `plan.test.ts`, and is called by CI through `plan-cli.ts`. **The rule is not written in YAML**, where nothing could test it; `src/release/contract.test.ts:88-91` fails the build if the workflow stops calling the planner or reimplements the bump in shell (`git tag | sort | tail`). It also fails the build if `package.json` starts carrying a release version, or if any module declares a version string of its own. The contract is enforced by the automation, not by memory — which is the point, because memory is exactly what failed when four copies of `"0.1.0"` drifted apart across the daemon, the MCP clients, the channel bridge, and the Codex handshake (`src/release/contract.test.ts:56-64` names all four).
+Everything above lives in `src/release/plan.ts` as a pure function, is tested in `plan.test.ts`, and is called by CI through `plan-cli.ts`. **The rule is not written in YAML**, where nothing could test it; `src/release/contract.test.ts:88-91` fails the build if the workflow stops calling the planner or reimplements the bump in shell (`git tag | sort | tail`). It also fails the build if `package.json` starts carrying a release version, or if any module declares a version string of its own. The contract is enforced by the automation, not by memory — which is the point, because memory is exactly what failed when copies of `"0.1.0"` drifted apart across the daemon, MCP clients, and provider handshakes (`src/release/contract.test.ts:56-64` enforces the single source).
 
 Staying patch-only is a deliberate refusal to decide something we cannot yet decide. We are a long way from knowing what a minor bump would mean for Hive, and a scheme with one moving part cannot drift. The alternative was conventional commits — read intent from commit messages, bump minor on `feat:`. It loses because it makes the version a function of prose nobody proofreads, and it mints `0.1.0` the first time someone types the wrong prefix. A version tag outside `v0.0.x` is therefore not noise to skip but a contract violation: `planRelease` **throws** rather than mint `v0.0.8` *behind* a stray `v0.1.0` and hand two builds a descending version order (`src/release/plan.ts:42-59`). `v0.0.007` is refused for the same reason — a second name for one release (`src/release/plan.ts:38-39`). Comparison is numeric, not lexicographic, so `v0.0.9` does not outrank `v0.0.10` (`src/release/plan.ts:64-68`). When Hive is ready for `0.1.0`, that is a deliberate edit to this document and to `plan.ts`, together.
 
@@ -87,7 +87,7 @@ After activation, the health check runs; if the new binary cannot say its own na
 
 Rollback is equally fail-closed. Before moving `current`, it re-verifies `release-verification.json`, checks that the signed manifest names the requested version and current architecture, and hashes the retained CLI. Versions staged before this proof existed, or whose sidecar or binary was altered, are refused with an exact-version reinstall remedy (`src/update/install.ts:536-618`).
 
-Ownership decides who may write. A Homebrew-owned install is told `brew upgrade hive` and is never rewritten, because two owners for one install is how a package receipt starts lying; Codex does the same thing, dispatching to the package manager that installed it. A binary sitting somewhere Hive did not put it is `unmanaged` and refused rather than guessed at. A source checkout is a source checkout *wherever it sits*, including inside the install root — identified by what it is (`IS_RELEASE_BUILD`), not by where it lives (`src/update/paths.ts:58-74`).
+Ownership decides who may write. A binary sitting somewhere Hive did not put it is `unmanaged` and refused rather than guessed at. A source checkout is a source checkout *wherever it sits*, including inside the install root — identified by what it is (`IS_RELEASE_BUILD`), not by where it lives (`src/update/paths.ts:54-68`). The only self-updating installation is Hive's native versioned layout.
 
 ### The daemon is why activation is not a file copy
 
@@ -170,8 +170,6 @@ Skipping step 1 is the flag day: the release that introduces the key is the rele
 - Run `hive update status`. `signature key:` must read `embedded (1 key) — a valid signature is required to install`. A binary that says `none` cannot verify anything, and is either a checkout or a release from before 0.0.6.
 - Run `hive update`. It must name what it checked — `verified: Ed25519 signature, SHA-256, binary probed` — and must never print the UNSIGNED banner.
 
-**A `hive` Homebrew tap**, if the secondary channel is wanted. Hive already detects a Homebrew-owned install and refuses to rewrite it; nothing else is built.
-
 ## Open questions
 
 **Who checks in the background.** [update-experience.md](update-experience.md) argues the daemon should own checking on a jittered ~24-hour timer while the CLI owns telling — Hive's structural advantage over `gh` and `npm`, since checks would happen every 24 hours of use rather than once per invocation burst. That is **not what shipped**: no daemon calls `checkForUpdate` (`src/update/check.ts:11-13` says so in as many words), and every check today is a CLI check against a 24-hour on-disk cache — `hive init`/bare `hive` at the session boundary, and the trailing notice on a short 300 ms network budget. A long-running daemon still learns about a release only when a human types a command.
@@ -185,6 +183,6 @@ Skipping step 1 is the flag day: the release that introduces the key is the rele
 ## See Also
 
 - [update-experience.md](update-experience.md) — the notice surfaces, the opt-outs, and the ecosystem survey behind them
-- [distribution.md](distribution.md) — why a native installer, why not npm/Homebrew/Sparkle, and the honest gaps in the installer
+- [distribution.md](distribution.md) — why Hive owns its native installer and the honest gaps in the bootstrap
 - [../daemon/database-resilience.md](../daemon/database-resilience.md) — what a daemon restart at activation has to protect
 - [../../SPEC.md](../../SPEC.md) — the product contract the release pipeline serves

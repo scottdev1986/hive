@@ -45,6 +45,7 @@ import { IS_RELEASE_BUILD } from "../version";
 import { orchestratorTmuxSession } from "../daemon/tmux-sessions";
 import {
   hiveInstanceSuffix,
+  hiveTmuxSocketName,
   isDefaultHiveHome,
 } from "../daemon/tmux-sessions";
 import { getHiveHome } from "../daemon/db";
@@ -85,22 +86,86 @@ export interface LaunchDeps {
   };
 }
 
-const openApp = (app: string, args: readonly string[]): Promise<number> =>
-  new Promise((resolvePromise, reject) => {
-    // `open -a` hands off to LaunchServices, which reuses a running instance —
-    // the Workspace multiplexes project windows in one process by design.
-    const child = spawn("open", [
-      ...(isDefaultHiveHome() ? [] : ["-n"]),
-      "-a",
-      app,
-      "--args",
-      ...args,
-    ], {
+const WORKSPACE_PROCESS_MARKER =
+  "HiveWorkspace.app/Contents/MacOS/HiveWorkspace";
+
+export function workspaceLaunchNeedsNewProcess(
+  processTable: string,
+  instanceId = hiveInstanceSuffix(),
+): boolean {
+  for (const line of processTable.split("\n")) {
+    const executable = line.indexOf(WORKSPACE_PROCESS_MARKER);
+    if (executable < 0) continue;
+    const command = line.slice(executable + WORKSPACE_PROCESS_MARKER.length);
+    const running = /(?:^|\s)--instance-id\s+([^\s]+)/.exec(command)?.[1];
+    // A project-neutral window has no instance id and cannot safely absorb a
+    // project launch either: LaunchServices would activate it and discard the
+    // new argv just as it does for a different named instance.
+    if (running !== instanceId) return true;
+  }
+  return false;
+}
+
+export function workspaceOpenArguments(
+  app: string,
+  args: readonly string[],
+  newProcess: boolean,
+  path = process.env.PATH,
+  temporaryDirectory = process.env.TMPDIR,
+): string[] {
+  return [
+    ...(newProcess ? ["-n"] : []),
+    "-a",
+    app,
+    // LaunchServices creates `open -n` processes from launchd's environment,
+    // which can omit package-manager tools and user-installed provider CLIs. Pass the
+    // caller's resolved command path across that process boundary explicitly.
+    ...(path === undefined ? [] : ["--env", `PATH=${path}`]),
+    // SwiftTerm starts the root from an explicit environment rather than the
+    // app's full inherited environment. Preserve macOS's private per-user temp
+    // directory across both LaunchServices and that terminal boundary; without
+    // it Node falls back to the /tmp symlink and Codex app-server refuses the
+    // socket parent as "not a directory".
+    ...(temporaryDirectory === undefined
+      ? []
+      : ["--env", `TMPDIR=${temporaryDirectory}`]),
+    "--args",
+    ...args,
+  ];
+}
+
+const readWorkspaceProcessTable = (): Promise<string | null> =>
+  new Promise((resolvePromise) => {
+    const child = spawn("ps", ["-axo", "command="], {
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    let stdout = "";
+    child.stdout?.setEncoding("utf8");
+    child.stdout?.on("data", (chunk: string) => {
+      stdout += chunk;
+    });
+    child.on("error", () => resolvePromise(null));
+    child.on("close", (code) => resolvePromise(code === 0 ? stdout : null));
+  });
+
+const openApp = async (
+  app: string,
+  args: readonly string[],
+): Promise<number> => {
+  // A named instance always owns a separate process. The default instance may
+  // reuse only a Workspace already carrying its own instance id; macOS cannot
+  // pass new --args to a running process owned by another Hive instance.
+  const table = isDefaultHiveHome() ? await readWorkspaceProcessTable() : null;
+  const newProcess = !isDefaultHiveHome() || table === null ||
+    workspaceLaunchNeedsNewProcess(table);
+  return await new Promise((resolvePromise, reject) => {
+    const child = spawn("open", workspaceOpenArguments(app, args, newProcess), {
       stdio: "ignore",
     });
     child.on("error", reject);
     child.on("close", (code) => resolvePromise(code ?? 0));
   });
+};
 
 export async function launchWorkspace(deps: LaunchDeps): Promise<number> {
   const root = deps.root ?? installRoot();
@@ -128,6 +193,8 @@ export async function launchWorkspace(deps: LaunchDeps): Promise<number> {
         deps.session.hivePath ?? process.execPath,
         "--orchestrator-session",
         orchestratorTmuxSession(),
+        "--tmux-socket",
+        hiveTmuxSocketName(),
         ...(deps.session.orchestrator === undefined
           ? []
           : ["--orchestrator", deps.session.orchestrator]),

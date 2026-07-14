@@ -7,6 +7,7 @@ import {
   cleanupLifecycleFiles,
   daemonInstanceLiveness,
   daemonSpawnArgv,
+  hiveCliSpawnArgv,
   getDaemonLockPath,
   getPidFilePath,
   getPortFilePath,
@@ -34,9 +35,16 @@ const handshake: DaemonHandshake = {
 };
 
 describe("respawning as the daemon", () => {
+  test("names this exact CLI build before adding a subcommand", () => {
+    expect(hiveCliSpawnArgv(false, "/usr/local/bin/bun", "/repo/src/cli.ts"))
+      .toEqual(["/usr/local/bin/bun", "/repo/src/cli.ts"]);
+    expect(hiveCliSpawnArgv(true, "/tmp/hive/versions/0.0.0/hive"))
+      .toEqual(["/tmp/hive/versions/0.0.0/hive"]);
+  });
+
   test("a source checkout names the entry script, because bun is the executable", () => {
-    expect(daemonSpawnArgv(false, "/opt/homebrew/bin/bun", "/repo/src/cli.ts"))
-      .toEqual(["/opt/homebrew/bin/bun", "/repo/src/cli.ts", "daemon"]);
+    expect(daemonSpawnArgv(false, "/usr/local/bin/bun", "/repo/src/cli.ts"))
+      .toEqual(["/usr/local/bin/bun", "/repo/src/cli.ts", "daemon"]);
   });
 
   test("a release build spawns itself, never a path inside its own bundle", () => {

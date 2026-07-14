@@ -12,7 +12,7 @@ import {
 import { HiveDatabase } from "./db";
 import {
   MessageDelivery,
-  type ChannelDeliverer,
+  type RootProtocolDeliverer,
   type TmuxSender,
 } from "./delivery";
 import {
@@ -57,7 +57,6 @@ function agent(overrides: Partial<AgentRecord> = {}): AgentRecord {
     capabilityEpoch: 0,
     readOnly: false,
     writeRevoked: false,
-    channelsEnabled: false,
     ...overrides,
   };
 }
@@ -70,13 +69,12 @@ class RecordingSender implements TmuxSender {
   }
 }
 
-class RecordingChannel implements ChannelDeliverer {
+class RecordingRootProtocol implements RootProtocolDeliverer {
   readonly calls: Array<{ content: string; meta: Record<string, string> }> = [];
   live = true;
   confirmed = true;
   isLive(): boolean { return this.live; }
   async deliverMessage(
-    _agent: string,
     content: string,
     meta: Record<string, string>,
   ): Promise<boolean> {
@@ -140,11 +138,11 @@ describe("event-driven orchestrator lifecycle", () => {
     }
   });
 
-  test("an agent message reaches the root over Channels without touching tmux", async () => {
+  test("an agent message reaches the root protocol without touching tmux", async () => {
     const db = new HiveDatabase(join(home, "wake.db"));
     const sender = new RecordingSender();
-    const channel = new RecordingChannel();
-    const delivery = new MessageDelivery(db, sender, undefined, undefined, channel);
+    const root = new RecordingRootProtocol();
+    const delivery = new MessageDelivery(db, sender, undefined, undefined, root);
     try {
       const message = await delivery.send(
         "maya", ORCHESTRATOR_NAME, "The implementation is ready for review.",
@@ -153,8 +151,8 @@ describe("event-driven orchestrator lifecycle", () => {
       expect(message.deliveredAt).not.toEqual(null);
       expect(message.state).toEqual("injected");
       expect(sender.calls).toEqual([]);
-      expect(channel.calls[0]?.content).toContain('"kind":"hive.message"');
-      expect(channel.calls[0]?.content).toContain('"from":"maya"');
+      expect(root.calls[0]?.content).toContain('"kind":"hive.message"');
+      expect(root.calls[0]?.content).toContain('"from":"maya"');
     } finally {
       db.close();
     }
@@ -179,7 +177,6 @@ describe("event-driven orchestrator lifecycle", () => {
       sender,
       undefined,
       undefined,
-      undefined,
       rootProtocol,
     );
     try {
@@ -198,10 +195,9 @@ describe("event-driven orchestrator lifecycle", () => {
     }
   });
 
-  test("an unconfirmed root-protocol wake falls through to the Claude channel", async () => {
+  test("an unconfirmed root-protocol wake remains durable", async () => {
     const db = new HiveDatabase(join(home, "root-protocol-fallthrough.db"));
     const sender = new RecordingSender();
-    const channel = new RecordingChannel();
     // A stale codex root socket: isLive says yes, delivery cannot confirm.
     const rootProtocol = {
       isLive: () => true,
@@ -212,7 +208,6 @@ describe("event-driven orchestrator lifecycle", () => {
       sender,
       undefined,
       undefined,
-      channel,
       rootProtocol,
     );
     try {
@@ -222,20 +217,20 @@ describe("event-driven orchestrator lifecycle", () => {
         "Report for whichever root is real.",
       );
 
-      expect(message.state).toEqual("injected");
-      expect(channel.calls).toHaveLength(1);
+      expect(message.state).toEqual("queued");
+      expect(message.deliveredAt).toBeNull();
       expect(sender.calls).toEqual([]);
     } finally {
       db.close();
     }
   });
 
-  test("keeps a root report durable until its verified channel is live", async () => {
-    const db = new HiveDatabase(join(home, "root-channel-unavailable.db"));
+  test("keeps a root report durable until its verified protocol is live", async () => {
+    const db = new HiveDatabase(join(home, "root-protocol-unavailable.db"));
     const sender = new RecordingSender();
-    const channel = new RecordingChannel();
-    channel.live = false;
-    const delivery = new MessageDelivery(db, sender, undefined, undefined, channel);
+    const root = new RecordingRootProtocol();
+    root.live = false;
+    const delivery = new MessageDelivery(db, sender, undefined, undefined, root);
     try {
       const queued = await delivery.send(
         "maya",
@@ -250,22 +245,22 @@ describe("event-driven orchestrator lifecycle", () => {
     }
   });
 
-  test("delivers a durable root report once its channel registers", async () => {
-    const db = new HiveDatabase(join(home, "root-channel-eventual-delivery.db"));
+  test("delivers a durable root report once its protocol becomes live", async () => {
+    const db = new HiveDatabase(join(home, "root-protocol-eventual-delivery.db"));
     const sender = new RecordingSender();
-    const channel = new RecordingChannel();
-    channel.live = false;
-    const delivery = new MessageDelivery(db, sender, undefined, undefined, channel);
+    const root = new RecordingRootProtocol();
+    root.live = false;
+    const delivery = new MessageDelivery(db, sender, undefined, undefined, root);
     try {
       const queued = await delivery.send("maya", ORCHESTRATOR_NAME, "Ready.");
       expect(db.getMessage(queued.id)?.deliveredAt).toEqual(null);
 
-      channel.live = true;
+      root.live = true;
       const delivered = await delivery.wakeOrchestrator();
 
       expect(delivered).toHaveLength(1);
       expect(sender.calls).toEqual([]);
-      expect(channel.calls).toHaveLength(1);
+      expect(root.calls).toHaveLength(1);
       expect(db.getMessage(queued.id)?.deliveredAt).not.toEqual(null);
     } finally {
       db.close();
@@ -303,8 +298,8 @@ describe("event-driven orchestrator lifecycle", () => {
   test("orders and deduplicates concurrent root messages by durable insertion", async () => {
     const db = new HiveDatabase(join(home, "ordering.db"));
     const sender = new RecordingSender();
-    const channel = new RecordingChannel();
-    const delivery = new MessageDelivery(db, sender, undefined, undefined, channel);
+    const root = new RecordingRootProtocol();
+    const delivery = new MessageDelivery(db, sender, undefined, undefined, root);
     try {
       const delivered = await Promise.all([
         delivery.send("maya", ORCHESTRATOR_NAME, "first"),
@@ -312,7 +307,7 @@ describe("event-driven orchestrator lifecycle", () => {
         delivery.send("nina", ORCHESTRATOR_NAME, "third"),
       ]);
 
-      expect(channel.calls.map((call) =>
+      expect(root.calls.map((call) =>
         JSON.parse(call.content.slice(3)) as { body: string }
       ).map((envelope) => envelope.body)).toEqual([
         "first",
@@ -325,7 +320,7 @@ describe("event-driven orchestrator lifecycle", () => {
       );
       expect(await delivery.wakeOrchestrator()).toEqual([]);
       expect(sender.calls).toEqual([]);
-      expect(channel.calls).toHaveLength(3);
+      expect(root.calls).toHaveLength(3);
     } finally {
       db.close();
     }
@@ -334,8 +329,8 @@ describe("event-driven orchestrator lifecycle", () => {
   test("bounds injected context and leaves the full report behind a reference", async () => {
     const db = new HiveDatabase(join(home, "bounded.db"));
     const sender = new RecordingSender();
-    const channel = new RecordingChannel();
-    const delivery = new MessageDelivery(db, sender, undefined, undefined, channel);
+    const root = new RecordingRootProtocol();
+    const delivery = new MessageDelivery(db, sender, undefined, undefined, root);
     const body = `${'"\\n'.repeat(20_000)}${"🚀".repeat(20_000)}`;
     try {
       const stored = await delivery.send("maya", ORCHESTRATOR_NAME, body);
@@ -349,7 +344,7 @@ describe("event-driven orchestrator lifecycle", () => {
       expect(envelope.ref).toContain("hive_read_message");
       expect(delivery.readOrchestratorMessage(stored.id)?.body).toEqual(body);
       expect(sender.calls).toEqual([]);
-      expect(channel.calls[0]?.content).toEqual(wake);
+      expect(root.calls[0]?.content).toEqual(wake);
     } finally {
       db.close();
     }

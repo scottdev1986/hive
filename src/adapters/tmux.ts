@@ -1,4 +1,7 @@
-import { isTmuxSessionForInstance } from "../daemon/tmux-sessions";
+import {
+  hiveTmuxSocketName,
+  isTmuxSessionForInstance,
+} from "../daemon/tmux-sessions";
 
 interface TmuxResult {
   stdout: string;
@@ -105,11 +108,15 @@ export class TmuxAdapter {
   private readonly run: TmuxRunner;
   private readonly sleep: (milliseconds: number) => Promise<void>;
   private readonly enterDelayMs: number;
+  private readonly socketName: string;
+  private readonly validateInstanceOwnership: boolean;
 
   constructor(
-    private readonly socketName?: string,
+    socketName?: string,
     options: TmuxAdapterOptions = {},
   ) {
+    this.socketName = socketName ?? hiveTmuxSocketName();
+    this.validateInstanceOwnership = socketName === undefined;
     this.run = options.run ?? runTmux;
     this.sleep = options.sleep ??
       ((milliseconds) =>
@@ -120,7 +127,7 @@ export class TmuxAdapter {
   private validateTarget(session: string): void {
     validateSessionName(session);
     if (
-      this.socketName === undefined &&
+      this.validateInstanceOwnership &&
       !isTmuxSessionForInstance(session)
     ) {
       throw new Error(
@@ -318,7 +325,7 @@ export class TmuxAdapter {
       .split("\n")
       .map((name) => name.trim())
       .filter((name) => name.length > 0);
-    return this.socketName === undefined
+    return this.validateInstanceOwnership
       ? sessions.filter((session) => isTmuxSessionForInstance(session))
       : sessions;
   }

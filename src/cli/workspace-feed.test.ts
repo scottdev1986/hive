@@ -10,8 +10,10 @@ import {
   FEED_HEARTBEAT_MS,
   FEED_POLL_MS,
   FEED_RETRY_MAX_MS,
+  parseOrchestratorStatus,
   runWorkspaceFeed,
 } from "./workspace-feed";
+import type { OrchestratorStatus } from "../daemon/orchestrator-status";
 
 const timestamp = "2026-07-10T12:00:00.000Z";
 
@@ -34,7 +36,6 @@ function agent(name: string, overrides: Partial<AgentRecord> = {}): AgentRecord 
     capabilityEpoch: 0,
     readOnly: false,
     writeRevoked: false,
-    channelsEnabled: false,
     ...overrides,
   };
 }
@@ -57,7 +58,7 @@ async function runScript(
   steps: Step[],
   fetchAutonomy: () => Promise<"sandboxed" | "dangerous" | null> = async () =>
     null,
-  fetchOrchestrator: () => Promise<"working" | "idle" | null> = async () => null,
+  fetchOrchestrator: () => Promise<OrchestratorStatus | null> = async () => null,
 ): Promise<FeedRun> {
   const controller = new AbortController();
   const lines: Array<Record<string, unknown>> = [];
@@ -103,6 +104,14 @@ const lastFailure = (message: string): Step => (abort) => {
 };
 
 describe("runWorkspaceFeed", () => {
+  test("preserves every known orchestrator lifecycle word", () => {
+    for (const status of ["spawning", "working", "idle", "exited"] as const) {
+      expect(parseOrchestratorStatus(status)).toEqual(status);
+    }
+    expect(parseOrchestratorStatus("running")).toEqual(null);
+    expect(parseOrchestratorStatus(undefined)).toEqual(null);
+  });
+
   test("emits the shared wire snapshot, stays silent while unchanged, heartbeats at 5s", async () => {
     const run = await runScript(
       [

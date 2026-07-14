@@ -8,12 +8,14 @@ import {
   type ResolvedClaudeExecutable,
   writeClaudeAgentConfig,
 } from "../adapters/tools/claude";
-import { CHANNELS_MIN_VERSION, versionAtLeast } from "../daemon/channels";
 import { writeCredential } from "../daemon/credentials";
 import { getHiveHome } from "../daemon/db";
 import { operatorHeaders } from "./credential";
 import { orchestratorTmuxSession } from "../daemon/orchestrator-lifecycle";
-import { hiveInstanceSuffix } from "../daemon/tmux-sessions";
+import {
+  hiveInstanceSuffix,
+  hiveTmuxSocketName,
+} from "../daemon/tmux-sessions";
 import { unknownVendor } from "../schemas";
 import { ORCHESTRATOR_BRIEF, orchestratorDocGuidance } from "./orchestrator-brief";
 import { ensureProfile } from "../adapters/profile";
@@ -25,6 +27,13 @@ import {
   writeGrokAgentConfig,
 } from "../adapters/tools/grok";
 import type { CapabilityProvider } from "../schemas";
+import {
+  buildCodexMcpExclusionArgs,
+  listInheritedCodexMcpServers,
+} from "../adapters/tools/mcp-scope";
+import { CODEX_CAPABILITY_TOKEN_ENV } from "../adapters/tools/codex";
+import { hiveCliSpawnArgv } from "../daemon/lifecycle";
+import { IS_RELEASE_BUILD } from "../version";
 
 export type OrchestratorTool = CapabilityProvider;
 
@@ -52,6 +61,7 @@ export function codexRootSocketPath(hiveHome?: string): string {
 export function buildCodexRootAuthorityCommand(
   socketPath = codexRootSocketPath(),
   codexArguments: readonly string[] = [],
+  capabilityTokenFile = "",
 ): string[] {
   const shellQuote = (value: string): string =>
     `'${value.replaceAll("'", `'"'"'`)}'`;
@@ -59,13 +69,38 @@ export function buildCodexRootAuthorityCommand(
     "codex",
     "--remote",
     `unix://${socketPath}`,
+    // Keep startup and disconnect diagnostics visible in the native terminal.
+    // The alternate screen erases the only provider evidence when a remote
+    // TUI exits before it creates a thread.
+    "--no-alt-screen",
     ...codexArguments,
   ].map(shellQuote).join(" ");
+  // The app-server authority owns MCP/App startup. Passing these only to the
+  // remote TUI is too late: an inherited server can already be blocking the
+  // root before the client connects. Replay only authority-safe Codex config
+  // overrides here, including Hive: MCP servers are created by the authority,
+  // so passing Hive only to the remote TUI leaves the root with no Hive tools.
+  const authorityConfigArguments: string[] = [];
+  for (let index = 0; index < codexArguments.length; index += 1) {
+    if (codexArguments[index] !== "-c") continue;
+    const value = codexArguments[index + 1];
+    if (value === undefined) continue;
+    authorityConfigArguments.push("-c", value);
+    index += 1;
+  }
+  const authorityConfig = authorityConfigArguments.length === 0
+    ? ""
+    : ` ${authorityConfigArguments.map(shellQuote).join(" ")}`;
   const quotedSocket = shellQuote(socketPath);
+  const capabilityEnvironment = capabilityTokenFile === ""
+    ? ""
+    : `export ${CODEX_CAPABILITY_TOKEN_ENV}="$(cat ${
+      shellQuote(capabilityTokenFile)
+    })"; `;
   return [
     "sh",
     "-lc",
-    `codex app-server --listen ${shellQuote(`unix://${socketPath}`)} & authority=$!; ` +
+    `${capabilityEnvironment}codex app-server --listen ${shellQuote(`unix://${socketPath}`)}${authorityConfig} & authority=$!; ` +
       `trap 'kill "$authority" 2>/dev/null || true' EXIT INT TERM; ` +
       `for attempt in $(seq 1 50); do ` +
       `test -S ${quotedSocket} && break; sleep 0.1; done; ` +
@@ -114,10 +149,12 @@ export function orchestratorConfigRoot(): string {
   return join(getHiveHome(), "runtime", "orchestrator");
 }
 
-/** The credential-store subject holding the single-use Codex root token. */
+/** The credential-store subject holding the Codex root's local Hive
+ * capability. This authorizes Hive control-plane calls; it is not a provider
+ * credential and Hive never reads or manages provider secrets. */
 export const CODEX_ROOT_TOKEN_SUBJECT = "codex-root";
 
-/** Ask the daemon to mint a single-use, short-lived root token. Returns null
+/** Ask the daemon to mint a root capability. Returns null
  * when the daemon does not offer the endpoint yet or refuses — the launch
  * proceeds without a token rather than failing, matching the pre-token
  * behavior until the daemon side lands. */
@@ -137,11 +174,11 @@ export async function requestCodexRootToken(
     : null;
 }
 
-/** Provision the Codex root capability: mint a single-use token and write it
+/** Provision the Codex root capability: mint a token and write it
  * to a 0600 file inside the 0700 credentials directory under the resolved
- * Hive home. Only the PATH is returned — the token itself never reaches argv,
- * env, or .codex/config.toml; the daemon exchanges it once over the root
- * socket for a connection-bound session and invalidates it on first use. */
+ * Hive home. Only the PATH is returned. The launch shell reads it into the
+ * process-local bearer environment Codex supports; the token itself never
+ * reaches argv or .codex/config.toml. */
 export async function provisionCodexRootToken(
   port: number,
   request: (port: number) => Promise<string | null> = requestCodexRootToken,
@@ -163,7 +200,7 @@ export async function prepareOrchestratorConfig(
         daemonPort: port,
         name: "orchestrator",
         readOnly: true,
-        channels: true,
+        hiveCommand: hiveCliSpawnArgv(IS_RELEASE_BUILD, process.execPath),
       });
       return;
     case "codex":
@@ -205,6 +242,7 @@ export function buildOrchestratorCommand(
   executable = "claude",
   codexTokenFile = "",
   recoveryBrief = "",
+  codexMcpExclusionArgs: readonly string[] = [],
 ): string[] {
   const brief = [ORCHESTRATOR_BRIEF, recoveryBrief, docGuidance, memoryIndex]
     .filter((part) => part !== "")
@@ -219,7 +257,6 @@ export function buildOrchestratorCommand(
           worktreePath: process.cwd(),
           daemonPort: port,
           readOnly: true,
-          channels: true,
           executable,
           scopedSettingsPath: join(configRoot, ".claude", "settings.local.json"),
           scopedMcpConfigPath: join(configRoot, ".mcp.json"),
@@ -230,15 +267,29 @@ export function buildOrchestratorCommand(
     case "codex":
       return [
         "codex",
+        // Apps/connectors are a separate Codex feature, not an inherited
+        // mcp_servers table, and can otherwise hold the root at startup on
+        // `codex_apps`. Hive orchestration needs only Hive's own MCP server.
+        "-c",
+        "features.apps=false",
+        // The root is a Hive coordinator, not a general-purpose Codex
+        // session. Detach addressable MCP servers inherited from the user's
+        // global config for this process only, exactly as Codex agents do.
+        // This prevents an unrelated server's startup from blocking Hive.
+        ...codexMcpExclusionArgs,
         "-c",
         `mcp_servers.hive.url="http://127.0.0.1:${port}/mcp"`,
-        // The token FILE PATH, never the token: paths are not secrets, so argv
-        // and ps can see this. Codex ignores the unknown key (verified against
-        // codex-cli 0.144.1); the daemon reads it during the root-socket
-        // exchange.
+        // The read-only root exists to call Hive's capability-scoped
+        // orchestration tools. A prompt here deadlocks unattended delegation;
+        // pre-approve only this Hive-owned server, never inherited MCPs.
+        "-c",
+        'mcp_servers.hive.default_tools_approval_mode="approve"',
+        // Codex's supported bearer indirection. The launch shell populates
+        // this process-local variable from the 0600 capability file; neither
+        // the token nor a made-up config key appears in argv.
         ...(codexTokenFile === "" ? [] : [
           "-c",
-          `mcp_servers.hive.capability_token_file=${JSON.stringify(codexTokenFile)}`,
+          `mcp_servers.hive.bearer_token_env_var=${JSON.stringify(CODEX_CAPABILITY_TOKEN_ENV)}`,
         ]),
         "--sandbox",
         "read-only",
@@ -272,6 +323,7 @@ export function buildOrchestratorLaunchCommand(
   executable = "claude",
   codexTokenFile = "",
   recoveryBrief = "",
+  codexMcpExclusionArgs: readonly string[] = [],
 ): string[] {
   switch (tool) {
     case "codex": {
@@ -286,14 +338,21 @@ export function buildOrchestratorLaunchCommand(
         "claude",
         codexTokenFile,
         recoveryBrief,
+        codexMcpExclusionArgs,
       );
-      return ["tmux", "new-session", "-s", orchestratorTmuxSession(), "-c", cwd,
-        ...buildCodexRootAuthorityCommand(undefined, codexCommand.slice(1)),
+      return ["tmux", "-L", hiveTmuxSocketName(), "new-session", "-s", orchestratorTmuxSession(), "-c", cwd,
+        ...buildCodexRootAuthorityCommand(
+          undefined,
+          codexCommand.slice(1),
+          codexTokenFile,
+        ),
         ";", "set-option", "-g", "mouse", "on"];
     }
     case "claude":
       return [
         "tmux",
+        "-L",
+        hiveTmuxSocketName(),
         "new-session",
         "-s",
         orchestratorTmuxSession(),
@@ -317,6 +376,8 @@ export function buildOrchestratorLaunchCommand(
     case "grok":
       return [
         "tmux",
+        "-L",
+        hiveTmuxSocketName(),
         "new-session",
         "-s",
         orchestratorTmuxSession(),
@@ -356,6 +417,9 @@ export async function launchOrchestrator(
   resolveExecutable: () => ResolvedClaudeExecutable = resolveWorkingClaudeExecutable,
   tmux: OrchestratorTmux = new TmuxAdapter(),
   recoveryBrief = "",
+  listCodexMcpServers: () => Promise<string[]> = listInheritedCodexMcpServers,
+  provisionCodexToken: (port: number) => Promise<string | null> =
+    provisionCodexRootToken,
 ): Promise<number> {
   // Resolve and gate Claude only for the Claude path. A Codex orchestrator
   // must not require an unrelated Claude installation.
@@ -365,19 +429,18 @@ export async function launchOrchestrator(
       const claude = resolveExecutable();
       claudePath = claude.path;
       const version = await (detectVersion ?? (async () => claude.version))();
-      if (version === null || !versionAtLeast(version, CHANNELS_MIN_VERSION)) {
+      if (version === null) {
         throw new Error(
-          `the orchestrator needs Claude ${CHANNELS_MIN_VERSION} or newer (for Channels)\n` +
-            "Fix: update Claude Code, then retry",
+          "the Claude orchestrator needs a working Claude Code CLI\n" +
+            "Fix: repair or install Claude Code, then retry",
         );
       }
       break;
     }
     case "codex":
-      // No gate: Codex's own binary is what launches, and Channels is a Claude
-      // feature. A future vendor must state its own minimum here rather than
-      // inherit Codex's silence — an ungated launch of a CLI too old for the
-      // hive MCP server stalls instead of failing.
+      // No version gate today: a future vendor must state its own minimum here
+      // rather than inherit Codex's silence — an ungated launch of a CLI too
+      // old for the Hive MCP server stalls instead of failing.
       break;
     case "grok":
       if (probeGrokCliVersion() === null) {
@@ -390,23 +453,20 @@ export async function launchOrchestrator(
   await prepareFreshOrchestratorSession(tmux);
   await prepareOrchestratorConfig(tool, port, cwd);
   let codexTokenFile = "";
+  let codexMcpExclusionArgs: string[] = [];
   switch (tool) {
     case "codex": {
-      const provisioned = await provisionCodexRootToken(port).catch(() => null);
+      codexMcpExclusionArgs = buildCodexMcpExclusionArgs(
+        await listCodexMcpServers(),
+      ).args;
+      const provisioned = await provisionCodexToken(port).catch(() => null);
       if (provisioned === null) {
-        // A daemon predating the mint endpoint; degrade to the old
-        // unauthenticated root rather than refuse to launch.
-        //
-        // Deliberately not printed. "No single-use Codex root token available
-        // from the daemon" names our own plumbing, and there is nothing the
-        // user can do with it — no command, no setting, no decision. A message
-        // that cannot be acted on is not a warning, it is noise, and it trains
-        // people to ignore the messages that do matter. The condition is real,
-        // so it goes where a real diagnostic goes: the daemon's log, on the
-        // side that knows it happened.
-      } else {
-        codexTokenFile = provisioned;
+        throw new Error(
+          "the Hive daemon could not authorize the Codex orchestrator\n" +
+            "Fix: run `hive stop`, then reopen Hive",
+        );
       }
+      codexTokenFile = provisioned;
       break;
     }
     case "claude":
@@ -434,6 +494,7 @@ export async function launchOrchestrator(
       claudePath,
       codexTokenFile,
       recoveryBrief,
+      codexMcpExclusionArgs,
     ),
     {
       cwd,

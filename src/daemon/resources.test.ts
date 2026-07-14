@@ -19,13 +19,13 @@ const sample = (
 describe("parseProcessTable", () => {
   test("parses ps output and converts rss to megabytes", () => {
     const parsed = parseProcessTable([
-      "  101     1  2048 /opt/homebrew/bin/bun test",
+      "  101     1  2048 /usr/local/bin/bun test",
       "  202   101 10240 codex app-server --stdio",
       "garbage line",
       "",
     ].join("\n"));
     expect(parsed).toEqual([
-      { pid: 101, ppid: 1, rssMb: 2, command: "/opt/homebrew/bin/bun test" },
+      { pid: 101, ppid: 1, rssMb: 2, command: "/usr/local/bin/bun test" },
       { pid: 202, ppid: 101, rssMb: 10, command: "codex app-server --stdio" },
     ]);
   });

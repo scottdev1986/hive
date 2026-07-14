@@ -39,7 +39,6 @@ export type Action =
   | "memory:write"
   | "event:report"
   | "telemetry:report"
-  | "channel:use"
   | "root-token:mint"
   | "autonomy:read"
   | "autonomy:write"
@@ -108,7 +107,7 @@ export const ROLE_GRANTS: Readonly<Record<Role, RoleGrant>> = {
       "agent:mark-dead", "agent:recover", "approval:read", "approval:decide",
       "message:send", "message:ack", "message:read", "inbox:read",
       "memory:read", "memory:write", "event:report", "telemetry:report",
-      "channel:use", "autonomy:read",
+      "autonomy:read",
     ],
     anySubject: AGENT_DIRECTED,
     oneShot: [],
@@ -117,7 +116,7 @@ export const ROLE_GRANTS: Readonly<Record<Role, RoleGrant>> = {
     actions: [
       "status:read", "quota:read", "message:send", "message:ack", "inbox:read",
       "branch:land", "memory:read", "memory:write", "event:report",
-      "telemetry:report", "channel:use",
+      "telemetry:report",
     ],
     anySubject: [],
     oneShot: ["branch:land"],
@@ -125,7 +124,7 @@ export const ROLE_GRANTS: Readonly<Record<Role, RoleGrant>> = {
   reader: {
     actions: [
       "status:read", "quota:read", "message:send", "message:ack", "inbox:read",
-      "memory:read", "event:report", "telemetry:report", "channel:use",
+      "memory:read", "event:report", "telemetry:report",
     ],
     anySubject: [],
     oneShot: [],

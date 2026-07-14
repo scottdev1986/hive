@@ -9,13 +9,18 @@
  * is alive by definition whenever the Workspace is running; gray was a lie of
  * omission. See docs/daemon/orchestrator-status.md.
  *
- * The root's turns ARE observable: its own hooks post `turn-start` on
- * UserPromptSubmit and `turn-end` on Stop, under the agent name "orchestrator"
- * (adapters/tools/claude.ts). Delivery already reads them to tell a busy root
- * from a deaf one. This derives the dot's status word from the same events, and
- * it never guesses:
+ * The root's turns ARE observable. Claude hooks post `turn-start` on
+ * UserPromptSubmit and `turn-end` on Stop; Codex rollouts persist exact
+ * `task_started` / `task_complete` records; Grok updates persist an exact
+ * terminal `turn_completed`. The hookless providers' native records are
+ * bridged into this same event stream by orchestrator-turn-monitor.ts. Delivery
+ * already reads the stream to tell a busy root from a deaf one. This derives
+ * the dot's status word from those events, and it never guesses:
  *
- *   newest boundary is turn-start                  → working  (a turn is open)
+ *   newest signal is session-launch                → spawning (process launch began)
+ *   newest signal is session-start                 → idle     (ready, no turn yet)
+ *   newest signal is session-end                   → exited   (root process ended)
+ *   newest signal is turn-start                    → working  (a turn is open)
  *   newest is turn-end, preceded by a turn-start   → idle     (turn closed)
  *   anything else                                  → null     (say nothing)
  *
@@ -44,20 +49,30 @@
  */
 
 export type TurnBoundaryKind = "turn-start" | "turn-end";
+export type OrchestratorSignalKind =
+  | "session-launch"
+  | "session-start"
+  | "session-end"
+  | TurnBoundaryKind;
 
 /** The dot's vocabulary for the root. A subset of the agent status words: the
  * root can never be spawning, done, failed, or blocked on a human. */
-export type OrchestratorStatus = "working" | "idle";
+export type OrchestratorStatus = "spawning" | "working" | "idle" | "exited";
 
 /**
- * @param boundaries the root's most recent turn boundaries, NEWEST FIRST. Two
- * is enough; more are ignored.
+ * @param signals the root's most recent lifecycle/turn signals, NEWEST FIRST.
+ * Two is enough; more are ignored. A confirmed `session-start` is the one
+ * honest idle state available before the first user turn: Claude emits it only
+ * after its root session has started and loaded Hive's hooks.
  */
 export function deriveOrchestratorStatus(
-  boundaries: readonly TurnBoundaryKind[],
+  signals: readonly OrchestratorSignalKind[],
 ): OrchestratorStatus | null {
-  const [newest, previous] = boundaries;
+  const [newest, previous] = signals;
   if (newest === undefined) return null;
+  if (newest === "session-launch") return "spawning";
+  if (newest === "session-end") return "exited";
+  if (newest === "session-start") return "idle";
   if (newest === "turn-start") return "working";
   // newest is a turn-end. It is only trustworthy if a turn actually started.
   return previous === "turn-start" ? "idle" : null;

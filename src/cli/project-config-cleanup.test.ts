@@ -19,11 +19,6 @@ describe("repairLeakedProjectConfig", () => {
           url: "http://127.0.0.1:4483/mcp",
           headersHelper: "hive credential --agent orchestrator",
         },
-        "hive-channel": {
-          type: "stdio",
-          command: "hive",
-          args: ["channel-bridge", "--agent", "orchestrator", "--port", "4483"],
-        },
       } }));
       await writeFile(join(root, ".claude", "settings.local.json"), JSON.stringify({
         permissions: {

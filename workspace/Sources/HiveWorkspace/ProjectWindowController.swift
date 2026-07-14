@@ -14,6 +14,7 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
     private let daemonPort: Int
     private let orchestrator: String
     private let orchestratorSession: String?
+    private let tmuxSocket: String?
     private let instanceID: String
     private let instanceHome: String
     private let container = LayoutContainerView()
@@ -21,18 +22,21 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
     private var paneViews: [PaneID: PaneView] = [:]
     private var pendingCloses: Set<PaneID> = []
     private var killFailureSheets: [String: NSWindow] = [:]
+    private var isClosing = false
 
     /// Set by the app delegate to tear the feed down with the window (the
     /// app usually quits on last-window-close, but a floating panel can keep
     /// it alive, and the status reader must not outlive its project surface).
     var onWindowWillClose: (() -> Void)?
     var onStateChange: (() -> Void)?
+    var onComposerInput: ((String, ComposerInputAction) -> Void)?
 
     var paneViewCount: Int { paneViews.count }
 
     init(state: ProjectState, attentionCenter: AttentionCenter,
          projectDirectory: String, hivePath: String, daemonPort: Int,
          orchestrator: String, orchestratorSession: String?,
+         tmuxSocket: String? = nil,
          instanceID: String, instanceHome: String) {
         self.state = state
         self.attentionCenter = attentionCenter
@@ -41,6 +45,7 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
         self.daemonPort = daemonPort
         self.orchestrator = orchestrator
         self.orchestratorSession = orchestratorSession
+        self.tmuxSocket = tmuxSocket
         self.instanceID = instanceID
         self.instanceHome = instanceHome
 
@@ -102,7 +107,9 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
     /// deferred terminal child. A snapped layout here gives SwiftTerm the
     /// visible pane's settled dimensions and deterministically starts it.
     func commitInitialGeometry() {
+        window?.contentView?.layoutSubtreeIfNeeded()
         window?.layoutIfNeeded()
+        container.layoutSubtreeIfNeeded()
         state.layoutBounds = container.bounds
         applyLayout(animated: false)
     }
@@ -256,13 +263,24 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
             paneID: paneID,
             title: pane.title,
             tmuxSession: scrollSession,
+            tmuxSocket: tmuxSocket,
             allowsMouseReporting: allowsMouseReporting) { [weak self] command in
             self?.dispatch(command)
         }
         view.update(state: pane)
+        let recipient = pane.kind == .orchestrator ? "orchestrator" : pane.title
+        view.contentView.onComposerInput = { [weak self] action in
+            self?.onComposerInput?(recipient, action)
+        }
         view.contentView.schedule(
             command: terminalCommand(for: pane),
             workingDirectory: projectDirectory)
+        if pane.kind == .orchestrator {
+            view.contentView.onChildExit = { [weak self] exitCode in
+                guard let self, !self.isClosing else { return }
+                self.react(to: self.state.markOrchestratorExited(exitCode: exitCode))
+            }
+        }
         paneViews[paneID] = view
         container.addSubview(view)
         // New panes appear at their final slot's center and grow into place;
@@ -284,8 +302,9 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
         case .agent:
             let session = pane.tmuxSession ?? pane.title
             let target = shellQuoted("=\(session):")
-            return "until tmux has-session -t \(target) 2>/dev/null; do sleep 0.5; done; "
-                + "exec tmux attach-session -t \(shellQuoted(session))"
+            let socket = tmuxSocket.map { " -L \(shellQuoted($0))" } ?? ""
+            return "until tmux\(socket) has-session -t \(target) 2>/dev/null; do sleep 0.5; done; "
+                + "exec tmux\(socket) attach-session -t \(shellQuoted(session))"
         }
     }
 
@@ -373,6 +392,7 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
     }
 
     func windowWillClose(_ notification: Notification) {
+        isClosing = true
         terminateAllTerminals()
         onWindowWillClose?()
     }

@@ -178,23 +178,7 @@ export class RoutingPolicyStore {
    * configured). An unparseable row → RoutingPolicyCorruptError, never a
    * quiet empty. */
   read(now: Date = new Date()): RoutingPolicy {
-    const row = this.db.database.query(
-      "SELECT document FROM routing_policy WHERE id = 1",
-    ).get() as { document: string } | null;
-    if (row === null) return emptyRoutingPolicy(now.toISOString());
-    let decoded: unknown;
-    try {
-      decoded = JSON.parse(row.document);
-    } catch (error) {
-      throw new RoutingPolicyCorruptError(
-        error instanceof Error ? error.message : String(error),
-      );
-    }
-    const parsed = RoutingPolicySchema.safeParse(decoded);
-    if (!parsed.success) {
-      throw new RoutingPolicyCorruptError(parsed.error.message);
-    }
-    return parsed.data;
+    return readRoutingPolicyDatabase(this.db, now);
   }
 
   /**
@@ -270,6 +254,39 @@ export class RoutingPolicyStore {
     })();
   }
 
+  /**
+   * A named instance gets a COPY of the default instance's user-authored
+   * Model Control settings on first boot. Runtime state remains isolated and
+   * later edits diverge normally. A local human edit always wins; only an
+   * empty store or Hive's untouched provisional suggestions may be replaced.
+   * Provisional source policy carries no consent and is never imported.
+   */
+  importDefaultPolicy(
+    source: RoutingPolicy,
+    now: Date = new Date(),
+  ): { imported: boolean; policy: RoutingPolicy } {
+    return this.db.database.transaction(() => {
+      const current = this.isEmpty() ? null : this.read(now);
+      if (
+        source.revision === 0 || source.provisional ||
+        (current !== null && !current.provisional)
+      ) {
+        return {
+          imported: false,
+          policy: current ?? this.read(now),
+        };
+      }
+      const next = RoutingPolicySchema.parse({
+        ...source,
+        revision: (current?.revision ?? 0) + 1,
+        updatedAt: now.toISOString(),
+        provisional: false,
+      });
+      this.write(next, current, "import-default-policy", "hive", now);
+      return { imported: true, policy: next };
+    })();
+  }
+
   private write(
     next: RoutingPolicy,
     before: RoutingPolicy | null,
@@ -300,6 +317,36 @@ export class RoutingPolicyStore {
       ],
     );
   }
+}
+
+/** Read without constructing a store, so a named daemon can inspect the live
+ * default database through a genuinely read-only connection. */
+export function readRoutingPolicyDatabase(
+  db: HiveDatabase,
+  now: Date = new Date(),
+): RoutingPolicy {
+  const table = db.database.query(`
+    SELECT 1 AS present FROM sqlite_master
+    WHERE type = 'table' AND name = 'routing_policy'
+  `).get();
+  if (table === null) return emptyRoutingPolicy(now.toISOString());
+  const row = db.database.query(
+    "SELECT document FROM routing_policy WHERE id = 1",
+  ).get() as { document: string } | null;
+  if (row === null) return emptyRoutingPolicy(now.toISOString());
+  let decoded: unknown;
+  try {
+    decoded = JSON.parse(row.document);
+  } catch (error) {
+    throw new RoutingPolicyCorruptError(
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+  const parsed = RoutingPolicySchema.safeParse(decoded);
+  if (!parsed.success) {
+    throw new RoutingPolicyCorruptError(parsed.error.message);
+  }
+  return parsed.data;
 }
 
 /** Pure mutation semantics, shared by the store and its tests. "unset"

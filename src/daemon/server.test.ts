@@ -73,7 +73,6 @@ function agent(overrides: Partial<AgentRecord> = {}): AgentRecord {
     capabilityEpoch: 0,
     readOnly: false,
     writeRevoked: false,
-    channelsEnabled: false,
     ...overrides,
   };
 }
@@ -2502,6 +2501,10 @@ describe("HiveDaemon HTTP server", () => {
     const daemon = new HiveDaemon({
       db,
       spawner: new StubSpawner(),
+      // This embedded daemon is driven through an in-memory MCP transport and
+      // never calls start(), so give recovery the nonzero port a real bound
+      // daemon would expose after its ephemeral bind.
+      port: 4317,
       tmuxSender: new SilentTmuxSender(db),
       tmux,
       recovery: {
@@ -3555,14 +3558,14 @@ describe("delivery reconciliation runs in maintenance", () => {
       expect(db.getAgentByName("orchestrator")).toBeNull();
 
       const sent = await daemon.delivery.send("maya", "orchestrator", "Auth API is done.");
-      // Injected by the root channel, exactly as `deliverRootViaChannel` leaves it.
-      db.transitionMessage(sent.id, "injected", "2026-07-09T12:00:00.000Z");
+      // Injected by the root transport, exactly as root delivery leaves it.
+      expect(sent.state).toEqual("injected");
 
       // The root's turn boundaries live in the events table and nowhere else.
       await daemon.processEvent({
         kind: "turn-end",
         agentName: "orchestrator",
-        timestamp: "2026-07-09T12:01:00.000Z",
+        timestamp: new Date(Date.now() + 60_000).toISOString(),
       });
 
       await daemon.runMaintenance();

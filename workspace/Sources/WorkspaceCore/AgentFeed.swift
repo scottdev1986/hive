@@ -64,7 +64,7 @@ public struct OrchestratorSnapshot: Equatable, Decodable {
 }
 
 /// One NDJSON line from the feed: either a snapshot (`agents`, optionally
-/// carrying the daemon's live writer-autonomy dial and the root's own status)
+/// carrying the daemon's live agent-autonomy dial and the root's own status)
 /// or an error.
 public struct FeedLine: Decodable {
     public let v: Int?
@@ -126,7 +126,7 @@ private struct LossyAgentSnapshot: Decodable {
 /// - control-paused/stuck → waiting(.userInput) (amber, attention)
 /// - done → completed (green until acknowledged)
 /// - failed → failed (red + badge until acknowledged)
-/// - dead → disconnected (gray dashed)
+/// - dead/exited → disconnected (gray dashed)
 /// - anything unknown → unknown (visible uncertainty, never healthy)
 public enum FeedStatusMap {
     public static func paneStatus(for raw: String, acknowledged: Bool = false) -> PaneStatus {
@@ -141,8 +141,8 @@ public enum FeedStatusMap {
             return .completed(acknowledged: acknowledged)
         case "failed":
             return .failed(acknowledged: acknowledged)
-        case "dead":
-            return .disconnected(reason: "agent reported dead", lastConfirmed: "dead")
+        case "dead", "exited":
+            return .disconnected(reason: "process reported \(raw)", lastConfirmed: raw)
         default:
             return .unknown
         }
@@ -154,7 +154,7 @@ public enum FeedStatusMap {
         case "awaiting-approval", "control-paused", "stuck": return .waiting
         case "done": return .completed
         case "failed": return .failed
-        case "dead": return .disconnected
+        case "dead", "exited": return .disconnected
         default: return nil
         }
     }
@@ -236,7 +236,7 @@ extension FeedStatusMap {
         case "spawning": return .spawning
         case "done": return .done
         case "failed": return .failed
-        case "dead": return .disconnected
+        case "dead", "exited": return .disconnected
         // The feed-lost sentinel "unknown" and any word this app does not
         // recognize must say "no signal", not impersonate a real state.
         default: return .unknown

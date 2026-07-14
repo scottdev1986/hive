@@ -21,7 +21,7 @@ Closing an agent pane requests `hive kill` for that agent. The daemon preserves 
 ## Requirements
 
 - macOS on Apple Silicon or Intel
-- git and tmux (`brew install tmux`)
+- git and tmux, installed through their supported distribution for your system
 - At least one signed-in agent CLI: [Claude Code](https://code.claude.com/docs), [Codex](https://developers.openai.com/codex), or [Grok](https://docs.x.ai/build/overview)
 
 The release includes the CLI and Workspace app. Bun, Swift, Python, and `uv` are not required to use an installed release.
@@ -71,7 +71,7 @@ Bare `hive` opens the Workspace with Claude as the default orchestrator. To choo
 | `hive uninstall [--repo]` | Remove the machine installation, or only this repository's Hive state |
 | `hive instances` | List the default and named Hive instances |
 
-Run `hive <command> --help` for the complete options. Hook, bridge, credential, daemon, and statusline commands also appear in `hive --help`; they are process-integration surfaces rather than normal interactive workflow commands.
+Run `hive <command> --help` for the complete options. Hook, local capability-helper, daemon, and statusline commands also appear in `hive --help`; they are process-integration surfaces rather than normal interactive workflow commands.
 
 ## Isolation and multiple instances
 
@@ -83,7 +83,7 @@ hive --instance client-a
 hive instances
 ```
 
-Instances have separate identity, daemon lock, ephemeral port, handshake, database, credentials, tmux namespace, worktrees, and owned branches. Repository landing is serialized across instances. Provider quota is deliberately machine-wide because it belongs to the signed-in vendor account, not to one Hive instance.
+Instances have separate identity, daemon lock, ephemeral port, handshake, database, local control-plane capabilities, tmux namespace, worktrees, and owned branches. Repository landing is serialized across instances. Provider quota is deliberately machine-wide because it belongs to the signed-in vendor account, not to one Hive instance. Hive never reads, stores, or manages provider passwords, API keys, session secrets, or keychain entries; provider sign-in remains entirely owned by each vendor CLI.
 
 Machine-wide update, rollback, and uninstall operations refuse while any instance has a live or unobservable team. Repository uninstall removes only state and branches owned by the selected instance.
 
@@ -97,7 +97,7 @@ Routing is explicit policy, not a compiled model ranking. The Model Control Cent
 
 No configuration file is required.
 
-- `~/.hive/config.toml` controls writer autonomy, the Codex driver, Claude Channels, resource limits, and idle-agent reaping. The Workspace Agents menu and `hive autonomy` persist the autonomy value here.
+- `~/.hive/config.toml` controls writer autonomy, the Codex driver, resource limits, and idle-agent reaping. The Workspace Agents menu and `hive autonomy` persist the autonomy value here.
 - Routing policy is stored in Hive's SQLite control store and edited through the Model Control Center or `hive routing`.
 - `~/.hive/quota.toml` can overlay planning estimates, reserves, warning thresholds, refresh cadence, and account/model-specific limits on provider discovery.
 

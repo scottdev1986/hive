@@ -5,7 +5,7 @@ Source: Hive source tree, 2026-07-14
 
 ## Summary
 
-Why Hive ships a native release rather than npm, Homebrew, or Sparkle — and what the shell bootstrap honestly does not verify. The mechanism (versioning, signing, activation) is owned by [versioning-and-release.md](versioning-and-release.md), which is authoritative where this article and it disagree; what survives here is the *survey* and the *reasoning*, which the code cannot express.
+Why Hive ships through its own native installer — and what the shell bootstrap honestly does not verify. The mechanism (versioning, signing, activation) is owned by [versioning-and-release.md](versioning-and-release.md), which is authoritative where this article and it disagree; what survives here is the *survey* and the *reasoning*, which the code cannot express.
 
 ## The one thing code cites this document for
 
@@ -33,7 +33,6 @@ Recorded so nobody re-derives them from the research doc as though they were beh
 - **The health check** was specified to open the database read/write, bind the MCP endpoint, and perform a no-op transaction, keeping a DB snapshot and a grace period. It is `hive --version`, checked for the string `hive` (`src/cli/update.ts:87-92`). Retention is three version directories (`src/update/install.ts:408-468`), not a database snapshot.
 - **An external updater helper** asking the old daemon to "prepare for update" (checkpoint WAL, record state, close listeners, exit) — not built. A stale, provably idle daemon is simply SIGTERM'd and waited on (`src/update/daemon.ts:145-203`).
 - **Background fetch and stage, jittered background checks, and a deterministic 5% → 25% → 100% rollout** keyed on an anonymous install ID — none built. There is one ring.
-- **Homebrew tap formula updates from release CI** — not built. Hive detects a Homebrew-owned install and refuses to rewrite it; that is all.
 - **A LaunchAgent for dormant machines** — deliberately out. The promise is Claude Code's promise: updates happen while you use the tool. SPEC's "launchd is v2 polish" line stays true.
 
 ## Why a native installer, measured against four precedents
@@ -42,7 +41,7 @@ Recorded so nobody re-derives them from the research doc as though they were beh
 
 **Deno.** Shell installer, `deno upgrade`, channels (`stable`, `alpha`, `beta`, `rc`, `canary`) and exact versions. Caches downloads, **verifies published SHA-256, verifies both delta patches and their resulting binaries**, falls back from a failed delta to a full archive, and **runs a downloaded binary before replacing the current executable**. Its update check is delayed 500 ms so it can never affect startup. Rollback is `deno upgrade <older>`; no retained last-known-good. Lesson taken: verify the artifact and smoke-test before activation; treat delta delivery as later polish.
 
-**Bun.** Shell installer, `bun upgrade`, stable/canary. Downloads into a temporary version directory, **executes the candidate with `--version`/`--revision` and compares against the expected version**, and only then moves it over the running executable. On Unix it preserves no automatic last-known-good sibling. **It tells Homebrew users to run `brew upgrade bun` instead of self-updating** — the ownership rule, verified. Hive's staged-binary probe is directly this.
+**Bun.** Shell installer, `bun upgrade`, stable/canary. Downloads into a temporary version directory, **executes the candidate with `--version`/`--revision` and compares against the expected version**, and only then moves it over the running executable. On Unix it preserves no automatic last-known-good sibling. Hive's staged-binary probe is directly this.
 
 **Claude Code.** The strongest model. Native installer recommended; exact version or `latest`/`stable`; checks at startup and periodically; installs in the background; activates on next start. Retains binaries under **`~/.local/share/claude/versions/VERSION`** with `~/.local/bin/claude` in front — which is exactly Hive's layout. Each release has a **SHA-256 manifest signed by Anthropic's GPG key**, and its macOS binaries are Developer ID signed and notarized. `stable` is ≈ one week behind and skips releases with major regressions. And the warning: **[issue #24117](https://github.com/anthropics/claude-code/issues/24117)** — a real 2026 packaging bug left downloaded versions present while **the active symlink still targeted an old release**. Versioned activation is recoverable, but it is not magically correct; that bug is why Hive's installer re-reads the link and re-resolves `current` after the rename (`install.sh:26-36`, `:120-129`) and why `src/release/contract.test.ts:133-170` proves `mv -fh` against the live filesystem.
 
@@ -57,14 +56,6 @@ Good notification quality; poor automatic-update quality. The notifier cannot re
 Claude Code makes the weakness concrete: its npm package now installs the same native binary through per-platform optional dependencies, yet the native installer remains recommended, global npm updates can fail when the prefix is not writable, and the documented update command must explicitly request `@latest` because an ordinary global update can respect the old semver range. **Moving the runtime into the package did not give npm native-install update semantics.**
 
 For Hive it would also contradict SPEC's "single binary, no runtime prerequisite" story unless it were a bootstrap wrapper — and a bootstrap wrapper adds a registry supply-chain and lifecycle-script layer without improving the final install.
-
-## Why Homebrew cannot make the promise
-
-Two operations that are easy to conflate. **Homebrew's built-in auto-update refreshes Homebrew and formula *metadata* before selected commands; it does not upgrade installed formulae.** `brew upgrade` does that, and only when a user runs it. The metadata refresh interval is 24 hours — and only when the user invokes a triggering command. `brew livecheck` finds a newer upstream version *for maintainers*; it neither changes the formula nor upgrades a machine.
-
-The separate `brew autoupdate` project can install a launchd job and, with flags, run `brew upgrade`. It requires the user to install and trust an external tap command, opt in, and accept Homebrew-wide behavior — and **it moved out of the Homebrew organization in 2023** to reduce Homebrew's maintenance burden. Its failure modes are the interesting part: a sleeping or offline Mac, stale tap metadata, formula lag after the upstream release, pins and environment opt-outs, bottle gaps, permissions, unrelated dependency upgrades, and **a running daemon the formula knows nothing about.**
-
-Homebrew stays a strong *secondary* route — users trust its receipts, its uninstall model, and its prefix management — and a weak primary answer. Hive detects a Homebrew-owned path and says `brew upgrade hive` rather than rewriting the Cellar (`src/update/paths.ts:56-79`, `src/cli/update.ts:96-101`).
 
 ## Why Sparkle loses
 

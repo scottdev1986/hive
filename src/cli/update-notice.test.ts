@@ -53,7 +53,7 @@ describe("wantsUpdateNotice", () => {
         "event",
         "statusline",
         "credential",
-        "channel-bridge",
+        "statusline",
         "daemon",
         "workspace-feed",
         "workspace-orchestrator",

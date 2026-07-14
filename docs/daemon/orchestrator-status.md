@@ -7,7 +7,7 @@ Source: Hive source tree, 2026-07-14
 
 The orchestrator has no row in the `agents` table, so it has no `status` column to read — and for months the Workspace papered over that by inventing a status word in Swift, which the UI correctly degraded to "unknown", leaving the root's dot gray forever. The fix was not to give the root a fake row: it was to **derive its status from the only surface that actually records it, and to say nothing when that surface contradicts itself.**
 
-The implementation is `src/daemon/orchestrator-status.ts` — 20 lines of code under a 44-line comment. **Read that file.** This article is the *why*, and the part that does not fit in a header comment.
+The derivation is `src/daemon/orchestrator-status.ts`; provider-native boundary bridging is `src/cli/orchestrator-turn-monitor.ts`. This article is the *why*.
 
 ## The rule
 
@@ -19,7 +19,21 @@ The implementation is `src/daemon/orchestrator-status.ts` — 20 lines of code u
 
 It reads event **kinds only, never timestamps**. That is not stylistic — it is the type signature enforcing the design. No timeout inference can be introduced without changing the function's signature, which is exactly the review a timeout deserves.
 
-The source is the root's own hooks: `turn-start` on `UserPromptSubmit`, `turn-end` on `Stop`, posted under the agent name `orchestrator`. Delivery already reads these to tell a busy root from a deaf one, so this adds a consumer, not a mechanism.
+Every provider feeds the same boundary stream under the agent name `orchestrator`:
+
+- Claude posts `turn-start` on `UserPromptSubmit` and `turn-end` on `Stop` through its native hooks.
+- Codex's rollout records exact `task_started` and `task_complete` events.
+- Grok's `updates.jsonl` records streaming updates and the exact terminal `turn_completed` event.
+
+The Workspace orchestrator supervisor resolves the new Codex/Grok session artifact once, then reads only that bounded file tail. It ignores a predecessor session, reports transitions through the authenticated daemon event endpoint, and pairs a first-observed completed turn when a short turn finished before the first poll. Missing or malformed artifacts remain unknown. It never scrapes terminal text and never infers from elapsed time.
+
+Agent reports follow the same provider boundary. Codex receives a native
+app-server item; Claude and Grok receive an instance-scoped tmux submission at
+their idle prompt. The root provider is selected only from the live supervisor
+marker under that instance's `HIVE_HOME`; PID liveness rejects stale markers,
+and a named instance cannot wake another instance. Workspace creates a
+recipient-scoped composer lease before a user's first keystroke, so every one
+of those delivery paths remains queued while a human draft exists.
 
 ## Contradiction is not absence
 
@@ -47,7 +61,7 @@ The same invariant appears in [database-resilience.md](database-resilience.md) a
 
 **No fake `agents` row.** The "orchestrator has no agents row" invariant is load-bearing in at least four places — name reuse, capability grants (`src/daemon/capabilities.ts:243-247`: the operator and the orchestrator have no row, which is also why they are exempt from the epoch check), spawner reservations, and delivery all read that table and assume its members are spawned agents. Adding a fake row to satisfy a *colour* would be the expensive kind of clever.
 
-**No terminal scraping.** Reading the root's pane buffer to guess what it is doing burns context on screenshots and turns the conductor into a babysitter. SPEC says the orchestrator never scrapes a terminal; the daemon should not do it on the orchestrator's behalf either.
+**No terminal scraping.** Reading the root's pane buffer to guess what it is doing burns context on screenshots and turns the conductor into a babysitter. Codex and Grok already persist typed turn boundaries, so Hive reads those exact records instead.
 
 **Not the one-word edit.** Changing the fabricated `"running"` to `"idle"` in Swift turns the dot yellow today, costs nothing, and is wrong the moment the root starts working. A constant is not an observation.
 
@@ -55,11 +69,11 @@ The same invariant appears in [database-resilience.md](database-resilience.md) a
 
 **The status dot is feed-derived.** Its turn word comes from daemon hook events. `TerminalPaneView.processTerminated` does clear `childRunning` and invoke `onChildExit`, but production assigns no `onChildExit` callback, so root-child exit is not currently observed for liveness. That callback is a known unwired seam.
 
-The feed and terminal process can therefore disagree: hooks can go silent while the process is perfectly alive (the 15-hour window above), and the process can die while the feed still carries the last hook-derived state.
+The feed and terminal process can therefore disagree: a provider's boundary source can go silent while the process is perfectly alive (the 15-hour Claude window above), and the process can die while the feed still carries the last boundary-derived state.
 
 ## The accepted residual
 
-One gap remains, deliberately. If the hooks stop firing **cleanly** — no unpaired `turn-end`, just nothing more at all — the last boundary stays a legitimate `turn-end`, the contradiction rule sees nothing wrong, and the dot sits **yellow (idle)** while the root is mid-turn. You would see a yellow dot that never goes green no matter what you type, next to a terminal visibly producing output. The terminal would be right.
+One gap remains, deliberately. If a provider's boundary source stops updating **cleanly** — no contradiction, just nothing more at all — the last boundary stays a legitimate `turn-end`, the contradiction rule sees nothing wrong, and the dot sits **yellow (idle)** while the root is mid-turn. You would see a yellow dot that never goes green no matter what you type, next to a terminal visibly producing output. The terminal would be right.
 
 We accept it because it is bounded, self-evidently wrong to anyone looking at the terminal, and strictly better than a dot that is gray 100% of the time. It cannot produce red, so it cannot manufacture a false alarm. And the underlying cause (hooks pointing at a dead port) is fixed — the contradiction rule exists to catch the *recurrence*, not to trust that there will not be one.
 

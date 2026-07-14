@@ -198,6 +198,12 @@ is the sole writer.
 
 The Settings controller keeps one data source while the window exists, but `show()` refreshes the model-control snapshot every time the window is shown before restoring the selected page (`workspace/Sources/HiveWorkspace/Settings/SettingsWindowController.swift:90-112`). Reopening Settings therefore cannot present the process's launch-time catalog or quota as if it were current; the in-window Refresh control is an additional explicit refresh, not the only one.
 
+## Named instances inherit preferences, not runtime state
+
+Opening `hive --instance <name>` creates an independent daemon and database, but a new application window should not behave like a new user account. On startup, an empty named policy—or Hive's still-untouched provisional suggestions—receives a one-time copy of the default instance's user-authored Model Control document: provider switches, exact model enablement, chains, selection modes, and effort choices. That copy is an audited local revision. It carries the user's existing spend consent on the same machine without coupling the daemons.
+
+The import never overwrites a policy the named instance has edited, never imports a provisional source policy, and never synchronizes later edits. Agents, messages, credentials, ports, process namespaces, and every other runtime resource remain isolated. See `src/daemon/instance-settings.ts` and `RoutingPolicyStore.importDefaultPolicy`.
+
 ## Status: partly built, not "not started"
 
 The spec header said "Design spec (not started)" to the end. Shipped: eight AppKit files

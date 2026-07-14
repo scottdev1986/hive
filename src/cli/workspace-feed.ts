@@ -83,8 +83,17 @@ async function getOrchestratorStatus(
   const body = await response.json().catch(() => null) as
     | { status?: unknown }
     | null;
-  return body?.status === "working" || body?.status === "idle"
-    ? body.status
+  return parseOrchestratorStatus(body?.status);
+}
+
+/** Keep the feed and daemon lifecycle vocabularies identical. Dropping a
+ * valid word here turns measured state into a gray `unknown` header. */
+export function parseOrchestratorStatus(
+  value: unknown,
+): OrchestratorStatus | null {
+  return value === "spawning" || value === "working" || value === "idle" ||
+      value === "exited"
+    ? value
     : null;
 }
 

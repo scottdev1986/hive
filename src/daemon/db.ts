@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import type { TurnBoundaryKind } from "./orchestrator-status";
+import type { OrchestratorSignalKind } from "./orchestrator-status";
 import {
   existsSync,
   mkdirSync,
@@ -126,7 +126,6 @@ const AgentDatabaseRowSchema = AgentRecordObjectSchema.extend({
   capabilityEpoch: z.number().int().nonnegative().default(0),
   readOnly: z.union([z.boolean(), z.number().int()]).default(0),
   writeRevoked: z.union([z.boolean(), z.number().int()]).default(0),
-  channelsEnabled: z.union([z.boolean(), z.number().int()]).default(0),
 });
 
 function parseAgentRow(row: unknown): AgentRecord {
@@ -147,8 +146,6 @@ function parseAgentRow(row: unknown): AgentRecord {
       : ExecutionIdentitySchema.parse(JSON.parse(value.executionIdentity)),
     readOnly: value.readOnly === true || value.readOnly === 1,
     writeRevoked: value.writeRevoked === true || value.writeRevoked === 1,
-    channelsEnabled: value.channelsEnabled === true ||
-      value.channelsEnabled === 1,
   });
 }
 
@@ -276,7 +273,6 @@ function agentsTableDdl(table: string, ifNotExists = false): string {
       capabilityEpoch INTEGER NOT NULL DEFAULT 0,
       readOnly INTEGER NOT NULL DEFAULT 0,
       writeRevoked INTEGER NOT NULL DEFAULT 0,
-      channelsEnabled INTEGER NOT NULL DEFAULT 0,
       closedAt TEXT
     )
   `;
@@ -592,11 +588,6 @@ export class HiveDatabase {
         WHERE writeRevoked = 1 AND capabilityEpoch = 0 AND controlMessageId IS NULL
       `);
     }
-    if (!agentColumnNames.has("channelsEnabled")) {
-      this.database.exec(
-        "ALTER TABLE agents ADD COLUMN channelsEnabled INTEGER NOT NULL DEFAULT 0",
-      );
-    }
     if (!agentColumnNames.has("closedAt")) {
       this.database.exec("ALTER TABLE agents ADD COLUMN closedAt TEXT");
       // Backfill closure for holders that terminated before Hive tracked it.
@@ -870,8 +861,8 @@ export class HiveDatabase {
         createdAt, lastEventAt, failureReason, failedAt,
         quotaReservationId, controlQuotaReservationId, controlMessageId,
         executionIdentity, toolSessionId, contextWindow, recoveryAttempts,
-        capabilityEpoch, readOnly, writeRevoked, channelsEnabled, closedAt
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        capabilityEpoch, readOnly, writeRevoked, closedAt
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         name = excluded.name,
         tool = excluded.tool,
@@ -898,7 +889,6 @@ export class HiveDatabase {
         capabilityEpoch = excluded.capabilityEpoch,
         readOnly = excluded.readOnly,
         writeRevoked = excluded.writeRevoked,
-        channelsEnabled = excluded.channelsEnabled,
         closedAt = excluded.closedAt
     `).run(
       value.id,
@@ -929,7 +919,6 @@ export class HiveDatabase {
       value.capabilityEpoch,
       value.readOnly ? 1 : 0,
       value.writeRevoked ? 1 : 0,
-      value.channelsEnabled ? 1 : 0,
       closedAt,
     );
     return this.getAgentById(value.id)!;
@@ -1199,7 +1188,7 @@ export class HiveDatabase {
   }
 
   /**
-   * The last `limit` turn boundaries, newest first.
+   * The last `limit` orchestrator lifecycle/turn signals, newest first.
    *
    * Two of them is a state the one on its own cannot express: a `turn-end`
    * preceded by a `turn-start` is an idle agent, while a `turn-end` preceded by
@@ -1207,12 +1196,15 @@ export class HiveDatabase {
    * the hooks are not reaching us and nothing here can be trusted. The
    * orchestrator's dot is derived from exactly this (orchestrator-status.ts).
    */
-  recentTurnBoundaries(agentName: string, limit = 2): TurnBoundaryKind[] {
+  recentOrchestratorSignals(
+    agentName: string,
+    limit = 2,
+  ): OrchestratorSignalKind[] {
     const rows = this.database.query(`
       SELECT kind FROM events
-      WHERE agentName = ? AND kind IN ('turn-start', 'turn-end')
+      WHERE agentName = ? AND kind IN ('session-launch', 'session-start', 'session-end', 'turn-start', 'turn-end')
       ORDER BY timestamp DESC, rowid DESC LIMIT ?
-    `).all(agentName, limit) as Array<{ kind: TurnBoundaryKind }>;
+    `).all(agentName, limit) as Array<{ kind: OrchestratorSignalKind }>;
     return rows.map((row) => row.kind);
   }
 

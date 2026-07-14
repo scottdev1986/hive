@@ -62,7 +62,6 @@ import {
 } from "../schemas";
 import { isAutonomy, type AutonomyControl } from "../config/autonomy";
 import { deriveOrchestratorStatus } from "./orchestrator-status";
-import { ChannelRegistry } from "./channels";
 import {
   bearerToken,
   CapabilityStore,
@@ -86,7 +85,7 @@ import {
   type RootProtocolDeliverer,
   type TmuxSender,
 } from "./delivery";
-import { CodexRootDelivery } from "./codex-root-delivery";
+import { OrchestratorRootDelivery } from "./orchestrator-root-delivery";
 import { readLiveGrokModel } from "../adapters/tools/grok";
 import {
   clampPct,
@@ -360,31 +359,6 @@ const MemoryWriteRequestSchema = MemoryWriteInputSchema.safeExtend({
   id: MemoryIdSchema.optional(),
 });
 
-const ChannelRegisterSchema = z.object({
-  agent: z.string().min(1),
-  clientName: z.string().min(1).default("unknown"),
-  clientVersion: z.string().min(1),
-});
-
-const ChannelPollSchema = z.object({
-  agent: z.string().min(1),
-  waitMs: z.number().int().nonnegative().max(60_000).default(25_000),
-});
-
-const ChannelAckSchema = z.object({
-  agent: z.string().min(1),
-  deliveryId: z.string().min(1),
-  ok: z.boolean(),
-});
-
-const ChannelPermissionRequestSchema = z.object({
-  agent: z.string().min(1),
-  requestId: z.string().min(1),
-  toolName: z.string().min(1).default("tool"),
-  description: z.string().default(""),
-  inputPreview: z.string().default(""),
-});
-
 export type { LandBranch };
 
 // The land-grant re-arm flow (SPEC decision 4's capability discipline without
@@ -422,9 +396,8 @@ const nothingToLand = (name: string, branch: string | null): Error =>
 // the mere arrival of a Notification hook, is what "blocked" means.
 //
 // Hive can SEE this dialog but cannot ANSWER it: the hook carries no request id
-// and there is no reply channel back to the TUI (the channels permission relay
-// has one, but spawned agents run with channels off). So a permission_prompt
-// makes an agent visible, and a human still has to clear it at the pane.
+// and there is no supported reply path to the TUI. So a permission_prompt makes
+// an agent visible, and a human still has to clear it at the pane.
 const CLAUDE_PERMISSION_PROMPT = "permission_prompt";
 
 const isPermissionPrompt = (event: HookEvent): boolean =>
@@ -573,7 +546,6 @@ function toolResult(value: unknown, key: string, note?: string | null) {
 export class HiveDaemon {
   readonly db: HiveDatabase;
   readonly delivery: MessageDelivery;
-  readonly channels: ChannelRegistry;
   readonly spawner: Spawner;
   readonly memory: MemoryIndex;
   readonly capabilities: CapabilityStore;
@@ -688,10 +660,10 @@ export class HiveDaemon {
     this.codexControl = options.codexControl;
     this.autonomy = options.autonomy;
     this.graphify = options.graphify;
-    this.channels = new ChannelRegistry(this.db);
+    const tmuxSender = options.tmuxSender ?? new BunTmuxSender();
     this.delivery = new MessageDelivery(
       this.db,
-      options.tmuxSender ?? new BunTmuxSender(),
+      tmuxSender,
       {
         interruptAndRestart: async (agent, message) => {
           const sameControlAttempt = agent.status === "control-paused" &&
@@ -760,14 +732,12 @@ export class HiveDaemon {
         },
       },
       this.codexControl,
-      this.channels,
-      // The Codex root wake path (SPEC decision 1): dual-client steering into
-      // the root's own app-server. Inert on a Claude-root machine — its
-      // socket never exists — and an unconfirmed delivery falls through to
-      // Claude Channels inside deliverRootViaChannel. Reads this.repoRoot
-      // lazily; it is assigned a few lines below.
+      // All visible roots use their instance-scoped terminal. Delivery holds
+      // the composer lease so a report cannot overwrite human input.
       options.rootProtocol ??
-        new CodexRootDelivery(() => this.repoRoot),
+        new OrchestratorRootDelivery({
+          tmux: tmuxSender,
+        }),
       {},
       // The stalled-message triage's OS probe: what `ps` says about the
       // recipient's pane tree. Reads this.panePids/this.tmux lazily — both
@@ -853,8 +823,7 @@ export class HiveDaemon {
     this.recovery = new CrashRecovery({
       db: this.db,
       tmux: this.tmux,
-      port: this.port,
-      dropChannel: (agentName) => this.channels.drop(agentName),
+      port: () => this.listeningPort ?? this.port,
       revokeCapabilities: (agentName) => {
         this.capabilities.revokeSubject(agentName);
         removeCredential(agentName);
@@ -921,7 +890,7 @@ export class HiveDaemon {
    * revoking whatever that subject held before. Tokens come into existence
    * only from the daemon: here at spawn, and through the single sanctioned
    * launcher request (`POST /codex-root-token`) that mints the codex root's
-   * short-lived credential. There is no delegation and no attenuation. */
+   * local control-plane capability. There is no delegation and no attenuation. */
   issueCredential(
     subject: string,
     role: Role,
@@ -1475,8 +1444,8 @@ export class HiveDaemon {
           ) {
             updates.contextPct = grokTelemetry.contextPct;
           }
-          // The turn boundary nothing else reports. Grok drives no control
-          // channel, so no turn-start ever promoted these rows off "spawning"
+          // The turn boundary nothing else reports. Grok drives no lifecycle
+          // hooks, so no turn-start ever promoted these rows off "spawning"
           // and no turn-end ever settled them to "idle" — bridget sat at
           // "spawning" long after her turn had ended with end_turn. The
           // session's own updates.jsonl is the observable: its last record
@@ -1794,7 +1763,6 @@ export class HiveDaemon {
     if (killed === null) {
       throw new Error(`Hive agent not found: ${agent.name}`);
     }
-    this.channels.drop(killed.name);
     await this.settleAgentQuota(killed, timestamp);
     let updated = killed;
     const cleaned: {
@@ -2392,9 +2360,6 @@ export class HiveDaemon {
     if (url.pathname === "/graphify" && request.method === "POST") {
       return this.graphifyEndpoint(request);
     }
-    if (request.method === "POST" && url.pathname.startsWith("/channel/")) {
-      return this.handleChannel(url.pathname, request);
-    }
     if (url.pathname === "/recover" && request.method === "POST") {
       return this.recoverEndpoint(request);
     }
@@ -2415,8 +2380,9 @@ export class HiveDaemon {
 
   /** POST /codex-root-token — the operator's launcher (`hive codex`) asks the
    * daemon to mint the orchestrator credential the codex root will present.
-   * Short TTL: the launcher writes it to a 0600 credential file and boots
-   * codex immediately, so a minute covers the hand-off window. This is the
+   * The stateless MCP transport authenticates every request, so this remains
+   * valid for the same bounded session window as the other orchestrator
+   * capability instead of expiring after launch. This is the
    * one sanctioned issuance outside the daemon's own spawn path (the
    * `root-token:mint` carve-out in capabilities.ts). */
   private mintCodexRootToken(request: Request): Response {
@@ -2429,7 +2395,7 @@ export class HiveDaemon {
       undefined,
     );
     if (!authorized.ok) return this.denied(authorized);
-    const ttlMs = 60_000;
+    const ttlMs = OPERATOR_TTL_MS;
     const { token } = this.capabilities.mint(ORCHESTRATOR_NAME, "orchestrator", {
       epoch: 0,
       ttlMs,
@@ -2438,131 +2404,6 @@ export class HiveDaemon {
       token,
       expiresAt: new Date(Date.now() + ttlMs).toISOString(),
     });
-  }
-
-  private async handleChannel(
-    pathname: string,
-    request: Request,
-  ): Promise<Response> {
-    const authenticated = this.authenticate(request, pathname);
-    if (!authenticated.ok) return this.denied(authenticated);
-    let body: unknown;
-    try {
-      body = await request.json();
-    } catch {
-      return json({ error: "Invalid channel request" }, { status: 400 });
-    }
-    // Every channel route names its agent, and a bridge may only speak for the
-    // agent it was launched for. Poll and ack are not audited on allow: they
-    // are the long-poll heartbeat and would bury every other row.
-    const named = z.object({ agent: z.string().min(1) }).safeParse(body);
-    if (named.success) {
-      const decision = this.authorize(
-        authenticated.capability,
-        pathname,
-        "channel:use",
-        named.data.agent,
-        pathname === "/channel/register" ||
-          pathname === "/channel/permission-request",
-      );
-      if (!decision.ok) return this.denied(decision);
-    }
-    try {
-      if (pathname === "/channel/register") {
-        const parsed = ChannelRegisterSchema.parse(body);
-        return json(this.channels.register(
-          parsed.agent,
-          parsed.clientName,
-          parsed.clientVersion,
-        ));
-      }
-      if (pathname === "/channel/poll") {
-        const parsed = ChannelPollSchema.parse(body);
-        try {
-          const events = await this.channels.poll(parsed.agent, parsed.waitMs);
-          return json({ events });
-        } catch (error) {
-          // An unknown connection (daemon restart) tells the bridge to
-          // re-register rather than spin.
-          return json(
-            {
-              error: error instanceof Error
-                ? error.message
-                : "channel poll failed",
-            },
-            { status: 404 },
-          );
-        }
-      }
-      if (pathname === "/channel/ack") {
-        const parsed = ChannelAckSchema.parse(body);
-        this.channels.ack(parsed.agent, parsed.deliveryId, parsed.ok);
-        return json({ ok: true });
-      }
-      if (pathname === "/channel/permission-request") {
-        const parsed = ChannelPermissionRequestSchema.parse(body);
-        return this.receiveChannelPermissionRequest(parsed);
-      }
-    } catch (error) {
-      return json(
-        {
-          error: error instanceof Error
-            ? error.message
-            : "Invalid channel request",
-        },
-        { status: 400 },
-      );
-    }
-    return json({ error: "Not found" }, { status: 404 });
-  }
-
-  private receiveChannelPermissionRequest(request: {
-    agent: string;
-    requestId: string;
-    toolName: string;
-    description: string;
-    inputPreview: string;
-  }): Response {
-    const agent = this.db.getAgentByName(request.agent);
-    if (
-      agent === null || agent.status === "dead" || agent.status === "done" ||
-      agent.status === "failed"
-    ) {
-      return json(
-        { error: `Hive agent not found or not live: ${request.agent}` },
-        { status: 404 },
-      );
-    }
-    const timestamp = new Date().toISOString();
-    const approval = this.db.transaction(() => {
-      const created = this.db.insertApproval({
-        id: crypto.randomUUID(),
-        agentName: agent.name,
-        // The tool call and its input ARE the decision. Never trimmed.
-        kind: "tool-permission",
-        description: [
-          `${request.toolName}: ${request.description}`.trim(),
-          request.inputPreview.slice(0, 500),
-        ].filter((part) => part.length > 0).join("\n"),
-        status: "pending",
-        createdAt: timestamp,
-        resolvedAt: null,
-      });
-      if (!agent.writeRevoked) {
-        this.db.upsertAgent({
-          ...agent,
-          status: "awaiting-approval",
-          lastEventAt: timestamp,
-        });
-      }
-      return created;
-    });
-    this.channels.notePermissionRequest(
-      agent.name,
-      request.requestId,
-      approval.id,
-    );
-    return json({ approval });
   }
 
   private async receiveStatusline(request: Request): Promise<Response> {
@@ -2852,7 +2693,7 @@ export class HiveDaemon {
     if (!decision.ok) return this.denied(decision);
     return json({
       status: deriveOrchestratorStatus(
-        this.db.recentTurnBoundaries(ORCHESTRATOR_NAME),
+        this.db.recentOrchestratorSignals(ORCHESTRATOR_NAME),
       ),
     });
   }
@@ -2971,7 +2812,7 @@ export class HiveDaemon {
   }
 
   /**
-   * `/autonomy` — the writer-autonomy dial.
+   * `/autonomy` — the agent-autonomy dial.
    *
    * GET reads the live value: the one the next spawn or resume will actually
    * use, which is what the Workspace menu checkmark and `hive autonomy`
@@ -3288,6 +3129,11 @@ export class HiveDaemon {
                   ? (isPermissionPrompt(value)
                     ? "awaiting-approval"
                     : agent.status)
+                : value.kind === "session-launch" || value.kind === "session-end"
+                  // Only the orchestrator supervisor emits this today. If a
+                  // future worker reports either supervisor lifecycle event,
+                  // process teardown remains the authority for that worker.
+                  ? agent.status
                 : "idle",
           contextPct: value.kind === "turn-end" &&
               value.contextPct !== undefined
@@ -3869,16 +3715,6 @@ export class HiveDaemon {
         approval.id,
         decision === "approve",
       );
-      // A relayed claude/channel permission is actually answered here: the
-      // decision rides back to the CLI's still-open dialog (first answer wins).
-      const relay = this.channels.takePermissionByApproval(id);
-      if (relay !== null) {
-        this.channels.pushPermissionDecision(
-          relay.agentName,
-          relay.requestId,
-          decision === "approve" ? "allow" : "deny",
-        );
-      }
       const agent = this.db.getAgentByName(approval.agentName);
       if (agent?.status === "awaiting-approval") {
         this.db.upsertAgent({
@@ -3894,18 +3730,17 @@ export class HiveDaemon {
       // granted has no reason to retry hive_land, so it just sits idle until a
       // human notices and prods it with an urgent message. Every resolution —
       // approve or deny — gets an explicit envelope naming the approval and
-      // the outcome, independent of whatever channel/relay/status-flush path
+      // the outcome, independent of whatever status-flush path
       // above already applies.
       const resolutionBody = decision === "approve"
         ? approval.description.startsWith(LAND_REARM_PREFIX)
           ? `Your approval request "${approval.description}" was approved — re-arm granted, retry hive_land now.`
           : `Your approval request "${approval.description}" was approved.`
         : `Your approval request "${approval.description}" was denied — do not retry it; report back with the blocker instead.`;
-      // Not awaited: a live-channel recipient's delivery can wait several
-      // seconds for the bridge's ack before falling back, and hive_approve's
-      // response must not hang on that. The message row itself is written
-      // synchronously before send() reaches its first await, so it is durable
-      // the instant this call is made.
+      // Not awaited: delivery may wait for a terminal turn boundary, and
+      // hive_approve's response must not hang on that. The message row itself
+      // is written synchronously before send() reaches its first await, so it
+      // is durable the instant this call is made.
       void this.delivery.send(
         "hive-approvals",
         approval.agentName,

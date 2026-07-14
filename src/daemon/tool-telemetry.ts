@@ -211,10 +211,25 @@ export async function readCodexTelemetry(
   return { contextPct, lastActivityAt };
 }
 
+/** Codex's rollout records exact task boundaries. Read newest first so an
+ * active task wins over every completed predecessor in the same session. */
+export function lastCodexTurnCompleted(tail: string): boolean | null {
+  const entries = parseJsonLines(tail);
+  for (let index = entries.length - 1; index >= 0; index--) {
+    const entry = entries[index];
+    if (!isRecord(entry) || entry.type !== "event_msg" ||
+      !isRecord(entry.payload)) continue;
+    if (entry.payload.type === "task_started") return false;
+    if (entry.payload.type === "task_complete") return true;
+  }
+  return null;
+}
+
 /**
- * Grok telemetry, read from the session's own artifacts. Grok drives no
- * control channel — no statusline, no app-server — so nothing ever reported a
- * turn boundary for it and its rows froze at "spawning" for their whole life.
+ * Grok telemetry, read from the session's own artifacts. Grok exposes no
+ * native status transport — no statusline, no app-server — so nothing ever
+ * reported a turn boundary for it and its rows froze at "spawning" for their
+ * whole life.
  * These two files are the only observation there is: `signals.json` states the
  * context reading the vendor itself computed, and `updates.jsonl` records the
  * turn.
@@ -240,7 +255,7 @@ const NO_GROK_TELEMETRY: GrokTelemetry = {
 /** The last update in `tail`, or null when none parses. `turn_completed` is
  * genuinely the final record a turn writes, so the last record's kind is the
  * turn's state — no need to reconstruct turn boundaries. */
-function lastGrokTurnCompleted(tail: string): boolean | null {
+export function lastGrokTurnCompleted(tail: string): boolean | null {
   const entries = parseJsonLines(tail);
   for (let index = entries.length - 1; index >= 0; index--) {
     const entry = entries[index];
@@ -250,6 +265,20 @@ function lastGrokTurnCompleted(tail: string): boolean | null {
     return update.sessionUpdate === "turn_completed";
   }
   return null;
+}
+
+/** Read one already-resolved vendor artifact. Locating the artifact is kept
+ * outside this poll path: recursively rediscovering all Codex rollouts every
+ * second would turn a status dot into permanent filesystem churn. */
+export async function readNativeTurnCompleted(
+  path: string,
+  tool: "codex" | "grok",
+): Promise<boolean | null> {
+  const tail = await readFileTail(path);
+  if (tail === null) return null;
+  return tool === "codex"
+    ? lastCodexTurnCompleted(tail)
+    : lastGrokTurnCompleted(tail);
 }
 
 export async function readGrokTelemetry(

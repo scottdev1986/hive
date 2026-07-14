@@ -87,7 +87,7 @@ enum MainMenuBuilder {
             item.target = paneTarget
         }
 
-        // Agents (the writer-autonomy dial). State lives in the daemon: the
+        // Agents (the autonomy dial). State lives in the daemon: the
         // AppDelegate validates the checkmarks from the feed's last report and
         // sets the dial through `hive autonomy`, so this menu never shows a
         // state the daemon has not confirmed.

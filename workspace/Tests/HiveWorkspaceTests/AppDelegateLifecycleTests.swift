@@ -6,6 +6,21 @@ import WorkspaceCore
 @MainActor
 final class AppDelegateLifecycleTests: XCTestCase {
 
+    func testTerminalEnvironmentPreservesPrivateTempDirectoryForCodexSocket() {
+        XCTAssertEqual(
+            terminalProcessEnvironment(
+                base: ["TERM=xterm-256color"],
+                inherited: [
+                    "PATH": "/usr/local/tools/bin:/usr/bin",
+                    "TMPDIR": "/var/folders/user/T/",
+                ]),
+            [
+                "TERM=xterm-256color",
+                "PATH=/usr/local/tools/bin:/usr/bin",
+                "TMPDIR=/var/folders/user/T/",
+            ])
+    }
+
     func testTrackedMenuIsCancelledWhenTheInstanceCloses() {
         _ = NSApplication.shared
         let owner = AppDelegate(config: LaunchConfig())
@@ -126,6 +141,16 @@ final class AppDelegateLifecycleTests: XCTestCase {
         XCTAssertTrue(textFields(in: pane).contains {
             $0.stringValue == "working" && $0.toolTip == "working"
         })
+    }
+
+    func testCellGeometryCommitPropagatesSnappedPaneFrameToTerminal() {
+        let pane = PaneView(paneID: "worker", title: "worker") { _ in }
+        pane.frame = NSRect(x: 0, y: 0, width: 900, height: 600)
+
+        pane.commitCellGeometry()
+
+        XCTAssertGreaterThan(pane.contentView.bounds.width, 40)
+        XCTAssertGreaterThan(pane.contentView.bounds.height, 40)
     }
 
     private func textFields(in view: NSView) -> [NSTextField] {

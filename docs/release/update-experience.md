@@ -26,7 +26,7 @@ Hive has three possible surfaces and only one is right by default. The daemon ha
 
 The passive trailing notice appears only on the human-facing commands in `USER_FACING_COMMANDS` (`src/cli/update-notice.ts:35-47`). Session boundaries and machine-facing protocol commands are deliberately absent from that allowlist.
 
-**`claude`, `codex`, `init`, and bare `hive` are excluded on purpose** (`src/cli/update-notice.ts:13-16`). Repo-backed session boundaries already print the richer *start* notice through `startSession` → `printStartNotice` (`src/cli/start.ts:53-72`, `:108-122`). Two version lines on one command is one too many, and that start notice is strictly better: it is the last moment Hive owns the terminal before an orchestrator takes it, so it says what the check found, including `could not check for updates (…)`. A standalone Workspace launch has no repo session to start; it performs its own forced check and prints only when a non-dismissed update is available (`src/cli/workspace.ts:191-208`). Everything not on either list — `hive event`, the hidden app-server host, hooks, bridges — never speaks at all, because a surprise stderr line inside an agent turn corrupts a protocol.
+**`claude`, `codex`, `init`, and bare `hive` are excluded on purpose** (`src/cli/update-notice.ts:13-16`). Repo-backed session boundaries already print the richer *start* notice through `startSession` → `printStartNotice` (`src/cli/start.ts:53-72`, `:108-122`). Two version lines on one command is one too many, and that start notice is strictly better: it is the last moment Hive owns the terminal before an orchestrator takes it, so it says what the check found, including `could not check for updates (…)`. A standalone Workspace launch has no repo session to start; it performs its own forced check and prints only when a non-dismissed update is available (`src/cli/workspace.ts:191-208`). Everything not on either list—`hive event`, the hidden app-server host, hooks, and helpers—never speaks at all, because a surprise stderr line inside an agent turn corrupts a protocol.
 
 The gate is **stdout is a TTY** and `CI` is unset (`src/cli/update-notice.ts:78-88`); the line itself is written to **stderr** (`src/cli/update-notice.ts:139-150`). The practical difference is real — `hive status | cat` prints no notice because stdout is a pipe.
 
@@ -36,7 +36,7 @@ The line, dim, one line, ending the command:
 hive 0.0.9 available (you have 0.0.7) — run hive update
 ```
 
-When the version is already staged and this is a native install, the line says what is actually true (`src/update/notice.ts:49-53`): `hive 0.0.9 downloaded — run hive update to activate`, or `— run hive update after all Hive teams stop` when agents are live. It promises no automatic activation and names no nonexistent force command. On a Homebrew-owned path the command in the line becomes `brew upgrade hive` (`src/update/paths.ts:76-79`), per the ownership rule.
+When the version is already staged and this is a native install, the line says what is actually true (`src/update/notice.ts:49-53`): `hive 0.0.9 downloaded — run hive update to activate`, or `— run hive update after all Hive teams stop` when agents are live. It promises no automatic activation and names no nonexistent force command.
 
 ### Rate limit, dismissal, and the security escalation
 
@@ -95,7 +95,7 @@ The download is **visible**: a binary that asks to replace itself, over tens of 
 
 **No `--now` flag.** Not built, and not an omission: the daemon owns landing authority and approvals, "force" means killing agents mid-write, and the honest spelling already exists — `hive stop && hive update` (`src/cli/update.ts:1-11`). Making destruction a deliberate two-command act rather than a flag is the point.
 
-**A Homebrew-owned install is refused, not rewritten** (`src/cli/update.ts:99-117`), and so is an `unmanaged` binary Hive did not place. Two owners for one install is how a package receipt starts lying.
+**An unmanaged binary is refused, not rewritten** (`src/cli/update.ts:99-111`). Hive never guesses that it owns a release binary outside its native version directory.
 
 **Daemon auto-activation at quiescence is not built.** A staged update waits for a human to re-run `hive update`; the one-shot completion line from the design does not exist.
 
@@ -107,7 +107,7 @@ Activation is a machine-wide mutation. It holds the mutation lease, repeats the 
 
 Measured from source and live docs on 2026-07-10. This is the survey the design above is derived from, and it exists nowhere else in the repo.
 
-**`gh` (GitHub CLI).** Checks in a **goroutine launched at command start** and prints to stderr **after the command finishes**, at most once per 24 hours via a persisted state file; skips CI, non-TTY output, and Codespaces entirely; silenced by `GH_NO_UPDATE_NOTIFIER`. The detail worth stealing: it **delays the notice for Homebrew installs when the release is under 24 hours old**, so the cask has time to land before the user is told to run `brew upgrade`.
+**`gh` (GitHub CLI).** Checks in a **goroutine launched at command start** and prints to stderr **after the command finishes**, at most once per 24 hours via a persisted state file; skips CI, non-TTY output, and Codespaces entirely; silenced by `GH_NO_UPDATE_NOTIFIER`.
 
 **npm.** Fires an unawaited best-effort check and saves the message "for printing at **process exit** so it will not get lost"; weekly for stable versions; **color-codes the notice by semver distance** (red major, yellow minor, cyan patch) and always prints the exact upgrade command. The `update-notifier` config key turns it off.
 
@@ -115,13 +115,11 @@ Measured from source and live docs on 2026-07-10. This is the survey the design 
 
 **Deno.** Delays its startup check by **500 ms** so it can never affect startup latency; caches 24 h; prints to stderr **only when stderr is a terminal**; `DENO_NO_UPDATE_CHECK`.
 
-**Homebrew.** The contrast case: it **acts instead of notifying** — refreshing its own metadata (not formulae) before some commands, default every 86400 seconds.
-
-**Codex CLI.** A `version.json` in the Codex home stores `latest_version`, `last_checked_at`, and an optional `dismissed_version`, refreshed at most every **20 hours**; the network fetch is spawned in the background so startup always renders the previous cached answer. The update action is **install-method-aware**: npm/bun/pnpm equivalents, `brew upgrade --cask codex` for Homebrew, the installer script with `CODEX_NON_INTERACTIVE=1` for standalone, and *nothing at all* when the method is unrecognized — the same respect-the-owner rule Hive follows, verified in a second vendor. And: **Homebrew installs check `formulae.brew.sh`, not GitHub**, so the notice never precedes cask availability. Two notice forms: an interactive "Update available!" popup with "Update now / Skip / Skip until next version" (a persistent per-version dismissal), and a passive history line. One config key, `check_for_update_on_startup`, disables the lot.
+**Codex CLI.** A `version.json` in the Codex home stores `latest_version`, `last_checked_at`, and an optional `dismissed_version`, refreshed at most every **20 hours**; the network fetch is spawned in the background so startup always renders the previous cached answer. An unrecognized install method is left alone. Two notice forms exist: an interactive "Update available!" popup with "Update now / Skip / Skip until next version" (a persistent per-version dismissal), and a passive history line. One config key, `check_for_update_on_startup`, disables the lot.
 
 **Claude Code.** Native install checks at startup and periodically while running; downloads and installs in the background; takes effect the next time you start. Two channels (`latest`, and `stable` ≈ one week behind, skipping releases with major regressions). **Two levels of off**: `DISABLE_AUTOUPDATER=1` stops background updates while manual `claude update` still works; `DISABLE_UPDATES=1` blocks everything, for organizations distributing through their own channels. And the detail worth copying outright: the managed-settings-only `requiredMinimumVersion`/`requiredMaximumVersion` gate startup and **deliberately fail open on invalid values, so a bad policy push cannot brick the tool.** Failure handling is modest: downloads retry up to **three attempts** on drops, stalls, and checksum failures, with a **ten-minute total deadline**; recovery is rerunning `claude update` or `claude install <version>`.
 
-**The consensus, and the one gap.** Check asynchronously so the user's command is never slower; cache the answer for about a day; print one line to stderr at a natural boundary; gate on TTY and skip CI; name the exact upgrade command *for the user's install method*; provide one dedicated opt-out. **No vendor in this survey performs an automatic post-activation rollback** — they verify before activating and leave recovery to an explicit reinstall. Hive does revert on a failed health check, which is going beyond the precedent, justified because a daemon can be health-checked and a TUI cannot, and because a broken control plane strands a team rather than merely failing a command.
+**The consensus, and the one gap.** Check asynchronously so the user's command is never slower; cache the answer for about a day; print one line to stderr at a natural boundary; gate on TTY and skip CI; name the exact native update command; provide one dedicated opt-out. **No vendor in this survey performs an automatic post-activation rollback** — they verify before activating and leave recovery to an explicit reinstall. Hive does revert on a failed health check, which is going beyond the precedent, justified because a daemon can be health-checked and a TUI cannot, and because a broken control plane strands a team rather than merely failing a command.
 
 ## Rejected alternatives
 
@@ -133,8 +131,6 @@ Measured from source and live docs on 2026-07-10. This is the survey the design 
 
 **Trust on first use.** Rejected outright: a pinned key is the entire point, and TOFU on an updater means the first fetch decides who owns the machine. See [versioning-and-release.md](versioning-and-release.md).
 
-**`CLAUDE_CODE_PACKAGE_MANAGER_AUTO_UPDATE`-style opt-in brew automation.** Say `brew upgrade hive` and stop.
-
 ## Open decisions
 
 1. **Security-notice severity source.** `securityCritical` is release-author judgment, grepped out of the GitHub release notes (`src/update/check.ts:134-138`), with no external check — and it overrides every rate limit and the skip list on every install. A second approver or a linked advisory is plausible; it is a process decision, not a code one.
@@ -144,6 +140,6 @@ Measured from source and live docs on 2026-07-10. This is the survey the design 
 ## See Also
 
 - [versioning-and-release.md](versioning-and-release.md) — the versioning contract; authoritative where this article and it disagree
-- [distribution.md](distribution.md) — how the bytes get here, and why not npm/Homebrew/Sparkle
+- [distribution.md](distribution.md) — how the bytes get here and why Hive owns its native install
 - [../daemon/database-resilience.md](../daemon/database-resilience.md) — what the daemon restart behind an activation must survive
 - [../../SPEC.md](../../SPEC.md)

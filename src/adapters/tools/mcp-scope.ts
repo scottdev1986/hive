@@ -7,12 +7,9 @@ import { join } from "node:path";
 /** Hive's own server. Always attached: it is how the agent reports, lands, and
  * reads memory. Scoping never removes it. */
 export const HIVE_MCP_SERVER = "hive";
-/** The stdio bridge that pushes daemon messages into a Channels session. */
-export const HIVE_CHANNEL_MCP_SERVER = "hive-channel";
 
 export const HIVE_MCP_SERVERS: readonly string[] = [
   HIVE_MCP_SERVER,
-  HIVE_CHANNEL_MCP_SERVER,
 ];
 
 // Codex `-c` cannot quote a dotted path segment. Leave unaddressable server

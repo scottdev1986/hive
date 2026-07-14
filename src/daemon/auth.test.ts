@@ -46,7 +46,6 @@ function agentRecord(overrides: Partial<AgentRecord> = {}): AgentRecord {
     capabilityEpoch: 0,
     readOnly: false,
     writeRevoked: false,
-    channelsEnabled: false,
     ...overrides,
   };
 }
@@ -152,7 +151,6 @@ describe("an unauthenticated process cannot mutate anything", () => {
       ["/event", "POST", { kind: "notification", agentName: "maya", timestamp }],
       ["/recover", "POST", { agent: "maya" }],
       ["/statusline", "POST", { agent: "maya" }],
-      ["/channel/register", "POST", { agent: "maya", clientName: "x", clientVersion: "1" }],
     ];
     for (const [path, method, body] of routes) {
       const response = await authorized(daemon, null)(`http://hive${path}`, {
@@ -245,7 +243,7 @@ describe("a foreign agent cannot act on another tenant", () => {
     await daemon.stop();
   });
 
-  test("a foreign agent cannot report events or drive the channel as another agent", async () => {
+  test("a foreign agent cannot report events as another agent", async () => {
     const { daemon, db } = harness();
     db.upsertAgent(agentRecord());
     db.upsertAgent(agentRecord({ id: "agent-zara", name: "zara", tmuxSession: "hive-zara" }));
@@ -259,12 +257,6 @@ describe("a foreign agent cannot act on another tenant", () => {
     expect(event.status).toBe(403);
     expect(db.getAgentByName("zara")?.status).toBe("working");
 
-    const channel = await authorized(daemon, token)("http://hive/channel/poll", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ agent: "zara", waitMs: 0 }),
-    });
-    expect(channel.status).toBe(403);
     await daemon.stop();
   });
 });
@@ -358,7 +350,7 @@ describe("an agent-bound capability requires a live authority record", () => {
 });
 
 describe("the codex root token endpoint", () => {
-  test("mints a short-lived orchestrator credential for the operator", async () => {
+  test("mints a session-lived orchestrator capability for the operator", async () => {
     const { daemon } = harness();
     const operator = daemon.capabilities.mint("operator", "operator", { epoch: 0 });
 
@@ -621,13 +613,6 @@ describe("legitimate workflows keep working", () => {
     expect((await callTool(daemon, token, "hive_inbox", { agent: "maya" })).ok).toBe(true);
     expect((await callTool(daemon, token, "hive_status")).ok).toBe(true);
     expect((await callTool(daemon, token, "memory_search", { query: "phase" })).ok).toBe(true);
-
-    const channel = await authorized(daemon, token)("http://hive/channel/register", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ agent: "maya", clientName: "claude", clientVersion: "2.1.206" }),
-    });
-    expect(channel.status).toBe(200);
 
     expect((await callTool(daemon, token, "hive_land", { agent: "maya", capabilityEpoch: 0 })).ok).toBe(true);
     expect(landed).toEqual(["hive/maya-work"]);

@@ -10,6 +10,8 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
   countGraphifyCallLines,
+  lastCodexTurnCompleted,
+  lastGrokTurnCompleted,
   readClaudeTelemetry,
   readCodexTelemetry,
   readGraphifyCalls,
@@ -201,6 +203,20 @@ describe("codex rollout telemetry", () => {
     expect(telemetry.contextPct).toEqual(null);
     expect(telemetry.lastActivityAt).not.toEqual(null);
   });
+
+  test("reads exact task boundaries for a hookless Codex orchestrator", () => {
+    const started = JSON.stringify({
+      type: "event_msg",
+      payload: { type: "task_started", turn_id: "turn-1" },
+    });
+    const completed = JSON.stringify({
+      type: "event_msg",
+      payload: { type: "task_complete", turn_id: "turn-1" },
+    });
+    expect(lastCodexTurnCompleted(started)).toEqual(false);
+    expect(lastCodexTurnCompleted(`${started}\n${completed}\n`)).toEqual(true);
+    expect(lastCodexTurnCompleted('{"type":"session_meta"}\n')).toEqual(null);
+  });
 });
 
 // Every record below is verbatim from a real Grok session (agent bridget,
@@ -271,6 +287,8 @@ describe("grok session telemetry", () => {
 
     const telemetry = await readGrokTelemetry(WORKTREE, "session-1", home);
     expect(telemetry.turnCompleted).toEqual(false);
+    expect(lastGrokTurnCompleted(streaming)).toEqual(false);
+    expect(lastGrokTurnCompleted(GROK_UPDATES)).toEqual(true);
   });
 
   // A cancelled grok turn writes no signals.json at all, and an agent that has

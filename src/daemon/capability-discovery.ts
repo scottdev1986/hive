@@ -701,13 +701,6 @@ export class GrokCliCapabilityTransport implements GrokCapabilityTransport {
       ? parseGrokCliVersion(version.stdout.toString())
       : null;
     if (identity === null) throw new Error("grok --version was unrecognized");
-    if (!isMeasuredGrokCatalogIdentity(identity)) {
-      throw new Error(
-        `grok catalog liveness is unverified for ${identity.version} ` +
-          `(${identity.buildHash}); measured builds are 0.2.93 ` +
-          `(f00f96316d4b) and 0.2.99 (b1b49ccb71a7)`,
-      );
-    }
     const debugRoot = await mkdtemp(join(tmpdir(), "hive-grok-models-"));
     const debugFile = join(debugRoot, "debug.log");
     try {
@@ -749,21 +742,13 @@ export class GrokCliCapabilityTransport implements GrokCapabilityTransport {
   }
 }
 
-/** Positive liveness evidence measured on admitted Grok builds. The same command
+/** Positive liveness evidence measured on Grok builds. The same command
  * offline returns cached stdout and exit 0 but never emits either event. */
 export function grokModelsProvedLive(stderr: string): boolean {
   return /Fetched remote settings from cli-chat-proxy/.test(stderr) ||
     /Fetched [1-9]\d* models from https:\/\/cli-chat-proxy\.grok\.com\/v1\/models/.test(
       stderr,
     );
-}
-
-export function isMeasuredGrokCatalogIdentity(identity: {
-  version: string;
-  buildHash: string;
-}): boolean {
-  return (identity.version === "0.2.93" && identity.buildHash === "f00f96316d4b") ||
-    (identity.version === "0.2.99" && identity.buildHash === "b1b49ccb71a7");
 }
 
 function grokDefaultFromStdout(stdout: string): string | null {
@@ -785,20 +770,27 @@ export function recordsFromGrokModels(
     !Number.isFinite(fetchedAt) ||
     parsed.data.grok_version !== payload.cliVersion
   ) return [];
+  const models = Object.entries(parsed.data.models);
+  if (models.some(([key, entry]) => {
+    const info = entry.info;
+    const efforts = info.reasoning_efforts ?? [];
+    return info.id !== key ||
+      (info.supports_reasoning_effort && efforts.length === 0) ||
+      (!info.supports_reasoning_effort && efforts.length > 0);
+  })) return [];
   const cacheObservedAt = new Date(fetchedAt).toISOString();
   const accountFingerprint = fingerprintAccount("grok", [
     parsed.data.auth_method,
     parsed.data.origin,
   ]);
-  return Object.entries(parsed.data.models).flatMap(([key, entry]) => {
+  return models.map(([_key, entry]) => {
     const info = entry.info;
-    if (info.id !== key) return [];
     const reasoningEfforts = info.reasoning_efforts ?? [];
     const efforts = reasoningEfforts.map((effort) => effort.value);
     const advertisedDefault = reasoningEfforts.find((effort) =>
       effort.default === true
     )?.value;
-    return [{
+    return {
       provider: "grok" as const,
       accountFingerprint,
       cliVersion: payload.cliVersion,
@@ -819,7 +811,7 @@ export function recordsFromGrokModels(
         ? unknown("field-absent", GROK_MODELS_CACHE, cacheObservedAt)
         : known(advertisedDefault, GROK_MODELS_CACHE, cacheObservedAt),
       observedAt: cacheObservedAt,
-    }];
+    };
   });
 }
 

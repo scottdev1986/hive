@@ -29,8 +29,6 @@ import {
   writeClaudeAgentConfig,
   claudeConfigPath,
   seedClaudeWorktreeTrust,
-  CLAUDE_CHANNELS_FLAG,
-  HIVE_CHANNEL_SERVER_NAME,
 } from "./claude";
 import { RecoverySessionDiscoveryError } from "./recovery-session";
 import { GRAPHIFY_HOOK_SCRIPT } from "./graphify-hook";
@@ -161,33 +159,18 @@ describe("Claude adapter", () => {
       expect(command.at(-1)).toBe("the task prompt");
     });
 
-    test("emits exactly one `--` when channels and scoping are both on", () => {
+    test("places an appended system prompt after scoped launch flags", () => {
       const command = buildClaudeSpawnCommand({
         ...base,
-        channels: true,
         scopedMcpConfigPath: "/tmp/worktree/.mcp.json",
-      });
-      // A second `--` would be read as prompt text rather than a terminator.
-      expect(command.filter((argument) => argument === "--")).toHaveLength(1);
-      expect(command.at(-1)).toBe("--");
-      expect(command.indexOf("--mcp-config")).toBeLessThan(
-        command.indexOf(CLAUDE_CHANNELS_FLAG),
-      );
-    });
-
-    test("places an appended system prompt before the channels terminator", () => {
-      const command = buildClaudeSpawnCommand({
-        ...base,
-        channels: true,
         appendSystemPrompt: "root instructions",
       });
-      expect(command.indexOf("--append-system-prompt")).toBeLessThan(
-        command.indexOf("--"),
-      );
       expect(command[command.indexOf("--append-system-prompt") + 1]).toBe(
         "root instructions",
       );
-      expect(command.at(-1)).toBe("--");
+      expect(command.indexOf("--append-system-prompt")).toBeGreaterThan(
+        command.indexOf("--strict-mcp-config"),
+      );
     });
 
     test("omits the flags entirely when no scoped config is given", () => {
@@ -230,10 +213,10 @@ describe("Claude adapter", () => {
         probes.push(executable);
         return executable === "/native/claude" ? "2.1.206" : null;
       },
-      () => ["/homebrew/claude", "/native/claude", "/never/reached"],
+      () => ["/stale/claude", "/native/claude", "/never/reached"],
     );
     expect(resolved).toEqual({ path: "/native/claude", version: "2.1.206" });
-    expect(probes).toEqual(["/homebrew/claude", "/native/claude"]);
+    expect(probes).toEqual(["/stale/claude", "/native/claude"]);
   });
 
   test("falls back to the bare command with a null version when nothing works", () => {
@@ -278,20 +261,18 @@ describe("Claude adapter", () => {
     ]);
   });
 
-  test("keeps resumed session flags before the channels terminator", () => {
+  test("keeps resumed session flags before the appended system prompt", () => {
     const command = buildClaudeResumeCommand({
       name: "agent-3",
       model: "sonnet",
       worktreePath: "/tmp/worktree",
       daemonPort: 4317,
       readOnly: false,
-      channels: true,
       appendSystemPrompt: "root instructions",
     }, "0189-session");
     expect(command.slice(0, 3)).toEqual(["claude", "--resume", "0189-session"]);
-    expect(command.indexOf("--append-system-prompt")).toBeLessThan(
-      command.indexOf("--"),
-    );
+    expect(command.at(-2)).toBe("--append-system-prompt");
+    expect(command.at(-1)).toBe("root instructions");
   });
 
   test("derives the transcript project directory from the munged worktree path", () => {
@@ -765,46 +746,36 @@ describe("Claude adapter", () => {
   });
 });
 
-describe("Claude Channels", () => {
-  test("adds the development-channels flag naming the hive bridge", () => {
-    expect(buildClaudeSpawnCommand({
+describe("Claude Hive integration", () => {
+  test("binds hooks, status, and credentials to this exact Hive build", async () => {
+    const hive = "/tmp/Hive Acceptance/versions/0.0.0/hive";
+    await writeClaudeAgentConfig(worktreePath, {
       name: "maya",
-      model: "sonnet",
-      worktreePath: "/tmp/worktree",
       daemonPort: 4317,
-      readOnly: false,
-      channels: true,
-    })).toEqual([
-      "claude",
-      "--model",
-      "sonnet",
-      // During the research preview a `server:` entry needs the development
-      // flag; hive is not an allowlisted channel plugin.
-      CLAUDE_CHANNELS_FLAG,
-      `server:${HIVE_CHANNEL_SERVER_NAME}`,
-      "--",
-    ]);
-  });
-
-  test("terminates the variadic Channels option before an appended prompt", () => {
-    const command = buildClaudeSpawnCommand({
-      name: "maya",
-      model: "sonnet",
-      worktreePath: "/tmp/worktree",
-      daemonPort: 4317,
-      readOnly: false,
-      channels: true,
+      readOnly: true,
+      hiveCommand: [hive],
     });
-    command.push("SANITIZED REVIEW PROMPT");
+    const settings = JSON.parse(
+      await readFile(join(worktreePath, ".claude", "settings.local.json"), "utf8"),
+    ) as {
+      hooks: { SessionStart: Array<{ hooks: Array<{ command: string }> }> };
+      statusLine: { command: string };
+    };
+    const mcp = JSON.parse(
+      await readFile(join(worktreePath, ".mcp.json"), "utf8"),
+    ) as { mcpServers: Record<string, { command?: string; args?: string[]; headersHelper?: string }> };
 
-    expect(command.slice(-3)).toEqual([
-      `server:${HIVE_CHANNEL_SERVER_NAME}`,
-      "--",
-      "SANITIZED REVIEW PROMPT",
-    ]);
+    expect(settings.hooks.SessionStart[0]?.hooks[0]?.command).toStartWith(
+      `'${hive}' event session-start`,
+    );
+    expect(settings.statusLine.command).toStartWith(`'${hive}' statusline`);
+    expect(mcp.mcpServers.hive?.headersHelper).toStartWith(
+      `'${hive}' credential`,
+    );
+    expect(Object.keys(mcp.mcpServers)).toEqual(["hive"]);
   });
 
-  test("omits the flag entirely when channels are off", () => {
+  test("builds a normal Claude command", () => {
     expect(buildClaudeSpawnCommand({
       name: "maya",
       model: "sonnet",
@@ -814,42 +785,21 @@ describe("Claude Channels", () => {
     })).toEqual(["claude", "--model", "sonnet"]);
   });
 
-  test("registers the stdio bridge alongside the HTTP daemon server", async () => {
+  test("registers only the HTTP daemon server", async () => {
     await writeClaudeAgentConfig(worktreePath, {
       name: "maya",
       daemonPort: 4317,
       readOnly: false,
-      channels: true,
     });
     const mcp = JSON.parse(
       await readFile(join(worktreePath, ".mcp.json"), "utf8"),
     ) as { mcpServers: Record<string, Record<string, unknown>> };
 
-    // Channels only work over stdio, so the HTTP daemon cannot push directly.
     expect(mcp.mcpServers.hive).toEqual({
       type: "http",
       url: "http://127.0.0.1:4317/mcp",
       headersHelper: "hive credential --agent maya",
     });
-    expect(mcp.mcpServers[HIVE_CHANNEL_SERVER_NAME]).toEqual({
-      type: "stdio",
-      command: "hive",
-      args: [
-        "channel-bridge", "--agent", "maya", "--port", "4317",
-        "--instance-id", hiveInstanceSuffix(),
-      ],
-    });
-  });
-
-  test("omits the bridge server when channels are off", async () => {
-    await writeClaudeAgentConfig(worktreePath, {
-      name: "maya",
-      daemonPort: 4317,
-      readOnly: false,
-    });
-    const mcp = JSON.parse(
-      await readFile(join(worktreePath, ".mcp.json"), "utf8"),
-    ) as { mcpServers: Record<string, unknown> };
     expect(Object.keys(mcp.mcpServers)).toEqual(["hive"]);
   });
 });

@@ -13,10 +13,8 @@
  *     state.json                        (active + retained previous)
  *   ~/.local/bin/hive -> ../share/hive/current/hive
  *
- * Ownership matters more than layout. Hive rewrites an install it created and
- * never one Homebrew created: two owners for one install is how a package
- * receipt starts lying. Codex verifiably does the same thing, dispatching to
- * `brew upgrade --cask codex` when it detects a cask install.
+ * Ownership matters more than layout. Hive rewrites only an install it created;
+ * a release binary elsewhere is unmanaged and is never modified or guessed at.
  */
 import { homedir } from "node:os";
 import { join, resolve, sep } from "node:path";
@@ -46,14 +44,10 @@ export function binLink(): string {
 export type InstallMethod =
   /** Installed by Hive's own installer into `installRoot()`. Self-updating. */
   | "native"
-  /** Owned by Homebrew. Hive tells the user the brew command; it never writes. */
-  | "homebrew"
   /** `bun run src/cli.ts` from a checkout. Never updates, never nags. */
   | "source"
   /** A release binary somewhere Hive did not put it. Refuse to guess. */
   | "unmanaged";
-
-const HOMEBREW_MARKERS = ["/Cellar/", "/homebrew/", "/Caskroom/"];
 
 /**
  * `executablePath` is `process.execPath`: the compiled `hive` for a release
@@ -69,11 +63,10 @@ export function detectInstallMethod(
   if (!isReleaseBuild) return "source";
   const path = resolve(executablePath);
   if (path.startsWith(resolve(versionsDir(root)) + sep)) return "native";
-  if (HOMEBREW_MARKERS.some((marker) => path.includes(marker))) return "homebrew";
   return "unmanaged";
 }
 
 /** The command a user of this install actually types to update. */
-export function updateCommand(method: InstallMethod): string {
-  return method === "homebrew" ? "brew upgrade hive" : "hive update";
+export function updateCommand(_method: InstallMethod): string {
+  return "hive update";
 }

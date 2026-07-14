@@ -5,12 +5,31 @@ import {
 } from "./orchestrator-status";
 
 describe("deriveOrchestratorStatus", () => {
+  test("a supervisor-owned launch is known to be spawning, not idle", () => {
+    expect(deriveOrchestratorStatus(["session-launch", "session-end"]))
+      .toBe("spawning");
+  });
+
   test("an open turn is working", () => {
     expect(deriveOrchestratorStatus(["turn-start", "turn-end"])).toBe("working");
   });
 
   test("a closed turn that actually started is idle", () => {
     expect(deriveOrchestratorStatus(["turn-end", "turn-start"])).toBe("idle");
+  });
+
+  test("a confirmed root session is idle before its first user turn", () => {
+    expect(deriveOrchestratorStatus(["session-start"])).toBe("idle");
+  });
+
+  test("a confirmed root session end is exited", () => {
+    expect(deriveOrchestratorStatus(["session-end", "turn-end"]))
+      .toBe("exited");
+  });
+
+  test("a new root session supersedes the predecessor's last boundary", () => {
+    expect(deriveOrchestratorStatus(["session-start", "turn-end"]))
+      .toBe("idle");
   });
 
   /**
@@ -32,6 +51,11 @@ describe("deriveOrchestratorStatus", () => {
 
   test("a lone turn-end never saw its own start, so it is not trusted either", () => {
     expect(deriveOrchestratorStatus(["turn-end"])).toBeNull();
+  });
+
+  test("a turn-end after session-start still exposes a missing turn-start", () => {
+    expect(deriveOrchestratorStatus(["turn-end", "session-start"]))
+      .toBeNull();
   });
 
   /** A root that has never taken a turn and a root whose turn-start hook is

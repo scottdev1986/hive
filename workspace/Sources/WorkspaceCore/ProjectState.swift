@@ -100,6 +100,11 @@ public final class ProjectState {
     /// this the snapshot that lands a second after the X rebuilds the pane the
     /// user just closed.
     private var userClosed: Set<PaneID> = []
+    /// A terminated root terminal is direct process evidence. Once observed,
+    /// a delayed feed snapshot must not paint the dead root healthy again.
+    /// A new ProjectState is created for every Workspace relaunch, so this
+    /// latch naturally resets when a new root process is started.
+    private var orchestratorChildExited = false
 
     public init(projectID: ProjectID, displayName: String,
                 layoutBounds: CGRect = CGRect(x: 0, y: 0, width: 1440, height: 900),
@@ -151,6 +156,26 @@ public final class ProjectState {
             changes.append(.focusChanged(paneID))
         }
         return changes
+    }
+
+    /// The Workspace's root child exited while its window was still open.
+    /// This is stronger evidence than the last turn boundary: the provider is
+    /// no longer attached, regardless of whether its last measured turn was
+    /// idle or working. Keep the raw word explicit for the header and the
+    /// semantic status disconnected for the shared visual legend.
+    @discardableResult
+    public func markOrchestratorExited(exitCode: Int32?) -> [StateChange] {
+        let paneID = ProjectState.orchestratorPaneID
+        guard var pane = panes[paneID] else { return [] }
+        orchestratorChildExited = true
+        let word = exitCode.map { "exited (code \($0))" } ?? "exited"
+        guard pane.feedStatus != word || !isDisconnected(pane.status) else { return [] }
+        pane.status = .disconnected(
+            reason: word,
+            lastConfirmed: pane.feedStatus)
+        pane.feedStatus = word
+        panes[paneID] = pane
+        return [.statusChanged(paneID)]
     }
 
     // MARK: Feed reconciliation
@@ -232,12 +257,18 @@ public final class ProjectState {
     private func applyOrchestrator(_ snapshot: OrchestratorSnapshot?) -> [StateChange] {
         let paneID = ProjectState.orchestratorPaneID
         guard var pane = panes[paneID] else { return [] }
+        guard !orchestratorChildExited else { return [] }
         let word = snapshot?.status ?? "unknown"
         guard pane.feedStatus != word else { return [] }
         pane.feedStatus = word
         pane.status = FeedStatusMap.paneStatus(for: word)
         panes[paneID] = pane
         return [.statusChanged(paneID)]
+    }
+
+    private func isDisconnected(_ status: PaneStatus) -> Bool {
+        if case .disconnected = status { return true }
+        return false
     }
 
     /// The feed process died: statuses can no longer be trusted, so every pane

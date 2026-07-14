@@ -360,10 +360,10 @@ describe("unmerged hive branch inventory", () => {
   test("finds a branch holding commits that never reached main", async () => {
     // Built the way david's branch was: a hive/* branch with a commit on it,
     // whose worktree is long gone. The ref is the only surviving trace.
-    await git("branch", "hive/david-channels", "main");
+    await git("branch", "hive/david-widgets", "main");
     const worktree = join(tempRoot, "david-wt");
-    await git("worktree", "add", worktree, "hive/david-channels");
-    await writeFile(join(worktree, "channels.ts"), "export const x = 1;\n");
+    await git("worktree", "add", worktree, "hive/david-widgets");
+    await writeFile(join(worktree, "widgets.ts"), "export const x = 1;\n");
     const inWorktree = async (...args: string[]) => {
       const process = Bun.spawn(["git", "-C", worktree, ...args], {
         stdout: "pipe",
@@ -371,16 +371,16 @@ describe("unmerged hive branch inventory", () => {
       });
       await process.exited;
     };
-    await inWorktree("add", "channels.ts");
-    await inWorktree("commit", "-m", "rescue david's channels work");
+    await inWorktree("add", "widgets.ts");
+    await inWorktree("commit", "-m", "rescue david's widgets work");
     await git("worktree", "remove", "--force", worktree);
 
     const stranded = await listUnmergedHiveBranches(repoRoot);
 
     expect(stranded).toEqual([
       {
-        branch: "hive/david-channels",
-        tip: await git("rev-parse", "hive/david-channels"),
+        branch: "hive/david-widgets",
+        tip: await git("rev-parse", "hive/david-widgets"),
         unmergedCommits: 1,
       },
     ]);

@@ -9,7 +9,16 @@ const HookEventBaseSchema = z.strictObject({
 });
 
 export const HookEventSchema = z.discriminatedUnion("kind", [
+  // Emitted by Hive's supervisor immediately before it launches a root
+  // generation. This is process lifecycle evidence, not a provider claim that
+  // its UI is ready, so status maps it to `spawning`, never `idle`.
+  HookEventBaseSchema.extend({ kind: z.literal("session-launch") }),
   HookEventBaseSchema.extend({ kind: z.literal("session-start") }),
+  // Emitted by the Workspace orchestrator supervisor after its final provider
+  // process exits. Provider TUIs do not all deliver a terminal callback to the
+  // native Workspace, so liveness belongs in the same structured event stream
+  // as turn state rather than in terminal scraping.
+  HookEventBaseSchema.extend({ kind: z.literal("session-end") }),
   HookEventBaseSchema.extend({ kind: z.literal("turn-start") }),
   HookEventBaseSchema.extend({
     kind: z.literal("turn-end"),

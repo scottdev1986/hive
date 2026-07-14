@@ -49,12 +49,6 @@ describe("hive init session notice", () => {
       .toEqual("hive 0.0.4 — update checks are disabled (HIVE_NO_UPDATE_CHECK=1)");
   });
 
-  test("a Homebrew install is told the Homebrew command, never `hive update`", () => {
-    const line = start(available(), { installMethod: "homebrew" });
-    expect(line).toEqual("hive 0.0.7 available (you have 0.0.4) — run brew upgrade hive");
-    expect(line).not.toContain("hive update");
-  });
-
   test("a staged update names the all-team activation gate", () => {
     expect(start(available(), { staged: "0.0.7", liveAgents: 3 })).toEqual(
       "hive 0.0.7 downloaded — run hive update after all Hive teams stop",

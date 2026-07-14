@@ -1,7 +1,8 @@
 /**
- * Runtime autonomy control: the one writer `~/.hive/config.toml` has.
+ * Runtime autonomy control: the one agent-autonomy dial in
+ * `~/.hive/config.toml`.
  *
- * The user flips writer autonomy from the Workspace's Agents menu (which runs
+ * The user flips agent autonomy from the Workspace's Agents menu (which runs
  * `hive autonomy <mode>`), so the change has to outlive the daemon that
  * received it. The persistence is a surgical text edit, not a re-serialize:
  * the file is the user's, and comments or keys this build does not know must

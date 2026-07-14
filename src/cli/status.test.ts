@@ -25,7 +25,6 @@ describe("status table", () => {
       capabilityEpoch: 0,
       readOnly: false,
       writeRevoked: false,
-      channelsEnabled: false,
     }];
 
     const table = formatStatusTable(agents);
@@ -62,7 +61,6 @@ describe("status table", () => {
       capabilityEpoch: 0,
       readOnly: false,
       writeRevoked: false,
-      channelsEnabled: false,
     } as const;
     const agents: AgentRecord[] = [
       {

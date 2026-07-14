@@ -4,7 +4,7 @@ import { CapabilityProviderSchema, EffortLevelSchema } from "./capability";
 
 // Reserved recipient name for the root orchestrator. It is not a spawned
 // agent and has no row in the agents table; delivery routes it through the
-// dedicated root wake bridge instead of ordinary agent liveness checks.
+// dedicated root delivery path instead of ordinary agent liveness checks.
 export const ORCHESTRATOR_NAME = "orchestrator";
 
 // A control restart must be able to reproduce the process that was actually
@@ -122,6 +122,10 @@ const AgentRecordShape = {
   // the transcript's token count by; it is never defaulted, because a guessed
   // 200k once reported agents at ~22% of a 1M window as 100% full.
   contextWindow: z.number().int().positive().optional(),
+  // Per-session graph-tool adoption observed from the agent's provider
+  // artifacts. Present only on hive_status rows when graphify is configured;
+  // null means no trustworthy observation, never zero calls.
+  graphifyCalls: z.number().int().nonnegative().nullable().optional(),
   createdAt: z.iso.datetime(),
   lastEventAt: z.iso.datetime(),
   capabilityEpoch: z.number().int().nonnegative().default(0),
@@ -130,9 +134,6 @@ const AgentRecordShape = {
   // later revoked by critical control.
   readOnly: z.boolean().default(false),
   writeRevoked: z.boolean().default(false),
-  // True only when hive launched this agent's CLI with the Channels research
-  // preview enabled; channel delivery is never trusted for other sessions.
-  channelsEnabled: z.boolean().default(false),
 } as const;
 
 export const AgentRecordObjectSchema = z.object(AgentRecordShape);

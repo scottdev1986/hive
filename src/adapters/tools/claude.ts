@@ -40,11 +40,6 @@ export interface ClaudeSpawnOptions {
   /** Suppress interactive permission prompts. Read-only authority remains
    * enforced independently by denied tools and server capabilities. */
   dangerous?: boolean;
-  /** Launch with the Channels research preview so the hive-channel bridge can
-   * push daemon messages into the running session. Attended sessions only: the
-   * flag raises a warning dialog nothing can pre-accept, so spawned agents
-   * leave this off and take tmux delivery instead. */
-  channels?: boolean;
   /** The per-repo graphify MCP server, when the daemon has one up and healthy
    * (docs/graphify/integration.md). Absent means no entry at all:
    * a dead URL in the config would cost every agent a connect-timeout. */
@@ -54,31 +49,31 @@ export interface ClaudeSpawnOptions {
    * the pane to resolve `claude` again. */
   executable?: string;
   /** Restrict the session to the worktree's own `.mcp.json` — Hive's `hive`
-   * server plus the channel bridge — instead of also inheriting every server
+   * server — instead of also inheriting every server
    * configured for the human's interactive sessions. Absent means today's
    * inherit-everything behavior. */
   scopedMcpConfigPath?: string;
   /** Hive-owned settings file for a launch that must not read project or local
    * settings from its cwd. User settings still apply. */
   scopedSettingsPath?: string;
-  /** Additional system instructions for this session. Emitted before the
-   * Channels `--` terminator, which makes every following argument positional. */
+  /** Additional system instructions for this session. */
   appendSystemPrompt?: string;
+  /** Exact argv prefix for this Hive build. Installed releases pass their
+   * absolute binary path so hooks and MCP helpers cannot attach to a
+   * different installation (or fail because `hive` is absent from PATH).
+   * Source-mode and focused adapter tests may omit it and use `hive`. */
+  hiveCommand?: readonly string[];
 }
 
 export type ClaudeAgentConfigOptions = Pick<
   ClaudeSpawnOptions,
-  "name" | "daemonPort" | "readOnly" | "dangerous" | "channels" | "graphifyUrl"
+  | "name"
+  | "daemonPort"
+  | "readOnly"
+  | "dangerous"
+  | "graphifyUrl"
+  | "hiveCommand"
 >;
-
-// The .mcp.json name of the stdio bridge Claude Code spawns as a subprocess.
-// Channels only work over stdio servers, so the HTTP hive daemon cannot push
-// directly; the bridge relays daemon deliveries into the session.
-export const HIVE_CHANNEL_SERVER_NAME = "hive-channel";
-
-// During the research preview, `server:` channel entries are only accepted
-// behind the development flag; hive is not an allowlisted channel plugin.
-export const CLAUDE_CHANNELS_FLAG = "--dangerously-load-development-channels";
 
 export type CommandRunner = (argv: string[]) => Promise<{
   stdout: string;
@@ -102,7 +97,7 @@ const runCommand: CommandRunner = async (argv) => {
 };
 
 /** Read the installed Claude CLI version (e.g. "2.1.206"), or null when the
- * CLI is missing or unparseable — callers must then skip Channels. */
+ * CLI is missing or unparseable. */
 export async function detectClaudeCliVersion(
   run: CommandRunner = runCommand,
   executable = "claude",
@@ -137,8 +132,8 @@ export function probeClaudeVersion(executable: string): string | null {
 
 /** Candidate installations in preference order: every PATH entry, then the
  * native-installer locations a broken package-manager shim commonly shadows
- * (a homebrew `claude` that prints "native binary not installed" sits ahead
- * of a working ~/.local/bin/claude on a typical login PATH). */
+ * (a stale `claude` shim can sit ahead of a working ~/.local/bin/claude on a
+ * typical login PATH). */
 export function claudeExecutableCandidates(
   env: Record<string, string | undefined> = process.env,
 ): string[] {
@@ -259,7 +254,7 @@ function removeOwnedHiveHooks(
       if (!isRecord(entry) || !Array.isArray(entry.hooks)) return true;
       return !entry.hooks.some((hook) => {
         if (!isRecord(hook) || typeof hook.command !== "string") return false;
-        if (!/^hive event [a-z-]+ --agent \S+ --port \d+/.test(hook.command)) {
+        if (!/(?:^|\s)event [a-z-]+ --agent \S+ --port \d+/.test(hook.command)) {
           return false;
         }
         const owner = /--instance-id (\S+)/.exec(hook.command)?.[1];
@@ -307,18 +302,6 @@ export function buildClaudeSpawnCommand(
   }
   if (options.appendSystemPrompt !== undefined) {
     command.push("--append-system-prompt", options.appendSystemPrompt);
-  }
-  if (options.channels ?? false) {
-    command.push(
-      CLAUDE_CHANNELS_FLAG,
-      `server:${HIVE_CHANNEL_SERVER_NAME}`,
-      // This option is variadic (`<channels...>`) in Claude 2.1.206. Without
-      // a terminator it consumes Hive's positional task prompt and rejects
-      // the prompt as an untagged channel entry. `--strict-mcp-config` already
-      // terminates the `--mcp-config` list above, so exactly one `--` is
-      // needed here — a second would itself be read as prompt text.
-      "--",
-    );
   }
   return command;
 }
@@ -547,9 +530,14 @@ export async function writeClaudeAgentConfig(
   ]);
   removeOwnedHiveHooks(existingSettings, hiveInstanceSuffix());
 
+  const hiveCommand = options.hiveCommand ?? ["hive"];
+  if (hiveCommand[0] === undefined) {
+    throw new Error("Hive command must contain an executable");
+  }
+  const hiveInvocation = hiveCommand.map(shellToken).join(" ");
   const eventCommand = (kind: string): string =>
     [
-      "hive",
+      hiveInvocation,
       "event",
       kind,
       "--agent",
@@ -666,7 +654,7 @@ export async function writeClaudeAgentConfig(
     statusLine: {
       type: "command",
       command: [
-        "hive",
+        hiveInvocation,
         "statusline",
         "--agent",
         shellToken(options.name),
@@ -687,25 +675,9 @@ export async function writeClaudeAgentConfig(
         // not through `headers: {Authorization: "Bearer ${VAR}"}`. An env var
         // would be inherited by every descendant of this agent's process; the
         // helper reads a 0600 file with a close-on-exec descriptor instead.
-        headersHelper: `hive credential --agent ${shellToken(options.name)}`,
+        headersHelper:
+          `${hiveInvocation} credential --agent ${shellToken(options.name)}`,
       },
-      ...((options.channels ?? false)
-        ? {
-            [HIVE_CHANNEL_SERVER_NAME]: {
-              type: "stdio",
-              command: "hive",
-              args: [
-                "channel-bridge",
-                "--agent",
-                options.name,
-                "--port",
-                String(options.daemonPort),
-                "--instance-id",
-                hiveInstanceSuffix(),
-              ],
-            },
-          }
-        : {}),
       // The repo's local knowledge graph, read-only and loopback-only. Only
       // written when the daemon's server was healthy at spawn time.
       ...(options.graphifyUrl === undefined

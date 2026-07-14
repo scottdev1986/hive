@@ -16,7 +16,6 @@ import {
   stopHive,
   writeMemoryCli,
 } from "./cli/control";
-import { runChannelBridge } from "./cli/channel-bridge";
 import { runCredentialHelper } from "./cli/credential";
 import { runDaemon } from "./cli/daemon";
 import {
@@ -107,6 +106,7 @@ interface CodexAppServerHostCliOptions {
   port: string;
   agent: string;
   instanceId: string;
+  graphifyUrl?: string;
 }
 
 function parseNonnegative(value: string, label: string): number {
@@ -518,7 +518,7 @@ export function createProgram(): Command {
   program
     .command("autonomy [mode]")
     .description(
-      "Show or set writer-agent autonomy: sandboxed (approvals queue) or " +
+      "Show or set agent autonomy: sandboxed (approvals queue) or " +
         "dangerous (no permission prompts)",
     )
     .option("--port <number>", "daemon port")
@@ -751,19 +751,6 @@ export function createProgram(): Command {
     });
 
   program
-    .command("channel-bridge")
-    .description(
-      "Run the stdio MCP bridge that pushes Hive messages into a Claude session",
-    )
-    .requiredOption("--agent <name>", "agent name")
-    .requiredOption("--port <number>", "daemon port")
-    .requiredOption("--instance-id <id>", "expected Hive instance identity")
-    .action(async (options: { agent: string; port: string; instanceId: string }) => {
-      await verifyDaemonInstance(parsePort(options.port), options.instanceId);
-      await runChannelBridge(options.agent, parsePort(options.port));
-    });
-
-  program
     .command("recover [name]")
     .description(
       "Resume crashed agent sessions (all recoverable agents, or one by name)",
@@ -827,6 +814,7 @@ export function createProgram(): Command {
     .requiredOption("--port <number>")
     .requiredOption("--agent <name>")
     .requiredOption("--instance-id <id>")
+    .option("--graphify-url <url>")
     .action(async (options: CodexAppServerHostCliOptions) => {
       await verifyDaemonInstance(parsePort(options.port), options.instanceId);
       process.exitCode = await runCodexAppServerHost({
@@ -834,6 +822,9 @@ export function createProgram(): Command {
         worktree: options.worktree,
         daemonPort: parsePort(options.port),
         agentName: options.agent,
+        ...(options.graphifyUrl === undefined
+          ? {}
+          : { graphifyUrl: options.graphifyUrl }),
       });
     });
 

@@ -247,7 +247,6 @@ describe("reapProcessTree", () => {
       capabilityEpoch: 0,
       readOnly: false,
       writeRevoked: false,
-      channelsEnabled: false,
     } satisfies AgentRecord;
     try {
       expect(() => process.kill(host.pid, 0)).not.toThrow();

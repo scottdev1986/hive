@@ -48,6 +48,7 @@ import { readBillingWithMemory } from "../daemon/usage-credits";
 import { persistAutonomy } from "../config/autonomy";
 import { readModelInventory } from "../daemon/model-inventory";
 import { verifiedAgentStop } from "../daemon/teardown";
+import { inheritDefaultModelControlSettings } from "../daemon/instance-settings";
 
 export async function runDaemon(): Promise<void> {
   await acquireDaemonLock();
@@ -69,6 +70,7 @@ export async function runDaemon(): Promise<void> {
   // vendor is skipped, never guessed), but the seed writes no enablement state.
   // Enablement is consent, and only the user's own click can grant it.
   const routingPolicy = new RoutingPolicyStore(db);
+  inheritDefaultModelControlSettings(routingPolicy);
   if (routingPolicy.isEmpty()) {
     const facts = await (async () => {
       const discovery = await forEachProvider(async (provider) => {
@@ -127,7 +129,10 @@ export async function runDaemon(): Promise<void> {
   const spawner = new HiveSpawner({
     db,
     repoRoot,
-    port,
+    // `port` is normally 0: Bun chooses the instance's ephemeral port only
+    // when the daemon starts. Every later launch must read that bound port,
+    // never preserve the pre-bind sentinel in agent hooks and MCP config.
+    port: () => daemon.listeningPort ?? port,
     // Synchronous read of the live server; null attaches nothing and costs
     // the spawn nothing.
     graphifyUrl: () => graphify.serverUrl(),
@@ -163,7 +168,6 @@ export async function runDaemon(): Promise<void> {
     readBilling: (provider) => readBillingWithMemory(provider),
     tmux,
     stopSession: verifiedAgentStop(tmux),
-    channelsEnabled: config.channels === "auto",
     // Even when quota-aware routing is disabled, critical read-only restarts
     // require a durable accounting lifecycle.
     quota,

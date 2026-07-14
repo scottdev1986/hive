@@ -7,10 +7,13 @@ import {
   launchWorkspace,
   resolveWorkspaceApp,
   runWorkspace,
+  workspaceLaunchNeedsNewProcess,
+  workspaceOpenArguments,
   type LaunchDeps,
 } from "./workspace";
 import {
   hiveInstanceSuffix,
+  hiveTmuxSocketName,
   orchestratorTmuxSession,
 } from "../daemon/tmux-sessions";
 import { getHiveHome } from "../daemon/db";
@@ -30,6 +33,37 @@ function install(version: string): string {
 }
 
 describe("hive opens the installed release Workspace", () => {
+  test("opens a new process when LaunchServices would reuse another instance", () => {
+    const current = hiveInstanceSuffix();
+    expect(workspaceLaunchNeedsNewProcess(
+      `/x/HiveWorkspace.app/Contents/MacOS/HiveWorkspace --instance-id other\n`,
+      current,
+    )).toEqual(true);
+    expect(workspaceLaunchNeedsNewProcess(
+      `/x/HiveWorkspace.app/Contents/MacOS/HiveWorkspace --instance-id ${current}\n`,
+      current,
+    )).toEqual(false);
+    expect(workspaceLaunchNeedsNewProcess(
+      "/x/HiveWorkspace.app/Contents/MacOS/HiveWorkspace\n",
+      current,
+    )).toEqual(true);
+  });
+
+  test("passes PATH and the private temp directory into a separate app", () => {
+    expect(workspaceOpenArguments(
+      "/Applications/HiveWorkspace.app",
+      ["--orchestrator", "codex"],
+      true,
+      "/usr/local/tools/bin:/Users/me/.local/bin:/usr/bin",
+      "/var/folders/user/T/",
+    )).toEqual([
+      "-n", "-a", "/Applications/HiveWorkspace.app",
+      "--env", "PATH=/usr/local/tools/bin:/Users/me/.local/bin:/usr/bin",
+      "--env", "TMPDIR=/var/folders/user/T/",
+      "--args", "--orchestrator", "codex",
+    ]);
+  });
+
   test("resolves the app through the active version symlink", () => {
     install("0.0.7");
     expect(resolveWorkspaceApp(root)).toEqual(join(root, "current", "HiveWorkspace.app"));
@@ -71,6 +105,7 @@ describe("hive opens the installed release Workspace", () => {
       "--instance-home", getHiveHome(),
       "--hive", "/opt/hive/bin/hive",
       "--orchestrator-session", orchestratorTmuxSession(),
+      "--tmux-socket", hiveTmuxSocketName(),
     ]]);
   });
 
@@ -94,6 +129,7 @@ describe("hive opens the installed release Workspace", () => {
       "--instance-home", getHiveHome(),
       "--hive", "/opt/hive/bin/hive",
       "--orchestrator-session", orchestratorTmuxSession(),
+      "--tmux-socket", hiveTmuxSocketName(),
       "--orchestrator", "codex",
     ]]);
   });
@@ -113,6 +149,7 @@ describe("hive opens the installed release Workspace", () => {
       "--instance-home", getHiveHome(),
       "--hive", process.execPath,
       "--orchestrator-session", orchestratorTmuxSession(),
+      "--tmux-socket", hiveTmuxSocketName(),
     ]]);
   });
 

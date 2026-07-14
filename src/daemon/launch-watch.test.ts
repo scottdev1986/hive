@@ -8,9 +8,6 @@
 //
 //   "Yes, I trust this folder"     <- projects[<worktree>].hasTrustDialogAccepted
 //   "WARNING: Bypass Permissions"  <- skipDangerousModePermissionPrompt
-//   "I am using this for local development"
-//                                  <- unsuppressable; so we never pass
-//                                     --dangerously-load-development-channels
 //
 // The run costs nothing: HOME points at a throwaway config with no credentials,
 // so the session stops at "Not logged in" — but only *after* the UserPromptSubmit
@@ -114,18 +111,12 @@ suite("Claude spawn launch watch", () => {
       // An onboarded but unauthenticated operator: no project is trusted, and
       // nothing here grants the bypass disclaimer.
       //
-      // tengu_harbor is the cached flag that turns Channels on. Without it the
-      // CLI skips the development-channels dialog entirely, and this watch
-      // would go green even if a spawn started passing the flag again. Seed it
-      // so the third dialog is armed and a regression is actually caught.
       await mkdir(home, { recursive: true });
       await writeFile(
         join(home, ".claude.json"),
         JSON.stringify({
           hasCompletedOnboarding: true,
           oauthAccount: { emailAddress: "launch-watch@example.invalid" },
-          cachedGrowthBookFeatures: { tengu_harbor: true },
-          cachedGrowthBookFeaturesAt: Date.now(),
         }),
       );
 
@@ -144,7 +135,6 @@ suite("Claude spawn launch watch", () => {
         daemonPort: 41999,
         readOnly,
         dangerous: true,
-        channels: false,
       });
       const argv = buildClaudeSpawnCommand({
         name: agent,
@@ -153,7 +143,6 @@ suite("Claude spawn launch watch", () => {
         daemonPort: 41999,
         readOnly,
         dangerous: true,
-        channels: false,
         executable: claudeBinary!,
       });
 

@@ -30,7 +30,6 @@ export const workspaceFeedAgentFixture: AgentRecord = {
   capabilityEpoch: 0,
   readOnly: false,
   writeRevoked: false,
-  channelsEnabled: false,
 };
 
 export async function buildWorkspaceFeedSnapshotFixture(): Promise<

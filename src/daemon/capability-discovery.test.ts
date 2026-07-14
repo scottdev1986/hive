@@ -4,7 +4,6 @@ import {
   CodexCapabilityProbe,
   GrokCapabilityProbe,
   grokModelsProvedLive,
-  isMeasuredGrokCatalogIdentity,
   recordsFromClaudeInitialize,
   recordsFromCodexModelList,
   recordsFromGrokModels,
@@ -343,7 +342,7 @@ describe("Grok models catalog", () => {
     expect(result).toMatchObject({ status: "ok" });
   });
 
-  test("requires positive live-fetch evidence from an exact measured build", () => {
+  test("requires positive live-fetch evidence instead of trusting exit zero", () => {
     expect(grokModelsProvedLive(
       "Fetched remote settings from cli-chat-proxy\n",
     )).toBe(true);
@@ -354,18 +353,61 @@ describe("Grok models catalog", () => {
       "Settings fetch failed after 3 attempts\n",
     )).toBe(false);
     expect(grokModelsProvedLive("")).toBe(false);
-    expect(isMeasuredGrokCatalogIdentity({
-      version: "0.2.93",
-      buildHash: "f00f96316d4b",
-    })).toBe(true);
-    expect(isMeasuredGrokCatalogIdentity({
-      version: "0.2.99",
-      buildHash: "b1b49ccb71a7",
-    })).toBe(true);
-    expect(isMeasuredGrokCatalogIdentity({
-      version: "0.2.100",
-      buildHash: "unmeasured",
-    })).toBe(false);
+  });
+
+  test("admits a newer CLI by behavior when its live catalog contract is unchanged", async () => {
+    const future = {
+      ...GROK_PAYLOAD,
+      cliVersion: "99.0.0",
+      cache: { ...GROK_PAYLOAD.cache, grok_version: "99.0.0" },
+    };
+
+    expect(recordsFromGrokModels(future, OBSERVED_AT)).toHaveLength(2);
+    expect(await new GrokCapabilityProbe({ readCatalog: async () => future }).read())
+      .toMatchObject({ status: "ok" });
+  });
+
+  test("fails closed on a changed or incoherent runtime catalog", async () => {
+    const wrongVersion = {
+      ...GROK_PAYLOAD,
+      cliVersion: "99.0.0",
+    };
+    const wrongId = {
+      ...GROK_PAYLOAD,
+      cache: {
+        ...GROK_PAYLOAD.cache,
+        models: {
+          ...GROK_PAYLOAD.cache.models,
+          "fixture-fast-model": {
+            info: {
+              ...GROK_PAYLOAD.cache.models["fixture-fast-model"].info,
+              id: "different-model",
+            },
+          },
+        },
+      },
+    };
+    const wrongEffort = {
+      ...GROK_PAYLOAD,
+      cache: {
+        ...GROK_PAYLOAD.cache,
+        models: {
+          ...GROK_PAYLOAD.cache.models,
+          "fixture-fast-model": {
+            info: {
+              ...GROK_PAYLOAD.cache.models["fixture-fast-model"].info,
+              reasoning_efforts: [{ value: "high", default: true }],
+            },
+          },
+        },
+      },
+    };
+
+    for (const payload of [wrongVersion, wrongId, wrongEffort]) {
+      expect(recordsFromGrokModels(payload, OBSERVED_AT)).toEqual([]);
+      expect(await new GrokCapabilityProbe({ readCatalog: async () => payload }).read())
+        .toMatchObject({ status: "unavailable" });
+    }
   });
 });
 

@@ -1,0 +1,24 @@
+# Grok catalog verification — 2026-07-14
+
+CLI identity:
+grok 0.2.101 (5bc4b5dfadcf) [stable]
+
+Command (free catalog surface; no model turn):
+grok models --debug --debug-file <temporary-file>
+
+Positive liveness evidence:
+Fetched 2 models from https://cli-chat-proxy.grok.com/v1/models
+Fetched remote settings from cli-chat-proxy
+
+Stdout:
+Default model: grok-4.5
+Available models: grok-4.5, grok-composer-2.5-fast
+
+Sanitized cache checks:
+- grok_version = 0.2.101
+- non-empty fetched_at and etag
+- 2 model records
+- every map key equals info.id
+- hidden and supports_reasoning_effort are booleans
+- grok-4.5 exposes high, medium, and low effort objects; high is default
+- grok-composer-2.5-fast reports no reasoning-effort support and a null effort list

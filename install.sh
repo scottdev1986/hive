@@ -6,7 +6,7 @@
 #
 # It downloads a published release, checks every artifact's SHA-256 against the
 # release manifest, proves the binary runs, and only then points ~/.local/bin/hive
-# at it. It never touches a Homebrew-owned install.
+# at it. It never modifies an existing unmanaged binary.
 #
 # Releases without Hive manifest signature material are refused. Portable shell
 # does not verify Ed25519; it preserves the exact manifest bytes and normalized

@@ -500,6 +500,91 @@ describe("first-boot seeding — consent is never seeded, entries are exact ids"
   });
 });
 
+describe("named-instance Model Control inheritance", () => {
+  function userPolicy(): { db: HiveDatabase; policy: RoutingPolicy } {
+    const sourceDb = new HiveDatabase(":memory:");
+    const source = new RoutingPolicyStore(sourceDb);
+    source.apply(
+      { op: "set-provider", expectedRevision: 0, provider: "grok", state: "enabled" },
+      "human",
+      NOW,
+    );
+    const policy = source.apply(
+      {
+        op: "set-chain",
+        expectedRevision: 1,
+        category: "light_research",
+        entries: [{
+          provider: "grok",
+          model: "grok-4.5",
+          effort: { mode: "exact", value: "low" },
+        }],
+      },
+      "human",
+      NOW,
+    );
+    return { db: sourceDb, policy };
+  }
+
+  test("copies chains, model consent, provider switches, and effort into an empty store", () => {
+    const source = userPolicy();
+    try {
+      const result = store.importDefaultPolicy(source.policy, NOW);
+      expect(result.imported).toBeTrue();
+      expect(result.policy.revision).toBe(1);
+      expect(result.policy.provisional).toBeFalse();
+      expect(result.policy.providers).toEqual(source.policy.providers);
+      expect(result.policy.models).toEqual(source.policy.models);
+      expect(result.policy.chains).toEqual(source.policy.chains);
+      expect(result.policy.selection).toEqual(source.policy.selection);
+    } finally {
+      source.db.close();
+    }
+  });
+
+  test("replaces only Hive's untouched provisional baseline", () => {
+    store.seedProvisionalBaseline(
+      { vendorDefaults: { grok: "old-suggestion" } },
+      NOW,
+    );
+    const source = userPolicy();
+    try {
+      const result = store.importDefaultPolicy(source.policy, NOW);
+      expect(result.imported).toBeTrue();
+      expect(result.policy.revision).toBe(2);
+      expect(result.policy.chains.light_research?.[0]?.model).toBe("grok-4.5");
+    } finally {
+      source.db.close();
+    }
+  });
+
+  test("never overwrites a named instance's own edit or imports provisional consent", () => {
+    const provisionalDb = new HiveDatabase(":memory:");
+    const provisional = new RoutingPolicyStore(provisionalDb)
+      .seedProvisionalBaseline(
+        { vendorDefaults: { grok: "grok-4.5" } },
+        NOW,
+      ).policy;
+    try {
+      expect(store.importDefaultPolicy(provisional, NOW).imported).toBeFalse();
+      store.apply(
+        { op: "set-provider", expectedRevision: 0, provider: "codex", state: "disabled" },
+        "named-instance-user",
+        NOW,
+      );
+      const source = userPolicy();
+      try {
+        expect(store.importDefaultPolicy(source.policy, NOW).imported).toBeFalse();
+        expect(store.read(NOW).providers).toEqual({ codex: "disabled" });
+      } finally {
+        source.db.close();
+      }
+    } finally {
+      provisionalDb.close();
+    }
+  });
+});
+
 describe("deterministic export", () => {
   test("identical logical policy exports byte-identically regardless of edit order", () => {
     const other = new HiveDatabase(":memory:");

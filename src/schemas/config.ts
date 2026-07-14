@@ -26,22 +26,18 @@ export const HiveConfigSchema = z.strictObject({
   codex: z.strictObject({
     driver: z.enum(["tui", "app-server"]).default("tui"),
   }).default({ driver: "tui" }),
-  // Claude Code's Channels research preview. "auto" uses it when the installed
-  // CLI is new enough and falls back to tmux injection otherwise; "off" pins
-  // every Claude session to the fallback.
-  channels: z.enum(["auto", "off"]).default("auto"),
-  // Writer-agent autonomy. "sandboxed" (the default) runs writers inside
+  // Agent autonomy. "sandboxed" (the default) runs writers inside
   // their vendor sandboxes with decision 4's approval queue (acceptEdits
   // allowlist, workspace-write + on-request): a fresh install is safe out of
   // the box, per the 2026-07-11 user decision (SPEC §4). "dangerous" launches
-  // writers with no human input required — Claude with
+  // agents with no human input required — writers use Claude with
   // permissions.defaultMode "bypassPermissions" in its worktree settings,
   // Codex with approval_policy="never" and sandbox_mode="danger-full-access"
-  // — and remains fully available at runtime through the Workspace's Agents
+  // — while readers keep their read-only boundary and suppress vendor/MCP
+  // confirmation prompts. The dial remains available through Workspace's Agents
   // menu and `hive autonomy`, both of which persist here. An absent key means
   // this default; an explicit key always means what it says. The read-only
-  // orchestrator and read-only control restarts are unaffected by either
-  // value.
+  // orchestrator and read-only control restarts keep their reduced authority.
   autonomy: z.enum(["dangerous", "sandboxed"]).default("sandboxed"),
   // VESTIGIAL, parsed for compatibility only. These two switches escaped a
   // misbehaving derived router back to the compiled-in table and the compiled

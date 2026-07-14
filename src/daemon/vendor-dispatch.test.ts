@@ -355,7 +355,6 @@ function unknownVendorSweep(
     capabilityEpoch: 0,
     readOnly: false,
     writeRevoked: false,
-    channelsEnabled: false,
     ...overrides,
   };
   db.insertAgent(record);

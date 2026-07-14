@@ -63,21 +63,24 @@ describe("Codex spawn-scoped MCP surface", () => {
     expect(command).not.toContain("mcp_servers.hive.enabled=false");
   });
 
+  test("disables Codex Apps for the process without touching user config", () => {
+    const command = buildCodexSpawnCommand(base);
+    expect(command).toContain("features.apps=false");
+  });
+
   test("changes nothing when the user has no servers of their own", () => {
     expect(buildCodexSpawnCommand({ ...base, excludeMcpServers: [] })).toEqual(
       buildCodexSpawnCommand(base),
     );
   });
 
-  test("never detaches Hive's own servers even if asked", () => {
+  test("never detaches Hive's own server even if asked", () => {
     const command = buildCodexSpawnCommand({
       ...base,
-      excludeMcpServers: ["hive", "hive-channel", "idea"],
+      excludeMcpServers: ["hive", "legacy", "idea"],
     });
     expect(command.join(" ")).not.toContain("mcp_servers.hive.enabled=false");
-    expect(command.join(" ")).not.toContain(
-      "mcp_servers.hive-channel.enabled=false",
-    );
+    expect(command.join(" ")).toContain("mcp_servers.legacy.enabled=false");
     expect(command).toContain("mcp_servers.idea.enabled=false");
   });
 
@@ -93,6 +96,30 @@ describe("Codex spawn-scoped MCP surface", () => {
     // The exclusion pass must not disable the entry whose url we just claimed.
     expect(command.join(" ")).not.toContain("mcp_servers.graphify.enabled=false");
     expect(command).toContain("mcp_servers.idea.enabled=false");
+  });
+
+  test("full autonomy pre-approves only Hive-owned MCP tools", () => {
+    const command = buildCodexSpawnCommand({
+      ...base,
+      dangerous: true,
+      graphifyUrl: "http://127.0.0.1:7799/mcp",
+      excludeMcpServers: ["idea"],
+    });
+    expect(command).toContain(
+      'mcp_servers.hive.default_tools_approval_mode="approve"',
+    );
+    expect(command).toContain(
+      'mcp_servers.graphify.default_tools_approval_mode="approve"',
+    );
+    expect(command.join(" ")).not.toContain(
+      "mcp_servers.idea.default_tools_approval_mode",
+    );
+
+    const sandboxed = buildCodexSpawnCommand({
+      ...base,
+      graphifyUrl: "http://127.0.0.1:7799/mcp",
+    });
+    expect(sandboxed.join(" ")).not.toContain("default_tools_approval_mode");
   });
 
   test("without a graphify URL there is no graphify entry, and an inherited one is detached", () => {
@@ -152,6 +179,8 @@ describe("Codex adapter", () => {
     expect(buildCodexSpawnCommand({ ...base, readOnly: false })).toEqual([
       "codex",
       "-c",
+      "features.apps=false",
+      "-c",
       "model=gpt-5-codex",
       "-c",
       "model_reasoning_effort=high",
@@ -171,6 +200,8 @@ describe("Codex adapter", () => {
     expect(buildCodexSpawnCommand({ ...base, readOnly: true })).toEqual([
       "codex",
       "-c",
+      "features.apps=false",
+      "-c",
       "model=gpt-5-codex",
       "-c",
       "model_reasoning_effort=high",
@@ -187,7 +218,7 @@ describe("Codex adapter", () => {
     ]);
   });
 
-  test("a dangerous writer needs no approvals and no sandbox; read-only still wins", () => {
+  test("full autonomy removes prompts without weakening a read-only sandbox", () => {
     const base = {
       name: "agent-4",
       model: "gpt-5-codex",
@@ -210,7 +241,8 @@ describe("Codex adapter", () => {
       buildCodexResumeCommand({ ...base, readOnly: false, dangerous: true }, "s1"),
     ).toContain('approval_policy="never"');
 
-    // Read-only sessions (the orchestrator, control restarts) ignore autonomy.
+    // Full autonomy governs prompts for readers too, while read-only remains
+    // the stronger filesystem restriction.
     const readOnly = buildCodexSpawnCommand({
       ...base,
       readOnly: true,
@@ -218,7 +250,16 @@ describe("Codex adapter", () => {
     });
     expect(readOnly).toContain("read-only");
     expect(readOnly).not.toContain('sandbox_mode="danger-full-access"');
-    expect(readOnly).not.toContain('approval_policy="never"');
+    expect(readOnly).toContain('approval_policy="never"');
+    expect(readOnly).not.toContain('approval_policy="on-request"');
+
+    const resumedReader = buildCodexResumeCommand({
+      ...base,
+      readOnly: true,
+      dangerous: true,
+    }, "reader-session");
+    expect(resumedReader).toContain('sandbox_mode="read-only"');
+    expect(resumedReader).toContain('approval_policy="never"');
   });
 
   test("builds trusted-project, native-hook, and MCP CLI overrides", () => {
@@ -280,6 +321,8 @@ describe("Codex adapter", () => {
     }, "019f-thread")).toEqual([
       "codex",
       "resume",
+      "-c",
+      "features.apps=false",
       "-c",
       "model=gpt-5-codex",
       "-c",
@@ -492,6 +535,24 @@ describe("Codex adapter", () => {
         'exec hive event "$1" --agent agent-4 --port 4317',
       ),
     ).toEqual(true);
+  });
+
+  test("pins lifecycle hooks to the exact release binary", async () => {
+    await writeCodexAgentConfig(worktreePath, {
+      name: "agent-4",
+      daemonPort: 4317,
+      readOnly: false,
+      hiveCommand: ["/tmp/Hive Versions/0.0.999/hive"],
+    });
+
+    const script = await readFile(
+      join(worktreePath, ".codex", CODEX_NOTIFY_SCRIPT),
+      "utf8",
+    );
+    expect(script).toContain(
+      `exec '/tmp/Hive Versions/0.0.999/hive' event "$1"`,
+    );
+    expect(script).not.toContain("exec hive event");
   });
 
   test("writes and removes the worktree-local graphify hook with server health", async () => {

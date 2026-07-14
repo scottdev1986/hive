@@ -42,7 +42,6 @@ function agent(status: AgentRecord["status"]): AgentRecord {
     capabilityEpoch: 0,
     readOnly: false,
     writeRevoked: false,
-    channelsEnabled: false,
   };
 }
 
@@ -763,7 +762,6 @@ describe("reconciling messages we handed over", () => {
       undefined,
       undefined,
       undefined,
-      undefined,
       { submitConfirmMs: 200 },
     );
     try {
@@ -1021,7 +1019,6 @@ describe("reconciling messages we handed over", () => {
       undefined,
       undefined,
       undefined,
-      undefined,
       {},
       async () => "stopped",
     );
@@ -1060,7 +1057,6 @@ describe("reconciling messages we handed over", () => {
     const delivery = new MessageDelivery(
       db,
       new RecordingTmuxSender(),
-      undefined,
       undefined,
       undefined,
       undefined,
@@ -1262,7 +1258,6 @@ describe("reconciling messages we handed over", () => {
     const delivery = new MessageDelivery(
       db,
       new RecordingTmuxSender(),
-      undefined,
       undefined,
       undefined,
       undefined,
@@ -1515,26 +1510,12 @@ describe("a live idle agent hears", () => {
     }
   });
 
-  test("an idle Claude agent is woken through its channel", async () => {
+  test("an idle Claude agent is woken through its terminal", async () => {
     const db = new HiveDatabase(join(home, "wake-claude.db"));
-    const delivered: Array<{ agent: string; content: string }> = [];
-    const channels = {
-      isLive: (name: string) => name === "maya",
-      async deliverMessage(name: string, content: string): Promise<boolean> {
-        delivered.push({ agent: name, content });
-        return true;
-      },
-    };
-    const tmux = new RecordingTmuxSender();
-    const delivery = new MessageDelivery(
-      db,
-      tmux,
-      undefined,
-      undefined,
-      channels,
-    );
+    const tmux = new SubmittingTmuxSender(db);
+    const delivery = new MessageDelivery(db, tmux);
     try {
-      db.insertAgent({ ...agent("working"), tool: "claude", channelsEnabled: true });
+      db.insertAgent({ ...agent("working"), tool: "claude" });
       const message = db.insertMessage(AgentMessageSchema.parse({
         id: crypto.randomUUID(),
         from: "orchestrator",
@@ -1544,17 +1525,134 @@ describe("a live idle agent hears", () => {
         deliveredAt: null,
         sequence: 0,
       }));
-      // A channel-live agent takes mid-turn traffic, so this one only strands
-      // if the channel was not live at send time (a bridge that reconnects
-      // after the send, which is what `retryable` registration exists for).
       db.upsertAgent({ ...db.getAgentByName("maya")!, status: "idle" });
 
       await delivery.wakeIdleRecipients();
 
-      expect(delivered).toEqual([
-        { agent: "maya", content: "Land what you have." },
+      expect(tmux.calls).toEqual([
+        ["hive-maya", "📨 message from orchestrator: Land what you have."],
       ]);
       expect(db.getMessage(message.id)?.state).toEqual("injected");
+    } finally {
+      db.close();
+    }
+  });
+
+  test("never pastes over a human draft and retries after the draft is submitted", async () => {
+    const db = new HiveDatabase(join(home, "composer-tmux.db"));
+    const tmux = new SubmittingTmuxSender(db);
+    let composing = true;
+    const delivery = new MessageDelivery(
+      db,
+      tmux,
+      undefined,
+      undefined,
+      undefined,
+      {},
+      undefined,
+      () => composing,
+    );
+    try {
+      db.insertAgent({ ...agent("idle"), tool: "claude" });
+      const queued = await delivery.send("orchestrator", "maya", "Incoming.");
+      expect(queued.state).toBe("queued");
+      expect(tmux.calls).toEqual([]);
+
+      expect(await delivery.flushQueued("maya")).toEqual([]);
+      expect(tmux.calls).toEqual([]);
+
+      composing = false;
+      const delivered = await delivery.flushQueued("maya");
+      expect(delivered).toHaveLength(1);
+      expect(tmux.calls).toEqual([
+        ["hive-maya", "📨 message from orchestrator: Incoming."],
+      ]);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("protects drafts from native, urgent, steer, and critical delivery", async () => {
+    const db = new HiveDatabase(join(home, "composer-priorities.db"));
+    const tmux = new RecordingTmuxSender();
+    const native = new RecordingNativeControl();
+    const critical: string[] = [];
+    let composing = true;
+    const delivery = new MessageDelivery(
+      db,
+      tmux,
+      {
+        async interruptAndRestart(recipient) {
+          critical.push(recipient.name);
+        },
+      },
+      native,
+      undefined,
+      {},
+      undefined,
+      () => composing,
+    );
+    try {
+      db.insertAgent(agent("working"));
+      const normal = await delivery.send("orchestrator", "maya", "Normal.");
+      const urgent = await delivery.send("orchestrator", "maya", "Urgent.", {
+        priority: "urgent",
+      });
+      const steer = await delivery.send("orchestrator", "maya", "Steer.", {
+        priority: "steer",
+      });
+      const stop = await delivery.send("orchestrator", "maya", "Stop.", {
+        intent: "stop",
+      });
+
+      expect([normal, urgent, steer, stop].every((message) =>
+        message.state === "queued"
+      )).toBe(true);
+      expect(native.calls).toEqual([]);
+      expect(tmux.calls).toEqual([]);
+      expect(critical).toEqual([]);
+      expect(await delivery.flushUrgent("maya")).toEqual([]);
+      expect(await delivery.flushSteer("maya")).toEqual([]);
+
+      composing = false;
+      await delivery.flushUrgent("maya");
+      await delivery.flushSteer("maya");
+      await delivery.flushQueued("maya");
+      expect(native.calls.length).toBeGreaterThanOrEqual(3);
+      expect(critical).toEqual(["maya"]);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("never injects a root report while the user is composing", async () => {
+    const db = new HiveDatabase(join(home, "composer-root.db"));
+    const calls: string[] = [];
+    let composing = true;
+    const delivery = new MessageDelivery(
+      db,
+      new RecordingTmuxSender(),
+      undefined,
+      undefined,
+      {
+        isLive: () => true,
+        async deliverMessage(content) {
+          calls.push(content);
+          return true;
+        },
+      },
+      {},
+      undefined,
+      () => composing,
+    );
+    try {
+      const message = await delivery.send("maya", "orchestrator", "Done.");
+      expect(message.state).toBe("queued");
+      expect(calls).toEqual([]);
+
+      composing = false;
+      expect(await delivery.wakeOrchestrator()).toHaveLength(1);
+      expect(calls).toHaveLength(1);
     } finally {
       db.close();
     }

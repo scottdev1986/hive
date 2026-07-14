@@ -64,7 +64,7 @@ Hive shipped the `systemMessage` shape first, and **no Codex agent ever received
 
 ## Why the daemon owns one HTTP server per repo
 
-The obvious alternative — a stdio server spawned per agent, the shape of the existing `hive-channel` bridge — was seriously considered for its simplicity (no port, no lifecycle, dies with the agent) and rejected on two grounds: **N concurrent agents would each hold a full copy of the graph in memory**, and **a long-lived agent would keep serving a graph from before every landing since its spawn**. The daemon-owned instance gets restart-on-rebuild for free. The cost is port and health management — both patterns the daemon already carries.
+The obvious alternative — a stdio server spawned per agent — was seriously considered for its simplicity (no port, no lifecycle, dies with the agent) and rejected on two grounds: **N concurrent agents would each hold a full copy of the graph in memory**, and **a long-lived agent would keep serving a graph from before every landing since its spawn**. The daemon-owned instance gets restart-on-rebuild for free. The cost is port and health management — both patterns the daemon already carries.
 
 The child is *held*, not detached: it must die with the daemon rather than leak, with a readiness poll before it is ever advertised and an exit watcher, so a crashed server can never remain a URL that spawns still attach.
 
@@ -72,9 +72,15 @@ The child is *held*, not detached: it must die with the daemon rather than leak,
 
 Lock one: every build runs `extract --code-only`, the binary's own zero-LLM switch. Lock two, the backstop: every graphify invocation runs under a **scrubbed allowlist environment** — `PATH`, a `HOME` pointed into Hive's tools dir (so upstream's `~/.graphify` global state is never read or written), `TMPDIR`, nothing else (`src/adapters/graphify.ts:73-85`). An allowlist rather than a `*_API_KEY` scrub, **so a provider key Hive has never heard of still cannot leak.** Upstream errors rather than degrades when a doc file needs a backend and no key exists, so a pin bump that drifts what `--code-only` covers fails loud (graphless, noted) instead of exfiltrating quietly.
 
-## Known limitations (verified still true, 2026-07-14)
+## Codex app-server parity
 
-- **Codex spawns through the experimental app-server host do not attach graphify** — the host starts app-server with only Hive's MCP URL (`src/adapters/tools/codex-app-server.ts:779-798`); the default TUI driver also receives graphify. App-server agents still receive the layer-1 digest.
+Codex agents launched through the app-server host receive the same healthy
+Graphify MCP URL as the TUI driver. The URL crosses the Hive host boundary as
+an explicit process argument; the host then attaches it with a process-local
+Codex config override. Apps/connectors and unrelated inherited MCP servers are
+disabled for that child without changing the user's Codex configuration
+(`src/adapters/tools/codex-app-server.ts`). The layer-1 digest still degrades
+independently, so a missing Graphify server never blocks a spawn.
 
 ## See Also
 

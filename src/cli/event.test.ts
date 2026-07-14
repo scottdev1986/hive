@@ -52,7 +52,9 @@ describe("hive event", () => {
 
   test("builds every valid HookEvent kind and round-trips through the schema", () => {
     const events = [
+      buildHookEvent("session-launch", { agent: "maya" }, timestamp),
       buildHookEvent("session-start", { agent: "maya" }, timestamp),
+      buildHookEvent("session-end", { agent: "maya" }, timestamp),
       buildHookEvent("turn-start", { agent: "maya" }, timestamp),
       buildHookEvent(
         "turn-end",
@@ -76,12 +78,12 @@ describe("hive event", () => {
       const encoded = JSON.stringify(event);
       expect(HookEventSchema.parse(JSON.parse(encoded))).toEqual(event);
     }
-    expect(events[2]).toMatchObject({
+    expect(events[4]).toMatchObject({
       kind: "turn-end",
       usageUnits: 7,
       usageSource: "provider",
     });
-    expect(events[4]).toMatchObject({
+    expect(events[6]).toMatchObject({
       kind: "approval-request",
       description: "Publish package",
     });

@@ -1,5 +1,5 @@
 /**
- * The passive update notice, npm/gh/brew shape: one dim line at the END of a
+ * The passive update notice, conventional CLI shape: one dim line at the END of a
  * user-facing command, never at the start, never in the way.
  *
  * The check starts when the command starts and runs concurrently, so a warm
@@ -13,7 +13,7 @@
  * Session-boundary commands (bare `hive`, init, claude, codex) are excluded:
  * they already print the richer start notice through startSession, and two
  * version lines per command is one too many. Machine-facing commands (hooks,
- * bridges, hidden process boundaries) never speak at all.
+ * helpers and hidden process boundaries) never speak at all.
  */
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";

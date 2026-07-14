@@ -16,7 +16,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     private let projectSwitcher = ProjectSwitcherController()
     private var placeholderWindow: NSWindow?
     private var smokeRunner: SmokeRunner?
-    /// The daemon's live writer-autonomy dial as last reported by the feed or
+    private var composerLeases: ComposerLeaseStore?
+    /// The daemon's live agent-autonomy dial as last reported by the feed or
     /// confirmed by a `hive autonomy` set. nil means unknown (no feed yet, or
     /// the daemon predates the dial) — the menu items disable rather than
     /// guess.
@@ -82,8 +83,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             projectDirectory: projectDirectory, hivePath: hivePath,
             daemonPort: daemonPort, orchestrator: config.orchestrator,
             orchestratorSession: config.orchestratorSession,
+            tmuxSocket: config.tmuxSocket,
             instanceID: instanceID, instanceHome: instanceHome)
         self.controller = controller
+        let composerLeases = ComposerLeaseStore(instanceHome: instanceHome)
+        self.composerLeases = composerLeases
+        controller.onComposerInput = { [weak composerLeases] recipient, action in
+            composerLeases?.handle(recipient: recipient, action: action)
+        }
         NSApp.mainMenu = MainMenuBuilder.build(paneTarget: controller)
 
         projectSwitcher.register(state: state) { [weak controller] in
@@ -98,6 +105,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         }
 
         controller.onWindowWillClose = { [weak self, weak controller] in
+            self?.composerLeases?.clear()
             self?.retireFeed()
             // The project window is this instance's reason to exist: when it
             // goes, so does everything else the instance put on screen. Without
@@ -120,17 +128,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             // indicator gets looked at). Default smoke stays offscreen.
             if ProcessInfo.processInfo.environment["HIVE_SMOKE_VISIBLE"] == "1" {
                 controller.showWindow(nil)
-                controller.commitInitialGeometry()
                 NSApp.activate(ignoringOtherApps: true)
                 controller.window?.makeKeyAndOrderFront(nil)
+                controller.commitInitialGeometry()
+                DispatchQueue.main.async { [weak controller] in
+                    controller?.commitInitialGeometry()
+                }
             }
             controller.window?.layoutIfNeeded()
             runner.run() // exits the process 0/1
         } else {
             controller.showWindow(nil)
-            controller.commitInitialGeometry()
             NSApp.activate(ignoringOtherApps: true)
             controller.window?.makeKeyAndOrderFront(nil)
+            // A second Workspace process with the same bundle id does not get
+            // usable content bounds until it is active/key. Committing before
+            // this point leaves its orchestrator pane at 0×0 forever.
+            controller.commitInitialGeometry()
+            // The first separate process for one bundle can receive its final
+            // content bounds one run-loop turn after becoming key. This retry
+            // is idempotent: a terminal whose pending launch was consumed is
+            // never spawned twice.
+            DispatchQueue.main.async { [weak controller] in
+                controller?.commitInitialGeometry()
+            }
             if config.settings { showSettings(nil) }
         }
     }
@@ -203,7 +224,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         feedClient?.stop()
     }
 
-    // MARK: Writer autonomy (Agents menu)
+    // MARK: Agent autonomy (Agents menu)
 
     @objc func selectSandboxedAutonomy(_ sender: Any?) {
         setAutonomy("sandboxed")
@@ -307,6 +328,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        composerLeases?.clear()
         closeOwnedSurfaces()
         retireFeed()
         controller?.terminateAllTerminals()

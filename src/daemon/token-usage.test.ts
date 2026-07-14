@@ -283,7 +283,6 @@ describe("TokenUsageStore", () => {
       capabilityEpoch: 0,
       readOnly: false,
       writeRevoked: false,
-      channelsEnabled: false,
       toolSessionId: "worker-codex-session",
     });
 

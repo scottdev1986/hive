@@ -85,6 +85,8 @@ Writers launch sandboxed by default; `autonomy = "dangerous"` launches them full
 
 **Read-only** is its own posture on both: an attended Claude reader gets `--permission-mode default`, while an autonomous reader takes bypass mode plus a deny list from its worktree settings (`src/adapters/tools/claude.ts:282-291`, `:563-587`). Codex gets `--sandbox read-only` — or `-c sandbox_mode="read-only"` on the resume path, because `codex resume` documents no `--sandbox` flag (`src/adapters/tools/codex.ts:117-124`).
 
+The Codex root is a separate read-only case. Its job is to call Hive's local, capability-scoped orchestration MCP, so Hive sets `mcp_servers.hive.default_tools_approval_mode="approve"` on both the app-server authority and its remote TUI (`src/cli/orchestrator.ts`). Without that override, Codex 0.144.4 displayed a blocking approval for `hive_spawn` during live acceptance. The override applies only to Hive's server; inherited servers are disabled for the root and provider credentials remain outside Hive.
+
 ## Launch identity is immutable, and that is a design commitment
 
 The model a spawn launches with is the agent's **recorded execution identity**. It is what a critical-control restart replays, and what the quota reservation is keyed to. Three mechanics fall out of that:
@@ -104,6 +106,8 @@ These are not model facts; they are the two ways adapter code most reliably manu
 **1. `Number.parseInt("12oops", 10)` yields `12` — a perfectly plausible PID.** External numerics must be parsed as *complete decimal strings*, then range-checked, never leniently. Pane-PID parsing therefore matches `/^[1-9][0-9]*$/` before converting and then requires `Number.isSafeInteger(pid) && pid > 0` (`src/adapters/tmux.ts:261-276`). The same discipline is applied to unmerged-commit counts and profile staleness in the worktree/profile adapters. A malformed number that survives parsing is indistinguishable from a real one, and it anchors a process-tree walk.
 
 **2. Long-lived provider sessions must be excluded from probe-style timeouts.** Short hard deadlines are correct for *probes* — 10s on every tmux invocation (`src/adapters/tmux.ts:27`), 5s on the Claude version probe (`src/adapters/tools/claude.ts:88-101`), 5s on the Codex app-server availability probe (`src/adapters/tools/codex-app-server.ts:382-397`), and 5s on the Grok version probe (`src/adapters/tools/grok.ts:74`). They are *wrong* for the Codex app-server host and the agent TUIs, which are intentionally long-running. Their lifecycle belongs to daemon supervision, not a 5s deadline; applying probe timeouts to them breaks their contract. The line between "a subprocess I am asking a question" and "a process I am hosting" is the line the timeout policy follows.
+
+**3. Installed lifecycle hooks must call the exact running Hive binary.** An isolated native acceptance install deliberately puts no `hive` on `PATH`. A generated Codex hook that used `exec hive event …` consequently returned 127 on every `PostToolUse` and `Stop`, leaving an idle agent recorded as working and blocking queued follow-ups. Spawn and recovery now pass `hiveCliSpawnArgv(IS_RELEASE_BUILD, process.execPath)` into `writeCodexAgentConfig`, exactly as Claude already did; source mode still receives Bun plus the entry script (`src/adapters/tools/codex.ts`, `src/daemon/spawner-impl.ts`, `src/daemon/recovery.ts`).
 
 ## When a model "won't open"
 

@@ -5,6 +5,11 @@ import { basename, join } from "node:path";
 import type { AgentRecord, HookEvent } from "../../schemas";
 import { HIVE_VERSION } from "../../version";
 import { hiveInstanceSuffix } from "../../daemon/tmux-sessions";
+import {
+  buildCodexMcpExclusionArgs,
+  HIVE_MCP_SERVERS,
+  listInheritedCodexMcpServers,
+} from "./mcp-scope";
 import type {
   CodexQuotaReading,
   CodexRateLimitsResponse,
@@ -127,49 +132,6 @@ export class CodexAppServerClient {
   }
 }
 
-/** A second, non-TUI connection to an already-running Codex thread. The
- * transport is deliberately injected so Unix sockets, WebSockets, and tests
- * share one protocol implementation without coupling the manager to an
- * agent-host process. */
-export class CodexAppServerThreadConnection {
-  constructor(private readonly client: CodexAppServerClient) {}
-
-  async initialize(clientName = "hive-root"): Promise<void> {
-    await this.client.request("initialize", {
-      clientInfo: { name: clientName, title: "Hive", version: HIVE_VERSION },
-      capabilities: { experimentalApi: true },
-    });
-    this.client.notify("initialized");
-  }
-
-  async resume(threadId: string): Promise<void> {
-    await this.client.request("thread/resume", { threadId });
-  }
-
-  async injectItems(threadId: string, text: string): Promise<void> {
-    await this.client.request("thread/inject_items", {
-      threadId,
-      items: [{
-        type: "message",
-        role: "user",
-        content: [{ type: "input_text", text }],
-      }],
-    });
-  }
-
-  async steer(threadId: string, text: string, expectedTurnId?: string): Promise<void> {
-    await this.client.request("turn/steer", {
-      threadId,
-      input: [{ type: "text", text }],
-      ...(expectedTurnId === undefined ? {} : { expectedTurnId }),
-    });
-  }
-
-  async close(): Promise<void> {
-    this.client.close();
-  }
-}
-
 // A frame is at most a few hundred KB. An unterminated larger buffer is not a
 // valid frame and must not grow without bound.
 export const MAX_FRAME_BUFFER_BYTES = 4 * 1024 * 1024;
@@ -237,49 +199,6 @@ export class SocketTransport implements CodexAppServerTransport {
         // keep the control connection alive for subsequent valid frames.
       }
     }
-  }
-}
-
-/** Root-session protocol driver. It is intentionally explicit about the
- * thread identity: the remote TUI and this connection must resume the same
- * thread before Hive can claim delivery. */
-export class CodexRootProtocolDriver {
-  private live = false;
-  private constructor(
-    private readonly connection: CodexAppServerThreadConnection,
-    private readonly threadId: string,
-  ) {}
-
-  static async connect(socketPath: string, threadId: string): Promise<CodexRootProtocolDriver> {
-    const transport = await SocketTransport.connect(socketPath);
-    const client = new CodexAppServerClient(transport, {
-      notification: () => undefined,
-      request: async () => ({}),
-    });
-    const connection = new CodexAppServerThreadConnection(client);
-    await connection.initialize("hive-root-delivery");
-    await connection.resume(threadId);
-    const driver = new CodexRootProtocolDriver(connection, threadId);
-    driver.live = true;
-    return driver;
-  }
-
-  isLive(): boolean { return this.live; }
-
-  async deliverMessage(content: string): Promise<boolean> {
-    if (!this.live) return false;
-    try {
-      await this.connection.injectItems(this.threadId, content);
-      return true;
-    } catch {
-      this.live = false;
-      return false;
-    }
-  }
-
-  async close(): Promise<void> {
-    this.live = false;
-    await this.connection.close();
   }
 }
 
@@ -409,7 +328,11 @@ export class CodexAppServerManager {
     return this.availability;
   }
 
-  buildHostCommand(agent: AgentRecord, daemonPort: number): string[] {
+  buildHostCommand(
+    agent: AgentRecord,
+    daemonPort: number,
+    graphifyUrl?: string,
+  ): string[] {
     if (agent.worktreePath === null) {
       throw new Error(`Cannot host Codex app-server without a worktree: ${agent.name}`);
     }
@@ -426,6 +349,9 @@ export class CodexAppServerManager {
       hiveInstanceSuffix(),
       "--agent",
       agent.name,
+      ...(graphifyUrl === undefined
+        ? []
+        : ["--graphify-url", graphifyUrl]),
     ];
   }
 
@@ -786,6 +712,42 @@ export interface CodexAppServerHostOptions {
   worktree: string;
   daemonPort: number;
   agentName: string;
+  graphifyUrl?: string;
+}
+
+/** Build the scoped Codex app-server authority. Apps/connectors and global MCP
+ * servers belong to the user's general Codex sessions, not a Hive agent. The
+ * overrides affect only this child process and keep Hive plus the optional
+ * per-instance Graphify server. */
+export function buildCodexAppServerCommand(
+  options: CodexAppServerHostOptions,
+  inheritedMcpServers: readonly string[] = [],
+): string[] {
+  const keep = options.graphifyUrl === undefined
+    ? HIVE_MCP_SERVERS
+    : [...HIVE_MCP_SERVERS, "graphify"];
+  const exclusions = buildCodexMcpExclusionArgs(
+    inheritedMcpServers,
+    keep,
+  ).args;
+  return [
+    "codex",
+    "app-server",
+    "--stdio",
+    "-c",
+    "features.apps=false",
+    ...exclusions,
+    "-c",
+    `projects.${JSON.stringify(options.worktree)}.trust_level=\"trusted\"`,
+    "-c",
+    `mcp_servers.hive.url=${JSON.stringify(`http://127.0.0.1:${options.daemonPort}/mcp`)}`,
+    ...(options.graphifyUrl === undefined
+      ? []
+      : [
+          "-c",
+          `mcp_servers.graphify.url=${JSON.stringify(options.graphifyUrl)}`,
+        ]),
+  ];
 }
 
 export async function runCodexAppServerHost(
@@ -793,15 +755,10 @@ export async function runCodexAppServerHost(
 ): Promise<number> {
   await unlink(options.socket).catch(() => undefined);
   await unlink(`${options.socket}.pid`).catch(() => undefined);
-  const child = Bun.spawn([
-    "codex",
-    "app-server",
-    "--stdio",
-    "-c",
-    `projects.${JSON.stringify(options.worktree)}.trust_level=\"trusted\"`,
-    "-c",
-    `mcp_servers.hive.url=${JSON.stringify(`http://127.0.0.1:${options.daemonPort}/mcp`)}`,
-  ], {
+  const child = Bun.spawn(buildCodexAppServerCommand(
+    options,
+    await listInheritedCodexMcpServers(),
+  ), {
     cwd: options.worktree,
     detached: true,
     stdin: "pipe",

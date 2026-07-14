@@ -26,8 +26,8 @@
  *     skills the user authored under `~/.hive/skills` (the confirmation
  *     names this; it is the one place user-authored content lives)
  *   - installed releases (`~/.local/share/hive`) and the `~/.local/bin/hive`
- *     link — only when Hive owns the install; a Homebrew or source install
- *     is named and left to its owner
+ *     link — only when Hive owns the install; a source or unmanaged binary is
+ *     named and left alone
  *
  * Deliberately not removed: `AGENTS.md` (scaffolded only on request and then
  * edited by humans — it is the user's document) and repo-level skills in
@@ -349,9 +349,7 @@ export async function runUninstallMachine(
     `  - deletes ${hiveHome} — all Hive state, memory, the graphify tool, and any skills you authored under ${join(hiveHome, "skills")}`,
     ...(method === "native"
       ? [`  - deletes the installed releases (${installRoot()}) and the \`hive\` command (${binLink()})`]
-      : [
-          `  - leaves the hive binary alone: this install is ${method === "homebrew" ? "Homebrew's (`brew uninstall hive` removes it)" : `${method}, not Hive-managed`}`,
-        ]),
+      : [`  - leaves the hive binary alone: this install is ${method}, not Hive-managed`]),
     "Repos keep the skills Hive installed into them; run `hive uninstall --repo` in a repo first to clean it.",
   ];
   if (!(await confirmed(plan, "Completely remove Hive?", options.yes, deps))) {
@@ -400,8 +398,6 @@ export async function runUninstallMachine(
       await rm(installRoot(), { recursive: true, force: true });
       await rm(binLink(), { force: true });
       deps.log(`Removed ${installRoot()} and ${binLink()}.`);
-    } else if (method === "homebrew") {
-      deps.log("The binary is Homebrew's: `brew uninstall hive` finishes the job.");
     }
     deps.log("Hive is removed.");
     return 0;

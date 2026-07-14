@@ -48,7 +48,6 @@ function agent(overrides: Partial<AgentRecord> = {}): AgentRecord {
     capabilityEpoch: 0,
     readOnly: false,
     writeRevoked: false,
-    channelsEnabled: false,
     ...overrides,
   };
 }
@@ -413,6 +412,39 @@ describe("crash resume", () => {
     expect(command).toContain("019f-codex-thread");
     expect(command).toContain("model_reasoning_effort=high");
     expect(command).toContain("workspace-write");
+  });
+
+  test("a resume resolves the daemon port after an ephemeral bind", async () => {
+    let daemonPort = 0;
+    let configuredPort: number | undefined;
+    const h = harness({
+      port: () => daemonPort,
+      writeCodexConfig: async (_worktreePath, options) => {
+        configuredPort = options.daemonPort;
+      },
+      readCodexActivity: async () =>
+        new Date(Date.now() + 60_000).toISOString(),
+    });
+    h.db.insertAgent(agent({
+      tool: "codex",
+      model: "gpt-5-codex",
+      status: "working",
+      toolSessionId: "019f-dynamic-port",
+      executionIdentity: {
+        tool: "codex",
+        model: "gpt-5-codex",
+        effort: "high",
+      },
+    }));
+
+    daemonPort = 43_219;
+    const outcomes = await h.recovery.sweep();
+
+    expect(outcomes).toMatchObject([{ agent: "maya", action: "resumed" }]);
+    expect(configuredPort).toBe(43_219);
+    expect(h.tmux.created[0]?.command).toContain(
+      'mcp_servers.hive.url="http://127.0.0.1:43219/mcp"',
+    );
   });
 
   test("a Grok agent resumes the exact session with current flags and compatibility isolation", async () => {

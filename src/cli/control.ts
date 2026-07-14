@@ -194,8 +194,9 @@ export async function printQuotaStatus(): Promise<void> {
 
 const AUTONOMY_MEANING: Record<Autonomy, string> = {
   sandboxed:
-    "writers run inside their vendor sandboxes; risky actions queue for approval",
-  dangerous: "writers run with permission prompts off",
+    "writers use vendor sandboxes and agent permission prompts remain enabled",
+  dangerous:
+    "agents run with permission prompts off; writers also use unrestricted vendor mode",
 };
 
 /** `hive autonomy [mode]` — read or set the daemon's live autonomy dial.

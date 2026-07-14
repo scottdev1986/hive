@@ -94,7 +94,6 @@ class AcceptanceSpawner implements Spawner {
       capabilityEpoch: 0,
       readOnly: false,
       writeRevoked: false,
-      channelsEnabled: false,
     };
     this.tmux.addSession(record.tmuxSession);
     return record;

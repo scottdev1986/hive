@@ -5,6 +5,7 @@ import Foundation
 ///     open -a HiveWorkspace --args --project <abs dir> --port <daemon port>
 ///       --instance-id <id> --instance-home <abs dir>
 ///       --hive <abs hive binary> --orchestrator-session <tmux session>
+///       --tmux-socket <instance-scoped socket name>
 ///       [--orchestrator claude|codex|grok]
 ///
 /// Plus two development/CI flags:
@@ -22,6 +23,7 @@ struct LaunchConfig {
     var hivePath: String?
     var orchestrator = "claude"
     var orchestratorSession: String?
+    var tmuxSocket: String?
     var feedOverride: String?
     var smoke = false
     /// Open the Settings window (Model Control Center) at launch. A
@@ -88,6 +90,8 @@ struct LaunchConfig {
                 }
             case "--orchestrator-session":
                 config.orchestratorSession = iterator.next()
+            case "--tmux-socket":
+                config.tmuxSocket = iterator.next()
             case "--feed":
                 config.feedOverride = iterator.next()
             default:

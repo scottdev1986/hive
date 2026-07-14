@@ -10,9 +10,9 @@ describe("upsertAutonomy", () => {
   });
 
   test("an existing top-level key is replaced in place", () => {
-    const text = ['channels = "off"', 'autonomy = "dangerous"', ""].join("\n");
+    const text = ['routingManifest = "off"', 'autonomy = "dangerous"', ""].join("\n");
     expect(upsertAutonomy(text, "sandboxed")).toEqual(
-      ['channels = "off"', 'autonomy = "sandboxed"', ""].join("\n"),
+      ['routingManifest = "off"', 'autonomy = "sandboxed"', ""].join("\n"),
     );
   });
 

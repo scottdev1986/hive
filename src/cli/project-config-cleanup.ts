@@ -66,15 +66,6 @@ async function cleanClaudeMcp(root: string, scope: RepairScope): Promise<boolean
     delete servers.hive;
     changed = true;
   }
-  const channel = servers["hive-channel"];
-  if (isRecord(channel) && channel.command === "hive" &&
-    Array.isArray(channel.args) && channel.args[0] === "channel-bridge" &&
-    channel.args.includes("orchestrator") &&
-    (channel.args.includes(scope.instanceId) ||
-      (scope.allowLegacy && !channel.args.includes("--instance-id")))) {
-    delete servers["hive-channel"];
-    changed = true;
-  }
   if (!changed) return false;
   const next = { ...parsed };
   if (Object.keys(servers).length === 0) delete next.mcpServers;

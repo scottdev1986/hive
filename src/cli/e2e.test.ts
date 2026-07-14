@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { HiveDatabase } from "../daemon/db";
 import type { TmuxSender } from "../daemon/delivery";
+import { GraphifyService } from "../daemon/graphify-service";
 import { HiveDaemon } from "../daemon/server";
 import { HiveSpawner } from "../daemon/spawner-impl";
 import { runHiveEvent } from "./event";
@@ -69,7 +70,7 @@ describe("CLI-to-daemon smoke", () => {
       isModelEnabled: async () => true,
       db,
       repoRoot: root,
-      port: 0,
+      port: 4317,
       config: {},
       readRoutingPolicy: () => ({
         schemaVersion: 2,
@@ -89,8 +90,8 @@ describe("CLI-to-daemon smoke", () => {
         branch: `hive/${name}-${slug}`,
       }),
       // The fail-loud launch watch needs proof of life. Advancing lastEventAt
-      // without leaving "spawning" stands in for the first hook event and
-      // keeps the post-spawn status assertion honest.
+      // without changing status stands in for a hook signal; the spawner owns
+      // the final promotion out of its in-flight state.
       sleep: async () => {
         const current = db.getAgentByName("maya");
         if (current !== null && current.status === "spawning") {
@@ -107,6 +108,9 @@ describe("CLI-to-daemon smoke", () => {
         db,
         spawner,
         tmuxSender: tmux,
+        // A configured graphify service adds its adoption telemetry to full
+        // hive_status rows. The Workspace feed consumes that exact surface.
+        graphify: new GraphifyService(root, undefined, () => {}),
       });
       const port = 4317;
       // The `hive` CLI presents the operator credential on every call; here it
@@ -127,9 +131,10 @@ describe("CLI-to-daemon smoke", () => {
       });
       expect(spawned.name).toEqual("maya");
       expect(spawned).toMatchObject({ readOnly: true, writeRevoked: false });
-      expect((await fetchAgentStatus(port, daemonFetch))[0]?.status).toEqual(
-        "spawning",
-      );
+      expect((await fetchAgentStatus(port, daemonFetch))[0]).toMatchObject({
+        status: "working",
+        graphifyCalls: null,
+      });
 
       expect(await runHiveEvent(
         "turn-start",

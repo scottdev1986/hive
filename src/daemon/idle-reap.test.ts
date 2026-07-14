@@ -32,7 +32,6 @@ function agent(overrides: Partial<AgentRecord> = {}): AgentRecord {
     capabilityEpoch: 0,
     readOnly: false,
     writeRevoked: false,
-    channelsEnabled: false,
     ...overrides,
   };
 }
@@ -50,6 +49,13 @@ class SilentTmuxSender implements TmuxSender {
     submitPaste(this.db, session);
   }
 }
+
+const offlineRootProtocol = {
+  isLive: () => false,
+  async deliverMessage(): Promise<boolean> {
+    return false;
+  },
+};
 
 class FakeDaemonTmux {
   readonly killed: string[] = [];
@@ -115,6 +121,7 @@ function reapDaemon(overrides: {
     db,
     spawner: new StubSpawner(),
     tmuxSender: new SilentTmuxSender(db),
+    rootProtocol: offlineRootProtocol,
     tmux,
     repoRoot: "/tmp/repo",
     lifecycle: {
@@ -171,6 +178,7 @@ describe("idle-agent reap sweep", () => {
       db,
       spawner: new StubSpawner(),
       tmuxSender: new SilentTmuxSender(db),
+      rootProtocol: offlineRootProtocol,
       tmux,
       repoRoot,
       lifecycle: { idleReap: true, idleReapMinutes: 10 },
@@ -399,6 +407,7 @@ describe("idle-agent reap sweep", () => {
       db,
       spawner: new StubSpawner(),
       tmuxSender: new SilentTmuxSender(db),
+      rootProtocol: offlineRootProtocol,
       tmux,
       repoRoot: "/tmp/repo",
       lifecycle: config.lifecycle,
@@ -426,6 +435,7 @@ describe("idle-agent reap sweep", () => {
       db,
       spawner: new StubSpawner(),
       tmuxSender: new SilentTmuxSender(db),
+      rootProtocol: offlineRootProtocol,
       tmux,
       repoRoot: "/tmp/repo",
     });

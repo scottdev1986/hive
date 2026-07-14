@@ -4,7 +4,10 @@ import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { ORCHESTRATOR_BRIEF, orchestratorDocGuidance } from "./orchestrator-brief";
-import { orchestratorTmuxSession } from "../daemon/tmux-sessions";
+import {
+  hiveTmuxSocketName,
+  orchestratorTmuxSession,
+} from "../daemon/tmux-sessions";
 import {
   buildOrchestratorCommand,
   buildOrchestratorLaunchCommand,
@@ -48,7 +51,7 @@ describe("orchestrator brief", () => {
     expect(command.slice(0, 2)).toEqual(["sh", "-lc"]);
     expect(command[2]).toContain("codex app-server --listen 'unix:///tmp/hive-root.sock'");
     expect(command[2]).toContain(
-      "exec 'codex' '--remote' 'unix:///tmp/hive-root.sock'",
+      "exec 'codex' '--remote' 'unix:///tmp/hive-root.sock' '--no-alt-screen'",
     );
   });
   test("is non-empty and names every orchestration MCP tool", () => {
@@ -87,21 +90,19 @@ describe("orchestrator brief", () => {
     expect(ORCHESTRATOR_BRIEF).toContain("is not done no matter how long it has been idle");
   });
 
-  test("builds a read-only Claude command with the required Channels bridge", () => {
+  test("builds a read-only Claude command with the orchestrator brief", () => {
     const claude = buildOrchestratorCommand("claude", 4317);
-    expect(claude).toContain("--dangerously-load-development-channels");
-    expect(claude).toContain("server:hive-channel");
-    expect(claude.at(-1)).toEqual("--");
-    expect(claude.indexOf("--append-system-prompt")).toBeLessThan(
-      claude.indexOf("--"),
-    );
     expect(claude[claude.indexOf("--append-system-prompt") + 1]).toEqual(
       ORCHESTRATOR_BRIEF,
     );
     expect(buildOrchestratorCommand("codex", 4317)).toEqual([
       "codex",
       "-c",
+      "features.apps=false",
+      "-c",
       'mcp_servers.hive.url="http://127.0.0.1:4317/mcp"',
+      "-c",
+      'mcp_servers.hive.default_tools_approval_mode="approve"',
       "--sandbox",
       "read-only",
       ORCHESTRATOR_BRIEF,
@@ -124,8 +125,10 @@ describe("orchestrator brief", () => {
 
   test("starts a fresh root in the fixed instance-scoped tmux session", () => {
     const command = buildOrchestratorLaunchCommand("claude", 4317, "/repo");
-    expect(command.slice(0, 7)).toEqual([
+    expect(command.slice(0, 9)).toEqual([
       "tmux",
+      "-L",
+      hiveTmuxSocketName(),
       "new-session",
       "-s",
       orchestratorTmuxSession(),
@@ -179,13 +182,23 @@ describe("orchestrator brief", () => {
       memory,
       guidance,
     );
-    expect(command.slice(0, 7)).toEqual([
-      "tmux", "new-session", "-s", orchestratorTmuxSession(), "-c", "/repo", "sh",
+    expect(command.slice(0, 9)).toEqual([
+      "tmux", "-L", hiveTmuxSocketName(), "new-session", "-s",
+      orchestratorTmuxSession(), "-c", "/repo", "sh",
     ]);
     const shellCommand = command[command.indexOf(";") - 1]!;
     expect(shellCommand).toContain("codex app-server --listen 'unix://");
     expect(shellCommand).toContain("'codex' '--remote' 'unix://");
+    expect(shellCommand).toContain("'features.apps=false'");
+    expect(shellCommand.match(/features\.apps=false/g)).toHaveLength(2);
     expect(shellCommand).toContain("mcp_servers.hive.url=");
+    expect(shellCommand.match(/mcp_servers\.hive\.url=/g)).toHaveLength(2);
+    expect(shellCommand).toContain(
+      "'mcp_servers.hive.default_tools_approval_mode=\"approve\"'",
+    );
+    expect(
+      shellCommand.match(/mcp_servers\.hive\.default_tools_approval_mode/g),
+    ).toHaveLength(2);
     expect(shellCommand).toContain("'--sandbox' 'read-only'");
     expect(shellCommand).toContain(ORCHESTRATOR_BRIEF.slice(0, 80));
     expect(shellCommand).toContain(guidance);
@@ -193,6 +206,23 @@ describe("orchestrator brief", () => {
     expect(command.slice(-5)).toEqual([
       ";", "set-option", "-g", "mouse", "on",
     ]);
+  });
+
+  test("detaches inherited Codex MCP servers from the root process", () => {
+    const command = buildOrchestratorLaunchCommand(
+      "codex",
+      4317,
+      "/repo",
+      "",
+      "",
+      "claude",
+      "",
+      "",
+      ["-c", "mcp_servers.codex_apps.enabled=false"],
+    );
+    const shellCommand = command[command.indexOf(";") - 1]!;
+    expect(shellCommand).toContain("'mcp_servers.codex_apps.enabled=false'");
+    expect(shellCommand).toContain("'mcp_servers.hive.url=");
   });
 
   test("Codex launch does not resolve or version-gate Claude", async () => {
@@ -208,10 +238,19 @@ describe("orchestrator brief", () => {
       async () => { throw new Error("must not inspect Claude"); },
       () => { throw new Error("must not resolve Claude"); },
       noExistingRoot,
+      "",
+      async () => ["codex_apps", "hive"],
+      async () => "/tmp/codex-root.cap",
     );
     expect(exitCode).toEqual(0);
     expect(command[command.indexOf(";") - 1]).toContain(
       ORCHESTRATOR_BRIEF.slice(0, 80),
+    );
+    expect(command[command.indexOf(";") - 1]).toContain(
+      "mcp_servers.codex_apps.enabled=false",
+    );
+    expect(command[command.indexOf(";") - 1]).not.toContain(
+      "mcp_servers.hive.enabled=false",
     );
   });
 
@@ -369,7 +408,7 @@ describe("orchestrator brief", () => {
       ).toBeNull();
     });
 
-    test("the launch command carries the token file PATH, never the token", () => {
+    test("the Codex config uses the supported bearer environment indirection", () => {
       const tokenFile = "/home/x/.hive/credentials/codex-root.cap";
       const command = buildOrchestratorCommand(
         "codex",
@@ -380,12 +419,13 @@ describe("orchestrator brief", () => {
         tokenFile,
       );
       expect(command).toContain(
-        `mcp_servers.hive.capability_token_file="${tokenFile}"`,
+        'mcp_servers.hive.bearer_token_env_var="HIVE_CAPABILITY_TOKEN"',
       );
+      expect(command.join(" ")).not.toContain(tokenFile);
       expect(command.join(" ")).not.toContain("Bearer");
       // Without a provisioned token the flag is absent entirely.
       expect(buildOrchestratorCommand("codex", 4317).join(" "))
-        .not.toContain("capability_token_file");
+        .not.toContain("bearer_token_env_var");
     });
 
     test("does not create a project .codex/config.toml", async () => {
@@ -409,8 +449,11 @@ describe("orchestrator brief", () => {
         "/home/x/.hive/credentials/codex-root.cap",
       );
       const shellCommand = command[command.indexOf(";") - 1]!;
-      expect(shellCommand).toContain("capability_token_file");
-      expect(shellCommand).toContain("codex-root.cap");
+      expect(shellCommand).toContain(
+        'export HIVE_CAPABILITY_TOKEN="$(cat \'/home/x/.hive/credentials/codex-root.cap\')"',
+      );
+      expect(shellCommand).toContain("bearer_token_env_var");
+      expect(shellCommand).not.toContain("capability_token_file");
     });
   });
 
@@ -481,7 +524,7 @@ describe("orchestrator brief", () => {
     }
   });
 
-  test("refuses to launch without a Channels-capable Claude CLI", async () => {
+  test("refuses to launch without a working Claude CLI", async () => {
     await expect(launchOrchestrator(
       "claude",
       4317,
@@ -490,7 +533,7 @@ describe("orchestrator brief", () => {
         throw new Error("must not spawn");
       },
       async () => null,
-    )).rejects.toThrow(/needs Claude .* or newer/);
+    )).rejects.toThrow(/needs a working Claude Code CLI/);
   });
 
   test("launches the orchestrator with the repo's committed memory index", async () => {

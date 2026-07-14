@@ -2,13 +2,13 @@
 
 Updated: 2026-07-14
 Sources: Hive source tree and linked raw measurements, 2026-07-14
-Raw: [Grok spend-sensitivity experiment](../../raw/grok/grok-spend-sensitivity-experiment.md) · [live quota verification](../../raw/grok/grok-quota-live-verification.txt) · [model-control snapshot](../../raw/grok/grok-model-control-verification.json)
+Raw: [Grok spend-sensitivity experiment](../../raw/grok/grok-spend-sensitivity-experiment.md) · [live quota verification](../../raw/grok/grok-quota-live-verification.txt) · [model-control snapshot](../../raw/grok/grok-model-control-verification.json) · [0.2.101 catalog verification](../../raw/grok/grok-0.2.101-catalog-verification.txt)
 
 ## Summary
 
 Grok is a **peer vendor** in Hive, launched into a tmux pane like Claude and Codex, and metered like them. Almost everything Hive knows about it was bought with measured prompts against a live account: the permission semantics, the sandbox's non-enforcement, the session-artifact layout, and the fact that its MCP calls arrive under a wrapper name. This article is that knowledge.
 
-Measured against **grok 0.2.93 (`f00f96316d4b`)** on 2026-07-12 and **grok 0.2.99 (`b1b49ccb71a7`)** on 2026-07-13. Model ids named here are **examples observed on those dates**; Hive ships no Grok catalog or Grok name heuristic (`src/adapters/tools/models.ts:1-15`), and Grok's default flipped server-side once already.
+Measured against **grok 0.2.93 (`f00f96316d4b`)** on 2026-07-12, **grok 0.2.99 (`b1b49ccb71a7`)** on 2026-07-13, and **grok 0.2.101 (`5bc4b5dfadcf`)** on 2026-07-14. Model ids named here are **examples observed on those dates**; Hive ships no Grok catalog or Grok name heuristic (`src/adapters/tools/models.ts:1-15`), and Grok's default flipped server-side once already.
 
 ## What the retired spec got wrong
 
@@ -152,7 +152,7 @@ The evidence discipline is worth copying: measured by planting uniquely-named pr
 /^grok (\S+) \(([0-9a-f]+)\) \[(\w+)\]$/
 ```
 
-→ `{version, buildHash, channel}`. The build hash is not decoration: capability discovery admits **only measured builds** (`isMeasuredGrokCatalogIdentity`, `src/daemon/capability-discovery.ts:761-766`), and a catalog whose cached `grok_version` disagrees with the running CLI yields no records at all. See [capability-discovery.md](capability-discovery.md).
+→ `{version, buildHash, channel}`. The identity remains diagnostic evidence, but it is not a manual allowlist: capability discovery validates the catalog's behavior on every probe. A catalog whose cached `grok_version` disagrees with the running CLI, changes the required schema, carries incoherent model IDs or effort declarations, lacks live-fetch proof, or names a missing default yields no usable discovery result. Compatible Grok updates therefore keep working without a Hive release; protocol-breaking updates still fail closed. See [capability-discovery.md](capability-discovery.md).
 
 ## Open unknowns (measured as unknown, not assumed)
 

@@ -11,7 +11,11 @@ import {
 } from "./tmux";
 import { join } from "node:path";
 import { promptArgument, writeLaunchPrompt } from "../daemon/launch-prompt";
-import { agentTmuxSession, hiveInstanceSuffix } from "../daemon/tmux-sessions";
+import {
+  agentTmuxSession,
+  hiveInstanceSuffix,
+  hiveTmuxSocketName,
+} from "../daemon/tmux-sessions";
 
 const socketName = `hive-test-${crypto.randomUUID()}`;
 const tmux = new TmuxAdapter(socketName);
@@ -184,6 +188,19 @@ describe("TmuxAdapter launch diagnostics", () => {
 });
 
 describe("TmuxAdapter instance boundary", () => {
+  test("uses a distinct tmux server socket for the current HIVE_HOME", async () => {
+    let observedSocket: string | undefined;
+    const adapter = new TmuxAdapter(undefined, {
+      run: async (_args, socket) => {
+        observedSocket = socket;
+        return { stdout: "", stderr: "no server running", exitCode: 1 };
+      },
+    });
+
+    expect(await adapter.listSessions()).toEqual([]);
+    expect(observedSocket).toEqual(hiveTmuxSocketName());
+  });
+
   test("never sends a command to another instance's session", async () => {
     const calls: string[][] = [];
     const adapter = new TmuxAdapter(undefined, {

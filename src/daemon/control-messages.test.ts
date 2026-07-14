@@ -35,7 +35,6 @@ function agent(status: AgentRecord["status"] = "working"): AgentRecord {
     capabilityEpoch: 0,
     readOnly: false,
     writeRevoked: false,
-    channelsEnabled: false,
   };
 }
 

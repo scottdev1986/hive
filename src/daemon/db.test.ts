@@ -45,7 +45,6 @@ function agent(overrides: Partial<AgentRecord> = {}): AgentRecord {
     capabilityEpoch: 0,
     readOnly: false,
     writeRevoked: false,
-    channelsEnabled: false,
     ...overrides,
   };
 }
@@ -826,7 +825,6 @@ describe("contextPct can say 'unknown'", () => {
         recoveryAttempts INTEGER NOT NULL DEFAULT 0,
         capabilityEpoch INTEGER NOT NULL DEFAULT 0,
         writeRevoked INTEGER NOT NULL DEFAULT 0,
-        channelsEnabled INTEGER NOT NULL DEFAULT 0,
         liveModel TEXT,
         closedAt TEXT
       )
@@ -962,10 +960,19 @@ describe("contextPct can say 'unknown'", () => {
    * turn-end whose predecessor is another turn-end) that means the root's
    * turn-start hook is not reaching us. See orchestrator-status.ts.
    */
-  test("reads the root's last turn boundaries, newest first", () => {
+  test("reads the root's last lifecycle and turn signals, newest first", () => {
     const db = new HiveDatabase(join(home, "boundaries.db"));
     try {
       // The root has no agents-table row by design; its turns live here.
+      db.insertEvent({
+        kind: "session-launch",
+        agentName: "launching-root",
+        timestamp: "2026-07-12T10:00:03.500Z",
+      });
+      expect(db.recentOrchestratorSignals("launching-root")).toEqual([
+        "session-launch",
+      ]);
+
       db.insertEvent({
         kind: "session-start",
         agentName: "orchestrator",
@@ -981,8 +988,7 @@ describe("contextPct can say 'unknown'", () => {
         agentName: "orchestrator",
         timestamp: "2026-07-12T10:00:02.000Z",
       });
-      // session-start is not a boundary and must not displace one.
-      expect(db.recentTurnBoundaries("orchestrator")).toEqual([
+      expect(db.recentOrchestratorSignals("orchestrator")).toEqual([
         "turn-end",
         "turn-start",
       ]);
@@ -995,13 +1001,32 @@ describe("contextPct can say 'unknown'", () => {
         agentName: "orchestrator",
         timestamp: "2026-07-12T10:00:03.000Z",
       });
-      expect(db.recentTurnBoundaries("orchestrator")).toEqual([
+      expect(db.recentOrchestratorSignals("orchestrator")).toEqual([
         "turn-end",
         "turn-end",
       ]);
 
       // A root nobody has heard from has no boundaries at all — not a default.
-      expect(db.recentTurnBoundaries("never-seen")).toEqual([]);
+      expect(db.recentOrchestratorSignals("never-seen")).toEqual([]);
+
+      db.insertEvent({
+        kind: "session-start",
+        agentName: "fresh-root",
+        timestamp: "2026-07-12T10:00:04.000Z",
+      });
+      expect(db.recentOrchestratorSignals("fresh-root")).toEqual([
+        "session-start",
+      ]);
+
+      db.insertEvent({
+        kind: "session-end",
+        agentName: "fresh-root",
+        timestamp: "2026-07-12T10:00:05.000Z",
+      });
+      expect(db.recentOrchestratorSignals("fresh-root")).toEqual([
+        "session-end",
+        "session-start",
+      ]);
     } finally {
       db.close();
     }

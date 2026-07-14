@@ -732,7 +732,6 @@ describe("quota persistence and reservations", () => {
       capabilityEpoch: 0,
       readOnly: false,
       writeRevoked: false,
-      channelsEnabled: false,
     });
     const daemon = new HiveDaemon({
       db,
@@ -1097,9 +1096,11 @@ describe("quota telemetry and alerts", () => {
     expect(db.listMessages()).toMatchObject([{
       from: "hive-quota",
       to: "orchestrator",
-      deliveredAt: null,
+      state: "injected",
+      deliveredAt: expect.any(String),
     }]);
-    expect(sender.calls).toEqual([]);
+    expect(sender.calls).toHaveLength(1);
+    expect(sender.calls[0]).toContain("Hive quota critical:");
     db.close();
   });
 

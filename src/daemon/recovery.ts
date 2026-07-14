@@ -34,6 +34,8 @@ import {
 import type { HiveDatabase } from "./db";
 import type { StopAgentSession } from "./teardown";
 import { readCodexTelemetry } from "./tool-telemetry";
+import { hiveCliSpawnArgv } from "./lifecycle";
+import { IS_RELEASE_BUILD } from "../version";
 
 // Three auto-resumes for one agent means the process is dying on its own,
 // not being killed by crashes; after that the sweep stops retrying and
@@ -84,7 +86,9 @@ export interface CrashRecoveryDependencies {
     TmuxAdapter,
     "hasSession" | "newSession" | "killSession" | "capturePane"
   >;
-  port: number;
+  /** Resolved lazily because a daemon configured with port 0 learns its
+   * ephemeral listening port only after Bun.serve() binds. */
+  port: number | (() => number);
   send: (
     from: string,
     to: string,
@@ -99,9 +103,6 @@ export interface CrashRecoveryDependencies {
     category: AgentRecord["category"],
   ) => Promise<AuthorizedLaunch | null>;
   flushQueued: (agentName: string) => Promise<unknown>;
-  /** Drops a stale Claude Channels registration: the connection died with
-   * the crashed process, and a resumed process re-registers on its own. */
-  dropChannel?: (agentName: string) => void;
   /** Revokes the dead agent's capability subject and deletes its credential
    * file — the same guarantee hive_kill and hive_mark_dead give, so a
    * capability can never outlive its agent through the recovery death path. */
@@ -197,6 +198,15 @@ export class CrashRecovery {
     this.readCodexActivity = deps.readCodexActivity ??
       (async (worktreePath, toolSessionId) =>
         (await readCodexTelemetry(worktreePath, toolSessionId)).lastActivityAt);
+  }
+
+  private daemonPort(): number {
+    const configured = this.deps.port;
+    const port = typeof configured === "function" ? configured() : configured;
+    if (!Number.isInteger(port) || port <= 0 || port > 65_535) {
+      throw new Error(`Hive daemon has no listening port (resolved ${port})`);
+    }
+    return port;
   }
 
   // The maintenance sweep: classify every agent whose tmux session is gone
@@ -404,7 +414,6 @@ export class CrashRecovery {
       recoveryAttempts: agent.recoveryAttempts + 1,
       lastEventAt: new Date().toISOString(),
     });
-    this.deps.dropChannel?.(record.name);
     this.denyPendingApprovals(record.name);
 
     const identity = record.executionIdentity;
@@ -458,13 +467,13 @@ export class CrashRecovery {
           // never prove life. A throw here lands in the launch-failure catch
           // below.
           await this.writeClaudeConfig(worktreePath, {
-            daemonPort: this.deps.port,
+            daemonPort: this.daemonPort(),
             name: record.name,
             readOnly: record.readOnly,
             dangerous,
           });
           argv = buildClaudeResumeCommand({
-            daemonPort: this.deps.port,
+            daemonPort: this.daemonPort(),
             model,
             ...(identity?.tool === "claude" && identity.effort !== undefined
               ? { effort: identity.effort }
@@ -479,12 +488,13 @@ export class CrashRecovery {
         }
         case "codex": {
           await this.writeCodexConfig(worktreePath, {
-            daemonPort: this.deps.port,
+            daemonPort: this.daemonPort(),
             name: record.name,
             readOnly: record.readOnly,
+            hiveCommand: hiveCliSpawnArgv(IS_RELEASE_BUILD, process.execPath),
           });
           argv = buildCodexResumeCommand({
-            daemonPort: this.deps.port,
+            daemonPort: this.daemonPort(),
             effort: identity?.tool === "codex" ? identity.effort : "medium",
             model,
             name: record.name,
@@ -496,7 +506,7 @@ export class CrashRecovery {
         }
         case "grok": {
           await this.writeGrokConfig(worktreePath, {
-            daemonPort: this.deps.port,
+            daemonPort: this.daemonPort(),
           });
           argv = buildGrokResumeCommand({
             model,
@@ -653,7 +663,6 @@ export class CrashRecovery {
       lastEventAt: now,
     });
     this.deps.revokeCapabilities?.(agent.name);
-    this.deps.dropChannel?.(agent.name);
     this.denyPendingApprovals(agent.name);
     await this.deps.send(
       "hive-recovery",
@@ -700,7 +709,6 @@ export class CrashRecovery {
       reason,
     );
     this.deps.revokeCapabilities?.(agent.name);
-    this.deps.dropChannel?.(agent.name);
     await this.deps.settleQuota(agent);
     this.denyPendingApprovals(agent.name);
     // Queued traffic to a dead agent can never inject; flag it once so

@@ -76,4 +76,5 @@ How a version comes into existence and reaches a machine.
 | --- | --- | --- |
 | [Versioning and release](release/versioning-and-release.md) | Patch-only releases, Apple and manifest signing, staged verification, atomic no-follow activation, rollback provenance, and ownership-aware updates. | 2026-07-14 |
 | [Update experience](release/update-experience.md) | Bounded notices and an update flow that stages verified bytes first, then tells the truth when quiescence blocks activation. | 2026-07-14 |
-| [Distribution](release/distribution.md) | Why not npm, Homebrew, or Sparkle — and the first-install authenticity gap the portable shell bootstrap cannot close. | 2026-07-14 |
+| [Distribution](release/distribution.md) | Why Hive uses its native installer — and the first-install authenticity gap the portable shell bootstrap cannot close. | 2026-07-14 |
+| [Pre-release acceptance testing](release/acceptance-testing.md) | The visible native Workspace release gate: three isolated concurrent instances, the complete 3×3 provider matrix, routing, status, Graphify, composer protection, no-op proof, and cleanup. | 2026-07-14 |

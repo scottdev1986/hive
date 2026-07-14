@@ -1,10 +1,15 @@
 # Multiple concurrent instances
 
-**Status:** shipped and covered by a two-process acceptance test. Verified 2026-07-14.
+**Status:** shipped, covered by a two-process live test, and exercised with three concurrent native Workspaces on 2026-07-14. The complete release gate still requires visible GUI-input and composer tests; a run driven through tmux is diagnostic evidence, not acceptance.
 
 ## Summary
 
-A Hive instance is a `HIVE_HOME`. The default instance remains `~/.hive`; `hive --instance <name>` selects `~/.hive/instances/<name>`. Each instance has its own identity, daemon lock, ephemeral port, handshake, database, credentials, runtime files, tmux sessions, and project state. Instances may operate on the same repository without sharing control-plane state.
+A Hive instance is a `HIVE_HOME`. The default instance remains `~/.hive`; `hive --instance <name>` selects `~/.hive/instances/<name>`. Each instance has its own identity, daemon lock, ephemeral port, handshake, database, local control-plane capabilities, runtime files, tmux sessions, and project state. Instances may operate on the same repository without sharing control-plane state. A named instance's empty or untouched provisional Model Control policy inherits a one-time copy of the default instance's user-authored policy, so opening a second window does not require re-enabling every model; later edits remain local to that instance. Provider authentication is outside Hive: it uses the vendor CLIs' existing signed-in sessions and never reads or writes provider passwords, API keys, session secrets, or keychain entries.
+
+Workspace launch is order-independent. A named instance always gets its own
+macOS process. When the default instance starts after a named one, the launcher
+detects the foreign `--instance-id` and requests a new process instead of
+letting LaunchServices activate the wrong window and discard the new arguments.
 
 Three resources cannot be isolated by instance and are coordinated instead:
 
@@ -12,7 +17,7 @@ Three resources cannot be isolated by instance and are coordinated instead:
 - Provider quota belongs to the logged-in vendor account. Hive therefore keeps one machine-wide quota ledger.
 - Installed releases and the `current` activation pointer are machine-wide. Update, rollback, and machine uninstall run under one mutation lease and refuse while another instance is active or unobservable.
 
-The acceptance test starts two real daemon processes on one repository, spawns one agent through each, rejects cross-instance routing, keeps the inboxes separate, lands through the shared repository, and proves that stopping one daemon leaves the other daemon, worktree, lock, and messaging path healthy (`src/daemon/multi-instance.live.test.ts:116-262`).
+The automated live test starts two real daemon processes on one repository, spawns one agent through each, rejects cross-instance routing, keeps the inboxes separate, lands through the shared repository, and proves that stopping one daemon leaves the other daemon, worktree, lock, and messaging path healthy (`src/daemon/multi-instance.live.test.ts:116-262`). A separate native diagnostic run opened Claude Code, Codex, and Grok Workspaces together from this repository, exercised every orchestrator-to-agent pairing and simultaneous identifier routing, stopped one agent and then one instance, and relaunched that instance without cross-attachment. Because macOS Accessibility permission was unavailable and its prompts were submitted through tmux, that run verifies the instance boundary but does not satisfy the visible-input release gate in [Pre-release acceptance testing](../release/acceptance-testing.md).
 
 ## Instance identity and discovery
 
@@ -43,13 +48,14 @@ A live PID is not ownership proof because PIDs are reused. Unknown state preserv
 
 | Scope | State | Coordination |
 |---|---|---|
-| Instance | `hive.db`, config, credentials, project registry and derived project state, runtime files, instance memory | Located below `HIVE_HOME` |
+| Instance | `hive.db`, config, local control-plane capability files, project registry and derived project state, runtime files, instance memory | Located below `HIVE_HOME` |
+| Preference bootstrap | Model Control chains, enablement consent, selection, and effort | One-time copy from the default policy into an empty/untouched named policy; never overwrites a named-instance edit |
 | Instance | daemon lock/PID/port, tmux sessions, provider session sockets | Instance suffix plus handshake identity |
 | Repository | `.hive/worktrees/*`, `hive/*` branches, Git common directory, repository memory and generated config | Ownership refs and file/landing locks |
 | Machine | `~/.hive/quota.db` | SQLite WAL plus transactional admission and instance-owned reservations |
 | Machine | installed version directories, the `current` pointer, and the CLI link | Machine mutation lease plus final all-instance liveness gate |
 
-The default home remains compatible with pre-instance state. Legacy unsuffixed tmux sessions are recognized only for the default home, so a named instance cannot adopt them (`src/daemon/tmux-sessions.ts:31-47`).
+The default home remains compatible with pre-instance state. Legacy unsuffixed tmux sessions are recognized only for the default home, so a named instance cannot adopt them (`src/daemon/tmux-sessions.ts:31-47`). Policy inheritance reads the default database through SQLite's read-only WAL-aware connection and writes a normal audited `import-default-policy` revision into the named database (`src/daemon/instance-settings.ts`, `src/daemon/routing-policy-store.ts`). It does not copy the database file, share a writer, import a provisional no-consent policy, or overwrite a named policy after its own first edit.
 
 ## One repository, multiple instances
 

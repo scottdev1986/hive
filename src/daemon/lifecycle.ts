@@ -346,7 +346,23 @@ export function daemonSpawnArgv(
   execPath: string,
   entry = resolve(import.meta.dir, "../cli.ts"),
 ): string[] {
-  return isReleaseBuild ? [execPath, "daemon"] : [execPath, entry, "daemon"];
+  return [...hiveCliSpawnArgv(isReleaseBuild, execPath, entry), "daemon"];
+}
+
+/**
+ * How child processes invoke this exact Hive build.
+ *
+ * Release hooks must never fall back to a different `hive` on PATH: the
+ * active version's daemon, hooks, MCP clients, and Workspace are one control
+ * plane. A source checkout still needs Bun plus the entry script because its
+ * `process.execPath` is Bun rather than Hive itself.
+ */
+export function hiveCliSpawnArgv(
+  isReleaseBuild: boolean,
+  execPath: string,
+  entry = resolve(import.meta.dir, "../cli.ts"),
+): string[] {
+  return isReleaseBuild ? [execPath] : [execPath, entry];
 }
 
 export async function ensureStarted(): Promise<number> {

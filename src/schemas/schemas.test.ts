@@ -25,7 +25,6 @@ describe("HiveConfigSchema", () => {
     const parsed = HiveConfigSchema.parse({});
     expect(HiveConfigSchema.parse(roundTrip(parsed))).toEqual({
       codex: { driver: "tui" },
-      channels: "auto",
       autonomy: "sandboxed",
       routingManifest: "auto",
       router: "derived",
@@ -75,7 +74,6 @@ describe("AgentRecordSchema", () => {
     capabilityEpoch: 0,
     readOnly: false,
     writeRevoked: false,
-    channelsEnabled: false,
   } satisfies AgentRecord;
 
   test("parses a valid round-trip", () => {
@@ -156,6 +154,8 @@ describe("AgentMessageSchema", () => {
 describe("HookEventSchema", () => {
   const events = [
     { kind: "session-start", agentName: "agent-3", timestamp },
+    { kind: "session-launch", agentName: "agent-3", timestamp },
+    { kind: "session-end", agentName: "agent-3", timestamp },
     { kind: "turn-start", agentName: "agent-3", timestamp },
     { kind: "turn-end", agentName: "agent-3", timestamp, contextPct: 25 },
     { kind: "notification", agentName: "agent-3", timestamp },

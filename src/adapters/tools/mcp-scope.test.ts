@@ -70,7 +70,7 @@ describe("isCodexAddressableServerName", () => {
   test("accepts bare TOML keys", () => {
     expect(isCodexAddressableServerName("idea")).toBe(true);
     expect(isCodexAddressableServerName("openaiDeveloperDocs")).toBe(true);
-    expect(isCodexAddressableServerName("hive-channel")).toBe(true);
+    expect(isCodexAddressableServerName("legacy-server")).toBe(true);
     expect(isCodexAddressableServerName("a_b1")).toBe(true);
   });
 
@@ -97,7 +97,7 @@ describe("buildCodexMcpExclusionArgs", () => {
     expect(result.unaddressable).toEqual([]);
   });
 
-  test("never detaches Hive's own servers", () => {
+  test("never detaches Hive's own server", () => {
     const result = buildCodexMcpExclusionArgs([
       ...HIVE_MCP_SERVERS,
       "idea",

@@ -17,9 +17,9 @@ function agent(overrides: Partial<AgentRecord> = {}): AgentRecord {
     model: "gpt-5-codex",
     category: "complex_coding",
     status: "dead",
-    taskDescription: "Implement the Claude channels",
+    taskDescription: "Implement the widget router",
     worktreePath: null,
-    branch: "hive/david-channels",
+    branch: "hive/david-widgets",
     tmuxSession: "hive-david",
     contextPct: null,
     createdAt: timestamp,
@@ -28,7 +28,6 @@ function agent(overrides: Partial<AgentRecord> = {}): AgentRecord {
     capabilityEpoch: 0,
     readOnly: false,
     writeRevoked: false,
-    channelsEnabled: false,
     ...overrides,
   };
 }
@@ -46,6 +45,13 @@ class SilentTmuxSender implements TmuxSender {
     submitPaste(this.db, session);
   }
 }
+
+const offlineRootProtocol = {
+  isLive: () => false,
+  async deliverMessage(): Promise<boolean> {
+    return false;
+  },
+};
 
 class FakeDaemonTmux {
   readonly killed: string[] = [];
@@ -66,7 +72,7 @@ class FakeDaemonTmux {
 }
 
 const DAVID_BRANCH: UnmergedBranch = {
-  branch: "hive/david-channels",
+  branch: "hive/david-widgets",
   tip: "3f77e58",
   unmergedCommits: 1,
 };
@@ -79,6 +85,7 @@ function strandedDaemon(branches: UnmergedBranch[] = [DAVID_BRANCH]) {
     db,
     spawner: new StubSpawner(),
     tmuxSender: new SilentTmuxSender(db),
+    rootProtocol: offlineRootProtocol,
     tmux,
     repoRoot: "/tmp/repo",
     removeWorktree: async (_repoRoot, worktreePath) => {
@@ -102,7 +109,7 @@ describe("stranded-branch reconciliation", () => {
 
       const notice = (await daemon.delivery.orchestratorInbox())[0];
       expect(notice?.from).toEqual("hive-lifecycle");
-      expect(notice?.body).toContain("hive/david-channels");
+      expect(notice?.body).toContain("hive/david-widgets");
       expect(notice?.body).toContain("1 commit(s) not on main");
       expect(notice?.body).toContain("no agent row owns it");
       // The reconciler reports; it never destroys.
@@ -123,7 +130,7 @@ describe("stranded-branch reconciliation", () => {
       await daemon.reconcileStrandedBranches();
 
       const notice = (await daemon.delivery.orchestratorInbox())[0];
-      expect(notice?.body).toContain("hive/david-channels");
+      expect(notice?.body).toContain("hive/david-widgets");
       expect(notice?.body).toContain("david");
       expect(notice?.body).toContain("is dead");
     } finally {
@@ -179,7 +186,7 @@ describe("stranded-branch reconciliation", () => {
     try {
       await daemon.reconcileStrandedBranches();
       branches[0] = {
-        branch: "hive/david-channels",
+        branch: "hive/david-widgets",
         tip: "aaaaaaa",
         unmergedCommits: 2,
       };

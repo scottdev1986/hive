@@ -46,6 +46,7 @@ final class AgentActivityTests: XCTestCase {
         XCTAssertEqual(FeedStatusMap.activity(for: "spawning"), .spawning)
         XCTAssertEqual(FeedStatusMap.activity(for: "done"), .done)
         XCTAssertEqual(FeedStatusMap.activity(for: "failed"), .failed)
+        XCTAssertEqual(FeedStatusMap.activity(for: "exited"), .disconnected)
     }
 
     /// Red is only ever a measured blocked-on-human state: a pending approval
@@ -116,6 +117,27 @@ final class AgentActivityTests: XCTestCase {
         let activity = FeedStatusMap.activity(for: orchestratorPane(in: state).feedStatus)
         XCTAssertEqual(activity, .idle)
         XCTAssertNotEqual(activity, .unknown)
+    }
+
+    /// The terminal child is an independent liveness surface. If it exits,
+    /// the last turn boundary cannot leave the pane looking idle or working.
+    func testOrchestratorExitOverridesAndOutlivesFeedStatus() {
+        let state = ProjectState(projectID: ProjectID("p"), displayName: "p")
+        state.addOrchestrator()
+        state.apply(feed: [], orchestrator: OrchestratorSnapshot(status: "idle"), now: 0)
+
+        XCTAssertEqual(
+            state.markOrchestratorExited(exitCode: 17),
+            [.statusChanged(ProjectState.orchestratorPaneID)])
+        var pane = orchestratorPane(in: state)
+        XCTAssertEqual(pane.feedStatus, "exited (code 17)")
+        XCTAssertEqual(FeedStatusMap.activity(for: pane.feedStatus, paneStatus: pane.status),
+                       .disconnected)
+
+        state.apply(feed: [], orchestrator: OrchestratorSnapshot(status: "working"), now: 1)
+        pane = orchestratorPane(in: state)
+        XCTAssertEqual(pane.feedStatus, "exited (code 17)",
+                       "a stale feed must not paint a dead root healthy")
     }
 
     /// The daemon omits the field when it cannot honestly say (no turn events,

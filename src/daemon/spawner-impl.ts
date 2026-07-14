@@ -89,6 +89,8 @@ import {
   poolAvailability,
   type AccountBilling,
 } from "./usage-credits";
+import { hiveCliSpawnArgv } from "./lifecycle";
+import { IS_RELEASE_BUILD } from "../version";
 
 /**
  * Names an agent can be given. Human first names, because the user's interface
@@ -261,11 +263,16 @@ function knownContextTokens(record: CapabilityRecord): number | null {
 export interface HiveSpawnerDependencies {
   db: AgentStore;
   repoRoot: string;
-  port: number;
+  /**
+   * The daemon port used by agent hooks and MCP clients. A thunk is required
+   * by the real daemon because `0` asks the OS for an ephemeral port and the
+   * chosen value does not exist until after Bun.serve() binds.
+   */
+  port: number | (() => number);
   issueCredential?: CredentialIssuer;
   config: {
     codex?: Pick<HiveConfig["codex"], "driver">;
-    /** Writer autonomy. Absent (older callers, tests) fails safe to
+    /** Agent autonomy. Absent (older callers, tests) fails safe to
      * "sandboxed"; the parsed HiveConfig always supplies a value. */
     autonomy?: HiveConfig["autonomy"];
   };
@@ -330,10 +337,6 @@ export interface HiveSpawnerDependencies {
   ps?: CommandOutput;
   /** Test seam for reading the user's global Codex MCP server names. */
   listCodexMcpServers?: () => Promise<string[]>;
-  /** Operator opt-out for the research preview. Agent spawns never launch
-   * Channels regardless (see `useChannels`); this still gates the attended
-   * orchestrator session. */
-  channelsEnabled?: boolean;
   quota?: QuotaService;
   codexAppServer?: Pick<
     CodexAppServerManager,
@@ -584,7 +587,7 @@ export interface AgentPromptOptions {
 }
 
 /** Layer 2 of the integration doc's adoption strategy: exactly one directive,
- * in the spawn prompt — the channel agents demonstrably read — not a skill.
+ * in the spawn prompt every agent demonstrably reads — not a skill.
  * Graph-first is the product decision; the concrete fallback criteria are
  * what keep it honest — a mandate agents catch being wrong is a mandate they
  * learn to skip (measured: 22% skill adoption). */
@@ -728,6 +731,15 @@ export class HiveSpawner implements Spawner {
         : async () => new Set());
   }
 
+  private daemonPort(): number {
+    const configured = this.dependencies.port;
+    const port = typeof configured === "function" ? configured() : configured;
+    if (!Number.isInteger(port) || port <= 0 || port > 65_535) {
+      throw new Error(`Hive daemon has no listening port (resolved ${port})`);
+    }
+    return port;
+  }
+
   /** Servers a Codex spawn would inherit from the user's global config. Read
    * once per spawn, never written. A read failure means "inherit nothing to
    * exclude" — the agent keeps today's surface rather than failing to launch. */
@@ -798,31 +810,6 @@ export class HiveSpawner implements Spawner {
     return availability.state === "exhausted"
       ? `${model} cannot run: ${availability.detail}`
       : null;
-  }
-
-  /**
-   * Spawned agents never launch with Channels, and the reason is structural
-   * rather than a version gate.
-   *
-   * Hive's bridge is a `server:` channel, and the CLI only accepts those behind
-   * `--dangerously-load-development-channels`. That flag always raises a
-   * blocking "WARNING: Loading development channels" dialog whose only exits
-   * are "I am using this for local development" and "Exit" — and, unlike the
-   * bypass-permissions disclaimer, accepting it persists nothing, so there is
-   * no state Hive can pre-seed. An unattended agent would sit on that dialog
-   * forever. Passing plain `--channels server:hive-channel` skips the dialog
-   * but the CLI then refuses to register the channel ("server: entries need
-   * --dangerously-load-development-channels"), which is a silent no-op.
-   *
-   * So an agent gets Channels or it gets an unattended launch, never both.
-   * Messages reach agents through the maintained tmux pane fallback in
-   * src/daemon/delivery.ts. The orchestrator keeps Channels: a human is sitting
-   * at that session and can answer the dialog once.
-   *
-   * Measured against claude 2.1.206; see SPEC "Spawn wiring".
-   */
-  private async useChannels(_tool: CapabilityProvider): Promise<boolean> {
-    return false;
   }
 
   async authorizeLaunch(
@@ -965,11 +952,8 @@ export class HiveSpawner implements Spawner {
       throw error;
     }
     const readOnly = true;
-    // The read-only control process carries its instruction in argv and needs
-    // no message channel. A safety interruption must not depend on a research
-    // preview, so the replacement never launches Channels — ordinary traffic
-    // to a control-paused agent queues exactly as it did before.
-    const channels = false;
+    // The read-only control process carries its instruction in argv; ordinary
+    // traffic to a control-paused agent remains queued until it is ready.
     let argv: string[];
     // The restarted process is read-only, so it re-mints as a reader at the
     // freshly advanced epoch: the critical control that paused it has already
@@ -998,19 +982,18 @@ export class HiveSpawner implements Spawner {
           // project-scoped permission rule: untrusted, the CLI drops it.
           await seedClaudeWorktreeTrust(agent.worktreePath);
           await writeClaudeAgentConfig(agent.worktreePath, {
-            daemonPort: this.dependencies.port,
+            daemonPort: this.daemonPort(),
             name: agent.name,
             readOnly,
-            channels,
+            hiveCommand: hiveCliSpawnArgv(IS_RELEASE_BUILD, process.execPath),
           });
           argv = buildClaudeSpawnCommand({
-            daemonPort: this.dependencies.port,
+            daemonPort: this.daemonPort(),
             model: identity.model,
             effort: identity.effort,
             name: agent.name,
             readOnly,
             worktreePath: agent.worktreePath,
-            channels,
             executable: this.claudeExecutable,
             scopedMcpConfigPath: claudeMcpConfigPath(agent.worktreePath),
           });
@@ -1018,9 +1001,10 @@ export class HiveSpawner implements Spawner {
         }
         case "codex": {
           await writeCodexAgentConfig(agent.worktreePath, {
-            daemonPort: this.dependencies.port,
+            daemonPort: this.daemonPort(),
             name: agent.name,
             readOnly,
+            hiveCommand: hiveCliSpawnArgv(IS_RELEASE_BUILD, process.execPath),
             ...(capabilityToken === undefined ? {} : { capabilityToken }),
           });
           const useAppServer =
@@ -1029,11 +1013,11 @@ export class HiveSpawner implements Spawner {
           if (useAppServer) {
             argv = this.dependencies.codexAppServer!.buildHostCommand(
               prepared.record,
-              this.dependencies.port,
+              this.daemonPort(),
             );
           } else {
             argv = buildCodexSpawnCommand({
-              daemonPort: this.dependencies.port,
+              daemonPort: this.daemonPort(),
               effort: identity.effort,
               model: identity.model,
               name: agent.name,
@@ -1047,7 +1031,7 @@ export class HiveSpawner implements Spawner {
         }
         case "grok": {
           await writeGrokAgentConfig(agent.worktreePath, {
-            daemonPort: this.dependencies.port,
+            daemonPort: this.daemonPort(),
             ...(capabilityToken === undefined ? {} : { capabilityToken }),
           });
           const options = {
@@ -1128,7 +1112,7 @@ export class HiveSpawner implements Spawner {
             `Codex app-server fallback for ${agent.name}`,
           );
           const fallback = buildCodexSpawnCommand({
-            daemonPort: this.dependencies.port,
+            daemonPort: this.daemonPort(),
             effort: identity.tool === "codex"
               ? identity.effort
               : (() => { throw new Error("Codex fallback requires Codex identity"); })(),
@@ -1230,9 +1214,6 @@ export class HiveSpawner implements Spawner {
       controlQuotaReservationId: reservationId,
       failureReason,
       lastEventAt: new Date().toISOString(),
-      // The replacement process launches without Channels; the record must
-      // agree so the registry never accepts a bridge for this session.
-      channelsEnabled: false,
     });
     return { record };
   }
@@ -1959,10 +1940,9 @@ export class HiveSpawner implements Spawner {
         }),
       },
     );
-    const channels = await this.useChannels(tool);
     const timestamp = new Date().toISOString();
     // Grok's session id is named by Hive, not discovered afterwards. Claude and
-    // Codex report theirs on hook traffic; Grok has no hook channel at all, so
+    // Codex report theirs on hook traffic; Grok has no lifecycle hooks, so
     // its readers used to resolve "the newest session recorded against this
     // cwd" — and a respawn into a reused worktree reads its dead predecessor's
     // session and reports the corpse's numbers as the live agent's. Naming the
@@ -1999,7 +1979,6 @@ export class HiveSpawner implements Spawner {
       // Revocation is reserved for a writer stripped by critical control.
       // Reader authority is represented independently above.
       writeRevoked: false,
-      channelsEnabled: channels,
     });
 
     const dangerous = this.dependencies.config.autonomy === "dangerous";
@@ -2026,22 +2005,21 @@ export class HiveSpawner implements Spawner {
         // discard the hooks and permissions we are about to write.
         await seedClaudeWorktreeTrust(worktree.path);
         await writeClaudeAgentConfig(worktree.path, {
-          daemonPort: this.dependencies.port,
+          daemonPort: this.daemonPort(),
           name,
           readOnly,
           dangerous,
-          channels,
+          hiveCommand: hiveCliSpawnArgv(IS_RELEASE_BUILD, process.execPath),
           ...(graphifyUrl === null ? {} : { graphifyUrl }),
         });
         argv = buildClaudeSpawnCommand({
-          daemonPort: this.dependencies.port,
+          daemonPort: this.daemonPort(),
           model,
           ...(effort === undefined ? {} : { effort }),
           name,
           readOnly,
           dangerous,
           worktreePath: worktree.path,
-          channels,
           executable: this.claudeExecutable,
           scopedMcpConfigPath: claudeMcpConfigPath(worktree.path),
         });
@@ -2049,9 +2027,10 @@ export class HiveSpawner implements Spawner {
         }
         case "codex": {
         await writeCodexAgentConfig(worktree.path, {
-          daemonPort: this.dependencies.port,
+          daemonPort: this.daemonPort(),
           name,
           readOnly,
+          hiveCommand: hiveCliSpawnArgv(IS_RELEASE_BUILD, process.execPath),
           ...(capabilityToken === undefined ? {} : { capabilityToken }),
           ...(graphifyUrl === null ? {} : { graphifyUrl }),
         });
@@ -2061,10 +2040,11 @@ export class HiveSpawner implements Spawner {
         argv = useAppServer
           ? this.dependencies.codexAppServer!.buildHostCommand(
               record,
-              this.dependencies.port,
+              this.daemonPort(),
+              graphifyUrl ?? undefined,
             )
           : buildCodexSpawnCommand({
-              daemonPort: this.dependencies.port,
+              daemonPort: this.daemonPort(),
               effort: effort ?? "medium",
               model,
               name,
@@ -2079,7 +2059,7 @@ export class HiveSpawner implements Spawner {
         }
         case "grok": {
         await writeGrokAgentConfig(worktree.path, {
-          daemonPort: this.dependencies.port,
+          daemonPort: this.daemonPort(),
           ...(capabilityToken === undefined ? {} : { capabilityToken }),
           ...(graphifyUrl === null ? {} : { graphifyUrl }),
         });
@@ -2176,7 +2156,7 @@ export class HiveSpawner implements Spawner {
             lastEventAt: new Date().toISOString(),
           });
           const fallback = buildCodexSpawnCommand({
-            daemonPort: this.dependencies.port,
+            daemonPort: this.daemonPort(),
             effort: effort ?? "medium",
             model,
             name,
@@ -2210,6 +2190,15 @@ export class HiveSpawner implements Spawner {
           failureReason,
           readinessFailureLayer(failureReason),
         );
+      }
+      // Hook traffic normally performs this transition first. A live provider
+      // can still prove itself through its process-backed screen heartbeat,
+      // though, and leaving that positive result as `spawning` makes the UI
+      // claim launch is still in flight forever. Promote only if no stronger
+      // lifecycle event has already moved the row elsewhere.
+      const ready = this.dependencies.db.getAgentById(record.id);
+      if (ready?.status === "spawning") {
+        this.dependencies.db.insertAgent({ ...ready, status: "working" });
       }
       if (quotaReservationId !== undefined) {
         this.dependencies.quota?.markStarted(quotaReservationId);

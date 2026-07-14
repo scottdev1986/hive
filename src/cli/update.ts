@@ -103,12 +103,6 @@ function guardSelfUpdate(): void {
         "updates an installed hive\nFix: pull and rebuild instead",
     );
   }
-  if (method === "homebrew") {
-    throw new UpdateError(
-      "Homebrew installed this hive and owns the install\n" +
-        "Fix: run `brew upgrade hive`",
-    );
-  }
   if (method === "unmanaged") {
     throw new UpdateError(
       `this hive binary (${process.execPath}) was not installed by hive's ` +

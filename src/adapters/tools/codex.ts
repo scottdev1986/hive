@@ -36,8 +36,9 @@ export interface CodexSpawnOptions {
   worktreePath: string;
   daemonPort: number;
   readOnly: boolean;
-  /** Writer autonomy through config overrides shared by spawn and resume.
-   * Ignored for read-only sessions. */
+  /** No-prompt autonomy through config overrides shared by spawn and resume.
+   * Read-only sessions keep their filesystem sandbox, but still inherit the
+   * user's no-prompt choice. */
   dangerous?: boolean;
   /** Names of MCP servers this spawn inherits from the user's global
    * `~/.codex/config.toml` and does not need. Each is detached for this
@@ -57,6 +58,10 @@ export type CodexAgentConfigOptions = Pick<
   CodexSpawnOptions,
   "name" | "daemonPort" | "readOnly" | "graphifyUrl"
 > & {
+  /** Exact argv prefix for this Hive build. Installed releases pass their
+   * absolute binary path so lifecycle hooks cannot attach to a different
+   * Hive installation or fail when `hive` is absent from PATH. */
+  hiveCommand?: readonly string[];
   /** Stored only in Hive's 0600 token file and exported by the launch shell;
    * never written to argv or project config. */
   capabilityToken?: string;
@@ -108,7 +113,10 @@ function buildCodexConfigArgs(
   options: CodexSpawnOptions,
   sandbox: { asConfigOverride: boolean },
 ): string[] {
-  const args: string[] = [];
+  // Apps/connectors do not appear in mcp_servers, so inherited-server
+  // exclusions cannot detach them. Hive agents have a deliberately scoped
+  // tool surface; disable Apps for this process without changing user config.
+  const args: string[] = ["-c", "features.apps=false"];
   if (options.model !== "default") {
     args.push("-c", `model=${options.model}`);
   }
@@ -121,6 +129,9 @@ function buildCodexConfigArgs(
       args.push("-c", 'sandbox_mode="read-only"');
     } else {
       args.push("--sandbox", "read-only");
+    }
+    if (options.dangerous ?? false) {
+      args.push("-c", 'approval_policy="never"');
     }
   } else if (options.dangerous ?? false) {
     args.push(
@@ -187,6 +198,12 @@ function buildCodexConfigArgs(
         ]),
     "-c",
     `mcp_servers.hive.url=${tomlString(`http://127.0.0.1:${options.daemonPort}/mcp`)}`,
+    ...((options.dangerous ?? false)
+      ? [
+        "-c",
+        'mcp_servers.hive.default_tools_approval_mode="approve"',
+      ]
+      : []),
     ...((options.withCapabilityToken ?? false)
       ? [
         "-c",
@@ -196,6 +213,12 @@ function buildCodexConfigArgs(
     ...(options.graphifyUrl === undefined ? [] : [
       "-c",
       `mcp_servers.graphify.url=${tomlString(options.graphifyUrl)}`,
+      ...((options.dangerous ?? false)
+        ? [
+          "-c",
+          'mcp_servers.graphify.default_tools_approval_mode="approve"',
+        ]
+        : []),
     ]),
     // Detach the human's own servers from this agent. Same override channel as
     // hooks and trust, so spawn and resume stay one shape. When Hive attaches
@@ -431,10 +454,15 @@ export async function writeCodexAgentConfig(
   const graphifyPath = graphifyHookPath(worktreePath, ".codex");
   await mkdir(codexDirectory, { recursive: true });
 
+  const hiveCommand = options.hiveCommand ?? ["hive"];
+  if (hiveCommand[0] === undefined) {
+    throw new Error("Hive command must contain an executable");
+  }
+  const hiveInvocation = hiveCommand.map(shellToken).join(" ");
   const notifyScript = [
     "#!/bin/sh",
     [
-      'exec hive event "$1"',
+      `exec ${hiveInvocation} event "$1"`,
       "--agent",
       shellToken(options.name),
       "--port",

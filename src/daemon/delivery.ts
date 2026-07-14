@@ -16,6 +16,7 @@ import {
   formatOrchestratorWake,
   orchestratorTmuxSession,
 } from "./orchestrator-lifecycle";
+import { isComposerLeased } from "./composer-lease";
 
 export interface TmuxSender {
   sendMessage(
@@ -25,53 +26,9 @@ export interface TmuxSender {
   ): Promise<void>;
 }
 
-/**
- * Vendor-native push channel (Claude Code Channels). deliverMessage resolves
- * true only when the bridge confirmed the notification was written to the
- * CLI's transport; the CLI queues it for its next turn. There is no vendor
- * acknowledgement beyond that, so callers must not claim more than
- * "injected" for a channel delivery.
- */
-export interface ChannelDeliverer {
-  isLive(agentName: string): boolean;
-  deliverMessage(
-    agentName: string,
-    content: string,
-    meta: Record<string, string>,
-  ): Promise<boolean>;
-}
-
 export interface RootProtocolDeliverer {
   isLive(): boolean;
   deliverMessage(content: string, meta: Record<string, string>): Promise<boolean>;
-}
-
-export function formatChannelMessage(message: AgentMessage): {
-  content: string;
-  meta: Record<string, string>;
-} {
-  const content = message.priority === "normal"
-    ? message.body
-    : [
-        message.body,
-        `Acknowledge with hive_ack_message agent=${JSON.stringify(message.to)} messageId=${JSON.stringify(message.id)}${
-          message.capabilityEpoch === null
-            ? ""
-            : ` capabilityEpoch=${message.capabilityEpoch}`
-        } applied=true.`,
-      ].join("\n");
-  return {
-    content,
-    // Channel meta keys must be bare identifiers; anything else the CLI
-    // silently drops from the rendered <channel> tag.
-    meta: {
-      sender: message.from,
-      priority: message.priority,
-      intent: message.intent,
-      message_id: message.id,
-      sequence: String(message.sequence),
-    },
-  };
 }
 
 export interface SendOptions {
@@ -86,7 +43,7 @@ export interface SendOptions {
  *
  * A sender reading state "queued" has taken it as "will arrive shortly", told
  * the user an agent was directed, and been wrong: a normal message to a
- * channel-less recipient mid-turn is delivered only at its next turn boundary,
+ * busy recipient mid-turn is delivered only at its next turn boundary,
  * and a deep agent's next boundary routinely falls AFTER the work the message
  * was trying to steer. That is how a migration shipped without the three
  * safety requirements sent nine minutes earlier (aurora, 2026-07-12 16:55Z —
@@ -207,7 +164,7 @@ const SUBMIT_POLL_MS = 100;
  * Every redelivery trigger Hive has hangs off that hook stream: flushQueued
  * fires on session-start and turn-end, flushUrgent on a tool boundary. Claude
  * and Codex post those events. GROK POSTS NOTHING — its CLI drives no hook
- * channel at all (adapters/tools/grok.ts), so it emits no session-start, no
+ * lifecycle hooks at all (adapters/tools/grok.ts), so it emits no session-start, no
  * turn boundary and no tool boundary, ever. Reading a grok agent through the
  * events table therefore answers "no turn events at all" for a healthy agent
  * and for a dead one alike, and waiting for one is waiting forever.
@@ -250,7 +207,6 @@ export class MessageDelivery {
     private readonly tmux: TmuxSender,
     private readonly controls?: CriticalControlRuntime,
     private readonly nativeControl?: NativeAgentControl,
-    private readonly channels?: ChannelDeliverer,
     private readonly rootProtocol?: RootProtocolDeliverer,
     private readonly timing: {
       sleep?: (ms: number) => Promise<void>;
@@ -262,6 +218,8 @@ export class MessageDelivery {
     private readonly processState?: (
       tmuxSession: string,
     ) => Promise<PaneProcessState>,
+    private readonly composerActive: (recipient: string) => boolean =
+      isComposerLeased,
   ) {}
 
   private sleep(ms: number): Promise<void> {
@@ -356,23 +314,11 @@ export class MessageDelivery {
         return this.getStoredMessage(message.id);
       }
       return this.withSessionLock(currentRecipient.tmuxSession, async () => {
-        try {
-          const latestRecipient = this.requireLiveRecipient(to);
-          await this.controls!.interruptAndRestart(latestRecipient, message);
-        } catch (error) {
-          const alertedAt = new Date().toISOString();
-          this.db.markMessageAlerted(message.id, alertedAt);
-          await this.send(
-            "hive-control",
-            ORCHESTRATOR_NAME,
-            `Critical control ${message.id} revoked ${to}'s capability epoch but process restart failed: ${
-              error instanceof Error ? error.message : "unknown error"
-            }. The agent was stopped in a terminal failed state, its quota hold was released, and automatic recovery will not retry this control. Worktree was preserved; operator attention is required.`,
-            { idempotencyKey: `control-restart-failed:${message.id}` },
-          ).catch(() => undefined);
-          return this.getStoredMessage(message.id);
-        }
-        return this.markInjected(message);
+        if (this.composerActive(to)) return this.getStoredMessage(message.id);
+        return this.deliverCritical(
+          this.getStoredMessage(message.id),
+          this.requireLiveRecipient(to),
+        );
       });
     }
 
@@ -383,7 +329,7 @@ export class MessageDelivery {
     if (this.nativeControl?.hasAgent(recipient.name)) {
       return this.withSessionLock(recipient.tmuxSession, async () => {
         const current = this.getStoredMessage(message.id);
-        if (current.deliveredAt !== null) return current;
+        if (current.deliveredAt !== null || this.composerActive(to)) return current;
         const currentRecipient = this.requireLiveRecipient(to);
         try {
           return await this.deliverNative(current, currentRecipient);
@@ -397,17 +343,13 @@ export class MessageDelivery {
       });
     }
 
-    // Claude's channel accepts messages mid-turn but queues them for the next
-    // TURN. A steer must beat that boundary, so a busy steer waits for the
-    // tool hook and uses the TUI's non-cancelling queued-paste surface instead.
-    const channelLive = this.channels?.isLive(to) ?? false;
-    if (recipient.status !== "idle" && (priority === "steer" || !channelLive)) {
+    if (recipient.status !== "idle") {
       return message;
     }
 
     return this.withSessionLock(recipient.tmuxSession, async () => {
       const current = this.getStoredMessage(message.id);
-      if (current.deliveredAt !== null) {
+      if (current.deliveredAt !== null || this.composerActive(to)) {
         return current;
       }
 
@@ -417,12 +359,6 @@ export class MessageDelivery {
       if (!this.isDeliverable(this.db.getAgentByName(to))) {
         return current;
       }
-      const viaChannel = await this.deliverViaChannel(current);
-      if (viaChannel !== null) {
-        return viaChannel;
-      }
-      // Re-read after the channel round trip: the agent may have died while
-      // the push was in flight, and nothing may be pasted into a dead session.
       const currentRecipient = this.db.getAgentByName(to);
       if (
         !this.isDeliverable(currentRecipient) ||
@@ -445,6 +381,7 @@ export class MessageDelivery {
     if (agentName === ORCHESTRATOR_NAME) {
       return this.wakeOrchestrator();
     }
+    if (this.composerActive(agentName)) return [];
     const recipient = this.db.getAgentByName(agentName);
     if (
       recipient === null || recipient.status === "dead" ||
@@ -455,34 +392,49 @@ export class MessageDelivery {
 
     return this.withSessionLock(recipient.tmuxSession, async () => {
       const currentRecipient = this.db.getAgentByName(agentName);
+      if (!this.isDeliverable(currentRecipient) || this.composerActive(agentName)) {
+        return [];
+      }
+      const queuedMessages = this.db.getUndeliveredMessages(agentName);
+      const hasCritical = queuedMessages.some((message) =>
+        message.priority === "critical"
+      );
       if (
-        currentRecipient?.status !== "idle" &&
-        !(currentRecipient !== null &&
-          this.nativeControl?.hasAgent(currentRecipient.name))
+        !hasCritical && currentRecipient.status !== "idle" &&
+        !this.nativeControl?.hasAgent(currentRecipient.name)
       ) {
         return [];
       }
 
       const delivered: AgentMessage[] = [];
-      for (const queued of this.db.getUndeliveredMessages(agentName)) {
+      for (const queued of queuedMessages) {
         try {
           const message = this.db.getMessage(queued.id);
           if (message === null || message.deliveredAt !== null) {
             continue;
           }
-          if (this.nativeControl?.hasAgent(currentRecipient.name)) {
-            delivered.push(await this.deliverNative(message, currentRecipient));
+          if (this.composerActive(agentName)) break;
+          const latestRecipient = this.db.getAgentByName(agentName);
+          if (!this.isDeliverable(latestRecipient)) break;
+          if (message.priority === "critical") {
+            const result = await this.deliverCritical(message, latestRecipient);
+            if (result.deliveredAt !== null) delivered.push(result);
             continue;
           }
-          const viaChannel = await this.deliverViaChannel(message);
-          if (viaChannel !== null) {
-            delivered.push(viaChannel);
+          if (
+            latestRecipient.status !== "idle" &&
+            !this.nativeControl?.hasAgent(latestRecipient.name)
+          ) {
             continue;
           }
-          delivered.push(await this.deliver(message, currentRecipient));
+          if (this.nativeControl?.hasAgent(latestRecipient.name)) {
+            delivered.push(await this.deliverNative(message, latestRecipient));
+          } else {
+            delivered.push(await this.deliver(message, latestRecipient));
+          }
         } catch (error) {
           // A failed pane must not prevent later queued messages from
-          // delivery, but a systemic failure (dead bridge, vanished tmux)
+          // delivery, but a systemic failure (vanished native connection or tmux)
           // dropping the whole queue must not be invisible either.
           console.error(
             `Hive failed to flush queued message ${queued.id} to ${agentName}: ${
@@ -508,6 +460,7 @@ export class MessageDelivery {
    * revoke-and-restart machinery and are never pasted.
    */
   async flushUrgent(agentName: string): Promise<AgentMessage[]> {
+    if (this.composerActive(agentName)) return [];
     const recipient = this.db.getAgentByName(agentName);
     if (!this.isDeliverable(recipient)) return [];
     const queuedUrgent = this.db.getUndeliveredMessages(agentName)
@@ -515,19 +468,17 @@ export class MessageDelivery {
     if (queuedUrgent.length === 0) return [];
     return this.withSessionLock(recipient.tmuxSession, async () => {
       const currentRecipient = this.db.getAgentByName(agentName);
-      if (!this.isDeliverable(currentRecipient)) return [];
+      if (!this.isDeliverable(currentRecipient) || this.composerActive(agentName)) {
+        return [];
+      }
       const delivered: AgentMessage[] = [];
       for (const queued of queuedUrgent) {
         try {
           const message = this.db.getMessage(queued.id);
           if (message === null || message.deliveredAt !== null) continue;
+          if (this.composerActive(agentName)) break;
           if (this.nativeControl?.hasAgent(currentRecipient.name)) {
             delivered.push(await this.deliverNative(message, currentRecipient));
-            continue;
-          }
-          const viaChannel = await this.deliverViaChannel(message);
-          if (viaChannel !== null) {
-            delivered.push(viaChannel);
             continue;
           }
           delivered.push(
@@ -547,6 +498,7 @@ export class MessageDelivery {
 
   /** Deliver non-destructive guidance at a vendor-reported tool boundary. */
   async flushSteer(agentName: string): Promise<AgentMessage[]> {
+    if (this.composerActive(agentName)) return [];
     const recipient = this.db.getAgentByName(agentName);
     if (!this.isDeliverable(recipient) || !reportsTurnEvents(recipient.tool)) return [];
     const queued = this.db.getUndeliveredMessages(agentName)
@@ -554,17 +506,20 @@ export class MessageDelivery {
     if (queued.length === 0) return [];
     return this.withSessionLock(recipient.tmuxSession, async () => {
       const currentRecipient = this.db.getAgentByName(agentName);
-      if (!this.isDeliverable(currentRecipient)) return [];
+      if (!this.isDeliverable(currentRecipient) || this.composerActive(agentName)) {
+        return [];
+      }
       const delivered: AgentMessage[] = [];
       for (const pending of queued) {
         const message = this.db.getMessage(pending.id);
         if (message === null || message.deliveredAt !== null) continue;
+        if (this.composerActive(agentName)) break;
         try {
           if (this.nativeControl?.hasAgent(currentRecipient.name)) {
             delivered.push(await this.deliverNative(message, currentRecipient));
           } else {
-            // A channel queues for the next turn; the TUI queues for the next
-            // model step, which is the mid-turn surface this priority promises.
+            // The TUI queues for the next model step, which is the mid-turn
+            // surface this priority promises.
             delivered.push(await this.deliver(message, currentRecipient));
           }
         } catch (error) {
@@ -604,7 +559,7 @@ export class MessageDelivery {
    * a message enqueued while it was busy was retried by nothing once it went
    * quiet, and the agent an orchestrator most needs to redirect (the one with
    * free capacity) was the one it could not reach. Grok made it total: driving
-   * no hook channel, it never fires ANY of those triggers, so its mail sat
+   * no lifecycle hooks, it never fires ANY of those triggers, so its mail sat
    * queued forever (cesar, 2026-07-12: two controls queued, alive, idle, deaf,
    * killed to be stopped).
    *
@@ -612,14 +567,17 @@ export class MessageDelivery {
    * queued — so it stops waiting to be told and does the waking itself, on the
    * maintenance tick. Each vendor is woken by the path that actually starts a
    * turn for it, which is the one flushQueued already picks: the app-server
-   * turn for a native Codex session, the vendor channel for Claude, a
-   * paste-and-submit into the pane for a TUI with neither.
+   * turn for a native Codex session or paste-and-submit into the TUI pane.
    */
   async wakeIdleRecipients(): Promise<AgentMessage[]> {
     const woken: AgentMessage[] = [];
     for (const agent of this.db.listAgents()) {
-      if (agent.status !== "idle") continue;
-      if (this.db.getUndeliveredMessages(agent.name).length === 0) continue;
+      const queued = this.db.getUndeliveredMessages(agent.name);
+      if (queued.length === 0) continue;
+      if (
+        agent.status !== "idle" &&
+        !queued.some((message) => message.priority === "critical")
+      ) continue;
       woken.push(...await this.flushQueued(agent.name));
     }
     return woken;
@@ -665,38 +623,29 @@ export class MessageDelivery {
   }
 
   async wakeOrchestrator(): Promise<AgentMessage[]> {
+    if (this.composerActive(ORCHESTRATOR_NAME)) return [];
     return this.withSessionLock(orchestratorTmuxSession(), async () => {
+      if (this.composerActive(ORCHESTRATOR_NAME)) return [];
       const delivered: AgentMessage[] = [];
       for (const message of this.db.getUndeliveredMessages(ORCHESTRATOR_NAME)) {
-        const injected = await this.deliverRootViaChannel(message);
+        if (this.composerActive(ORCHESTRATOR_NAME)) break;
+        const injected = await this.deliverRoot(message);
         if (injected !== null) delivered.push(injected);
       }
       return delivered;
     });
   }
 
-  private async deliverRootViaChannel(
+  private async deliverRoot(
     message: AgentMessage,
   ): Promise<AgentMessage | null> {
-    if (this.rootProtocol?.isLive()) {
-      const confirmed = await this.rootProtocol.deliverMessage(
-        formatOrchestratorWake(createOrchestratorEnvelope(message)),
-        { sender: message.from, message_id: message.id, sequence: String(message.sequence) },
-      ).catch(() => false);
-      // Unconfirmed falls through to the Claude Channels path rather than
-      // giving up: a stale codex root socket (dead app-server, file left in
-      // /tmp) must not cost a Claude root its wake.
-      if (confirmed) {
-        const now = new Date().toISOString();
-        this.db.markMessageDelivered(message.id, now);
-        return this.db.transitionMessage(message.id, "injected", now)!;
-      }
-    }
-    if (this.channels === undefined || !this.channels.isLive(ORCHESTRATOR_NAME)) {
+    if (
+      this.composerActive(ORCHESTRATOR_NAME) ||
+      this.rootProtocol?.isLive() !== true
+    ) {
       return null;
     }
-    const confirmed = await this.channels.deliverMessage(
-      ORCHESTRATOR_NAME,
+    const confirmed = await this.rootProtocol.deliverMessage(
       formatOrchestratorWake(createOrchestratorEnvelope(message)),
       {
         sender: message.from,
@@ -708,44 +657,41 @@ export class MessageDelivery {
     const now = new Date().toISOString();
     const injected = this.db.markMessageDelivered(message.id, now);
     if (injected === null) {
-      throw new Error(`Message disappeared during root channel delivery: ${message.id}`);
+      throw new Error(`Message disappeared during root delivery: ${message.id}`);
     }
     return this.db.transitionMessage(message.id, "injected", now)!;
   }
 
-  /**
-   * Attempt vendor-channel delivery. Returns the updated message when the
-   * bridge confirmed the write, or null when no live channel exists (the
-   * caller falls back to tmux). Channel-delivered messages stop at
-   * "injected": the CLI queues the event for its next turn and provides no
-   * application signal, so hive does not claim one — unlike the tmux path,
-   * where paste-and-submit into an idle prompt structurally starts the turn.
-   */
-  private async deliverViaChannel(
+  private async deliverCritical(
     message: AgentMessage,
-  ): Promise<AgentMessage | null> {
-    if (this.channels === undefined || !this.channels.isLive(message.to)) {
-      return null;
+    recipient: AgentRecord,
+  ): Promise<AgentMessage> {
+    if (this.composerActive(message.to) || this.controls === undefined) {
+      return this.getStoredMessage(message.id);
     }
-    const { content, meta } = formatChannelMessage(message);
-    const confirmed = await this.channels
-      .deliverMessage(message.to, content, meta)
-      .catch(() => false);
-    if (!confirmed) {
-      return null;
+    try {
+      await this.controls.interruptAndRestart(recipient, message);
+    } catch (error) {
+      const alertedAt = new Date().toISOString();
+      this.db.markMessageAlerted(message.id, alertedAt);
+      await this.send(
+        "hive-control",
+        ORCHESTRATOR_NAME,
+        `Critical control ${message.id} revoked ${message.to}'s capability epoch but process restart failed: ${
+          error instanceof Error ? error.message : "unknown error"
+        }. The agent was stopped in a terminal failed state, its quota hold was released, and automatic recovery will not retry this control. Worktree was preserved; operator attention is required.`,
+        { idempotencyKey: `control-restart-failed:${message.id}` },
+      ).catch(() => undefined);
+      return this.getStoredMessage(message.id);
     }
-    const now = new Date().toISOString();
-    const injected = this.db.markMessageDelivered(message.id, now);
-    if (injected === null) {
-      throw new Error(`Message disappeared during delivery: ${message.id}`);
-    }
-    return this.db.transitionMessage(message.id, "injected", now)!;
+    return this.markInjected(message);
   }
 
   private async deliver(
     message: AgentMessage,
     recipient: AgentRecord,
   ): Promise<AgentMessage> {
+    if (this.composerActive(message.to)) return this.getStoredMessage(message.id);
     const text = this.formatAgentMessage(message);
     const boundaryBefore = this.turnBoundaryAt(message.to);
     // This is what makes priority mean anything. Until now every level did the
@@ -830,6 +776,7 @@ export class MessageDelivery {
     message: AgentMessage,
     agent: AgentRecord,
   ): Promise<AgentMessage> {
+    if (this.composerActive(message.to)) return this.getStoredMessage(message.id);
     const text = this.formatAgentMessage(message);
     await this.nativeControl!.deliver(agent, text, {
       interrupt: message.priority === "urgent",
@@ -888,7 +835,7 @@ export class MessageDelivery {
   /**
    * Close the loop on every message we handed over.
    *
-   * "Injected" used to be a shrug: the channel bridge accepted the message, Hive
+   * "Injected" used to be a shrug: a transport accepted the message, Hive
    * honestly declined to claim it had been applied — and then nothing ever looked
    * at it again. Ninety messages accumulated in that state, including twenty of
    * Hive's own control alerts. Hive *knew* they were unconfirmed, which is
@@ -942,7 +889,7 @@ export class MessageDelivery {
       // not stalled: its TUI holds the paste until the turn's own boundary,
       // and a deep build turn routinely outlives any fixed deadline. This
       // alert fired seven times in one evening for agents that were simply
-      // working, and a wolf-cry on the very channel that reveals genuine
+      // working, and a wolf-cry on the very alert path that reveals genuine
       // deafness trains the one reader it has to ignore it. A busy message
       // stays unalerted (alertAt null), so every later sweep re-judges it and
       // still fires the moment its recipient stops showing signs of life.

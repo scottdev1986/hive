@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import {
   agentTmuxSession,
   hiveInstanceSuffix,
+  hiveTmuxSocketName,
   isTmuxSessionForInstance,
   orchestratorTmuxSession,
 } from "./tmux-sessions";
@@ -18,6 +19,9 @@ describe("instance-scoped tmux session names", () => {
     expect(orchestratorTmuxSession(home)).toEqual(
       `hive-orchestrator-${hiveInstanceSuffix(home)}`,
     );
+    expect(hiveTmuxSocketName(home)).toEqual(
+      `hive-${hiveInstanceSuffix(home)}`,
+    );
   });
 
   test("different HIVE_HOMEs cannot match each other's sessions", () => {
@@ -31,5 +35,8 @@ describe("instance-scoped tmux session names", () => {
       .toEqual(false);
     expect(isTmuxSessionForInstance("hive-orchestrator", scratchA)).toEqual(false);
     expect(isTmuxSessionForInstance("hive-maya", scratchA)).toEqual(false);
+    expect(hiveTmuxSocketName(scratchA)).not.toEqual(
+      hiveTmuxSocketName(scratchB),
+    );
   });
 });

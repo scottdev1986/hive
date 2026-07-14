@@ -25,12 +25,14 @@ final class PaneView: NSView {
     private var focusIndicator: PaneFocusIndicator = .none
 
     init(paneID: PaneID, title: String, tmuxSession: String? = nil,
+         tmuxSocket: String? = nil,
          allowsMouseReporting: Bool = true,
          dispatch: @escaping (WorkspaceCommand) -> Void) {
         self.paneID = paneID
         self.dispatch = dispatch
         self.contentView = TerminalPaneView(
             tmuxSession: tmuxSession,
+            tmuxSocket: tmuxSocket,
             allowsMouseReporting: allowsMouseReporting)
         super.init(frame: .zero)
         wantsLayer = true
@@ -284,6 +286,12 @@ final class PaneView: NSView {
     /// transition, or immediately under Reduce Motion). The terminal pane
     /// uses it to spawn its child with settled pty geometry.
     func commitCellGeometry() {
+        // A snapped outer frame does not synchronously propagate through this
+        // pane's Auto Layout constraints. Without this layout pass the terminal
+        // can still report 0x0 here, leave its launch pending, and never get
+        // another commit when a second Workspace process opens for the same
+        // bundle. Commit the complete pane hierarchy before testing the cell.
+        layoutSubtreeIfNeeded()
         contentView.commitCellGeometry()
     }
 

@@ -6,6 +6,13 @@ import WorkspaceCore
 /// Drop that one packet at the PTY boundary; clicks, drags, and wheels pass
 /// through byte-for-byte. Hover highlighting is optional; committing is not.
 private final class WorkspaceTerminalView: LocalProcessTerminalView {
+    var onComposerInput: ((ComposerInputAction) -> Void)?
+
+    override func paste(_ sender: Any) {
+        onComposerInput?(.editing)
+        super.paste(sender)
+    }
+
     override func send(source: TerminalView, data: ArraySlice<UInt8>) {
         if case .anyEvent = source.getTerminal().mouseMode,
            isMalformedNoButtonMotion(Array(data)) {
@@ -21,13 +28,15 @@ private final class WorkspaceTerminalView: LocalProcessTerminalView {
 /// direction become one command instead of an unbounded subprocess queue.
 private final class TmuxScrollController: @unchecked Sendable {
     private let session: String
+    private let socket: String?
     private let queue = DispatchQueue(label: "dev.hive.workspace.tmux-scroll", qos: .userInteractive)
     private let lock = NSLock()
     private var pending: [TerminalScrollRequest] = []
     private var workerScheduled = false
 
-    init(session: String) {
+    init(session: String, socket: String?) {
         self.session = session
+        self.socket = socket
     }
 
     func submit(_ request: TerminalScrollRequest) {
@@ -75,7 +84,9 @@ private final class TmuxScrollController: @unchecked Sendable {
     private func runTmux(_ arguments: [String]) {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-        let command = (["exec", "tmux"] + arguments.map(shellQuoted)).joined(separator: " ")
+        let socketArguments = socket.map { ["-L", $0] } ?? []
+        let command = (["exec", "tmux"] + socketArguments + arguments)
+            .map(shellQuoted).joined(separator: " ")
         process.arguments = ["-lc", command]
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
@@ -104,13 +115,20 @@ final class TerminalPaneView: NSView, LocalProcessTerminalViewDelegate {
     private let tmuxScroller: TmuxScrollController?
     private let forwardsScrollWheel: Bool
     private var scrollMonitor: Any?
+    private var keyMonitor: Any?
 
     private var pendingLaunch: (command: String, workingDirectory: String)?
     private(set) var childRunning = false
     var onChildExit: ((Int32?) -> Void)?
+    var onComposerInput: ((ComposerInputAction) -> Void)? {
+        didSet {
+            (terminal as? WorkspaceTerminalView)?.onComposerInput = onComposerInput
+        }
+    }
 
-    init(tmuxSession: String? = nil, allowsMouseReporting: Bool = true) {
-        tmuxScroller = tmuxSession.map(TmuxScrollController.init)
+    init(tmuxSession: String? = nil, tmuxSocket: String? = nil,
+         allowsMouseReporting: Bool = true) {
+        tmuxScroller = tmuxSession.map { TmuxScrollController(session: $0, socket: tmuxSocket) }
         forwardsScrollWheel = allowsMouseReporting
         super.init(frame: .zero)
         terminal.allowMouseReporting = allowsMouseReporting
@@ -129,6 +147,12 @@ final class TerminalPaneView: NSView, LocalProcessTerminalViewDelegate {
 
     deinit {
         if let scrollMonitor { NSEvent.removeMonitor(scrollMonitor) }
+        if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
+    }
+
+    override func layout() {
+        super.layout()
+        startPendingChildIfGeometryReady()
     }
 
     override func viewDidMoveToWindow() {
@@ -136,6 +160,30 @@ final class TerminalPaneView: NSView, LocalProcessTerminalViewDelegate {
         if let scrollMonitor {
             NSEvent.removeMonitor(scrollMonitor)
             self.scrollMonitor = nil
+        }
+        if let keyMonitor {
+            NSEvent.removeMonitor(keyMonitor)
+            self.keyMonitor = nil
+        }
+        if window != nil {
+            keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+                guard let self, event.window === self.window,
+                      let responder = self.window?.firstResponder as? NSView,
+                      responder === self.terminal || responder.isDescendant(of: self.terminal)
+                else { return event }
+                let action = classifyComposerInput(
+                    characters: event.charactersIgnoringModifiers ?? event.characters ?? "",
+                    command: event.modifierFlags.contains(.command),
+                    control: event.modifierFlags.contains(.control))
+                if action == .editing {
+                    self.onComposerInput?(action)
+                } else if action == .submitted || action == .cancelled {
+                    DispatchQueue.main.async { [weak self] in
+                        self?.onComposerInput?(action)
+                    }
+                }
+                return event
+            }
         }
         guard window != nil, tmuxScroller != nil else { return }
         scrollMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
@@ -189,17 +237,20 @@ final class TerminalPaneView: NSView, LocalProcessTerminalViewDelegate {
     /// into the deferred spawn; live resizes are handled by SwiftTerm's own
     /// frame-driven winsize updates.
     func commitCellGeometry() {
+        layoutSubtreeIfNeeded()
+        startPendingChildIfGeometryReady()
+    }
+
+    private func startPendingChildIfGeometryReady() {
         guard let launch = pendingLaunch, bounds.width > 40, bounds.height > 40 else { return }
         pendingLaunch = nil
         childRunning = true
-        layoutSubtreeIfNeeded()
-        // SwiftTerm supplies TERM/COLORTERM/LANG/HOME/USER. PATH is inherited
-        // too: the login shell prepends the user's own PATH anyway, and this
-        // keeps tmux findable when the app was launched from a shell (CI).
-        var environment = Terminal.getEnvironmentVariables(termName: "xterm-256color")
-        if let path = ProcessInfo.processInfo.environment["PATH"] {
-            environment.append("PATH=\(path)")
-        }
+        // SwiftTerm supplies TERM/COLORTERM/LANG/HOME/USER. Preserve the two
+        // caller values the root also needs: PATH finds tmux/providers, while
+        // TMPDIR keeps Codex's socket out of the /tmp symlink fallback.
+        let environment = terminalProcessEnvironment(
+            base: Terminal.getEnvironmentVariables(termName: "xterm-256color"),
+            inherited: ProcessInfo.processInfo.environment)
         terminal.startProcess(
             executable: "/bin/zsh",
             args: ["-lc", launch.command],
@@ -248,6 +299,24 @@ final class TerminalPaneView: NSView, LocalProcessTerminalViewDelegate {
         childRunning = false
         onChildExit?(exitCode)
     }
+}
+
+/// SwiftTerm deliberately receives a bounded environment. PATH selects the
+/// installed provider CLIs; TMPDIR is equally load-bearing on macOS because
+/// Codex binds its instance-scoped app-server socket in the private per-user
+/// temporary directory. Omitting it makes Node fall back to `/tmp`, a symlink
+/// that Codex rejects as a socket parent.
+func terminalProcessEnvironment(
+    base: [String],
+    inherited: [String: String]
+) -> [String] {
+    var environment = base
+    for key in ["PATH", "TMPDIR"] {
+        if let value = inherited[key] {
+            environment.append("\(key)=\(value)")
+        }
+    }
+    return environment
 }
 
 /// Single-quotes a string for embedding in a `zsh -c` command line.

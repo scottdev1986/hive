@@ -6,8 +6,8 @@ import { basename, join } from "node:path";
 import { hiveInstanceSuffix } from "../../daemon/tmux-sessions";
 import {
   CodexAppServerManager,
+  buildCodexAppServerCommand,
   CodexAppServerClient,
-  CodexAppServerThreadConnection,
   type CodexAppServerTransport,
   codexAgentHostPidfile,
   codexAgentSocketPath,
@@ -73,35 +73,6 @@ class FakeTransport implements CodexAppServerTransport {
   }
 }
 
-test("second-client thread connection resumes, injects, and steers without a TUI transport", async () => {
-  const transport = new FakeTransport();
-  const client = new CodexAppServerClient(transport, {
-    notification: () => undefined,
-    request: async () => ({}),
-  });
-  const connection = new CodexAppServerThreadConnection(client);
-  await connection.initialize();
-  await connection.resume("thread-tui");
-  await connection.injectItems("thread-tui", "HIVE_ROOT_MESSAGE");
-  await connection.steer("thread-tui", "continue", "turn-active");
-
-  expect(transport.sent.map((message) => message.method)).toEqual([
-    "initialize",
-    "initialized",
-    "thread/resume",
-    "thread/inject_items",
-    "turn/steer",
-  ]);
-  expect(transport.sent[3]?.params).toEqual({
-    threadId: "thread-tui",
-    items: [{
-      type: "message",
-      role: "user",
-      content: [{ type: "input_text", text: "HIVE_ROOT_MESSAGE" }],
-    }],
-  });
-});
-
 function agent(): AgentRecord {
   return {
     id: "agent-maya",
@@ -121,11 +92,38 @@ function agent(): AgentRecord {
     capabilityEpoch: 0,
     readOnly: false,
     writeRevoked: false,
-    channelsEnabled: false,
   };
 }
 
 describe("Codex app-server adapter", () => {
+  test("scopes Apps and inherited MCPs while attaching Graphify", () => {
+    const command = buildCodexAppServerCommand({
+      socket: "/tmp/agent.sock",
+      worktree: "/tmp/maya",
+      daemonPort: 4317,
+      agentName: "maya",
+      graphifyUrl: "http://127.0.0.1:7799/mcp",
+    }, ["idea", "hive", "graphify"]);
+    expect(command).toContain("features.apps=false");
+    expect(command).toContain("mcp_servers.idea.enabled=false");
+    expect(command.join(" ")).not.toContain("mcp_servers.hive.enabled=false");
+    expect(command.join(" ")).not.toContain("mcp_servers.graphify.enabled=false");
+    expect(command).toContain(
+      'mcp_servers.graphify.url="http://127.0.0.1:7799/mcp"',
+    );
+  });
+
+  test("threads the healthy Graphify URL through the host boundary", () => {
+    const manager = new CodexAppServerManager({
+      commandRunner: async () => 0,
+      onEvent: async () => undefined,
+      queueApproval: async () => "approval-1",
+      observeRateLimits: async () => null,
+    });
+    expect(manager.buildHostCommand(agent(), 4317, "http://127.0.0.1:7799/mcp"))
+      .toContain("--graphify-url");
+  });
+
   test("initializes, starts a thread and turn, steers with the active turn precondition, and interrupts", async () => {
     const transport = new FakeTransport();
     const events: HookEvent[] = [];
@@ -288,7 +286,6 @@ describe("codexAgentSocketPath", () => {
       capabilityEpoch: 0,
       readOnly: false,
       writeRevoked: false,
-      channelsEnabled: false,
     };
     const path = codexAgentSocketPath(agent);
     expect(path).toContain("hive-codex-");
@@ -316,7 +313,6 @@ describe("codexAgentSocketPath", () => {
       capabilityEpoch: 0,
       readOnly: false,
       writeRevoked: false,
-      channelsEnabled: false,
     };
     const path = codexAgentSocketPath(agent);
     const filename = path.split("/").pop()!;
@@ -345,7 +341,6 @@ describe("codexAgentSocketPath", () => {
       capabilityEpoch: 0,
       readOnly: false,
       writeRevoked: false,
-      channelsEnabled: false,
     };
     const path = codexAgentSocketPath(agent);
     expect(Buffer.byteLength(path)).toBeLessThan(104);
@@ -372,7 +367,6 @@ describe("codexAgentSocketPath", () => {
       capabilityEpoch: 0,
       readOnly: false,
       writeRevoked: false,
-      channelsEnabled: false,
     };
     expect(() => codexAgentSocketPath(agent)).toThrow(
       /exceeds the AF_UNIX length limit/,
@@ -398,7 +392,6 @@ describe("codexAgentSocketPath", () => {
       capabilityEpoch: 0,
       readOnly: false,
       writeRevoked: false,
-      channelsEnabled: false,
     };
     const path1 = codexAgentSocketPath(agent);
     const path2 = codexAgentSocketPath(agent, "/some/hive/home");

@@ -17,6 +17,15 @@ export function hiveInstanceSuffix(hiveHome = getHiveHome()): string {
     .slice(0, INSTANCE_HASH_LENGTH);
 }
 
+/** The tmux server is part of an instance's control plane, not a machine-wide
+ * singleton. A distinct `-L` name gives every HIVE_HOME its own Unix socket,
+ * server environment, clients, and lifecycle. Session-name suffixes remain a
+ * second ownership check; they cannot isolate the environment of a shared
+ * tmux server on their own. */
+export function hiveTmuxSocketName(hiveHome = getHiveHome()): string {
+  return `hive-${hiveInstanceSuffix(hiveHome)}`;
+}
+
 export function agentTmuxSession(
   agentName: string,
   hiveHome = getHiveHome(),

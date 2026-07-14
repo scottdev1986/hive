@@ -21,7 +21,6 @@ import {
   type AccountBilling,
 } from "../daemon/usage-credits";
 import type { Approval } from "../daemon/db";
-import { CLAUDE_CHANNELS_FLAG } from "../adapters/tools/claude";
 import {
   QuotaConfigSchema,
   isLiveAgent,
@@ -257,7 +256,6 @@ function agent(
     capabilityEpoch: 0,
     readOnly: false,
     writeRevoked: false,
-    channelsEnabled: false,
   };
 }
 
@@ -2103,11 +2101,14 @@ describe("HiveSpawner wiring", () => {
       await Bun.write(join(skillPath, "SKILL.md"), "# Test skill\n");
       return { path, branch: `hive/${name}-${slug}` };
     };
+    let daemonPort = 0;
     const spawner = newTestSpawner({
       isModelEnabled: async () => true,
       db: store,
       repoRoot: root,
-      port: 4317,
+      // The production daemon is constructed with the same pre-bind sentinel.
+      // Resolving this during construction would either throw or write port 0.
+      port: () => daemonPort,
       config: {},
       readRoutingPolicy: () => policy,
       tmux,
@@ -2115,6 +2116,7 @@ describe("HiveSpawner wiring", () => {
       sleep: signalReadiness(store),
     });
 
+    daemonPort = 4317;
     const claude = await spawner.spawn({ task: "Build auth API", category: "complex_coding" });
     const codex = await spawner.spawn({
       task: "Add route tests",
@@ -2137,10 +2139,6 @@ describe("HiveSpawner wiring", () => {
     expect(tmux.sessions[0]?.[2]).toContain(
       "'--model' 'claude-fable-5'",
     );
-    // An unattended agent can never answer the development-channels warning
-    // dialog that this flag raises, so it must never appear in a spawn argv.
-    expect(tmux.sessions[0]?.[2]).not.toContain(CLAUDE_CHANNELS_FLAG);
-    expect(tmux.sessions[0]?.[2]).not.toContain("server:hive-channel");
     const mayaPrompt = await deliveredPrompt(tmux.sessions[0]?.[2] ?? "");
     expect(mayaPrompt).toContain("You are maya");
     // Every writer agent carries the landing protocol for its own branch.
@@ -2171,7 +2169,7 @@ describe("HiveSpawner wiring", () => {
       "utf8",
     );
     expect(claudeSettings).toContain("acceptEdits");
-    expect(claudeSettings).toContain("hive event session-start --agent maya");
+    expect(claudeSettings).toContain(" event session-start --agent maya");
     expect(codexConfig).toContain("http://127.0.0.1:4317/mcp");
     expect(
       await realpath(join(root, "maya", ".claude", "skills", "test-skill")),
@@ -2712,7 +2710,9 @@ describe("HiveSpawner wiring", () => {
       category: "simple_coding",
     });
 
-    expect(spawned.status).toEqual("spawning");
+    // A process-backed screen heartbeat is positive launch proof. Even if the
+    // hook channel is degraded, that result must close the spawning phase.
+    expect(spawned.status).toEqual("working");
     expect(rolloutReads).toBe(0);
     expect(processReads).toBeGreaterThanOrEqual(4);
     expect(tmux.capturePaneCalls).toBeGreaterThanOrEqual(4);
