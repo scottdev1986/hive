@@ -74,6 +74,7 @@ import {
 } from "./resources";
 import type { SpawnRequest, Spawner } from "./spawner";
 import type { QuotaService } from "./quota";
+import type { StopAgentSession } from "./teardown";
 import {
   AuthorizedLaunch,
   type LaunchGateChecks,
@@ -277,6 +278,7 @@ export interface HiveSpawnerDependencies {
    */
   readRoutingPolicy?: () => RoutingPolicy;
   tmux: TmuxSessionManager;
+  stopSession?: StopAgentSession;
   createWorktree?: WorktreeCreator;
   unavailableAgentNames?: typeof unavailableAgentNames;
   removeWorktree?: WorktreeRemover;
