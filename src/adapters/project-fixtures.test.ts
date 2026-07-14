@@ -1,15 +1,18 @@
-import { describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, realpath, stat } from "node:fs/promises";
+import { afterAll, describe, expect, test } from "bun:test";
+import { mkdtemp, readFile, realpath, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { serializeProfile } from "./profile";
 import {
   AMBIGUOUS_SIGNALS,
   addHazards,
   ambiguousProject,
+  disposeFixtures,
   driftProject,
   editPreservingSize,
   emptyProject,
   freshProject,
+  LEGACY_PROFILE_TOML,
   legacyProfileProject,
   MONOREPO_WORKSPACES,
   monorepoProject,
@@ -20,6 +23,8 @@ import {
 // These test the *fixtures*, not the profiler. A fixture that does not contain
 // what its doc comment promises is worse than no fixture: it makes the
 // acceptance test that consumes it pass for the wrong reason.
+
+afterAll(disposeFixtures);
 
 function gitOut(root: string, args: string[]): { code: number; out: string } {
   const result = Bun.spawnSync(["git", "-C", root, ...args], {
@@ -93,33 +98,63 @@ describe("addHazards", () => {
 });
 
 describe("monorepoProject", () => {
-  test("each workspace's manifest really contains the command the table claims", async () => {
-    const root = await monorepoProject();
+  test("every workspace in the ground-truth table has its manifest on disk", async () => {
+    const { root } = await monorepoProject();
     for (const workspace of MONOREPO_WORKSPACES) {
-      const directory = join(root, workspace.directory);
-      expect(await exists(directory)).toBe(true);
-
-      const manifests = ["Cargo.toml", "package.json"];
-      const bodies = await Promise.all(
-        manifests.map(async (name) => {
-          const path = join(directory, name);
-          return (await exists(path)) ? await readFile(path, "utf8") : "";
-        }),
-      );
-      const text = bodies.join("\n");
-      expect(text).toContain(workspace.testCommand);
-      expect(text).toContain(workspace.buildCommand);
+      expect(await exists(join(root, workspace.directory, workspace.manifest))).toBe(true);
     }
   });
 
-  test("no workspace's command is the other's, and the root has no manifest of its own", async () => {
-    const root = await monorepoProject();
-    const [backend, frontend] = MONOREPO_WORKSPACES;
-    expect(backend?.testCommand).not.toBe(frontend?.testCommand);
-    // The claim that makes a bare repo-wide command wrong: there is nothing at
-    // the root to run. Only the workspaces are runnable.
+  test("the frontend's scripts ARE the table's commands, and none invokes itself", async () => {
+    const { root } = await monorepoProject();
+    const frontend = MONOREPO_WORKSPACES.find((w) => w.directory === "frontend");
+    expect(frontend).toBeDefined();
+
+    const manifest = JSON.parse(
+      await readFile(join(root, "frontend/package.json"), "utf8"),
+    ) as { scripts: Record<string, string> };
+
+    // Structural, not substring: the script's value is exactly the command the
+    // table promises a profiler should find.
+    expect(manifest.scripts.test).toBe(frontend?.testCommand);
+    expect(manifest.scripts.build).toBe(frontend?.buildCommand);
+
+    // A script whose body re-invokes its own name is an infinite shell loop, and
+    // a ground-truth table full of those would validate unrunnable commands.
+    for (const [name, command] of Object.entries(manifest.scripts)) {
+      expect(command).not.toContain(`pnpm ${name}`);
+      expect(command).not.toContain(`npm run ${name}`);
+    }
+  });
+
+  test("the backend is a virtual workspace, which is what makes --workspace right", async () => {
+    const { root } = await monorepoProject();
+    const backend = MONOREPO_WORKSPACES.find((w) => w.directory === "backend");
+    const manifest = await readFile(join(root, "backend/Cargo.toml"), "utf8");
+
+    // `cargo test --workspace` is correct here because the manifest declares a
+    // workspace and no package of its own — a bare `cargo test` has no crate to
+    // run. The members it names really exist.
+    expect(manifest).toContain("[workspace]");
+    expect(manifest).not.toContain("[package]");
+    expect(backend?.testCommand).toContain("--workspace");
+    expect(await exists(join(root, "backend/crates/api/Cargo.toml"))).toBe(true);
+    expect(await exists(join(root, "backend/crates/store/Cargo.toml"))).toBe(true);
+  });
+
+  test("the workspaces share no command, and the root has no ecosystem manifest", async () => {
+    const { root } = await monorepoProject();
+    const commands = MONOREPO_WORKSPACES.flatMap((w) => [w.testCommand, w.buildCommand]);
+    expect(new Set(commands).size).toBe(commands.length);
+
+    // The claim that makes a bare repo-wide command wrong: nothing at the root
+    // is runnable on its own. Even the dispatcher has to `cd` into a workspace.
     expect(await exists(join(root, "package.json"))).toBe(false);
     expect(await exists(join(root, "Cargo.toml"))).toBe(false);
+    for (const workspace of MONOREPO_WORKSPACES) {
+      expect(await readFile(join(root, "Makefile"), "utf8"))
+        .toContain(`cd ${workspace.directory} && ${workspace.testCommand}`);
+    }
   });
 });
 
@@ -174,17 +209,75 @@ describe("legacyProfileProject", () => {
 
   test("the legacy profile lands in the caller's state dir, outside the repo", async () => {
     const { root, plantLegacyProfile } = await legacyProfileProject();
+    // The caller owns this directory, so the caller cleans it up.
     const stateDir = await mkdtemp(join(tmpdir(), "hive-fixture-state-"));
-    const path = await plantLegacyProfile(stateDir);
+    try {
+      const path = await plantLegacyProfile(stateDir);
 
-    const body = await readFile(path, "utf8");
-    expect(body).toContain("schema_version = 2");
-    // Omitted keys, not nulls: that is how the legacy format said "unknown".
-    expect(body).toContain(`test = "bun test"`);
-    expect(body).not.toContain("lint");
-    // Derived data is local, never in the tree.
-    expect(path.startsWith(await realpath(root))).toBe(false);
-    expect(gitOut(root, ["status", "--porcelain", "-uall"]).out).toBe("");
+      const body = await readFile(path, "utf8");
+      expect(body).toContain("schema_version = 2");
+      // Omitted keys, not nulls: that is how the legacy format said "unknown".
+      expect(body).toContain(`test = "bun test"`);
+      expect(body).not.toContain("lint");
+      // Derived data is local, never in the tree.
+      expect(path.startsWith(await realpath(root))).toBe(false);
+      expect(gitOut(root, ["status", "--porcelain", "-uall"]).out).toBe("");
+    } finally {
+      await rm(stateDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("LEGACY_PROFILE_TOML fidelity", () => {
+  // The one place that imports the code being replaced, and deliberately: a
+  // migration test against an *approximation* of the legacy format proves
+  // nothing. The builders stay import-free so the fixtures outlive the
+  // serializer; this test is meant to be deleted along with it.
+  test("is byte-for-byte what the legacy serializer emitted", () => {
+    const emitted = serializeProfile({
+      schemaVersion: 2,
+      docs: { briefable: ["SPEC.md"], briefableDirectories: ["docs"], primary: "SPEC.md" },
+      commands: {
+        build: "bun run build",
+        test: "bun test",
+        typecheck: "bun run typecheck",
+        // Unknown in the legacy format meant an omitted key, never a null.
+        lint: null,
+        run: null,
+      },
+      conventions: {
+        agentsFile: "CLAUDE.md",
+        language: "typescript",
+        packageManager: "bun",
+        monorepo: false,
+      },
+      entryPoints: ["src/cli.ts"],
+      fingerprint: {
+        generated: "2026-01-01",
+        hiveVersion: "0.1.0",
+        commit: "1111111111111111111111111111111111111111",
+        inputsHash: "0".repeat(64),
+      },
+    });
+    expect(LEGACY_PROFILE_TOML).toBe(emitted);
+  });
+});
+
+describe("disposeFixtures", () => {
+  test("removes the fixture root AND the outside-symlink target", async () => {
+    const { root, outsideRoot } = await polyglotProject();
+    const monorepo = await monorepoProject();
+    expect(await exists(root)).toBe(true);
+    expect(await exists(outsideRoot)).toBe(true);
+
+    await disposeFixtures();
+
+    // The outside root is the one a caller could not clean up on its own: it is
+    // outside the fixture by construction, which is why disposal is a registry.
+    expect(await exists(root)).toBe(false);
+    expect(await exists(outsideRoot)).toBe(false);
+    expect(await exists(monorepo.root)).toBe(false);
+    expect(await exists(monorepo.outsideRoot)).toBe(false);
   });
 });
 

@@ -8,9 +8,31 @@
 // cli/init.test.ts), not checked-in trees, so these are builders. Each returns a
 // root under $TMPDIR and is never cleaned up, matching the existing tests.
 
-import { mkdir, mkdtemp, readFile, stat, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+// --- disposal ---------------------------------------------------------------
+
+// Every temp directory this module creates, whether or not a builder hands it
+// back. The symlink-escape target is the reason this is a registry rather than a
+// handle on each fixture: it lives *outside* the fixture root by construction,
+// so a caller who only knows the root cannot delete it even deliberately.
+const created: string[] = [];
+
+async function trackedMkdtemp(prefix: string): Promise<string> {
+  const path = await mkdtemp(join(tmpdir(), prefix));
+  created.push(path);
+  return path;
+}
+
+/** Remove every directory these builders created. Call from `afterAll`. */
+export async function disposeFixtures(): Promise<void> {
+  const paths = created.splice(0, created.length);
+  await Promise.all(
+    paths.map((path) => rm(path, { recursive: true, force: true })),
+  );
+}
 
 // --- primitives -------------------------------------------------------------
 
@@ -36,7 +58,7 @@ async function write(root: string, relativePath: string, body: string): Promise<
 }
 
 async function initRepo(prefix: string): Promise<string> {
-  const root = await mkdtemp(join(tmpdir(), `hive-fixture-${prefix}-`));
+  const root = await trackedMkdtemp(`hive-fixture-${prefix}-`);
   git(root, ["init"]);
   return root;
 }
@@ -80,7 +102,7 @@ export async function addHazards(root: string): Promise<string> {
   // Credential-shaped, gitignored, present on disk — the realistic case.
   await write(root, ".env", `AWS_SECRET_ACCESS_KEY=${SECRET_CANARY}\n`);
 
-  const outsideRoot = await mkdtemp(join(tmpdir(), "hive-fixture-outside-"));
+  const outsideRoot = await trackedMkdtemp("hive-fixture-outside-");
   await writeFile(join(outsideRoot, "secrets.txt"), `${SECRET_CANARY}\n`);
   await symlink(outsideRoot, join(root, "external"));
 
@@ -89,9 +111,11 @@ export async function addHazards(root: string): Promise<string> {
 
 // --- 1. polyglot ------------------------------------------------------------
 
-export interface PolyglotFixture {
+/** A fixture carrying the hazard set. `outsideRoot` is where the `external`
+ * symlink lands: nothing under it belongs to the project, so a profile that
+ * names any path beneath it followed the symlink out of the repo. */
+export interface HazardousFixture {
   root: string;
-  /** Where the `external` symlink lands. Nothing under here is in the project. */
   outsideRoot: string;
 }
 
@@ -104,7 +128,7 @@ export interface PolyglotFixture {
  * this repo without discarding two thirds of it, whichever one it picks. Carries
  * the full hazard set.
  */
-export async function polyglotProject(): Promise<PolyglotFixture> {
+export async function polyglotProject(): Promise<HazardousFixture> {
   const root = await initRepo("polyglot");
 
   await write(root, "Cargo.toml", `[package]\nname = "engine"\nversion = "0.1.0"\n`);
@@ -138,6 +162,10 @@ export async function polyglotProject(): Promise<PolyglotFixture> {
 export interface Workspace {
   /** Working directory the command must run in, relative to the repo root. */
   directory: string;
+  /** The manifest, relative to `directory`, that makes these commands the right
+   * ones — `package.json` names them outright, `Cargo.toml` implies them by
+   * declaring a `[workspace]`. */
+  manifest: string;
   testCommand: string;
   buildCommand: string;
 }
@@ -145,19 +173,26 @@ export interface Workspace {
 /**
  * The ground truth for `monorepoProject`. Every command below runs in its own
  * `directory` and nowhere else: `cargo test --workspace` from the repo root
- * fails, and so does `pnpm test`. A profile recording a single repo-wide command
- * string is *provably* wrong against this table, not merely incomplete.
+ * fails, and so does `vitest run`. A profile recording a single repo-wide
+ * command string is *provably* wrong against this table, not merely incomplete.
+ *
+ * These are the commands that actually do the work, never a package-manager
+ * indirection that re-invokes the same script name — `pnpm test` as the value of
+ * `scripts.test` is a shell loop, and a table of those would validate a profile
+ * full of commands that cannot run.
  */
 export const MONOREPO_WORKSPACES: readonly Workspace[] = [
   {
     directory: "backend",
+    manifest: "Cargo.toml",
     testCommand: "cargo test --workspace",
     buildCommand: "cargo build --release",
   },
   {
     directory: "frontend",
-    testCommand: "pnpm test --run",
-    buildCommand: "pnpm build",
+    manifest: "package.json",
+    testCommand: "vitest run",
+    buildCommand: "vite build",
   },
 ];
 
@@ -168,44 +203,45 @@ export const MONOREPO_WORKSPACES: readonly Workspace[] = [
  * The manifests literally contain the strings in `MONOREPO_WORKSPACES`, so a
  * test can compare a profile against that table.
  */
-export async function monorepoProject(): Promise<string> {
+export async function monorepoProject(): Promise<HazardousFixture> {
   const root = await initRepo("monorepo");
 
+  // No `[package]`: a virtual workspace root, which is what makes
+  // `cargo test --workspace` the command and `cargo test` the wrong one.
   await write(root, "backend/Cargo.toml", [
-    `[package]`,
-    `name = "backend"`,
-    `version = "0.1.0"`,
-    ``,
     `[workspace]`,
-    `members = ["crates/*"]`,
-    ``,
-    `# test = "cargo test --workspace"`,
-    `# build = "cargo build --release"`,
+    `members = ["crates/api", "crates/store"]`,
+    `resolver = "2"`,
     ``,
   ].join("\n"));
-  await write(root, "backend/Cargo.lock", `[[package]]\nname = "backend"\n`);
-  await write(root, "backend/src/main.rs", "fn main() {}\n");
+  await write(root, "backend/Cargo.lock", `[[package]]\nname = "api"\n`);
+  await write(root, "backend/crates/api/Cargo.toml", `[package]\nname = "api"\nversion = "0.1.0"\n`);
+  await write(root, "backend/crates/api/src/main.rs", "fn main() {}\n");
+  await write(root, "backend/crates/store/Cargo.toml", `[package]\nname = "store"\nversion = "0.1.0"\n`);
+  await write(root, "backend/crates/store/src/lib.rs", "pub fn get() {}\n");
 
+  // The scripts run the real tools. `"test": "pnpm test"` would invoke itself.
   await write(root, "frontend/package.json", `${JSON.stringify({
     name: "frontend",
-    scripts: { build: "pnpm build", test: "pnpm test --run" },
+    scripts: { build: "vite build", test: "vitest run" },
   }, null, 2)}\n`);
   await write(root, "frontend/pnpm-lock.yaml", "lockfileVersion: '9.0'\n");
   await write(root, "frontend/src/index.ts", "export const app = 1;\n");
 
-  // The root has no manifest of its own — only a dispatcher. A profiler that
-  // reads the root and stops finds nothing runnable at all.
+  // No *ecosystem* manifest at the root — only a dispatcher, and one that has to
+  // `cd` into each workspace to do anything. The working directory is not a
+  // detail of these commands; it is part of them.
   await write(root, "Makefile", [
     "test:",
-    "\t$(MAKE) -C backend test",
-    "\t$(MAKE) -C frontend test",
+    "\tcd backend && cargo test --workspace",
+    "\tcd frontend && vitest run",
     "",
   ].join("\n"));
   await write(root, "README.md", "# monorepo\n");
 
-  await addHazards(root);
+  const outsideRoot = await addHazards(root);
   commitAll(root, "init");
-  return root;
+  return { root, outsideRoot };
 }
 
 // --- 3. empty / fresh -------------------------------------------------------
@@ -295,11 +331,21 @@ const LEGACY_OVERRIDE_TOML = [
   "",
 ].join("\n");
 
-/** A v2 derived profile exactly as the legacy serializer emitted it: TOML with
- * no nulls, unknown commands represented by *omitted* keys (`lint` and `run`
- * here). Local derived data — a migration may replace it freely. */
+/** A v2 derived profile byte-for-byte as the legacy serializer emitted it,
+ * header comment and all: TOML with no nulls, unknown commands represented by
+ * *omitted* keys (`lint` and `run` here). Local derived data — a migration may
+ * replace it freely.
+ *
+ * The literal keeps this module independent of the code being replaced. Fidelity
+ * to the real serializer is not asserted here but in project-fixtures.test.ts,
+ * which imports `serializeProfile` and compares byte-for-byte — that test is
+ * meant to die with the legacy serializer, and this constant is not. */
 export const LEGACY_PROFILE_TOML = [
   "# Hive's derived profile of this repo — generated, cached, disposable.",
+  "# Hive rewrites this file whenever the repo drifts; nothing here is worth",
+  "# editing, because the next start will overwrite it. To *correct* a wrong",
+  "# answer, put it in the repo's .hive/profile.override.toml, which Hive never",
+  "# touches and always layers on top.",
   "",
   "schema_version = 2",
   "",
