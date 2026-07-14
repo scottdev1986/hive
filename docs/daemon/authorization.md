@@ -1,7 +1,7 @@
 # Authorization: the capability rights matrix
 
-Updated: 2026-07-13
-Sources: Hive source tree, 2026-07-13; compiled from `docs/architecture/capability-rights-matrix.md`
+Updated: 2026-07-14
+Source: Hive source tree, 2026-07-14
 
 ## Summary
 

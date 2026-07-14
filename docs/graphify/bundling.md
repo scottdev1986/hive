@@ -1,7 +1,7 @@
 # Graphify bundling
 
-Updated: 2026-07-13
-Sources: Hive source tree, 2026-07-13; compiled from `docs/architecture/graphify-bundling.md`
+Updated: 2026-07-14
+Source: Hive source tree, 2026-07-14
 
 ## Summary
 

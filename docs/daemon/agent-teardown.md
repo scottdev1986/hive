@@ -1,6 +1,6 @@
 # Agent teardown
 
-**Updated:** 2026-07-13
+**Updated:** 2026-07-14
 
 ## Summary
 

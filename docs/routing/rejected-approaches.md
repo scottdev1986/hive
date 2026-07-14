@@ -1,7 +1,7 @@
 # Rejected Approaches — where the dead routers are buried
 
-Updated: 2026-07-13
-Sources: Hive source tree, 2026-07-13; `docs/benchmark-fit-policy-proposal.md`; `docs/research/dynamic-model-router.md`; `docs/research/dynamic-router-adoption.md`; `docs/model-selection.md` (Layer 1); `docs/research/model-routing-and-token-efficiency.md`
+Updated: 2026-07-14
+Source: Hive source tree, 2026-07-14
 
 ## Summary
 

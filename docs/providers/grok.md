@@ -1,7 +1,7 @@
 # Grok
 
-Updated: 2026-07-13
-Sources: Hive source tree, 2026-07-13; docs/research/grok-mcp-turn-completion.md; docs/architecture/grok-integration-spec.md (surviving sections)
+Updated: 2026-07-14
+Sources: Hive source tree and linked raw measurements, 2026-07-14
 Raw: [Grok spend-sensitivity experiment](../../raw/grok/grok-spend-sensitivity-experiment.md) · [live quota verification](../../raw/grok/grok-quota-live-verification.txt) · [model-control snapshot](../../raw/grok/grok-model-control-verification.json)
 
 ## Summary

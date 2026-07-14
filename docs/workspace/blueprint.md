@@ -1,7 +1,7 @@
 # Workspace Blueprint
 
-Updated: 2026-07-13
-Sources: Hive source tree, 2026-07-13; docs/architecture/hive-workspace-blueprint.md; docs/architecture/restart-handoff.md
+Updated: 2026-07-14
+Source: Hive source tree, 2026-07-14
 
 ## Summary
 

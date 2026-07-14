@@ -1,7 +1,7 @@
 # Versioning and release
 
-Updated: 2026-07-13
-Sources: Hive source tree, 2026-07-13; docs/versioning-and-release.md (relocated here); src/release/contract.test.ts
+Updated: 2026-07-14
+Sources: Hive source tree, 2026-07-14; `src/release/contract.test.ts`
 
 ## Summary
 
@@ -70,14 +70,14 @@ Two independent signatures protect a release and neither substitutes for the oth
 
 ## Install, update, launch
 
-`~/.local/share/hive/versions/<version>/` holds an immutable tree per release: the `hive` binary and `HiveWorkspace.app`, plus `release-verification.json` for a release installed with a manifest signature. The verification file contains the exact signed manifest bytes and signature needed to prove an offline rollback target. The current shell installer warns and omits the sidecar when installing a legacy release without that asset; such a version must be reinstalled before rollback can select it. `current` is a symlink at one version directory and `~/.local/bin/hive` points at `current/hive` forever (`install.sh:74-115`, `src/update/install.ts:54-83`, `:215-250`).
+`~/.local/share/hive/versions/<version>/` holds an immutable tree per release: the `hive` binary and `HiveWorkspace.app`, plus `release-verification.json` containing the exact manifest bytes and signature needed to prove an offline rollback target. The shell installer refuses a release whose signature asset is missing or empty, so every shell-installed version carries that sidecar. `current` is a symlink at one version directory and `~/.local/bin/hive` points at `current/hive` forever (`install.sh:74-109`, `src/update/install.ts:54-83`, `:215-250`).
 
 **Activation is one `rename(2)` over `current`, which is atomic**, so there is no instant at which `current` names a half-installed tree (`src/update/install.ts:366-378`, `paths.ts:1-14`). The in-binary updater creates a temporary sibling symlink and renames that directory entry over `current`; it never resolves or follows the existing link. In the shell installer this is `replace_symlink` (`install.sh:26-36`), and the flag is load-bearing: **BSD `mv` needs `-h`**. `contract.test.ts:133-170` proves both halves against the live filesystem on macOS:
 
 - plain `/bin/mv -f current.tmp current` **follows** the `current` symlink, moves the temporary link *inside the old version directory*, exits **0**, and leaves `current` still pointing at the old release — a silent missed activation;
 - `/bin/mv -fh current.tmp current` replaces the symlink itself and leaves nothing behind.
 
-The installer is Darwin-guarded, verifies every artifact's digest **before it ever runs the binary** (`contract.test.ts:118-120`), runs the staged binary and makes it state its own version before it can be `current`, and after activation re-reads the link and re-resolves `current` to confirm it landed on the intended directory (`install.sh:74-142`). It preserves signed rollback provenance but does not verify Ed25519 itself; the real-shell regressions prove that a signed fresh install survives update and rollback, changed retained bytes are refused, and a missing signature produces the compatibility warning (`release/install.test.ts:212-266`). `install.sh` must also be executable (`contract.test.ts:172-174`). It is short on purpose: short enough to audit is the only reason `curl | sh` is acceptable.
+The installer is Darwin-guarded, verifies every artifact's digest **before it ever runs the binary** (`src/release/contract.test.ts:118-120`), runs the staged binary and makes it state its own version before it can be `current`, and after activation re-reads the link and re-resolves `current` to confirm it landed on the intended directory (`install.sh:74-128`). It requires and preserves signed rollback provenance but does not verify Ed25519 itself; the real-shell regressions prove that a signed fresh install survives update and rollback, changed retained bytes are refused, and missing or empty signature material is refused before installation (`src/release/install.test.ts:212-275`). `install.sh` must also be executable (`src/release/contract.test.ts:172-174`). It is short on purpose: short enough to audit is the only reason `curl | sh` is acceptable.
 
 `hive update` always does the safe half immediately — check, verify the signed manifest, download, hash, probe, and stage — and then tells the truth about activation. It activates only while holding the machine mutation lease and after a final enumeration proves that every instance has an empty observable team. An unobservable instance refuses activation. Spawn and landing register operations with the same coordinator, closing the race between that final check and the `current` change (`src/cli/update.ts:291-365`, `src/daemon/mutation-lease.ts:162-305`). **There is no `--now` flag** that forces activation over a live team; `hive stop && hive update` is the explicit destructive spelling.
 
@@ -145,7 +145,7 @@ This section is therefore the recreate-and-rotate procedure, not a to-do list.
    scripts/signing/dry-run.sh --full
    ```
 
-**The offline Ed25519 release key.** Generated on an offline machine, with the private half kept there — a hardware token or an air-gapped password manager, never the repo:
+**The Ed25519 release key.** Generate it away from the source checkout and never commit either private material or its encoded value:
 
 ```sh
 openssl genpkey -algorithm ed25519 -out hive-release-private.pem
@@ -153,7 +153,7 @@ openssl pkey -in hive-release-private.pem -pubout -outform DER | base64   # -> H
 openssl pkey -in hive-release-private.pem -outform DER | base64           # -> HIVE_RELEASE_PRIVATE_KEY
 ```
 
-Both halves are repository secrets. **Set both or neither:** the pipeline hard-errors on a half-configured key (`release.yml:100-108`), because embedding the public half without signing with the private half flips `hive update` fail-closed and then refuses the very release it shipped in. The public half is inlined into every binary via `build.ts --public-key`; the private half signs `hive-release.json` in the release job through `scripts/signing/sign-manifest.ts` and touches nothing else in the pipeline.
+Both halves are GitHub Actions secrets. The private half is therefore available to release CI; this is not offline signing. **Set both or neither:** the pipeline hard-errors on a half-configured key (`release.yml:100-108`), because embedding the public half without signing with the private half flips `hive update` fail-closed and then refuses the very release it shipped in. The public half is inlined into every binary via `build.ts --public-key`; the private half signs `hive-release.json` in the release job through `scripts/signing/sign-manifest.ts` and touches nothing else in the pipeline.
 
 **To rotate the key**, exploit the fact that `HIVE_RELEASE_PUBLIC_KEY` is a comma-separated list and any listed key may vouch for a manifest. Generate the new pair, then take it in **three releases, never fewer**:
 

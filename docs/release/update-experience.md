@@ -1,7 +1,7 @@
 # The update experience
 
-Updated: 2026-07-13
-Sources: Hive source tree, 2026-07-13; research/update-experience.md (2026-07-10, partially stale)
+Updated: 2026-07-14
+Source: Hive source tree, 2026-07-14
 
 ## Summary
 

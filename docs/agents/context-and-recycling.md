@@ -1,7 +1,7 @@
 # Context degradation and agent recycling
 
-Updated: 2026-07-13
-Sources: Hive source tree, 2026-07-13; docs/research/context-degradation-and-agent-recycling.md; docs/session-2026-07-11-findings-and-plan.md; SPEC.md decision 7
+Updated: 2026-07-14
+Sources: Hive source tree, 2026-07-14; [SPEC decision 7](../../SPEC.md); linked research papers
 
 ## Summary
 

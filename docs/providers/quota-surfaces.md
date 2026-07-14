@@ -1,7 +1,7 @@
 # Quota surfaces
 
-Updated: 2026-07-13
-Sources: Hive source tree, 2026-07-13; docs/research/provider-quota-surfaces.md
+Updated: 2026-07-14
+Sources: Hive source tree and linked raw measurements, 2026-07-14
 Raw: [Grok spend-sensitivity experiment](../../raw/grok/grok-spend-sensitivity-experiment.md) · [billing BEFORE](../../raw/grok/grok-billing-BEFORE.json) / [AFTER1](../../raw/grok/grok-billing-AFTER1.json) / [AFTER3](../../raw/grok/grok-billing-AFTER3.json) · [live quota verification](../../raw/grok/grok-quota-live-verification.txt) · [model-control snapshot](../../raw/grok/grok-model-control-verification.json)
 
 ## Summary

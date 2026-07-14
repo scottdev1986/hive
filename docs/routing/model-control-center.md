@@ -1,7 +1,7 @@
 # Model Control Center — the honesty contract
 
-Updated: 2026-07-13
-Sources: Hive source tree, 2026-07-13; `docs/architecture/model-control-center-settings-ui.md`
+Updated: 2026-07-14
+Source: Hive source tree, 2026-07-14
 
 ## Summary
 
@@ -120,11 +120,13 @@ The review gate. Each is a way to make the screen lie about money.
    (2), because that feed *actually goes quiet*.
 4. **Absolute counts.** "128 of 500" is fiction for every provider.
 5. **`known-none` effort shown as unknown**, or unknown shown as "no effort axis."
-6. **"Falls back to any enabled model."** It does not. There is no such string and
-   the behavior does not exist. Empty walks the user's `default` chain — anything
-   else is Hive inventing an order and becoming the router again.
-7. **Blurring empty and exhausted.** (Note: the *code* currently blurs them — see
-   the gap below. The UI must not promise a distinction the daemon does not keep.)
+6. **"The authored chain is the outer boundary."** It is preference order, not
+   the outer boundary. Under `choice`, an exhausted category chain walks the Default
+   chain; if every authored link is refused, Hive spreads across the remaining
+   enabled models as a last resort. The user's enablement set is the boundary.
+7. **Blurring empty and exhausted.** A category with no chain uses Default, but if
+   both are empty Hive refuses outright. A non-empty authored search space whose
+   links were all refused is exhausted and earns the enabled-model fallback.
 8. **A floor refusal shown as "you disabled this."** Capability truth is not user
    policy.
 9. **Provider off but the model toggle still looks on.** Effective state must
@@ -205,9 +207,10 @@ under `workspace/Sources/HiveWorkspace/Settings/` (`ProviderCardView`, `ModelRow
 `MCCCopy`), the read surface, and the full write surface. Rendering conventions come
 from [../workspace/ui-design-system.md](../workspace/ui-design-system.md).
 
-**Known gap:** the UI must not promise **empty ≠ exhausted**, because the daemon does
-not keep it — under `choice` both widen to the default chain; under `auto` neither does.
-See [routing-policy.md](routing-policy.md#known-gaps-real-and-unimplemented).
+**Routing boundary:** under `choice`, authored category and Default chains express
+preference order inside the enabled-model set. If those non-empty chains are exhausted,
+Hive spreads across the remaining enabled models; if both chains are empty, it refuses
+without widening. Empty and exhausted are intentionally different (`src/daemon/spawner-impl.ts:1811-1849`; `src/cli/spawner-impl.test.ts:3505-3674`). Under `auto`, the enabled models that fit the category are the candidate set directly.
 
 ## See Also
 

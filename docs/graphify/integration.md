@@ -1,7 +1,7 @@
 # Graphify integration
 
-Updated: 2026-07-13
-Sources: Hive source tree, 2026-07-13; compiled from `docs/architecture/graphify-integration.md` (audited current) and `docs/architecture/graphify-query-degradation.md` (ephemeral investigation; its proposals all shipped)
+Updated: 2026-07-14
+Source: Hive source tree, 2026-07-14
 
 ## Summary
 
@@ -72,7 +72,7 @@ The child is *held*, not detached: it must die with the daemon rather than leak,
 
 Lock one: every build runs `extract --code-only`, the binary's own zero-LLM switch. Lock two, the backstop: every graphify invocation runs under a **scrubbed allowlist environment** — `PATH`, a `HOME` pointed into Hive's tools dir (so upstream's `~/.graphify` global state is never read or written), `TMPDIR`, nothing else (`src/adapters/graphify.ts:73-85`). An allowlist rather than a `*_API_KEY` scrub, **so a provider key Hive has never heard of still cannot leak.** Upstream errors rather than degrades when a doc file needs a backend and no key exists, so a pin bump that drifts what `--code-only` covers fails loud (graphless, noted) instead of exfiltrating quietly.
 
-## Known limitations (verified still true, 2026-07-13)
+## Known limitations (verified still true, 2026-07-14)
 
 - **Codex spawns through the experimental app-server host do not attach graphify** — the host starts app-server with only Hive's MCP URL (`src/adapters/tools/codex-app-server.ts:779-798`); the default TUI driver also receives graphify. App-server agents still receive the layer-1 digest.
 

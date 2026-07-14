@@ -1,11 +1,11 @@
 # Distribution
 
-Updated: 2026-07-13
-Sources: Hive source tree, 2026-07-13; research/distribution-auto-update.md (2026-07-10, largely superseded)
+Updated: 2026-07-14
+Source: Hive source tree, 2026-07-14
 
 ## Summary
 
-Why Hive ships a signed native installer rather than npm, Homebrew, or Sparkle — and what the shipped installer honestly does not do. The mechanism (versioning, signing, activation) is owned by [versioning-and-release.md](versioning-and-release.md), which is authoritative where this article and it disagree; what survives here is the *survey* and the *reasoning*, which the code cannot express.
+Why Hive ships a native release rather than npm, Homebrew, or Sparkle — and what the shell bootstrap honestly does not verify. The mechanism (versioning, signing, activation) is owned by [versioning-and-release.md](versioning-and-release.md), which is authoritative where this article and it disagree; what survives here is the *survey* and the *reasoning*, which the code cannot express.
 
 ## The one thing code cites this document for
 
@@ -15,13 +15,13 @@ Why Hive ships a signed native installer rather than npm, Homebrew, or Sparkle �
 
 **The shipped updater does exactly what that sentence forbids.** It reads `releases/latest` and the `hive-release.json` asset attached to it (`src/update/source.ts:105-164`, `src/update/check.ts:102-138`). There is no channel endpoint. The choice was between a knowing deviation and no updater at all, and it is confined to `src/update/source.ts`, which exists as the seam — introducing the channel document changes that file and nothing else.
 
-The deviation is **recorded, not rationalized**. Until it closes: channel and rollout policy are inferred from a mutable API, and the manifest's `channel` field is written but never read. What stands between a compromised release and an installed Hive is TLS, GitHub's immutable-release guarantee, and — since 0.0.6 — the Ed25519 manifest signature that the research doc argued for and that now exists. The signature is the part that closed; the channel document is the part that did not.
+The deviation is **recorded, not rationalized**. Until it closes: channel and rollout policy are inferred from a mutable API, and the manifest's `channel` field is written but never read. Native updates trust TLS only for transport: the embedded Hive release key authenticates the manifest before its hashes authorize any artifact. The shell bootstrap cannot perform that Ed25519 check, so its first-install boundary remains TLS plus GitHub Release hosting. The signed manifest exists; authentication in the bootstrap and the channel document do not.
 
 ## What the installer actually verifies — and does not
 
-`install.sh` downloads a published release, checks every artifact's SHA-256 against the release manifest, proves the binary runs, and only then points `~/.local/bin/hive` at it. **That is the whole of its verification** (`install.sh:74-122`). When the release includes `hive-release.json.sig`, the installer also preserves the manifest bytes and signature in `release-verification.json`; it does not claim to verify them. A later `hive update rollback` re-verifies that material with the installed binary's embedded key before it can reactivate the version (`install.sh:104-115`, `update/install.ts:543-603`). Releases without the signature still install with an explicit warning that rollback to that version requires reinstall.
+`install.sh` requires a non-empty `hive-release.json.sig`, checks every artifact's SHA-256 against the release manifest, proves the binary runs, and only then points `~/.local/bin/hive` at it (`install.sh:74-129`). It preserves the exact manifest bytes and signature in `release-verification.json`; portable shell does not claim to verify Ed25519. A later `hive update rollback` re-verifies that material with the installed binary's embedded key before it can reactivate the version (`install.sh:102-106`, `src/update/install.ts:543-603`). A release with missing or empty signature material is refused before installation, with no bypass flag.
 
-The design called for the installer to verify the manifest signature, the Developer ID signature, and the Team ID. **It does none of those.** The script says so itself (`install.sh:84-86`, `:104-106`): the manifest is served over TLS from an immutable release, and the installed Hive binary performs the Ed25519 verification later. So the first install is anchored on TLS + GitHub immutability + SHA-256 against an *unverified* manifest; every subsequent update through `hive update` is anchored on the embedded key and is fail-closed. **This is a real gap, not a rounding error**: an attacker who can serve a forged manifest *and* the matching bytes defeats the installer, because the digest it checks comes from the same document it did not authenticate.
+The design called for the installer to verify the manifest signature, the Developer ID signature, and the Team ID. **It does none of those cryptographic checks.** The script says so itself (`install.sh:82-84`, `:102-104`): it requires and preserves the manifest signature, but the installed Hive binary performs Ed25519 verification only when that version is later considered for rollback. So the first install is anchored on TLS + GitHub Release hosting + SHA-256 against an *unverified* manifest, plus the requirement that signature material be present; every subsequent update through `hive update` is anchored on the embedded key and is fail-closed. **This remains a real gap**: an attacker who can serve a forged manifest, matching bytes, and non-empty fake signature material defeats the shell installer, because the script cannot authenticate the document it reads.
 
 The reason it has not been closed is the one the research doc gave: portable POSIX shell cannot reliably verify Ed25519 on every supported macOS. The stated options are a tiny notarized installer binary, or a pinned Apple-native signature check plus a SHA from a versioned HTTPS script. Neither is built. `curl | sh` is convenient, not a trust argument; the script is short enough to audit, which is the only reason it is acceptable at all.
 
@@ -44,7 +44,7 @@ Recorded so nobody re-derives them from the research doc as though they were beh
 
 **Bun.** Shell installer, `bun upgrade`, stable/canary. Downloads into a temporary version directory, **executes the candidate with `--version`/`--revision` and compares against the expected version**, and only then moves it over the running executable. On Unix it preserves no automatic last-known-good sibling. **It tells Homebrew users to run `brew upgrade bun` instead of self-updating** — the ownership rule, verified. Hive's staged-binary probe is directly this.
 
-**Claude Code.** The strongest model. Native installer recommended; exact version or `latest`/`stable`; checks at startup and periodically; installs in the background; activates on next start. Retains binaries under **`~/.local/share/claude/versions/VERSION`** with `~/.local/bin/claude` in front — which is exactly Hive's layout. Each release has a **SHA-256 manifest signed by Anthropic's GPG key**, and its macOS binaries are Developer ID signed and notarized. `stable` is ≈ one week behind and skips releases with major regressions. And the warning: **[issue #24117](https://github.com/anthropics/claude-code/issues/24117)** — a real 2026 packaging bug left downloaded versions present while **the active symlink still targeted an old release**. Versioned activation is recoverable, but it is not magically correct; that bug is why Hive's installer re-reads the link and re-resolves `current` after the rename (`install.sh:26-36`, `:129-138`) and why `src/release/contract.test.ts:133-170` proves `mv -fh` against the live filesystem.
+**Claude Code.** The strongest model. Native installer recommended; exact version or `latest`/`stable`; checks at startup and periodically; installs in the background; activates on next start. Retains binaries under **`~/.local/share/claude/versions/VERSION`** with `~/.local/bin/claude` in front — which is exactly Hive's layout. Each release has a **SHA-256 manifest signed by Anthropic's GPG key**, and its macOS binaries are Developer ID signed and notarized. `stable` is ≈ one week behind and skips releases with major regressions. And the warning: **[issue #24117](https://github.com/anthropics/claude-code/issues/24117)** — a real 2026 packaging bug left downloaded versions present while **the active symlink still targeted an old release**. Versioned activation is recoverable, but it is not magically correct; that bug is why Hive's installer re-reads the link and re-resolves `current` after the rename (`install.sh:26-36`, `:120-129`) and why `src/release/contract.test.ts:133-170` proves `mv -fh` against the live filesystem.
 
 **None of the four provides a documented transactional rollback after a newly activated binary starts and fails.** They provide pre-activation verification and an explicit old-version path. Hive goes one step further — health check with automatic revert — because it has a daemon that can be health-checked and durable state that a broken control plane strands.
 
@@ -90,16 +90,16 @@ Two further rules from the design still stand as intent even though nothing enfo
 
 The honest risk in choosing a native installer is **supply-chain concentration**: compromise of Hive's update signing process reaches every opted-in installation faster than a compromised manual channel would. The mitigation list, in the order it was argued:
 
-- an **offline** manifest key (private half never in the repo, only a CI secret, touching exactly one script);
+- a dedicated manifest key whose private half is confined to the release CI secret and signing script;
 - a protected Apple signing identity;
 - two-person release approval;
-- immutable releases and provenance attestations;
+- immutable release publication and provenance attestations;
 - deterministic/staged rollout;
 - an emergency channel freeze;
 - user-visible logs;
 - a hard disable switch (`HIVE_DISABLE_UPDATES=1`, which blocks even manual updates).
 
-Of these, the offline key, the protected identity, immutable releases, and the disable switch exist. Two-person approval, staged rollout, and a channel freeze do not — the last two both wait on the channel document.
+Of these, manifest signing, the Apple signing identity, and the disable switch exist. Immutable publication, two-person approval, staged rollout, provenance attestations, and a channel freeze are not enforced by this repository — the last two rollout controls both wait on the channel document.
 
 **Automatic delivery should be the default; invisible, unaccountable mutation should not be.** That sentence is the whole argument for why the notice names its three checks and why `hive update` never activates over a live team.
 

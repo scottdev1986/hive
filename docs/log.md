@@ -1,5 +1,13 @@
 # Wiki Log
 
+## [2026-07-14] audit | Reconcile docs with the hardened control plane
+
+Audited every article against the source after multi-instance isolation, machine-wide
+mutation leases, verified agent teardown, shared Swift/TypeScript wire fixtures, and
+terminal-surface removal landed. Corrected routing fallback, installer provenance,
+quota ownership, workspace feed, authorization, and source references; refreshed the
+index only after the article-level checks passed.
+
 ## [2026-07-13] ingest | Compile docs/ into a code-verified wiki
 
 Rebuilt `docs/` as a compiled wiki. Every prior document was audited claim-by-claim

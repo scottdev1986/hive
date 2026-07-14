@@ -1,7 +1,7 @@
 # Routing Policy — the user is the router
 
-Updated: 2026-07-13
-Sources: Hive source tree, 2026-07-13; `docs/architecture/router-redesign-recommended.md` (governing); `docs/architecture/routing-distribution-and-auto-selection.md`
+Updated: 2026-07-14
+Source: Hive source tree, 2026-07-14
 
 ## Summary
 
@@ -181,13 +181,17 @@ Two vendors claiming one name returns `unreadable`, not a first-match win. The
 predecessor answered by regex over spelling and returned null for anything it could
 not place — and **both callers read that null as PERMISSION.**
 
+## Selection boundary
+
+The user's enablement set is the outer boundary; authored chains are preference order
+inside it. Under `choice`, Hive tries the category chain, then Default. If those
+non-empty authored chains are exhausted because every link is refused, it spreads the
+last-resort attempt across the remaining enabled models. A disabled or unconfigured
+model never enters that fallback. If both category and Default are empty, Hive refuses
+before constructing the fallback: **empty is not exhausted** (`src/daemon/spawner-impl.ts:1811-1849`; `src/cli/spawner-impl.test.ts:3505-3674`, `:3794-3804`). Under `auto`, enabled models that fit the category form the candidate set directly.
+
 ## Known gaps (real, and unimplemented)
 
-- **`exhaustion_behavior` does not exist.** The governing doc specified a per-category
-  `refuse | use_global_fallback`. There is no such field. Under `choice`, an empty
-  category chain and a fully-refused one behave *identically* — both widen to the
-  global default chain (`spawner-impl.ts:1793-1829`). Under `auto` there is **no
-  widening at all**. The doc's "**empty ≠ exhausted**" distinction is real, and unbuilt.
 - **There is no coding-capability floor of any kind.** The only floor is
   `minContextTokens` (`spawner-impl.ts:1625-1634`), which fails closed on an unmeasured
   window. The invariant "a capability floor blocks even a pin" has nothing to enforce.

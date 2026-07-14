@@ -1,7 +1,7 @@
 # Platform Constraints
 
-Updated: 2026-07-13
-Sources: Hive source tree, 2026-07-13; research/cross-vendor-architecture-review.md
+Updated: 2026-07-14
+Sources: Hive source tree, 2026-07-14; [cross-vendor architecture review](../../raw/reviews/cross-vendor-architecture-review.md)
 
 ## Summary
 

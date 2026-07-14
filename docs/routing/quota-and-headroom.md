@@ -1,15 +1,15 @@
 # Quota and Headroom — distribution without a common currency
 
-Updated: 2026-07-13
-Sources: Hive source tree, 2026-07-13; `docs/architecture/routing-distribution-and-auto-selection.md`; `docs/architecture/grok-routing-fit.md`
+Updated: 2026-07-14
+Source: Hive source tree and linked raw measurements, 2026-07-14
 Raw: `../../raw/grok/grok-spend-sensitivity-experiment.md`, `../../raw/grok/grok-billing-{BEFORE,AFTER1,AFTER3}.json`
 
 ## Summary
 
-Quota is an affordability gate on every candidate, and — under `auto` only — the
-chooser among the survivors. It chooses by **weighted-fair deficit over work Hive
-itself assigned**, never by comparing vendors' quota percentages, because unlike
-quota windows are not a common currency.
+Quota is an affordability gate on every candidate. It chooses among survivors under
+`auto`, and as the last resort after a `choice` category plus Default chain are
+exhausted. That chooser uses **weighted-fair deficit over work Hive itself assigned**,
+never cross-vendor quota percentages, because unlike windows are not a common currency.
 
 ## The load-bearing argument
 
@@ -31,29 +31,33 @@ rank providers.** Evaluate each real window as its own affordability gate.
 
 Two layers, and conflating them is the most common misreading of this system.
 
-**Policy layer** (`routing-policy.ts:115-119`): `never-configured` | `auto` | `choice`
+**Policy layer** (`src/schemas/routing-policy.ts:112-126`): `never-configured` | `auto` | `choice`
 — the user's intent. See [routing-policy.md](routing-policy.md).
 
-**Quota dispatch layer** (`quota.ts:64-78`): `QuotaRouteRequest.selection` is
-`spread` | `strict`. The spawner maps intent onto it at `spawner-impl.ts:1779-1794`
-(`auto`→`spread`, `choice`→`strict`). Every candidate handed to quota has **already
-cleared the full launch gate**; selection never bypasses a gate.
+**Quota dispatch layer** (`src/daemon/quota.ts:64-78`): `QuotaRouteRequest.selection`
+is `spread` | `strict`. The spawner maps `auto` to `spread` and uses `strict` for the
+authored attempts under `choice` (`src/daemon/spawner-impl.ts:1779-1841`). If the
+category and Default chains are non-empty but exhausted, the final `choice` attempt
+uses `spread` over the remaining enabled models. Every candidate handed to quota has
+**already cleared the full launch gate**; selection never bypasses a gate.
 
-### `strict` (the user's `choice`)
+### `strict` (the authored portion of `choice`)
 
-Walk the chain in the user's order; reserve the first link with safe headroom
-(`quota.ts:1672-1753`). Quota may veto a link, never reorder the list.
+Walk the category and Default chains in the user's order; reserve the first link with
+safe headroom (`src/daemon/quota.ts:1671-1753`). Quota may veto a link, never reorder
+either authored list.
 
-> CHOICE bypasses distribution entirely. **Reordering an explicit preference for
-> balance would make the preference untrue.**
+> Authored preference order bypasses distribution. **Reordering an explicit
+> preference for balance would make the preference untrue.** Only after every authored
+> link is refused may Hive use fair dispatch across the remaining enabled models.
 
-A candidate whose capacity Hive cannot read still runs, in **compatibility mode**
-(:1673-1705): an unbounded reservation, a loud "running unconstrained" warning, and no
+A strict candidate whose capacity Hive cannot read still runs, in **compatibility mode**
+(`src/daemon/quota.ts:1671-1705`): an unbounded reservation, a loud "running unconstrained" warning, and no
 pretense of a number. **Meter uncertainty is not capability revocation.**
 
-### `spread` (the user's `auto`)
+### `spread` (`auto`, and exhausted-`choice` last resort)
 
-`QuotaLedger.tryReserveFairGroups` (`quota-ledger.ts:1218-1303`) chooses and reserves
+`QuotaLedger.tryReserveFairGroups` (`src/daemon/quota-ledger.ts:1218-1303`) chooses and reserves
 **atomically** — one decision, so two concurrent spawns cannot both see the same
 provider as under-share — by **weighted-fair deficit**. Each historical dispatch
 credits every *eligible* provider an equal share and charges the selected provider one
@@ -74,7 +78,7 @@ to a provider, even one that publishes no capacity number. Consequences worth kn
   instruction must not distort the next automatic choice.
 - **No catch-up bursts.** A vendor unavailable for a week earned no credit and does not
   return with a week of debt to repay.
-- **Unknown capacity is excluded from `auto`, not scored** (`quota.ts:1625-1634`):
+- **Unknown capacity is excluded from `spread`, not scored** (`src/daemon/quota.ts:1624-1634`):
   *"AUTO excludes unreadable capacity, while an explicit choice may still run it."*
 
 Its cost is deliberate: it does not optimize consumption near a reset. Quota gates

@@ -1,7 +1,7 @@
 # Workspace UI Design System
 
-Updated: 2026-07-13
-Sources: Hive source tree, 2026-07-13; docs/architecture/hive-workspace-design-system.md; docs/design/workspace-visual-audit.md
+Updated: 2026-07-14
+Source: Hive source tree, 2026-07-14
 
 ## Summary
 
@@ -90,9 +90,9 @@ Near-limit coloring comes from the **remaining** fraction, not a hardcoded used-
 
 ## Honest open work
 
-The token ramp is still concentrated in the Model Control Center. Pane chrome uses the legacy top-level `Theme` font aliases but does not use `Theme.Space` or `Theme.Metric`. Verified still unbuilt as of 2026-07-13:
+The token ramp is still concentrated in the Model Control Center. Pane chrome uses the legacy top-level `Theme` font aliases but does not use `Theme.Space` or `Theme.Metric`. Verified still unbuilt as of 2026-07-14:
 
-- **Pane metrics are not tokenised.** `PaneView.swift` hardcodes `cornerRadius = 10` (:43, :50), `headerStack.spacing = 6` (:100), and a 14 pt status icon (:144-145). These duplicate `Metric.cardCornerRadius` and `Space.xs`/`s` by coincidence, not by reference — they will drift the first time a token moves.
+- **Pane metrics are not tokenised.** `PaneView.swift` hardcodes `cornerRadius = 10` (:43, :50), `headerStack.spacing = 6` (:95), and a 14 pt status icon (:139-140). These duplicate `Metric.cardCornerRadius` and `Space.xs`/`s` by coincidence, not by reference — they will drift the first time a token moves.
 - **Off-ramp fonts in shipped chrome.** The project switcher hardcodes 14-semibold (`ProjectSwitcher.swift:66`), a size absent from `Theme.Font`; the placeholder window hardcodes 15-semibold (`AppDelegate.swift:413-415`) instead of using the equal-valued `Theme.Font.title` token.
 - **The Attention panel has no empty state.** Nothing renders when the queue is clear.
 - **No titlebar feed-health indicator.** A feed loss marks every pane disconnected, retries five times, and terminates the Workspace if the feed never returns (`AppDelegate.swift:138-197`), but the titlebar itself carries no glanceable retry-health signal.

@@ -1,7 +1,7 @@
 # Orchestrator status
 
-Updated: 2026-07-13
-Sources: Hive source tree, 2026-07-13; compiled from `docs/orchestrator-status-gray.md`
+Updated: 2026-07-14
+Source: Hive source tree, 2026-07-14
 
 ## Summary
 

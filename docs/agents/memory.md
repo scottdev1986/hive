@@ -1,7 +1,7 @@
 # Agent memory: what the field does, and why Hive does what it does
 
-Updated: 2026-07-13
-Sources: Hive source tree, 2026-07-13; docs/research/agent-memory-best-practices.md; SPEC.md decision 5
+Updated: 2026-07-14
+Sources: Hive source tree, 2026-07-14; [SPEC decision 5](../../SPEC.md)
 
 ## Summary
 

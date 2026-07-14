@@ -1,7 +1,7 @@
 # Capability discovery
 
-Updated: 2026-07-13
-Sources: Hive source tree, 2026-07-13; docs/research/router-vendor-surfaces.md; docs/research/dynamic-model-router.md (capability-record section); raw/reviews/cross-vendor-architecture-review.md (retired)
+Updated: 2026-07-14
+Sources: Hive source tree, 2026-07-14; [cross-vendor architecture review](../../raw/reviews/cross-vendor-architecture-review.md)
 Raw: [Cross-vendor architecture review](../../raw/reviews/cross-vendor-architecture-review.md)
 
 ## Summary

@@ -1,6 +1,6 @@
 # Multiple concurrent instances
 
-**Status:** shipped and covered by a two-process acceptance test.
+**Status:** shipped and covered by a two-process acceptance test. Verified 2026-07-14.
 
 ## Summary
 

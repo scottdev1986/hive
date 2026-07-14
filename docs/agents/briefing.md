@@ -1,7 +1,7 @@
 # Briefing: how Hive discovers a repo and what a spawn actually carries
 
-Updated: 2026-07-13
-Sources: Hive source tree, 2026-07-13; docs/research/repo-startup-and-init.md; docs/research/model-routing-and-token-efficiency.md; SPEC.md decision 14
+Updated: 2026-07-14
+Sources: Hive source tree, 2026-07-14; [SPEC decision 14](../../SPEC.md)
 
 ## Summary
 
@@ -11,7 +11,7 @@ Every mechanism that makes a Hive spawn cheap — the scoped brief, the memory i
 
 The research this article compiles opens on a premise that was true when written and is **false now**. It claimed `src/adapters/brief.ts` "ships a literal `["SPEC.md", "README.md", "CLAUDE.md"]` allowlist and a bare-name `SPEC §6` special case." SPEC decision 14 still narrates that hardcode as the *problem*, and readers have mistaken the narration for the current state.
 
-Verified against the tree on 2026-07-13, it is fixed:
+Verified against the tree on 2026-07-14, it is fixed:
 
 - `src/adapters/brief.ts:5-15` defines only profile-supplied briefing inputs; no repository document name is compiled in.
 - `src/adapters/brief.ts:24-33` (`loadBriefConfig`) reads `briefableDocs`, `briefableDirectories`, and `primaryDoc: profile.docs.primary` from the profile — and a repo whose profile cannot be built briefs **nothing**, rather than falling back to Hive's own doc names. That is the safe, portable default.
