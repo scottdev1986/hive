@@ -195,9 +195,6 @@ not place — and **both callers read that null as PERMISSION.**
   returns `unreadable`, `spawner-impl.ts:1510` falls back to the name-shape regex
   `modelVendor()` — which (`src/adapters/tools/models.ts:19-31`) knows only `claude`
   and `codex`, **not Grok**. This is exactly the inference the design forbids. Live hole.
-- **Stale CLI copy.** `src/cli.ts:347` still calls `hive routing` "the derived routing
-  table with per-cell provenance", while `src/cli/routing.ts:24` says *"There is no
-  derived table any more because there is no derivation."*
 
 ## See Also
 
