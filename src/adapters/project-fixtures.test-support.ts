@@ -6,7 +6,8 @@
 //
 // The repo's idiom is programmatic temp repos (see profile.test.ts,
 // cli/init.test.ts), not checked-in trees, so these are builders. Each returns a
-// root under $TMPDIR and is never cleaned up, matching the existing tests.
+// root under $TMPDIR; call `disposeFixtures()` from `afterAll` to remove every
+// directory they created.
 
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -162,9 +163,9 @@ export async function polyglotProject(): Promise<HazardousFixture> {
 export interface Workspace {
   /** Working directory the command must run in, relative to the repo root. */
   directory: string;
-  /** The manifest, relative to `directory`, that makes these commands the right
-   * ones — `package.json` names them outright, `Cargo.toml` implies them by
-   * declaring a `[workspace]`. */
+  /** The manifest, relative to `directory`, that these commands belong to. It is
+   * what makes `directory` the place they run: `cargo` and `vitest` both resolve
+   * their scope from the manifest they find in the working directory. */
   manifest: string;
   testCommand: string;
   buildCommand: string;
@@ -206,8 +207,11 @@ export const MONOREPO_WORKSPACES: readonly Workspace[] = [
 export async function monorepoProject(): Promise<HazardousFixture> {
   const root = await initRepo("monorepo");
 
-  // No `[package]`: a virtual workspace root, which is what makes
-  // `cargo test --workspace` the command and `cargo test` the wrong one.
+  // A virtual workspace: no `[package]` of its own, just members. Note this does
+  // not make `--workspace` *necessary* — with no `default-members`, a bare
+  // `cargo test` here selects every member too. What the fixture pins is the
+  // working directory: either command only resolves from `backend/`, because
+  // that is where the manifest naming these crates lives.
   await write(root, "backend/Cargo.toml", [
     `[workspace]`,
     `members = ["crates/api", "crates/store"]`,

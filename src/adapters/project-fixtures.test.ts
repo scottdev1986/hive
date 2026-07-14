@@ -127,19 +127,23 @@ describe("monorepoProject", () => {
     }
   });
 
-  test("the backend is a virtual workspace, which is what makes --workspace right", async () => {
+  test("the backend is a virtual workspace whose members really exist", async () => {
     const { root } = await monorepoProject();
     const backend = MONOREPO_WORKSPACES.find((w) => w.directory === "backend");
     const manifest = await readFile(join(root, "backend/Cargo.toml"), "utf8");
 
-    // `cargo test --workspace` is correct here because the manifest declares a
-    // workspace and no package of its own — a bare `cargo test` has no crate to
-    // run. The members it names really exist.
+    // A workspace with members and no package of its own. This does not make
+    // `--workspace` necessary — absent `default-members`, bare `cargo test`
+    // selects every member as well. It makes the *directory* necessary: the
+    // manifest that names these crates exists only here, so the command resolves
+    // only from here, which is the scoping the profile has to preserve.
     expect(manifest).toContain("[workspace]");
     expect(manifest).not.toContain("[package]");
     expect(backend?.testCommand).toContain("--workspace");
-    expect(await exists(join(root, "backend/crates/api/Cargo.toml"))).toBe(true);
-    expect(await exists(join(root, "backend/crates/store/Cargo.toml"))).toBe(true);
+    for (const member of ["crates/api", "crates/store"]) {
+      expect(manifest).toContain(member);
+      expect(await exists(join(root, "backend", member, "Cargo.toml"))).toBe(true);
+    }
   });
 
   test("the workspaces share no command, and the root has no ecosystem manifest", async () => {
