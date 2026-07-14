@@ -37,6 +37,16 @@ export interface GraphifyServiceStatus {
   lastError: string | null;
 }
 
+async function stopSubprocess(child: Subprocess): Promise<void> {
+  if (child.exitCode === null && child.signalCode === null) {
+    child.kill("SIGKILL");
+  }
+  await child.exited;
+  if (child.exitCode === null && child.signalCode === null) {
+    throw new Error(`Could not verify graphify server ${child.pid} stopped`);
+  }
+}
+
 export class GraphifyService {
   private child: Subprocess | null = null;
   private port: number | null = null;
@@ -95,8 +105,7 @@ export class GraphifyService {
     const port = this.port;
     this.child = null;
     if (child !== null) {
-      child.kill();
-      await child.exited;
+      await stopSubprocess(child);
     }
     // Keep the repo's endpoint stable across a rebuild. Agent MCP configs are
     // fixed at spawn time; choosing a fresh port here strands every live agent
@@ -200,7 +209,7 @@ export class GraphifyService {
       }
     }
     if (this.child === child) this.child = null;
-    child.kill();
+    await stopSubprocess(child);
     this.lastError = "graphify MCP server never became ready";
     this.log(`graphify: ${this.lastError} — agents run without graph tools`);
   }
