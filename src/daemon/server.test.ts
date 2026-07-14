@@ -1079,6 +1079,72 @@ describe("HiveDaemon HTTP server", () => {
     }
   });
 
+  test("an expired control reservation stays held when process teardown is unknown", async () => {
+    const db = new HiveDatabase(join(home, "control-timeout-unknown.db"));
+    const ledger = new QuotaLedger(db);
+    let now = new Date(timestamp);
+    const quota = new QuotaService(
+      ledger,
+      QuotaConfigSchema.parse({
+        enabled: false,
+        reservationTtlMinutes: 1,
+      }),
+      () => now,
+    );
+    const reservation = await quota.reserveControlRun({
+      agentName: "maya",
+      category: "simple_coding",
+      tool: "codex",
+      model: "gpt-5-codex",
+      controlMessageId: "timeout-control-unknown",
+    });
+    quota.markStarted(reservation.id);
+    const tmux = new FakeDaemonTmux();
+    tmux.sessions.add("hive-maya");
+    const process = Bun.spawn(["sleep", "60"], {
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new StubSpawner(),
+      tmux,
+      tmuxSender: new RootUnavailableTmuxSender(db),
+      quota,
+      resourceRunners: {
+        panePids: async () => {
+          throw new Error("ps output unreadable");
+        },
+      },
+    });
+    try {
+      db.insertAgent(agent({
+        status: "control-paused",
+        writeRevoked: true,
+        capabilityEpoch: 1,
+        controlMessageId: "timeout-control-unknown",
+        controlQuotaReservationId: reservation.id,
+      }));
+      now = new Date("2026-07-09T12:02:00.000Z");
+      await expect(daemon.recoverQuotaReservations()).rejects.toThrow(
+        "ps output unreadable",
+      );
+      expect(ledger.getReservation(reservation.id)).toMatchObject({
+        status: "active",
+      });
+      expect(db.getAgentByName("maya")).toMatchObject({
+        status: "control-paused",
+        controlQuotaReservationId: reservation.id,
+      });
+      expect(tmux.killed).toEqual([]);
+      expect(() => globalThis.process.kill(process.pid, 0)).not.toThrow();
+    } finally {
+      process.kill("SIGKILL");
+      await process.exited;
+      db.close();
+    }
+  });
+
   test("quota-blocked control stops terminally and emits a durable actionable alert", async () => {
     const db = new HiveDatabase(join(home, "control-quota-blocked.db"));
     const quota = new QuotaService(
