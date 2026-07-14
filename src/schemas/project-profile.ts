@@ -232,23 +232,26 @@ export type ProjectProfileConflict = z.infer<
  * which drift detection reads as prose, not as a hash input.
  *
  * FOUNDATION CONTRACT — the freshness guarantee, and its explicit limit. The
- * daemon proves, under lock and immediately before commit, that every path a
- * profile cites exists and that the repository digest still matches the one the
- * profiler read (`proveProfileStillHolds`). What it CANNOT prove is that those
- * facts still hold one instant later: nothing that edits the repository takes
- * the profile lock — the repository does not know the lock exists — so a cited
- * file deleted in the moment after the commit, or in the final unclosable
- * instant between the proof and the rename, lands in `current.json` and stays
- * there. The guarantee is therefore "valid as of the commit", not "valid now".
+ * daemon runs a final proof, under lock and immediately before it commits, that
+ * every path a profile cites exists and that the repository digest still matches
+ * the one the profiler read (`proveProfileStillHolds`). The commit itself is a
+ * rename, and that rename follows the proof — so even "at commit" is one
+ * unclosable instant later than the proof, and a cited file deleted in that
+ * instant (or at any moment after) still lands in `current.json` and stays
+ * there. Nothing that edits the repository takes the profile lock; the
+ * repository does not know the lock exists. So the honest guarantee is not
+ * "valid at commit" and certainly not "valid now": it is that every citation was
+ * OBSERVED VALID BY THE FINAL PRE-COMMIT PROOF, and no stronger.
  *
  * Closing the gap is drift detection's job (P7), and this is the interface it
  * inherits: a consumer that acts on a profile is entitled to assume its
- * citations were real at commit time and no stronger; drift detection MUST,
- * on observing that a `staleness.paths` entry or any cited path has gone
- * missing or changed, drive the profile to `stale` via `markProfileStale` so the
- * lifecycle reprofiles it. `stale` keeps the profile readable and in use until a
- * replacement is accepted, so this backstop never leaves a consumer with
- * nothing — it leaves them with a profile flagged as due for refresh. */
+ * citations were observed valid immediately before commit and nothing more;
+ * drift detection MUST, on observing that a `staleness.paths` entry or any cited
+ * path has gone missing or changed, drive the profile to `stale` via
+ * `markProfileStale` so the lifecycle reprofiles it. `stale` keeps the profile
+ * readable and in use until a replacement is accepted, so this backstop never
+ * leaves a consumer with nothing — it leaves them with a profile flagged as due
+ * for refresh. */
 export const ProjectProfileStalenessSchema = z.strictObject({
   paths: z.array(RepoRelativePath),
   notes: z.array(z.string().min(1)),

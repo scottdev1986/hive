@@ -87,19 +87,27 @@ async function publish(
  * unlink, is the case where the dead owner's slot was reused by a live one
  * between our inspection and our rename.
  *
- * TWO RESIDUALS REMAIN, and neither is closable with the primitives a POSIX
- * filesystem exposes; both belong to whoever owns full cross-process lock
- * hardening, not to this slice:
- *  - If this process crashes between the rename and the restore, a live owner
- *    that had republished into `path` is left with its lock moved aside — it is
- *    stranded until a human clears the `.stale.` file.
+ * THREE RESIDUALS REMAIN, and none is closable with the primitives a POSIX
+ * filesystem exposes; all belong to whoever owns full cross-process lock
+ * hardening, not to this slice. Each requires the dead owner's slot to have been
+ * reused by a live one between our inspection and our rename (`moved !== source`)
+ * — already narrow — and then one further mishap:
+ *  - If this process crashes between the rename and the restore, the live owner
+ *    is left with its lock moved aside — stranded until a human clears the
+ *    `.stale.` file.
  *  - If a third contender publishes into `path` in the instant between the
  *    rename and the restore, the restore takes the EEXIST branch and the moved
- *    owner's file is gone while another process holds the name.
- * Closing either needs a lock the kernel releases on process death (`flock` /
- * `O_EXLOCK`), which no portable Node/Bun API offers. What is here is strictly
- * safer than the unconditional unlink it replaces; it is not airtight, and it
- * does not pretend to be. */
+ *    owner's file is dropped while another process holds the name.
+ *  - If the restore link() fails for any reason other than EEXIST, the error is
+ *    surfaced rather than papered over (we do not unlink a lock we do not own) —
+ *    but `path` is left free while the moved owner is still in its critical
+ *    section, so a later contender can publish into `path` and overlap with it.
+ *    Surfacing the fault beats destroying the lock; it does not restore
+ *    exclusion.
+ * Closing any of these needs a lock the kernel releases on process death
+ * (`flock` / `O_EXLOCK`), which no portable Node/Bun API offers. What is here is
+ * strictly safer than the unconditional unlink it replaces; it is not airtight,
+ * and it does not pretend to be. */
 async function reclaim(
   path: string,
   source: string,

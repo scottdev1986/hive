@@ -77,13 +77,19 @@ describe("withFileLock", () => {
     expect(acquiredAt).toBeGreaterThanOrEqual(clearedAt);
   }, 15_000);
 
-  test("a held lock always has a legible owner record", async () => {
-    const root = await mkdtemp(join(tmpdir(), "hive-file-lock-atomic-"));
+  test("a held lock exposes a legible owner record", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-file-lock-legible-"));
     roots.push(root);
     const path = join(root, "state.lock");
 
-    // Publication is atomic: the lock's name and its full owner record appear in
-    // the same instant, so a held lock is never empty for a reader to trip over.
+    // An invariant check, NOT an atomicity proof. It reads only after
+    // acquisition returns, so it does not exercise the publication window and
+    // would pass under the old create-then-write protocol too. The atomicity of
+    // that window is structural, not tested here: the owner record is fully
+    // written to a staging file before the single atomic link() that gives it
+    // the lock's name, so `path` never exists in an empty state. What this
+    // asserts is only the weaker invariant a held lock must satisfy — its record
+    // is present and parseable while held.
     await withFileLock(path, async () => {
       const source = await readFile(path, "utf8");
       expect(source.trim().length).toBeGreaterThan(0);
