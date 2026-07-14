@@ -57,7 +57,7 @@ The repository is the common arbiter for names and work:
 
 - Before allocating an agent name, Hive reads existing worktrees and `hive/*` branches. `git worktree add` remains the atomic backstop when two instances race for the same name (`src/adapters/worktrees.ts:306-351`, `:403-429`).
 - Creating a writer branch also writes `refs/hive-owner/<instanceId>/<branch>`. Branch deletion clears that ownership ref (`src/adapters/worktrees.ts:88-143`, `:306-351`).
-- Stranded-work reconciliation skips an unpreserved branch owned by a live sibling. It never deletes stranded work itself (`src/daemon/server.ts:2187-2213`).
+- Stranded-work reconciliation skips an unpreserved branch owned by a live sibling. It never deletes stranded work itself (`src/daemon/server.ts:2132-2173`).
 - Landing holds `hive-landing.lock` in the Git common directory across the complete fast-forward-only landing operation. Release is token-scoped, so one process cannot remove a successor's lease (`src/daemon/landing.ts:115-152`, `:476-482`).
 - `hive uninstall --repo` stops only the selected instance and removes only worktrees and branches owned by that instance. The default instance may claim legacy branches that predate ownership refs; named instances may not (`src/cli/uninstall.ts:195-273`, `:275-332`).
 

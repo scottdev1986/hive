@@ -141,7 +141,7 @@ And the reasoning discipline that produced the rest of this article:
 
 - **Name what each direction of error actually costs before you call one of them safe.** Assuming that "conservative" meant "recycle early" is exactly what justified hardcoding a 200K denominator, on the reasoning that a larger window would merely read "conservatively high."
 - **A measurement beats an estimate; a label describes the number actually *published*, not the reading it was built from.**
-- **An honest `null` beats a confident wrong number** — a missing number stops a bad decision; a wrong one causes it. This is load-bearing in the code: `contextPct` is nullable end to end, null reads as *full, not free*, and an agent Hive cannot sense is an agent it will not reuse (`src/schemas/agent.ts:128`, SPEC.md:198–232).
+- **An honest `null` beats a confident wrong number** — a missing number stops a bad decision; a wrong one causes it. This is load-bearing in the code: `contextPct` is nullable end to end, null reads as *full, not free*, and an agent Hive cannot sense is an agent it will not reuse (`src/schemas/agent.ts:117`, `src/cli/orchestrator-brief.ts:3`, SPEC.md:198–232).
 
 ## The cost of being wrong, in each direction
 
@@ -155,7 +155,7 @@ And the reasoning discipline that produced the rest of this article:
 
 Verified against the tree on 2026-07-13, and it is a real, current gap.
 
-**There is no recycle actuator.** No token ceiling, no recycle threshold, no kill-on-depth path exists anywhere in `src/`. `HandoffSchema` (`src/schemas/handoff.ts:3-12`) *is* now live — but not as a recycle artifact: it is produced in the `hive_escalate` path (imported at `src/daemon/server.ts:51`, parsed at `src/daemon/server.ts:3485`), where an agent claims its task exceeds its model and hands the orchestrator a goal/done/remaining/decisions/failedApproaches/branch envelope. Escalation, not recycling. So "recycled too late" remains **structurally unreachable**; the single live failure mode is spawn-churn.
+**There is no recycle actuator.** No token ceiling, no recycle threshold, no kill-on-depth path exists anywhere in `src/`. `HandoffSchema` (`src/schemas/handoff.ts:3-12`) *is* now live — but not as a recycle artifact: it is produced in the `hive_escalate` path (imported at `src/daemon/server.ts:48`, parsed at `src/daemon/server.ts:3647-3656`), where an agent claims its task exceeds its model and hands the orchestrator a goal/done/remaining/decisions/failedApproaches/branch envelope. Escalation, not recycling. So "recycled too late" remains **structurally unreachable**; the single live failure mode is spawn-churn.
 
 **And the only live use of the number `65` is a prose sentence in `src/cli/orchestrator-brief.ts:3`**, which tells the orchestrator to reuse an agent when "its contextPct is a number under 65." That is a *percentage of the window* — the exact unit this research proved unsound, still shipping in the instruction every orchestrator reads, still pointing at "the recycle line" that does not exist. **The rule this research retired is what Hive currently tells its agents.** SPEC decision 7 is written from the conclusion; the orchestrator brief is not. Fixing that is the outstanding work.
 

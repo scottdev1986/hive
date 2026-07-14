@@ -54,7 +54,7 @@ The design spec said "Grok has no gauge at all" and gave it the unmetered panel,
 meter. **That was already false when this article was written.** The 2026-07-13
 controlled-spend experiment established `config.creditUsagePercent` as a real weekly gauge:
 
-- `src/daemon/quota-sources.ts:857-862` reads it as the gauge.
+- `src/daemon/quota-sources.ts:923-945` reads it as the gauge.
 - `src/cli/model-control.ts:72-83` returns `"metered"` for **all three** providers,
   and its switch **fails closed** on a vendor nobody classified — a new provider
   will not silently render as metered-and-empty.
@@ -178,7 +178,7 @@ The truth is `RoutingPolicySchema` (`routing-policy.ts:133-152`):
 - `revision` + `provisional` at the top; writers present the revision they read (CAS).
 
 Also contra the spec: an absent model row does **not** inherit provider enablement
-(`modelPolicyState`, :293-309). Provider-on is a master switch, not consent for every
+(`modelPolicyState`, :306-320). Provider-on is a master switch, not consent for every
 model discovered tomorrow. `ProviderId` stays a **closed enum**.
 
 ## Transport: the app is a CLI subprocess, not an HTTP client
@@ -192,7 +192,7 @@ is the sole writer.
   daemon could not be asked** — not an empty list, and never rendered as 0%.
 - **Write:** `hive routing policy | set-provider | set-model | set-effort |
   set-selection | set-chain | export` (`src/cli/routing-policy.ts`, dispatched from
-  `src/cli.ts:345`).
+  `src/cli.ts:357-501`).
 
 The Settings controller keeps one data source while the window exists, but `show()` refreshes the model-control snapshot every time the window is shown before restoring the selected page (`HiveWorkspace/Settings/SettingsWindowController.swift:90-112`). Reopening Settings therefore cannot present the process's launch-time catalog or quota as if it were current; the in-window Refresh control is an additional explicit refresh, not the only one.
 

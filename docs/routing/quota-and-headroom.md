@@ -35,7 +35,7 @@ Two layers, and conflating them is the most common misreading of this system.
 — the user's intent. See [routing-policy.md](routing-policy.md).
 
 **Quota dispatch layer** (`quota.ts:64-78`): `QuotaRouteRequest.selection` is
-`spread` | `strict`. The spawner maps intent onto it at `spawner-impl.ts:1814`
+`spread` | `strict`. The spawner maps intent onto it at `spawner-impl.ts:1779-1794`
 (`auto`→`spread`, `choice`→`strict`). Every candidate handed to quota has **already
 cleared the full launch gate**; selection never bypasses a gate.
 
@@ -53,14 +53,14 @@ pretense of a number. **Meter uncertainty is not capability revocation.**
 
 ### `spread` (the user's `auto`)
 
-`QuotaLedger.tryReserveFairGroups` (`quota-ledger.ts:981-1050`) chooses and reserves
+`QuotaLedger.tryReserveFairGroups` (`quota-ledger.ts:1218-1303`) chooses and reserves
 **atomically** — one decision, so two concurrent spawns cannot both see the same
 provider as under-share — by **weighted-fair deficit**. Each historical dispatch
 credits every *eligible* provider an equal share and charges the selected provider one
 unit; largest deficit wins. History lives in `quota_fair_dispatch` (bounded rolling
 window of 1000 rows).
 
-The invariant, from the code (:973-979):
+The invariant, from the code (:1218-1224):
 
 > **Quota percentages never enter this comparison, so unlike windows are never
 > compared and a not-metered provider needs no fabricated headroom score.**
@@ -117,12 +117,14 @@ reserve floor untouched so heavy work still has somewhere to land.
 ## Effort
 
 Five-valued in policy (`routing-policy.ts:49-55`), resolved per chain link
-(`spawner-impl.ts:1549-1588`). An explicit `request.effort` outranks the link.
+(`spawner-impl.ts:1519-1565`). An explicit `request.effort` outranks the link.
 `exact` is validated against the model's own record; `none` means the vendor stated
 there is no effort axis; `never-configured` refuses.
 
-**`provider-controlled`** omits the flag and **does not claim to know the vendor's
-default** (`spawner-impl.ts:1659-1695`): Claude passes no flag; Grok and Codex take
+**`provider-controlled`** omits the link-level flag unless the model row carries a
+standing exact or Hive-decides choice (`spawner-impl.ts:1549-1564`). Otherwise the
+launch gate uses the vendor's honest default (`spawner-impl.ts:1636-1668`): Claude
+passes no flag; Grok and Codex take
 their *discovered* default; Codex's CLI requires a flag, so it last-resorts to
 `"medium"` — the one remaining invented value, scoped to a CLI that will not start
 without one.
@@ -193,7 +195,7 @@ is low."* Leaning on a vendor whenever other meters are low is not distribution;
 recreates the load-concentration bug this router exists to remove.
 
 `src/cli/model-control.ts:72-83` classifies all three providers as `"metered"`;
-`src/daemon/quota-sources.ts:857-862` reads the gauge while keeping the money rails in
+`src/daemon/quota-sources.ts:920-945` reads the gauge while keeping the money rails in
 the schema *specifically so parsers cannot confuse them with it*. Deeper wire facts live
 in [../providers/quota-surfaces.md](../providers/quota-surfaces.md).
 

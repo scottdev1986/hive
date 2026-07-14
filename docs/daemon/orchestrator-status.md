@@ -53,9 +53,9 @@ The same invariant appears in [database-resilience.md](database-resilience.md) a
 
 ## Liveness and turn state fail independently
 
-**Liveness is observed by the app; turn state by the hooks.** The Workspace owns the orchestrator's PTY — the root TUI is its own child process, and SwiftTerm delivers an exit callback when that child dies. That is how "gone" is known, locally and for real. The turn *word* comes from the daemon, from hook events. These are two different observers of two different facts, and **they fail independently**: hooks can go silent while the process is perfectly alive (the 15-hour window above), and the process can die while the last hook event still reads `turn-start`.
+**The status dot is feed-derived.** Its turn word comes from daemon hook events. `TerminalPaneView.processTerminated` does clear `childRunning` and invoke `onChildExit`, but production assigns no `onChildExit` callback, so root-child exit is not currently observed for liveness. That callback is a known unwired seam.
 
-Conflating them is what produced the original bug. Keep them separate, and let each one degrade to unknown on its own.
+The feed and terminal process can therefore disagree: hooks can go silent while the process is perfectly alive (the 15-hour window above), and the process can die while the feed still carries the last hook-derived state.
 
 ## The accepted residual
 
