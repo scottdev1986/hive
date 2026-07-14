@@ -28,20 +28,32 @@ interface DaemonLock {
   readonly startedAt: string;
 }
 
-function readDaemonLock(hiveHome = getHiveHome()): DaemonLock | null {
+type FileEvidence<T> =
+  | { readonly state: "absent" }
+  | { readonly state: "valid"; readonly value: T }
+  | { readonly state: "unknown" };
+
+function readDaemonLock(hiveHome = getHiveHome()): FileEvidence<DaemonLock> {
+  let contents: string;
   try {
-    const value: unknown = JSON.parse(
-      readFileSync(getDaemonLockPath(hiveHome), "utf8"),
-    );
-    if (typeof value !== "object" || value === null) return null;
+    contents = readFileSync(getDaemonLockPath(hiveHome), "utf8");
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "ENOENT"
+      ? { state: "absent" }
+      : { state: "unknown" };
+  }
+  try {
+    const value: unknown = JSON.parse(contents);
+    if (typeof value !== "object" || value === null) return { state: "unknown" };
     const lock = value as Record<string, unknown>;
     if (
-      !Number.isSafeInteger(lock.pid) || typeof lock.instanceId !== "string" ||
+      typeof lock.pid !== "number" || !Number.isSafeInteger(lock.pid) ||
+      lock.pid <= 0 || typeof lock.instanceId !== "string" ||
       typeof lock.startedAt !== "string"
-    ) return null;
-    return lock as unknown as DaemonLock;
+    ) return { state: "unknown" };
+    return { state: "valid", value: lock as unknown as DaemonLock };
   } catch {
-    return null;
+    return { state: "unknown" };
   }
 }
 
@@ -56,20 +68,17 @@ export async function daemonInstanceLiveness(
   hiveHome: string,
   instanceId: string,
 ): Promise<DaemonInstanceLiveness> {
-  const path = getDaemonLockPath(hiveHome);
-  const lock = readDaemonLock(hiveHome);
-  if (lock === null) {
-    try {
-      readFileSync(path);
-      return "unknown";
-    } catch (error) {
-      return (error as NodeJS.ErrnoException).code === "ENOENT" ? "dead" : "unknown";
-    }
-  }
+  const evidence = readDaemonLock(hiveHome);
+  if (evidence.state === "absent") return "dead";
+  if (evidence.state === "unknown") return "unknown";
+  const lock = evidence.value;
   if (lock.instanceId !== instanceId) return "unknown";
   if (!processIsAlive(lock.pid)) return "dead";
-  const port = readNumber(getPortFilePath(hiveHome));
-  if (port === null || port <= 0 || port > 65_535) return "unknown";
+  const portEvidence = readPositiveInteger(getPortFilePath(hiveHome));
+  if (
+    portEvidence.state !== "valid" || portEvidence.value > 65_535
+  ) return "unknown";
+  const port = portEvidence.value;
   try {
     const response = await fetch(`http://127.0.0.1:${port}/handshake`, {
       signal: AbortSignal.timeout(250),
@@ -93,13 +102,35 @@ function processIsAlive(pid: number): boolean {
 }
 
 function removeLockIfOwned(lock: DaemonLock): boolean {
-  const current = readDaemonLock();
+  const evidence = readDaemonLock();
+  if (evidence.state !== "valid") return false;
+  const current = evidence.value;
   if (
-    current?.pid !== lock.pid || current.instanceId !== lock.instanceId ||
+    current.pid !== lock.pid || current.instanceId !== lock.instanceId ||
     current.startedAt !== lock.startedAt
   ) return false;
   rmSync(getDaemonLockPath(), { force: true });
-  return true;
+  const remaining = readDaemonLock();
+  if (remaining.state === "absent") return true;
+  return remaining.state === "valid" && (
+    remaining.value.pid !== lock.pid ||
+    remaining.value.instanceId !== lock.instanceId ||
+    remaining.value.startedAt !== lock.startedAt
+  );
+}
+
+function assertLifecycleLockOwnership(pid: number, action: string): void {
+  const evidence = readDaemonLock();
+  if (evidence.state === "absent") return;
+  if (evidence.state === "unknown") {
+    throw new Error(`Refusing ${action} because daemon lock ownership is unknown`);
+  }
+  if (
+    evidence.value.pid !== pid ||
+    evidence.value.instanceId !== hiveInstanceSuffix()
+  ) {
+    throw new Error(`Refusing ${action} because lifecycle files belong to another daemon`);
+  }
 }
 
 async function lockHasLiveHandshake(lock: DaemonLock): Promise<boolean> {
@@ -140,18 +171,29 @@ export async function acquireDaemonLock(
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
     }
 
-    const existing = readDaemonLock();
-    if (existing === null) {
-      rmSync(getDaemonLockPath(), { force: true });
+    const evidence = readDaemonLock();
+    if (evidence.state === "absent") {
       continue;
     }
+    if (evidence.state === "unknown") {
+      throw new Error(
+        `Refusing to replace daemon lock at ${getDaemonLockPath()} because its ownership is unknown`,
+      );
+    }
+    const existing = evidence.value;
     const liveHandshake = await lockHasLiveHandshake(existing);
     const startedAt = Date.parse(existing.startedAt);
     const recentlyStarted = Number.isFinite(startedAt) &&
       Date.now() - startedAt < 30_000;
-    if (liveHandshake || (isAlive(existing.pid) && recentlyStarted)) {
+    const ownerIsAlive = isAlive(existing.pid);
+    if (liveHandshake || (ownerIsAlive && recentlyStarted)) {
       throw new Error(
         `Hive daemon for instance ${existing.instanceId} is already starting or running (pid ${existing.pid})`,
+      );
+    }
+    if (ownerIsAlive) {
+      throw new Error(
+        `Refusing to replace daemon lock for live pid ${existing.pid} because its ownership is unknown`,
       );
     }
     removeLockIfOwned(existing);
@@ -159,24 +201,34 @@ export async function acquireDaemonLock(
   throw new Error(`Could not acquire Hive daemon lock at ${getDaemonLockPath()}`);
 }
 
-export function releaseDaemonLock(pid = process.pid): void {
-  const lock = readDaemonLock();
-  if (lock?.pid === pid && lock.instanceId === hiveInstanceSuffix()) {
-    removeLockIfOwned(lock);
-  }
+export function releaseDaemonLock(pid = process.pid): boolean {
+  const evidence = readDaemonLock();
+  if (evidence.state === "absent") return true;
+  if (evidence.state === "unknown") return false;
+  const lock = evidence.value;
+  if (lock.pid !== pid || lock.instanceId !== hiveInstanceSuffix()) return false;
+  return removeLockIfOwned(lock);
 }
 
-function readNumber(path: string): number | null {
+function readPositiveInteger(path: string): FileEvidence<number> {
+  let contents: string;
   try {
-    const value = Number.parseInt(readFileSync(path, "utf8").trim(), 10);
-    return Number.isSafeInteger(value) ? value : null;
-  } catch {
-    return null;
+    contents = readFileSync(path, "utf8").trim();
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "ENOENT"
+      ? { state: "absent" }
+      : { state: "unknown" };
   }
+  if (!/^[1-9]\d*$/.test(contents)) return { state: "unknown" };
+  const value = Number(contents);
+  return Number.isSafeInteger(value)
+    ? { state: "valid", value }
+    : { state: "unknown" };
 }
 
 export function readDaemonPort(): number | null {
-  return readNumber(getPortFilePath());
+  const evidence = readPositiveInteger(getPortFilePath());
+  return evidence.state === "valid" ? evidence.value : null;
 }
 
 export function readConfiguredPort(): number {
@@ -243,22 +295,41 @@ export function writeLifecycleFiles(
   pid = process.pid,
 ): void {
   mkdirSync(getHiveHome(), { recursive: true });
-  const recordedPid = readNumber(getPidFilePath());
-  if (recordedPid !== null && recordedPid !== pid && processIsAlive(recordedPid)) {
-    throw new Error(`Refusing to overwrite lifecycle files for live daemon pid ${recordedPid}`);
+  assertLifecycleLockOwnership(pid, "lifecycle file overwrite");
+  const evidence = readPositiveInteger(getPidFilePath());
+  if (evidence.state === "unknown") {
+    throw new Error("Refusing to overwrite lifecycle files because pid ownership is unknown");
+  }
+  if (
+    evidence.state === "valid" && evidence.value !== pid &&
+    processIsAlive(evidence.value)
+  ) {
+    throw new Error(
+      `Refusing to overwrite lifecycle files for live daemon pid ${evidence.value}`,
+    );
   }
   writeFileSync(getPidFilePath(), `${pid}\n`);
   writeFileSync(getPortFilePath(), `${port}\n`);
 }
 
 export function cleanupLifecycleFiles(pid = process.pid): void {
-  const recordedPid = readNumber(getPidFilePath());
-  if (recordedPid !== null && recordedPid !== pid) {
-    return;
+  assertLifecycleLockOwnership(pid, "lifecycle cleanup");
+  const evidence = readPositiveInteger(getPidFilePath());
+  if (evidence.state === "unknown") {
+    throw new Error("Refusing lifecycle cleanup because pid ownership is unknown");
+  }
+  if (evidence.state === "valid" && evidence.value !== pid) return;
+  rmSync(getPortFilePath(), { force: true });
+  if (readPositiveInteger(getPortFilePath()).state !== "absent") {
+    throw new Error("Could not verify removal of the daemon port file");
   }
   rmSync(getPidFilePath(), { force: true });
-  rmSync(getPortFilePath(), { force: true });
-  releaseDaemonLock(pid);
+  if (readPositiveInteger(getPidFilePath()).state !== "absent") {
+    throw new Error("Could not verify removal of the daemon pid file");
+  }
+  if (!releaseDaemonLock(pid)) {
+    throw new Error("Could not verify release of the daemon lock");
+  }
 }
 
 /**
