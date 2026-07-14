@@ -15,9 +15,11 @@ import {
 } from "../schemas";
 import { HiveDatabase } from "./db";
 import type { TmuxSender } from "./delivery";
-import { QuotaLedger } from "./quota-ledger";
+import {
+  authorizeForQuotaTest,
+  CatalogedQuotaLedger as QuotaLedger,
+} from "./authorized-launch.test-support";
 import { QuotaService } from "./quota";
-import { authorizeForQuotaTest } from "./authorized-launch.test-support";
 import { HIVE_VERSION, HiveDaemon, inferLegacyControl } from "./server";
 import { readLiveClaudeModel } from "./live-model";
 import { formatStatusTable } from "../cli/status";

@@ -24,7 +24,7 @@ import {
 } from "../adapters/tools/claude";
 import { shellJoin, TmuxAdapter } from "../adapters/tmux";
 import { HiveDatabase } from "./db";
-import { QuotaLedger } from "./quota-ledger";
+import { CatalogedQuotaLedger as QuotaLedger } from "./authorized-launch.test-support";
 import { QuotaService } from "./quota";
 import { HiveDaemon } from "./server";
 import type { SpawnRequest, Spawner } from "./spawner";

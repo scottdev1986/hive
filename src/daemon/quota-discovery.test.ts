@@ -90,18 +90,66 @@ async function service(
   probes: QuotaProbe[] = [],
   limits: QuotaLimit[] = [],
   clock: () => Date = () => now,
-): Promise<{ quota: QuotaService; db: HiveDatabase }> {
+): Promise<{ quota: QuotaService; db: HiveDatabase; ledger: QuotaLedger }> {
   const root = await mkdtemp(join(tmpdir(), "hive-quota-discovery-"));
   roots.push(root);
   const db = new HiveDatabase(join(root, "hive.db"));
+  const ledger = new QuotaLedger(db);
+  ledger.replaceModelCatalog("claude", [
+    "claude-fable-5",
+    "claude-opus-4-8",
+  ].map((model) => ({
+    provider: "claude" as const,
+    modelId: model,
+    displayName: model,
+    discoveredAt: now.toISOString(),
+  })));
+  ledger.replaceModelCatalog("codex", [
+    "gpt-5-codex",
+    "gpt-5.3-codex",
+    "gpt-5.6-sol",
+  ].map((model) => ({
+    provider: "codex" as const,
+    modelId: model,
+    displayName: model,
+    discoveredAt: now.toISOString(),
+  })));
+  ledger.replaceModelCatalog("grok", [{
+    provider: "grok",
+    modelId: "grok-4.5",
+    displayName: "grok-4.5",
+    discoveredAt: now.toISOString(),
+  }]);
   const quota = new QuotaService(
-    new QuotaLedger(db),
+    ledger,
     QuotaConfigSchema.parse({ limits }),
     clock,
     probes,
   );
-  return { quota, db };
+  return { quota, db, ledger };
 }
+
+test("a billing probe without a catalog preserves launch-catalog evidence", async () => {
+  const probe = new StubProbe("codex", {
+    status: "ok",
+    pools: [],
+    catalog: [],
+  });
+  const { quota, db, ledger } = await service([probe]);
+  try {
+    expect(ledger.modelVendorFromCatalog("gpt-5.3-codex")).toEqual({
+      state: "claimed",
+      provider: "codex",
+    });
+    await quota.refreshFromProviders(now, { force: true });
+    expect(ledger.modelVendorFromCatalog("gpt-5.3-codex")).toEqual({
+      state: "claimed",
+      provider: "codex",
+    });
+  } finally {
+    db.close();
+  }
+});
 
 const pool = (quota: QuotaService, name: string, at = now): QuotaPoolStatus => {
   const status = quota.statuses(at).find((candidate) =>
@@ -1536,6 +1584,12 @@ describe("a spend belongs to the vendor whose model produced it", () => {
   test("the ledger refuses to bill a Claude model to the Codex meter", async () => {
     const { db } = await service();
     const ledger = new QuotaLedger(db);
+    ledger.replaceModelCatalog("claude", [{
+      provider: "claude",
+      modelId: "claude-opus-4-8",
+      displayName: "Claude Opus 4.8",
+      discoveredAt: now.toISOString(),
+    }]);
     const reserve = () =>
       ledger.tryReserveGroup([{
         id: "r1",
@@ -1563,32 +1617,43 @@ describe("a spend belongs to the vendor whose model produced it", () => {
     expect(reserve).toThrow(/Refusing to bill claude model/);
   });
 
-  test("a model whose vendor cannot be placed is recorded, not guessed at", async () => {
-    const { db } = await service();
+  test("spend attribution requires positive catalog evidence", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-quota-catalog-evidence-"));
+    roots.push(root);
+    const db = new HiveDatabase(join(root, "hive.db"));
     const ledger = new QuotaLedger(db);
-    // `default` is a real Codex alias, and an unrecognised name may simply be
-    // new. Only a *provable* contradiction is an impossible fact; Hive does not
-    // get to guess which meter an unfamiliar model's spend belongs to.
-    const result = ledger.tryReserveGroup([{
-      id: "r2",
-      agentName: "worker",
+    let attempt = 0;
+    const reserve = (model: string) =>
+      ledger.tryReserveGroup([{
+        id: `catalog-evidence-${attempt++}`,
+        agentName: "worker",
+        provider: "codex",
+        account: "default",
+        pool: "codex",
+        model,
+        category: "simple_coding",
+        estimatedUnits: 4,
+        now: now.toISOString(),
+        expiresAt: new Date(now.getTime() + 60_000).toISOString(),
+        fiveHourStart: now.toISOString(),
+        weeklyStart: now.toISOString(),
+        supplementalFiveHourUsed: 0,
+        supplementalWeeklyUsed: 0,
+        fiveHourAllowance: 100,
+        weeklyAllowance: 100,
+        fiveHourFloor: 0,
+        weeklyFloor: 0,
+      }]);
+
+    expect(() => reserve("default")).toThrow(/positive vendor catalog evidence/);
+    expect(() => reserve("gpt-5-codex")).toThrow(/positive vendor catalog evidence/);
+
+    ledger.replaceModelCatalog("codex", [{
       provider: "codex",
-      account: "default",
-      pool: "codex",
-      model: "default",
-      category: "simple_coding",
-      estimatedUnits: 4,
-      now: now.toISOString(),
-      expiresAt: new Date(now.getTime() + 60_000).toISOString(),
-      fiveHourStart: now.toISOString(),
-      weeklyStart: now.toISOString(),
-      supplementalFiveHourUsed: 0,
-      supplementalWeeklyUsed: 0,
-      fiveHourAllowance: 100,
-      weeklyAllowance: 100,
-      fiveHourFloor: 0,
-      weeklyFloor: 0,
+      modelId: "gpt-5-codex",
+      displayName: "GPT-5 Codex",
+      discoveredAt: now.toISOString(),
     }]);
-    expect(result.ok).toBe(true);
+    expect(reserve("gpt-5-codex").ok).toBe(true);
   });
 });

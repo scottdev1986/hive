@@ -14,7 +14,6 @@ import { HiveDaemon } from "./server";
 import {
   migrateDefaultQuotaLedger,
   QuotaDatabase,
-  QuotaLedger,
   QuotaLedgerUnknownError,
 } from "./quota-ledger";
 import { hiveInstanceSuffix } from "./tmux-sessions";
@@ -23,7 +22,10 @@ import {
   QuotaExhaustedError,
   QuotaService,
 } from "./quota";
-import { authorizeForQuotaTest } from "./authorized-launch.test-support";
+import {
+  authorizeForQuotaTest,
+  CatalogedQuotaLedger as QuotaLedger,
+} from "./authorized-launch.test-support";
 
 const roots: string[] = [];
 

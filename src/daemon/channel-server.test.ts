@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { QuotaConfigSchema, type AgentRecord } from "../schemas";
 import { HiveDatabase } from "./db";
 import type { TmuxSender } from "./delivery";
-import { QuotaLedger } from "./quota-ledger";
+import { CatalogedQuotaLedger as QuotaLedger } from "./authorized-launch.test-support";
 import { QuotaService } from "./quota";
 import { HiveDaemon } from "./server";
 import { actingAs } from "./testing";

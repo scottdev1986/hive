@@ -173,8 +173,21 @@ test("a vendor whose billing reads null is omitted, not invented", () => {
 
 test("a review of an unknown vendor is not silently handed to claude", async () => {
   const db = new HiveDatabase(join(home, "quota.db"));
+  const ledger = new QuotaLedger(db);
+  ledger.replaceModelCatalog("claude", [{
+    provider: "claude",
+    modelId: "claude-model",
+    displayName: "claude-model",
+    discoveredAt: "2026-07-09T12:00:00.000Z",
+  }]);
+  ledger.replaceModelCatalog("codex", [{
+    provider: "codex",
+    modelId: "codex-model",
+    displayName: "codex-model",
+    discoveredAt: "2026-07-09T12:00:00.000Z",
+  }]);
   const service = new QuotaService(
-    new QuotaLedger(db),
+    ledger,
     QuotaConfigSchema.parse({
       limits: [quotaLimit("claude"), quotaLimit("codex")],
       reserveFiveHourPct: 0,

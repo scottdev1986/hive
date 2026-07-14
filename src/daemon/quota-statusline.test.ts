@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { QuotaConfigSchema, type QuotaLimit } from "../schemas";
 import { HiveDatabase } from "./db";
-import { QuotaLedger } from "./quota-ledger";
+import { CatalogedQuotaLedger as QuotaLedger } from "./authorized-launch.test-support";
 import { QuotaService } from "./quota";
 
 const roots: string[] = [];
