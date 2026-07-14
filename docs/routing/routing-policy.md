@@ -25,8 +25,8 @@ and the rest of the graveyard: [rejected-approaches.md](rejected-approaches.md).
 
 ## What the policy document is
 
-`src/schemas/routing-policy.ts` — `schemaVersion: 2`. Ten categories
-(:24-35): nine task kinds plus `default`, the user-authored global fallback chain.
+`src/schemas/routing-policy.ts` — `schemaVersion: 2`. Eleven categories
+(:24-36): ten task kinds plus `default`, the user-authored global fallback chain.
 `long_context` is deliberately **not** a category — it returns as
 `minContextTokens`, a requirement *modifier*, because a context requirement
 composes with every kind of work rather than replacing it. `hive_spawn` requires

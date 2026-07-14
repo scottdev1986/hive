@@ -35,9 +35,9 @@ human's preference.
 > **A tier system that lowers the effort flag but not the model is not a tier system.**
 
 This is the origin of the entire no-quiet-defaults rule, and why `ExactModelIdSchema`
-(`src/schemas/routing-policy.ts:60-66`) now refuses the literal string `"default"` as a model id.
+(`src/schemas/routing-policy.ts:61-67`) now refuses the literal string `"default"` as a model id.
 
-**Replaced by** nine categories plus a user-authored `default` chain. Note the diagnosis:
+**Replaced by** ten categories plus a user-authored `default` chain. Note the diagnosis:
 the failure was **never "four tiers is too few"** — it was *the values behind the tiers*.
 More tiers would have failed identically.
 
