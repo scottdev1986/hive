@@ -301,13 +301,6 @@ function checkDuplicates(profile: ProjectProfile): ProfileRejection[] {
   return rejections;
 }
 
-/** Every path the profile cites is read from disk: it must exist, and it must be
- * inside the project. Both halves matter. A citation to a file that is not there
- * is a hallucinated manifest, and it is the single cheapest lie to catch. A path
- * that resolves outside the project — `../../etc`, an absolute path, a symlink
- * out of the tree — is a profile telling a spawned agent to read or run
- * something that is not this repo, so containment is checked after resolving
- * symlinks, not before. */
 /** Is `path` the directory `parent`, or inside it? Both arguments are already
  * absolute; the `sep` is what stops `/repo-backup` from counting as inside
  * `/repo`. */
@@ -315,6 +308,13 @@ function contains(parent: string, path: string): boolean {
   return path === parent || path.startsWith(parent + sep);
 }
 
+/** Every path the profile cites is read from disk: it must exist, and it must be
+ * inside the project. Both halves matter. A citation to a file that is not there
+ * is a hallucinated manifest, and it is the single cheapest lie to catch. A path
+ * that resolves outside the project — `../../etc`, an absolute path, a symlink
+ * out of the tree — is a profile telling a spawned agent to read or run
+ * something that is not this repo, so containment is checked after resolving
+ * symlinks, not before. */
 async function checkPaths(
   profile: ProjectProfile,
   root: string,
