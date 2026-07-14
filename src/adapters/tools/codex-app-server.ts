@@ -926,7 +926,9 @@ export interface ReapOrphanDependencies {
   listSocketDir: () => Promise<string[]>;
   readPidFile: (name: string) => Promise<string>;
   removeFile: (name: string) => Promise<void>;
+  fileState: (name: string) => Promise<"present" | "absent" | "unknown">;
   processCommand: (pid: number) => Promise<string | null>;
+  processState: (pid: number) => Promise<"live" | "dead" | "unknown">;
   /** A negative target signals the process group, matching process.kill. */
   kill: (pid: number) => void;
 }
@@ -936,6 +938,20 @@ export interface ReapOrphanDependencies {
 function isCodexAppServer(command: string): boolean {
   const [binary, subcommand] = command.trim().split(/\s+/);
   return basename(binary ?? "") === "codex" && subcommand === "app-server";
+}
+
+async function removeVerifiedHostFile(
+  name: string,
+  dependencies: ReapOrphanDependencies,
+): Promise<void> {
+  await dependencies.removeFile(name);
+  const state = await dependencies.fileState(name);
+  if (state === "present") {
+    throw new Error(`Codex app-server cleanup left ${name} behind`);
+  }
+  if (state === "unknown") {
+    throw new Error(`Cannot verify removal of Codex app-server file ${name}`);
+  }
 }
 
 export async function reapOrphanCodexHosts(
@@ -951,42 +967,57 @@ export async function reapOrphanCodexHosts(
     if (agentId === null) continue;
     const status = agentIdStatus(agentId);
     if (status !== "dead") continue;
-    let pid: number | null = null;
+    let rawPid: string;
     try {
-      pid = Number.parseInt((await dependencies.readPidFile(name)).trim(), 10);
+      rawPid = (await dependencies.readPidFile(name)).trim();
     } catch {
       continue;
     }
-    if (Number.isSafeInteger(pid) && pid > 0) {
-      const command = await dependencies.processCommand(pid);
-      if (command !== null && isCodexAppServer(command)) {
-        let signaled = false;
+    if (!/^[1-9]\d*$/.test(rawPid)) continue;
+    const pid = Number(rawPid);
+    if (!Number.isSafeInteger(pid)) continue;
+
+    const command = await dependencies.processCommand(pid);
+    if (command === null) {
+      const state = await dependencies.processState(pid);
+      if (state !== "dead") {
+        throw new Error(
+          `Hive cannot verify process ${pid} for dead agent ${agentId}; ` +
+            "preserving its Codex app-server socket and pidfile",
+        );
+      }
+    } else if (isCodexAppServer(command)) {
+      let signaled = false;
+      try {
+        dependencies.kill(-pid);
+        signaled = true;
+      } catch {
         try {
-          dependencies.kill(-pid);
+          // Hosts created before process-group isolation need direct cleanup.
+          dependencies.kill(pid);
           signaled = true;
         } catch {
-          try {
-            // Hosts created before process-group isolation need direct cleanup.
-            dependencies.kill(pid);
-            signaled = true;
-          } catch {
-            // The process exited between identification and the signal.
-          }
+          // The process exited between identification and the signal.
         }
-        let stillRunning = true;
-        for (let attempt = 0; attempt < 50 && stillRunning; attempt += 1) {
-          stillRunning = await dependencies.processCommand(pid) !== null;
-          if (stillRunning) await Bun.sleep(10);
-        }
-        if (stillRunning) {
-          throw new Error(`Codex app-server ${pid} is still running after reap`);
-        }
-        if (signaled) reaped.push(pid);
       }
+      let state: "live" | "dead" | "unknown" = "live";
+      for (let attempt = 0; attempt < 50 && state !== "dead"; attempt += 1) {
+        state = await dependencies.processState(pid);
+        if (state !== "dead") await Bun.sleep(10);
+      }
+      if (state === "live") {
+        throw new Error(`Codex app-server ${pid} is still running after reap`);
+      }
+      if (state === "unknown") {
+        throw new Error(
+          `Hive cannot verify exit of Codex app-server ${pid}; ` +
+            "preserving its socket and pidfile",
+        );
+      }
+      if (signaled) reaped.push(pid);
     }
-    await dependencies.removeFile(name).catch(() => undefined);
-    await dependencies.removeFile(name.slice(0, -".pid".length))
-      .catch(() => undefined);
+    await removeVerifiedHostFile(name.slice(0, -".pid".length), dependencies);
+    await removeVerifiedHostFile(name, dependencies);
   }
   return reaped;
 }

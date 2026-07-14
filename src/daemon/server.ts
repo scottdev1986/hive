@@ -1,4 +1,4 @@
-import { mkdir, readdir, readFile, rm } from "node:fs/promises";
+import { lstat, mkdir, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -191,6 +191,16 @@ function defaultOrphanDependencies(): ReapOrphanDependencies {
     readPidFile: (name) =>
       readFile(join(CODEX_SOCKET_DIR, name), "utf8"),
     removeFile: (name) => rm(join(CODEX_SOCKET_DIR, name), { force: true }),
+    fileState: async (name) => {
+      try {
+        await lstat(join(CODEX_SOCKET_DIR, name));
+        return "present";
+      } catch (error) {
+        return (error as NodeJS.ErrnoException).code === "ENOENT"
+          ? "absent"
+          : "unknown";
+      }
+    },
     processCommand: async (pid) => {
       const child = Bun.spawn(["ps", "-o", "command=", "-p", String(pid)], {
         stdout: "pipe",
@@ -200,7 +210,17 @@ function defaultOrphanDependencies(): ReapOrphanDependencies {
         new Response(child.stdout).text(),
         child.exited,
       ]);
-      return exitCode === 0 ? output.trim() : null;
+      return exitCode === 0 && output.trim() !== "" ? output.trim() : null;
+    },
+    processState: async (pid) => {
+      try {
+        process.kill(pid, 0);
+        return "live";
+      } catch (error) {
+        return (error as NodeJS.ErrnoException).code === "ESRCH"
+          ? "dead"
+          : "unknown";
+      }
     },
     kill: (pid) => process.kill(pid, "SIGKILL"),
   };
