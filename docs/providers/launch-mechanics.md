@@ -107,7 +107,7 @@ These are not model facts; they are the two ways adapter code most reliably manu
 
 ## When a model "won't open"
 
-1. **Is it on a route?** `hive routing` prints what every tier resolves to and where each value came from. A model in no cell is reachable only by an explicit `hive_spawn` `model`, or a pin in `~/.hive/routing.toml`.
+1. **Is it on a route?** `hive routing` prints what every tier resolves to and where each value came from. A model in no route is reachable only through an explicit `hive_spawn` `model`; it must still be enabled in the Model Control Center. The retired `~/.hive/routing.toml` is not a policy source.
 2. **Does the CLI accept it directly?** `claude --model <id>` / `codex -m <id>` / `grok -m <id>`, and read the session header. This separates *entitlement* problems from *Hive* problems in one step.
 3. **Is the value concrete?** Aliases pass through verbatim into the recorded execution identity, which tells you nothing about what a control restart would relaunch. Pin concrete ids.
 4. **Is a pool in the way?** `hive quota` shows measured headroom per pool; an exhausted per-model pool refuses the spawn and *names* the pool that blocked it. See [quota-surfaces.md](quota-surfaces.md).
