@@ -351,7 +351,7 @@ async function fingerprintFile(
       return {
         path,
         type: "symlink",
-        size: entry.size,
+        size: 0,
         contentDigest: createHash("sha256").update("outside-project").digest("hex"),
         contentOmissionReason: "outside-project",
       };

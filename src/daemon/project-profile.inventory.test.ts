@@ -80,6 +80,7 @@ describe("bounded profile inventory policy", () => {
     expect(JSON.stringify(inventory)).not.toContain(outsideRoot);
     expect(inventory.entries.find((entry) => entry.path === "external")).toMatchObject({
       type: "symlink",
+      size: 0,
       contentOmissionReason: "outside-project",
     });
 
@@ -87,7 +88,11 @@ describe("bounded profile inventory policy", () => {
     await write(root, ".env", `AWS_SECRET_ACCESS_KEY=${"x".repeat(SECRET_CANARY.length)}\n`);
     await write(outsideRoot, "secrets.txt", `${"x".repeat(SECRET_CANARY.length)}\n`);
     expect((await computeProfileInventory(root)).digest).toBe(digest);
+  });
 
+  test("rejects an innocuous indexed child beneath a symlinked parent", async () => {
+    const { root, outsideRoot } = await polyglotProject();
+    await write(outsideRoot, "innocent.txt", "outside one\n");
     // A stale index can still name a child after its parent became a symlink.
     // The inventory must reject that intermediate link before lstat/open can
     // resolve the child outside the project.
@@ -99,16 +104,16 @@ describe("bounded profile inventory policy", () => {
       "--cacheinfo",
       "100644",
       object,
-      "external/secrets.txt",
+      "external/innocent.txt",
     ]);
-    expect(gitOutput(root, ["ls-files", "external/secrets.txt"])).toBe(
-      "external/secrets.txt",
+    expect(gitOutput(root, ["ls-files", "external/innocent.txt"])).toBe(
+      "external/innocent.txt",
     );
     const guarded = await computeProfileInventory(root);
     expect(guarded.entries.map((entry) => entry.path)).not.toContain(
-      "external/secrets.txt",
+      "external/innocent.txt",
     );
-    await write(outsideRoot, "secrets.txt", `${"y".repeat(SECRET_CANARY.length)}\n`);
+    await write(outsideRoot, "innocent.txt", "outside two\n");
     expect((await computeProfileInventory(root)).digest).toBe(guarded.digest);
   });
 
