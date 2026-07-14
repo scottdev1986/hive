@@ -80,8 +80,8 @@ fetch "hive-darwin-$ARCH"
 fetch HiveWorkspace.tar.gz
 
 # Every artifact's digest must be the one the manifest names. The manifest is
-# served over TLS from an immutable release; when a Hive release key exists,
-# `hive update` additionally verifies its Ed25519 signature.
+# served over TLS from GitHub Release hosting; `hive update` additionally
+# verifies its Ed25519 signature against the embedded release key.
 verify() {
   want="$(tr -d ' \n' < "$TMP/hive-release.json" |
     sed -n "s/.*\"name\":\"$1\",[^}]*\"sha256\":\"\([0-9a-f]\{64\}\)\".*/\1/p" | head -1)"
