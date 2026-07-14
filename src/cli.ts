@@ -357,7 +357,7 @@ export function createProgram(): Command {
   const routing = program
     .command("routing")
     .description(
-      "Show the derived routing table with per-cell provenance (inert: does not route)",
+      "Show routing policy beside live model, billing, and discovery facts",
     )
     .action(printRouting);
   routing
