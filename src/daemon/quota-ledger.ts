@@ -17,7 +17,6 @@ import {
   type RoutingCategory,
 } from "../schemas";
 import type { HiveDatabase } from "./db";
-import { modelVendor } from "../adapters/tools/models";
 import {
   daemonInstanceLiveness,
   type DaemonInstanceLiveness,
@@ -1051,18 +1050,9 @@ export class QuotaLedger {
    * corruption stays small until it doesn't.
    *
    * The stored catalog is the authority, because a model's vendor is a fact the
-   * vendor publishes — not something to be inferred from how the name is spelt.
-   * This guard used to ask `modelVendor()`, a regex over the model string, and
-   * treat its null ("I cannot place this name") as PERMISSION: an unplaceable
-   * model's spend was billed to whatever meter it arrived on. Unknown read as
-   * yes, in the one guard whose whole purpose is to refuse.
-   *
-   * So the states are kept apart. Every catalog read and none of them lists the
-   * model: that is a MEASUREMENT, and it refuses. No catalog read at all: that
-   * is no evidence, and absence of evidence may not be converted into either a
-   * yes or a no — Hive falls back to the name's shape, which can still prove a
-   * contradiction (a `claude-` model on the Codex meter) but can never grant
-   * permission, and says out loud when it cannot vouch for the pairing at all.
+   * vendor publishes — not something to infer from its name. Missing or
+   * conflicting catalog evidence refuses loudly so the caller retains the
+   * observation and can refresh discovery instead of silently undercounting it.
    */
   private requireCoherent(provider: CapabilityProvider, model: string): void {
     const verdict = this.modelVendorFromCatalog(model);
@@ -1083,23 +1073,12 @@ export class QuotaLedger {
           "model nobody claims is not evidence that it belongs here.",
       );
     }
-    // No catalog to answer with. The name's shape may still expose an
-    // impossible pair; it may never be read as a licence.
-    const named = modelVendor(model);
-    if (named !== null && named !== provider) {
-      throw new Error(
-        `Refusing to bill ${named} model "${model}" to the ${provider} meter: ` +
-          "a spend belongs to the vendor whose model produced it, and Hive will " +
-          "not guess which pool an impossible pairing should be charged to.",
-      );
-    }
-    if (named === null) {
-      console.warn(
-        `Hive cannot verify that model "${model}" belongs to the ${provider} meter ` +
-          `(${verdict.reason}); billing it as asked. This is an unverified pairing, ` +
-          "not a confirmed one.",
-      );
-    }
+    throw new Error(
+      `Refusing to bill model "${model}" to the ${provider} meter without ` +
+        `positive vendor catalog evidence (${verdict.reason}). Refresh the ` +
+        "provider model catalogs and retry; Hive will not invent attribution " +
+        "or silently discard this spend observation.",
+    );
   }
 
   /**

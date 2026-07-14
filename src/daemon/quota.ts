@@ -995,10 +995,14 @@ export class QuotaService {
       });
       // The catalog is what binds a metered sub-pool to the models it gates, so
       // it is stored before the pools that depend on it are resolved.
-      this.ledger.replaceModelCatalog(probe.provider, result.catalog.map((entry) => ({
-        ...entry,
-        discoveredAt: iso(now),
-      })));
+      // Some billing surfaces carry no model catalog. That absence cannot
+      // erase a vendor claim measured by capability discovery.
+      if (result.catalog.length > 0) {
+        this.ledger.replaceModelCatalog(probe.provider, result.catalog.map((entry) => ({
+          ...entry,
+          discoveredAt: iso(now),
+        })));
+      }
       if (result.resetCredits !== undefined) {
         this.resetCredits.set(probe.provider, result.resetCredits);
       }
