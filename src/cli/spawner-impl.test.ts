@@ -269,11 +269,44 @@ function makeControlQuota(root: string): {
   return {
     db,
     quota: new QuotaService(
-      new QuotaLedger(db),
+      cataloguedQuotaLedger(db),
       QuotaConfigSchema.parse({ enabled: false }),
       () => new Date(timestamp),
     ),
   };
+}
+
+function cataloguedQuotaLedger(db: HiveDatabase): QuotaLedger {
+  const ledger = new QuotaLedger(db);
+  ledger.replaceModelCatalog("claude", [
+    {
+      provider: "claude",
+      modelId: "claude-test",
+      displayName: "Claude Test",
+      discoveredAt: timestamp,
+    },
+    {
+      provider: "claude",
+      modelId: "claude-opus-4-8",
+      displayName: "Claude Opus 4.8",
+      discoveredAt: timestamp,
+    },
+  ]);
+  ledger.replaceModelCatalog("codex", [
+    {
+      provider: "codex",
+      modelId: "removed-model",
+      displayName: "Removed Model",
+      discoveredAt: timestamp,
+    },
+    {
+      provider: "codex",
+      modelId: "gpt-5.6-sol",
+      displayName: "GPT-5.6 Sol",
+      discoveredAt: timestamp,
+    },
+  ]);
+  return ledger;
 }
 
 function controlMessage(id: string, epoch = 1): AgentMessage {
@@ -492,7 +525,7 @@ describe("HiveSpawner name pool", () => {
       // The model has to belong to the tool that runs it. Pairing a Codex model
       // name with the Claude CLI is an identity that cannot exist, and the quota
       // ledger now refuses to bill one vendor's model to the other's meter.
-      const model = tool === "claude" ? "claude-test" : "gpt-test";
+      const model = tool === "claude" ? "claude-test" : "gpt-5.6-sol";
       const controlled = {
         ...agent("maya", "control-paused"),
         tool,
@@ -716,7 +749,7 @@ describe("HiveSpawner name pool", () => {
     tempRoots.push(root);
     const quotaDb = new HiveDatabase(join(root, "quota.db"));
     const quota = new QuotaService(
-      new QuotaLedger(quotaDb),
+      cataloguedQuotaLedger(quotaDb),
       QuotaConfigSchema.parse({
         estimates: { deep: 20, standard: 10, cheap: 4, review: 8 },
         limits: [{
@@ -1274,7 +1307,7 @@ describe("HiveSpawner wiring", () => {
     tempRoots.push(root);
     const quotaDb = new HiveDatabase(join(root, "quota.db"));
     const quota = new QuotaService(
-      new QuotaLedger(quotaDb),
+      cataloguedQuotaLedger(quotaDb),
       QuotaConfigSchema.parse({
         reserveFiveHourPct: 0,
         reserveWeeklyPct: 0,
@@ -1348,7 +1381,7 @@ describe("HiveSpawner wiring", () => {
     return {
       db,
       quota: new QuotaService(
-        new QuotaLedger(db),
+        cataloguedQuotaLedger(db),
         QuotaConfigSchema.parse({
           discovery: false,
           reserveFiveHourPct: 0,
@@ -2435,7 +2468,7 @@ describe("HiveSpawner wiring", () => {
     await mkdir(worktreePath, { recursive: true });
     const quotaDb = new HiveDatabase(join(root, "quota.db"));
     const quota = new QuotaService(
-      new QuotaLedger(quotaDb),
+      cataloguedQuotaLedger(quotaDb),
       QuotaConfigSchema.parse({
         discovery: false,
         limits: [{
@@ -3185,7 +3218,7 @@ describe("HiveSpawner launch prompt transport", () => {
     return {
       db,
       quota: new QuotaService(
-        new QuotaLedger(db),
+        cataloguedQuotaLedger(db),
         QuotaConfigSchema.parse({
           discovery: false,
           limits: [{
