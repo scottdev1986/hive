@@ -7,21 +7,28 @@
 // still only as good as the model that wrote it. That is the point of
 // `evidence`, `confidence` and `unknowns` — the profile carries its own audit
 // trail forward to whatever reads it.
+//
+// The model authors a *candidate* only. Identity, timestamps, digests,
+// provider/model/agent, run id, tool session id, and request provenance are
+// assembled by the daemon from the authenticated active run. A payload that
+// tries to choose those fields fails the candidate schema.
 import { realpath, stat } from "node:fs/promises";
 import { isAbsolute, resolve, sep } from "node:path";
 import {
+  PROJECT_PROFILE_SCHEMA_VERSION,
+  ProjectProfileCandidateSchema,
   ProjectProfileSchema,
   REPO_SCOPE,
   type ProjectProfile,
+  type ProjectProfileCandidate,
   type ProjectProfileEvidence,
   type ProjectProfileRun,
 } from "../schemas/project-profile";
 
 export type ProfileRejectionCode =
-  /** The payload is not a profile of the current schema version. */
+  /** The payload is not a candidate of the current schema version. */
   | "schema"
-  /** The caller is not the agent that owns the active run, or the profile names
-   * another project. */
+  /** The caller is not the agent that owns the active run. */
   | "unauthorized"
   /** The run this payload belongs to is no longer the active one. */
   | "superseded"
@@ -58,27 +65,59 @@ export interface ProfileValidationContext {
   hiveUuid: string;
   /** The run in flight, from `state.json`. */
   run: ProjectProfileRun;
-  /** The authenticated caller. The daemon knows who this is; the payload only
-   * claims who it is, which is why both are checked against the run. */
+  /** The authenticated caller. The daemon knows who this is; the payload never
+   * chooses the agent identity. */
   subject: string;
   /** The inventory digest as observed *now*, not when the run began. */
   inventoryDigest: string;
+  /** Daemon clock used for `generatedAt` when assembling the envelope. */
+  generatedAt?: string;
 }
 
 export type ProfileValidation =
   | { ok: true; profile: ProjectProfile }
   | { ok: false; rejections: ProfileRejection[] };
 
-/** Validate a submitted payload against the repo it describes. The checks run in
- * order of cost and of consequence: schema, then who is submitting, then whether
- * the repo they profiled is still the repo on disk, and only then the contents.
- * A payload that fails an early check is not read further — there is nothing to
- * learn from the contents of a profile submitted by the wrong agent. */
+/** Assemble a full profile from a model-authored candidate and the daemon-owned
+ * active run. The model never chooses these fields. */
+export function assembleProfileEnvelope(
+  candidate: ProjectProfileCandidate,
+  context: {
+    hiveUuid: string;
+    run: ProjectProfileRun;
+    generatedAt?: string;
+  },
+): ProjectProfile {
+  const { run } = context;
+  return {
+    schemaVersion: PROJECT_PROFILE_SCHEMA_VERSION,
+    generatedAt: context.generatedAt ?? new Date().toISOString(),
+    project: {
+      hiveUuid: context.hiveUuid,
+      inputDigest: run.inputDigest,
+    },
+    profiler: {
+      agent: run.agent,
+      provider: run.provider,
+      model: run.model,
+      runId: run.runId,
+      toolSessionId: run.toolSessionId,
+      request: run.request,
+    },
+    ...candidate,
+  };
+}
+
+/** Validate a submitted *candidate* against the repo it describes. The checks
+ * run in order of cost and of consequence: schema, then who is submitting, then
+ * whether the repo they profiled is still the repo on disk, and only then the
+ * contents. Envelope fields are filled from the authenticated run before the
+ * accepted shape is checked — the model cannot write its own provenance. */
 export async function validateProfileSubmission(
   payload: unknown,
   context: ProfileValidationContext,
 ): Promise<ProfileValidation> {
-  const parsed = ProjectProfileSchema.safeParse(payload);
+  const parsed = ProjectProfileCandidateSchema.safeParse(payload);
   if (!parsed.success) {
     return {
       ok: false,
@@ -89,13 +128,29 @@ export async function validateProfileSubmission(
       })),
     };
   }
-  const profile = parsed.data;
+  const candidate = parsed.data;
 
-  const identity = checkIdentity(profile, context);
+  const identity = checkIdentity(context);
   if (identity.length > 0) return { ok: false, rejections: identity };
 
-  const digest = checkDigest(profile, context);
+  const digest = checkDigest(context);
   if (digest.length > 0) return { ok: false, rejections: digest };
+
+  const assembled = assembleProfileEnvelope(candidate, context);
+  const envelope = ProjectProfileSchema.safeParse(assembled);
+  if (!envelope.success) {
+    // Assembly is daemon-controlled; a failure here is a bug, not a model
+    // mistake. Surface it as schema so the rejection shape stays uniform.
+    return {
+      ok: false,
+      rejections: envelope.error.issues.map((issue) => ({
+        code: "schema" as const,
+        message: issue.message,
+        at: issue.path.join(".") || "(root)",
+      })),
+    };
+  }
+  const profile = envelope.data;
 
   const rejections = [
     ...checkDuplicates(profile),
@@ -132,71 +187,39 @@ export async function proveProfileStillHolds(
     inventoryDigest: string;
   },
 ): Promise<ProfileRejection[]> {
-  const digest = checkDigest(profile, context);
+  const digest = checkDigest(context);
   if (digest.length > 0) return digest;
-  return checkPaths(profile, context.root);
-}
-
-/** The credential the daemon authenticated must own the active run, and the run
- * must be the one in flight. A submission from a superseded run is not a failure
- * of *this* run — the newer one is still going — so the two are distinct codes,
- * and the caller treats them differently. */
-function checkIdentity(
-  profile: ProjectProfile,
-  context: ProfileValidationContext,
-): ProfileRejection[] {
-  const { run, subject, hiveUuid } = context;
-  if (profile.profiler.runId !== run.runId) {
+  // Assembled profiles carry the run's digest; a stale or forged envelope that
+  // somehow reached commit still fails closed.
+  if (profile.project.inputDigest !== context.run.inputDigest) {
     return [
       {
-        code: "superseded",
-        message: `Profile was authored for run ${profile.profiler.runId}; the active run is ${run.runId}.`,
-        at: "profiler.runId",
+        code: "digest-mismatch",
+        message: `Profile cites input digest ${profile.project.inputDigest}; run ${context.run.runId} was started on ${context.run.inputDigest}.`,
+        at: "project.inputDigest",
       },
     ];
   }
-  const rejections: ProfileRejection[] = [];
+  return checkPaths(profile, context.root);
+}
+
+/** The credential the daemon authenticated must own the active run. Identity
+ * fields on the payload are not consulted — they are not present on a
+ * candidate — so a stolen or wrong credential is the only unauthorized path. */
+function checkIdentity(
+  context: ProfileValidationContext,
+): ProfileRejection[] {
+  const { run, subject } = context;
   if (subject !== run.agent) {
-    rejections.push({
-      code: "unauthorized",
-      message: `${subject} is not the profiler for run ${run.runId} (${run.agent} is).`,
-      at: "profiler.agent",
-    });
+    return [
+      {
+        code: "unauthorized",
+        message: `${subject} is not the profiler for run ${run.runId} (${run.agent} is).`,
+        at: "profiler.agent",
+      },
+    ];
   }
-  if (profile.profiler.agent !== run.agent) {
-    rejections.push({
-      code: "unauthorized",
-      message: `Profile claims profiler ${profile.profiler.agent}; run ${run.runId} belongs to ${run.agent}.`,
-      at: "profiler.agent",
-    });
-  }
-  if (profile.project.hiveUuid !== hiveUuid) {
-    rejections.push({
-      code: "unauthorized",
-      message: `Profile describes project ${profile.project.hiveUuid}, not ${hiveUuid}.`,
-      at: "project.hiveUuid",
-    });
-  }
-  // Provenance is not the model's to assert. The daemon spawned this profiler
-  // and knows what it is; a payload naming a different provider or model is
-  // either confused or lying, and either way persisting it would put a false
-  // provenance in front of everyone who later asks "who profiled this repo, and
-  // can I trust it?".
-  if (profile.profiler.provider !== run.provider) {
-    rejections.push({
-      code: "unauthorized",
-      message: `Profile claims provider ${profile.profiler.provider}; run ${run.runId} is ${run.provider}.`,
-      at: "profiler.provider",
-    });
-  }
-  if (profile.profiler.model !== run.model) {
-    rejections.push({
-      code: "unauthorized",
-      message: `Profile claims model ${profile.profiler.model}; run ${run.runId} is ${run.model}.`,
-      at: "profiler.model",
-    });
-  }
-  return rejections;
+  return [];
 }
 
 /** A profile that asserts nothing must say why it asserts nothing.
@@ -230,25 +253,14 @@ function checkSilence(profile: ProjectProfile): ProfileRejection[] {
   ];
 }
 
-/** The repo the profiler read must still be the repo on disk. Two ways it might
- * not be: the payload cites a digest that was never handed out (a fabricated or
- * replayed digest), or the tree moved under the profiler while it worked. Both
- * discard the result — a profile of a repo that no longer exists is worse than
- * no profile, because something will act on it. */
-function checkDigest(
-  profile: ProjectProfile,
-  context: { run: ProjectProfileRun; inventoryDigest: string },
-): ProfileRejection[] {
+/** The repo the profiler read must still be the repo on disk. The model no
+ * longer round-trips the digest — the daemon minted it on the run — so the only
+ * failure here is a tree that moved under the profiler. */
+function checkDigest(context: {
+  run: ProjectProfileRun;
+  inventoryDigest: string;
+}): ProfileRejection[] {
   const { run, inventoryDigest } = context;
-  if (profile.project.inputDigest !== run.inputDigest) {
-    return [
-      {
-        code: "digest-mismatch",
-        message: `Profile cites input digest ${profile.project.inputDigest}; run ${run.runId} was started on ${run.inputDigest}.`,
-        at: "project.inputDigest",
-      },
-    ];
-  }
   if (run.inputDigest !== inventoryDigest) {
     return [
       {

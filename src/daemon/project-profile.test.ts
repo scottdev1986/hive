@@ -4,11 +4,17 @@ import { readdir, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  PROFILE_GUIDANCE_MAX_BYTES,
   PROJECT_PROFILE_SCHEMA_VERSION,
   ProjectProfileSchema,
+  mergeProfileGuidance,
+  normalizeProfileGuidance,
   type ProjectProfile,
+  type ProjectProfileCandidate,
+  type ProjectProfileRequest,
 } from "../schemas/project-profile";
 import {
+  appendProfilingGuidance,
   beginProfiling,
   computeProfileInventory,
   currentProfilePath,
@@ -18,10 +24,14 @@ import {
   projectProfileDir,
   readCurrentProfile,
   readProfileState,
+  reconcileProfileState,
   submitProfile,
   type ProfileSubmitResult,
 } from "./project-profile";
-import { proveProfileStillHolds } from "./project-profile-validate";
+import {
+  assembleProfileEnvelope,
+  proveProfileStillHolds,
+} from "./project-profile-validate";
 import { projectHiveUuid } from "./project-state";
 import { withFileLock } from "../adapters/file-lock";
 
@@ -90,19 +100,17 @@ async function polyglotRepo(): Promise<string> {
 
 const PROFILER = { agent: "erica", provider: "claude", model: "opus-4.8" };
 
-/** A profile of `polyglotRepo`. Every claim cites a file that is really there,
- * every command names the directory it runs in, and the two test commands are
- * scoped to different workspaces — which is the whole point. */
-function polyglotProfile(
-  root: string,
-  runId: string,
-  inputDigest: string,
-): ProjectProfile {
+const DEFAULT_REQUEST: ProjectProfileRequest = {
+  source: "daemon",
+  requestedAt: "2026-01-01T00:00:00.000Z",
+  requestedBy: "erica",
+  guidance: null,
+};
+
+/** A model-authored candidate for `polyglotRepo`. Every claim cites a file that
+ * is really there; daemon envelope fields are deliberately absent. */
+function polyglotCandidate(): ProjectProfileCandidate {
   return {
-    schemaVersion: PROJECT_PROFILE_SCHEMA_VERSION,
-    generatedAt: new Date().toISOString(),
-    project: { hiveUuid: projectHiveUuid(root), inputDigest },
-    profiler: { ...PROFILER, runId, toolSessionId: null },
     languages: [
       {
         name: "rust",
@@ -205,15 +213,37 @@ function polyglotProfile(
   };
 }
 
-/** Begin a run and submit a profile the caller may first bend out of shape. */
+/** Assemble a full accepted-shape profile (for disk fixtures / proof helpers). */
+function polyglotProfile(
+  root: string,
+  runId: string,
+  inputDigest: string,
+  request: ProjectProfileRequest = DEFAULT_REQUEST,
+): ProjectProfile {
+  return assembleProfileEnvelope(polyglotCandidate(), {
+    hiveUuid: projectHiveUuid(root),
+    run: {
+      runId,
+      agent: PROFILER.agent,
+      provider: PROFILER.provider,
+      model: PROFILER.model,
+      inputDigest,
+      startedAt: request.requestedAt,
+      toolSessionId: null,
+      request,
+    },
+  });
+}
+
+/** Begin a run and submit a candidate the caller may first bend out of shape. */
 async function profile(
   root: string,
-  mutate: (profile: ProjectProfile) => ProjectProfile = (p) => p,
+  mutate: (candidate: ProjectProfileCandidate) => ProjectProfileCandidate = (p) => p,
   subject = PROFILER.agent,
 ): Promise<ProfileSubmitResult> {
   const run = await beginProfiling(root, PROFILER);
-  const payload = mutate(polyglotProfile(root, run.runId, run.inputDigest));
-  return submitProfile(root, payload, subject);
+  const payload = mutate(polyglotCandidate());
+  return submitProfile(root, payload, subject, run.runId);
 }
 
 function rejectionCodes(result: ProfileSubmitResult): string[] {
@@ -265,8 +295,9 @@ describe("lifecycle", () => {
 
     const result = await submitProfile(
       root,
-      polyglotProfile(root, run.runId, run.inputDigest),
+      polyglotCandidate(),
       "erica",
+      run.runId,
     );
     expect(result.status).toBe("accepted");
 
@@ -276,6 +307,8 @@ describe("lifecycle", () => {
     expect(current.profiled?.profiler.agent).toBe("erica");
     expect(current.profiled?.profiler.model).toBe("opus-4.8");
     expect(current.profiled?.inputDigest).toBe(run.inputDigest);
+    expect(current.profiled?.profiler.request.source).toBe("daemon");
+    expect(current.profiled?.profiler.request.guidance).toBeNull();
     expect(current.failure).toBeNull();
     expect(Date.parse(current.updatedAt)).not.toBeNaN();
 
@@ -341,8 +374,9 @@ describe("lifecycle", () => {
     // The refusal did not disturb the run in flight: it still lands.
     const landed = await submitProfile(
       root,
-      polyglotProfile(root, first.runId, first.inputDigest),
+      polyglotCandidate(),
       "erica",
+      first.runId,
     );
     expect(landed.status).toBe("accepted");
   });
@@ -355,8 +389,9 @@ describe("lifecycle", () => {
     expect(first).not.toBeNull();
     await submitProfile(
       root,
-      polyglotProfile(root, first!.runId, first!.inputDigest),
+      polyglotCandidate(),
       "erica",
+      first!.runId,
     );
 
     // current
@@ -369,8 +404,9 @@ describe("lifecycle", () => {
     expect(third).not.toBeNull();
     await submitProfile(
       root,
-      polyglotProfile(root, third!.runId, third!.inputDigest),
+      polyglotCandidate(),
       "erica",
+      third!.runId,
     );
 
     // stale
@@ -446,8 +482,9 @@ describe("lifecycle", () => {
     const root = await polyglotRepo();
     const result = await submitProfile(
       root,
-      polyglotProfile(root, "invented-run", "invented-digest"),
+      polyglotCandidate(),
       "erica",
+      "invented-run",
     );
     expect(rejectionCodes(result)).toEqual(["no-active-run"]);
     expect(await readCurrentProfile(root)).toBeNull();
@@ -460,11 +497,7 @@ describe("the empty project", () => {
   test("profiles to explicit unknowns, not to guesses", async () => {
     const root = await emptyRepo();
     const run = await beginProfiling(root, PROFILER);
-    const minimal: ProjectProfile = {
-      schemaVersion: PROJECT_PROFILE_SCHEMA_VERSION,
-      generatedAt: new Date().toISOString(),
-      project: { hiveUuid: projectHiveUuid(root), inputDigest: run.inputDigest },
-      profiler: { ...PROFILER, runId: run.runId, toolSessionId: null },
+    const minimal: ProjectProfileCandidate = {
       languages: [],
       packageManagers: [],
       buildSystems: [],
@@ -482,7 +515,7 @@ describe("the empty project", () => {
       staleness: { paths: [], notes: ["The repository is empty; any file is drift."] },
     };
 
-    const result = await submitProfile(root, minimal, "erica");
+    const result = await submitProfile(root, minimal, "erica", run.runId);
     expect(result.status).toBe("accepted");
 
     const stored = await readCurrentProfile(root);
@@ -492,6 +525,8 @@ describe("the empty project", () => {
       "commands.test",
       "languages",
     ]);
+    expect(stored?.profiler.agent).toBe("erica");
+    expect(stored?.project.inputDigest).toBe(run.inputDigest);
     expect((await readProfileState(root)).lifecycle).toBe("current");
   });
 });
@@ -506,6 +541,7 @@ describe("validation", () => {
       root,
       { schemaVersion: PROJECT_PROFILE_SCHEMA_VERSION, runId: run.runId },
       "erica",
+      run.runId,
     );
     expect(rejectionCodes(result).every((code) => code === "schema")).toBe(true);
     expect(await readCurrentProfile(root)).toBeNull();
@@ -516,17 +552,23 @@ describe("validation", () => {
     const result = await profile(root, (p) => ({
       ...p,
       indexBudget: { mapTokens: 8192 },
-    }) as ProjectProfile);
+    }) as unknown as ProjectProfileCandidate);
     expect(rejectionCodes(result)).toContain("schema");
   });
 
   test("a superseded run cannot land behind the newer one's back", async () => {
     const root = await polyglotRepo();
     const first = await beginProfiling(root, PROFILER);
-    const stale = polyglotProfile(root, first.runId, first.inputDigest);
     const second = await beginProfiling(root, PROFILER);
 
-    const result = await submitProfile(root, stale, "erica");
+    // runId is credential-bound, not model-authored: the first run's credential
+    // cannot land after a newer run replaced it.
+    const result = await submitProfile(
+      root,
+      polyglotCandidate(),
+      "erica",
+      first.runId,
+    );
     expect(rejectionCodes(result)).toEqual(["superseded"]);
     expect(await readCurrentProfile(root)).toBeNull();
 
@@ -538,8 +580,9 @@ describe("validation", () => {
     // And the winner still lands.
     const winner = await submitProfile(
       root,
-      polyglotProfile(root, second.runId, second.inputDigest),
+      polyglotCandidate(),
       "erica",
+      second.runId,
     );
     expect(winner.status).toBe("accepted");
   });
@@ -550,13 +593,13 @@ describe("validation", () => {
     const landed = await readFile(currentProfilePath(root), "utf8");
 
     const orphan = await beginProfiling(root, PROFILER);
-    const orphanPayload = polyglotProfile(root, orphan.runId, orphan.inputDigest);
+    const orphanPayload = polyglotCandidate();
     orphanPayload.commands[0]!.command = "cargo test --all";
     await beginProfiling(root, PROFILER); // supersedes it
 
-    expect(rejectionCodes(await submitProfile(root, orphanPayload, "erica"))).toEqual([
-      "superseded",
-    ]);
+    expect(
+      rejectionCodes(await submitProfile(root, orphanPayload, "erica", orphan.runId)),
+    ).toEqual(["superseded"]);
     expect(await readFile(currentProfilePath(root), "utf8")).toBe(landed);
   });
 
@@ -571,7 +614,7 @@ describe("validation", () => {
     const root = await polyglotRepo();
     const run = await beginProfiling(root, PROFILER);
 
-    const result = await submitProfile(root, { not: "a profile" }, "mallory");
+    const result = await submitProfile(root, { not: "a profile" }, "mallory", run.runId);
     expect(result.status).toBe("rejected");
 
     // The run erica is still working on is untouched: an authenticated caller
@@ -584,40 +627,41 @@ describe("validation", () => {
     // And she still lands.
     const landed = await submitProfile(
       root,
-      polyglotProfile(root, run.runId, run.inputDigest),
+      polyglotCandidate(),
       "erica",
+      run.runId,
     );
     expect(landed.status).toBe("accepted");
   });
 
-  test("a payload claiming a different profiler than the run is refused", async () => {
+  test("model-authored envelope fields are refused at the schema boundary", async () => {
     const root = await polyglotRepo();
-    const result = await profile(root, (p) => ({
-      ...p,
-      profiler: { ...p.profiler, agent: "someone-else" },
-    }));
-    expect(rejectionCodes(result)).toContain("unauthorized");
-  });
-
-  test("a profile of another project is refused", async () => {
-    const root = await polyglotRepo();
-    const result = await profile(root, (p) => ({
-      ...p,
-      project: { ...p.project, hiveUuid: "00000000-0000-0000-0000-000000000000" },
-    }));
-    expect(rejectionCodes(result)).toContain("unauthorized");
+    // The model cannot choose identity, digests, or provenance — those keys
+    // are not on the candidate schema, and strict parsing rejects them.
+    for (const forbidden of [
+      { schemaVersion: PROJECT_PROFILE_SCHEMA_VERSION },
+      { generatedAt: new Date().toISOString() },
+      { project: { hiveUuid: "x", inputDigest: "y" } },
+      { profiler: { ...PROFILER, runId: "r", toolSessionId: null } },
+    ] as const) {
+      const result = await profile(root, (p) => ({
+        ...p,
+        ...forbidden,
+      }) as unknown as ProjectProfileCandidate);
+      expect(rejectionCodes(result)).toContain("schema");
+    }
     expect(await readCurrentProfile(root)).toBeNull();
   });
 
   test("a repo that changed under the profiler discards the result and marks a rerun", async () => {
     const root = await polyglotRepo();
     const run = await beginProfiling(root, PROFILER);
-    const payload = polyglotProfile(root, run.runId, run.inputDigest);
+    const payload = polyglotCandidate();
 
     // The tree moves on while the profiler is thinking.
     await write(root, "backend/Cargo.toml", "[workspace]\nmembers = [\"crates/*\"]\n");
 
-    const result = await submitProfile(root, payload, "erica");
+    const result = await submitProfile(root, payload, "erica", run.runId);
     expect(rejectionCodes(result)).toEqual(["digest-mismatch"]);
     expect(await readCurrentProfile(root)).toBeNull();
 
@@ -633,11 +677,11 @@ describe("validation", () => {
     const landed = await readFile(currentProfilePath(root), "utf8");
 
     const run = await beginProfiling(root, PROFILER);
-    const payload = polyglotProfile(root, run.runId, run.inputDigest);
+    const payload = polyglotCandidate();
     payload.commands[0]!.command = "cargo test --all-features";
     await write(root, "frontend/package.json", '{ "name": "f", "private": true }\n');
 
-    const result = await submitProfile(root, payload, "erica");
+    const result = await submitProfile(root, payload, "erica", run.runId);
     expect(rejectionCodes(result)).toEqual(["digest-mismatch"]);
 
     // The refresh is discarded; the profile it would have replaced is untouched.
@@ -645,15 +689,6 @@ describe("validation", () => {
     const state = await readProfileState(root);
     expect(state.lifecycle).toBe("stale");
     expect(state.profiled).not.toBeNull();
-  });
-
-  test("a digest the daemon never handed out is refused", async () => {
-    const root = await polyglotRepo();
-    const result = await profile(root, (p) => ({
-      ...p,
-      project: { ...p.project, inputDigest: "f".repeat(64) },
-    }));
-    expect(rejectionCodes(result)).toEqual(["digest-mismatch"]);
   });
 
   test("evidence for a file that is not there is refused", async () => {
@@ -673,7 +708,7 @@ describe("validation", () => {
     const root = await polyglotRepo();
     const result = await profile(root, (p) => {
       const { evidence: _evidence, ...withoutEvidence } = p.commands[0]!;
-      return { ...p, commands: [withoutEvidence] } as unknown as ProjectProfile;
+      return { ...p, commands: [withoutEvidence] } as unknown as ProjectProfileCandidate;
     });
     expect(rejectionCodes(result)).toContain("schema");
   });
@@ -741,33 +776,44 @@ describe("validation", () => {
     expect(await readCurrentProfile(root)).toBeNull();
   });
 
-  test("a profile claiming a provider or model the run does not have is refused", async () => {
+  test("daemon envelope provenance is assembled, not model-claimed", async () => {
     const root = await polyglotRepo();
-
-    const wrongProvider = await profile(root, (p) => ({
-      ...p,
-      profiler: { ...p.profiler, provider: "codex" },
-    }));
-    expect(rejectionCodes(wrongProvider)).toContain("unauthorized");
-
-    const wrongModel = await profile(root, (p) => ({
-      ...p,
-      profiler: { ...p.profiler, model: "gpt-9-ultra" },
-    }));
-    expect(rejectionCodes(wrongModel)).toContain("unauthorized");
-
-    // Provenance is the daemon's, not the model's: nothing false was persisted.
-    expect(await readCurrentProfile(root)).toBeNull();
+    const run = await beginProfiling(root, PROFILER, {
+      request: {
+        source: "operator",
+        requestedBy: "scott",
+        guidance: "Prefer cargo workspaces over npm.",
+        toolSessionId: "sess-1",
+      },
+    });
+    const result = await submitProfile(
+      root,
+      polyglotCandidate(),
+      "erica",
+      run.runId,
+    );
+    expect(result.status).toBe("accepted");
+    const stored = await readCurrentProfile(root);
+    expect(stored?.profiler).toMatchObject({
+      agent: "erica",
+      provider: "claude",
+      model: "opus-4.8",
+      runId: run.runId,
+      toolSessionId: "sess-1",
+      request: {
+        source: "operator",
+        requestedBy: "scott",
+        guidance: "Prefer cargo workspaces over npm.",
+      },
+    });
+    expect(stored?.project.hiveUuid).toBe(projectHiveUuid(root));
+    expect(stored?.project.inputDigest).toBe(run.inputDigest);
   });
 
   test("a profile that asserts nothing and explains nothing is refused", async () => {
     const root = await emptyRepo();
     const run = await beginProfiling(root, PROFILER);
-    const silent: ProjectProfile = {
-      schemaVersion: PROJECT_PROFILE_SCHEMA_VERSION,
-      generatedAt: new Date().toISOString(),
-      project: { hiveUuid: projectHiveUuid(root), inputDigest: run.inputDigest },
-      profiler: { ...PROFILER, runId: run.runId, toolSessionId: null },
+    const silent: ProjectProfileCandidate = {
       languages: [],
       packageManagers: [],
       buildSystems: [],
@@ -784,7 +830,7 @@ describe("validation", () => {
 
     // An empty repo profiles to explicit unknowns. A profile that says nothing
     // at all is indistinguishable from a profiler that read nothing.
-    const result = await submitProfile(root, silent, "erica");
+    const result = await submitProfile(root, silent, "erica", run.runId);
     expect(rejectionCodes(result)).toEqual(["missing-unknowns"]);
     expect(await readCurrentProfile(root)).toBeNull();
   });
@@ -796,7 +842,7 @@ describe("validation", () => {
     const bare = await profile(root, (p) => ({
       ...p,
       docs: { ...p.docs, briefable: [{ path: "README.md" }] },
-    }) as unknown as ProjectProfile);
+    }) as unknown as ProjectProfileCandidate);
     expect(rejectionCodes(bare)).toContain("schema");
 
     // Evidence that cites a file which is not there: refused like any other.
@@ -815,7 +861,7 @@ describe("validation", () => {
     const result = await profile(root, (p) => ({
       ...p,
       conventionFiles: [{ path: "AGENTS.md", kind: "agents" }],
-    }) as unknown as ProjectProfile);
+    }) as unknown as ProjectProfileCandidate);
     expect(rejectionCodes(result)).toContain("schema");
   });
 
@@ -848,7 +894,7 @@ describe("validation", () => {
 
   test("two different answers to one question are refused unless declared", async () => {
     const root = await polyglotRepo();
-    const contradict = (p: ProjectProfile): ProjectProfile => {
+    const contradict = (p: ProjectProfileCandidate): ProjectProfileCandidate => {
       p.commands.push({ ...p.commands[0]!, command: "cargo nextest run" });
       return p;
     };
@@ -908,7 +954,7 @@ describe("commit-time proof", () => {
     const landed = await readFile(currentProfilePath(root), "utf8");
 
     const run = await beginProfiling(root, PROFILER);
-    const payload = polyglotProfile(root, run.runId, run.inputDigest);
+    const payload = polyglotCandidate();
     payload.commands[0]!.command = "cargo test --all-features";
 
     // Hold the profile lock from outside, so the submission validates (which
@@ -925,7 +971,7 @@ describe("commit-time proof", () => {
     });
     while (!existsSync(lockPath)) await Bun.sleep(5);
 
-    const inFlight = submitProfile(root, payload, "erica");
+    const inFlight = submitProfile(root, payload, "erica", run.runId);
     await Bun.sleep(500); // past validation, now waiting for the lock we hold
     await rm(join(root, "backend", "Cargo.toml"));
     release();
@@ -951,7 +997,7 @@ describe("commit-time proof", () => {
   test("proveProfileStillHolds catches a deleted citation and a moved tree", async () => {
     const root = await polyglotRepo();
     const run = await beginProfiling(root, PROFILER);
-    const profileToProve = polyglotProfile(root, run.runId, run.inputDigest);
+    const profileToProve = polyglotProfile(root, run.runId, run.inputDigest, run.request);
     const asRun = {
       runId: run.runId,
       agent: PROFILER.agent,
@@ -959,6 +1005,8 @@ describe("commit-time proof", () => {
       model: PROFILER.model,
       inputDigest: run.inputDigest,
       startedAt: new Date().toISOString(),
+      toolSessionId: null as string | null,
+      request: run.request,
     };
 
     // Nothing has changed: the profile still holds.
@@ -995,7 +1043,7 @@ describe("crash recovery", () => {
   test("a profile that landed but whose state write was lost heals on read", async () => {
     const root = await polyglotRepo();
     const run = await beginProfiling(root, PROFILER);
-    const accepted = polyglotProfile(root, run.runId, run.inputDigest);
+    const accepted = polyglotProfile(root, run.runId, run.inputDigest, run.request);
 
     // Exactly the disk left by a crash between the two renames: current.json is
     // the new profile, state.json still says this run is in flight. Before the
@@ -1016,6 +1064,58 @@ describe("crash recovery", () => {
 
     // And the project is profilable again.
     expect(await beginProfiling(root, PROFILER, { ifIdle: true })).not.toBeNull();
+  });
+
+  test("reconcileProfileState persists the heal and strips leftover temps", async () => {
+    const root = await polyglotRepo();
+    const run = await beginProfiling(root, PROFILER);
+    const accepted = polyglotProfile(root, run.runId, run.inputDigest, run.request);
+    await mkdir(projectProfileDir(root), { recursive: true });
+    await writeFile(
+      currentProfilePath(root),
+      `${JSON.stringify(accepted, null, 2)}\n`,
+    );
+    const tempPath = join(projectProfileDir(root), "current.json.dead.tmp");
+    await writeFile(tempPath, "{ half");
+
+    const healed = await reconcileProfileState(root);
+    expect(healed.lifecycle).toBe("current");
+    expect(healed.run).toBeNull();
+    expect(healed.profiled?.inputDigest).toBe(run.inputDigest);
+
+    // Persisted: a raw re-read (without heal) would still need the file on disk.
+    const raw = JSON.parse(await readFile(profileStatePath(root), "utf8"));
+    expect(raw.lifecycle).toBe("current");
+    expect(raw.run).toBeNull();
+    expect(existsSync(tempPath)).toBe(false);
+  });
+
+  test("state cannot claim a different current digest than the profile on disk", async () => {
+    const root = await polyglotRepo();
+    expect((await profile(root)).status).toBe("accepted");
+    const current = await readCurrentProfile(root);
+    expect(current).not.toBeNull();
+
+    // Corrupt profiled.inputDigest while leaving a valid current.json in place.
+    const state = await readProfileState(root);
+    await writeFile(
+      profileStatePath(root),
+      `${JSON.stringify(
+        {
+          ...state,
+          profiled: {
+            ...state.profiled!,
+            inputDigest: "f".repeat(64),
+          },
+        },
+        null,
+        2,
+      )}\n`,
+    );
+
+    const healed = await reconcileProfileState(root);
+    expect(healed.profiled?.inputDigest).toBe(current!.project.inputDigest);
+    expect(healed.profiled?.profiler.runId).toBe(current!.profiler.runId);
   });
 
   test("a profile from a different run does not heal an in-flight one", async () => {
@@ -1052,9 +1152,9 @@ describe("atomicity", () => {
       // Big enough that the write cannot complete before the kill lands.
       payload.staleness.notes = Array.from({ length: 400_000 }, (_, i) => "note " + i);
       console.log("go");
-      await submitProfile(${JSON.stringify(root)}, payload, "erica");
+      await submitProfile(${JSON.stringify(root)}, payload, "erica", ${JSON.stringify(run.runId)});
     `;
-    const payload = polyglotProfile(root, run.runId, run.inputDigest);
+    const payload = polyglotCandidate();
     const child = Bun.spawn(
       ["bun", "-e", script, "--", JSON.stringify(payload)],
       {
@@ -1109,6 +1209,99 @@ describe("atomicity", () => {
   });
 });
 
+// --- guidance provenance ----------------------------------------------------
+
+describe("guidance provenance", () => {
+  test("normalizeProfileGuidance only rewrites line endings and caps at 4 KiB", () => {
+    expect(normalizeProfileGuidance(null)).toBeNull();
+    expect(normalizeProfileGuidance("")).toBeNull();
+    expect(normalizeProfileGuidance("a\r\nb\rc")).toBe("a\nb\nc");
+
+    const over = "x".repeat(PROFILE_GUIDANCE_MAX_BYTES + 50);
+    const capped = normalizeProfileGuidance(over);
+    expect(capped).not.toBeNull();
+    expect(new TextEncoder().encode(capped!).byteLength).toBe(
+      PROFILE_GUIDANCE_MAX_BYTES,
+    );
+  });
+
+  test("mergeProfileGuidance concatenates in arrival order under the cap", () => {
+    expect(mergeProfileGuidance("first", "second")).toBe("first\nsecond");
+    expect(mergeProfileGuidance(null, "only")).toBe("only");
+    const left = "a".repeat(PROFILE_GUIDANCE_MAX_BYTES - 10);
+    const merged = mergeProfileGuidance(left, "bbbbbbbbbbbb");
+    expect(new TextEncoder().encode(merged!).byteLength).toBe(
+      PROFILE_GUIDANCE_MAX_BYTES,
+    );
+  });
+
+  test("guidance on the run is copied into accepted provenance", async () => {
+    const root = await polyglotRepo();
+    const run = await beginProfiling(root, PROFILER, {
+      request: {
+        source: "operator",
+        requestedBy: "alice",
+        guidance: "Check the Rust workspace carefully.",
+      },
+    });
+    expect(run.request.guidance).toBe("Check the Rust workspace carefully.");
+
+    const result = await submitProfile(
+      root,
+      polyglotCandidate(),
+      "erica",
+      run.runId,
+    );
+    expect(result.status).toBe("accepted");
+    expect((await readCurrentProfile(root))?.profiler.request.guidance).toBe(
+      "Check the Rust workspace carefully.",
+    );
+  });
+
+  test("appended guidance merges and never bypasses validation", async () => {
+    const root = await polyglotRepo();
+    const run = await beginProfiling(root, PROFILER, {
+      request: {
+        source: "operator",
+        requestedBy: "alice",
+        guidance: "first",
+      },
+    });
+    const merged = await appendProfilingGuidance(root, run.runId, "second", {
+      source: "orchestrator",
+      requestedBy: "bob",
+    });
+    expect(merged?.guidance).toBe("first\nsecond");
+
+    // Guidance is provenance only: an invalid candidate is still refused.
+    const bad = polyglotCandidate();
+    bad.commands[0]!.evidence = {
+      path: "backend/nope.toml",
+      basis: "invented",
+    };
+    const rejected = await submitProfile(root, bad, "erica", run.runId);
+    expect(rejectionCodes(rejected)).toEqual(["missing-path"]);
+    expect(await readCurrentProfile(root)).toBeNull();
+
+    // After a failed run, start fresh and land with the merged guidance gone
+    // (new run). The point is the earlier rejection was not waived by guidance.
+    const next = await beginProfiling(root, PROFILER, {
+      request: {
+        source: "operator",
+        requestedBy: "alice",
+        guidance: "still only advice",
+      },
+    });
+    expect(
+      (await submitProfile(root, polyglotCandidate(), "erica", next.runId))
+        .status,
+    ).toBe("accepted");
+    expect((await readCurrentProfile(root))?.profiler.request.guidance).toBe(
+      "still only advice",
+    );
+  });
+});
+
 // --- inventory --------------------------------------------------------------
 
 describe("inventory", () => {
@@ -1146,10 +1339,10 @@ describe("inventory", () => {
   test("a same-length edit under a running profiler discards the result", async () => {
     const root = await polyglotRepo();
     const run = await beginProfiling(root, PROFILER);
-    const payload = polyglotProfile(root, run.runId, run.inputDigest);
+    const payload = polyglotCandidate();
     await write(root, "backend/Cargo.toml", "[workspace]\nmembers = []\r\n");
 
-    expect(rejectionCodes(await submitProfile(root, payload, "erica"))).toEqual([
+    expect(rejectionCodes(await submitProfile(root, payload, "erica", run.runId))).toEqual([
       "digest-mismatch",
     ]);
   });

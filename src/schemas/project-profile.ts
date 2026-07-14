@@ -260,10 +260,55 @@ export type ProjectProfileStaleness = z.infer<
   typeof ProjectProfileStalenessSchema
 >;
 
-/** Who profiled, on what, with what. `runId` and `inputDigest` are what make a
- * submission checkable: the daemon minted the run and observed the digest, so a
- * payload carrying someone else's run, or a digest from a repo that has since
- * changed, is refused rather than committed. */
+/** Cap on requester guidance (UTF-8 bytes). Guidance is an instruction to
+ * investigate, never a validation override, and never caller-expandable. */
+export const PROFILE_GUIDANCE_MAX_BYTES = 4 * 1024;
+
+/** Normalize requester guidance: line endings only (`\r\n`/`\r` → `\n`), then
+ * truncate to {@link PROFILE_GUIDANCE_MAX_BYTES} on a UTF-8 code-unit boundary.
+ * Empty input becomes null. */
+export function normalizeProfileGuidance(
+  guidance: string | null | undefined,
+): string | null {
+  if (guidance === null || guidance === undefined) return null;
+  const normalized = guidance.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  if (normalized.length === 0) return null;
+  const encoded = new TextEncoder().encode(normalized);
+  if (encoded.byteLength <= PROFILE_GUIDANCE_MAX_BYTES) return normalized;
+  // Walk back from the byte cap so we do not split a multi-byte code point.
+  let end = PROFILE_GUIDANCE_MAX_BYTES;
+  while (end > 0 && (encoded[end]! & 0xc0) === 0x80) end -= 1;
+  return new TextDecoder().decode(encoded.subarray(0, end));
+}
+
+/** Concatenate guidance strings in arrival order, each piece normalized, up to
+ * the 4 KiB total cap. Used when multiple requesters coalesce onto one run. */
+export function mergeProfileGuidance(
+  existing: string | null | undefined,
+  next: string | null | undefined,
+): string | null {
+  const left = normalizeProfileGuidance(existing);
+  const right = normalizeProfileGuidance(next);
+  if (left === null) return right;
+  if (right === null) return left;
+  return normalizeProfileGuidance(`${left}\n${right}`);
+}
+
+/** Who asked for this profiling run, and any guidance they attached. Owned by
+ * the daemon: the model never authors it, and it never bypasses validation. */
+export const ProjectProfileRequestSchema = z.strictObject({
+  source: z.string().min(1),
+  requestedAt: z.iso.datetime(),
+  requestedBy: z.string().min(1),
+  /** Optional investigation guidance; already normalized and capped when stored. */
+  guidance: z.string().nullable(),
+});
+export type ProjectProfileRequest = z.infer<typeof ProjectProfileRequestSchema>;
+
+/** Who profiled, on what, with what. Every field is daemon-assembled from the
+ * authenticated active run — a candidate payload that tries to choose any of
+ * them is refused at the schema boundary. `runId` still makes a landed profile
+ * checkable against the run that authored it. */
 export const ProjectProfileProvenanceSchema = z.strictObject({
   agent: z.string().min(1),
   provider: z.string().min(1),
@@ -271,9 +316,33 @@ export const ProjectProfileProvenanceSchema = z.strictObject({
   runId: z.string().min(1),
   /** The vendor session the profile was authored in, when the tool exposes one. */
   toolSessionId: z.string().min(1).nullable(),
+  /** The requester who started (or coalesced onto) this run. */
+  request: ProjectProfileRequestSchema,
 });
 export type ProjectProfileProvenance = z.infer<
   typeof ProjectProfileProvenanceSchema
+>;
+
+/** What the model may author. Daemon-owned identity, timestamps, digests,
+ * provider/model/agent, run id, tool session id, and request provenance are
+ * deliberately absent — `submitProfile` assembles them from the authenticated
+ * active run before the accepted profile is validated and stored. */
+export const ProjectProfileCandidateSchema = z.strictObject({
+  languages: z.array(ProjectProfileLanguageSchema),
+  packageManagers: z.array(ProjectProfileToolSchema),
+  buildSystems: z.array(ProjectProfileToolSchema),
+  workspaces: z.array(ProjectProfileWorkspaceSchema),
+  commands: z.array(ProjectProfileCommandSchema),
+  docs: ProjectProfileDocsSchema,
+  conventionFiles: z.array(ProjectProfileConventionFileSchema),
+  entryPoints: z.array(ProjectProfileEntryPointSchema),
+  unknowns: z.array(ProjectProfileUnknownSchema),
+  ambiguities: z.array(ProjectProfileAmbiguitySchema),
+  conflicts: z.array(ProjectProfileConflictSchema),
+  staleness: ProjectProfileStalenessSchema,
+});
+export type ProjectProfileCandidate = z.infer<
+  typeof ProjectProfileCandidateSchema
 >;
 
 export const ProjectProfileSchema = z.strictObject({
@@ -332,7 +401,8 @@ export type ProjectProfileLifecycle = z.infer<
 
 /** The profiling run in flight. A second `beginProfiling` mints a new one, and
  * the older run's submission is then superseded — it cannot land behind the
- * newer one's back. */
+ * newer one's back. Request provenance rides on the run so an accepted profile
+ * can copy it without trusting the model. */
 export const ProjectProfileRunSchema = z.strictObject({
   runId: z.string().min(1),
   agent: z.string().min(1),
@@ -341,6 +411,10 @@ export const ProjectProfileRunSchema = z.strictObject({
   /** The inventory digest observed when the run began. */
   inputDigest: z.string().min(1),
   startedAt: z.iso.datetime(),
+  /** Vendor session id when observed; otherwise null. Daemon-owned. */
+  toolSessionId: z.string().min(1).nullable(),
+  /** Who requested this run and any guidance they attached. */
+  request: ProjectProfileRequestSchema,
 });
 export type ProjectProfileRun = z.infer<typeof ProjectProfileRunSchema>;
 

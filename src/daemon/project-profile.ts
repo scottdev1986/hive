@@ -30,8 +30,11 @@ import {
   PROJECT_PROFILE_SCHEMA_VERSION,
   ProjectProfileSchema,
   ProjectProfileStateSchema,
+  mergeProfileGuidance,
+  normalizeProfileGuidance,
   type ProjectProfile,
   type ProjectProfileLifecycle,
+  type ProjectProfileRequest,
   type ProjectProfileState,
 } from "../schemas/project-profile";
 import { withFileLock } from "../adapters/file-lock";
@@ -46,6 +49,12 @@ export type {
   ProfileRejection,
   ProfileRejectionCode,
 } from "./project-profile-validate";
+
+export {
+  PROFILE_GUIDANCE_MAX_BYTES,
+  mergeProfileGuidance,
+  normalizeProfileGuidance,
+} from "../schemas/project-profile";
 
 export function projectProfileDir(root: string): string {
   return join(projectStateDir(root), "profile");
@@ -531,31 +540,34 @@ export async function readCurrentProfile(
   return parsed.success ? parsed.data : null;
 }
 
+function emptyProfileState(root: string): ProjectProfileState {
+  return {
+    schemaVersion: PROJECT_PROFILE_SCHEMA_VERSION,
+    lifecycle: "unprofiled",
+    hiveUuid: projectHiveUuid(root),
+    updatedAt: new Date().toISOString(),
+    run: null,
+    profiled: null,
+    reprofile: null,
+    failure: null,
+  };
+}
+
 /** The lifecycle state. A project nobody has profiled has no `state.json`, and
  * neither does one whose state file was lost or written by an older schema — all
  * three are `unprofiled`, which is the honest answer and the one that leads to
- * the right next action. */
+ * the right next action. Healing of the two-file crash window is applied in
+ * memory here; call {@link reconcileProfileState} to persist it (daemon start). */
 export async function readProfileState(
   root: string,
 ): Promise<ProjectProfileState> {
   const raw = await readJson(profileStatePath(root));
   const parsed = ProjectProfileStateSchema.safeParse(raw);
-  if (!parsed.success) {
-    return {
-      schemaVersion: PROJECT_PROFILE_SCHEMA_VERSION,
-      lifecycle: "unprofiled",
-      hiveUuid: projectHiveUuid(root),
-      updatedAt: new Date().toISOString(),
-      run: null,
-      profiled: null,
-      reprofile: null,
-      failure: null,
-    };
-  }
-  return reconcile(root, parsed.data);
+  if (!parsed.success) return emptyProfileState(root);
+  return healProfileState(root, parsed.data);
 }
 
-/** Heal the one inconsistency the write order can produce.
+/** Heal inconsistencies the write order can produce, without taking the lock.
  *
  * `current.json` is written before `state.json` on purpose: a crash between them
  * leaves a valid new profile that the state has not caught up with, where the
@@ -569,36 +581,109 @@ export async function readProfileState(
  * The lag is provable, which is why it is safe to heal: `current.json` carries
  * the run id it was authored for. If that is the run the state still thinks is
  * in flight, then the submission was accepted and only the bookkeeping was lost.
- * Nothing else can put that run id in that file. */
-async function reconcile(
+ * Nothing else can put that run id in that file.
+ *
+ * Also: state may never claim a different current digest than the validated
+ * profile on disk. When both exist and disagree, the profile wins. */
+async function healProfileState(
   root: string,
   state: ProjectProfileState,
 ): Promise<ProjectProfileState> {
-  if (state.lifecycle !== "profiling" || state.run === null) return state;
   const current = await readCurrentProfile(root);
-  if (current === null || current.profiler.runId !== state.run.runId) {
-    return state;
+
+  if (
+    state.lifecycle === "profiling" &&
+    state.run !== null &&
+    current !== null &&
+    current.profiler.runId === state.run.runId
+  ) {
+    let acceptedAt = current.generatedAt;
+    try {
+      acceptedAt = (await lstat(currentProfilePath(root))).mtime.toISOString();
+    } catch {
+      // The profile parsed a moment ago; if it is gone now, its own timestamp is
+      // the best evidence of when it landed.
+    }
+    return {
+      ...state,
+      lifecycle: "current",
+      updatedAt: new Date().toISOString(),
+      run: null,
+      profiled: {
+        at: acceptedAt,
+        inputDigest: current.project.inputDigest,
+        profiler: current.profiler,
+      },
+      reprofile: null,
+      failure: null,
+    };
   }
-  let acceptedAt = current.generatedAt;
+
+  if (
+    current !== null &&
+    state.profiled !== null &&
+    state.profiled.inputDigest !== current.project.inputDigest
+  ) {
+    let acceptedAt = current.generatedAt;
+    try {
+      acceptedAt = (await lstat(currentProfilePath(root))).mtime.toISOString();
+    } catch {
+      // same as above
+    }
+    return {
+      ...state,
+      profiled: {
+        at: acceptedAt,
+        inputDigest: current.project.inputDigest,
+        profiler: current.profiler,
+      },
+    };
+  }
+
+  return state;
+}
+
+function profileStatesEqual(
+  left: ProjectProfileState,
+  right: ProjectProfileState,
+): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+/** Persist crash-window repair and strip leftover temp files. Safe to call at
+ * daemon start and any other moment that must not observe a permanently stuck
+ * `profiling` run after a successful current.json rename. */
+export async function reconcileProfileState(
+  root: string,
+): Promise<ProjectProfileState> {
+  return withProfileLock(root, async () => {
+    const raw = await readJson(profileStatePath(root));
+    const parsed = ProjectProfileStateSchema.safeParse(raw);
+    const baseline = parsed.success ? parsed.data : emptyProfileState(root);
+    const healed = await healProfileState(root, baseline);
+    if (!profileStatesEqual(baseline, healed)) {
+      await writeProfileState(root, healed);
+    }
+    await cleanupProfileTemps(root);
+    return healed;
+  });
+}
+
+/** Remove staged `*.tmp` files left by a killed writer. Never touches
+ * `current.json` or `state.json`. */
+async function cleanupProfileTemps(root: string): Promise<void> {
+  const directory = projectProfileDir(root);
+  let names: string[];
   try {
-    acceptedAt = (await lstat(currentProfilePath(root))).mtime.toISOString();
+    names = await readdir(directory);
   } catch {
-    // The profile parsed a moment ago; if it is gone now, its own timestamp is
-    // the best evidence of when it landed.
+    return;
   }
-  return {
-    ...state,
-    lifecycle: "current",
-    updatedAt: new Date().toISOString(),
-    run: null,
-    profiled: {
-      at: acceptedAt,
-      inputDigest: current.project.inputDigest,
-      profiler: current.profiler,
-    },
-    reprofile: null,
-    failure: null,
-  };
+  await Promise.all(
+    names
+      .filter((name) => name.endsWith(".tmp"))
+      .map((name) => unlink(join(directory, name)).catch(() => undefined)),
+  );
 }
 
 async function writeProfileState(
@@ -634,11 +719,41 @@ export interface ProfilerIdentity {
   model: string;
 }
 
+/** Requester metadata recorded on the run and copied into accepted-profile
+ * provenance. Guidance is normalized and capped; it never affects validation. */
+export interface BeginProfilingRequest {
+  source: string;
+  requestedBy: string;
+  guidance?: string | null;
+  /** Vendor session id when already known; otherwise omitted (stored as null). */
+  toolSessionId?: string | null;
+}
+
+export interface BeginProfilingOptions {
+  ifIdle?: boolean;
+  request?: BeginProfilingRequest;
+}
+
 export interface ProfileRunHandle {
   runId: string;
   /** The digest the submitted profile must carry back. */
   inputDigest: string;
   inventory: ProfileInventory;
+  /** Request provenance sealed onto the run at begin. */
+  request: ProjectProfileRequest;
+}
+
+function sealRunRequest(
+  profiler: ProfilerIdentity,
+  request: BeginProfilingRequest | undefined,
+  at: string,
+): ProjectProfileRequest {
+  return {
+    source: request?.source ?? "daemon",
+    requestedAt: at,
+    requestedBy: request?.requestedBy ?? profiler.agent,
+    guidance: normalizeProfileGuidance(request?.guidance),
+  };
 }
 
 /** Start a profiling run: `unprofiled | stale | failed | current → profiling`.
@@ -658,20 +773,24 @@ export interface ProfileRunHandle {
  *   in flight. One profiling job per project is an invariant the daemon owns, so
  *   the primitive that mints runs is what enforces it: a caller that must check
  *   first is a caller that can forget to. Whose job it is, when a dead run may be
- *   taken over, and what counts as dead are policy, and stay out of here. */
+ *   taken over, and what counts as dead are policy, and stay out of here.
+ *
+ * Optional `request` records who asked and any guidance; both become provenance
+ * on the accepted profile and never override validation. */
 export function beginProfiling(
   root: string,
   profiler: ProfilerIdentity,
+  options?: BeginProfilingOptions & { ifIdle?: false | undefined },
 ): Promise<ProfileRunHandle>;
 export function beginProfiling(
   root: string,
   profiler: ProfilerIdentity,
-  options: { ifIdle: true },
+  options: BeginProfilingOptions & { ifIdle: true },
 ): Promise<ProfileRunHandle | null>;
 export async function beginProfiling(
   root: string,
   profiler: ProfilerIdentity,
-  options?: { ifIdle?: boolean },
+  options?: BeginProfilingOptions,
 ): Promise<ProfileRunHandle | null> {
   return withProfileLock(root, async () => {
     const previous = await readProfileState(root);
@@ -687,22 +806,67 @@ export async function beginProfiling(
     // concurrent begin.
     const inventory = await computeProfileInventory(root);
     const runId = randomUUID();
+    const startedAt = new Date().toISOString();
+    const request = sealRunRequest(profiler, options?.request, startedAt);
     await writeProfileState(root, {
       ...previous,
       schemaVersion: PROJECT_PROFILE_SCHEMA_VERSION,
       lifecycle: "profiling",
       hiveUuid: projectHiveUuid(root),
-      updatedAt: new Date().toISOString(),
+      updatedAt: startedAt,
       run: {
         runId,
         agent: profiler.agent,
         provider: profiler.provider,
         model: profiler.model,
         inputDigest: inventory.digest,
-        startedAt: new Date().toISOString(),
+        startedAt,
+        toolSessionId: options?.request?.toolSessionId ?? null,
+        request,
       },
     });
-    return { runId, inputDigest: inventory.digest, inventory };
+    return {
+      runId,
+      inputDigest: inventory.digest,
+      inventory,
+      request,
+    };
+  });
+}
+
+/** Append guidance onto an in-flight run's request provenance (coalesced
+ * requesters). Returns null when no matching run is live. Guidance is
+ * concatenated in arrival order up to the 4 KiB cap and never affects
+ * validation. */
+export async function appendProfilingGuidance(
+  root: string,
+  runId: string,
+  guidance: string | null | undefined,
+  meta?: { source?: string; requestedBy?: string },
+): Promise<ProjectProfileRequest | null> {
+  const normalized = normalizeProfileGuidance(guidance);
+  return withProfileLock(root, async () => {
+    const state = await readProfileState(root);
+    if (
+      state.run === null ||
+      state.run.runId !== runId ||
+      state.lifecycle !== "profiling"
+    ) {
+      return null;
+    }
+    const merged = mergeProfileGuidance(state.run.request.guidance, normalized);
+    const request: ProjectProfileRequest = {
+      source: meta?.source ?? state.run.request.source,
+      requestedAt: state.run.request.requestedAt,
+      requestedBy: meta?.requestedBy ?? state.run.request.requestedBy,
+      guidance: merged,
+    };
+    await writeProfileState(root, {
+      ...state,
+      updatedAt: new Date().toISOString(),
+      run: { ...state.run, request },
+    });
+    return request;
   });
 }
 
@@ -717,8 +881,14 @@ export type ProfileSubmitResult =
       lifecycle: ProjectProfileLifecycle;
     };
 
-/** Submit a profile. `subject` is the caller the daemon authenticated — not a
- * name out of the payload, which is only a claim.
+/** Submit a *candidate* profile.
+ *
+ * `subject` and `runId` are daemon-authenticated credentials — never taken from
+ * the model payload. The payload may only carry model-authored content; the
+ * daemon assembles schema version, timestamps, project identity/digest,
+ * profiler provenance, and request guidance from the active run before
+ * validation and commit. A candidate that tries to choose those fields fails
+ * the schema boundary.
  *
  * On acceptance: `profiling → current`, and the profile becomes readable in the
  * same instant its state says so. `current.json` is written before `state.json`
@@ -739,6 +909,7 @@ export async function submitProfile(
   root: string,
   payload: unknown,
   subject: string,
+  runId: string,
 ): Promise<ProfileSubmitResult> {
   const state = await readProfileState(root);
   if (state.run === null || state.lifecycle !== "profiling") {
@@ -748,6 +919,19 @@ export async function submitProfile(
         {
           code: "no-active-run",
           message: `No profiling run is in flight for this project (lifecycle: ${state.lifecycle}).`,
+        },
+      ],
+      lifecycle: state.lifecycle,
+    };
+  }
+  if (state.run.runId !== runId) {
+    return {
+      status: "rejected",
+      rejections: [
+        {
+          code: "superseded",
+          message: `Run ${runId} is no longer active; the active run is ${state.run.runId}.`,
+          at: "runId",
         },
       ],
       lifecycle: state.lifecycle,
@@ -766,7 +950,11 @@ export async function submitProfile(
 
   return withProfileLock(root, async () => {
     const fresh = await readProfileState(root);
-    if (fresh.run === null || fresh.run.runId !== validatedAgainst.runId) {
+    if (
+      fresh.run === null ||
+      fresh.run.runId !== validatedAgainst.runId ||
+      fresh.run.runId !== runId
+    ) {
       // The run moved on while this submission was being validated. Its result
       // describes a run nobody is waiting for, and writing it would clobber
       // whatever replaced it.
