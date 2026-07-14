@@ -101,9 +101,13 @@ async function polyglotRepo(): Promise<string> {
 const PROFILER = { agent: "erica", provider: "claude", model: "opus-4.8" };
 
 const DEFAULT_REQUEST: ProjectProfileRequest = {
-  source: "daemon",
-  requestedAt: "2026-01-01T00:00:00.000Z",
-  requestedBy: "erica",
+  requesters: [
+    {
+      source: "daemon",
+      requestedAt: "2026-01-01T00:00:00.000Z",
+      requestedBy: "erica",
+    },
+  ],
   guidance: null,
 };
 
@@ -228,7 +232,7 @@ function polyglotProfile(
       provider: PROFILER.provider,
       model: PROFILER.model,
       inputDigest,
-      startedAt: request.requestedAt,
+      startedAt: request.requesters[0]!.requestedAt,
       toolSessionId: null,
       request,
     },
@@ -307,7 +311,12 @@ describe("lifecycle", () => {
     expect(current.profiled?.profiler.agent).toBe("erica");
     expect(current.profiled?.profiler.model).toBe("opus-4.8");
     expect(current.profiled?.inputDigest).toBe(run.inputDigest);
-    expect(current.profiled?.profiler.request.source).toBe("daemon");
+    expect(current.profiled?.profiler.request.requesters).toEqual([
+      expect.objectContaining({
+        source: "daemon",
+        requestedBy: "erica",
+      }),
+    ]);
     expect(current.profiled?.profiler.request.guidance).toBeNull();
     expect(current.failure).toBeNull();
     expect(Date.parse(current.updatedAt)).not.toBeNaN();
@@ -801,11 +810,16 @@ describe("validation", () => {
       runId: run.runId,
       toolSessionId: "sess-1",
       request: {
-        source: "operator",
-        requestedBy: "scott",
+        requesters: [
+          {
+            source: "operator",
+            requestedBy: "scott",
+          },
+        ],
         guidance: "Prefer cargo workspaces over npm.",
       },
     });
+    expect(stored?.profiler.request.requesters).toHaveLength(1);
     expect(stored?.project.hiveUuid).toBe(projectHiveUuid(root));
     expect(stored?.project.inputDigest).toBe(run.inputDigest);
   });
@@ -1245,6 +1259,13 @@ describe("guidance provenance", () => {
       },
     });
     expect(run.request.guidance).toBe("Check the Rust workspace carefully.");
+    expect(run.request.requesters).toEqual([
+      {
+        source: "operator",
+        requestedAt: run.request.requesters[0]!.requestedAt,
+        requestedBy: "alice",
+      },
+    ]);
 
     const result = await submitProfile(
       root,
@@ -1258,7 +1279,7 @@ describe("guidance provenance", () => {
     );
   });
 
-  test("appended guidance merges and never bypasses validation", async () => {
+  test("appended guidance preserves every requester and never bypasses validation", async () => {
     const root = await polyglotRepo();
     const run = await beginProfiling(root, PROFILER, {
       request: {
@@ -1267,11 +1288,28 @@ describe("guidance provenance", () => {
         guidance: "first",
       },
     });
+    const aliceAt = run.request.requesters[0]!.requestedAt;
     const merged = await appendProfilingGuidance(root, run.runId, "second", {
       source: "orchestrator",
       requestedBy: "bob",
     });
     expect(merged?.guidance).toBe("first\nsecond");
+    expect(merged?.requesters).toHaveLength(2);
+    expect(merged?.requesters[0]).toEqual({
+      source: "operator",
+      requestedAt: aliceAt,
+      requestedBy: "alice",
+    });
+    expect(merged?.requesters[1]).toMatchObject({
+      source: "orchestrator",
+      requestedBy: "bob",
+    });
+    expect(merged?.requesters[1]!.requestedAt).not.toBe(aliceAt);
+    // Bob must not steal Alice's timestamp, and Alice must not be overwritten.
+    expect(merged?.requesters.map((r) => r.requestedBy)).toEqual([
+      "alice",
+      "bob",
+    ]);
 
     // Guidance is provenance only: an invalid candidate is still refused.
     const bad = polyglotCandidate();
@@ -1299,13 +1337,16 @@ describe("guidance provenance", () => {
     expect((await readCurrentProfile(root))?.profiler.request.guidance).toBe(
       "still only advice",
     );
+    expect(
+      (await readCurrentProfile(root))?.profiler.request.requesters,
+    ).toHaveLength(1);
   });
 
-  test("coalesced guidance merged during validation is committed, not the pre-merge snapshot", async () => {
+  test("coalesced requesters merged during validation are committed, not the pre-merge snapshot", async () => {
     // submitProfile validates outside the lock using a run snapshot. A second
-    // requester can append guidance under the lock while that runs. Commit must
-    // re-read the run's request provenance — checking only runId would land the
-    // stale pre-merge envelope (alice/"first") and drop the merge.
+    // requester can append under the lock while that runs. Commit must re-read
+    // the full request provenance — checking only runId would land the stale
+    // pre-merge envelope (alice alone) and drop bob.
     const root = await polyglotRepo();
     const run = await beginProfiling(root, PROFILER, {
       request: {
@@ -1314,6 +1355,8 @@ describe("guidance provenance", () => {
         guidance: "first",
       },
     });
+    const aliceAt = run.request.requesters[0]!.requestedAt;
+    const bobAt = "2026-06-15T12:00:00.000Z";
 
     let release!: () => void;
     const held = new Promise<void>((resolve) => {
@@ -1328,11 +1371,17 @@ describe("guidance provenance", () => {
     const inFlight = submitProfile(root, polyglotCandidate(), "erica", run.runId);
     await Bun.sleep(500); // past out-of-lock validation; submit is waiting on our lock
 
-    // Simulate what appendProfilingGuidance would write under the lock: merge
-    // while submit still holds the pre-merge envelope from validation.
+    // Simulate what appendProfilingGuidance would write under the lock: keep
+    // Alice's stamp and append Bob with his own timestamp + merged guidance.
     const blocked = await readProfileState(root);
     expect(blocked.run?.runId).toBe(run.runId);
-    expect(blocked.run?.request.guidance).toBe("first");
+    expect(blocked.run?.request.requesters).toEqual([
+      {
+        source: "operator",
+        requestedAt: aliceAt,
+        requestedBy: "alice",
+      },
+    ]);
     await writeFile(
       profileStatePath(root),
       `${JSON.stringify(
@@ -1341,9 +1390,18 @@ describe("guidance provenance", () => {
           run: {
             ...blocked.run!,
             request: {
-              source: "orchestrator",
-              requestedAt: blocked.run!.request.requestedAt,
-              requestedBy: "bob",
+              requesters: [
+                {
+                  source: "operator",
+                  requestedAt: aliceAt,
+                  requestedBy: "alice",
+                },
+                {
+                  source: "orchestrator",
+                  requestedAt: bobAt,
+                  requestedBy: "bob",
+                },
+              ],
               guidance: "first\nsecond",
             },
           },
@@ -1359,19 +1417,33 @@ describe("guidance provenance", () => {
 
     expect(result.status).toBe("accepted");
     if (result.status !== "accepted") return;
-    expect(result.profile.profiler.request).toMatchObject({
-      requestedBy: "bob",
-      guidance: "first\nsecond",
-    });
+    expect(result.profile.profiler.request.guidance).toBe("first\nsecond");
+    expect(result.profile.profiler.request.requesters).toEqual([
+      {
+        source: "operator",
+        requestedAt: aliceAt,
+        requestedBy: "alice",
+      },
+      {
+        source: "orchestrator",
+        requestedAt: bobAt,
+        requestedBy: "bob",
+      },
+    ]);
     const stored = await readCurrentProfile(root);
-    expect(stored?.profiler.request).toMatchObject({
-      requestedBy: "bob",
-      guidance: "first\nsecond",
-    });
-    expect(stored?.profiler.request).not.toMatchObject({
-      requestedBy: "alice",
-      guidance: "first",
-    });
+    expect(stored?.profiler.request.requesters).toEqual([
+      {
+        source: "operator",
+        requestedAt: aliceAt,
+        requestedBy: "alice",
+      },
+      {
+        source: "orchestrator",
+        requestedAt: bobAt,
+        requestedBy: "bob",
+      },
+    ]);
+    expect(stored?.profiler.request.guidance).toBe("first\nsecond");
   }, 20_000);
 });
 

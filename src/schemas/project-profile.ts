@@ -294,12 +294,24 @@ export function mergeProfileGuidance(
   return normalizeProfileGuidance(`${left}\n${right}`);
 }
 
-/** Who asked for this profiling run, and any guidance they attached. Owned by
- * the daemon: the model never authors it, and it never bypasses validation. */
-export const ProjectProfileRequestSchema = z.strictObject({
+/** One requester who started or coalesced onto a profiling run. Each arrival
+ * keeps its own source, timestamp, and identity — coalescing must not overwrite
+ * earlier requesters or invent a hybrid of one person's stamp and another's name. */
+export const ProjectProfileRequesterSchema = z.strictObject({
   source: z.string().min(1),
   requestedAt: z.iso.datetime(),
   requestedBy: z.string().min(1),
+});
+export type ProjectProfileRequester = z.infer<
+  typeof ProjectProfileRequesterSchema
+>;
+
+/** Daemon-owned request provenance on a run (and, after accept, on the profile).
+ * `requesters` is every arrival in order; `guidance` is the merged investigation
+ * text (normalized, 4 KiB-capped). The model never authors this, and it never
+ * bypasses validation. */
+export const ProjectProfileRequestSchema = z.strictObject({
+  requesters: z.array(ProjectProfileRequesterSchema).min(1),
   /** Optional investigation guidance; already normalized and capped when stored. */
   guidance: z.string().nullable(),
 });
@@ -316,7 +328,7 @@ export const ProjectProfileProvenanceSchema = z.strictObject({
   runId: z.string().min(1),
   /** The vendor session the profile was authored in, when the tool exposes one. */
   toolSessionId: z.string().min(1).nullable(),
-  /** The requester who started (or coalesced onto) this run. */
+  /** Every requester who started or coalesced onto this run, plus merged guidance. */
   request: ProjectProfileRequestSchema,
 });
 export type ProjectProfileProvenance = z.infer<

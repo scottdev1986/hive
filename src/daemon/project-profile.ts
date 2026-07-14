@@ -750,9 +750,13 @@ function sealRunRequest(
   at: string,
 ): ProjectProfileRequest {
   return {
-    source: request?.source ?? "daemon",
-    requestedAt: at,
-    requestedBy: request?.requestedBy ?? profiler.agent,
+    requesters: [
+      {
+        source: request?.source ?? "daemon",
+        requestedAt: at,
+        requestedBy: request?.requestedBy ?? profiler.agent,
+      },
+    ],
     guidance: normalizeProfileGuidance(request?.guidance),
   };
 }
@@ -835,17 +839,18 @@ export async function beginProfiling(
   });
 }
 
-/** Append guidance onto an in-flight run's request provenance (coalesced
- * requesters). Returns null when no matching run is live. Guidance is
- * concatenated in arrival order up to the 4 KiB cap and never affects
- * validation. */
+/** Append a coalesced requester (and optional guidance) onto an in-flight run.
+ * Returns null when no matching run is live. Every requester keeps its own
+ * source/timestamp/identity; guidance is concatenated in arrival order up to
+ * the 4 KiB cap. Never affects validation. */
 export async function appendProfilingGuidance(
   root: string,
   runId: string,
   guidance: string | null | undefined,
-  meta?: { source?: string; requestedBy?: string },
+  meta: { source: string; requestedBy: string },
 ): Promise<ProjectProfileRequest | null> {
   const normalized = normalizeProfileGuidance(guidance);
+  const at = new Date().toISOString();
   return withProfileLock(root, async () => {
     const state = await readProfileState(root);
     if (
@@ -855,16 +860,20 @@ export async function appendProfilingGuidance(
     ) {
       return null;
     }
-    const merged = mergeProfileGuidance(state.run.request.guidance, normalized);
     const request: ProjectProfileRequest = {
-      source: meta?.source ?? state.run.request.source,
-      requestedAt: state.run.request.requestedAt,
-      requestedBy: meta?.requestedBy ?? state.run.request.requestedBy,
-      guidance: merged,
+      requesters: [
+        ...state.run.request.requesters,
+        {
+          source: meta.source,
+          requestedAt: at,
+          requestedBy: meta.requestedBy,
+        },
+      ],
+      guidance: mergeProfileGuidance(state.run.request.guidance, normalized),
     };
     await writeProfileState(root, {
       ...state,
-      updatedAt: new Date().toISOString(),
+      updatedAt: at,
       run: { ...state.run, request },
     });
     return request;
