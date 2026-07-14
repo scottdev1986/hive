@@ -320,6 +320,18 @@ class FailedSpawner implements Spawner {
   }
 }
 
+class StuckSpawner implements Spawner {
+  async spawn(request: SpawnRequest): Promise<AgentRecord> {
+    return agent({
+      status: "stuck",
+      writeRevoked: true,
+      category: request.category,
+      taskDescription: request.task,
+      failureReason: "process teardown could not be verified",
+    });
+  }
+}
+
 class RestartingSpawner extends StubSpawner {
   readonly restarts: Array<{ agent: AgentRecord; messageId: string }> = [];
   async restartForControl(
@@ -607,6 +619,53 @@ describe("HiveDaemon HTTP server", () => {
     }
   });
 
+  test("an unverified critical restart remains stuck instead of being declared dead", async () => {
+    const db = new HiveDatabase(join(home, "critical-restart-stuck.db"));
+    const quota = new QuotaService(
+      new QuotaLedger(db),
+      QuotaConfigSchema.parse({ enabled: false }),
+      () => new Date(timestamp),
+    );
+    class StuckRestartSpawner extends StubSpawner {
+      async restartForControl(value: AgentRecord): Promise<AgentRecord> {
+        db.upsertAgent({
+          ...value,
+          status: "stuck",
+          writeRevoked: true,
+          failureReason: "control process teardown could not be verified",
+        });
+        throw new Error("control process teardown could not be verified");
+      }
+    }
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new StuckRestartSpawner(),
+      tmux: new FakeDaemonTmux(),
+      tmuxSender: new SilentTmuxSender(db),
+      quota,
+    });
+    try {
+      db.insertAgent(agent());
+
+      const message = await daemon.delivery.send(
+        "orchestrator",
+        "maya",
+        "Pause.",
+        { priority: "critical", intent: "pause" },
+      );
+
+      expect(message.state).toEqual("queued");
+      expect(db.getAgentByName("maya")).toMatchObject({
+        status: "stuck",
+        writeRevoked: true,
+        failureReason: "control process teardown could not be verified",
+      });
+    } finally {
+      await daemon.stop();
+      db.close();
+    }
+  });
+
   test("repeated critical interruption settles the prior control run before starting the next", async () => {
     const db = new HiveDatabase(join(home, "repeated-critical.db"));
     const ledger = new QuotaLedger(db);
@@ -718,6 +777,87 @@ describe("HiveDaemon HTTP server", () => {
       expect(db.getMessage("recover-control")?.state).toEqual("injected");
       expect(ledger.getReservation(reservation.id)?.status).toEqual("active");
     } finally {
+      db.close();
+    }
+  });
+
+  test("control recovery never reuses a process whose teardown state is stuck", async () => {
+    const owned = Bun.spawn(["sleep", "60"], {
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    const unrelated = Bun.spawn(["sleep", "60"], {
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    const db = new HiveDatabase(join(home, "stuck-control-recovery.db"));
+    const quota = new QuotaService(
+      new QuotaLedger(db),
+      QuotaConfigSchema.parse({ enabled: false }),
+      () => new Date(timestamp),
+    );
+    const reservation = await quota.reserveControlRun({
+      agentName: "maya",
+      category: "simple_coding",
+      tool: "codex",
+      model: "gpt-5-codex",
+      controlMessageId: "recover-stuck-control",
+    });
+    quota.markStarted(reservation.id);
+    const tmux = new FakeDaemonTmux();
+    tmux.sessions.add("hive-maya");
+    const spawner = new RestartingSpawner();
+    const daemon = new HiveDaemon({
+      db,
+      spawner,
+      tmux,
+      tmuxSender: new SilentTmuxSender(db),
+      quota,
+      resourceRunners: {
+        panePids: async (session) => session === "hive-maya" ? [owned.pid] : [],
+        orphans: null,
+      },
+    });
+    try {
+      db.insertAgent(agent({
+        status: "stuck",
+        writeRevoked: true,
+        capabilityEpoch: 1,
+        controlMessageId: "recover-stuck-control",
+        controlQuotaReservationId: reservation.id,
+      }));
+      db.insertMessage({
+        id: "recover-stuck-control",
+        from: "orchestrator",
+        to: "maya",
+        body: "Pause.",
+        createdAt: timestamp,
+        deliveredAt: null,
+        priority: "critical",
+        intent: "pause",
+        state: "queued",
+        injectedAt: null,
+        acknowledgedAt: null,
+        appliedAt: null,
+        deadlineAt: "2026-07-09T12:01:00.000Z",
+        alertAt: null,
+        sequence: 1,
+        idempotencyKey: null,
+        capabilityEpoch: 1,
+      });
+
+      expect(await daemon.delivery.recoverCriticalControls()).toEqual(1);
+      expect(spawner.restarts).toHaveLength(1);
+      expect(await Promise.race([
+        owned.exited,
+        Bun.sleep(1_000).then(() => null),
+      ])).not.toBeNull();
+      expect(() => process.kill(unrelated.pid, 0)).not.toThrow();
+    } finally {
+      owned.kill("SIGKILL");
+      unrelated.kill("SIGKILL");
+      await Promise.all([owned.exited, unrelated.exited]);
+      await daemon.stop();
       db.close();
     }
   });
@@ -2629,6 +2769,41 @@ describe("HiveDaemon HTTP server", () => {
       expect(statuses[0]?.failureReason).toEqual(
         "Error: model not supported",
       );
+    } finally {
+      await client.close();
+      await daemon.stop();
+      db.close();
+    }
+  });
+
+  test("hive_spawn returns a tool error for an unverified stuck verdict", async () => {
+    const db = new HiveDatabase(join(home, "stuck-spawn.db"));
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new StuckSpawner(),
+      tmux: new FakeDaemonTmux(),
+    });
+    const transport = new StreamableHTTPClientTransport(
+      new URL("http://hive/mcp"),
+      { fetch: actingAs(daemon, "operator") },
+    );
+    const client = new Client({ name: "hive-test", version: "1.0.0" });
+    try {
+      await client.connect(transport);
+
+      const result = await client.callTool({
+        name: "hive_spawn",
+        arguments: { task: "Unverified launch", category: "simple_coding" },
+      });
+
+      expect(result.isError).toEqual(true);
+      expect(JSON.stringify(result.content)).toContain(
+        "process teardown could not be verified",
+      );
+      expect(db.getAgentByName("maya")).toMatchObject({
+        status: "stuck",
+        writeRevoked: true,
+      });
     } finally {
       await client.close();
       await daemon.stop();

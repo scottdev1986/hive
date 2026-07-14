@@ -224,7 +224,6 @@ type TmuxSessionManager = Pick<
   | "newSession"
   | "hasSession"
   | "capturePane"
-  | "killSession"
   // Readiness asks the process tree whether the binary it launched is still
   // running in the pane, because a redrawing screen alone cannot tell an agent
   // from the wrapper shell hive launches it behind (see readiness.ts).
@@ -278,7 +277,7 @@ export interface HiveSpawnerDependencies {
    */
   readRoutingPolicy?: () => RoutingPolicy;
   tmux: TmuxSessionManager;
-  stopSession?: StopAgentSession;
+  stopSession: StopAgentSession;
   createWorktree?: WorktreeCreator;
   unavailableAgentNames?: typeof unavailableAgentNames;
   removeWorktree?: WorktreeRemover;
@@ -1124,9 +1123,10 @@ export class HiveSpawner implements Spawner {
             }`,
           );
           this.dependencies.codexAppServer!.disconnect(agent.name);
-          await this.dependencies.tmux.killSession(agent.tmuxSession, {
-            ignoreMissing: true,
-          });
+          await this.stopVerifiedSession(
+            prepared.record,
+            `Codex app-server fallback for ${agent.name}`,
+          );
           const fallback = buildCodexSpawnCommand({
             daemonPort: this.dependencies.port,
             effort: identity.tool === "codex"
@@ -1164,26 +1164,42 @@ export class HiveSpawner implements Spawner {
       if (failureReason !== null) throw new Error(failureReason);
       this.dependencies.quota.markStarted(reservationId);
     } catch (error) {
-      // The cancel must not preempt the rest of this cleanup: the session
-      // kill and the control-paused record are what keep a failed restart
-      // from leaving a live process around a revoked agent.
-      await this.dependencies.quota.cancel(reservationId).catch(
-        (cancelError: unknown) => {
-          console.error(
-            `Hive failed to cancel control reservation ${reservationId}: ${
-              cancelError instanceof Error ? cancelError.message : "unknown error"
-            }`,
-          );
-        },
-      );
-      await this.dependencies.tmux.killSession(agent.tmuxSession, {
-        ignoreMissing: true,
-      }).catch(() => undefined);
       const reason = error instanceof Error
         ? error.message
         : "control acknowledgement process failed to launch";
+      const current = this.dependencies.db.getAgentById(prepared.record.id) ??
+        prepared.record;
+      if (current.status !== "stuck") {
+        await this.stopVerifiedSession(
+          current,
+          `Critical control ${message.id} restart failed`,
+        ).catch(() => undefined);
+      }
+      const stopped = this.dependencies.db.getAgentById(prepared.record.id) ??
+        prepared.record;
+      if (stopped.status === "stuck") {
+        const teardown = stopped.failureReason ??
+          "teardown could not be verified";
+        throw new Error(
+          `Recorded ${identity.tool}/${identity.model} could not be launched for ${agent.name}: ` +
+            (reason === teardown ? reason : `${reason}; ${teardown}`),
+        );
+      }
+      try {
+        await this.dependencies.quota.cancel(reservationId);
+      } catch (cancelError) {
+        const detail = cancelError instanceof Error
+          ? cancelError.message
+          : "quota cancellation failed";
+        const stuck = this.preserveStuck(
+          stopped,
+          `Critical control ${message.id} restart failed: ${reason}; ` +
+            `quota release could not be verified: ${detail}`,
+        );
+        throw new Error(stuck.failureReason!, { cause: cancelError });
+      }
       this.dependencies.db.insertAgent({
-        ...prepared.record,
+        ...stopped,
         status: "control-paused",
         writeRevoked: true,
         failureReason: `Critical control ${message.id} restart failed: ${reason}`,
@@ -2150,9 +2166,10 @@ export class HiveSpawner implements Spawner {
             }`,
           );
           this.dependencies.codexAppServer!.disconnect(name);
-          await this.dependencies.tmux.killSession(record.tmuxSession, {
-            ignoreMissing: true,
-          });
+          await this.stopVerifiedSession(
+            record,
+            `Codex app-server fallback for ${record.name}`,
+          );
           this.dependencies.db.insertAgent({
             ...record,
             status: "spawning",
@@ -2247,6 +2264,40 @@ export class HiveSpawner implements Spawner {
     return current === null || current.status === "spawning";
   }
 
+  private preserveStuck(
+    record: AgentRecord,
+    failureReason: string,
+  ): AgentRecord {
+    return this.dependencies.db.insertAgent({
+      ...(this.dependencies.db.getAgentById(record.id) ?? record),
+      status: "stuck",
+      writeRevoked: true,
+      failureReason,
+      lastEventAt: new Date().toISOString(),
+    });
+  }
+
+  private async stopVerifiedSession(
+    record: AgentRecord,
+    context: string,
+  ): Promise<void> {
+    try {
+      const outcome = await this.dependencies.stopSession(record);
+      if (outcome.survivors.length > 0) {
+        throw new Error(
+          `${outcome.survivors.length} process(es) survived teardown`,
+        );
+      }
+    } catch (error) {
+      const detail = error instanceof Error
+        ? error.message
+        : "unknown process state";
+      const reason = `${context}: teardown could not be verified: ${detail}`;
+      this.preserveStuck(record, reason);
+      throw new Error(reason, { cause: error });
+    }
+  }
+
   private async failSpawnIfStillSpawning(
     record: AgentRecord,
     worktree: CreatedWorktree,
@@ -2266,44 +2317,49 @@ export class HiveSpawner implements Spawner {
     failureReason: string,
     layer: LaunchFailureLayer,
   ): Promise<AgentRecord> {
+    const stopping = this.preserveStuck(
+      record,
+      `${failureReason}\nTeardown is pending verification.`,
+    );
+    try {
+      await this.stopVerifiedSession(
+        stopping,
+        `Spawn failure for ${record.name}`,
+      );
+    } catch {
+      return this.dependencies.db.getAgentById(record.id) ?? stopping;
+    }
+    if (record.quotaReservationId !== undefined) {
+      try {
+        // A model-layer failure reached the provider and may quarantine that
+        // exact route. Transport failures release capacity without claiming
+        // anything about the model.
+        await this.dependencies.quota?.cancel(
+          record.quotaReservationId,
+          new Date().toISOString(),
+          layer === "model" ? failureReason : undefined,
+        );
+      } catch (error) {
+        const detail = error instanceof Error
+          ? error.message
+          : "quota cancellation failed";
+        return this.preserveStuck(
+          stopping,
+          `${failureReason}\nQuota release could not be verified: ${detail}`,
+        );
+      }
+    }
     const failedAt = new Date().toISOString();
     let failed = this.dependencies.db.insertAgent({
-      ...record,
+      ...(this.dependencies.db.getAgentById(record.id) ?? stopping),
       status: "failed",
+      writeRevoked: true,
       failureReason,
       failedAt,
       lastEventAt: failedAt,
     });
-    if (record.quotaReservationId !== undefined) {
-      // Only a model-layer failure is evidence about the route: the CLI came up
-      // and the model refused, or never answered. Quota then passes that route
-      // over until it proves itself again — headroom alone was never enough to
-      // call a route eligible.
-      //
-      // A transport failure is not that. tmux, the shell, the filesystem, a
-      // binary that would not exec — none of them reached the model, and
-      // quarantining a model Hive never contacted is how a single over-long
-      // brief benched Opus for half an hour and quietly downgraded every spawn
-      // that followed. The reservation is still released; only the health signal
-      // is withheld.
-      await this.dependencies.quota?.cancel(
-        record.quotaReservationId,
-        failedAt,
-        layer === "model" ? failureReason : undefined,
-      );
-    }
     const cleanupErrors: string[] = [];
     let preserved: string | null = null;
-
-    try {
-      await this.dependencies.tmux.killSession(record.tmuxSession, {
-        ignoreMissing: true,
-      });
-    } catch (error) {
-      cleanupErrors.push(
-        error instanceof Error ? error.message : "tmux cleanup failed",
-      );
-    }
 
     // Never delete work to tidy up after ourselves.
     //

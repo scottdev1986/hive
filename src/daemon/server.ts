@@ -674,7 +674,8 @@ export class HiveDaemon {
       options.tmuxSender ?? new BunTmuxSender(),
       {
         interruptAndRestart: async (agent, message) => {
-          const sameControlAttempt = agent.controlMessageId === message.id &&
+          const sameControlAttempt = agent.status === "control-paused" &&
+            agent.controlMessageId === message.id &&
             agent.controlQuotaReservationId !== undefined &&
             this.quota?.ledger.getReservation(agent.controlQuotaReservationId)
                 ?.status === "active";
@@ -713,19 +714,21 @@ export class HiveDaemon {
           try {
             await this.spawner.restartForControl(agent, message);
           } catch (error) {
+            const current = this.db.getAgentById(agent.id) ?? agent;
+            if (current.status === "stuck") throw error;
             // The old writer is already gone, so rolling back across the OS
             // boundary is impossible. Finish the control into a coherent,
             // terminal fail-closed state and release what the ledger says this
             // agent still holds; a queued control must not strand capacity or
             // invite an identical recovery attempt forever.
             await this.settleAgentQuota(
-              this.db.getAgentById(agent.id) ?? agent,
+              current,
             ).catch(() => undefined);
             const reason = error instanceof Error
               ? error.message
               : "control acknowledgement process failed to launch";
             this.db.insertAgent({
-              ...(this.db.getAgentById(agent.id) ?? agent),
+              ...current,
               status: "failed",
               writeRevoked: true,
               failureReason: `Critical control ${message.id} restart failed: ${reason}`,
@@ -3768,9 +3771,12 @@ export class HiveDaemon {
             current.lastEventAt >= agent.lastEventAt
           ? current
           : this.db.upsertAgent(agent);
-        if (persisted.status === "failed") {
+        if (persisted.status === "failed" || persisted.status === "stuck") {
+          const outcome = persisted.status === "stuck"
+            ? "could not verify cleanup after spawn"
+            : "failed to spawn";
           throw new Error(
-            `Hive agent ${persisted.name} failed to spawn: ${
+            `Hive agent ${persisted.name} ${outcome}: ${
               persisted.failureReason ?? "unknown launch failure"
             }`,
           );
