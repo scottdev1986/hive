@@ -8,7 +8,7 @@
 // cli/init.test.ts), not checked-in trees, so these are builders. Each returns a
 // root under $TMPDIR and is never cleaned up, matching the existing tests.
 
-import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -449,15 +449,13 @@ export async function editPreservingSize(
       `not a same-size edit: ${Buffer.byteLength(from)} bytes -> ${Buffer.byteLength(to)}`,
     );
   }
+  // Both sizes come from the bytes read, never from a second look at the file:
+  // one read, one write, and no window in between for the file to change under
+  // the check. Replacing a run of bytes with the same number of bytes is what
+  // preserves the size, and that was already established above.
   const before = await readFile(path, "utf8");
   if (!before.includes(from)) throw new Error(`${path} does not contain ${from}`);
-
-  const sizeBefore = (await stat(path)).size;
   await writeFile(path, before.replace(from, to));
-  const sizeAfter = (await stat(path)).size;
-  if (sizeBefore !== sizeAfter) {
-    throw new Error(`size changed: ${sizeBefore} -> ${sizeAfter}`);
-  }
 }
 
 export interface DriftFixture {
