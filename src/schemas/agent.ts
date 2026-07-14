@@ -111,8 +111,8 @@ const AgentRecordShape = {
    * orchestrator to pile more work onto an agent it can see nothing about. A
    * live Codex agent that had done real work sat at 0% for exactly this reason.
    *
-   * Decision 7's recycle line and the orchestrator's reuse rule both read this,
-   * and both must treat null as "not eligible", never as "plenty of room".
+   * Hive has no automatic recycle actuator. The orchestrator may use this as
+   * one input to reuse, and must treat null as "not eligible", never as room.
    */
   contextPct: z.number().min(0).max(100).nullable(),
   // The context window Claude Code reported for this session via the
