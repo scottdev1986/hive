@@ -24,6 +24,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BunTmuxSender } from "../daemon/delivery";
 import { TmuxAdapter } from "../adapters/tmux";
+import { hiveInstanceSuffix } from "../daemon/tmux-sessions";
 
 const enabled = process.env.HIVE_E2E === "1" && Bun.which("tmux") !== null;
 if (!enabled) {
@@ -268,7 +269,15 @@ e2e("real hive CLI against a real daemon and real tmux", () => {
 
   test("workspace-feed streams NDJSON snapshots and stops cleanly", async () => {
     const feed = Bun.spawn(
-      [process.execPath, CLI, "workspace-feed", "--port", String(port)],
+      [
+        process.execPath,
+        CLI,
+        "workspace-feed",
+        "--port",
+        String(port),
+        "--instance-id",
+        hiveInstanceSuffix(hiveHome),
+      ],
       {
         cwd: repo,
         env,
