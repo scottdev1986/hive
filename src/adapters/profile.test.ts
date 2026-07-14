@@ -12,11 +12,11 @@ import {
   OVERRIDE_RELATIVE_PATH,
   overridePath,
   profilePath,
-  projectStateDir,
   rankPrimaryDoc,
   regenerateProfile,
   serializeProfile,
 } from "./profile";
+import { projectStateDir } from "../daemon/project-state";
 
 // The profile is Hive's own cache, so every test here runs against a throwaway
 // HIVE_HOME: the profiles land there, not in the synthetic repos, which is half

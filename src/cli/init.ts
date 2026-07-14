@@ -32,9 +32,9 @@ import { dirname, join } from "node:path";
 import {
   ensureProfile,
   loadDerivedProfile,
-  projectStateDir,
   regenerateProfile,
 } from "../adapters/profile";
+import { projectStateDir } from "../daemon/project-state";
 import {
   listMemoryFacts,
   writeMemoryFact,

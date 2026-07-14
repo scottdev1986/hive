@@ -8,8 +8,8 @@ import {
   GRAPHIFY_IGNORE_MARKER,
   runCommand,
 } from "../adapters/graphify";
-import { projectStateDir } from "../adapters/profile";
 import { getHiveHome } from "../daemon/db";
+import { projectStateDir } from "../daemon/project-state";
 import { hiveInstanceSuffix } from "../daemon/tmux-sessions";
 import { MachineMutationCoordinator } from "../daemon/mutation-lease";
 import { shippedSkillsFor } from "../skills/shipped";

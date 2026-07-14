@@ -48,7 +48,7 @@ import {
   runCommand,
   type CommandRunner,
 } from "../adapters/graphify";
-import { projectStateDir } from "../adapters/profile";
+import { projectStateDir } from "../daemon/project-state";
 import { nativeSkillDirectory, type SkillTool } from "../adapters/skills";
 import { CAPABILITY_PROVIDERS } from "../schemas";
 import { shippedSkillsFor } from "../skills/shipped";

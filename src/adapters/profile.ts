@@ -22,8 +22,7 @@ import {
   type ProfileOverride,
   type RepoProfile,
 } from "../schemas/profile";
-import { getHiveHome } from "../daemon/db";
-import { resolveHandshakeProject } from "../daemon/project-identity";
+import { projectStateDir } from "../daemon/project-state";
 import { HIVE_VERSION } from "../version";
 
 /** The human-owned override, committed, relative to the repo root. The derived
@@ -35,9 +34,6 @@ const isMissingFileError = (error: unknown): boolean =>
   error !== null &&
   "code" in error &&
   (error as { code?: unknown }).code === "ENOENT";
-
-// Resolve state through the primary worktree so linked agent worktrees share
-// one durable project identity and profile.
 
 /** Git helpers — cheap, best-effort. A directory that is not a Git checkout
  * profiles fine; it is simply its own project. */
@@ -54,24 +50,6 @@ function git(root: string, args: string[]): string | null {
   } catch {
     return null;
   }
-}
-
-/** The main working tree of `root`'s repo. `--git-common-dir` is the one
- * question whose answer is shared by every worktree of a repo: it names the main
- * `.git`, whose parent is the checkout the profile belongs to. */
-function primaryWorktree(root: string): string {
-  const common = git(root, [
-    "rev-parse",
-    "--path-format=absolute",
-    "--git-common-dir",
-  ]);
-  return common === null ? root : dirname(common);
-}
-
-/** The directory Hive keeps this project's derived state in. */
-export function projectStateDir(root: string): string {
-  const { hiveUuid } = resolveHandshakeProject(primaryWorktree(root));
-  return join(getHiveHome(), "projects", hiveUuid);
 }
 
 export function profilePath(root: string): string {

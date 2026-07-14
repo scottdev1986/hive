@@ -31,7 +31,7 @@ import {
   graphifyPlatformKey,
   type GraphifyArtifact,
 } from "./graphify-artifacts";
-import { projectStateDir } from "./profile";
+import { projectStateDir } from "../daemon/project-state";
 import { withFileLock } from "./file-lock";
 
 /** The exact version the embedded lock pins. The lock is the single source of
