@@ -51,8 +51,11 @@ export function resolveHandshakeProject(directory: string) {
 function persistRegistry(registry: ProjectRegistry): void {
   mkdirSync(getHiveHome(), { recursive: true });
   // Write-then-rename so a crash mid-write cannot leave a half-written file
-  // for the next boot's corruption path to quarantine.
-  const temp = `${path()}.tmp`;
+  // for the next boot's corruption path to quarantine. The temp name carries the
+  // pid: a fixed one is not a private staging file at all, and two processes
+  // resolving identity at the same moment would rename each other's temp out
+  // from under themselves — the second `renameSync` dying with ENOENT.
+  const temp = `${path()}.${process.pid}.tmp`;
   writeFileSync(temp, JSON.stringify(registry.snapshot()));
   renameSync(temp, path());
 }

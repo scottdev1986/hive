@@ -357,6 +357,60 @@ describe("lifecycle", () => {
     expect(await beginProfiling(root, PROFILER, { ifIdle: true })).not.toBeNull();
   });
 
+  test("concurrent ifIdle begins mint exactly one run", async () => {
+    const root = await polyglotRepo();
+
+    // The bug this exists to catch: reading the state and then beginning is two
+    // steps with an await between them, so four callers can all be told "nothing
+    // is profiling" before any of them has written a run. Compare-and-begin has
+    // to be one step.
+    const handles = await Promise.all([
+      beginProfiling(root, PROFILER, { ifIdle: true }),
+      beginProfiling(root, PROFILER, { ifIdle: true }),
+      beginProfiling(root, PROFILER, { ifIdle: true }),
+      beginProfiling(root, PROFILER, { ifIdle: true }),
+    ]);
+
+    const started = handles.filter((handle) => handle !== null);
+    expect(started).toHaveLength(1);
+
+    const state = await readProfileState(root);
+    expect(state.lifecycle).toBe("profiling");
+    expect(state.run?.runId).toBe(started[0]!.runId);
+  });
+
+  test("concurrent ifIdle begins in separate processes mint exactly one run", async () => {
+    const root = await polyglotRepo();
+    // Resolve the project identity once up front: the children must contend for
+    // the profile lock, not race to create the registry entry.
+    projectHiveUuid(root);
+
+    const script = `
+      import { beginProfiling } from ${JSON.stringify(join(import.meta.dir, "project-profile.ts"))};
+      const handle = await beginProfiling(${JSON.stringify(root)}, ${JSON.stringify(PROFILER)}, { ifIdle: true });
+      console.log(handle === null ? "coalesced" : "started");
+    `;
+    const children = await Promise.all(
+      [0, 1, 2, 3].map(async () => {
+        const child = Bun.spawn(["bun", "-e", script], {
+          env: { ...process.env, HIVE_HOME: hiveHome },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [out] = await Promise.all([
+          new Response(child.stdout).text(),
+          child.exited,
+        ]);
+        return out.trim();
+      }),
+    );
+
+    // A real lock, held across real processes — an event-loop-only guard would
+    // let all four through here.
+    expect(children.filter((line) => line === "started")).toHaveLength(1);
+    expect(children.filter((line) => line === "coalesced")).toHaveLength(3);
+  }, 30_000);
+
   test("a dead run cannot fail the run that replaced it", async () => {
     const root = await polyglotRepo();
     const first = await beginProfiling(root, PROFILER);

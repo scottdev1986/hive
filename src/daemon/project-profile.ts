@@ -32,6 +32,7 @@ import {
   type ProjectProfileLifecycle,
   type ProjectProfileState,
 } from "../schemas/project-profile";
+import { withFileLock } from "../adapters/file-lock";
 import { projectHiveUuid, projectStateDir } from "./project-state";
 import {
   validateProfileSubmission,
@@ -267,6 +268,24 @@ async function writeProfileState(
   await writeJsonAtomic(profileStatePath(root), state);
 }
 
+/** Serialise every read-modify-write of `state.json`.
+ *
+ * Reading the state and then acting on it is not one step, and the `await`
+ * between the two halves is all a second caller needs to slip through: two
+ * launchers asking "is anything profiling?" at the same time would both be told
+ * no, and both start. One profiling job per project cannot be enforced by a
+ * caller that checks first — only by a compare-and-begin that no one can be
+ * interleaved with. The lock is the repo's own `withFileLock`, so it holds
+ * across processes too, not merely across this daemon's event loop. */
+async function withProfileLock<T>(
+  root: string,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const directory = projectProfileDir(root);
+  await mkdir(directory, { recursive: true });
+  return withFileLock(join(directory, "profile.lock"), operation);
+}
+
 // --- lifecycle --------------------------------------------------------------
 
 export interface ProfilerIdentity {
@@ -314,32 +333,37 @@ export async function beginProfiling(
   profiler: ProfilerIdentity,
   options?: { ifIdle?: boolean },
 ): Promise<ProfileRunHandle | null> {
-  const previous = await readProfileState(root);
-  if (
-    options?.ifIdle === true &&
-    previous.lifecycle === "profiling" &&
-    previous.run !== null
-  ) {
-    return null;
-  }
-  const inventory = await computeProfileInventory(root);
-  const runId = randomUUID();
-  await writeProfileState(root, {
-    ...previous,
-    schemaVersion: PROJECT_PROFILE_SCHEMA_VERSION,
-    lifecycle: "profiling",
-    hiveUuid: projectHiveUuid(root),
-    updatedAt: new Date().toISOString(),
-    run: {
-      runId,
-      agent: profiler.agent,
-      provider: profiler.provider,
-      model: profiler.model,
-      inputDigest: inventory.digest,
-      startedAt: new Date().toISOString(),
-    },
+  return withProfileLock(root, async () => {
+    const previous = await readProfileState(root);
+    if (
+      options?.ifIdle === true &&
+      previous.lifecycle === "profiling" &&
+      previous.run !== null
+    ) {
+      return null;
+    }
+    // Inside the lock, so the digest is the tree as it was when this run was
+    // minted, and so the check above and the write below cannot be split by a
+    // concurrent begin.
+    const inventory = await computeProfileInventory(root);
+    const runId = randomUUID();
+    await writeProfileState(root, {
+      ...previous,
+      schemaVersion: PROJECT_PROFILE_SCHEMA_VERSION,
+      lifecycle: "profiling",
+      hiveUuid: projectHiveUuid(root),
+      updatedAt: new Date().toISOString(),
+      run: {
+        runId,
+        agent: profiler.agent,
+        provider: profiler.provider,
+        model: profiler.model,
+        inputDigest: inventory.digest,
+        startedAt: new Date().toISOString(),
+      },
+    });
+    return { runId, inputDigest: inventory.digest, inventory };
   });
-  return { runId, inputDigest: inventory.digest, inventory };
 }
 
 export type ProfileSubmitResult =
@@ -363,7 +387,14 @@ export type ProfileSubmitResult =
  * leave a state file swearing a profile is current while `current.json` still
  * holds the old one, which is a lie, and lies do not recover.
  *
- * On rejection nothing is written to `current.json` at all. */
+ * On rejection nothing is written to `current.json` at all.
+ *
+ * Validation runs *outside* the lock — it hashes the tree and stats every cited
+ * path, and holding a lock for that would stall every other caller. Only the
+ * decision is locked, and inside it the run is re-read: whatever was true when
+ * validation started, the profile lands only if the run it was authored for is
+ * still the live one. A run superseded while its profile was being checked
+ * cannot land on top of the run that replaced it. */
 export async function submitProfile(
   root: string,
   payload: unknown,
@@ -382,47 +413,67 @@ export async function submitProfile(
       lifecycle: state.lifecycle,
     };
   }
+  const validatedAgainst = state.run;
 
   const inventory = await computeProfileInventory(root);
   const validation = await validateProfileSubmission(payload, {
     root,
     hiveUuid: projectHiveUuid(root),
-    run: state.run,
+    run: validatedAgainst,
     subject,
     inventoryDigest: inventory.digest,
   });
 
-  if (!validation.ok) {
-    // Only the agent that owns the run can change its state. Otherwise any
-    // authenticated caller could end someone else's profiling run by submitting
-    // rubbish to it — a rejected submission would write `failed` over a run that
-    // is still perfectly alive.
-    const ownsRun = state.run.agent === subject;
-    return {
-      status: "rejected",
-      rejections: validation.rejections,
-      lifecycle: ownsRun
-        ? await recordRejection(root, state, validation.rejections)
-        : state.lifecycle,
-    };
-  }
+  return withProfileLock(root, async () => {
+    const fresh = await readProfileState(root);
+    if (fresh.run === null || fresh.run.runId !== validatedAgainst.runId) {
+      // The run moved on while this submission was being validated. Its result
+      // describes a run nobody is waiting for, and writing it would clobber
+      // whatever replaced it.
+      return {
+        status: "rejected" as const,
+        rejections: [
+          {
+            code: "superseded" as const,
+            message: `Run ${validatedAgainst.runId} was superseded while its profile was being validated.`,
+          },
+        ],
+        lifecycle: fresh.lifecycle,
+      };
+    }
 
-  const profile = validation.profile;
-  await writeJsonAtomic(currentProfilePath(root), profile);
-  await writeProfileState(root, {
-    ...state,
-    lifecycle: "current",
-    updatedAt: new Date().toISOString(),
-    run: null,
-    profiled: {
-      at: new Date().toISOString(),
-      inputDigest: profile.project.inputDigest,
-      profiler: profile.profiler,
-    },
-    reprofile: null,
-    failure: null,
+    if (!validation.ok) {
+      // Only the agent that owns the run can change its state. Otherwise any
+      // authenticated caller could end someone else's profiling run by
+      // submitting rubbish to it — a rejected submission would write `failed`
+      // over a run that is still perfectly alive.
+      const ownsRun = fresh.run.agent === subject;
+      return {
+        status: "rejected" as const,
+        rejections: validation.rejections,
+        lifecycle: ownsRun
+          ? await recordRejection(root, fresh, validation.rejections)
+          : fresh.lifecycle,
+      };
+    }
+
+    const profile = validation.profile;
+    await writeJsonAtomic(currentProfilePath(root), profile);
+    await writeProfileState(root, {
+      ...fresh,
+      lifecycle: "current",
+      updatedAt: new Date().toISOString(),
+      run: null,
+      profiled: {
+        at: new Date().toISOString(),
+        inputDigest: profile.project.inputDigest,
+        profiler: profile.profiler,
+      },
+      reprofile: null,
+      failure: null,
+    });
+    return { status: "accepted" as const, profile };
   });
-  return { status: "accepted", profile };
 }
 
 /** Where a rejected submission leaves the project.
@@ -498,18 +549,20 @@ export async function failProfiling(
   runId: string,
   reason: string,
 ): Promise<ProjectProfileState> {
-  const state = await readProfileState(root);
-  if (state.run === null || state.run.runId !== runId) return state;
-  const now = new Date().toISOString();
-  const next: ProjectProfileState = {
-    ...state,
-    lifecycle: "failed",
-    updatedAt: now,
-    run: null,
-    failure: { at: now, code: "profiler-failed", detail: reason, runId },
-  };
-  await writeProfileState(root, next);
-  return next;
+  return withProfileLock(root, async () => {
+    const state = await readProfileState(root);
+    if (state.run === null || state.run.runId !== runId) return state;
+    const now = new Date().toISOString();
+    const next: ProjectProfileState = {
+      ...state,
+      lifecycle: "failed",
+      updatedAt: now,
+      run: null,
+      failure: { at: now, code: "profiler-failed", detail: reason, runId },
+    };
+    await writeProfileState(root, next);
+    return next;
+  });
 }
 
 /** `current → stale`: the profile's own staleness inputs moved, so it should be
@@ -527,14 +580,16 @@ export async function markProfileStale(
   source: string,
   reason: string,
 ): Promise<ProjectProfileState> {
-  const state = await readProfileState(root);
-  if (state.lifecycle !== "current") return state;
-  const next: ProjectProfileState = {
-    ...state,
-    lifecycle: "stale",
-    updatedAt: new Date().toISOString(),
-    reprofile: { at: new Date().toISOString(), source, reason },
-  };
-  await writeProfileState(root, next);
-  return next;
+  return withProfileLock(root, async () => {
+    const state = await readProfileState(root);
+    if (state.lifecycle !== "current") return state;
+    const next: ProjectProfileState = {
+      ...state,
+      lifecycle: "stale",
+      updatedAt: new Date().toISOString(),
+      reprofile: { at: new Date().toISOString(), source, reason },
+    };
+    await writeProfileState(root, next);
+    return next;
+  });
 }
