@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   EffortTargetSchema,
+  ROUTING_CATEGORIES,
   RoutingPolicySchema,
   SelectionModeSchema,
 } from "./routing-policy";
@@ -57,6 +58,30 @@ describe("routing policy wire contract (shared with the Swift Settings decoder)"
     // An effort mode the fixture never carries is a mode the Swift decoder is
     // never tested against — exactly how "never-configured" shipped broken.
     expect(fixtureModes).toEqual(schemaModes);
+  });
+
+  /**
+   * THE CATEGORY HALF OF THE HANDSHAKE, and the reason it exists: the effort
+   * modes got this guard after they shipped broken, and CATEGORIES then drifted
+   * the same way, unguarded. `standard_coding` lived in this schema for months
+   * while the Swift enum had never heard of it — so the Settings screen, which
+   * builds its cards from TaskCategory.allCases, could not show or edit that
+   * chain, while the daemon happily routed real work through it. Two green
+   * suites, one broken wire, exactly as before.
+   *
+   * So: add a category to the schema and THIS test fails until the fixture
+   * carries a chain for it, at which point the Swift parity test is forced to
+   * name it too.
+   */
+  test("the fixture exercises EVERY routing category the daemon can emit", () => {
+    const schemaCategories = [...ROUTING_CATEGORIES].sort();
+
+    const policy = RoutingPolicySchema.parse(fixture);
+    const fixtureCategories = Object.keys(policy.chains).sort();
+
+    // A category the fixture never carries is a category the Swift decoder is
+    // never tested against — and a chain the user may never get to configure.
+    expect(fixtureCategories).toEqual(schemaCategories);
   });
 
   test("the fixture exercises EVERY selection mode the daemon can emit", () => {

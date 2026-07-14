@@ -16,6 +16,7 @@ public enum TaskCategory: String, CaseIterable, Codable, Sendable {
     case lightResearch = "light_research"
     case heavyResearch = "heavy_research"
     case simpleCoding = "simple_coding"
+    case standardCoding = "standard_coding"
     case complexCoding = "complex_coding"
     case codeReview = "code_review"
     case planning = "planning"
@@ -28,6 +29,7 @@ public enum TaskCategory: String, CaseIterable, Codable, Sendable {
         case .lightResearch: return "Light research"
         case .heavyResearch: return "Heavy research / synthesis"
         case .simpleCoding: return "Simple coding"
+        case .standardCoding: return "Standard coding"
         case .complexCoding: return "Complex coding"
         case .codeReview: return "Code review"
         case .planning: return "Planning"
@@ -462,6 +464,7 @@ public enum ProvisionalPolicyStore {
             (.planning, "high", "Strong reasoning first."),
             (.heavyResearch, "high", "Strong reasoning / synthesis at high effort."),
             (.simpleCoding, "medium", "Vendor defaults at medium effort for routine changes."),
+            (.standardCoding, "medium", "The everyday coding default: vendor defaults at medium effort."),
             (.lightResearch, "low", "Cheap and fast first; spreads work off the coding pools."),
             (.summarization, "low", "Cheapest competent choice first."),
             (.profiling, "medium", "Read-only pass over a codebase; mid effort."),

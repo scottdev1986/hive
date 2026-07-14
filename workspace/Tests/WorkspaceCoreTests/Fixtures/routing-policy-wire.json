@@ -52,6 +52,62 @@
         "effort": { "mode": "never-configured" }
       }
     ],
+    "standard_coding": [
+      {
+        "provider": "codex",
+        "model": "gpt-5.6-sol",
+        "effort": { "mode": "provider-controlled" }
+      }
+    ],
+    "simple_coding": [
+      {
+        "provider": "codex",
+        "model": "gpt-5.6-sol",
+        "effort": { "mode": "exact", "value": "low" }
+      }
+    ],
+    "code_review": [
+      {
+        "provider": "claude",
+        "model": "claude-sonnet-5",
+        "effort": { "mode": "exact", "value": "high" }
+      }
+    ],
+    "planning": [
+      {
+        "provider": "claude",
+        "model": "claude-opus-4-8",
+        "effort": { "mode": "hive-decides" }
+      }
+    ],
+    "debugging": [
+      {
+        "provider": "claude",
+        "model": "claude-fable-5",
+        "effort": { "mode": "exact", "value": "high" }
+      }
+    ],
+    "heavy_research": [
+      {
+        "provider": "claude",
+        "model": "claude-fable-5",
+        "effort": { "mode": "provider-controlled" }
+      }
+    ],
+    "light_research": [
+      {
+        "provider": "grok",
+        "model": "grok-4.5",
+        "effort": { "mode": "none" }
+      }
+    ],
+    "summarization": [
+      {
+        "provider": "grok",
+        "model": "grok-4.5",
+        "effort": { "mode": "exact", "value": "low" }
+      }
+    ],
     "profiling": [
       {
         "provider": "codex",

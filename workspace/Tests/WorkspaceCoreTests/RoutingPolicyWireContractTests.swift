@@ -81,6 +81,52 @@ final class RoutingPolicyWireContractTests: XCTestCase {
             "Settings enumerates allCases; a category missing there is uneditable")
     }
 
+    /// THE CATEGORY PARITY GUARD, and the drift it exists to make impossible.
+    ///
+    /// `standard_coding` sat in the daemon's schema for months while this enum
+    /// had never heard of it. Settings builds one card per TaskCategory.allCases,
+    /// so the chain simply had no card: the user could not see it, could not
+    /// configure it, and the daemon routed real work through it anyway — which
+    /// is how a standard_coding spawn came to refuse every link with no way for
+    /// the user to fix it. Both suites were green the whole time, because each
+    /// side only ever checked its own half.
+    ///
+    /// The fixture is the handshake. Its keys are pinned to the daemon's full
+    /// category set by the TS twin (routing-policy.wire-contract.test.ts), so
+    /// this assertion transitively pins THIS enum to the daemon's schema. Add a
+    /// category on either side alone and one of the two tests goes red.
+    func testEveryDaemonCategoryIsNameableByThisApp() throws {
+        let document = try RoutingPolicyDocument.decode(from: try wireFixture())
+
+        // "default" is the user-authored global fallback. It is a CATEGORY key
+        // in the store but not a task kind, so the app models it as
+        // `defaultChain` rather than a TaskCategory — the one deliberate
+        // asymmetry, asserted here so it stays deliberate.
+        let wireCategories = Set(document.chains.keys).subtracting(["default"])
+        let appCategories = Set(TaskCategory.allCases.map(\.rawValue))
+
+        XCTAssertEqual(
+            appCategories, wireCategories,
+            """
+            TaskCategory and the daemon's routing categories have drifted. \
+            A daemon category this app cannot name is a chain the user can \
+            neither see nor edit while work routes through it; an app category \
+            the daemon does not know is a control that writes a chain the \
+            daemon will reject.
+            """)
+        XCTAssertFalse(
+            document.defaultChain.isEmpty,
+            "the global fallback chain must survive the wire like any other")
+
+        // Every category the app offers resolves to the chain the daemon sent:
+        // parity of NAMES is not parity of READS.
+        for category in TaskCategory.allCases {
+            XCTAssertFalse(
+                document.chain(for: category).isEmpty,
+                "\(category.rawValue) decoded to an empty chain — the card would render blank")
+        }
+    }
+
     /// FORWARD COMPATIBILITY: a future daemon adds an effort mode and a field
     /// this build has never heard of. The document must still decode — one
     /// unknown value must never disable persistence for everything else.
