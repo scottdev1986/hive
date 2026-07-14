@@ -14,6 +14,7 @@
 //   ~/.hive/projects/<hiveUuid>/profile/current.json   last validated profile
 //   ~/.hive/projects/<hiveUuid>/profile/state.json     lifecycle, digest, run
 import { createHash, randomUUID } from "node:crypto";
+import { constants } from "node:fs";
 import {
   lstat,
   mkdir,
@@ -24,7 +25,7 @@ import {
   rename,
   unlink,
 } from "node:fs/promises";
-import { dirname, join, relative } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import {
   PROJECT_PROFILE_SCHEMA_VERSION,
   ProjectProfileSchema,
@@ -62,9 +63,12 @@ export function profileStatePath(root: string): string {
 
 export interface ProfileInventoryEntry {
   path: string;
+  type: "file" | "symlink";
   size: number;
-  /** sha256 of the file's contents; of the link target, for a symlink. */
+  /** sha256 of file contents or of an allowed repo-relative link target. */
   contentDigest: string;
+  linkTarget?: string;
+  contentOmissionReason?: "binary" | "outside-project";
 }
 
 export interface ProfileInventory {
@@ -87,18 +91,153 @@ const UNREAD_DIRECTORIES = new Set([
   ".git",
   ".hive",
   "node_modules",
+  "bower_components",
+  ".pnpm-store",
+  ".yarn",
+  "vendor",
+  "vendors",
   "dist",
   "build",
+  "out",
   "target",
-  "vendor",
+  "coverage",
+  ".next",
+  ".nuxt",
+  ".cache",
+  ".parcel-cache",
+  ".turbo",
   ".venv",
+  "venv",
+  "__pycache__",
+  ".tox",
+  ".mypy_cache",
+  ".pytest_cache",
+  ".gradle",
 ]);
 
-const isUnread = (path: string): boolean =>
-  path.split("/").some((segment) => UNREAD_DIRECTORIES.has(segment));
+const CREDENTIAL_DIRECTORIES = new Set([
+  ".ssh",
+  ".aws",
+  ".azure",
+  ".kube",
+  ".gnupg",
+  ".docker",
+]);
 
-function trackedAndUntrackedFiles(root: string): string[] | null {
+const MAX_INVENTORY_FILES = 100_000;
+const MAX_INVENTORY_BYTES = 2 * 1024 * 1024 * 1024;
+const MAX_INVENTORY_PATH_SEGMENTS = 64;
+const MAX_INVENTORY_MILLISECONDS = 60_000;
+
+export class ProfileInventoryLimitError extends Error {
+  readonly code = "inventory-limit" as const;
+
+  constructor(readonly limit: "files" | "bytes" | "path-segments" | "time") {
+    super(`inventory-limit: exceeded ${limit}`);
+    this.name = "ProfileInventoryLimitError";
+  }
+}
+
+interface InventoryBudget {
+  startedAt: number;
+  hashedBytes: number;
+}
+
+function assertWithinInventoryTime(budget: InventoryBudget): void {
+  if (performance.now() - budget.startedAt > MAX_INVENTORY_MILLISECONDS) {
+    throw new ProfileInventoryLimitError("time");
+  }
+}
+
+function reserveHashedBytes(budget: InventoryBudget, bytes: number): void {
+  assertWithinInventoryTime(budget);
+  if (budget.hashedBytes + bytes > MAX_INVENTORY_BYTES) {
+    throw new ProfileInventoryLimitError("bytes");
+  }
+  budget.hashedBytes += bytes;
+}
+
+function normalizeInventoryPath(path: string): string | null {
+  if (path.length === 0 || path.includes("\0") || isAbsolute(path)) return null;
+  const normalized = path.split(sep).join("/");
+  const segments = normalized.split("/");
+  if (
+    normalized.startsWith("/") ||
+    segments.some((segment) => segment.length === 0 || segment === "." || segment === "..")
+  ) {
+    return null;
+  }
+  return normalized;
+}
+
+function isKnownSecretBasename(name: string): boolean {
+  const lower = name.toLowerCase();
+  if (lower === ".env.example" || lower === ".env.sample") return false;
+  if (lower === ".env" || lower.startsWith(".env.")) return true;
+  if (
+    lower === ".npmrc" ||
+    lower === ".pypirc" ||
+    lower === ".netrc" ||
+    lower === ".git-credentials" ||
+    lower === "id_rsa" ||
+    lower === "id_ed25519" ||
+    lower.startsWith("credentials") ||
+    lower.startsWith("secrets") ||
+    lower.endsWith(".pem") ||
+    lower.endsWith(".key") ||
+    lower.endsWith(".p12") ||
+    lower.endsWith(".pfx")
+  ) {
+    return true;
+  }
+  const compact = lower.replace(/[^a-z0-9]/g, "");
+  return compact.includes("privatekey") || compact.includes("serviceaccount");
+}
+
+function isUnread(path: string): boolean {
+  const segments = path.split("/");
+  if (
+    segments.some(
+      (segment) =>
+        UNREAD_DIRECTORIES.has(segment) || CREDENTIAL_DIRECTORIES.has(segment),
+    )
+  ) {
+    return true;
+  }
+  if (
+    segments.some(
+      (segment, index) => segment === ".config" && segments[index + 1] === "gcloud",
+    )
+  ) {
+    return true;
+  }
+  return isKnownSecretBasename(segments.at(-1)!);
+}
+
+function collectCandidate(
+  path: string,
+  candidates: Set<string>,
+  budget: InventoryBudget,
+): void {
+  assertWithinInventoryTime(budget);
+  const normalized = normalizeInventoryPath(path);
+  if (normalized === null || isUnread(normalized)) return;
+  if (normalized.split("/").length > MAX_INVENTORY_PATH_SEGMENTS) {
+    throw new ProfileInventoryLimitError("path-segments");
+  }
+  if (!candidates.has(normalized) && candidates.size === MAX_INVENTORY_FILES) {
+    throw new ProfileInventoryLimitError("files");
+  }
+  candidates.add(normalized);
+}
+
+function trackedAndUntrackedFiles(
+  root: string,
+  budget: InventoryBudget,
+): Set<string> | null {
   try {
+    assertWithinInventoryTime(budget);
+    const remaining = MAX_INVENTORY_MILLISECONDS - (performance.now() - budget.startedAt);
     const result = Bun.spawnSync(
       [
         "git",
@@ -110,29 +249,69 @@ function trackedAndUntrackedFiles(root: string): string[] | null {
         "--others",
         "--exclude-standard",
       ],
-      { stdout: "pipe", stderr: "ignore", timeout: 30_000, killSignal: "SIGKILL" },
+      {
+        stdout: "pipe",
+        stderr: "ignore",
+        timeout: Math.max(1, Math.min(30_000, remaining)),
+        killSignal: "SIGKILL",
+      },
     );
     if (result.exitCode !== 0) return null;
-    return result.stdout
-      .toString()
-      .split("\0")
-      .filter((path) => path.length > 0);
-  } catch {
+    const candidates = new Set<string>();
+    for (const path of result.stdout.toString().split("\0")) {
+      if (path.length > 0) collectCandidate(path, candidates, budget);
+    }
+    return candidates;
+  } catch (error) {
+    if (error instanceof ProfileInventoryLimitError) throw error;
     return null;
   }
 }
 
-async function walkFiles(root: string, directory: string): Promise<string[]> {
-  const found: string[] = [];
+async function walkFiles(
+  directory: string,
+  relativeDirectory: string,
+  candidates: Set<string>,
+  budget: InventoryBudget,
+): Promise<void> {
+  assertWithinInventoryTime(budget);
   for (const entry of await readdir(directory, { withFileTypes: true })) {
-    if (UNREAD_DIRECTORIES.has(entry.name)) continue;
+    assertWithinInventoryTime(budget);
     const full = join(directory, entry.name);
+    const path = relativeDirectory
+      ? `${relativeDirectory}/${entry.name}`
+      : entry.name;
+    const normalized = normalizeInventoryPath(path);
+    if (normalized === null || isUnread(normalized)) continue;
     // `withFileTypes` reports a symlink as a symlink, not as what it points at,
     // so a link to a directory outside the tree is never descended into.
-    if (entry.isDirectory()) found.push(...(await walkFiles(root, full)));
-    else found.push(relative(root, full));
+    if (entry.isDirectory()) {
+      if (normalized.split("/").length >= MAX_INVENTORY_PATH_SEGMENTS) {
+        throw new ProfileInventoryLimitError("path-segments");
+      }
+      await walkFiles(full, normalized, candidates, budget);
+    } else {
+      collectCandidate(normalized, candidates, budget);
+    }
   }
-  return found;
+}
+
+async function hasSafeParentChain(
+  root: string,
+  path: string,
+  budget: InventoryBudget,
+): Promise<boolean> {
+  let directory = root;
+  for (const segment of path.split("/").slice(0, -1)) {
+    assertWithinInventoryTime(budget);
+    directory = join(directory, segment);
+    try {
+      if (!(await lstat(directory)).isDirectory()) return false;
+    } catch {
+      return false;
+    }
+  }
+  return true;
 }
 
 /** Fingerprint one file without following it out of the project and without
@@ -142,8 +321,11 @@ async function walkFiles(root: string, directory: string): Promise<string[]> {
 async function fingerprintFile(
   root: string,
   path: string,
+  budget: InventoryBudget,
 ): Promise<ProfileInventoryEntry | null> {
-  const full = join(root, path);
+  assertWithinInventoryTime(budget);
+  if (!(await hasSafeParentChain(root, path, budget))) return null;
+  const full = resolve(root, path);
   let entry: Awaited<ReturnType<typeof lstat>>;
   try {
     entry = await lstat(full);
@@ -152,15 +334,93 @@ async function fingerprintFile(
     // will read either.
     return null;
   }
-  const hasher = createHash("sha256");
   if (entry.isSymbolicLink()) {
-    hasher.update(`symlink:${await readlink(full)}`);
-  } else if (entry.isFile()) {
-    for await (const chunk of Bun.file(full).stream()) hasher.update(chunk);
-  } else {
-    return null; // sockets, fifos: not repo input
+    let target: string;
+    try {
+      target = await readlink(full);
+    } catch {
+      return null;
+    }
+    const resolvedTarget = resolve(dirname(full), target);
+    const relativeTarget = relative(root, resolvedTarget).split(sep).join("/");
+    if (
+      relativeTarget.length === 0 ||
+      isAbsolute(relativeTarget) ||
+      relativeTarget.split("/").some((segment) => segment === "..")
+    ) {
+      return {
+        path,
+        type: "symlink",
+        size: entry.size,
+        contentDigest: createHash("sha256").update("outside-project").digest("hex"),
+        contentOmissionReason: "outside-project",
+      };
+    }
+    reserveHashedBytes(budget, Buffer.byteLength(relativeTarget));
+    return {
+      path,
+      type: "symlink",
+      size: entry.size,
+      contentDigest: createHash("sha256").update(relativeTarget).digest("hex"),
+      linkTarget: relativeTarget,
+    };
   }
-  return { path, size: entry.size, contentDigest: hasher.digest("hex") };
+  if (!entry.isFile()) return null; // sockets, fifos: not repo input
+
+  let handle: Awaited<ReturnType<typeof open>> | undefined;
+  try {
+    // O_NOFOLLOW closes the lstat/open race: replacing the file with a symlink
+    // cannot make the inventory open its target.
+    handle = await open(full, constants.O_RDONLY | constants.O_NOFOLLOW);
+    const opened = await handle.stat();
+    if (!opened.isFile()) return null;
+    reserveHashedBytes(budget, opened.size);
+
+    const hasher = createHash("sha256");
+    const decoder = new TextDecoder("utf-8", { fatal: true });
+    let binary = false;
+    let bytesRead = 0;
+    let reservedBytes = opened.size;
+    for await (const chunk of handle.createReadStream({ autoClose: false })) {
+      assertWithinInventoryTime(budget);
+      const bytes = chunk as Buffer;
+      bytesRead += bytes.byteLength;
+      if (bytesRead > reservedBytes) {
+        reserveHashedBytes(budget, bytesRead - reservedBytes);
+        reservedBytes = bytesRead;
+      }
+      hasher.update(bytes);
+      if (!binary) {
+        if (bytes.includes(0)) binary = true;
+        else {
+          try {
+            decoder.decode(bytes, { stream: true });
+          } catch {
+            binary = true;
+          }
+        }
+      }
+    }
+    if (!binary) {
+      try {
+        decoder.decode();
+      } catch {
+        binary = true;
+      }
+    }
+    return {
+      path,
+      type: "file",
+      size: bytesRead,
+      contentDigest: hasher.digest("hex"),
+      ...(binary ? { contentOmissionReason: "binary" as const } : {}),
+    };
+  } catch (error) {
+    if (error instanceof ProfileInventoryLimitError) throw error;
+    return null;
+  } finally {
+    await handle?.close().catch(() => {});
+  }
 }
 
 /** What the repo looked like at a moment: every file the profiler could have
@@ -182,18 +442,25 @@ async function fingerprintFile(
 export async function computeProfileInventory(
   root: string,
 ): Promise<ProfileInventory> {
-  const paths = trackedAndUntrackedFiles(root) ?? (await walkFiles(root, root));
+  const absoluteRoot = resolve(root);
+  const budget: InventoryBudget = { startedAt: performance.now(), hashedBytes: 0 };
+  let paths = trackedAndUntrackedFiles(absoluteRoot, budget);
+  if (paths === null) {
+    paths = new Set<string>();
+    await walkFiles(absoluteRoot, "", paths, budget);
+  }
   const entries: ProfileInventoryEntry[] = [];
-  for (const path of [...new Set(paths)].sort()) {
-    if (isUnread(path)) continue;
-    const entry = await fingerprintFile(root, path);
+  for (const path of [...paths].sort()) {
+    assertWithinInventoryTime(budget);
+    const entry = await fingerprintFile(absoluteRoot, path, budget);
     if (entry !== null) entries.push(entry);
   }
+  assertWithinInventoryTime(budget);
   const digest = createHash("sha256")
     .update(
       entries
-        .map((entry) => `${entry.path}:${entry.size}:${entry.contentDigest}`)
-        .join("\n"),
+        .map((entry) => `${entry.type}\0${entry.path}\0${entry.contentDigest}`)
+        .join("\0"),
     )
     .digest("hex");
   return { entries, digest };
