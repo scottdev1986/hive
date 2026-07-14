@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import {
   instanceMutationBlockers,
@@ -71,5 +74,38 @@ describe("instance selection", () => {
         ["blue", ["maya"]],
         ["starting", ["<starting-or-unreachable>"]],
       ]);
+  });
+
+  test("an unreadable instance registry is never treated as an empty machine", async () => {
+    const home = mkdtempSync(join(tmpdir(), "hive-instance-registry-error-"));
+    const modulePath = join(import.meta.dir, "instances.ts");
+    const child = Bun.spawn([process.execPath, "-e", `
+      import { mkdirSync, writeFileSync } from "node:fs";
+      import { dirname } from "node:path";
+      const { instancesRoot, listInstances } = await import(${JSON.stringify(modulePath)});
+      const root = instancesRoot();
+      mkdirSync(dirname(root), { recursive: true });
+      writeFileSync(root, "not a directory\\n");
+      try {
+        await listInstances();
+        console.error("listInstances treated an unreadable registry as empty");
+        process.exit(2);
+      } catch (error) {
+        if (error?.code !== "ENOTDIR") throw error;
+      }
+    `], {
+      env: { ...process.env, HOME: home },
+      stderr: "pipe",
+    });
+    try {
+      const [exitCode, stderr] = await Promise.all([
+        child.exited,
+        new Response(child.stderr).text(),
+      ]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 });
