@@ -17,7 +17,7 @@ import { join } from "node:path";
 import type { AgentRecord } from "../schemas";
 import { HiveDatabase } from "./db";
 import type { LandReadiness } from "./landing";
-import { listAuditEntries } from "./testing";
+import { deleteAgentRow, listAuditEntries } from "./testing";
 import { readCredential, writeCredential, credentialPath } from "./credentials";
 import { AUTO_REARM_BUDGET, HiveDaemon } from "./server";
 import type { SpawnRequest, Spawner } from "./spawner";
@@ -335,6 +335,24 @@ describe("a revoked epoch invalidates a capability", () => {
     const { token } = daemon.capabilities.mint("maya", "writer", { ttlMs: -1 });
     expect((await callTool(daemon, token, "hive_status")).ok).toBe(false);
     expect(denials(daemon)).toContain("capability.expired");
+    await daemon.stop();
+  });
+});
+
+describe("an agent-bound capability requires a live authority record", () => {
+  test("a writer whose agent row vanished is refused instead of inheriting permission", async () => {
+    const { daemon, db } = harness();
+    const record = db.upsertAgent(agentRecord());
+    const { capability } = daemon.capabilities.mint("maya", "writer", { epoch: 0 });
+    expect(deleteAgentRow(db, record.id)).toBe(true);
+
+    expect(daemon.capabilities.authorize(capability, {
+      action: "branch:land",
+      route: "hive_land",
+    })).toMatchObject({
+      ok: false,
+      reason: "capability.authority-unknown",
+    });
     await daemon.stop();
   });
 });
