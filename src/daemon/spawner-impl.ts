@@ -212,6 +212,7 @@ type AgentStore = Pick<
   | "getAgentById"
   | "getLiveAgentByName"
   | "insertAgent"
+  | "insertRouteAudit"
   | "listAgents"
   | "releaseAgentName"
   | "reserveAgentName"
@@ -1800,6 +1801,24 @@ export class HiveSpawner implements Spawner {
       let chosen = await selectFrom(await gateChain(categoryChain, category));
       chosen ??= await selectFrom(await gateChain(defaultChain, "default"));
       chosen ??= await selectFrom(await gateChain(fallbackChain, "fallback"), "spread");
+      // Persist a bounded, structured route audit so this decision can be
+      // explained later: the policy revision, the per-link gate chain (including
+      // any reviewOfTool independence exclusion, captured in `attempts`), the
+      // selection, and the reservation — no prompt or account data. Written for
+      // both a selection and a total refusal.
+      this.dependencies.db.insertRouteAudit({
+        id: crypto.randomUUID(),
+        agentName: name,
+        category,
+        decidedAt: new Date().toISOString(),
+        policyRevision: policy.revision,
+        reviewOfTool: request.reviewOfTool ?? null,
+        attempts: [...attempts],
+        selectedTool: chosen?.authorized.tool ?? null,
+        selectedModel: chosen?.authorized.model ?? null,
+        selectedEffort: chosen?.authorized.effort ?? null,
+        reservationId: chosen?.reservationId ?? null,
+      });
       if (chosen === null) {
         throw new Error(
           `Cannot spawn ${name}: every link of the ${category} chain` +

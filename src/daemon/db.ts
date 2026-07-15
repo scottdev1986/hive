@@ -110,6 +110,35 @@ export const EscalationSchema = z.object({
 
 export type Escalation = z.infer<typeof EscalationSchema>;
 
+/** A bounded, structured audit of one routing decision, durable so a policy
+ * revision, the original chain and its per-link gate results (including a
+ * reviewOfTool independence exclusion), the selection, and the reservation can
+ * be explained later — without retaining any prompt or account data. */
+export const RouteAuditSchema = z.object({
+  id: z.string().min(1),
+  agentName: z.string().min(1),
+  category: z.string().min(1),
+  decidedAt: z.iso.datetime({ offset: true }),
+  /** The routing policy revision in effect when the decision was made. */
+  policyRevision: z.number().int().nonnegative(),
+  /** The tool under review for an independent code_review, else null. */
+  reviewOfTool: z.string().nullable(),
+  /** The per-link gate results in chain order — refusals, effort errors, quota
+   * outcomes, and the reviewOfTool exclusion diagnostic. */
+  attempts: z.array(z.string()),
+  /** The selected route, or null when every link was refused. */
+  selectedTool: z.string().nullable(),
+  selectedModel: z.string().nullable(),
+  selectedEffort: z.string().nullable(),
+  reservationId: z.string().nullable(),
+});
+
+export type RouteAudit = z.infer<typeof RouteAuditSchema>;
+
+/** Keep only the most recent decisions; a route audit is a bounded diagnostic,
+ * not an unbounded log. */
+const ROUTE_AUDIT_LIMIT = 500;
+
 const AgentDatabaseRowSchema = AgentRecordObjectSchema.extend({
   failureReason: z.string().nullable(),
   failedAt: z.string().nullable(),
@@ -445,6 +474,22 @@ export class HiveDatabase {
       );
       CREATE INDEX IF NOT EXISTS events_agent_timestamp
         ON events(agentName, timestamp);
+      CREATE TABLE IF NOT EXISTS route_audits (
+        id TEXT PRIMARY KEY,
+        agentName TEXT NOT NULL,
+        category TEXT NOT NULL,
+        decidedAt TEXT NOT NULL,
+        policyRevision INTEGER NOT NULL,
+        reviewOfTool TEXT,
+        -- JSON array of per-link gate results, including reviewOfTool exclusions.
+        attempts TEXT NOT NULL,
+        selectedTool TEXT,
+        selectedModel TEXT,
+        selectedEffort TEXT,
+        reservationId TEXT
+      );
+      CREATE INDEX IF NOT EXISTS route_audits_decided
+        ON route_audits(decidedAt);
       CREATE TABLE IF NOT EXISTS approvals (
         id TEXT PRIMARY KEY,
         agentName TEXT NOT NULL,
@@ -1611,6 +1656,53 @@ export class HiveDatabase {
       "SELECT COUNT(*) AS count FROM escalations WHERE agentId = ?",
     ).get(agentId) as { count: number };
     return row.count;
+  }
+
+  insertRouteAudit(audit: RouteAudit): RouteAudit {
+    const value = RouteAuditSchema.parse(audit);
+    this.database.query(`
+      INSERT INTO route_audits (
+        id, agentName, category, decidedAt, policyRevision, reviewOfTool,
+        attempts, selectedTool, selectedModel, selectedEffort, reservationId
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      value.id,
+      value.agentName,
+      value.category,
+      value.decidedAt,
+      value.policyRevision,
+      value.reviewOfTool,
+      JSON.stringify(value.attempts),
+      value.selectedTool,
+      value.selectedModel,
+      value.selectedEffort,
+      value.reservationId,
+    );
+    // Bounded: keep only the most recent decisions.
+    this.database.query(`
+      DELETE FROM route_audits WHERE id NOT IN (
+        SELECT id FROM route_audits ORDER BY decidedAt DESC, rowid DESC LIMIT ?
+      )
+    `).run(ROUTE_AUDIT_LIMIT);
+    return value;
+  }
+
+  /** The retained route decisions, newest first; scoped to one agent when named. */
+  listRouteAudits(agentName?: string): RouteAudit[] {
+    const rows = agentName === undefined
+      ? this.database.query(
+        "SELECT * FROM route_audits ORDER BY decidedAt DESC, rowid DESC",
+      ).all()
+      : this.database.query(
+        "SELECT * FROM route_audits WHERE agentName = ? ORDER BY decidedAt DESC, rowid DESC",
+      ).all(agentName);
+    return rows.map((row) => {
+      const record = row as Record<string, unknown>;
+      return RouteAuditSchema.parse({
+        ...record,
+        attempts: JSON.parse(String(record.attempts ?? "[]")),
+      });
+    });
   }
 
   resolveApproval(

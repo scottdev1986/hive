@@ -20,7 +20,7 @@ import {
   accountBillingFromCodexRateLimits,
   type AccountBilling,
 } from "../daemon/usage-credits";
-import type { Approval } from "../daemon/db";
+import type { Approval, RouteAudit } from "../daemon/db";
 import {
   QuotaConfigSchema,
   isLiveAgent,
@@ -334,6 +334,7 @@ class FakeStore {
   readonly reservations = new Set<string>();
   /** The real approvals queue, in memory: the spend guard asks through it. */
   readonly approvals = new Map<string, Approval>();
+  readonly routeAudits: RouteAudit[] = [];
 
   constructor(agents: AgentRecord[] = []) {
     this.agents = [...agents];
@@ -346,6 +347,11 @@ class FakeStore {
   insertApproval(approval: Approval): Approval {
     this.approvals.set(approval.id, approval);
     return approval;
+  }
+
+  insertRouteAudit(audit: RouteAudit): RouteAudit {
+    this.routeAudits.push(audit);
+    return audit;
   }
 
   listAgents(): AgentRecord[] {
@@ -905,6 +911,39 @@ describe("HiveSpawner name pool", () => {
 
   test("an explicitly requested name is allowed once its holder has closed", () => {
     expect(resolveAgentName("maya", [agent("maya", "dead")])).toEqual("maya");
+  });
+
+  test("a routing decision is recorded as a structured route audit", async () => {
+    const store = new FakeStore();
+    const spawner = newTestSpawner({
+      isModelEnabled: async () => true,
+      db: store,
+      repoRoot: "/tmp/hive-route-audit",
+      port: 4317,
+      config: {},
+      readRoutingPolicy: () => policyFromRoute(CODEX_ROUTE),
+      discoverCapabilities: async () =>
+        discovery(capabilityRecord("codex", "gpt-5.6-sol", ["medium"])),
+      tmux: new FakeTmux(),
+      // Stop just after routing: the audit is persisted before the worktree is
+      // created, so this isolates the decision and its structured record.
+      createWorktree: async () => {
+        throw new Error("stop after routing");
+      },
+      sleep: async () => {},
+    });
+    await expect(
+      spawner.spawn({ task: "Do the thing", category: "simple_coding" }),
+    ).rejects.toThrow();
+
+    expect(store.routeAudits).toHaveLength(1);
+    const audit = store.routeAudits[0]!;
+    expect(audit.category).toEqual("simple_coding");
+    expect(audit.selectedTool).toEqual("codex");
+    expect(audit.selectedModel).toEqual("gpt-5.6-sol");
+    expect(audit.selectedEffort).toEqual("medium");
+    expect(typeof audit.policyRevision).toEqual("number");
+    expect(Array.isArray(audit.attempts)).toBe(true);
   });
 
   test("concurrent spawns never receive the same name", async () => {

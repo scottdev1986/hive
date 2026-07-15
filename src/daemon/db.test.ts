@@ -12,6 +12,7 @@ import {
   getDatabaseIdentityPath,
   HiveDatabase,
   type Approval,
+  type RouteAudit,
 } from "./db";
 import {
   deleteAgentRow,
@@ -144,6 +145,38 @@ describe("HiveDatabase", () => {
       });
       expect(db.upsertAgent(attested)).toEqual(attested);
       expect(db.getAgentByName("maya")).toEqual(attested);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("records structured route audits, newest first and scoped by agent", () => {
+    const db = new HiveDatabase(join(home, "route-audits.db"));
+    try {
+      const audit = (id: string, at: string): RouteAudit => ({
+        id,
+        agentName: "maya",
+        category: "code_review",
+        decidedAt: at,
+        policyRevision: 7,
+        reviewOfTool: "codex",
+        attempts: [
+          "codex/gpt — quota: Independent review of codex has no independent route",
+        ],
+        selectedTool: "claude",
+        selectedModel: "claude-model",
+        selectedEffort: "high",
+        reservationId: "res-1",
+      });
+      db.insertRouteAudit(audit("a", "2026-07-09T12:00:00.000Z"));
+      db.insertRouteAudit(audit("b", "2026-07-09T12:01:00.000Z"));
+
+      const all = db.listRouteAudits();
+      expect(all.map((row) => row.id)).toEqual(["b", "a"]);
+      // Full structured round-trip, including the JSON attempts chain.
+      expect(all[0]).toEqual(audit("b", "2026-07-09T12:01:00.000Z"));
+      expect(db.listRouteAudits("maya")).toHaveLength(2);
+      expect(db.listRouteAudits("someone-else")).toEqual([]);
     } finally {
       db.close();
     }
