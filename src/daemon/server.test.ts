@@ -4207,10 +4207,40 @@ describe("the project-profile tools and gate routes", () => {
   });
 
   test("the fake control satisfies the shared opacity conformance P3 reuses", async () => {
-    // The same executable contract the real coordinator must pass: a foreign
-    // subject gets an opaque unauthorized from both run-bound tools, carrying
-    // nothing about the active run.
-    await assertProfileControlOpacity(new FakeProfileControl(), "profiler-foreign-run");
+    // The same executable contract the real coordinator must pass, across BOTH
+    // required scenarios: a foreign subject during an active run, AND the former
+    // owner after the run completed. The second is what stops an implementation
+    // from answering a stale token with denied/no-active-run and leaking that no
+    // run is live.
+    const completed = new FakeProfileControl();
+    completed.activeProfiler = null;
+    await assertProfileControlOpacity({
+      activeRunForeign: { control: new FakeProfileControl(), subject: "profiler-foreign-run" },
+      completedFormerOwner: { control: completed, subject: PROFILER },
+    });
+  });
+
+  test("the conformance catches an implementation that leaks completed-run state", async () => {
+    // The exact hole the second scenario exists to close: answering a stale
+    // token with denied/no-active-run instead of the opaque refusal. This is a
+    // valid result-union shape, so only the conformance — not the type — stops
+    // it, and it must.
+    class LeakyProfileControl extends FakeProfileControl {
+      override async inventory(subject: string, request: ProfileInventoryRequest): Promise<ProfileInventoryResult> {
+        if (this.activeProfiler === null) {
+          return { status: "denied", code: "no-active-run", message: "no run is active" };
+        }
+        return super.inventory(subject, request);
+      }
+    }
+    const leaky = new LeakyProfileControl();
+    leaky.activeProfiler = null;
+    await expect(
+      assertProfileControlOpacity({
+        activeRunForeign: { control: new FakeProfileControl(), subject: "profiler-foreign-run" },
+        completedFormerOwner: { control: leaky, subject: PROFILER },
+      }),
+    ).rejects.toThrow();
   });
 
   test("an authorized inventory denial keeps its structured code, not a flattened message", async () => {
