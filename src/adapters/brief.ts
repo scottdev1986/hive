@@ -121,7 +121,8 @@ export function resolveBriefablePath(
 
 // A `.md` path anywhere: `DESIGN.md`, `docs/research/x.md`. Trailing punctuation
 // is stripped by the character class, so "read DESIGN.md, then..." yields
-// "DESIGN.md". Which of these are actually briefable is the profile's call.
+// "DESIGN.md". Which of these are actually briefable is decided by on-demand
+// doc discovery (see loadBriefConfig).
 const DOC_PATH = /\b((?:[A-Za-z0-9_-]+\/)*[A-Za-z0-9_.-]+\.md)\b/g;
 // `§6`, `§ 6`, `section 6`, `sections 6 and 7`, `§6.2` (major number wins).
 const SECTION_SELECTOR =
@@ -166,7 +167,7 @@ export function findTaskDocReferences(
     references.set(path, sections);
   }
   // The primary doc referred to by bare name and section: `SPEC §6`, `DESIGN §3`
-  // — whatever the profile names primary — with no `.md`. A repo with no primary
+  // — whatever discovery names primary — with no `.md`. A repo with no primary
   // doc simply has no such special case.
   if (config.primaryDoc !== null) {
     const bareName = basename(config.primaryDoc).replace(/\.md$/i, "");
@@ -243,8 +244,8 @@ function renderOutline(path: string, outline: DocSection[]): string {
 export interface BriefOptions {
   readDoc?: (absolutePath: string) => Promise<string>;
   maxChars?: number;
-  /** The profile-derived brief inputs. Omitted in production, where it is read
-   * from the repo profile at `root`; passed explicitly in tests. */
+  /** The brief inputs from on-demand doc discovery. Omitted in production, where
+   * they are discovered from the repo at `root`; passed explicitly in tests. */
   config?: BriefConfig;
 }
 

@@ -3,7 +3,7 @@
  *
  * Run inside a git worktree, bare `hive` resolves the repository root, runs
  * the Workspace session boundary (update notice, fresh runtime selection,
- * daemon bring-up, init-once profile line), and launches the
+ * daemon bring-up, init-once onboarding line), and launches the
  * installed release app with everything it needs on argv: `--project <root>`,
  * `--port <port>`, `--hive <this binary>`, the instance-scoped
  * `--orchestrator-session`, and, for an explicit orchestrator entry,
@@ -193,7 +193,7 @@ export async function runWorkspace(deps: RunWorkspaceDeps = {}): Promise<number>
   if (root !== null) {
     if (!(deps.isInitialized ?? isRepoInitialized)(root)) {
       (deps.write ?? ((text: string) => process.stderr.write(`${text}\n`)))(
-        `No Hive here yet — initializing ${root} first (\`hive init\`: skills, repo profile, memory):`,
+        `No Hive here yet — initializing ${root} first (\`hive init\`: skills, memory):`,
       );
       await (deps.init ?? ((r: string) => runInitCli({ cwd: r })))(root)
         .catch((error: unknown) => {

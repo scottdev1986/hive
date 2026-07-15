@@ -18,8 +18,8 @@
  *     signature-matched repair every session boundary runs
  *   - `graphify-out/` and the `.git/info/exclude` lines Hive appended (in
  *     the git common dir, so linked worktrees are covered)
- *   - the project's derived-state dir `~/.hive/projects/<uuid>/` (profile,
- *     graphify decision, init stamp)
+ *   - the project's derived-state dir `~/.hive/projects/<uuid>/` (graphify
+ *     decision, init stamp)
  *
  *   Machine-level (no flag):
  *   - `~/.hive` — state, memory, the graphify tool under `tools/`, and any

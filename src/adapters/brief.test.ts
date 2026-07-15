@@ -96,7 +96,7 @@ describe("findTaskDocReferences", () => {
     ]);
   });
 
-  test("the bare-name rule follows whatever doc the profile names primary", () => {
+  test("the bare-name rule follows whatever doc discovery names primary", () => {
     const design: BriefConfig = {
       briefableDocs: ["DESIGN.md"],
       briefableDirectories: [],
@@ -105,7 +105,7 @@ describe("findTaskDocReferences", () => {
     expect(findTaskDocReferences("Follow DESIGN §3 exactly", design)).toEqual([
       { path: "DESIGN.md", sections: [3] },
     ]);
-    // And a repo whose profile names no primary doc simply loses the special
+    // And a repo whose discovery names no primary doc simply loses the special
     // case: a bare "SPEC §6" resolves to nothing.
     const none: BriefConfig = {
       briefableDocs: ["notes.md"],

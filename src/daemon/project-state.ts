@@ -1,8 +1,7 @@
-// Where Hive keeps a project's derived state. Extracted from the legacy
-// profiler (`src/adapters/profile.ts`) because it is project *identity*, not
-// profiling: graphify, `hive init`, and `hive uninstall` all need this directory
-// and none of them care how a profile is produced. The legacy profiler is going
-// away; this is not.
+// Where Hive keeps a project's derived state: the per-project directory keyed by
+// project *identity* that graphify, `hive init`, and `hive uninstall` all need.
+// It is deliberately independent of a repo's contents — nothing here depends on
+// what the repo holds or how anything about it is produced.
 import { dirname, join } from "node:path";
 import { getHiveHome } from "./db";
 import { resolveHandshakeProject } from "./project-identity";
@@ -33,8 +32,8 @@ export function projectStateDir(root: string): string {
   return join(getHiveHome(), "projects", hiveUuid);
 }
 
-/** The project uuid `projectStateDir` keys on. The profile records it so a
- * payload can be checked against the project it claims to describe. */
+/** The project uuid `projectStateDir` keys on, so per-project state can be
+ * checked against the project it belongs to. */
 export function projectHiveUuid(root: string): string {
   return resolveHandshakeProject(primaryWorktree(root)).hiveUuid;
 }

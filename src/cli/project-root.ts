@@ -4,7 +4,7 @@
  * Bare `hive` anchors a session and `hive init` anchors setup to the repository root,
  * not to whichever subdirectory the shell happens to be in — the daemon's
  * identity resolver canonicalizes to `git rev-parse --show-toplevel`, and a
- * profile or session keyed to a subdirectory silently splits identity.
+ * session or per-project state keyed to a subdirectory silently splits identity.
  * `probeGit` is the same resolver the daemon uses (env-sanitized, bare-safe,
  * absolute paths), so the CLI and daemon can never disagree about the root.
  */

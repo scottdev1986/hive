@@ -66,6 +66,10 @@ narrative memory; new foundation vs outgoing legacy reader.
 
 ## [2026-07-14] correction | README init --refresh does not start the daemon
 
+*Superseded by the 2026-07-15 profiling removal above: `--refresh` and the outgoing
+profiling cache it rebuilt are gone, so the `--refresh` split described here no longer
+exists. Original entry preserved below as historical record.*
+
 Plain `hive init` starts the daemon. `hive init --refresh` forces the outgoing
 cache rebuild while otherwise running init (skills, optional memory, Graphify,
 stamp), then exits without starting the daemon (`src/cli.ts` skips `runStart`

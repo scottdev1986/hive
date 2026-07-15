@@ -172,7 +172,7 @@ beforeAll(async () => {
     await chmod(shim, 0o755);
   }
 
-  // A repo the profiler can read: a manifest with scripts, a doc, one commit.
+  // A minimal repo: a manifest with scripts, a doc, one commit.
   git(repo, ["init"]);
   await writeFile(
     join(repo, "package.json"),
