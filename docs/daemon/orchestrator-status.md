@@ -21,7 +21,7 @@ The derivation is `src/daemon/orchestrator-status.ts`; provider-native boundary 
 
 It reads event **kinds only, never timestamps**. That is not stylistic — it is the type signature enforcing the design. No timeout inference can be introduced without changing the function's signature, which is exactly the review a timeout deserves.
 
-Every provider feeds the same boundary stream under the root's reserved name (queen; `orchestrator` remains accepted):
+Every provider feeds the same boundary stream under the root's preferred address queen. Delivery accepts the synonym `orchestrator` (case-insensitive) and stores the preferred form; pre-rename undelivered rows keyed as `orchestrator` still drain. The architectural role word and the instance tmux session (`hive-orchestrator-<instance>`) are separate surfaces and keep that spelling:
 
 - Claude posts `turn-start` on `UserPromptSubmit` and `turn-end` on `Stop` through its native hooks.
 - Codex's rollout records exact `task_started` and `task_complete` events.

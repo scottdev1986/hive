@@ -180,7 +180,7 @@ Every root prompt is sent through the visible Workspace terminal:
 
 1. activate the intended Workspace process and focus queen's pane;
 2. type or paste the complete prompt as one editing action;
-3. confirm the instance's `runtime/composers/orchestrator.typing` marker exists;
+3. confirm the instance's root composer typing marker exists (`runtime/composers/queen.typing` preferred; `runtime/composers/orchestrator.typing` still accepted during compatibility);
 4. wait outside the TUI's paste-coalescing interval;
 5. send Enter as a separate input event;
 6. confirm the composer marker clears only after its grace interval and that the structured root status moves to `working`;

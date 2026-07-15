@@ -2,13 +2,15 @@
 
 ## [2026-07-15] change | Root orchestrator named queen
 
-The root orchestrator's name is queen. Prefer queen when addressing or referring to
-the root; the architectural role remains orchestrator, and input that says
-`orchestrator` is still understood. Authority is unchanged (read-only root, no agents
-row, no landing right). README, worker-facing briefing, status, authorization, Workspace
-blueprint, acceptance reply wording, and related docs were updated accordingly. Module
-paths, CLI flags (`--orchestrator`), and role-matrix language retain orchestrator where
-they describe the role or the code surface.
+The root orchestrator's preferred address is queen. Prefer queen when addressing or
+referring to the root; the architectural role remains orchestrator; synonym
+`orchestrator` is still accepted case-insensitively and is canonicalized to queen on
+send. Authority is unchanged (read-only root, no agents row, no landing right). Tmux
+session remains `hive-orchestrator-<instance>`. README, worker-facing briefing, status,
+authorization, Workspace blueprint, acceptance reply wording, and related docs were
+updated. Module paths, CLI flags (`--orchestrator`), role credential string, and
+role-matrix language retain orchestrator where they describe the role or the code surface.
+Aligned with runtime contract in `src/schemas/agent.ts` (`ORCHESTRATOR_NAME`, aliases).
 
 ## [2026-07-15] correction | Acceptance attestation requires measured enforcement
 
