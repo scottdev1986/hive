@@ -128,7 +128,7 @@ extension TokenUsageSession {
         // Backup orchestrators are relaunches of the ONE orchestrator, so they
         // collapse into a single row showing the daemon's own control aggregate.
         if let orchestratorRow = collapsedRow(
-            name: "Orchestrator", generations: orchestrators, counts: hiveControl.counts) {
+            name: "Queen", generations: orchestrators, counts: hiveControl.counts) {
             rows.append(orchestratorRow)
         }
         return rows + workerSubjects.map(individualRow) + unclassifiedSubjects.map(individualRow)

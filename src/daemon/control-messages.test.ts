@@ -231,7 +231,7 @@ describe("priority control messages", () => {
       expect(db.getMessage(urgent.id)?.alertAt).not.toEqual(null);
       expect(sender.calls).toEqual([]);
       expect(db.listMessages().some((message) =>
-        message.to === "orchestrator" &&
+        message.to === "queen" &&
         message.body.includes("missed its acknowledgement deadline") &&
         message.deliveredAt === null
       )).toEqual(true);

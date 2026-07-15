@@ -14,6 +14,7 @@
 //     root will present, because that root has no spawn path of its own —
 //     still daemon-minted, still one level deep.
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { isOrchestratorName } from "../schemas";
 import type { HiveDatabase } from "./db";
 
 export type Role =
@@ -319,8 +320,14 @@ export class CapabilityStore {
     }
 
     const subject = request.subject;
+    // queen is the preferred root address; "orchestrator" is the accepted
+    // synonym. A capability bound to either may act as the root under both.
+    const sameRootSubject = subject !== undefined &&
+      isOrchestratorName(subject) &&
+      isOrchestratorName(capability.subject);
     if (
       subject !== undefined && subject !== capability.subject &&
+      !sameRootSubject &&
       !grant.anySubject.includes(request.action)
     ) {
       return deny(

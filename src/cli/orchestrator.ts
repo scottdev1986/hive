@@ -16,7 +16,7 @@ import {
   hiveInstanceSuffix,
   hiveTmuxSocketName,
 } from "../daemon/tmux-sessions";
-import { unknownVendor } from "../schemas";
+import { ORCHESTRATOR_NAME, unknownVendor } from "../schemas";
 import { ORCHESTRATOR_BRIEF, orchestratorDocGuidance } from "./orchestrator-brief";
 import { discoverBriefableDocs } from "../adapters/briefing-docs";
 import {
@@ -198,7 +198,7 @@ export async function prepareOrchestratorConfig(
     case "claude":
       await writeClaudeAgentConfig(orchestratorConfigRoot(), {
         daemonPort: port,
-        name: "orchestrator",
+        name: ORCHESTRATOR_NAME,
         readOnly: true,
         hiveCommand: hiveCliSpawnArgv(IS_RELEASE_BUILD, process.execPath),
       });
@@ -252,7 +252,7 @@ export function buildOrchestratorCommand(
       const configRoot = orchestratorConfigRoot();
       return [
         ...buildClaudeSpawnCommand({
-          name: "orchestrator",
+          name: ORCHESTRATOR_NAME,
           model: "default",
           worktreePath: process.cwd(),
           daemonPort: port,

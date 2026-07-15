@@ -1067,7 +1067,7 @@ describe("HiveDaemon HTTP server", () => {
         worktreePath: "/tmp/hive-maya",
       });
       expect(db.listMessages().some((message) =>
-        message.to === "orchestrator" && message.body.includes("timed out")
+        message.to === "queen" && message.body.includes("timed out")
       )).toEqual(true);
       const exitCode = await Promise.race([
         process.exited,
@@ -1178,7 +1178,7 @@ describe("HiveDaemon HTTP server", () => {
         worktreePath: "/tmp/hive-maya",
       });
       const alert = db.listMessages().find((message) =>
-        message.to === "orchestrator" && message.from === "hive-control"
+        message.to === "queen" && message.from === "hive-control"
       );
       expect(alert?.body).toContain("Insufficient quota");
       expect(alert?.body).toContain("automatic recovery will not retry");
@@ -1530,7 +1530,7 @@ describe("HiveDaemon HTTP server", () => {
       const alerts = db.listMessages()
         .filter((message) => message.from === "hive-resources");
       expect(alerts).toHaveLength(1);
-      expect(alerts[0]?.to).toEqual("orchestrator");
+      expect(alerts[0]?.to).toEqual("queen");
       expect(alerts[0]?.body).toContain("BLOCKED");
       expect(alerts[0]?.body).toContain("maya");
 
@@ -1711,6 +1711,9 @@ describe("HiveDaemon HTTP server", () => {
       expect(send?.description).toContain("CANCEL");
       expect(send?.description).toContain("never resumed");
       expect(send?.description).toContain("not RECEIVED and not STOPPED");
+      // Preferred root address is queen; synonym remains accepted.
+      expect(send?.description).toContain("queen");
+      expect(send?.description).toContain("orchestrator");
 
       const missingRecipient = await client.callTool({
         name: "hive_send",
@@ -2603,7 +2606,7 @@ describe("HiveDaemon HTTP server", () => {
       // Death surfaces durably: the orchestrator gets the stored task text
       // for a respawn instead of a silent status flip.
       const alert = db.listMessages().find((message) =>
-        message.to === "orchestrator" && message.from === "hive-recovery"
+        message.to === "queen" && message.from === "hive-recovery"
       );
       expect(alert?.body).toContain("maya died in a crash");
       expect(alert?.body).toContain("Build server");
@@ -2971,7 +2974,7 @@ describe("resource watchdog", () => {
       expect(killed).toEqual([11]);
       const reports = db.listMessages()
         .filter((message) => message.from === "hive-resources");
-      const toOrchestrator = reports.filter((message) => message.to === "orchestrator");
+      const toOrchestrator = reports.filter((message) => message.to === "queen");
       expect(toOrchestrator).toHaveLength(1);
       expect(toOrchestrator[0]?.body).toContain("killed pid 11 under maya");
       expect(toOrchestrator[0]?.body).toContain("bun test");

@@ -5,9 +5,14 @@ import {
   HandoffSchema,
   HiveConfigSchema,
   HookEventSchema,
+  ORCHESTRATOR_NAME,
+  ORCHESTRATOR_NAME_ALIASES,
   QuotaConfigSchema,
   RoutingPolicySchema,
   StatuslineReportSchema,
+  canonicalOrchestratorName,
+  isOrchestratorName,
+  orchestratorRecipientNames,
   type AgentRecord,
   type AgentMessage,
   type HookEvent,
@@ -302,5 +307,20 @@ describe("RoutingPolicySchema", () => {
       ...policy,
       models: [row, { ...row, state: "disabled" }],
     })).toThrow();
+  });
+});
+
+describe("root orchestrator naming", () => {
+  test("queen is the preferred address; orchestrator remains a synonym", () => {
+    expect(ORCHESTRATOR_NAME).toEqual("queen");
+    expect(ORCHESTRATOR_NAME_ALIASES).toContain("orchestrator");
+    expect(orchestratorRecipientNames()).toEqual(["queen", "orchestrator"]);
+    expect(isOrchestratorName("queen")).toBe(true);
+    expect(isOrchestratorName("Queen")).toBe(true);
+    expect(isOrchestratorName("orchestrator")).toBe(true);
+    expect(isOrchestratorName("maya")).toBe(false);
+    expect(canonicalOrchestratorName("orchestrator")).toEqual("queen");
+    expect(canonicalOrchestratorName("queen")).toEqual("queen");
+    expect(canonicalOrchestratorName("maya")).toEqual("maya");
   });
 });

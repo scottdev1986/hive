@@ -516,16 +516,23 @@ describe("MessageDelivery", () => {
     const delivery = new MessageDelivery(db, tmux);
     try {
       const report = "Task complete.\nRoot cause: enter race.\nBranch: hive/maya-delivery";
-      const queued = await delivery.send("maya", "orchestrator", report);
-      expect(queued.deliveredAt).toEqual(null);
+      // Preferred address is queen; synonym "orchestrator" still reaches the root
+      // and is stored under the preferred name.
+      const viaSynonym = await delivery.send("maya", "orchestrator", report);
+      expect(viaSynonym.to).toEqual("queen");
+      expect(viaSynonym.deliveredAt).toEqual(null);
       expect(tmux.calls).toEqual([]);
 
+      const viaPreferred = await delivery.send("sam", "queen", "second report");
+      expect(viaPreferred.to).toEqual("queen");
+
       const inbox = await delivery.orchestratorInbox();
-      expect(inbox.length).toEqual(1);
-      expect(inbox[0]?.id).toEqual(queued.id);
-      expect(inbox[0]?.body).toEqual(report);
+      expect(inbox.length).toEqual(2);
+      expect(inbox.map((m) => m.id).sort()).toEqual(
+        [viaSynonym.id, viaPreferred.id].sort(),
+      );
       expect(await delivery.orchestratorInbox()).toEqual([]);
-      expect(db.getMessage(queued.id)?.deliveredAt).not.toEqual(null);
+      expect(db.getMessage(viaSynonym.id)?.deliveredAt).not.toEqual(null);
     } finally {
       db.close();
     }
@@ -820,7 +827,7 @@ describe("reconciling messages we handed over", () => {
 
       await delivery.reconcileInjected();
 
-      const alerts = db.getUndeliveredMessages("orchestrator")
+      const alerts = db.getUndeliveredMessages("queen")
         .filter((m) => m.body.includes("stuck unconfirmed"));
       expect(alerts).toHaveLength(1);
       // One line naming the count — not ninety messages dumped into the
@@ -837,7 +844,7 @@ describe("reconciling messages we handed over", () => {
       // Surfaced once, never a repeating alarm.
       await delivery.reconcileInjected();
       expect(
-        db.getUndeliveredMessages("orchestrator")
+        db.getUndeliveredMessages("queen")
           .filter((m) => m.body.includes("stuck unconfirmed")),
       ).toHaveLength(1);
     } finally {
@@ -856,7 +863,7 @@ describe("reconciling messages we handed over", () => {
   }
 
   const unconfirmedAlerts = (db: HiveDatabase): AgentMessage[] =>
-    db.getUndeliveredMessages("orchestrator")
+    db.getUndeliveredMessages("queen")
       .filter((m) => m.body.includes("stuck unconfirmed"));
 
   test("a recipient mid-turn and alive is busy, not deaf: no alert, and its own boundary confirms it", async () => {

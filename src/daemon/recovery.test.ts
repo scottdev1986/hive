@@ -185,7 +185,7 @@ function harness(
 function orchestratorAlerts(db: HiveDatabase): string[] {
   return db.listMessages()
     .filter((message) =>
-      message.to === "orchestrator" && message.from === "hive-recovery"
+      message.to === "queen" && message.from === "hive-recovery"
     )
     .map((message) => message.body);
 }

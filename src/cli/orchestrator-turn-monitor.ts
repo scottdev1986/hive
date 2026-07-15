@@ -11,7 +11,7 @@ import {
 import { getHiveHome } from "../daemon/db";
 import { readNativeTurnCompleted } from "../daemon/tool-telemetry";
 import type { TurnBoundaryKind } from "../daemon/orchestrator-status";
-import type { CapabilityProvider } from "../schemas";
+import { ORCHESTRATOR_NAME, type CapabilityProvider } from "../schemas";
 import { buildHookEvent } from "./event";
 import { operatorFetch } from "./credential";
 import { publishOrchestratorSessionId } from "./orchestrator-runtime";
@@ -134,7 +134,7 @@ async function reportBoundary(
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(buildHookEvent(kind, {
-      agent: "orchestrator",
+      agent: ORCHESTRATOR_NAME,
       toolSessionId: sessionId,
     })),
     signal: AbortSignal.timeout(1_000),

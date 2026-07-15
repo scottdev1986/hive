@@ -46,7 +46,9 @@ const localHiveUrl = (value: unknown, scope: RepairScope): boolean => {
 function isHiveMcpServer(value: unknown, scope: RepairScope): boolean {
   return isRecord(value) &&
     localHiveUrl(value.url, scope) &&
-    value.headersHelper === "hive credential --agent orchestrator";
+    typeof value.headersHelper === "string" &&
+    // queen is preferred; orchestrator remains for pre-rename leaked config.
+    /^hive credential --agent (?:queen|orchestrator)$/.test(value.headersHelper);
 }
 
 async function cleanClaudeMcp(root: string, scope: RepairScope): Promise<boolean> {
@@ -76,7 +78,8 @@ async function cleanClaudeMcp(root: string, scope: RepairScope): Promise<boolean
 
 const hiveOrchestratorCommand = (value: unknown, scope: RepairScope): boolean => {
   if (typeof value !== "string") return false;
-  if (!/^hive (?:event [a-z-]+|statusline) --agent orchestrator --port \d+/.test(value)) {
+  // Preferred address is queen; synonym orchestrator still matches old leaks.
+  if (!/^hive (?:event [a-z-]+|statusline) --agent (?:queen|orchestrator) --port \d+/.test(value)) {
     return false;
   }
   const owner = /--instance-id (\S+)/.exec(value)?.[1];

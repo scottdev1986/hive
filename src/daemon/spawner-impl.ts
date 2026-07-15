@@ -40,6 +40,7 @@ import {
 } from "../adapters/worktrees";
 import {
   ORCHESTRATOR_NAME,
+  isOrchestratorName,
   CapabilityProviderSchema,
   forEachProvider,
   identifyModelVendor,
@@ -414,9 +415,10 @@ export function resolveAgentName(
   }
 
   const normalizedName = requestedName.toLowerCase();
-  if (normalizedName === ORCHESTRATOR_NAME) {
+  if (isOrchestratorName(normalizedName)) {
     throw new Error(
-      `Agent name "${ORCHESTRATOR_NAME}" is reserved for the Hive orchestrator`,
+      `Agent name "${normalizedName}" is reserved for the Hive orchestrator ` +
+        `(preferred address: ${ORCHESTRATOR_NAME})`,
     );
   }
   if (!AGENT_NAME_PATTERN.test(normalizedName)) {
@@ -455,7 +457,7 @@ const CONCISE_CATEGORIES: readonly RoutingCategory[] = [
  * idle-with-work → continue). A live session is also the cheapest place to do
  * the next piece: a respawn re-reads everything from zero. */
 const CONTINUOUS_EXECUTION =
-  `After reporting a landing or milestone, immediately continue with the next authorized piece of your assignment in this same session. Stop only for a genuine blocker, an escalation, or an explicit hold from "${ORCHESTRATOR_NAME}".`;
+  `After reporting a landing or milestone, immediately continue with the next authorized piece of your assignment in this same session. Stop only for a genuine blocker, an escalation, or an explicit hold from ${ORCHESTRATOR_NAME}.`;
 
 /** The karpathy guidelines' rules, carried in the prompt rather than left to the
  * `karpathy-guidelines` skill to be self-invoked.
@@ -522,20 +524,20 @@ export function buildLandingProtocol(
     return [
       `When your task is done and tests are green, land it on ${mainBranch} — unlanded work is lost work:`,
       `1. Commit everything on \`${branch}\`.`,
-      `2. \`git rebase ${mainBranch}\` in your worktree. On conflict: \`git rebase --abort\`, message "${ORCHESTRATOR_NAME}" with the conflicting file names, stop. Never force, never resolve another agent's code.`,
+      `2. \`git rebase ${mainBranch}\` in your worktree. On conflict: \`git rebase --abort\`, message ${ORCHESTRATOR_NAME} with the conflicting file names, stop. Never force, never resolve another agent's code.`,
       `3. ${verify.test} and typecheck with ${verify.typecheck}; ${verify.typecheckBackstop}, so a green suite alone can carry a type error onto ${mainBranch}. Skip both only if \`git diff --name-only ORIG_HEAD..HEAD\` lists \`.md\` files alone. Red tests never merge, and neither do type errors: fix them, or commit and report the failure. Exception: a red proven identical on unmodified ${mainBranch} is pre-existing and does not block — note it and proceed; any other red still blocks.`,
       `4. Call \`hive_land\` with agent \`${agentName}\`, capabilityEpoch \`${capabilityEpoch}\`. Never merge into the primary checkout yourself.`,
-      `5. Rejected because ${mainBranch} moved? Back to step 2, at most ${LANDING_MAX_ATTEMPTS} attempts, then message "${ORCHESTRATOR_NAME}".`,
+      `5. Rejected because ${mainBranch} moved? Back to step 2, at most ${LANDING_MAX_ATTEMPTS} attempts, then message ${ORCHESTRATOR_NAME}.`,
       `6. Report the merge commit hash. Leave your branch and worktree in place.`,
     ].join("\n");
   }
   return [
     `When your task is complete and the tests are green, land your work on ${mainBranch} immediately — finished work left on your branch is lost work:`,
     `1. Commit everything on your branch (${branch}); never leave work uncommitted.`,
-    `2. Rebase onto the latest ${mainBranch}: run \`git rebase ${mainBranch}\` in your worktree. If the rebase hits conflicts, run \`git rebase --abort\` and message "${ORCHESTRATOR_NAME}" naming the conflicting files — never force anything and never resolve another agent's code alone.`,
+    `2. Rebase onto the latest ${mainBranch}: run \`git rebase ${mainBranch}\` in your worktree. If the rebase hits conflicts, run \`git rebase --abort\` and message ${ORCHESTRATOR_NAME} naming the conflicting files — never force anything and never resolve another agent's code alone.`,
     `3. ${verify.test} on the rebased branch, and typecheck it with ${verify.typecheck}. Both must pass. ${verify.typecheckBackstop}, so a green suite alone will carry a type error onto ${mainBranch}: two agents whose work was separately green merge into a duplicate symbol that no test can see. You may skip both checks only when \`git diff --name-only ORIG_HEAD..HEAD\` — what the rebase pulled in — lists nothing but \`.md\` files that no test reads: your pre-rebase green run still holds, so go straight to step 4. Red tests never merge, and neither do type errors: fix them on your branch, or commit what you have and report the failure instead. The one exception: a red test proven identical on unmodified ${mainBranch} — checkout ${mainBranch} in a scratch copy, run it, same failure, unrelated to your change — is pre-existing, not yours to fix, and does not block; name it in your report and proceed. Any other red — one that passes on ${mainBranch}, or one you have not actually checked there — blocks like any other.`,
     `4. Land through Hive's capability gate: call \`hive_land\` with agent \`${agentName}\` and capabilityEpoch \`${capabilityEpoch}\`. The daemon performs the fast-forward-only merge of \`${branch}\` into \`${mainBranch}\`; never merge into the primary checkout directly.`,
-    `5. If that merge is rejected because ${mainBranch} moved, return to step 2. After ${LANDING_MAX_ATTEMPTS} failed attempts, stop and message "${ORCHESTRATOR_NAME}".`,
+    `5. If that merge is rejected because ${mainBranch} moved, return to step 2. After ${LANDING_MAX_ATTEMPTS} failed attempts, stop and message ${ORCHESTRATOR_NAME}.`,
     `6. Include the merge commit hash in your completion report. Do not delete your branch or worktree; hive cleans up landed branches.`,
   ].join("\n");
 }
@@ -626,9 +628,9 @@ export function buildAgentPrompt(
         `You are ${name}, a Hive ${readOnly ? "read-only" : "writer"} agent.`,
         `Your task: ${task}`,
         `Work only inside your worktree at ${worktree.path}.`,
-        `Report completion, blockers, and findings to "${ORCHESTRATOR_NAME}" with hive_send (hive_inbox and hive_status are also available). Reference artifacts by path; never paste them.`,
+        `Your orchestrator is named ${ORCHESTRATOR_NAME}. Report completion, blockers, and findings to ${ORCHESTRATOR_NAME} with hive_send (hive_inbox and hive_status are also available; the synonym "orchestrator" is still accepted). Reference artifacts by path; never paste them.`,
         `Read only what the task names. Search for the lines that matter rather than reading files whole. If the task is substantially bigger than briefed, stop and report rather than grinding.`,
-        `If the task exceeds your model — a genuine capability wall after at least two distinct failed approaches, not a scope surprise — commit your WIP, then call hive_escalate once with the evidence and a handoff. Keep working until the orchestrator answers. Never grind on under-powered, and never quietly lower the quality bar instead.`,
+        `If the task exceeds your model — a genuine capability wall after at least two distinct failed approaches, not a scope surprise — commit your WIP, then call hive_escalate once with the evidence and a handoff. Keep working until ${ORCHESTRATOR_NAME} answers. Never grind on under-powered, and never quietly lower the quality bar instead.`,
         CONTINUOUS_EXECUTION,
       ]
     : [
@@ -636,9 +638,9 @@ export function buildAgentPrompt(
         `Your task: ${task}`,
         `Your file scope is your worktree at ${worktree.path}; do all code and file work there.`,
         "Use the Hive MCP tools hive_send, hive_inbox, and hive_status to message and coordinate with other named agents.",
-        `Send concise completion reports, blockers, and important findings to "${ORCHESTRATOR_NAME}" with hive_send; reference large artifacts instead of pasting them.`,
-        `Read only what the task needs: search for the lines that matter instead of reading large files whole, and reuse artifacts other agents already wrote instead of re-deriving them. If the task proves substantially larger than briefed, stop and report to "${ORCHESTRATOR_NAME}" rather than grinding.`,
-        `If the task exceeds your model — a genuine capability wall after at least two distinct failed approaches, not a scope surprise (that is a stop-and-report) — commit your WIP to your branch, then call hive_escalate once with the evidence (why, and what you tried) and a handoff (goal, done, remaining, decisions). Keep working until the orchestrator answers; it may respawn the task on a stronger model with your handoff or tell you to continue. Never grind on under-powered, and never quietly lower the quality bar instead. Escalations are recorded and measured.`,
+        `Your orchestrator is named ${ORCHESTRATOR_NAME}. Users and agents may address it as ${ORCHESTRATOR_NAME} without quotation marks; the synonym "orchestrator" remains accepted. Send concise completion reports, blockers, and important findings to ${ORCHESTRATOR_NAME} with hive_send; reference large artifacts instead of pasting them.`,
+        `Read only what the task needs: search for the lines that matter instead of reading large files whole, and reuse artifacts other agents already wrote instead of re-deriving them. If the task proves substantially larger than briefed, stop and report to ${ORCHESTRATOR_NAME} rather than grinding.`,
+        `If the task exceeds your model — a genuine capability wall after at least two distinct failed approaches, not a scope surprise (that is a stop-and-report) — commit your WIP to your branch, then call hive_escalate once with the evidence (why, and what you tried) and a handoff (goal, done, remaining, decisions). Keep working until ${ORCHESTRATOR_NAME} answers; it may respawn the task on a stronger model with your handoff or tell you to continue. Never grind on under-powered, and never quietly lower the quality bar instead. Escalations are recorded and measured.`,
         CONTINUOUS_EXECUTION,
       ];
   return [

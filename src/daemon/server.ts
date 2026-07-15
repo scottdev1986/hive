@@ -49,6 +49,7 @@ import {
   MemoryWriteInputSchema,
   MessagePrioritySchema,
   ORCHESTRATOR_NAME,
+  isOrchestratorName,
   QuotaObservationSchema,
   RoutingPolicyMutationSchema,
   StatuslineReportSchema,
@@ -3433,7 +3434,7 @@ export class HiveDaemon {
     server.registerTool("hive_send", {
       title: "Send agent message",
       description:
-        'Send a durable message and return its real lifecycle state. normal is ordinary guidance and lands at a turn boundary. steer is prompt, NON-DESTRUCTIVE guidance: Claude and Codex receive it mid-turn at the next tool boundary without cancellation; Grok has no tool-hook or native steer surface, so it honestly degrades to the next turn. urgent CANCELS the in-flight turn, which is never resumed, and discards its reasoning; use it only when the current work must STOP. critical is unchanged: it also revokes write/landing authority and restarts the target read-only. "queued" means not delivered, "injected" means handed to the vendor, and "applied" means receipt measured on the vendor\'s own boundary/transcript surface; queued/injected is SENT, not RECEIVED and not STOPPED. Never report a target as informed from enqueue or transport silence. Recipient "orchestrator" wakes the root. The returned body is a short head-and-tail preview; read the durable message for the full body.',
+        'Send a durable message and return its real lifecycle state. normal is ordinary guidance and lands at a turn boundary. steer is prompt, NON-DESTRUCTIVE guidance: Claude and Codex receive it mid-turn at the next tool boundary without cancellation; Grok has no tool-hook or native steer surface, so it honestly degrades to the next turn. urgent CANCELS the in-flight turn, which is never resumed, and discards its reasoning; use it only when the current work must STOP. critical is unchanged: it also revokes write/landing authority and restarts the target read-only. "queued" means not delivered, "injected" means handed to the vendor, and "applied" means receipt measured on the vendor\'s own boundary/transcript surface; queued/injected is SENT, not RECEIVED and not STOPPED. Never report a target as informed from enqueue or transport silence. Recipient queen wakes the root (preferred name; synonym "orchestrator" is still accepted). The returned body is a short head-and-tail preview; read the durable message for the full body.',
       inputSchema: SendRequestSchema,
     }, async ({ from, to, body, ...requested }) => {
       // `from` is a claim about identity, so it is checked against the bound
@@ -3453,7 +3454,7 @@ export class HiveDaemon {
       // migration without the safety requirements sent nine minutes earlier.
       const note = queuedDeliveryNote(
         message,
-        to === ORCHESTRATOR_NAME ? null : this.db.getAgentByName(to),
+        isOrchestratorName(to) ? null : this.db.getAgentByName(to),
       );
       return toolResult(
         note === undefined
@@ -3554,14 +3555,14 @@ export class HiveDaemon {
     server.registerTool("hive_inbox", {
       title: "Read agent inbox",
       description:
-        'Read and atomically acknowledge queued messages. Recipient "orchestrator" returns bounded envelopes.',
+        'Read and atomically acknowledge queued messages. Recipient queen returns bounded envelopes (synonym "orchestrator" is still accepted).',
       inputSchema: InboxRequestSchema,
     }, async ({ agent }) => {
-      // The global orchestrator inbox is reachable only by naming the
-      // orchestrator, which only the orchestrator's own capability may do.
+      // The global root inbox is reachable only by naming queen (or the
+      // accepted synonym), which only the root's own capability may do.
       this.authorizeTool(capability, "hive_inbox", "inbox:read", agent, false);
       return toolResult(
-        agent === ORCHESTRATOR_NAME
+        isOrchestratorName(agent)
           ? await this.delivery.orchestratorInbox()
           : await this.delivery.inbox(agent),
         "messages",

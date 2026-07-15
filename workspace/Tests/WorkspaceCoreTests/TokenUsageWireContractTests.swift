@@ -36,8 +36,8 @@ final class TokenUsageWireContractTests: XCTestCase {
         let session = try XCTUnwrap(snapshot.sessions.first)
         XCTAssertEqual(session.fleet.counts?.totalTokens, 1780)
         let rows = session.usageRows
-        XCTAssertTrue(rows.contains { $0.name == "Orchestrator" })
-        let workerRows = rows.filter { $0.name != "Orchestrator" }
+        XCTAssertTrue(rows.contains { $0.name == "Queen" })
+        let workerRows = rows.filter { $0.name != "Queen" }
         XCTAssertEqual(
             Set(workerRows.map(\.name)), ["maya", "quinn"],
             "each worker is listed individually beside the collapsed orchestrator")

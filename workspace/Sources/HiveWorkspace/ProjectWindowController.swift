@@ -268,7 +268,9 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
             self?.dispatch(command)
         }
         view.update(state: pane)
-        let recipient = pane.kind == .orchestrator ? "orchestrator" : pane.title
+        // Preferred root address is queen; daemon also accepts the synonym
+        // "orchestrator" for lease checks during the rename window.
+        let recipient = pane.kind == .orchestrator ? "queen" : pane.title
         view.contentView.onComposerInput = { [weak self] action in
             self?.onComposerInput?(recipient, action)
         }

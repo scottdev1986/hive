@@ -1,5 +1,5 @@
 import type { AgentRecord, CapabilityProvider } from "../schemas";
-import { isLiveAgent } from "../schemas";
+import { isLiveAgent, ORCHESTRATOR_NAME } from "../schemas";
 import { operatorFetch } from "./credential";
 import { buildHookEvent, postHookEvent } from "./event";
 import { fetchAgentStatus, sendOrchestratorMessage } from "./mcp";
@@ -20,7 +20,7 @@ const TASK_PREVIEW_LENGTH = 240;
 const recoveryPing =
   "Hive recovery: the previous orchestrator exited while your agent session " +
   "remained active. Continue your current task, and send a concise recovery " +
-  "report to orchestrator with your objective, current status, branch and " +
+  `report to ${ORCHESTRATOR_NAME} with your objective, current status, branch and ` +
   "worktree, files you are changing, blockers, and next action.";
 
 export interface OrchestratorSupervisorDependencies {
@@ -185,7 +185,7 @@ export async function runWorkspaceOrchestrator(
           // truthful known state `spawning`, never a fabricated idle or gray
           // unknown, while this generation starts.
           await postHookEvent(buildHookEvent("session-launch", {
-            agent: "orchestrator",
+            agent: ORCHESTRATOR_NAME,
           }), port, operatorFetch);
           return await withNativeOrchestratorTurnMonitor(
             tool,
@@ -226,7 +226,7 @@ export async function runWorkspaceOrchestrator(
     });
     try {
       await postHookEvent(buildHookEvent("session-end", {
-        agent: "orchestrator",
+        agent: ORCHESTRATOR_NAME,
       }), port, operatorFetch);
     } catch (error) {
       console.error(

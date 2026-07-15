@@ -1,6 +1,9 @@
 import {
   AgentMessageSchema,
   ORCHESTRATOR_NAME,
+  canonicalOrchestratorName,
+  isOrchestratorName,
+  orchestratorRecipientNames,
   unknownVendor,
   type AgentMessage,
   type AgentRecord,
@@ -239,6 +242,9 @@ export class MessageDelivery {
       );
       if (existing !== null) return existing;
     }
+    // Preferred root address is queen; "orchestrator" is a synonym. Store the
+    // preferred form so inbox, wake, and history share one recipient key.
+    to = canonicalOrchestratorName(to);
     const recipient = to === ORCHESTRATOR_NAME
       ? null
       : this.db.getAgentByName(to);
@@ -378,7 +384,7 @@ export class MessageDelivery {
   }
 
   async flushQueued(agentName: string): Promise<AgentMessage[]> {
-    if (agentName === ORCHESTRATOR_NAME) {
+    if (isOrchestratorName(agentName)) {
       return this.wakeOrchestrator();
     }
     if (this.composerActive(agentName)) return [];
@@ -602,45 +608,55 @@ export class MessageDelivery {
   }
 
   async orchestratorInbox(): Promise<OrchestratorMessageEnvelope[]> {
-    return this.withSessionLock(orchestratorTmuxSession(), async () =>
-      this.db.claimUndeliveredMessages(
-        ORCHESTRATOR_NAME,
-        new Date().toISOString(),
-      ).map((message) => {
+    return this.withSessionLock(orchestratorTmuxSession(), async () => {
+      const deliveredAt = new Date().toISOString();
+      // Drain preferred and synonym keys so pre-rename messages still surface.
+      const claimed = orchestratorRecipientNames().flatMap((name) =>
+        this.db.claimUndeliveredMessages(name, deliveredAt)
+      );
+      return claimed.map((message) => {
         const applied = this.db.transitionMessage(
           message.id,
           "applied",
           message.deliveredAt!,
         )!;
         return createOrchestratorEnvelope(applied);
-      })
-    );
+      });
+    });
   }
 
   readOrchestratorMessage(id: string): AgentMessage | null {
     const message = this.db.getMessage(id);
-    return message?.to === ORCHESTRATOR_NAME ? message : null;
+    return message !== null && isOrchestratorName(message.to) ? message : null;
   }
 
   async wakeOrchestrator(): Promise<AgentMessage[]> {
-    if (this.composerActive(ORCHESTRATOR_NAME)) return [];
+    if (this.rootComposerActive()) return [];
     return this.withSessionLock(orchestratorTmuxSession(), async () => {
-      if (this.composerActive(ORCHESTRATOR_NAME)) return [];
+      if (this.rootComposerActive()) return [];
       const delivered: AgentMessage[] = [];
-      for (const message of this.db.getUndeliveredMessages(ORCHESTRATOR_NAME)) {
-        if (this.composerActive(ORCHESTRATOR_NAME)) break;
-        const injected = await this.deliverRoot(message);
-        if (injected !== null) delivered.push(injected);
+      for (const name of orchestratorRecipientNames()) {
+        for (const message of this.db.getUndeliveredMessages(name)) {
+          if (this.rootComposerActive()) return delivered;
+          const injected = await this.deliverRoot(message);
+          if (injected !== null) delivered.push(injected);
+        }
       }
       return delivered;
     });
+  }
+
+  /** Preferred or synonym lease blocks root injection — Workspace may still
+   * write either marker during the rename window. */
+  private rootComposerActive(): boolean {
+    return orchestratorRecipientNames().some((name) => this.composerActive(name));
   }
 
   private async deliverRoot(
     message: AgentMessage,
   ): Promise<AgentMessage | null> {
     if (
-      this.composerActive(ORCHESTRATOR_NAME) ||
+      this.rootComposerActive() ||
       this.rootProtocol?.isLive() !== true
     ) {
       return null;
@@ -909,7 +925,7 @@ export class MessageDelivery {
     // by hive_inbox on its own turns — and the root is this alert's audience,
     // so "you have unread mail" would be noise by construction.
     for (const message of this.db.listQueuedMessages()) {
-      if (message.to === ORCHESTRATOR_NAME) continue;
+      if (isOrchestratorName(message.to)) continue;
       if (message.createdAt < cutoff && message.alertAt === null) {
         if (await this.stalledReason(message.to, now, "queued") === null) {
           continue;
@@ -991,8 +1007,14 @@ export class MessageDelivery {
    * from §2 applies exactly: read what the tool measures and hands you.
    */
   private turnBoundaryAt(recipient: string): string | null {
-    if (recipient === ORCHESTRATOR_NAME) {
-      return this.db.latestTurnEndAt(ORCHESTRATOR_NAME);
+    if (isOrchestratorName(recipient)) {
+      // Prefer the newest turn-end across preferred and synonym event keys.
+      let newest: string | null = null;
+      for (const name of orchestratorRecipientNames()) {
+        const at = this.db.latestTurnEndAt(name);
+        if (at !== null && (newest === null || at > newest)) newest = at;
+      }
+      return newest;
     }
     // Was `lastEventAt`, which is the newest event of any kind. An idle agent
     // emits `notification` events while doing nothing, so an unsubmitted paste
@@ -1033,13 +1055,23 @@ export class MessageDelivery {
     now: string,
     phase: "injected" | "queued" = "injected",
   ): Promise<string | null> {
-    const agent = recipient === ORCHESTRATOR_NAME
+    const agent = isOrchestratorName(recipient)
       ? null
       : this.db.getAgentByName(recipient);
     if (agent !== null && (agent.status === "dead" || agent.status === "failed")) {
       return `${recipient} is ${agent.status} and will never reach a boundary`;
     }
-    const boundary = this.db.latestTurnBoundary(recipient);
+    // Root events may be keyed under queen (preferred) or orchestrator (legacy).
+    const boundary = isOrchestratorName(recipient)
+      ? orchestratorRecipientNames().reduce<
+        ReturnType<HiveDatabase["latestTurnBoundary"]>
+      >((best, name) => {
+        const next = this.db.latestTurnBoundary(name);
+        if (next === null) return best;
+        if (best === null || next.timestamp > best.timestamp) return next;
+        return best;
+      }, null)
+      : this.db.latestTurnBoundary(recipient);
     if (boundary === null) {
       // "No turn events at all" is a diagnosis about a vendor that HAS a hook
       // stream and has gone silent on it. Said about grok, which has none, it
@@ -1081,8 +1113,12 @@ export class MessageDelivery {
         return `${recipient}'s process is gone mid-turn — nothing is left to reach a boundary`;
       }
     }
-    const life = recipient === ORCHESTRATOR_NAME
-      ? this.db.latestEventAt(recipient)
+    const life = isOrchestratorName(recipient)
+      ? orchestratorRecipientNames().reduce<string | null>((best, name) => {
+        const at = this.db.latestEventAt(name);
+        if (at === null) return best;
+        return best === null || at > best ? at : best;
+      }, null)
       : agent?.lastEventAt ?? null;
     const quietMs = life === null
       ? Number.POSITIVE_INFINITY

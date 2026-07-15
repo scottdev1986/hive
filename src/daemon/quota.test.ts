@@ -1095,7 +1095,7 @@ describe("quota telemetry and alerts", () => {
     });
     expect(db.listMessages()).toMatchObject([{
       from: "hive-quota",
-      to: "orchestrator",
+      to: "queen",
       state: "injected",
       deliveredAt: expect.any(String),
     }]);

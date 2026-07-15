@@ -2,10 +2,31 @@ import { z } from "zod";
 import { RoutingCategorySchema } from "./routing-policy";
 import { CapabilityProviderSchema, EffortLevelSchema } from "./capability";
 
-// Reserved recipient name for the root orchestrator. It is not a spawned
+// Preferred user-facing name of the root orchestrator. It is not a spawned
 // agent and has no row in the agents table; delivery routes it through the
 // dedicated root delivery path instead of ordinary agent liveness checks.
-export const ORCHESTRATOR_NAME = "orchestrator";
+// The architectural role word remains "orchestrator"; this is the address.
+export const ORCHESTRATOR_NAME = "queen";
+
+// Compatibility synonym still accepted for addressing. Not removed: callers
+// and memories that say "orchestrator" must keep working.
+export const ORCHESTRATOR_NAME_ALIASES = ["orchestrator"] as const;
+
+/** Every accepted root recipient name: preferred first, then synonyms. */
+export function orchestratorRecipientNames(): readonly string[] {
+  return [ORCHESTRATOR_NAME, ...ORCHESTRATOR_NAME_ALIASES];
+}
+
+/** True when `name` addresses the root (preferred or synonym), case-insensitive. */
+export function isOrchestratorName(name: string): boolean {
+  const normalized = name.toLowerCase();
+  return orchestratorRecipientNames().includes(normalized);
+}
+
+/** Collapse any accepted root name to the preferred form; leave others alone. */
+export function canonicalOrchestratorName(name: string): string {
+  return isOrchestratorName(name) ? ORCHESTRATOR_NAME : name;
+}
 
 // A control restart must be able to reproduce the process that was actually
 // launched without reading a routing table or a mutable tool default. Keep

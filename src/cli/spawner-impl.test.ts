@@ -810,6 +810,9 @@ describe("HiveSpawner name pool", () => {
     expect(() => resolveAgentName("orchestrator", [])).toThrow(
       'Agent name "orchestrator" is reserved',
     );
+    expect(() => resolveAgentName("queen", [])).toThrow(
+      'Agent name "queen" is reserved',
+    );
   });
 
   test("prefers a never-used name over a closed one", () => {
@@ -825,9 +828,9 @@ describe("HiveSpawner name pool", () => {
   test("the pool is large, typeable, and mutually unconfusable", () => {
     expect(NAME_POOL.length).toBeGreaterThanOrEqual(300);
     expect(new Set(NAME_POOL).size).toEqual(NAME_POOL.length);
-    // Names that would be ambiguous when spoken to the orchestrator: the
-    // reserved destination, the tools, and the human running the Hive.
-    for (const reserved of ["orchestrator", "claude", "codex", "hive", "scott"]) {
+    // Names that would be ambiguous when spoken to the root: preferred and
+    // synonym destinations, the tools, and the human running the Hive.
+    for (const reserved of ["queen", "orchestrator", "claude", "codex", "hive", "scott"]) {
       expect(NAME_POOL).not.toContain(reserved);
     }
     for (const name of NAME_POOL) {
@@ -2949,17 +2952,20 @@ describe("agent landing protocol", () => {
     expect(prompt).toContain("Read only what the task needs");
     expect(prompt).toContain("instead of reading large files whole");
     expect(prompt).toContain("substantially larger than briefed");
-    // The tripwire must route to the orchestrator, not to a silent stop.
+    // The tripwire must route to queen (preferred root name), not a silent stop.
+    expect(prompt).toContain("Your orchestrator is named queen");
     expect(prompt).toContain(
-      'stop and report to "orchestrator" rather than grinding',
+      "stop and report to queen rather than grinding",
     );
+    // Compatibility synonym remains documented for agents and memories.
+    expect(prompt).toContain('synonym "orchestrator" remains accepted');
   });
 
   test("bounds retries and escalates conflicts to the orchestrator", () => {
     const protocol = buildLandingProtocol(worktree.branch, "/repo");
     expect(protocol).toContain("git rebase --abort");
     expect(protocol).toContain(`After ${LANDING_MAX_ATTEMPTS} failed attempts`);
-    const escalations = protocol.match(/"orchestrator"/g) ?? [];
+    const escalations = protocol.match(/\bqueen\b/g) ?? [];
     expect(escalations.length).toBeGreaterThanOrEqual(2);
     expect(protocol).toContain("never force");
   });

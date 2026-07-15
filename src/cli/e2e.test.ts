@@ -166,7 +166,7 @@ describe("CLI-to-daemon smoke", () => {
         daemonFetch,
       );
       expect(db.listMessages().at(-1)).toMatchObject({
-        from: "orchestrator",
+        from: "queen",
         to: "maya",
         priority: "steer",
         body: "Report your current work to the backup orchestrator.",

@@ -142,7 +142,7 @@ public final class ProjectState {
     /// `orchestrator` field and is applied below; until the first snapshot lands,
     /// "unknown" is the honest word, and gray is the honest colour.
     @discardableResult
-    public func addOrchestrator(title: String = "Orchestrator") -> [StateChange] {
+    public func addOrchestrator(title: String = "Queen") -> [StateChange] {
         let paneID = ProjectState.orchestratorPaneID
         guard panes[paneID] == nil else { return [] }
         panes[paneID] = PaneState(

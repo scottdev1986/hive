@@ -89,7 +89,7 @@ final class TokenUsagePresentationTests: XCTestCase {
         let session = sessionWithTwoOrchestratorGenerations()
         let rows = session.usageRows
 
-        XCTAssertEqual(rows.map(\.name), ["Orchestrator", "maya"])
+        XCTAssertEqual(rows.map(\.name), ["Queen", "maya"])
         XCTAssertEqual(rows[0].model, "claude-opus-4-8", "the running generation names the row")
     }
 

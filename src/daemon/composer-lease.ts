@@ -1,5 +1,9 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import {
+  isOrchestratorName,
+  orchestratorRecipientNames,
+} from "../schemas";
 import { getHiveHome } from "./db";
 
 const RECIPIENT = /^[a-z][a-z0-9-]*$/;
@@ -24,6 +28,13 @@ export function isComposerLeased(
   hiveHome = getHiveHome(),
 ): boolean {
   try {
+    // Root addressing accepts queen (preferred) and orchestrator (synonym);
+    // either marker blocks injection into the root pane.
+    if (isOrchestratorName(recipient)) {
+      return orchestratorRecipientNames().some((name) =>
+        existsSync(composerLeasePath(name, hiveHome))
+      );
+    }
     return existsSync(composerLeasePath(recipient, hiveHome));
   } catch {
     // A malformed recipient must fail closed: do not inject into an unknown

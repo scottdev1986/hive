@@ -9,6 +9,7 @@ import {
   MemoryScopeSchema,
   MemorySearchResultSchema,
   MemoryWriteResultSchema,
+  ORCHESTRATOR_NAME,
   QuotaObservationSchema,
   type AgentRecord,
   type MemoryFact,
@@ -83,7 +84,7 @@ export async function sendOrchestratorMessage(
   await callHiveTool(
     port,
     "hive_send",
-    { from: "orchestrator", to, body, priority: "steer" },
+    { from: ORCHESTRATOR_NAME, to, body, priority: "steer" },
     "message",
     fetcher,
     `hive_send to ${to}`,
