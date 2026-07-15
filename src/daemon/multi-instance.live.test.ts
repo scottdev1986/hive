@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { existsSync } from "node:fs";
@@ -209,6 +210,15 @@ test("two live daemon processes isolate one repo through spawn, message, land, a
     git(statusA[0]!.worktreePath, [
       "commit", "-m", "acceptance marker", "--no-gpg-sign",
     ]);
+    // A real Codex writer that made these commits would have attested matching
+    // at its turn boundary; this live test fakes maya's work, so stamp the
+    // attestation the fail-closed landing gate requires (WAL makes it visible to
+    // the running daemon's own connection).
+    const dbA = new Database(join(homeA, "hive.db"));
+    dbA.exec("PRAGMA busy_timeout = 5000");
+    dbA.query("UPDATE agents SET identityState = 'matching' WHERE name = 'maya'")
+      .run();
+    dbA.close();
     const landed = textValue(await clientA.callTool({
       name: "hive_land",
       arguments: { agent: "maya", capabilityEpoch: 0 },

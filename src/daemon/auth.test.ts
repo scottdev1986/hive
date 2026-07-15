@@ -46,6 +46,9 @@ function agentRecord(overrides: Partial<AgentRecord> = {}): AgentRecord {
     capabilityEpoch: 0,
     readOnly: false,
     writeRevoked: false,
+    // A healthy Codex writer has attested matching (from its turn-boundary
+    // reattest); the fail-closed landing gate requires it to merge.
+    identityState: "matching",
     ...overrides,
   };
 }
