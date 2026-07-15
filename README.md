@@ -12,7 +12,7 @@ Hive is currently a 0.0.x project. Its command and storage contracts may change 
 
 ## Workspace
 
-Run `hive` in an initialized repository to open one Workspace window for that Hive instance. The orchestrator is the master pane and worker agents appear as SwiftTerm panes attached to their daemon-owned tmux sessions. The vendor TUI remains interactive: clicking a pane focuses it, and typing goes directly to that Claude Code, Codex, or Grok session.
+Run `hive` in an initialized repository to create a fresh Hive instance and open its Workspace window. Running it again creates another isolated instance and another window, even from the same repository. The orchestrator is the master pane and worker agents appear as SwiftTerm panes attached to their daemon-owned tmux sessions. The vendor TUI remains interactive: clicking a pane focuses it, and typing goes directly to that Claude Code, Codex, or Grok session.
 
 Agent state comes from structured daemon events, not terminal scraping. Unknown or disconnected state is displayed as unknown rather than inferred from pane contents.
 
@@ -46,7 +46,7 @@ hive init
 hive
 ```
 
-`hive init` installs the agent skills used by the CLIs present on the machine, offers the optional local Graphify integration, seeds optional narrative memory, and starts an instance daemon on an ephemeral loopback port. It is safe to run again. **Today** it still runs the outgoing deterministic repository profile pass (`ensureProfile` / `src/adapters/profile.ts`). `--refresh` forces the outgoing cache rebuild while otherwise running init, then exits without starting the daemon (`src/cli.ts`). Long-term, profile authorship moves to a daemon-coordinated agent-authored job (SPEC decision 14; plan package P5 removes the init/legacy path). Use `hive init --no-graphify` to skip the Graphify prompt.
+`hive init` installs the agent skills used by the CLIs present on the machine, offers the optional local Graphify integration, seeds optional narrative memory, and performs repo-only setup: it does not start a daemon or open a Workspace. It is safe to run again. **Today** it still runs the outgoing deterministic repository profile pass (`ensureProfile` / `src/adapters/profile.ts`); `--refresh` forces that cache rebuild while otherwise running init. Long-term, profile authorship moves to a daemon-coordinated agent-authored job (SPEC decision 14; plan package P5 removes the init/legacy path). Use `hive init --no-graphify` to skip the Graphify prompt.
 
 Bare `hive` opens the Workspace with Claude as the default orchestrator. To choose another installed vendor explicitly, run `hive codex` or `hive grok`; `hive claude` is the explicit Claude spelling.
 
@@ -54,9 +54,9 @@ Bare `hive` opens the Workspace with Claude as the default orchestrator. To choo
 
 | Command | Purpose |
 | --- | --- |
-| `hive` | Start or reuse this instance and open its Workspace |
-| `hive init` | Install agent skills, seed optional memory, offer Graphify, run the outgoing deterministic profile pass, and start the daemon |
-| `hive init --refresh` | Forces the outgoing cache rebuild while otherwise running init; exits without starting the daemon (removed with plan package P5) |
+| `hive` | Create a fresh isolated instance and open its Workspace |
+| `hive init` | Install agent skills, seed optional memory, offer Graphify, and run the outgoing deterministic profile pass without starting a daemon |
+| `hive init --refresh` | Force the outgoing cache rebuild while otherwise running daemon-free init (removed with plan package P5) |
 | `hive claude`, `hive codex`, `hive grok` | Open the Workspace with that read-only orchestrator |
 | `hive status` | Show agent name, tool, model, state, context use, task, and failure |
 | `hive kill <agent>` | Stop one agent and preserve any unlanded work |
@@ -76,7 +76,7 @@ Run `hive <command> --help` for the complete options. Hook, local capability-hel
 
 ## Isolation and multiple instances
 
-The default instance stores state under `~/.hive`. A named instance uses its own home under `~/.hive/instances/<name>`:
+The default home at `~/.hive` stores setup and preference state. Every ordinary Workspace launch selects a fresh runtime home under `~/.hive/instances/run-<uuid>` before starting its daemon. An explicit named instance uses `~/.hive/instances/<name>` when stable naming is needed:
 
 ```sh
 hive --instance client-a init
@@ -86,7 +86,7 @@ hive instances
 
 Instances have separate identity, daemon lock, ephemeral port, handshake, database, local control-plane capabilities, tmux namespace, worktrees, and owned branches. Repository landing is serialized across instances. Provider quota is deliberately machine-wide because it belongs to the signed-in vendor account, not to one Hive instance. Hive never reads, stores, or manages provider passwords, API keys, session secrets, or keychain entries; provider sign-in remains entirely owned by each vendor CLI.
 
-Machine-wide update, rollback, and uninstall operations refuse while any instance has a live or unobservable team. Repository uninstall removes only state and branches owned by the selected instance.
+Machine-wide update, rollback, and uninstall operations refuse while any instance has a live or unobservable team. Repository uninstall removes only the current repository's Hive footprint. It stops the selected daemon only after its handshake proves it serves that repository; a daemon serving another repository is never signaled.
 
 ## Autonomy and routing
 

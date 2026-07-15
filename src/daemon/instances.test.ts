@@ -4,8 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
+  defaultHiveHome,
   instanceMutationBlockers,
+  machineHiveHome,
   namedInstanceHome,
+  selectFreshInstance,
   selectInstanceFromArgv,
 } from "./instances";
 
@@ -27,6 +30,19 @@ describe("instance selection", () => {
     process.env.HIVE_HOME = "/tmp/existing-hive-home";
     expect(selectInstanceFromArgv(["bun", "hive", "init"])).toBeNull();
     expect(process.env.HIVE_HOME).toBe("/tmp/existing-hive-home");
+  });
+
+  test("ordinary launches can select a fresh isolated instance every time", () => {
+    const first = selectFreshInstance("first");
+    const second = selectFreshInstance("second");
+    expect(first).toBe(namedInstanceHome("run-first"));
+    expect(second).toBe(namedInstanceHome("run-second"));
+    expect(second).not.toBe(first);
+    expect(process.env.HIVE_HOME).toBe(second);
+  });
+
+  test("automatic runtimes share machine-scoped tools from the default home", () => {
+    expect(machineHiveHome(namedInstanceHome("run-first"))).toBe(defaultHiveHome());
   });
 
   test("instance names cannot escape the registry directory", () => {

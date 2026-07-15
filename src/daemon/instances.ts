@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -40,6 +41,14 @@ export function selectInstance(name: string): string {
   const home = namedInstanceHome(name);
   process.env.HIVE_HOME = home;
   return home;
+}
+
+/** Give an ordinary Workspace launch its own runtime boundary. Named
+ * instances remain available for callers that explicitly ask for one, while
+ * every unqualified launch gets a distinct daemon, database, tmux namespace,
+ * and application process. */
+export function selectFreshInstance(id: string = randomUUID()): string {
+  return selectInstance(`run-${id}`);
 }
 
 export function selectInstanceFromArgv(argv: readonly string[]): string | null {

@@ -13,9 +13,8 @@
  *   - Opt-in only: the suite skips (visibly) unless HIVE_E2E=1 and tmux is on
  *     PATH. CI sets HIVE_E2E=1; locally run `HIVE_E2E=1 bun test`.
  *
- * The scenarios are ordered and share one daemon lifetime on purpose — the
- * second `hive init` being a no-op on the profile *is* the regression under test, and it is
- * only meaningful against the daemon the first start brought up.
+ * The scenarios are ordered. Init is proved daemon-free first; the suite then
+ * starts one real daemon explicitly for the remaining transport checks.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
@@ -44,6 +43,7 @@ let repo = "";
 let shims = "";
 let port = 0;
 let env: Record<string, string> = {};
+let daemonProcess: ReturnType<typeof Bun.spawn> | null = null;
 
 const tmuxSocket = `hive-e2e-${process.pid}`;
 const tmux = new TmuxAdapter(tmuxSocket);
@@ -210,6 +210,7 @@ afterAll(async () => {
   } catch {
     // Already stopped, as the last scenario asserts.
   }
+  daemonProcess?.kill("SIGKILL");
   await Bun.spawn(["tmux", "-L", tmuxSocket, "kill-server"], {
     stdout: "ignore",
     stderr: "ignore",
@@ -227,7 +228,7 @@ e2e("real hive CLI against a real daemon and real tmux", () => {
     throw new Error(`no profile cached under ${hiveHome}`);
   };
 
-  test("hive init profiles a fresh repo into Hive's home, not the repo, and brings the daemon up", async () => {
+  test("hive init profiles a fresh repo without starting a daemon", async () => {
     const run = await runCli(["init"]);
     const output = run.stdout + run.stderr;
     expect(run.exitCode).toEqual(0);
@@ -235,9 +236,11 @@ e2e("real hive CLI against a real daemon and real tmux", () => {
     expect(existsSync(await cachedProfile())).toEqual(true);
     // …and the repo is left exactly as the user had it. Nothing to commit.
     expect(existsSync(join(repo, ".hive", "profile.toml"))).toEqual(false);
-    // …and a real daemon answers on the advertised port.
-    expect(output).toContain(`daemon port ${port}`);
-    await until(health, "daemon /health");
+    expect(output).not.toContain("daemon port");
+    expect(existsSync(join(hiveHome, "daemon.lock"))).toEqual(false);
+    expect(existsSync(join(hiveHome, "daemon.pid"))).toEqual(false);
+    expect(existsSync(join(hiveHome, "daemon.port"))).toEqual(false);
+    expect(await health()).toEqual(false);
   }, MINUTE);
 
   test("a second hive init is a no-op, and never asks for a third — the field-test regression", async () => {
@@ -256,6 +259,18 @@ e2e("real hive CLI against a real daemon and real tmux", () => {
     expect(output).not.toContain("--refresh");
     expect(output).not.toContain("hive memory reindex");
     expect(output).not.toContain("stale");
+    expect(await health()).toEqual(false);
+  }, MINUTE);
+
+  test("the daemon begins only when the launch boundary is crossed", async () => {
+    daemonProcess = Bun.spawn([process.execPath, CLI, "daemon"], {
+      cwd: repo,
+      env,
+      stdin: "ignore",
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    await until(health, "daemon /health");
     expect(await health()).toEqual(true);
   }, MINUTE);
 

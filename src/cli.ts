@@ -42,7 +42,6 @@ import {
   setSelectionMode,
 } from "./cli/routing-policy";
 import { printModelControlSnapshot } from "./cli/model-control";
-import { runStart } from "./cli/start";
 import { runStatusline } from "./cli/statusline";
 import { runUninstall } from "./cli/uninstall";
 import {
@@ -255,7 +254,7 @@ export function createProgram(): Command {
   program
     .command("init")
     .description(
-      "Scaffold this repo's agent conventions and seed its memory, then bring its Hive daemon up",
+      "Scaffold this repo's agent conventions and seed its memory without starting Hive",
     )
     .option("--refresh", "force a re-scan of the repo profile; never required")
     .option("--scaffold-agents", "offer to scaffold an AGENTS.md when none exists")
@@ -286,7 +285,6 @@ export function createProgram(): Command {
         ...(options.force === undefined ? {} : { force: options.force }),
         ...(options.graphify === undefined ? {} : { graphify: options.graphify }),
       });
-      if (options.refresh !== true) await runStart({ cwd: root });
     });
 
   program

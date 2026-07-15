@@ -4,12 +4,12 @@
 
 ## Summary
 
-A Hive instance is a `HIVE_HOME`. The default instance remains `~/.hive`; `hive --instance <name>` selects `~/.hive/instances/<name>`. Each instance has its own identity, daemon lock, ephemeral port, handshake, database, local control-plane capabilities, runtime files, tmux sessions, and project state. Instances may operate on the same repository without sharing control-plane state. A named instance's empty or untouched provisional Model Control policy inherits a one-time copy of the default instance's user-authored policy, so opening a second window does not require re-enabling every model; later edits remain local to that instance. Provider authentication is outside Hive: it uses the vendor CLIs' existing signed-in sessions and never reads or writes provider passwords, API keys, session secrets, or keychain entries.
+A Hive instance is a `HIVE_HOME`. `~/.hive` is the default setup and preference home, but an ordinary `hive`, `hive claude`, `hive codex`, or `hive grok` launch switches to a fresh `~/.hive/instances/run-<uuid>` runtime before daemon lookup. `hive --instance <name>` remains the explicit stable-name form. Each runtime has its own identity, daemon lock, ephemeral port, handshake, database, local control-plane capabilities, runtime files, tmux sessions, and project state. Instances may operate on the same repository without sharing control-plane state. A fresh or named instance's empty or untouched provisional Model Control policy inherits a one-time copy of the default home's user-authored policy, so opening another window does not require re-enabling every model; later edits remain local to that instance. Provider authentication is outside Hive: it uses the vendor CLIs' existing signed-in sessions and never reads or writes provider passwords, API keys, session secrets, or keychain entries.
 
-Workspace launch is order-independent. A named instance always gets its own
-macOS process. When the default instance starts after a named one, the launcher
-detects the foreign `--instance-id` and requests a new process instead of
-letting LaunchServices activate the wrong window and discard the new arguments.
+Workspace launch is order-independent and never focuses an existing Workspace.
+Every public launch asks LaunchServices for a new macOS process. Unqualified
+launches also select a new runtime home, so two launches from the same repository
+have distinct instance ids, daemons, ports, databases, tmux namespaces, and windows.
 
 Three resources cannot be isolated by instance and are coordinated instead:
 
@@ -23,7 +23,7 @@ The automated live test starts two real daemon processes on one repository, spaw
 
 `hiveInstanceSuffix()` is the first ten hexadecimal characters of SHA-256 over the resolved `HIVE_HOME`. That stable value scopes tmux sessions and other runtime names (`src/daemon/tmux-sessions.ts:9-29`).
 
-The global `--instance <name>` option selects a named home before a command runs (`src/cli.ts:231-238`, `src/daemon/instances.ts:30-54`). The instances directory is the registry: Hive discovers the default home plus directories below `~/.hive/instances`, reads their lifecycle files, and accepts a running instance only when its handshake reports the expected instance id (`src/daemon/instances.ts:76-112`). There is no shared mutable registry file.
+The global `--instance <name>` option selects a named home before a command runs. Without that option, the Workspace session boundary finishes repo-only preparation, snapshots that repository's registry binding and derived setup state into a new home, and calls `selectFreshInstance`, producing a new `run-<uuid>` runtime before it inspects or starts a daemon (`src/daemon/instances.ts`, `src/cli/start.ts`). The snapshot carries the init stamp, profile, and Graphify decision forward without sharing daemon lifecycle files or the database. The instances directory is the registry: Hive discovers the default home plus directories below `~/.hive/instances`, reads their lifecycle files, and accepts a running instance only when its handshake reports the expected instance id. There is no shared mutable instance-registry file.
 
 Each home permits one daemon:
 
@@ -65,7 +65,7 @@ The repository is the common arbiter for names and work:
 - Creating a writer branch also writes `refs/hive-owner/<instanceId>/<branch>`. Branch deletion clears that ownership ref (`src/adapters/worktrees.ts:88-143`, `:306-351`).
 - Stranded-work reconciliation skips an unpreserved branch owned by a live sibling. It never deletes stranded work itself (`src/daemon/server.ts:2142-2195`).
 - Landing holds `hive-landing.lock` in the Git common directory across the complete fast-forward-only landing operation. Release is token-scoped, so one process cannot remove a successor's lease (`src/daemon/landing.ts:115-152`, `:476-482`).
-- `hive uninstall --repo` stops only the selected instance and removes only worktrees and branches owned by that instance. The default instance may claim legacy branches that predate ownership refs; named instances may not (`src/cli/uninstall.ts:195-273`, `:275-332`).
+- `hive uninstall --repo` compares the selected live daemon's complete project identity with the repository being removed. It signals that daemon only on a match; a daemon serving another repository is untouched. Cleanup remains rooted in the current repository, and worktree/branch deletion remains limited to the selected instance's ownership. The default instance may claim legacy branches that predate ownership refs; named instances may not (`src/cli/uninstall.ts`).
 
 These mechanisms are separate on purpose. Ownership prevents one instance from treating a sibling's branch as abandoned; the landing lease serializes mutations even when both branches are valid and ready.
 

@@ -5,14 +5,15 @@ Source: Hive source tree and native Workspace acceptance, 2026-07-14
 
 ## Summary
 
-This is the release gate for the installed Hive product. It is deliberately not a unit-test recipe, a daemon-only simulation, a copied repository, a separate worktree, or the Workspace's internal `--smoke` diagnostic. Acceptance builds the current working tree into Hive's native versioned layout, launches three visible Workspace processes from the actual repository through the public commands, and drives the real Claude Code, Codex, and Grok TUIs.
+This is the release gate for the installed Hive product. It is deliberately not a unit-test recipe, a daemon-only simulation, a copied repository, a separate worktree, or the Workspace's internal `--smoke` diagnostic. Acceptance builds the current working tree into Hive's native versioned layout, verifies the public command lifecycle against the dedicated empty repository at `/Users/scottkellar/Projects/hive-test-project`, then launches three visible Workspace processes from the actual Hive repository and drives the real Claude Code, Codex, and Grok TUIs.
 
 A run is complete only when the 3×3 orchestrator-to-agent matrix, simultaneous routing, status, Graphify, composer protection, lifecycle isolation, repository no-op checks, and cleanup all pass. An unexecuted cell is not a pass.
 
 ## Non-negotiable boundaries
 
-- Run every public Hive launch with the actual Hive checkout under test as its working directory. Resolve and record that Git toplevel at run time; do not use a copied repository, temporary repository, or separate worktree for a Hive root.
-- Use a fresh temporary native installation and fresh temporary `HIVE_HOME` and `TMPDIR` per instance. Invoke the temporary release binary by absolute path. Never modify, upgrade, uninstall, or put a link in front of the user's existing Hive installation.
+- Run the provider matrix with the actual Hive checkout under test as its working directory. Resolve and record that Git toplevel at run time; do not use a copied repository, temporary repository, or separate worktree for a matrix root.
+- Run the command-lifecycle cases only in `/Users/scottkellar/Projects/hive-test-project`. It is the durable empty external Git repository for this purpose, not a copy or worktree of Hive. Record its own toplevel and clean baseline before the run; do not add Hive source or fixtures to it.
+- Use a fresh temporary native installation and private temporary homes. The command-lifecycle group sets a fresh `HOME` and deliberately leaves `HIVE_HOME` unset so it exercises ordinary automatic instance selection without touching the user's real `~/.hive`; the provider matrix sets a distinct temporary `HIVE_HOME` and `TMPDIR` per controlled instance. Invoke the temporary release binary by absolute path. Never modify, upgrade, uninstall, or put a link in front of the user's existing Hive installation.
 - Before testing any newly built artifact, close every Workspace created by the prior build, run its instance-scoped stop path, and prove its daemon, root, agents, tmux server, app-server sockets, and Workspace process are gone. Evidence from a fleet that spans builds is invalid.
 - Launch only through `hive claude`, `hive codex`, and `hive grok`. Private helper commands are implementation details, and `--smoke` is not acceptance.
 - Provider authentication belongs to the provider CLIs. The acceptance run may rely on their existing signed-in sessions, but it must not query, create, import, copy, inspect, or modify passwords, API keys, session secrets, or keychain entries. Hive's local `.cap` files authorize calls to Hive's own daemon; they are not provider credentials.
@@ -31,6 +32,26 @@ Record before building:
 5. the Git common directory and the current worktree/index state.
 
 The initial tree may be dirty. The baseline is evidence, not a demand to discard the user's work.
+
+## Public command lifecycle in the empty test repository
+
+The dedicated lifecycle repository is:
+
+```text
+/Users/scottkellar/Projects/hive-test-project
+```
+
+It must already be a Git repository and must contain no application code. This section is a required acceptance procedure, but documenting or changing it does not authorize running it; execute it only as part of an explicitly requested acceptance run. Give the whole group a fresh temporary `HOME`, common temporary `TMPDIR`/`HIVE_INSTALL_ROOT`, and no `HIVE_HOME`; this preserves the public unqualified-command semantics while isolating every write from the user's installation.
+
+First launch one Hive from the actual Hive source repository and record its project identity, instance home/id, daemon PID/port, tmux socket, and Workspace PID. Keep it running as the foreign-project sentinel. Then, from the lifecycle repository, run the installed test binary by absolute path and prove these contracts:
+
+1. `hive init --no-graphify` completes repository setup but creates no daemon lock, PID file, port file, tmux server/session, or Workspace process. The foreign-project sentinel remains byte-for-byte the same process and continues answering its handshake.
+2. The first unqualified `hive` creates a new `~/.hive/instances/run-<uuid>` home, daemon, ephemeral port, database, tmux namespace, instance id, and Workspace process for `hive-test-project`.
+3. A second unqualified `hive` from the same directory creates another distinct set of all seven resources. It must not focus, reuse, replace, or stop the first test-repository instance.
+4. `hive uninstall --repo` from `hive-test-project` removes only Hive's footprint from that repository. Before signaling any selected daemon, its project handshake must match `hive-test-project`; the foreign-project sentinel must retain the same PID, port, instance id, agents, tmux namespace, and Workspace process throughout.
+5. Cleanup closes only the two test-repository Workspaces and their instances. The sentinel is stopped separately through its own instance-scoped close path.
+
+Capture process tables, `hive instances`, lifecycle files, and daemon handshakes before and after every command. A new port alone is not proof of a new instance, and a surviving PID alone is not proof that uninstall left the foreign Hive usable.
 
 ## Build and install the development release
 
@@ -69,7 +90,7 @@ An unsigned local artifact is acceptable for development acceptance because it w
 
 Create three disjoint instance roots and private temporary directories beneath `TEST_ROOT`, labelled with unique run identifiers such as `CLAUDE-I1`, `CODEX-I2`, and `GROK-I3`. For every command set that instance's `HIVE_HOME`, its `TMPDIR`, and the common temporary `HIVE_INSTALL_ROOT`; keep the caller's existing `PATH` so the real provider CLIs and tmux remain discoverable.
 
-From the actual repository directory, initialize each instance with Graphify explicitly enabled:
+From the actual repository directory, initialize each instance with Graphify explicitly enabled. Init must leave that instance without daemon lifecycle files; the following public launch is what creates them:
 
 ```sh
 "$HIVE" init --graphify

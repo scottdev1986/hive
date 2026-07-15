@@ -24,7 +24,7 @@ import { existsSync } from "node:fs";
 import { copyFile, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import graphifyLock from "../../graphify.lock" with { type: "text" };
-import { getHiveHome } from "../daemon/db";
+import { machineHiveHome } from "../daemon/instances";
 import {
   graphifyArtifact,
   graphifyArtifactUrl,
@@ -45,7 +45,7 @@ export function graphifyPin(): string {
 }
 
 export function graphifyToolsDir(): string {
-  return join(getHiveHome(), "tools", "graphify");
+  return join(machineHiveHome(), "tools", "graphify");
 }
 
 /** One immutable bundle dir per pin, so a pin bump can never layer onto a

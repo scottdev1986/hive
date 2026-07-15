@@ -1,5 +1,20 @@
 # Wiki Log
 
+## [2026-07-14] correction | Separate repo setup from fresh Workspace runtimes
+
+The default runtime had been shared across repositories through `~/.hive`, so a
+second project's launch refused the first project's port and repo uninstall could
+signal that first daemon. Public Workspace launches now select a fresh generated
+instance before daemon lookup and always request a new app process. `hive init` is
+repo-only setup and creates no daemon. Repo uninstall verifies the selected daemon's
+project handshake before stopping it, so a foreign project's Hive is untouched.
+
+The release gate now reserves `/Users/scottkellar/Projects/hive-test-project` as the
+empty external Git repository for these command-lifecycle cases. The procedure proves
+daemon-free init, two distinct launches from one repo, foreign-project survival across
+repo uninstall, and instance-scoped cleanup. This entry documents the gate; no native
+acceptance run was performed for this correction.
+
 ## [2026-07-14] correction | Reconcile docs with landed agent-authored profiling foundation
 
 Reconciled public and knowledge-base docs with the **landed** portion of the
@@ -47,7 +62,6 @@ Cross-vendor review NO-LAND findings applied:
 3. **SPEC §15 summary split** — landed storage/acceptance vs transitional
    `profile.ts` consumers vs planned P2/P8 authorship/consumption.
 4. **Log touched-list** — includes the design plan and blueprint (this entry's parent).
-
 ## [2026-07-14] measurement | Exercise three native instances; retain the GUI blocker
 
 A fresh isolated native build opened three real Workspace processes from the same

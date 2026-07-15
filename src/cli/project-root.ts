@@ -1,7 +1,7 @@
 /**
  * Shared project-root resolution for the CLI entry points.
  *
- * Bare `hive` and `hive init` both anchor a session to the repository root,
+ * Bare `hive` anchors a session and `hive init` anchors setup to the repository root,
  * not to whichever subdirectory the shell happens to be in — the daemon's
  * identity resolver canonicalizes to `git rev-parse --show-toplevel`, and a
  * profile or session keyed to a subdirectory silently splits identity.

@@ -227,7 +227,7 @@ export function globalMutationRefusal(
 
 /**
  * After the symlink moves, the daemon is still executing the old image. The
- * handshake will refuse to reuse it, so the next `hive init` would fail rather
+ * handshake will refuse to reuse it, so the next `hive` would fail rather
  * than adopt a stale control plane. Close the loop here: stop it while it is
  * provably idle so the next start spawns the new binary.
  */
@@ -245,7 +245,7 @@ async function stopStaleDaemonAfterActivation(): Promise<void> {
   const outcome = await restartStaleDaemon(state, { isRunning: () => isRunning() });
   console.log(
     outcome.stopped
-      ? "Stopped the previous daemon; the next `hive init` runs the new build."
+      ? "Stopped the previous daemon; the next `hive` runs the new build."
       : `Could not stop the previous daemon: ${outcome.reason}`,
   );
 }

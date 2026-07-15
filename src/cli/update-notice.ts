@@ -10,10 +10,10 @@
  * src/update/notice.ts — this module only decides *when* to ask and *where*
  * the "last shown" timestamp lives, and prints whatever the renderer says.
  *
- * Session-boundary commands (bare `hive`, init, claude, codex) are excluded:
- * they already print the richer start notice through startSession, and two
- * version lines per command is one too many. Machine-facing commands (hooks,
- * helpers and hidden process boundaries) never speak at all.
+ * Workspace launch commands (bare `hive`, claude, codex, grok) are excluded:
+ * they already print the richer start notice through startSession. Init is a
+ * repo-only setup command and does not start a session. Machine-facing commands
+ * (hooks, helpers and hidden process boundaries) never speak at all.
  */
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";

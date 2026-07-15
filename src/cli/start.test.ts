@@ -45,12 +45,12 @@ async function repoWithSpec(): Promise<string> {
   return root;
 }
 
-// The session boundary shared by `hive init` and bare `hive`. The daemon
+// The Workspace session boundary. The daemon
 // bring-up itself is a subprocess concern (covered end-to-end in
 // e2e-real.test.ts); here the seams prove the boundary's shape: order, the
 // returned port, and the best-effort steps staying best-effort.
 describe("startSession", () => {
-  test("checks, profiles the repo in silence, then brings the daemon up — and returns the port", async () => {
+  test("checks and profiles before selecting an instance and bringing its daemon up", async () => {
     const root = await repoWithSpec();
     const steps: string[] = [];
     try {
@@ -63,6 +63,9 @@ describe("startSession", () => {
         ensureDaemon: async (cwd) => {
           steps.push(`ensure:${cwd}`);
         },
+        prepareInstance: () => {
+          steps.push("instance");
+        },
         ensurePort: async () => {
           steps.push("port");
           return 45_017;
@@ -73,7 +76,7 @@ describe("startSession", () => {
       // The update check ran first and its failure stopped nothing. A repo that
       // has never been profiled gets profiled here — before the daemon, and
       // without a word: the profile is Hive's business, not the user's.
-      expect(steps).toEqual(["check", `ensure:${root}`, "port"]);
+      expect(steps).toEqual(["check", "instance", `ensure:${root}`, "port"]);
       expect(await loadDerivedProfile(root)).not.toBeNull();
       expect(profilePath(root).startsWith(hiveHome)).toBe(true);
     } finally {
@@ -91,6 +94,7 @@ describe("startSession", () => {
           throw new Error("offline");
         },
         ensureDaemon: async () => {},
+        prepareInstance: () => {},
         ensurePort: async () => 45_018,
         write: () => {},
       });
@@ -111,6 +115,7 @@ describe("startSession", () => {
         throw new Error("profile directory is read-only");
       },
       ensureDaemon: async () => {},
+      prepareInstance: () => {},
       ensurePort: async () => 45_020,
       warn: (line) => lines.push(line),
       write: () => {},
@@ -135,6 +140,7 @@ describe("startSession", () => {
         ensureDaemon: async () => {
           throw new Error("live agents still running");
         },
+        prepareInstance: () => {},
         ensurePort: async () => {
           started = true;
           return 45_019;
@@ -160,6 +166,7 @@ describe("successful profiling stays silent", () => {
           throw new Error("offline");
         },
         ensureDaemon: async () => {},
+        prepareInstance: () => {},
         ensurePort: async () => 45_021,
         write: (line) => lines.push(line),
       });

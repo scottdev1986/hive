@@ -1,9 +1,9 @@
 /**
- * `hive` — open the project you're in.
+ * `hive` — open a fresh instance for the project you're in.
  *
  * Run inside a git worktree, bare `hive` resolves the repository root, runs
- * the shared `hive init` session boundary (update notice, stale-daemon
- * restart, daemon bring-up, init-once profile line), and launches the
+ * the Workspace session boundary (update notice, fresh runtime selection,
+ * daemon bring-up, init-once profile line), and launches the
  * installed release app with everything it needs on argv: `--project <root>`,
  * `--port <port>`, `--hive <this binary>`, the instance-scoped
  * `--orchestrator-session`, and, for an explicit orchestrator entry,
@@ -46,7 +46,6 @@ import { orchestratorTmuxSession } from "../daemon/tmux-sessions";
 import {
   hiveInstanceSuffix,
   hiveTmuxSocketName,
-  isDefaultHiveHome,
 } from "../daemon/tmux-sessions";
 import { getHiveHome } from "../daemon/db";
 import { isRepoInitialized, runInitCli } from "./init";
@@ -86,35 +85,14 @@ export interface LaunchDeps {
   };
 }
 
-const WORKSPACE_PROCESS_MARKER =
-  "HiveWorkspace.app/Contents/MacOS/HiveWorkspace";
-
-export function workspaceLaunchNeedsNewProcess(
-  processTable: string,
-  instanceId = hiveInstanceSuffix(),
-): boolean {
-  for (const line of processTable.split("\n")) {
-    const executable = line.indexOf(WORKSPACE_PROCESS_MARKER);
-    if (executable < 0) continue;
-    const command = line.slice(executable + WORKSPACE_PROCESS_MARKER.length);
-    const running = /(?:^|\s)--instance-id\s+([^\s]+)/.exec(command)?.[1];
-    // A project-neutral window has no instance id and cannot safely absorb a
-    // project launch either: LaunchServices would activate it and discard the
-    // new argv just as it does for a different named instance.
-    if (running !== instanceId) return true;
-  }
-  return false;
-}
-
 export function workspaceOpenArguments(
   app: string,
   args: readonly string[],
-  newProcess: boolean,
   path = process.env.PATH,
   temporaryDirectory = process.env.TMPDIR,
 ): string[] {
   return [
-    ...(newProcess ? ["-n"] : []),
+    "-n",
     "-a",
     app,
     // LaunchServices creates `open -n` processes from launchd's environment,
@@ -134,32 +112,12 @@ export function workspaceOpenArguments(
   ];
 }
 
-const readWorkspaceProcessTable = (): Promise<string | null> =>
-  new Promise((resolvePromise) => {
-    const child = spawn("ps", ["-axo", "command="], {
-      stdio: ["ignore", "pipe", "ignore"],
-    });
-    let stdout = "";
-    child.stdout?.setEncoding("utf8");
-    child.stdout?.on("data", (chunk: string) => {
-      stdout += chunk;
-    });
-    child.on("error", () => resolvePromise(null));
-    child.on("close", (code) => resolvePromise(code === 0 ? stdout : null));
-  });
-
 const openApp = async (
   app: string,
   args: readonly string[],
 ): Promise<number> => {
-  // A named instance always owns a separate process. The default instance may
-  // reuse only a Workspace already carrying its own instance id; macOS cannot
-  // pass new --args to a running process owned by another Hive instance.
-  const table = isDefaultHiveHome() ? await readWorkspaceProcessTable() : null;
-  const newProcess = !isDefaultHiveHome() || table === null ||
-    workspaceLaunchNeedsNewProcess(table);
   return await new Promise((resolvePromise, reject) => {
-    const child = spawn("open", workspaceOpenArguments(app, args, newProcess), {
+    const child = spawn("open", workspaceOpenArguments(app, args), {
       stdio: "ignore",
     });
     child.on("error", reject);
@@ -215,7 +173,7 @@ export interface RunWorkspaceDeps {
   readonly init?: (root: string) => Promise<void>;
 }
 
-/** Bare `hive`. Inside a git worktree: resolve the repo root, run the shared
+/** Bare `hive`. Inside a git worktree: resolve the repo root, run the
  * session boundary, and launch the app against that project and its daemon
  * port. That path must NOT run the forced update check below — `startSession`
  * already prints the start notice, and running both prints it twice. Outside
@@ -228,7 +186,7 @@ export interface RunWorkspaceDeps {
  * half-initialized or mutate it by surprise, and the graphify question is the
  * same question init asks (TTY-gated; without a terminal it declines for the
  * run with one line). Init failing does not stop the launch — the session
- * boundary below still brings the daemon up, and init can be re-run. */
+ * boundary below still brings a fresh daemon up, and init can be re-run. */
 export async function runWorkspace(deps: RunWorkspaceDeps = {}): Promise<number> {
   const cwd = deps.cwd ?? process.cwd();
   const root = (deps.resolveRoot ?? resolveProjectRoot)(cwd);

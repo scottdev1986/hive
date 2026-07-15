@@ -1,17 +1,17 @@
 /**
- * `hive init` — the session boundary.
+ * Workspace launch — the session boundary.
  *
- * Per the Workspace blueprint, `hive init` is an idempotent request to resolve,
- * create, attach, and focus a project. It is also the one moment Hive reliably
- * owns the terminal, so it is where the update notice belongs: printed before
- * any work, on stderr, dim, one line. Claude Code's contract exactly — you learn
- * a new version exists at the start of a session, not in the middle of one.
+ * Each public Workspace launch owns the terminal long enough to print the
+ * update notice and prepare the repository before selecting a new runtime.
+ * Initialization is a separate repo-only command and never calls this module.
  *
  * The check is best-effort and never blocks. A machine with no network prints
  * "could not check for updates" and starts anyway. It never prints "up to date"
  * on a failed check, because that sentence is a claim about the world and we
  * would not have looked.
  */
+import { basename, join } from "node:path";
+import { cp, mkdir } from "node:fs/promises";
 import { expectedDaemonHandshake } from "../daemon/handshake";
 import { ensureStarted } from "../daemon/lifecycle";
 import { checkForUpdate, fetchLatestFromGitHub, readUpdateCache, isDismissed } from "../update/check";
@@ -28,6 +28,10 @@ import { liveAgentNames } from "./update";
 import { ensureProfile } from "../adapters/profile";
 import type { UpdateCheck } from "../update/check";
 import { repairLeakedProjectConfig } from "./project-config-cleanup";
+import { selectFreshInstance } from "../daemon/instances";
+import { isDefaultHiveHome } from "../daemon/tmux-sessions";
+import { getHiveHome } from "../daemon/db";
+import { projectStateDir } from "../daemon/project-state";
 
 export interface StartDeps {
   readonly checkUpdate?: () => Promise<UpdateCheck>;
@@ -39,6 +43,8 @@ export interface StartDeps {
   readonly ensurePort?: () => Promise<number>;
   readonly ensureProfile?: (cwd: string) => Promise<unknown>;
   readonly repairProjectConfig?: (cwd: string) => Promise<unknown>;
+  /** Select the runtime after repo-only preparation and before daemon lookup. */
+  readonly prepareInstance?: (cwd: string) => void | Promise<void>;
   readonly warn?: (line: string) => void;
 }
 
@@ -105,12 +111,33 @@ export interface StartedSession {
   readonly cwd: string;
 }
 
+/** Copy repo setup into a new runtime before switching HIVE_HOME. Init and the
+ * pre-launch profile pass write under the default home; the fresh daemon needs
+ * the same project UUID, Graphify decision, and derived profile without
+ * sharing mutable runtime state with another instance. */
+async function prepareFreshWorkspaceInstance(cwd: string): Promise<void> {
+  if (!isDefaultHiveHome()) return;
+  const sourceHome = getHiveHome();
+  const sourceProjectState = projectStateDir(cwd);
+  const targetHome = selectFreshInstance();
+  await mkdir(join(targetHome, "projects"), { recursive: true });
+  await cp(
+    join(sourceHome, "project-registry.json"),
+    join(targetHome, "project-registry.json"),
+  );
+  await cp(
+    sourceProjectState,
+    join(targetHome, "projects", basename(sourceProjectState)),
+    { recursive: true },
+  ).catch((error: NodeJS.ErrnoException) => {
+    if (error.code !== "ENOENT") throw error;
+  });
+}
+
 /**
- * The session boundary itself, shared by `hive init` and bare `hive`: update
- * notice (best-effort), stale-daemon restart, and daemon bring-up. Everything a
- * session needs before anything attaches to it — and nothing about *what*
- * attaches, which is why bare `hive` can run this and then hand the port to the
- * Workspace app while `hive init` just prints where the daemon is.
+ * The Workspace session boundary: update notice (best-effort), repo-only
+ * preparation, fresh-instance selection, and daemon bring-up. `hive init`
+ * deliberately does not cross this boundary.
  *
  * The repo profile is ensured here too, before the daemon. Successful profiling
  * is silent (SPEC §14). The daemon ensures it as well; both are deterministic
@@ -130,17 +157,8 @@ export async function startSession(deps: StartDeps = {}): Promise<StartedSession
         "Fix: resolve the error, then run `hive init --refresh`.",
     );
   });
+  await (deps.prepareInstance ?? prepareFreshWorkspaceInstance)(cwd);
   await (deps.ensureDaemon ?? ensureDaemonForBuild)(cwd);
   const port = await (deps.ensurePort ?? ensureStarted)();
   return { port, cwd };
-}
-
-export async function runStart(deps: StartDeps = {}): Promise<void> {
-  const { port, cwd } = await startSession(deps);
-  // State the state. Neither Claude Code nor Codex makes its own name the
-  // subject of a status line ("Claude Code is running for /path"), and neither
-  // puts a full stop at the end of one. The second line is what is now
-  // possible, not a chore being handed back.
-  console.log(`ready — ${cwd} (daemon port ${port})`);
-  console.log("`hive` opens the Workspace; `hive claude` starts an orchestrator");
 }

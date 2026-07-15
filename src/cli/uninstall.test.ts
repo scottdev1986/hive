@@ -70,6 +70,7 @@ function probe(confirm: boolean | null, overrides: Partial<UninstallDeps> = {}):
     stopCurrentInstance: async () => {
       stops.push(1);
     },
+    currentInstanceOwnsProject: async () => true,
     liveTeams: async () => [],
     stopInstances: async () => {},
     acquireLease: async (purpose) => {
@@ -121,6 +122,21 @@ describe("hive uninstall --repo", () => {
       expect(existsSync(join(root, "graphify-out"))).toBe(true);
       expect(lines.join("\n")).toContain("tmux refused the stop");
       expect(lines.join("\n")).toContain("rerun `hive uninstall --repo`");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("a daemon serving another repo is never stopped", async () => {
+    const root = await gitRepo();
+    try {
+      await mkdir(join(root, "graphify-out"), { recursive: true });
+      const { deps, stops } = probe(true, {
+        currentInstanceOwnsProject: async () => false,
+      });
+      expect(await runUninstallRepo(root, {}, deps)).toBe(0);
+      expect(stops).toEqual([]);
+      expect(existsSync(join(root, "graphify-out"))).toBe(false);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

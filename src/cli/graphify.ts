@@ -12,7 +12,8 @@
  */
 import { existsSync } from "node:fs";
 import { stat } from "node:fs/promises";
-import { readDaemonPort } from "../daemon/lifecycle";
+import { probeDaemonReuse } from "../daemon/lifecycle";
+import { expectedDaemonHandshake } from "../daemon/handshake";
 import { operatorFetch } from "./credential";
 import {
   buildGraph,
@@ -37,19 +38,23 @@ export interface GraphifyCliDeps {
   log: (line: string) => void;
   /** Ask a running daemon to converge on the persisted state. Injectable so
    * tests never open a socket. */
-  syncDaemon: (log: (line: string) => void) => Promise<void>;
+  syncDaemon: (root: string, log: (line: string) => void) => Promise<void>;
 }
 
 /** Best-effort: the state file is the truth and the next daemon start reads
  * it, so an unreachable daemon costs nothing but immediacy. */
-async function syncDaemon(log: (line: string) => void): Promise<void> {
-  const port = readDaemonPort();
-  if (port === null) {
-    log("No daemon is running; the next `hive` start applies this.");
+async function syncDaemon(
+  root: string,
+  log: (line: string) => void,
+): Promise<void> {
+  const daemon = await probeDaemonReuse(await expectedDaemonHandshake(root))
+    .catch(() => ({ state: "absent" } as const));
+  if (daemon.state !== "authorized") {
+    log("No daemon for this project is running; the next `hive` start applies this.");
     return;
   }
   try {
-    const response = await operatorFetch(`http://127.0.0.1:${port}/graphify`, {
+    const response = await operatorFetch(`http://127.0.0.1:${daemon.port}/graphify`, {
       method: "POST",
     });
     const body = await response.json().catch(() => null) as
@@ -120,7 +125,7 @@ export async function runGraphifyEnable(
     return 1;
   }
   deps.log(`Graph built: ${built.detail}.`);
-  await deps.syncDaemon(deps.log);
+  await deps.syncDaemon(root, deps.log);
   return 0;
 }
 
@@ -131,7 +136,7 @@ export async function runGraphifyDisable(
 ): Promise<number> {
   await writeGraphifyState(root, { enabled: false, pin: null });
   deps.log("Graphify disabled: no graph context, no MCP server, no rebuilds.");
-  await deps.syncDaemon(deps.log);
+  await deps.syncDaemon(root, deps.log);
   if (options.purge === true) {
     const removed = await purgeGraphify(root);
     for (const path of removed) deps.log(`Removed ${path}.`);

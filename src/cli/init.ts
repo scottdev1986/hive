@@ -48,7 +48,8 @@ import {
   type GraphifyState,
 } from "../adapters/graphify";
 import { graphifyArtifact } from "../adapters/graphify-artifacts";
-import { readDaemonPort } from "../daemon/lifecycle";
+import { probeDaemonReuse } from "../daemon/lifecycle";
+import { expectedDaemonHandshake } from "../daemon/handshake";
 import { reindexMemory } from "./mcp";
 import {
   installShippedSkills,
@@ -126,7 +127,7 @@ export interface InitDeps {
   fileExists: (path: string) => Promise<boolean>;
   writeFile: (path: string, contents: string) => Promise<void>;
   /** The next daemon rebuilds the index when no daemon is available yet. */
-  reindexMemory: () => Promise<"indexed" | "deferred">;
+  reindexMemory: (root: string) => Promise<"indexed" | "deferred">;
   /** Is this CLI installed on the machine? A dependency so a test can decide
    * what the machine has without a real `claude` on PATH. */
   hasCli: (command: string) => boolean;
@@ -170,10 +171,10 @@ export const defaultInitDeps: InitDeps = {
   writeFile: async (path, contents) => {
     await writeFile(path, contents);
   },
-  reindexMemory: async () => {
-    const port = readDaemonPort();
-    if (port === null) return "deferred";
-    await reindexMemory(port);
+  reindexMemory: async (root) => {
+    const daemon = await probeDaemonReuse(await expectedDaemonHandshake(root));
+    if (daemon.state !== "authorized") return "deferred";
+    await reindexMemory(daemon.port);
     return "indexed";
   },
   hasCli: (command) => Bun.which(command) !== null,
@@ -417,7 +418,7 @@ export async function runInit(
       factsSeeded.length === 1 ? "" : "s"
     }`;
     try {
-      const indexing = await deps.reindexMemory();
+      const indexing = await deps.reindexMemory(cwd);
       messages.push(
         indexing === "indexed"
           ? `Seeded and indexed ${articles} (source: init).`

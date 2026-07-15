@@ -7,7 +7,6 @@ import {
   launchWorkspace,
   resolveWorkspaceApp,
   runWorkspace,
-  workspaceLaunchNeedsNewProcess,
   workspaceOpenArguments,
   type LaunchDeps,
 } from "./workspace";
@@ -33,27 +32,10 @@ function install(version: string): string {
 }
 
 describe("hive opens the installed release Workspace", () => {
-  test("opens a new process when LaunchServices would reuse another instance", () => {
-    const current = hiveInstanceSuffix();
-    expect(workspaceLaunchNeedsNewProcess(
-      `/x/HiveWorkspace.app/Contents/MacOS/HiveWorkspace --instance-id other\n`,
-      current,
-    )).toEqual(true);
-    expect(workspaceLaunchNeedsNewProcess(
-      `/x/HiveWorkspace.app/Contents/MacOS/HiveWorkspace --instance-id ${current}\n`,
-      current,
-    )).toEqual(false);
-    expect(workspaceLaunchNeedsNewProcess(
-      "/x/HiveWorkspace.app/Contents/MacOS/HiveWorkspace\n",
-      current,
-    )).toEqual(true);
-  });
-
   test("passes PATH and the private temp directory into a separate app", () => {
     expect(workspaceOpenArguments(
       "/Applications/HiveWorkspace.app",
       ["--orchestrator", "codex"],
-      true,
       "/usr/local/tools/bin:/Users/me/.local/bin:/usr/bin",
       "/var/folders/user/T/",
     )).toEqual([

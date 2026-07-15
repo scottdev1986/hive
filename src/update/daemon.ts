@@ -142,7 +142,7 @@ const isNoSuchProcess = (error: unknown): boolean =>
   (error as { code?: unknown }).code === "ESRCH";
 
 /**
- * Stop a stale daemon so the next `hive init` spawns the new binary.
+ * Stop a stale daemon so the next `hive` spawns the new binary.
  *
  * We stop rather than hot-swap on purpose. The daemon owns SQLite state,
  * approvals, and landing authority; a clean SIGTERM lets it checkpoint and exit

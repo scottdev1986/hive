@@ -63,7 +63,11 @@ import {
   machineHiveHome,
   type InstanceMutationBlocker,
 } from "../daemon/instances";
-import { daemonInstanceLiveness } from "../daemon/lifecycle";
+import { daemonInstanceLiveness, readDaemonPort } from "../daemon/lifecycle";
+import {
+  expectedDaemonHandshake,
+  readDaemonHandshake,
+} from "../daemon/handshake";
 import {
   branchOwner,
   clearBranchOwnership,
@@ -82,6 +86,9 @@ export interface UninstallDeps {
   log: (line: string) => void;
   /** Clean up this instance's sessions after every daemon has exited. */
   stopCurrentInstance: () => Promise<void>;
+  /** Whether the selected instance's live daemon serves the repo being
+   * uninstalled. A foreign daemon must never be signaled. */
+  currentInstanceOwnsProject: (root: string) => Promise<boolean>;
   liveTeams: () => Promise<readonly InstanceMutationBlocker[]>;
   stopInstances: () => Promise<void>;
   acquireLease: (purpose: MachineMutationPurpose) => Promise<MachineMutationLease>;
@@ -111,6 +118,22 @@ export const defaultUninstallDeps: UninstallDeps = {
   confirm: confirmOnTty,
   log: console.log,
   stopCurrentInstance: stopHive,
+  currentInstanceOwnsProject: async (root) => {
+    const port = readDaemonPort();
+    if (port === null) return false;
+    try {
+      const [actual, expected] = await Promise.all([
+        readDaemonHandshake(port),
+        expectedDaemonHandshake(root),
+      ]);
+      return actual.instanceId === expected.instanceId &&
+        actual.hiveUuid === expected.hiveUuid &&
+        actual.identityKey === expected.identityKey &&
+        actual.repoFamilyKey === expected.repoFamilyKey;
+    } catch {
+      return false;
+    }
+  },
   liveTeams: () => instanceMutationBlockers(async (port) => {
     const agents = await fetchAgentStatus(port);
     return agents
@@ -279,7 +302,7 @@ export async function runUninstallRepo(
 ): Promise<number> {
   const plan = [
     `This removes Hive from ${root}:`,
-    "  - stops this project's agents and daemon",
+    "  - stops the selected daemon only when its handshake proves it serves this project",
     "  - deletes this instance's agent worktrees and hive/* branches (its unlanded agent work is lost)",
     "  - removes the skills Hive installed (edited copies are yours and stay)",
     "  - removes Hive's entries from .mcp.json, .claude/settings.local.json, .codex/, and .git/info/exclude",
@@ -290,14 +313,16 @@ export async function runUninstallRepo(
     return 1;
   }
 
-  try {
-    await deps.stopCurrentInstance();
-  } catch (error) {
-    deps.log(
-      `Refusing repo uninstall because this instance did not stop: ${errorMessage(error)}\n` +
-        "Fix: stop its agents and daemon, then rerun `hive uninstall --repo`.",
-    );
-    return 1;
+  if (await deps.currentInstanceOwnsProject(root)) {
+    try {
+      await deps.stopCurrentInstance();
+    } catch (error) {
+      deps.log(
+        `Refusing repo uninstall because this project's instance did not stop: ${errorMessage(error)}\n` +
+          "Fix: stop its agents and daemon, then rerun `hive uninstall --repo`.",
+      );
+      return 1;
+    }
   }
   try {
     await removeWorktreesAndBranches(root, deps.run, deps.log);
