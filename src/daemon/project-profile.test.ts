@@ -1426,8 +1426,8 @@ describe("guidance provenance", () => {
     expect(reqA).not.toBeNull();
     expect(reqB).not.toBeNull();
 
-    // Both results reflect the final state (last writer wins on the return
-    // value's full list), so re-read the run as authority.
+    // Each append returns the request it just wrote; the first lock winner's
+    // return value is intermediate. Re-read the run as authority.
     const final = (await readProfileState(root)).run!.request;
     expect(final.requesters).toHaveLength(3);
     expect(final.requesters[0]).toEqual({
