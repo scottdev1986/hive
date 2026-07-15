@@ -2930,27 +2930,17 @@ describe("agent landing protocol", () => {
   // `bun test` does not typecheck. A branch whose suite is green can still
   // carry a type error onto main — which is how two agents who each added a
   // version module landed a duplicate `HIVE_VERSION` import that no test could
-  // see. The landing gate verifies both, or it verifies nothing — and names the
-  // repo's concrete commands (SPEC §14), not a hardcoded guess.
-  test("requires a typecheck, not just green tests, and names the profile's commands", () => {
-    const protocol = buildLandingProtocol(
-      worktree.branch, "/repo", "main", "maya", 0, false,
-      { test: "bun test", typecheck: "bun run typecheck" },
-    );
-    expect(protocol).toContain("bun run typecheck");
-    expect(protocol).toContain("Re-run the tests (`bun test`)");
-    expect(protocol).toContain("`bun test` does not typecheck");
-    expect(protocol).toContain("neither do type errors");
-  });
-
-  // In a repo whose profile discovered no commands, the gate keeps the rule but
-  // invents no command — it must never tell an agent to run a command that does
-  // not exist in this repo.
-  test("falls back to generic wording when the profile knows no commands", () => {
+  // see. The landing gate verifies both, or it verifies nothing. Hive no longer
+  // detects this repo's concrete commands, so the gate names the rule in
+  // repo-neutral wording and never invents a command that may not exist here.
+  test("requires a typecheck, not just green tests, in repo-neutral wording", () => {
     const protocol = buildLandingProtocol(worktree.branch, "/repo");
     expect(protocol).toContain("Re-run the tests on the rebased branch");
     expect(protocol).toContain("your typechecker");
+    // Never a concrete command the repo may not have.
+    expect(protocol).not.toContain("Re-run the tests (`");
     expect(protocol).not.toContain("bunx tsc --noEmit");
+    expect(protocol).toContain("a passing test run does not typecheck");
     expect(protocol).toContain("neither do type errors");
   });
 

@@ -19,7 +19,6 @@ import {
   readMemoryFact,
   writeMemoryFact as writeMemoryFactFile,
 } from "../adapters/memory";
-import { ensureProfile } from "../adapters/profile";
 import { withFileLock } from "../adapters/file-lock";
 import { graphLocate, readGraphifyState } from "../adapters/graphify";
 import { GraphifyService } from "./graphify-service";
@@ -1034,16 +1033,6 @@ export class HiveDaemon {
         }`,
       );
     });
-    // The repo profile (SPEC §14): generate it if this repo has never been met,
-    // regenerate it if it drifted, in silence. Never blocks startup; a repo runs
-    // without a profile, just with poorer briefs.
-    void this.ensureRepoProfile().catch((error) => {
-      console.error(
-        `Hive repo profile check failed: ${
-          error instanceof Error ? error.message : "unknown error"
-        }`,
-      );
-    });
     return this.bunServer;
   }
 
@@ -1085,20 +1074,6 @@ export class HiveDaemon {
 
   async rebuildMemoryIndex() {
     return this.serializeMemory(() => this.memory.rebuild(this.repoRoot));
-  }
-
-  /**
-   * The repo profile's start-time duty the daemon owns (SPEC §14): have a
-   * correct profile ready before the first spawn asks for one, whether this repo
-   * has ever been seen or has drifted since it was.
-   *
-   * It says nothing to anyone. This used to enqueue a durable note telling the
-   * orchestrator the profile was N commits stale and that a human should run
-   * `hive init --refresh` — a message about a file nobody chose to have, naming a
-   * command that does what the daemon could simply have done. It does it.
-   */
-  private async ensureRepoProfile(): Promise<void> {
-    await ensureProfile(this.repoRoot);
   }
 
   /**

@@ -25,7 +25,6 @@ import { isStaged, readInstallState } from "../update/install";
 import { renderStartNotice } from "../update/notice";
 import { isRunning } from "../daemon/lifecycle";
 import { liveAgentNames } from "./update";
-import { ensureProfile } from "../adapters/profile";
 import type { UpdateCheck } from "../update/check";
 import { repairLeakedProjectConfig } from "./project-config-cleanup";
 import { selectFreshInstance } from "../daemon/instances";
@@ -41,11 +40,9 @@ export interface StartDeps {
    * `ensureDaemonForBuild` and `ensureStarted`. */
   readonly ensureDaemon?: (cwd: string) => Promise<void>;
   readonly ensurePort?: () => Promise<number>;
-  readonly ensureProfile?: (cwd: string) => Promise<unknown>;
   readonly repairProjectConfig?: (cwd: string) => Promise<unknown>;
   /** Select the runtime after repo-only preparation and before daemon lookup. */
   readonly prepareInstance?: (cwd: string) => void | Promise<void>;
-  readonly warn?: (line: string) => void;
 }
 
 /** Resolve the staged-but-not-active version, so the notice can say so. */
@@ -111,10 +108,10 @@ export interface StartedSession {
   readonly cwd: string;
 }
 
-/** Copy repo setup into a new runtime before switching HIVE_HOME. Init and the
- * pre-launch profile pass write under the default home; the fresh daemon needs
- * the same project UUID, Graphify decision, and derived profile without
- * sharing mutable runtime state with another instance. */
+/** Copy repo setup into a new runtime before switching HIVE_HOME. Init writes
+ * under the default home; the fresh daemon needs the same project UUID and
+ * Graphify decision without sharing mutable runtime state with another
+ * instance. */
 async function prepareFreshWorkspaceInstance(cwd: string): Promise<void> {
   if (!isDefaultHiveHome()) return;
   const sourceHome = getHiveHome();
@@ -138,10 +135,6 @@ async function prepareFreshWorkspaceInstance(cwd: string): Promise<void> {
  * The Workspace session boundary: update notice (best-effort), repo-only
  * preparation, fresh-instance selection, and daemon bring-up. `hive init`
  * deliberately does not cross this boundary.
- *
- * The repo profile is ensured here too, before the daemon. Successful profiling
- * is silent (SPEC §14). The daemon ensures it as well; both are deterministic
- * and idempotent, so racing them costs nothing.
  */
 export async function startSession(deps: StartDeps = {}): Promise<StartedSession> {
   await printStartNotice(deps).catch(() => {
@@ -149,14 +142,6 @@ export async function startSession(deps: StartDeps = {}): Promise<StartedSession
   });
   const cwd = deps.cwd ?? process.cwd();
   await (deps.repairProjectConfig ?? repairLeakedProjectConfig)(cwd);
-  await (deps.ensureProfile ?? ensureProfile)(cwd).catch((error: unknown) => {
-    const message = error instanceof Error ? error.message : String(error);
-    const warn = deps.warn ?? ((line: string) => process.stderr.write(`${line}\n`));
-    warn(
-      `Repository profiling failed: ${message}\n` +
-        "Fix: resolve the error, then run `hive init --refresh`.",
-    );
-  });
   await (deps.prepareInstance ?? prepareFreshWorkspaceInstance)(cwd);
   await (deps.ensureDaemon ?? ensureDaemonForBuild)(cwd);
   const port = await (deps.ensurePort ?? ensureStarted)();

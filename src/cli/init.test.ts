@@ -8,7 +8,6 @@ import {
   isRepoInitialized,
   readSeedFactsFile,
   runInit,
-  runInitProfile,
   scaffoldAgentsMd,
   seedInitFacts,
 } from "./init";
@@ -16,12 +15,11 @@ import {
   discoverMemoryFacts,
   parseMemoryFile,
 } from "../adapters/memory";
-import { bootstrapProfile } from "../adapters/profile";
 import { provisionSkills } from "../adapters/skills";
 import { shippedSkillsFor } from "../skills/shipped";
 
-// `hive init` profiles the repo like any other start, and the profile lands in
-// Hive's own home — a throwaway one here, never the developer's.
+// `hive init` writes Hive's own state into its home — a throwaway one here,
+// never the developer's.
 let hiveHome: string;
 const originalHiveHome = process.env.HIVE_HOME;
 
@@ -95,8 +93,8 @@ describe("seedInitFacts — the memory seam (SPEC §14 ↔ §5)", () => {
       expect(parsed.verified).toBe("2026-07-10");
       expect(parsed.scope).toBe("repo");
 
-      // A --refresh re-run with the same title upserts in place (id is stable),
-      // bumping verified rather than accumulating a duplicate.
+      // A re-run with the same title upserts in place (id is stable), bumping
+      // verified rather than accumulating a duplicate.
       await seedInitFacts(
         root,
         [{ title: "The e2e suite needs Docker running first", body: "Updated note." }],
@@ -114,25 +112,28 @@ describe("seedInitFacts — the memory seam (SPEC §14 ↔ §5)", () => {
 });
 
 describe("scaffoldAgentsMd", () => {
-  test("derives a starter from the profile, not a hive-specific template", async () => {
-    const root = await tsRepo();
-    try {
-      const profile = await bootstrapProfile(root);
-      const md = scaffoldAgentsMd(profile);
-      expect(md).toContain("Test: `bun test`");
-      expect(md).toContain("Typecheck: `bun run typecheck`");
-      expect(md).toContain("Language: typescript");
-      expect(md).toContain("`SPEC.md`");
-      // A starting point, explicitly framed as such (every vendor's /init does).
-      expect(md).toContain("Review and refine");
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
+  test("is a generic starter with placeholders, never invented commands", () => {
+    const md = scaffoldAgentsMd("SPEC.md");
+    // Hive no longer detects commands or stack, so those sections are prompts to
+    // fill in — never a concrete command guessed from a manifest.
+    expect(md).not.toContain("`bun test`");
+    expect(md).toContain("## Commands");
+    expect(md).toContain("## Stack");
+    // The one repo fact a starter can name: the discovered primary design doc.
+    expect(md).toContain("The primary design doc is `SPEC.md`");
+    // A starting point, explicitly framed as such (every vendor's /init does).
+    expect(md).toContain("Review and fill these in");
+  });
+
+  test("omits the design section when there is no primary doc", () => {
+    const md = scaffoldAgentsMd(null);
+    expect(md).not.toContain("## Design");
+    expect(md).toContain("## Commands");
   });
 });
 
 describe("runInit", () => {
-  test("writes the profile, scaffolds AGENTS.md on opt-in, and seeds facts", async () => {
+  test("scaffolds AGENTS.md on opt-in, and seeds facts", async () => {
     const root = await tsRepo();
     try {
       const result = await runInit(root, {
@@ -140,11 +141,12 @@ describe("runInit", () => {
         facts: [{ title: "Flaky login test", body: "Races on the token clock." }],
         today: "2026-07-10",
       });
-      expect(result.profileWritten).toBe(true);
       expect(result.agentsScaffolded).toBe(true);
       expect(result.factsSeeded).toEqual(["flaky-login-test"]);
-      // AGENTS.md really written, from the profile.
-      expect(await readFile(join(root, "AGENTS.md"), "utf8")).toContain("bun test");
+      // AGENTS.md really written — a generic starter, not invented commands.
+      const agents = await readFile(join(root, "AGENTS.md"), "utf8");
+      expect(agents).toContain("Starter conventions scaffolded by `hive init`");
+      expect(agents).toContain("## Commands");
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -164,42 +166,15 @@ describe("runInit", () => {
     }
   });
 
-  test("a correct profile is left alone, and nothing is asked of anyone", async () => {
+  test("a second init nags about nothing — no --refresh, no next command", async () => {
     const root = await tsRepo();
     try {
-      await runInit(root, {}); // profiles it once
+      await runInit(root, {});
       const result = await runInit(root, {});
-      expect(result.profileWritten).toBe(false);
-      // The old init ended with "pass --refresh to re-scan". There is nothing to
-      // re-scan and no flag to reach for: init never names a next command.
+      // The old init ended with "pass --refresh to re-scan". There is no such
+      // flag and no re-scan: init never names a next command.
       expect(result.messages.some((m) => m.includes("--refresh"))).toBe(false);
       expect(result.messages.every((m) => !m.includes("Run `"))).toBe(true);
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
-  });
-
-  test("a drifted profile is rebuilt without --refresh, because --refresh is not a chore", async () => {
-    const root = await tsRepo();
-    try {
-      await runInit(root, {});
-      await writeFile(join(root, "DESIGN.md"), "# Design\n\na new doc\n");
-      git(root, ["add", "-A"]);
-      git(root, ["commit", "-m", "drift", "--no-gpg-sign"]);
-
-      const result = await runInitProfile(root, {});
-      expect(result.profileWritten).toBe(true);
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
-  });
-
-  test("--refresh forces a re-scan, for a detection you want to watch rerun", async () => {
-    const root = await tsRepo();
-    try {
-      await runInit(root, {});
-      const result = await runInit(root, { refresh: true });
-      expect(result.profileWritten).toBe(true);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -431,7 +406,7 @@ describe("runInit — installing the shipped skills", () => {
     try {
       // Bare `hive init` supplies no facts, so it seeds none. Hive's own
       // development memories live in Hive's repo and are never a source here.
-      const result = await runInitProfile(root, {});
+      const result = await runInit(root, {});
       expect(result.factsSeeded).toEqual([]);
       expect(await discoverMemoryFacts(root, "repo")).toEqual([]);
     } finally {
@@ -612,7 +587,6 @@ describe("the graphify decision in init", () => {
       const result = await runInit(root, { graphify: true }, deps);
       const line = result.messages[result.messages.length - 1] as string;
       expect(line).toContain("could not be enabled");
-      expect(result.profileWritten).toBe(true);
       expect(isRepoInitialized(root)).toBe(true);
     } finally {
       await rm(root, { recursive: true, force: true });

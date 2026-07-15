@@ -1,18 +1,14 @@
 /**
  * `hive init` — the gated enrichment pass (SPEC.md decision 14).
  *
- * The profile itself is no longer this command's job. Every session boundary
- * ensures a correct profile silently, so there is nothing for a human to
- * initialize and nothing to keep up to date; `hive init` is left with only the
- * work that *must* be asked for, because it writes into the user's repo or
- * spends their tokens:
- *   - When no `AGENTS.md` exists, *offer* to scaffold one (opt-in, never blind —
- *     Codex caps the AGENTS.md chain at 32 KiB and truncates silently, so we
- *     never append to a human's existing instructions).
+ * `hive init` is the work that *must* be asked for, because it writes into the
+ * user's repo or spends their tokens:
+ *   - When no `AGENTS.md` exists, *offer* to scaffold a starter one (opt-in,
+ *     never blind — Codex caps the AGENTS.md chain at 32 KiB and truncates
+ *     silently, so we never append to a human's existing instructions).
  *   - Seed a small set of narrative memory articles with `source: "init"` and a
  *     `verified` date (decision 5's provenance), derived and re-derivable —
- *     distinct from the earned facts an agent learns. Structured facts never
- *     become memory; they are already in the profile.
+ *     distinct from the earned facts an agent learns.
  *
  * Running the command is the authorization, and every action it takes is
  * printed. Seeded facts are indexed immediately when a daemon is available;
@@ -30,10 +26,9 @@ import { existsSync } from "node:fs";
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import {
-  ensureProfile,
-  loadDerivedProfile,
-  regenerateProfile,
-} from "../adapters/profile";
+  discoverBriefableDocs,
+  type BriefableDocs,
+} from "../adapters/briefing-docs";
 import { projectStateDir } from "../daemon/project-state";
 import {
   listMemoryFacts,
@@ -56,7 +51,6 @@ import {
   type SkillInstallReport,
   type SkillTool,
 } from "../adapters/skills";
-import type { RepoProfile } from "../schemas/profile";
 import { CAPABILITY_PROVIDERS } from "../schemas";
 import { runGraphifyEnable } from "./graphify";
 import { confirmOnTty, type ConfirmFn } from "./prompt";
@@ -73,9 +67,8 @@ const VENDORS: Record<SkillTool, { command: string; label: string }> = {
   grok: { command: "grok", label: "Grok" },
 };
 
-/** A narrative fact for init to seed. Structured truth never comes through here
- * — it lives in the profile (SPEC §14). A stable id keeps a `hive init --refresh`
- * upserting the same fact in place rather than accumulating duplicates. */
+/** A narrative fact for init to seed. A stable id keeps a re-run upserting the
+ * same fact in place rather than accumulating duplicates. */
 export interface InitFact {
   title: string;
   body: string;
@@ -84,10 +77,6 @@ export interface InitFact {
 }
 
 export interface InitOptions {
-  /** Force a re-scan even when the profile is already correct. Never required —
-   * every start regenerates a drifted profile on its own — so this is a debug
-   * escape hatch, not a maintenance ritual. */
-  refresh?: boolean;
   /** Opt-in `AGENTS.md` scaffold. Only ever writes when none exists. */
   scaffoldAgents?: boolean;
   /** Model-authored narrative facts to seed with `source: "init"`. */
@@ -104,8 +93,6 @@ export interface InitOptions {
 }
 
 export interface InitResult {
-  /** Whether this run rebuilt the derived profile (forced, first-ever, or drifted). */
-  profileWritten: boolean;
   agentsScaffolded: boolean;
   /** Ids of the facts seeded (upserted) this run. */
   factsSeeded: string[];
@@ -116,9 +103,9 @@ export interface InitResult {
 }
 
 export interface InitDeps {
-  ensureProfile: (root: string) => Promise<RepoProfile>;
-  regenerateProfile: (root: string) => Promise<RepoProfile>;
-  loadDerivedProfile: (root: string) => Promise<RepoProfile | null>;
+  /** Discover the repo's briefable docs, so a scaffolded AGENTS.md can point at
+   * the primary design doc. The only surviving repo-detection init does. */
+  discoverBriefableDocs: (root: string) => Promise<BriefableDocs>;
   writeMemoryFact: (
     root: string,
     input: MemoryWriteFileInput,
@@ -155,9 +142,7 @@ export interface InitDeps {
 }
 
 export const defaultInitDeps: InitDeps = {
-  ensureProfile,
-  regenerateProfile,
-  loadDerivedProfile,
+  discoverBriefableDocs,
   writeMemoryFact,
   listMemoryFacts,
   fileExists: async (path) => {
@@ -194,10 +179,9 @@ export const defaultInitDeps: InitDeps = {
 };
 
 /** The marker `hive init` leaves in the project's derived-state dir. Bare
- * `hive` reads it to know whether this repo ever completed the init flow —
- * the profile cannot serve, because every session boundary writes one
- * silently. Deleting it (or the state dir, as `hive uninstall --repo` does)
- * makes bare `hive` offer init again, which is exactly right. */
+ * `hive` reads it to know whether this repo ever completed the init flow.
+ * Deleting it (or the state dir, as `hive uninstall --repo` does) makes bare
+ * `hive` offer init again, which is exactly right. */
 export function initStampPath(root: string): string {
   return join(projectStateDir(root), "initialized");
 }
@@ -219,10 +203,10 @@ function slugify(title: string): string {
 /**
  * Seed narrative facts as `source: "init"`, `verified: <today>`, scope `repo`.
  * Every fact gets a stable id (explicit, or a slug of its title) so a later
- * `hive init --refresh` upserts it in place — the id-overwrite path is exactly
- * the dedup-before-write policy decision 5 requires, and re-confirming a fact
- * bumps its `verified` date while leaving earned facts untouched. Returns the
- * ids written.
+ * `hive init` re-run upserts it in place — the id-overwrite path is exactly the
+ * dedup-before-write policy decision 5 requires, and re-confirming a fact bumps
+ * its `verified` date while leaving earned facts untouched. Returns the ids
+ * written.
  */
 export async function seedInitFacts(
   root: string,
@@ -242,7 +226,7 @@ export async function seedInitFacts(
       tags: fact.tags ?? [],
       date: today,
       source: "init",
-      evidence: "Derived by hive init from the current repository profile",
+      evidence: "Derived by hive init from the current repository",
       status: "verified",
       supersedes: [id],
       verified: today,
@@ -252,50 +236,32 @@ export async function seedInitFacts(
   return seeded;
 }
 
-/** A minimal starter `AGENTS.md` derived from the profile — a starting point a
- * human refines (every vendor's `/init` frames it that way), not a template
- * pretending to be authoritative. Commands and shape come from the profile so
- * nothing here is hive-repo-specific. */
-export function scaffoldAgentsMd(profile: RepoProfile): string {
-  const lines = ["# Agent instructions", ""];
-  lines.push(
-    "Starter conventions scaffolded by `hive init` from this repo's profile.",
-    "Review and refine — it captures obvious structure, not your team's nuance.",
+/** A minimal starter `AGENTS.md` — a starting point a human refines (every
+ * vendor's `/init` frames it that way), not a template pretending to be
+ * authoritative. Hive does not detect this repo's commands or stack, so those
+ * sections are prompts to fill in, never invented values. The one thing it can
+ * name is the repo's primary design doc, discovered from the tree. */
+export function scaffoldAgentsMd(primaryDoc: string | null): string {
+  const lines = [
+    "# Agent instructions",
+    "",
+    "Starter conventions scaffolded by `hive init`. Review and fill these in —",
+    "it is a starting point, not your team's nuance.",
     "",
     "## Commands",
     "",
-  );
-  const commands: Array<[string, string | null]> = [
-    ["Build", profile.commands.build],
-    ["Test", profile.commands.test],
-    ["Typecheck", profile.commands.typecheck],
-    ["Lint", profile.commands.lint],
-    ["Run", profile.commands.run],
+    "Document how this repo builds, tests, typechecks, lints, and runs.",
+    "",
+    "## Stack",
+    "",
+    "Note the language, package manager, and anything an agent should assume.",
+    "",
   ];
-  for (const [label, command] of commands) {
-    if (command !== null) lines.push(`- ${label}: \`${command}\``);
-  }
-  lines.push("");
-  if (profile.conventions.language !== null || profile.conventions.packageManager !== null) {
-    lines.push("## Stack", "");
-    if (profile.conventions.language !== null) {
-      lines.push(`- Language: ${profile.conventions.language}`);
-    }
-    if (profile.conventions.packageManager !== null) {
-      lines.push(`- Package manager: ${profile.conventions.packageManager}`);
-    }
-    lines.push("");
-  }
-  if (profile.entryPoints.length > 0) {
-    lines.push("## Entry points", "");
-    for (const entry of profile.entryPoints) lines.push(`- \`${entry}\``);
-    lines.push("");
-  }
-  if (profile.docs.primary !== null) {
+  if (primaryDoc !== null) {
     lines.push(
       "## Design",
       "",
-      `The primary design doc is \`${profile.docs.primary}\`; read it by section.`,
+      `The primary design doc is \`${primaryDoc}\`; read it by section.`,
       "",
     );
   }
@@ -310,22 +276,7 @@ export async function runInit(
   const today = options.today ?? deps.today();
   const messages: string[] = [];
 
-  // 1. Profile. Nothing to decide: it is generated if this repo has never been
-  //    profiled and regenerated if it drifted, here exactly as on every other
-  //    start. We report what was found, never what to run next.
-  const before = await deps.loadDerivedProfile(cwd);
-  const profile = options.refresh === true
-    ? await deps.regenerateProfile(cwd)
-    : await deps.ensureProfile(cwd);
-  const profileWritten = options.refresh === true || before === null ||
-    before.fingerprint.inputsHash !== profile.fingerprint.inputsHash;
-  messages.push(
-    `Profiled the repo: ${profile.docs.briefable.length} briefable doc${
-      profile.docs.briefable.length === 1 ? "" : "s"
-    }${profile.commands.test === null ? "" : `, tests run with \`${profile.commands.test}\``}.`,
-  );
-
-  // 2. AGENTS.md: offer to scaffold, never overwrite.
+  // 1. AGENTS.md: offer to scaffold, never overwrite.
   let agentsScaffolded = false;
   if (options.scaffoldAgents === true) {
     const agentsPath = join(cwd, "AGENTS.md");
@@ -335,7 +286,10 @@ export async function runInit(
     if (hasAgents) {
       messages.push("AGENTS.md already exists; leaving it untouched.");
     } else {
-      await deps.writeFile(agentsPath, scaffoldAgentsMd(profile));
+      // The one repo fact a starter can name without inventing anything: the
+      // primary design doc, discovered from the tree.
+      const docs = await deps.discoverBriefableDocs(cwd).catch(() => null);
+      await deps.writeFile(agentsPath, scaffoldAgentsMd(docs?.primary ?? null));
       agentsScaffolded = true;
       messages.push(
         hasClaude
@@ -345,7 +299,7 @@ export async function runInit(
     }
   }
 
-  // 3. Skills. Hive's own skills live in the binary (src/skills/shipped.ts), so
+  // 2. Skills. Hive's own skills live in the binary (src/skills/shipped.ts), so
   //    this works on a machine that has only the binary and never consults a
   //    checkout. We install for the CLIs the user actually has, into the
   //    directory each vendor actually reads, creating `.claude/` or `.agents/`
@@ -407,8 +361,8 @@ export async function runInit(
     }
   }
 
-  // 4. Seed narrative facts (source: init). Structured truth stays in the
-  //    profile; only genuinely narrative knowledge is seeded here.
+  // 3. Seed narrative facts (source: init): genuinely narrative knowledge an
+  //    agent should start with, distinct from the facts an agent earns.
   const facts = options.facts ?? [];
   const factsSeeded = facts.length === 0
     ? []
@@ -433,7 +387,7 @@ export async function runInit(
     }
   }
 
-  // 5. Graphify. The choice is the human's, and init is where it gets made:
+  // 4. Graphify. The choice is the human's, and init is where it gets made:
   //    flags always win and never prompt; a TTY without a flag is asked once
   //    (recommended, default yes); non-interactive without a flag safely
   //    declines for this run and says how to enable. An enable failure is
@@ -442,7 +396,7 @@ export async function runInit(
 
   await deps.writeInitStamp(cwd);
 
-  return { profileWritten, agentsScaffolded, factsSeeded, skills, messages };
+  return { agentsScaffolded, factsSeeded, skills, messages };
 }
 
 const GRAPHIFY_ENABLED_LINE =
@@ -522,14 +476,13 @@ export async function readSeedFactsFile(path: string): Promise<InitFact[]> {
   });
 }
 
-/** CLI entry: `hive init [--refresh] [--scaffold-agents] [--seed-facts <path>]`.
+/** CLI entry: `hive init [--scaffold-agents] [--seed-facts <path>]`.
  * Prints what it did and stops. */
 export async function runInitCli(options: {
   /** The project root; defaults to the git toplevel of process.cwd(), so
-   * `hive init` from a repo subdirectory profiles the repo, not the
+   * `hive init` from a repo subdirectory initializes the repo, not the
    * subdirectory. */
   cwd?: string;
-  refresh?: boolean;
   scaffoldAgents?: boolean;
   seedFacts?: string;
   force?: boolean;
@@ -540,27 +493,10 @@ export async function runInitCli(options: {
   if (repaired.length > 0) {
     console.log(`Removed stale Hive runtime config: ${repaired.join(", ")}`);
   }
-  const result = await runInitProfile(root, options);
-  for (const line of result.messages) console.log(line);
-}
-
-/** Run init's profile pass. Kept separate from the session boundary so it is
- * independently testable. */
-export async function runInitProfile(
-  cwd: string,
-  options: {
-    refresh?: boolean;
-    scaffoldAgents?: boolean;
-    seedFacts?: string;
-    force?: boolean;
-    graphify?: boolean;
-  },
-): Promise<InitResult> {
   const facts = options.seedFacts === undefined
     ? []
     : await readSeedFactsFile(options.seedFacts);
-  return runInit(cwd, {
-    ...(options.refresh === true ? { refresh: true } : {}),
+  const result = await runInit(root, {
     ...(options.scaffoldAgents === undefined
       ? {}
       : { scaffoldAgents: options.scaffoldAgents }),
@@ -568,4 +504,5 @@ export async function runInitProfile(
     ...(options.graphify === undefined ? {} : { graphify: options.graphify }),
     facts,
   });
+  for (const line of result.messages) console.log(line);
 }

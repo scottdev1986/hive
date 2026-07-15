@@ -17,7 +17,7 @@
  * starts one real daemon explicitly for the remaining transport checks.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -221,21 +221,12 @@ afterAll(async () => {
 });
 
 e2e("real hive CLI against a real daemon and real tmux", () => {
-  /** The profile Hive cached for `repo`, wherever under its home it put it. */
-  const cachedProfile = async (): Promise<string> => {
-    const glob = new Bun.Glob("projects/*/profile.toml");
-    for await (const hit of glob.scan({ cwd: hiveHome, absolute: true })) return hit;
-    throw new Error(`no profile cached under ${hiveHome}`);
-  };
-
-  test("hive init profiles a fresh repo without starting a daemon", async () => {
+  test("hive init sets up a fresh repo without starting a daemon", async () => {
     const run = await runCli(["init"]);
     const output = run.stdout + run.stderr;
     expect(run.exitCode).toEqual(0);
-    // The profile is Hive's own state: it goes under HIVE_HOME…
-    expect(existsSync(await cachedProfile())).toEqual(true);
-    // …and the repo is left exactly as the user had it. Nothing to commit.
-    expect(existsSync(join(repo, ".hive", "profile.toml"))).toEqual(false);
+    // init writes only Hive's own state under HIVE_HOME and never starts a
+    // daemon: the launch boundary is a separate step.
     expect(output).not.toContain("daemon port");
     expect(existsSync(join(hiveHome, "daemon.lock"))).toEqual(false);
     expect(existsSync(join(hiveHome, "daemon.pid"))).toEqual(false);
@@ -244,18 +235,11 @@ e2e("real hive CLI against a real daemon and real tmux", () => {
   }, MINUTE);
 
   test("a second hive init is a no-op, and never asks for a third — the field-test regression", async () => {
-    const profilePath = await cachedProfile();
-    const before = await readFile(profilePath, "utf8");
-    const mtimeBefore = (await stat(profilePath)).mtimeMs;
-
     const run = await runCli(["init"]);
     const output = run.stdout + run.stderr;
     expect(run.exitCode).toEqual(0);
-    // Not rewritten, not even touched.
-    expect(await readFile(profilePath, "utf8")).toEqual(before);
-    expect((await stat(profilePath)).mtimeMs).toEqual(mtimeBefore);
-    // And it does not close by naming another command to run. The profile is
-    // never stale in a way anyone has to fix, so there is nothing to say.
+    // It does not close by naming another command to run: there is no --refresh,
+    // nothing stale, and nothing for a human to reindex by hand.
     expect(output).not.toContain("--refresh");
     expect(output).not.toContain("hive memory reindex");
     expect(output).not.toContain("stale");

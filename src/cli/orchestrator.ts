@@ -18,7 +18,7 @@ import {
 } from "../daemon/tmux-sessions";
 import { unknownVendor } from "../schemas";
 import { ORCHESTRATOR_BRIEF, orchestratorDocGuidance } from "./orchestrator-brief";
-import { ensureProfile } from "../adapters/profile";
+import { discoverBriefableDocs } from "../adapters/briefing-docs";
 import {
   buildGrokSpawnCommand,
   GROK_COMPATIBILITY_ENV,
@@ -222,15 +222,15 @@ export async function prepareOrchestratorConfig(
   }
 }
 
-/** Load the repo profile and format the orchestrator's repo-specific doc
- * guidance. A repo whose profile cannot be built contributes "", leaving the
- * generic brief untouched rather than teaching hive's own doc names. */
+/** Discover the repo's briefable docs and format the orchestrator's
+ * repo-specific doc guidance. A repo whose docs cannot be walked contributes "",
+ * leaving the generic brief untouched rather than teaching hive's own doc names. */
 export async function buildOrchestratorDocGuidance(cwd: string): Promise<string> {
-  const profile = await ensureProfile(cwd).catch(() => null);
-  if (profile === null) return "";
+  const docs = await discoverBriefableDocs(cwd).catch(() => null);
+  if (docs === null) return "";
   return orchestratorDocGuidance({
-    primary: profile.docs.primary,
-    loadBearing: profile.docs.briefable,
+    primary: docs.primary,
+    loadBearing: docs.briefable,
   });
 }
 

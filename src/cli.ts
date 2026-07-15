@@ -256,7 +256,6 @@ export function createProgram(): Command {
     .description(
       "Scaffold this repo's agent conventions and seed its memory without starting Hive",
     )
-    .option("--refresh", "force a re-scan of the repo profile; never required")
     .option("--scaffold-agents", "offer to scaffold an AGENTS.md when none exists")
     .option("--seed-facts <path>", "JSON file of narrative facts to seed (source: init)")
     .option(
@@ -266,7 +265,6 @@ export function createProgram(): Command {
     .option("--graphify", "enable graphify without asking (recommended default)")
     .option("--no-graphify", "skip graphify without asking")
     .action(async (options: {
-      refresh?: boolean;
       scaffoldAgents?: boolean;
       seedFacts?: string;
       force?: boolean;
@@ -275,7 +273,6 @@ export function createProgram(): Command {
       const root = projectRootOrCwd();
       await runInitCli({
         cwd: root,
-        ...(options.refresh === undefined ? {} : { refresh: options.refresh }),
         ...(options.scaffoldAgents === undefined
           ? {}
           : { scaffoldAgents: options.scaffoldAgents }),

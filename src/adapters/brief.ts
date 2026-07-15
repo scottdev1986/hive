@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { basename, isAbsolute, relative, resolve } from "node:path";
-import { ensureProfile } from "./profile";
+import { discoverBriefableDocs } from "./briefing-docs";
 
 /** Repo-specific briefing inputs. No document name is compiled in. */
 export interface BriefConfig {
@@ -21,14 +21,14 @@ const EMPTY_BRIEF_CONFIG: BriefConfig = {
   primaryDoc: null,
 };
 
-/** Profile failure briefs nothing rather than assuming Hive-specific docs. */
+/** Doc-discovery failure briefs nothing rather than assuming Hive-specific docs. */
 export async function loadBriefConfig(root: string): Promise<BriefConfig> {
-  const profile = await ensureProfile(root).catch(() => null);
-  if (profile === null) return EMPTY_BRIEF_CONFIG;
+  const docs = await discoverBriefableDocs(root).catch(() => null);
+  if (docs === null) return EMPTY_BRIEF_CONFIG;
   return {
-    briefableDocs: profile.docs.briefable,
-    briefableDirectories: profile.docs.briefableDirectories,
-    primaryDoc: profile.docs.primary,
+    briefableDocs: docs.briefable,
+    briefableDirectories: docs.briefableDirectories,
+    primaryDoc: docs.primary,
   };
 }
 

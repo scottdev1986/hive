@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { buildScopedBrief } from "../adapters/brief";
 import { buildMemoryIndex } from "../adapters/memory";
-import { ensureProfile } from "../adapters/profile";
+import { discoverBriefableDocs } from "../adapters/briefing-docs";
 import { shellJoin } from "../adapters/tmux";
 import type { TmuxAdapter } from "../adapters/tmux";
 import {
@@ -503,36 +503,6 @@ export const HIVE_PROTOCOL_RULES = [
   '4. Measure, do not infer. Never accept an ACT as proof of a STATE: "the command exited 0" is not "the message was received"; "the skill shipped" is not "the agent read it"; "the screen redrew" is not "the agent is alive". Read the thing that records the state.',
 ].join("\n");
 
-/** The concrete verify commands the landing gate names, from the repo profile
- * (SPEC §14: "the landing gate's 're-run the tests' resolves to the profile's
- * concrete command"). Null means the profile could not discover it; the gate
- * then falls back to generic wording rather than inventing a command. */
-export interface LandingCommands {
-  test: string | null;
-  typecheck: string | null;
-}
-
-/** Render "re-run the tests"/"typecheck it" against the profile's commands so an
- * agent in an arbitrary repo is told the exact command, not hive's own. */
-function verifyPhrases(commands: LandingCommands | undefined): {
-  test: string;
-  typecheck: string;
-  typecheckBackstop: string;
-} {
-  const test = commands?.test != null
-    ? `Re-run the tests (\`${commands.test}\`)`
-    : "Re-run the tests";
-  const typecheck = commands?.typecheck != null
-    ? `\`${commands.typecheck}\``
-    : "your typechecker";
-  // The "a green suite does not typecheck" backstop names the test command when
-  // the profile knows it, so the agent sees exactly which run is insufficient.
-  const typecheckBackstop = commands?.typecheck != null && commands.test != null
-    ? `\`${commands.test}\` does not typecheck`
-    : "a passing test run does not typecheck";
-  return { test, typecheck, typecheckBackstop };
-}
-
 export function buildLandingProtocol(
   branch: string,
   repoRoot: string,
@@ -540,9 +510,14 @@ export function buildLandingProtocol(
   agentName = branch.split("/")[1]?.split("-")[0] ?? "agent",
   capabilityEpoch = 0,
   concise = false,
-  commands?: LandingCommands,
 ): string {
-  const verify = verifyPhrases(commands);
+  // Repo-neutral wording: Hive no longer detects this repo's concrete test or
+  // typecheck command, so the gate names the rule without inventing a command.
+  const verify = {
+    test: "Re-run the tests",
+    typecheck: "your typechecker",
+    typecheckBackstop: "a passing test run does not typecheck",
+  };
   if (concise) {
     return [
       `When your task is done and tests are green, land it on ${mainBranch} — unlanded work is lost work:`,
@@ -581,9 +556,6 @@ export interface AgentPromptOptions {
    * so the one-sentence directive (layer 2) never advertises tools the agent
    * does not have. */
   graphifyTools?: boolean;
-  /** The repo profile's verify commands, so the landing gate names this repo's
-   * concrete test/typecheck commands instead of a hardcoded guess (SPEC §14). */
-  landingCommands?: LandingCommands;
 }
 
 /** Layer 2 of the integration doc's adoption strategy: exactly one directive,
@@ -681,7 +653,7 @@ export function buildAgentPrompt(
           "This process is capability-enforced read-only: it may read the repo, run permitted read-only commands, use MCP tools, and report with hive_send. It cannot change the worktree or land its branch. Persist findings in durable Hive messages; do not attempt a commit.",
         ]
       : [buildLandingProtocol(
-          worktree.branch, repoRoot, "main", name, 0, concise, options.landingCommands,
+          worktree.branch, repoRoot, "main", name, 0, concise,
         )]),
     ...(options.brief === undefined || options.brief === ""
       ? []
@@ -1871,24 +1843,25 @@ export class HiveSpawner implements Spawner {
       name,
       slugify(request.task),
     );
-    // The profile is a property of the *project*, not of the branch an agent
-    // happens to be on, so it is read from the repo root and generated on demand
-    // (SPEC §14) — a fresh clone's first spawn is briefed like any other. A repo
-    // whose profile cannot be built degrades to no brief and generic landing
-    // wording rather than assuming hive's own doc names or commands.
-    const profile = await ensureProfile(this.dependencies.repoRoot).catch((error: unknown) => {
-      console.error(
-        `Hive could not load the repo profile for ${name}'s worktree; spawning with generic landing wording: ${
-          error instanceof Error ? error.message : "unknown error"
-        }`,
-      );
-      return null;
-    });
-    const briefConfig = profile === null ? undefined : {
-      briefableDocs: profile.docs.briefable,
-      briefableDirectories: profile.docs.briefableDirectories,
-      primaryDoc: profile.docs.primary,
-    };
+    // Which docs a task can be briefed on is a property of the *project*, not of
+    // the branch an agent happens to be on, so they are discovered from the repo
+    // root on demand — a fresh clone's first spawn is briefed like any other. A
+    // repo whose docs cannot be walked degrades to no brief rather than assuming
+    // hive's own doc names.
+    const briefConfig = await discoverBriefableDocs(this.dependencies.repoRoot)
+      .then((docs) => ({
+        briefableDocs: docs.briefable,
+        briefableDirectories: docs.briefableDirectories,
+        primaryDoc: docs.primary,
+      }))
+      .catch((error: unknown) => {
+        console.error(
+          `Hive could not discover briefable docs for ${name}'s worktree; spawning without a brief: ${
+            error instanceof Error ? error.message : "unknown error"
+          }`,
+        );
+        return undefined;
+      });
     // Read once, before the prompt: the directive, the digest, and the MCP
     // config below must all describe the same server observation.
     const graphifyUrl = this.dependencies.graphifyUrl?.() ?? null;
@@ -1932,12 +1905,6 @@ export class HiveSpawner implements Spawner {
         brief,
         ...(graphBrief === null ? {} : { graphBrief }),
         ...(graphifyUrl === null ? {} : { graphifyTools: true }),
-        ...(profile === null ? {} : {
-          landingCommands: {
-            test: profile.commands.test,
-            typecheck: profile.commands.typecheck,
-          },
-        }),
       },
     );
     const timestamp = new Date().toISOString();
