@@ -72,6 +72,10 @@ function newTestSpawner(
   },
 ): HiveSpawner {
   return new HiveSpawner({
+    // A default credential issuer so read-only Codex spawns (the allowed
+    // surface after the Codex-writer containment) work without every test
+    // wiring one; the two tests that assert credential behavior pass their own.
+    issueCredential: () => "test-capability",
     ...dependencies,
     stopSession: dependencies.stopSession ?? positivelyVerifiedStop,
   });
@@ -1391,7 +1395,7 @@ describe("HiveSpawner wiring", () => {
       quota,
     });
 
-    const spawned = await spawner.spawn({ task: "Deep task", category: "complex_coding" });
+    const spawned = await spawner.spawn({ task: "Deep task", category: "complex_coding", readOnly: true });
     expect(spawned.tool).toEqual("codex");
     expect(spawned.model).toEqual("gpt-5.6-sol");
     expect(spawned.quotaReservationId).toBeString();
@@ -1489,7 +1493,7 @@ describe("HiveSpawner wiring", () => {
       quota,
     });
 
-    await spawner.spawn({ task: "Deep task", category: "complex_coding" });
+    await spawner.spawn({ task: "Deep task", category: "complex_coding", readOnly: true });
     expect(reservedOnCodex(quota)).toBeGreaterThan(0);
     expect(quota.ledger.activeReservations()).toHaveLength(1);
     quotaDb.close();
@@ -1520,7 +1524,7 @@ describe("HiveSpawner wiring", () => {
       quota,
     });
 
-    await expect(spawner.spawn({ task: "Deep task", category: "complex_coding" })).rejects
+    await expect(spawner.spawn({ task: "Deep task", category: "complex_coding", readOnly: true })).rejects
       .toThrow();
     expect(store.listAgents()).toEqual([]);
     expect(reservedOnCodex(quota)).toEqual(0);
@@ -1560,7 +1564,7 @@ describe("HiveSpawner wiring", () => {
       quota,
     });
 
-    await expect(spawner.spawn({ task: "Deep task", category: "complex_coding" })).rejects
+    await expect(spawner.spawn({ task: "Deep task", category: "complex_coding", readOnly: true })).rejects
       .toThrow("agents table write failed");
     expect(store.listAgents()).toEqual([]);
     expect(reservedOnCodex(quota)).toEqual(0);
@@ -1907,6 +1911,9 @@ describe("HiveSpawner wiring", () => {
       repoRoot: root,
       port: 4317,
       config: {},
+      // This test proves the reader-authority refusal, so it must NOT inherit
+      // the harness default credential issuer.
+      issueCredential: undefined,
       readRoutingPolicy: () => policyFromRoute(CODEX_ROUTE),
       tmux: new FakeTmux(),
       createWorktree: async () => {
@@ -2840,7 +2847,7 @@ describe("HiveSpawner wiring", () => {
       readCodexActivity: async () => null,
     });
 
-    const failed = await spawner.spawn({ task: "Hang at launch", category: "simple_coding" });
+    const failed = await spawner.spawn({ task: "Hang at launch", category: "simple_coding", readOnly: true });
 
     expect(failed.status).toEqual("failed");
     expect(removed).toEqual(0);
@@ -2876,7 +2883,7 @@ describe("HiveSpawner wiring", () => {
       readCodexActivity: async () => null,
     });
 
-    const failed = await spawner.spawn({ task: "Hang at launch", category: "simple_coding" });
+    const failed = await spawner.spawn({ task: "Hang at launch", category: "simple_coding", readOnly: true });
     expect(failed.status).toEqual("failed");
     expect(removed).toEqual(1);
   });
@@ -2911,7 +2918,7 @@ describe("HiveSpawner wiring", () => {
       readCodexActivity: async () => null,
     });
 
-    const failed = await spawner.spawn({ task: "Hang at launch", category: "simple_coding" });
+    const failed = await spawner.spawn({ task: "Hang at launch", category: "simple_coding", readOnly: true });
     expect(failed.status).toEqual("failed");
     expect(removed).toEqual(0);
     expect(failed.failureReason).toContain("could not be checked");
