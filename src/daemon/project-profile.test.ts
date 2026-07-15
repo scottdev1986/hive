@@ -1379,6 +1379,89 @@ describe("guidance provenance", () => {
     ).toHaveLength(1);
   });
 
+  test("concurrent appends record lock-acquisition order with matching timestamps", async () => {
+    // withFileLock is not FIFO: two waiters can acquire in either order. The
+    // recorded requester list must still be timestamp-monotonic — the stamp is
+    // taken under the lock, so acquisition order IS arrival order. Cap-merge
+    // under contention also follows that order: room left for one chunk is
+    // consumed by the first lock winner; the second still gets a requester row.
+    const root = await polyglotRepo();
+    const nearCap = "b".repeat(PROFILE_GUIDANCE_MAX_BYTES - 12);
+    const run = await beginProfiling(root, PROFILER, {
+      request: {
+        source: "operator",
+        requestedBy: "alice",
+        guidance: nearCap,
+      },
+    });
+    const aliceAt = run.request.requesters[0]!.requestedAt;
+
+    const lockPath = join(projectProfileDir(root), "profile.lock");
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const lock = withFileLock(lockPath, async () => {
+      await held;
+    });
+    while (!existsSync(lockPath)) await Bun.sleep(5);
+
+    // Both waiters start while the lock is held; order of Promise creation is
+    // not authority — only lock acquisition is.
+    const firstChunk = "AAAAAAAAAAAA"; // 12 bytes; alone fills the remaining room
+    const secondChunk = "BBBBBBBBBBBB";
+    const appendA = appendProfilingGuidance(root, run.runId, firstChunk, {
+      source: "orchestrator",
+      requestedBy: "bob",
+    });
+    await Bun.sleep(20);
+    const appendB = appendProfilingGuidance(root, run.runId, secondChunk, {
+      source: "orchestrator",
+      requestedBy: "carol",
+    });
+
+    release();
+    await lock;
+    const [reqA, reqB] = await Promise.all([appendA, appendB]);
+    expect(reqA).not.toBeNull();
+    expect(reqB).not.toBeNull();
+
+    // Both results reflect the final state (last writer wins on the return
+    // value's full list), so re-read the run as authority.
+    const final = (await readProfileState(root)).run!.request;
+    expect(final.requesters).toHaveLength(3);
+    expect(final.requesters[0]).toEqual({
+      source: "operator",
+      requestedAt: aliceAt,
+      requestedBy: "alice",
+    });
+    const names = final.requesters.slice(1).map((r) => r.requestedBy);
+    expect(new Set(names)).toEqual(new Set(["bob", "carol"]));
+
+    // Array order matches non-decreasing ISO timestamps (lock = stamp order).
+    for (let i = 1; i < final.requesters.length; i++) {
+      expect(
+        final.requesters[i - 1]!.requestedAt <=
+          final.requesters[i]!.requestedAt,
+      ).toBe(true);
+    }
+
+    // Cap: first coalesced append under the lock fills the remaining 12 bytes
+    // (after the join newline, normalize truncates). Second contributes nothing
+    // to guidance text but still owns a requester row.
+    expect(new TextEncoder().encode(final.guidance!).byteLength).toBe(
+      PROFILE_GUIDANCE_MAX_BYTES,
+    );
+    const winner = final.requesters[1]!.requestedBy;
+    if (winner === "bob") {
+      expect(final.guidance).toContain("A");
+      expect(final.guidance).not.toContain("B");
+    } else {
+      expect(final.guidance).toContain("B");
+      expect(final.guidance).not.toContain("A");
+    }
+  });
+
   test("coalesced requesters merged during validation are committed, not the pre-merge snapshot", async () => {
     // submitProfile validates outside the lock using a run snapshot. A second
     // requester can append under the lock while that runs. Commit must re-read

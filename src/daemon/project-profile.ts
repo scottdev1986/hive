@@ -850,8 +850,12 @@ export async function appendProfilingGuidance(
   meta: { source: string; requestedBy: string },
 ): Promise<ProjectProfileRequest | null> {
   const normalized = normalizeProfileGuidance(guidance);
-  const at = new Date().toISOString();
+  // Stamp and append only under the lock. withFileLock has no FIFO queue, so a
+  // pre-lock timestamp can invert against acquisition order (A stamps first, B
+  // acquires first → provenance [B,A] with A earlier). The lock is the single
+  // serialization point: acquisition order IS arrival order.
   return withProfileLock(root, async () => {
+    const at = new Date().toISOString();
     const state = await readProfileState(root);
     if (
       state.run === null ||
