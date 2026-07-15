@@ -12,7 +12,9 @@ import {
   countGraphifyCallLines,
   lastCodexTurnCompleted,
   lastGrokTurnCompleted,
+  newestTurnContextIdentity,
   readClaudeTelemetry,
+  readCodexObservedIdentity,
   readCodexTelemetry,
   readGraphifyCalls,
   readGrokTelemetry,
@@ -202,6 +204,112 @@ describe("codex rollout telemetry", () => {
     const telemetry = await readCodexTelemetry(WORKTREE, "thread-1", home);
     expect(telemetry.contextPct).toEqual(null);
     expect(telemetry.lastActivityAt).not.toEqual(null);
+  });
+
+  // A real Codex CLI 0.144.4 turn_context record (fields trimmed to the ones
+  // the reader depends on), matching the shape observed on disk.
+  function turnContext(
+    model: string,
+    effort: string,
+    cwd: string,
+    turnId: string,
+    timestamp: string,
+  ): string {
+    return JSON.stringify({
+      timestamp,
+      type: "turn_context",
+      payload: {
+        turn_id: turnId,
+        cwd,
+        workspace_roots: [cwd],
+        model,
+        effort,
+        multi_agent_mode: "explicitRequestOnly",
+        collaboration_mode: {
+          mode: "default",
+          settings: { model, reasoning_effort: effort },
+        },
+      },
+    });
+  }
+
+  test("observes the newest main-thread turn_context identity (the Sam drift)", async () => {
+    const home = makeHome();
+    const cwd = resolve(WORKTREE);
+    // Launched Sol/xhigh, then a settings change flipped the productive parent
+    // to Luna/low — every later turn stays Luna/low. Newest wins.
+    writeRollout(home, [
+      turnContext("gpt-5.6-sol", "xhigh", cwd, "turn-1", "2026-07-10T10:01:00.000Z"),
+      turnContext("gpt-5.6-luna", "low", cwd, "turn-2", "2026-07-10T10:02:00.000Z"),
+    ]);
+    const observation = await readCodexObservedIdentity(WORKTREE, "thread-1", home);
+    expect(observation).toEqual({
+      status: "observed",
+      model: "gpt-5.6-luna",
+      effort: "low",
+      turnId: "turn-2",
+      sessionId: "thread-1",
+      observedAt: "2026-07-10T10:02:00.000Z",
+    });
+  });
+
+  test("ignores a subagent turn_context recorded for a different cwd", async () => {
+    const home = makeHome();
+    const cwd = resolve(WORKTREE);
+    // A Codex-internal subagent runs at its own cwd; its turn_context must never
+    // be read as the parent's identity even if it lands in the same tail.
+    writeRollout(home, [
+      turnContext("gpt-5.6-sol", "xhigh", cwd, "turn-1", "2026-07-10T10:01:00.000Z"),
+      turnContext("gpt-5.6-luna", "low", "/root/review", "child-1", "2026-07-10T10:03:00.000Z"),
+    ]);
+    const observation = await readCodexObservedIdentity(WORKTREE, "thread-1", home);
+    expect(observation).toMatchObject({
+      status: "observed",
+      model: "gpt-5.6-sol",
+      effort: "xhigh",
+      turnId: "turn-1",
+    });
+  });
+
+  test("absent without a session or rollout; unknown for a rollout with no turn_context", async () => {
+    const home = makeHome();
+    // No session id: nothing has been observed.
+    expect(await readCodexObservedIdentity(WORKTREE, undefined, home)).toEqual({
+      status: "absent",
+    });
+    // No rollout yet for this session.
+    expect(await readCodexObservedIdentity(WORKTREE, "thread-1", home)).toEqual({
+      status: "absent",
+    });
+    // A live rollout that carries no turn_context is unknown, never a guess —
+    // generic mtime proves liveness only, not identity.
+    writeRollout(home, [
+      JSON.stringify({ type: "event_msg", payload: { type: "task_started" } }),
+    ]);
+    expect(await readCodexObservedIdentity(WORKTREE, "thread-1", home)).toEqual({
+      status: "unknown",
+    });
+  });
+
+  test("newestTurnContextIdentity requires both model and effort in-cwd", () => {
+    const cwd = resolve(WORKTREE);
+    const good = turnContext("gpt-5.6-sol", "xhigh", cwd, "t1", "2026-07-10T10:00:00.000Z");
+    expect(newestTurnContextIdentity(good + "\n", cwd)).toEqual({
+      model: "gpt-5.6-sol",
+      effort: "xhigh",
+      turnId: "t1",
+      observedAt: "2026-07-10T10:00:00.000Z",
+    });
+    // A turn_context missing effort is not a complete identity.
+    const noEffort = JSON.stringify({
+      type: "turn_context",
+      payload: { turn_id: "t1", cwd, model: "gpt-5.6-sol" },
+    });
+    expect(newestTurnContextIdentity(noEffort + "\n", cwd)).toEqual(null);
+    // A different cwd is ignored.
+    expect(newestTurnContextIdentity(good + "\n", "/some/other/tree")).toEqual(
+      null,
+    );
   });
 
   test("reads exact task boundaries for a hookless Codex orchestrator", () => {

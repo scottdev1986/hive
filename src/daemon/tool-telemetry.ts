@@ -1,5 +1,5 @@
 import { open, readFile, stat } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { claudeProjectDirectory } from "../adapters/tools/claude";
 import { findCodexRolloutBySessionId } from "../adapters/tools/codex";
 import { findLatestGrokSessionDirectory } from "../adapters/tools/grok";
@@ -209,6 +209,105 @@ export async function readCodexTelemetry(
     if (total > 0) contextPct = clampPct((100 * total) / window);
   }
   return { contextPct, lastActivityAt };
+}
+
+// ---------------------------------------------------------------------------
+// Codex execution-identity attestation (SPEC 2/6/13). The rollout's generic
+// mtime proves liveness only; the running model+effort is a different fact,
+// carried by the newest `turn_context` record. Codex CLI 0.144.4 writes one
+// `turn_context` per turn with the *applied* identity — verified against real
+// rollouts, where a settings change mid-session produced the sequence
+// [(gpt-5.6-sol, xhigh) -> (gpt-5.6-luna, low)]. Reading the newest one is how
+// Hive observes drift the immutable launch identity cannot.
+//
+// The state DB (~/.codex/state_5.sqlite) is deliberately NOT a dependency: the
+// rollout is the primary and only production sensor here.
+// ---------------------------------------------------------------------------
+
+/** A single provider-native observation of the Codex running identity.
+ * - `observed`: the newest main-thread `turn_context` for this worktree parsed
+ *   cleanly and carries both model and effort.
+ * - `unknown`: a rollout exists (so the process is live) but no complete
+ *   identity could be read — the dangerous case the guard must fail closed on.
+ * - `absent`: no session id or no rollout yet — nothing has been observed. */
+export type CodexIdentityObservation =
+  | {
+    status: "observed";
+    model: string;
+    effort: string;
+    turnId: string | null;
+    sessionId: string;
+    observedAt: string;
+  }
+  | { status: "unknown" }
+  | { status: "absent" };
+
+/**
+ * The newest `turn_context` identity in `tail`, scanned backwards so the active
+ * turn wins over every completed predecessor. Only a record whose `cwd` is this
+ * worktree is accepted: a `turn_context` for another directory belongs to a
+ * different session (a Codex-internal subagent runs at its own cwd) and must
+ * never be read as this agent's identity. Both `model` and `effort` must be
+ * present — an incomplete record is not an identity. Pure; exported for tests.
+ */
+export function newestTurnContextIdentity(
+  tail: string,
+  expectedCwd: string,
+): { model: string; effort: string; turnId: string | null; observedAt: string | null } | null {
+  const wanted = resolve(expectedCwd);
+  const entries = parseJsonLines(tail);
+  for (let index = entries.length - 1; index >= 0; index--) {
+    const entry = entries[index];
+    if (!isRecord(entry) || entry.type !== "turn_context") continue;
+    if (!isRecord(entry.payload)) continue;
+    const payload = entry.payload;
+    if (typeof payload.cwd !== "string" || resolve(payload.cwd) !== wanted) {
+      continue;
+    }
+    const model = payload.model;
+    const effort = payload.effort;
+    if (typeof model !== "string" || model.length === 0) continue;
+    if (typeof effort !== "string" || effort.length === 0) continue;
+    const turnId = typeof payload.turn_id === "string" ? payload.turn_id : null;
+    const observedAt = typeof entry.timestamp === "string"
+      ? entry.timestamp
+      : null;
+    return { model, effort, turnId, observedAt };
+  }
+  return null;
+}
+
+/**
+ * Observe this Codex agent's running identity from its own rollout. Keyed on
+ * the exact `toolSessionId`, so a reused worktree's dead-predecessor rollout is
+ * never read, and cwd-matched inside the file, so a Codex-internal subagent's
+ * `turn_context` cannot masquerade as the parent's. Returns `absent` when there
+ * is nothing to read yet and `unknown` when a live rollout yields no complete
+ * identity — both of which the guard treats as fail-closed.
+ */
+export async function readCodexObservedIdentity(
+  worktreePath: string,
+  toolSessionId: string | undefined,
+  home?: string,
+): Promise<CodexIdentityObservation> {
+  if (toolSessionId === undefined) return { status: "absent" };
+  const rollout = home === undefined
+    ? await findCodexRolloutBySessionId(worktreePath, toolSessionId)
+    : await findCodexRolloutBySessionId(worktreePath, toolSessionId, home);
+  if (rollout === null) return { status: "absent" };
+  const tail = await readFileTail(rollout.path);
+  if (tail === null) return { status: "unknown" };
+  const identity = newestTurnContextIdentity(tail, worktreePath);
+  if (identity === null) return { status: "unknown" };
+  return {
+    status: "observed",
+    model: identity.model,
+    effort: identity.effort,
+    turnId: identity.turnId,
+    sessionId: rollout.sessionId,
+    observedAt: identity.observedAt ??
+      new Date(rollout.mtimeMs).toISOString(),
+  };
 }
 
 /** Codex's rollout records exact task boundaries. Read newest first so an
