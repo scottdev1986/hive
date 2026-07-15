@@ -235,6 +235,11 @@ export class MessageDelivery {
     body: string,
     options: SendOptions = {},
   ): Promise<AgentMessage> {
+    // Preferred root address is queen; "orchestrator" (any case) is a synonym.
+    // Canonicalize both ends before idempotency lookup, provenance, and storage
+    // so worker-instruction status and history share one root identity.
+    from = canonicalOrchestratorName(from);
+    to = canonicalOrchestratorName(to);
     if (options.idempotencyKey !== undefined) {
       const existing = this.db.findMessageByIdempotency(
         from,
@@ -242,9 +247,6 @@ export class MessageDelivery {
       );
       if (existing !== null) return existing;
     }
-    // Preferred root address is queen; "orchestrator" is a synonym. Store the
-    // preferred form so inbox, wake, and history share one recipient key.
-    to = canonicalOrchestratorName(to);
     const recipient = to === ORCHESTRATOR_NAME
       ? null
       : this.db.getAgentByName(to);

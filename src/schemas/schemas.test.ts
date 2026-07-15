@@ -318,8 +318,13 @@ describe("root orchestrator naming", () => {
     expect(isOrchestratorName("queen")).toBe(true);
     expect(isOrchestratorName("Queen")).toBe(true);
     expect(isOrchestratorName("orchestrator")).toBe(true);
+    expect(isOrchestratorName("Orchestrator")).toBe(true);
+    expect(isOrchestratorName("ORCHESTRATOR")).toBe(true);
     expect(isOrchestratorName("maya")).toBe(false);
     expect(canonicalOrchestratorName("orchestrator")).toEqual("queen");
+    expect(canonicalOrchestratorName("Orchestrator")).toEqual("queen");
+    expect(canonicalOrchestratorName("ORCHESTRATOR")).toEqual("queen");
+    expect(canonicalOrchestratorName("Queen")).toEqual("queen");
     expect(canonicalOrchestratorName("queen")).toEqual("queen");
     expect(canonicalOrchestratorName("maya")).toEqual("maya");
   });

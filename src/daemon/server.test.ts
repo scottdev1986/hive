@@ -3579,6 +3579,55 @@ describe("delivery reconciliation runs in maintenance", () => {
     }
   });
 
+  test("hook events under queen/orchestrator/case variants store one canonical root identity", async () => {
+    const db = new HiveDatabase(join(home, "root-event-canonical.db"));
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new StubSpawner(),
+      tmux: new FakeDaemonTmux(),
+      tmuxSender: new SilentTmuxSender(db),
+    });
+    try {
+      const base = Date.parse("2026-07-15T18:00:00.000Z");
+      await daemon.processEvent({
+        kind: "session-launch",
+        agentName: "Orchestrator",
+        timestamp: new Date(base).toISOString(),
+        toolSessionId: "root-sess-1",
+      });
+      await daemon.processEvent({
+        kind: "turn-start",
+        agentName: "orchestrator",
+        timestamp: new Date(base + 1_000).toISOString(),
+        toolSessionId: "root-sess-1",
+      });
+      await daemon.processEvent({
+        kind: "turn-end",
+        agentName: "Queen",
+        timestamp: new Date(base + 2_000).toISOString(),
+        toolSessionId: "root-sess-1",
+      });
+
+      // All three variants land under queen; legacy key stays empty for new writes.
+      expect(db.recentOrchestratorSignals("queen")).toEqual([
+        "turn-end",
+        "turn-start",
+      ]);
+      expect(db.recentOrchestratorSignals("orchestrator")).toEqual([]);
+
+      // Worker-instruction provenance: root sender normalizes too.
+      db.insertAgent(agent({ status: "idle" }));
+      const instruction = await daemon.delivery.send(
+        "ORCHESTRATOR",
+        "maya",
+        "Ship the fix.",
+      );
+      expect(instruction.from).toEqual("queen");
+    } finally {
+      db.close();
+    }
+  });
+
   test("a message that never reached a turn is surfaced once, and the alert never surfaces itself", async () => {
     const db = new HiveDatabase(join(home, "reconcile-stalled.db"));
     const daemon = new HiveDaemon({

@@ -49,6 +49,7 @@ import {
   MemoryWriteInputSchema,
   MessagePrioritySchema,
   ORCHESTRATOR_NAME,
+  canonicalOrchestratorName,
   isOrchestratorName,
   QuotaObservationSchema,
   RoutingPolicyMutationSchema,
@@ -3034,7 +3035,13 @@ export class HiveDaemon {
   }
 
   async processEvent(event: HookEvent): Promise<void> {
-    const value = HookEventSchema.parse(event);
+    const parsed = HookEventSchema.parse(event);
+    // One root identity at ingress: legacy/case-varied orchestrator events
+    // register and store as queen so status, token usage, and consumers agree.
+    const value = {
+      ...parsed,
+      agentName: canonicalOrchestratorName(parsed.agentName),
+    };
     if (
       value.agentName === ORCHESTRATOR_NAME &&
       value.toolSessionId !== undefined
@@ -3219,18 +3226,24 @@ export class HiveDaemon {
         { status: 400 },
       );
     }
+    // Normalize root address before authorize + process so synonym and
+    // case variants share the queen subject with minted root credentials.
+    const normalized = {
+      ...event.data,
+      agentName: canonicalOrchestratorName(event.data.agentName),
+    };
     // A hook may only report on the agent it was installed for. Hooks fire at
     // every turn boundary, so allows are not audited.
     const decision = this.authorize(
       authenticated.capability,
       "/event",
       "event:report",
-      event.data.agentName,
+      normalized.agentName,
       false,
     );
     if (!decision.ok) return this.denied(decision);
     try {
-      await this.processEvent(event.data);
+      await this.processEvent(normalized);
       return json({ ok: true });
     } catch (error) {
       return json(

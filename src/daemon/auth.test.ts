@@ -597,6 +597,28 @@ describe("legitimate workflows keep working", () => {
     await daemon.stop();
   });
 
+  test("root credentials accept queen↔orchestrator cross-pairs and case variants", async () => {
+    const { daemon, db } = harness();
+    db.upsertAgent(agentRecord());
+    // Preferred mint subject is queen; synonym still appears on older tooling.
+    const asQueen = daemon.capabilities.mint("queen", "orchestrator").token;
+    const asSynonym = daemon.capabilities.mint("orchestrator", "orchestrator").token;
+
+    expect((await callTool(daemon, asQueen, "hive_inbox", { agent: "orchestrator" })).ok).toBe(true);
+    expect((await callTool(daemon, asQueen, "hive_inbox", { agent: "Orchestrator" })).ok).toBe(true);
+    expect((await callTool(daemon, asQueen, "hive_inbox", { agent: "queen" })).ok).toBe(true);
+    expect((await callTool(daemon, asQueen, "hive_inbox", { agent: "Queen" })).ok).toBe(true);
+
+    expect((await callTool(daemon, asSynonym, "hive_inbox", { agent: "queen" })).ok).toBe(true);
+    expect((await callTool(daemon, asSynonym, "hive_inbox", { agent: "Queen" })).ok).toBe(true);
+    expect((await callTool(daemon, asSynonym, "hive_inbox", { agent: "orchestrator" })).ok).toBe(true);
+
+    // Foreign root-style subject from a worker is still denied.
+    const worker = daemon.capabilities.mint("maya", "writer").token;
+    expect((await callTool(daemon, worker, "hive_inbox", { agent: "queen" })).ok).toBe(false);
+    await daemon.stop();
+  });
+
   test("a writer reports, talks, reads its own inbox, and lands its own branch", async () => {
     const { daemon, db, landed } = harness();
     db.upsertAgent(agentRecord());

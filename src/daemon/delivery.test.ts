@@ -202,7 +202,7 @@ describe("MessageDelivery", () => {
       expect(native.calls).toEqual([
         {
           agent: "maya",
-          text: "📨 message from orchestrator: Focus on the failing test.",
+          text: "📨 message from queen: Focus on the failing test.",
           interrupt: false,
         },
         {
@@ -538,6 +538,63 @@ describe("MessageDelivery", () => {
     }
   });
 
+  test("drains a genuine pre-rename DB row keyed to orchestrator without send() normalization", async () => {
+    const db = new HiveDatabase(join(home, "orchestrator-legacy-row.db"));
+    const delivery = new MessageDelivery(db, new UnavailableTmuxSender());
+    try {
+      // Bypass send() so the stored recipient key stays the pre-rename synonym.
+      const legacy = db.insertMessage(AgentMessageSchema.parse({
+        id: "legacy-pre-rename",
+        from: "maya",
+        to: "orchestrator",
+        body: "report written before queen was preferred",
+        createdAt: timestamp,
+        deliveredAt: null,
+        priority: "normal",
+        intent: "instruction",
+        state: "queued",
+        sequence: 0,
+      }));
+      expect(db.getMessage(legacy.id)?.to).toEqual("orchestrator");
+
+      const inbox = await delivery.orchestratorInbox();
+      expect(inbox).toHaveLength(1);
+      expect(inbox[0]?.id).toEqual(legacy.id);
+      expect(db.getMessage(legacy.id)?.deliveredAt).not.toEqual(null);
+      expect(await delivery.orchestratorInbox()).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("canonicalizes root-compatible senders to queen for storage and idempotency", async () => {
+    const db = new HiveDatabase(join(home, "root-sender-canonical.db"));
+    const delivery = new MessageDelivery(db, new SubmittingTmuxSender(db));
+    try {
+      db.insertAgent(agent("idle"));
+      const first = await delivery.send(
+        "Orchestrator",
+        "maya",
+        "Reuse the middleware.",
+        { idempotencyKey: "root-instruction-1" },
+      );
+      expect(first.from).toEqual("queen");
+      expect(db.getMessage(first.id)?.from).toEqual("queen");
+
+      // Same idempotency under the synonym must hit the canonicalized row.
+      const again = await delivery.send(
+        "orchestrator",
+        "maya",
+        "Reuse the middleware.",
+        { idempotencyKey: "root-instruction-1" },
+      );
+      expect(again.id).toEqual(first.id);
+      expect(again.from).toEqual("queen");
+    } finally {
+      db.close();
+    }
+  });
+
   test("orchestrator stays a valid recipient even when agents are dead", async () => {
     const db = new HiveDatabase(join(home, "orchestrator-always.db"));
     const delivery = new MessageDelivery(db, new RecordingTmuxSender());
@@ -566,7 +623,7 @@ describe("MessageDelivery", () => {
         "Start with the auth module.",
       );
       expect(tmux.calls).toEqual([
-        ["hive-maya", "📨 message from orchestrator: Start with the auth module."],
+        ["hive-maya", "📨 message from queen: Start with the auth module."],
       ]);
       expect(message.deliveredAt === null).toEqual(false);
     } finally {
@@ -605,7 +662,7 @@ describe("MessageDelivery", () => {
       expect(tmux.calls).toEqual([
         [
           "hive-maya",
-          "📨 message from orchestrator: When done, also update the docs.",
+          "📨 message from queen: When done, also update the docs.",
         ],
       ]);
       expect(db.getMessage(queued.id)?.deliveredAt === null).toEqual(false);
@@ -1434,7 +1491,7 @@ describe("a live idle agent hears", () => {
       expect(tmux.calls).toEqual([
         [
           "hive-cesar",
-          "📨 message from orchestrator: Stop what you are doing and report.",
+          "📨 message from queen: Stop what you are doing and report.",
         ],
       ]);
 
@@ -1504,6 +1561,7 @@ describe("a live idle agent hears", () => {
 
       await delivery.wakeIdleRecipients();
 
+      // insertMessage fixtures keep stored from as-is; display uses the row.
       expect(native.calls).toEqual([
         {
           agent: "maya",
@@ -1572,7 +1630,7 @@ describe("a live idle agent hears", () => {
       const delivered = await delivery.flushQueued("maya");
       expect(delivered).toHaveLength(1);
       expect(tmux.calls).toEqual([
-        ["hive-maya", "📨 message from orchestrator: Incoming."],
+        ["hive-maya", "📨 message from queen: Incoming."],
       ]);
     } finally {
       db.close();
