@@ -251,10 +251,21 @@ export async function resumeCapturedTree(
   if (captured.length === 0) {
     throw new Error("resume refused: empty process capture");
   }
+  const continued: number[] = [];
   const failures: string[] = [];
+  const reStop = () => {
+    for (const pid of continued) {
+      try {
+        dependencies.kill(pid, "SIGSTOP");
+      } catch {
+        // best-effort re-freeze
+      }
+    }
+  };
   for (const entry of captured) {
     try {
       dependencies.kill(entry.pid, "SIGCONT");
+      continued.push(entry.pid);
     } catch (error) {
       failures.push(
         `SIGCONT pid ${entry.pid}: ${
@@ -264,11 +275,13 @@ export async function resumeCapturedTree(
     }
   }
   if (failures.length > 0) {
+    reStop();
     throw new Error(`SIGCONT failed: ${failures.join("; ")}`);
   }
   await dependencies.wait(REAP_SETTLE_MS);
   const states = parseStateTable(await dependencies.psState());
   if (!states.some((sample) => sample.pid === verificationPid)) {
+    reStop();
     throw new Error(
       `Process-state verification did not contain verification pid ${verificationPid}`,
     );
@@ -277,16 +290,19 @@ export async function resumeCapturedTree(
   for (const entry of captured) {
     const live = byPid.get(entry.pid);
     if (live === undefined) {
+      reStop();
       throw new Error(
         `SIGCONT readback: pid ${entry.pid} vanished (not non-stopped)`,
       );
     }
     if (live.stat.startsWith("T")) {
+      reStop();
       throw new Error(
         `SIGCONT readback: pid ${entry.pid} is still stopped (${live.stat})`,
       );
     }
     if (live.stat.startsWith("Z")) {
+      reStop();
       throw new Error(
         `SIGCONT readback: pid ${entry.pid} is a zombie (${live.stat})`,
       );
@@ -529,13 +545,18 @@ export async function resumePauseCapture(
 /** Capture + SIGSTOP a full pause-bound tree (tmux roots + optional host). */
 export async function suspendAgentForPause(
   agent: AgentRecord,
-  dependencies: VerifiedStopDependencies,
+  dependencies: VerifiedStopDependencies & { requireAppServerHost?: boolean },
 ): Promise<{ capture: PauseCapture; outcome: SuspendOutcome }> {
   const reap: PauseCaptureDependencies = {
     ...(dependencies.reap ?? defaultReapDependencies()),
   };
   const selfPid = dependencies.selfPid ?? process.pid;
   const hostPid = await (dependencies.readHostPid ?? readCodexHostPid)(agent);
+  if (dependencies.requireAppServerHost === true && hostPid === null) {
+    throw new Error(
+      `pause refused for ${agent.name}: app-server host pidfile missing while app-server is live`,
+    );
+  }
   const roots = await sessionRoots(agent.tmuxSession, dependencies.tmux);
   const tree = await capturePauseBoundTree(roots, hostPid, reap, selfPid);
   const capture = buildPauseCapture(agent, tree, hostPid);

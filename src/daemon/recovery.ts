@@ -459,12 +459,26 @@ export class CrashRecovery {
   ): AgentRecord | null {
     const current = this.deps.db.getAgentById(agent.id);
     if (current === null) return null;
-    // Automatic recovery must never resurrect a deliberately closed agent.
-    // Manual recovery may revive a dead/failed row on purpose.
-    if (!options.manual) {
-      if (current.closedAt !== undefined || isTerminalAgentStatus(current.status)) {
+    // Never accept a concurrent terminal/closed row — including manual mode
+    // once kill has marked the row after recovery started.
+    if (current.closedAt !== undefined || isTerminalAgentStatus(current.status)) {
+      // Manual may start from a dead row only when that was the original target
+      // (same closedAt/status at kickoff). A newly terminal row mid-flight aborts.
+      if (!options.manual) return null;
+      if (
+        agent.status !== current.status ||
+        (agent.closedAt ?? null) !== (current.closedAt ?? null) ||
+        agent.capabilityEpoch !== current.capabilityEpoch
+      ) {
         return null;
       }
+    }
+    // Automatic recovery also refuses revoked/control-paused rows it did not own.
+    if (
+      !options.manual &&
+      (current.writeRevoked || current.status === "control-paused")
+    ) {
+      return null;
     }
     return current;
   }

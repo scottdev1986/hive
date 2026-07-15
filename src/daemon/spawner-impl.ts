@@ -215,6 +215,7 @@ type AgentStore = Pick<
   | "insertAgent"
   | "insertRouteAudit"
   | "listAgents"
+  | "markAgentTerminal"
   | "releaseAgentName"
   | "reserveAgentName"
 >;
@@ -1653,7 +1654,7 @@ export class HiveSpawner implements Spawner {
       return result.authorized;
     };
     let authorized: AuthorizedLaunch;
-    const writeRouteAudit = (fields: {
+    type AuditFields = {
       attempts: string[];
       selectedTool: string | null;
       selectedModel: string | null;
@@ -1661,7 +1662,8 @@ export class HiveSpawner implements Spawner {
       reservationId: string | null;
       category?: string;
       policyRevision?: number;
-    }) => {
+    };
+    const writeRouteAudit = (fields: AuditFields) => {
       this.dependencies.db.insertRouteAudit({
         id: crypto.randomUUID(),
         agentName: name,
@@ -1676,6 +1678,9 @@ export class HiveSpawner implements Spawner {
         reservationId: fields.reservationId,
       });
     };
+    // Success audits are deferred until after Codex writer containment so a
+    // later refusal is not recorded as selected/success.
+    let pendingSuccessAudit: AuditFields | null = null;
     if (explicitModel !== undefined) {
       // A user-named model is the only candidate and is never substituted.
       // Every explicit decision records exactly one prompt-free route audit —
@@ -1724,23 +1729,39 @@ export class HiveSpawner implements Spawner {
         );
       }
       if (this.dependencies.quota?.config.enabled === true) {
-        const decision = await this.dependencies.quota.routeAndReserve({
-          agentName: name,
-          category: request.category,
-          selection: "strict",
-          explicitTool: tool,
-          explicitCandidate: true,
-          ...(request.reviewOfTool === undefined
-            ? {}
-            : { reviewOfTool: request.reviewOfTool }),
-          candidates: [gated],
-        });
-        authorized = decision.authorized;
-        quotaReservationId = decision.reservation.id;
+        try {
+          const decision = await this.dependencies.quota.routeAndReserve({
+            agentName: name,
+            category: request.category,
+            selection: "strict",
+            explicitTool: tool,
+            explicitCandidate: true,
+            ...(request.reviewOfTool === undefined
+              ? {}
+              : { reviewOfTool: request.reviewOfTool }),
+            candidates: [gated],
+          });
+          authorized = decision.authorized;
+          quotaReservationId = decision.reservation.id;
+        } catch (error) {
+          writeRouteAudit({
+            attempts: [
+              `explicit: eligible ${gated.tool}/${gated.model}`,
+              `explicit: quota refused — ${
+                error instanceof Error ? error.message : String(error)
+              }`,
+            ],
+            selectedTool: null,
+            selectedModel: null,
+            selectedEffort: null,
+            reservationId: null,
+          });
+          throw error;
+        }
       } else {
         authorized = gated;
       }
-      writeRouteAudit({
+      pendingSuccessAudit = {
         attempts: [
           `explicit: eligible ${authorized.tool}/${authorized.model}`,
           `explicit: selected ${authorized.tool}/${authorized.model}`,
@@ -1753,7 +1774,7 @@ export class HiveSpawner implements Spawner {
         selectedModel: authorized.model,
         selectedEffort: authorized.effort ?? null,
         reservationId: quotaReservationId ?? null,
-      });
+      };
     } else {
       // THE CHAIN SELECTION. The category's chain names the CAPABLE models,
       // best first; it is not a strict always-try-#1 ladder, because a strict
@@ -1935,20 +1956,16 @@ export class HiveSpawner implements Spawner {
       // any reviewOfTool independence exclusion, captured in `attempts`), the
       // selection, and the reservation — no prompt or account data. Written for
       // both a selection and a total refusal.
-      this.dependencies.db.insertRouteAudit({
-        id: crypto.randomUUID(),
-        agentName: name,
-        category,
-        decidedAt: new Date().toISOString(),
-        policyRevision: policy.revision,
-        reviewOfTool: request.reviewOfTool ?? null,
-        attempts: [...attempts],
-        selectedTool: chosen?.authorized.tool ?? null,
-        selectedModel: chosen?.authorized.model ?? null,
-        selectedEffort: chosen?.authorized.effort ?? null,
-        reservationId: chosen?.reservationId ?? null,
-      });
       if (chosen === null) {
+        writeRouteAudit({
+          attempts: [...attempts, "refused: total chain exhaustion"],
+          selectedTool: null,
+          selectedModel: null,
+          selectedEffort: null,
+          reservationId: null,
+          category,
+          policyRevision: policy.revision,
+        });
         throw new Error(
           `Cannot spawn ${name}: every link of the ${category} chain` +
             `${defaultChain.length > 0 ? " and the global default chain" : ""} ` +
@@ -1959,13 +1976,39 @@ export class HiveSpawner implements Spawner {
       }
       authorized = chosen.authorized;
       quotaReservationId = chosen.reservationId;
+      pendingSuccessAudit = {
+        attempts: [...attempts],
+        selectedTool: authorized.tool,
+        selectedModel: authorized.model,
+        selectedEffort: authorized.effort ?? null,
+        reservationId: quotaReservationId ?? null,
+        category,
+        policyRevision: policy.revision,
+      };
     }
     tool = authorized.tool;
-    // Codex writer authoring is contained: refuse before any worktree or launch,
-    // for an explicit model, a routed selection, or a fallback link alike. No
-    // silent fallback to another Codex driver or provider — the caller gets an
-    // actionable containment diagnostic. Read-only Codex is unaffected.
-    assertCodexWriterContained(tool, readOnly);
+    // Codex writer authoring is contained: refuse before any worktree or launch.
+    // Audit only after this gate so containment is never recorded as success.
+    try {
+      assertCodexWriterContained(tool, readOnly);
+    } catch (error) {
+      writeRouteAudit({
+        attempts: [
+          ...(pendingSuccessAudit?.attempts ?? []),
+          `containment: refused ${tool} writer — ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        ],
+        selectedTool: null,
+        selectedModel: null,
+        selectedEffort: null,
+        reservationId: null,
+      });
+      throw error;
+    }
+    if (pendingSuccessAudit !== null) {
+      writeRouteAudit(pendingSuccessAudit);
+    }
     const model: string = authorized.model;
     effort = authorized.effort;
     if (model !== "default") {
@@ -2474,14 +2517,20 @@ export class HiveSpawner implements Spawner {
       }
     }
     const failedAt = new Date().toISOString();
-    let failed = this.dependencies.db.insertAgent({
-      ...(this.dependencies.db.getAgentById(record.id) ?? stopping),
-      status: "failed",
+    const base = this.dependencies.db.getAgentById(record.id) ?? stopping;
+    let failed = this.dependencies.db.markAgentTerminal(
+      base.id,
+      failedAt,
+      "failed",
+      { failureReason, failedAt },
+    ) ?? {
+      ...base,
+      status: "failed" as const,
       writeRevoked: true,
       failureReason,
       failedAt,
       lastEventAt: failedAt,
-    });
+    };
     const cleanupErrors: string[] = [];
     let preserved: string | null = null;
 

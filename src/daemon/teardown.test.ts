@@ -542,3 +542,71 @@ describe("pause capture birth binding (N5)", () => {
       .rejects.toThrow(/no tmux roots and no app-server host/);
   });
 });
+
+describe("SIGCONT fail-closed re-freeze", () => {
+  test("thrown SIGCONT re-SIGSTOPs already continued pids", async () => {
+    const { resumeCapturedTree } = await import("./teardown");
+    const signals: Array<{ pid: number; signal: string }> = [];
+    const deps = {
+      ps: async () => "100 1 1024 a\n200 1 1024 b\n",
+      psState: async () => "1 0 S\n100 1 S\n200 1 S\n",
+      kill: (pid: number, signal: NodeJS.Signals) => {
+        signals.push({ pid, signal });
+        if (pid === 200 && signal === "SIGCONT") {
+          throw new Error("ESRCH");
+        }
+      },
+      wait: async () => undefined,
+    };
+    await expect(
+      resumeCapturedTree(
+        [{ pid: 100, command: "a" }, { pid: 200, command: "b" }],
+        deps,
+        1,
+      ),
+    ).rejects.toThrow(/SIGCONT failed/);
+    expect(signals.filter((s) => s.signal === "SIGSTOP").map((s) => s.pid))
+      .toContain(100);
+  });
+
+  test("still-T readback re-SIGSTOPs the tree", async () => {
+    const { resumeCapturedTree } = await import("./teardown");
+    const signals: Array<{ pid: number; signal: string }> = [];
+    const deps = {
+      ps: async () => "100 1 1024 a\n",
+      psState: async () => "1 0 S\n100 1 T\n",
+      kill: (pid: number, signal: NodeJS.Signals) => {
+        signals.push({ pid, signal });
+      },
+      wait: async () => undefined,
+    };
+    await expect(
+      resumeCapturedTree([{ pid: 100, command: "a" }], deps, 1),
+    ).rejects.toThrow(/still stopped/);
+    expect(signals.some((s) => s.pid === 100 && s.signal === "SIGSTOP")).toBe(true);
+  });
+});
+
+describe("pause capture host descendants", () => {
+  test("captures descendants under the app-server host root", async () => {
+    const { capturePauseBoundTree } = await import("./teardown");
+    const deps = {
+      ps: async () =>
+        [
+          "100 1 1024 -zsh",
+          "200 100 1024 codex",
+          "900 1 1024 codex app-server",
+          "901 900 1024 host-child",
+        ].join("\n"),
+      psState: async () => "1 0 S\n",
+      psBirth: async () =>
+        ["100 b1", "200 b2", "900 b9", "901 b91"].join("\n"),
+      kill: () => undefined,
+      wait: async () => undefined,
+    };
+    const tree = await capturePauseBoundTree([100], 900, deps, 1);
+    expect(tree.map((e) => e.pid).sort()).toEqual([100, 200, 900, 901]);
+    expect(tree.find((e) => e.pid === 900)?.role).toBe("app-server-host");
+    expect(tree.find((e) => e.pid === 901)?.role).toBe("descendant");
+  });
+});

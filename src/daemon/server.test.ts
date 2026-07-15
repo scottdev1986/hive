@@ -1655,11 +1655,15 @@ describe("HiveDaemon HTTP server", () => {
       spawner: new StubSpawner(),
       tmuxSender: new SilentTmuxSender(db),
     });
-    db.insertAgent(agent({ tmuxSession: agentTmuxSession("maya", home) }));
+    // Claude writer: Codex legacy turn-start containment is out of scope here.
+    db.insertAgent(agent({
+      tool: "claude",
+      model: "sonnet",
+      tmuxSession: agentTmuxSession("maya", home),
+    }));
     try {
       const events = [
-        { kind: "session-start", agentName: "maya", timestamp },
-        {
+        { kind: "session-start", agentName: "maya", timestamp },        {
           kind: "turn-start",
           agentName: "maya",
           timestamp: "2026-07-09T12:00:30.000Z",
@@ -2755,6 +2759,13 @@ describe("HiveDaemon HTTP server", () => {
       writeRevoked: false,
     }));
     try {
+      // Parent session bind only from session-start for Codex.
+      await daemon.processEvent({
+        kind: "session-start",
+        agentName: "maya",
+        timestamp: "2026-07-10T09:59:00.000Z",
+        toolSessionId: "reader-session",
+      });
       await daemon.processEvent({
         kind: "turn-start",
         agentName: "maya",

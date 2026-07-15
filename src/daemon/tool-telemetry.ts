@@ -278,14 +278,14 @@ export function newestTurnContextIdentity(
     if (typeof payload.cwd !== "string" || resolve(payload.cwd) !== wanted) {
       continue;
     }
-    // Prefer main-thread CLI evidence when present; reject explicit non-cli
-    // sources so same-cwd children cannot masquerade as the parent.
-    if (
-      typeof payload.source === "string" &&
-      payload.source.length > 0 &&
-      payload.source !== "cli"
-    ) {
-      continue;
+    // Main-thread provenance must be exact: payload.source === "cli".
+    // Missing/empty/non-string/non-cli is not parent identity (unknown).
+    if (payload.source !== "cli") {
+      // Same-cwd non-cli or source-less evidence is not a complete parent
+      // observation — treat as incomplete for this record and keep scanning
+      // only if it is NOT an in-cwd turn_context. An in-cwd turn without
+      // source=cli means unknown (do not fall through to older matching).
+      return null;
     }
     const model = payload.model;
     const effort = payload.effort;

@@ -36,9 +36,15 @@ import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { unlink } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
+export type LandBranchOptions = {
+  /** Called immediately before `git merge --ff-only`. Must throw to abort. */
+  preMergeCheck?: () => void | Promise<void>;
+};
+
 export type LandBranch = (
   repoRoot: string,
   branch: string,
+  options?: LandBranchOptions,
 ) => Promise<{ commit: string }>;
 
 /** A stuck git — a stale `index.lock`, a stalled filesystem — must fail the
@@ -474,7 +480,7 @@ export function landError(branch: string, blocker: LandBlocker): Error {
   );
 }
 
-const landBranchUnlocked: LandBranch = async (repoRoot, branch) => {
+const landBranchUnlocked: LandBranch = async (repoRoot, branch, options) => {
   const blocker = await diagnoseLand(repoRoot, branch);
   if (blocker !== null) throw landError(branch, blocker);
 
@@ -489,6 +495,10 @@ const landBranchUnlocked: LandBranch = async (repoRoot, branch) => {
       await unlink(join(repoRoot, collision.path)).catch(() => {});
     }
   }
+
+  // Authority/incarnation check at the actual merge boundary — after diagnosis
+  // and collision cleanup, immediately before git merge.
+  await options?.preMergeCheck?.();
 
   const merge = await runGit(repoRoot, ["merge", "--ff-only", branch]);
   if (merge.timedOut) {
@@ -522,10 +532,10 @@ const landBranchUnlocked: LandBranch = async (repoRoot, branch) => {
   return { commit: trimmed(revision) };
 };
 
-export const landBranch: LandBranch = async (repoRoot, branch) => {
+export const landBranch: LandBranch = async (repoRoot, branch, options) => {
   const release = await acquireLandingLease(repoRoot);
   try {
-    return await landBranchUnlocked(repoRoot, branch);
+    return await landBranchUnlocked(repoRoot, branch, options);
   } finally {
     release();
   }

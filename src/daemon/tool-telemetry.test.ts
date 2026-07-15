@@ -214,6 +214,7 @@ describe("codex rollout telemetry", () => {
     cwd: string,
     turnId: string,
     timestamp: string,
+    source: string = "cli",
   ): string {
     return JSON.stringify({
       timestamp,
@@ -224,6 +225,7 @@ describe("codex rollout telemetry", () => {
         workspace_roots: [cwd],
         model,
         effort,
+        source,
         multi_agent_mode: "explicitRequestOnly",
         collaboration_mode: {
           mode: "default",
@@ -313,7 +315,7 @@ describe("codex rollout telemetry", () => {
   });
 
 
-  
+
   test("actually malformed newest JSONL after valid context yields unknown", () => {
     const cwd = "/repo/.hive/worktrees/maya";
     const older = JSON.stringify({
@@ -329,7 +331,7 @@ test("newest incomplete in-cwd turn_context is unknown, never older complete", (
     const cwd = "/repo/.hive/worktrees/maya";
     const older = JSON.stringify({
       type: "turn_context",
-      payload: { cwd, model: "gpt-5.6-sol", effort: "xhigh", turn_id: "old" },
+      payload: { cwd, model: "gpt-5.6-sol", effort: "xhigh", turn_id: "old", source: "cli" },
       timestamp: "2026-07-15T17:00:00.000Z",
     });
     const incomplete = JSON.stringify({
@@ -349,7 +351,20 @@ test("newest incomplete in-cwd turn_context is unknown, never older complete", (
       .toEqual(null);
   });
 
-  test("reads exact task boundaries for a hookless Codex orchestrator", () => {
+  
+  test("missing or non-cli source on newest in-cwd turn_context is unknown", () => {
+    const cwd = resolve(WORKTREE);
+    const older = turnContext("gpt-5.6-sol", "xhigh", cwd, "old", "2026-07-10T10:00:00.000Z");
+    const noSource = JSON.stringify({
+      type: "turn_context",
+      payload: { cwd, model: "gpt-5.6-luna", effort: "low", turn_id: "new" },
+      timestamp: "2026-07-10T11:00:00.000Z",
+    });
+    expect(newestTurnContextIdentity(older + "\n" + noSource + "\n", cwd)).toEqual(null);
+    const emptySource = turnContext("gpt-5.6-luna", "low", cwd, "new", "2026-07-10T11:00:00.000Z", "");
+    expect(newestTurnContextIdentity(older + "\n" + emptySource + "\n", cwd)).toEqual(null);
+  });
+test("reads exact task boundaries for a hookless Codex orchestrator", () => {
     const started = JSON.stringify({
       type: "event_msg",
       payload: { type: "task_started", turn_id: "turn-1" },

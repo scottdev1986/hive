@@ -359,6 +359,4 @@ describe("execution-identity attestation", () => {
     expect(attestationStateOf({ identityState: "drift" })).toEqual("drift");
   });
 
-  test("only matching permits a writer to mutate; every other state fails closed", () => {
-  });
 });

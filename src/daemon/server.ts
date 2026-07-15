@@ -147,6 +147,7 @@ import {
   stopAgentSession,
   stopTmuxSession,
   suspendAgentForPause,
+  suspendCapturedTree,
   suspendTmuxSession,
   readCodexHostPid,
   type ReapDependencies,
@@ -782,13 +783,11 @@ export class HiveDaemon {
             const reason = error instanceof Error
               ? error.message
               : "control acknowledgement process failed to launch";
-            this.db.insertAgent({
-              ...current,
-              status: "failed",
-              writeRevoked: true,
-              failureReason: `Critical control ${message.id} restart failed: ${reason}`,
-              failedAt: new Date().toISOString(),
-              lastEventAt: new Date().toISOString(),
+            const failedAt = new Date().toISOString();
+            this.db.markAgentTerminal(current.id, failedAt, "failed", {
+              failureReason:
+                `Critical control ${message.id} restart failed: ${reason}`,
+              failedAt,
             });
             throw error;
           }
@@ -1439,10 +1438,13 @@ export class HiveDaemon {
         }
         return { outcome, capture };
       }
+      const requireHost = agent.tool === "codex" &&
+        this.codexControl?.hasAgent(agent.name) === true;
       const { capture, outcome } = await suspendAgentForPause(agent, {
         tmux: this.teardownTmux,
         reap: this.reapDependencies,
         readHostPid: readCodexHostPid,
+        requireAppServerHost: requireHost,
       });
       if (outcome.unstopped.length > 0) {
         return { outcome, capture };
@@ -1478,8 +1480,18 @@ export class HiveDaemon {
     agent: AgentRecord,
     message: AgentMessage,
   ): Promise<void> {
+    const epochAtStart = agent.capabilityEpoch;
     const frozen = await this.freezeAgentProcessTree(agent);
-    const current = this.db.getAgentById(agent.id) ?? agent;
+    const current = this.db.getAgentById(agent.id);
+    if (
+      current === null ||
+      isTerminalAgentStatus(current.status) ||
+      current.capabilityEpoch !== epochAtStart
+    ) {
+      throw new Error(
+        `Pause aborted for ${agent.name}: row became terminal or changed epoch during freeze`,
+      );
+    }
     this.db.upsertAgent({
       ...current,
       status: "control-paused",
@@ -1500,18 +1512,42 @@ export class HiveDaemon {
     agent: AgentRecord,
     detail: string,
   ): Promise<void> {
+    const epochAtStart = agent.capabilityEpoch;
     const nextEpoch = agent.capabilityEpoch + 1;
+    // CAS: only pause if still the same non-terminal incarnation.
+    const pre = this.db.getAgentById(agent.id);
+    if (
+      pre === null ||
+      isTerminalAgentStatus(pre.status) ||
+      pre.capabilityEpoch !== epochAtStart ||
+      pre.writeRevoked
+    ) {
+      return; // concurrent kill/terminal wins
+    }
     this.db.upsertAgent({
-      ...agent,
+      ...pre,
       status: "control-paused",
       writeRevoked: true,
       capabilityEpoch: nextEpoch,
+      identityState: agent.identityState ?? pre.identityState,
+      ...(agent.observedIdentity !== undefined
+        ? { observedIdentity: agent.observedIdentity }
+        : {}),
+      ...(agent.liveModel !== undefined ? { liveModel: agent.liveModel } : {}),
+      ...(agent.liveEffort !== undefined ? { liveEffort: agent.liveEffort } : {}),
     });
     this.capabilities.revokeSubject(agent.name);
     removeCredential(agent.name);
     const frozen = await this.freezeAgentProcessTree(agent);
+    const current = this.db.getAgentById(agent.id);
+    if (
+      current === null ||
+      isTerminalAgentStatus(current.status) ||
+      current.capabilityEpoch !== nextEpoch
+    ) {
+      return; // concurrent kill won after freeze
+    }
     if (frozen !== null) {
-      const current = this.db.getAgentById(agent.id) ?? agent;
       this.db.upsertAgent({
         ...current,
         pauseCapture: frozen.capture,
@@ -1592,14 +1628,21 @@ export class HiveDaemon {
       if (attestation.liveModel !== null) liveModel = attestation.liveModel;
       if (attestation.liveEffort !== null) liveEffort = attestation.liveEffort;
       if (identityState !== "matching") {
-        // Persist the fresh verdict; the agent stays paused and revoked.
-        this.db.upsertAgent({
-          ...agent,
-          identityState,
-          ...(observed === undefined ? {} : { observedIdentity: observed }),
-          ...(liveModel === undefined ? {} : { liveModel }),
-          ...(liveEffort === undefined ? {} : { liveEffort }),
-        });
+        // Narrow attestation update only if still the same paused incarnation.
+        const mid = this.db.getAgentById(agent.id);
+        if (
+          mid !== null &&
+          mid.status === "control-paused" &&
+          mid.capabilityEpoch === agent.capabilityEpoch
+        ) {
+          this.db.upsertAgent({
+            ...mid,
+            identityState,
+            ...(observed === undefined ? {} : { observedIdentity: observed }),
+            ...(liveModel === undefined ? {} : { liveModel }),
+            ...(liveEffort === undefined ? {} : { liveEffort }),
+          });
+        }
         return {
           resumed: false,
           identityState,
@@ -1642,6 +1685,7 @@ export class HiveDaemon {
     }
     // Final CAS after async identity/tree/SIGCONT: kill interleaving during
     // awaits must leave the row terminal/revoked without reissuing authority.
+    // If CAS fails after SIGCONT, re-freeze the capture so process state stays paused.
     const fresh = this.db.getAgentById(agent.id) ?? this.db.getAgentByName(name);
     if (
       fresh === null ||
@@ -1650,6 +1694,16 @@ export class HiveDaemon {
       fresh.capabilityEpoch !== agent.capabilityEpoch ||
       isTerminalAgentStatus(fresh.status)
     ) {
+      if (!this.usesInjectedResume && capture !== undefined) {
+        try {
+          await suspendCapturedTree(
+            capture.tree.map((e) => ({ pid: e.pid, command: e.command })),
+            this.reapDependencies,
+          );
+        } catch {
+          // best-effort re-freeze
+        }
+      }
       return {
         resumed: false,
         identityState,
@@ -2744,19 +2798,37 @@ export class HiveDaemon {
       );
     }
     const operation = await this.machineMutations?.beginOperation("landing");
-    try {
-      const recheck = this.db.getAgentById(agent.id);
+    const authoritySnapshot = {
+      id: agent.id,
+      epoch: capabilityEpoch,
+      recoveryAttempts: agent.recoveryAttempts,
+      toolSessionId: agent.toolSessionId ?? null,
+      branch: agent.branch!,
+    };
+    const assertLandAuthority = () => {
+      const row = this.db.getAgentById(authoritySnapshot.id);
       if (
-        recheck === null ||
-        isTerminalAgentStatus(recheck.status) ||
-        recheck.writeRevoked ||
-        recheck.capabilityEpoch !== capabilityEpoch
+        row === null ||
+        isTerminalAgentStatus(row.status) ||
+        row.writeRevoked ||
+        row.capabilityEpoch !== authoritySnapshot.epoch ||
+        row.readOnly ||
+        row.branch !== authoritySnapshot.branch ||
+        row.recoveryAttempts !== authoritySnapshot.recoveryAttempts ||
+        (row.toolSessionId ?? null) !== authoritySnapshot.toolSessionId
       ) {
         throw new Error(
-          `Cannot land ${name}: agent lost landing authority after the mutation lease was taken.`,
+          `Cannot land ${name}: authority/incarnation check failed at the Git boundary ` +
+            `(status=${row?.status ?? "missing"}, epoch=${row?.capabilityEpoch ?? "?"}, ` +
+            `recoveryAttempts=${row?.recoveryAttempts ?? "?"}).`,
         );
       }
-      const landed = await this.land(this.repoRoot, recheck.branch!);
+    };
+    try {
+      assertLandAuthority();
+      const landed = await this.land(this.repoRoot, authoritySnapshot.branch, {
+        preMergeCheck: assertLandAuthority,
+      });
       this.graphify?.scheduleRebuild();
       return landed;
     } finally {
@@ -3659,9 +3731,9 @@ export class HiveDaemon {
           ...(agent.status === "awaiting-approval" ? { status: "working" } : {}),
           ...(value.toolSessionId === undefined
             ? {}
-            : agent.toolSessionId === undefined ||
-                agent.toolSessionId === value.toolSessionId ||
-                agent.tool !== "codex"
+            : agent.tool !== "codex"
+            ? { toolSessionId: value.toolSessionId }
+            : agent.toolSessionId === value.toolSessionId
             ? { toolSessionId: value.toolSessionId }
             : {}),
         });
@@ -3687,7 +3759,7 @@ export class HiveDaemon {
               value.kind !== "dead"
             ? "control-paused"
             : value.kind === "dead"
-            ? "dead"
+            ? agent.status  // terminalization is markAgentDead in killAgentTeardown only
             : value.kind === "turn-start"
               ? "working"
               : value.kind === "approval-request"
@@ -3713,14 +3785,18 @@ export class HiveDaemon {
             ? value.contextPct
             : agent.contextPct,
           lastEventAt: new Date(value.timestamp).toISOString(),
-          // Codex: bind toolSessionId once to the authorized parent; same-cwd
-          // children must not overwrite. Claude/Grok may rebind on native resume
-          // (forked session ids are legitimate parent reincarnations).
+          // Codex: never first-bind from an arbitrary turn event (child can
+          // arrive first with the inherited credential). Only session-start /
+          // session-launch may set the initial parent binding; later same-id
+          // is ok; different id is refused. Claude/Grok may rebind on resume.
           ...(value.toolSessionId === undefined
             ? {}
-            : agent.toolSessionId === undefined ||
-                agent.toolSessionId === value.toolSessionId ||
-                agent.tool !== "codex"
+            : agent.tool !== "codex"
+            ? { toolSessionId: value.toolSessionId }
+            : agent.toolSessionId === value.toolSessionId
+            ? { toolSessionId: value.toolSessionId }
+            : agent.toolSessionId === undefined &&
+                (value.kind === "session-start" || value.kind === "session-launch")
             ? { toolSessionId: value.toolSessionId }
             : {}),
           // A completed turn proves the process is genuinely healthy, so the
@@ -3773,47 +3849,62 @@ export class HiveDaemon {
     }
 
     // Fail-closed at the turn boundary for legacy Codex writers: any non-matching
-    // reattestation (unknown/absent/error/incomplete/drift) immediately persists
-    // the verdict, revokes, and pauses non-destructively. There is no per-mutation
-    // guard fallback — writers are contained at launch, and this path only covers
-    // still-running legacy processes.
+    // reattestation (or missing launch identity/path) immediately persists
+    // unknown/unattested, revokes, and pauses. Concurrent kill during the awaited
+    // read wins via pauseWriterForIdentityDrift CAS.
     if (
       value.kind === "turn-start" && agent !== null && agent !== undefined &&
-      agent.tool === "codex" && !agent.readOnly && !agent.writeRevoked &&
-      agent.executionIdentity !== undefined && agent.worktreePath !== null
+      agent.tool === "codex" && !agent.readOnly && !agent.writeRevoked
     ) {
-      const launch = agent.executionIdentity;
-      let attestation;
-      try {
-        attestation = reconcileCodexIdentity(
-          launch,
-          await this.readCodexIdentity(agent.worktreePath, agent.toolSessionId),
-        );
-      } catch (error) {
-        attestation = {
-          identityState: "unknown" as const,
-          observedIdentity: null,
-          liveModel: null,
-          liveEffort: null,
-        };
-        void error;
-      }
-      if (attestation.identityState !== "matching") {
-        const observed = attestation.observedIdentity;
-        const state = attestation.identityState === "unattested"
-          ? "unknown" as const
-          : attestation.identityState;
+      const epochAtStart = agent.capabilityEpoch;
+      const toolSessionAtStart = agent.toolSessionId ?? null;
+      if (agent.executionIdentity === undefined || agent.worktreePath === null) {
         await this.pauseWriterForIdentityDrift({
           ...agent,
-          identityState: state,
-          ...(observed === null ? {} : { observedIdentity: observed }),
-          ...(attestation.liveModel === null
-            ? {}
-            : { liveModel: attestation.liveModel }),
-          ...(attestation.liveEffort === null
-            ? {}
-            : { liveEffort: attestation.liveEffort }),
-        }, `turn-start reattestation is ${state}, not matching`);
+          identityState: "unknown",
+        }, "turn-start: no immutable launch identity or worktree (legacy/migrated writer)");
+      } else {
+        const launch = agent.executionIdentity;
+        let attestation;
+        try {
+          attestation = reconcileCodexIdentity(
+            launch,
+            await this.readCodexIdentity(agent.worktreePath, agent.toolSessionId),
+          );
+        } catch {
+          attestation = {
+            identityState: "unknown" as const,
+            observedIdentity: null,
+            liveModel: null,
+            liveEffort: null,
+          };
+        }
+        // Post-await CAS snapshot before pause mutation.
+        const mid = this.db.getAgentById(agent.id);
+        if (
+          mid === null ||
+          isTerminalAgentStatus(mid.status) ||
+          mid.capabilityEpoch !== epochAtStart ||
+          (mid.toolSessionId ?? null) !== toolSessionAtStart
+        ) {
+          // concurrent kill/terminal/incarnation change wins
+        } else if (attestation.identityState !== "matching") {
+          const observed = attestation.observedIdentity;
+          const state = attestation.identityState === "unattested"
+            ? "unknown" as const
+            : attestation.identityState;
+          await this.pauseWriterForIdentityDrift({
+            ...mid,
+            identityState: state,
+            ...(observed === null ? {} : { observedIdentity: observed }),
+            ...(attestation.liveModel === null
+              ? {}
+              : { liveModel: attestation.liveModel }),
+            ...(attestation.liveEffort === null
+              ? {}
+              : { liveEffort: attestation.liveEffort }),
+          }, `turn-start reattestation is ${state}, not matching`);
+        }
       }
     }
 

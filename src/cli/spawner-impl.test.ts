@@ -397,6 +397,29 @@ class FakeStore {
     return record;
   }
 
+  markAgentTerminal(
+    agentId: string,
+    timestamp: string,
+    status: "dead" | "failed" | "done",
+    options: { failureReason?: string; failedAt?: string } = {},
+  ): AgentRecord | null {
+    const current = this.getAgentById(agentId);
+    if (current === null) return null;
+    return this.insertAgent({
+      ...current,
+      status,
+      writeRevoked: true,
+      capabilityEpoch: current.capabilityEpoch + 1,
+      failureReason: options.failureReason ?? current.failureReason,
+      failedAt: options.failedAt ??
+        (status === "failed" ? timestamp : current.failedAt),
+      lastEventAt: timestamp,
+      closedAt: current.closedAt ?? timestamp,
+      pauseCapture: undefined,
+      controlMessageId: undefined,
+    });
+  }
+
 }
 
 /** The hardened readiness monitor treats poll exhaustion with no positive
@@ -938,8 +961,12 @@ describe("HiveSpawner name pool", () => {
       sleep: async () => {},
     });
     await expect(
-      spawner.spawn({ task: "Do the thing", category: "simple_coding" }),
-    ).rejects.toThrow();
+      spawner.spawn({
+        task: "Do the thing",
+        category: "simple_coding",
+        readOnly: true,
+      }),
+    ).rejects.toThrow("stop after routing");
 
     expect(store.routeAudits).toHaveLength(1);
     const audit = store.routeAudits[0]!;

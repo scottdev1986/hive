@@ -114,7 +114,7 @@ export type PauseCapture = z.infer<typeof PauseCaptureSchema>;
 
 
 // How the observed identity relates to the immutable launch identity. A Codex
-// writer may only reach a mutating tool while this is `matching`; every other
+// is recorded for reattestation/landing of legacy processes; every other
 // value fails closed.
 // - `unattested`: never observed — the spawn default, before any turn boundary
 //   has produced an identity record. Also the reset value on app-server->TUI
@@ -123,7 +123,7 @@ export type PauseCapture = z.infer<typeof PauseCaptureSchema>;
 // - `drift`: a complete observation differs from the launch identity.
 // - `unknown`: an observation was attempted but the artifact was missing or
 //   unparseable, or was incomplete (e.g. model without effort). Unknown is not
-//   matching; it blocks writer mutation exactly like drift, without asserting a
+//   matching; it is fail-closed for authority like drift, without asserting a
 //   deliberate change occurred.
 export const IdentityStateSchema = z.enum([
   "unattested",
@@ -209,7 +209,7 @@ const AgentRecordShape = {
    * launch intent) and never synthesized from it. Populated for Codex only. */
   observedIdentity: ObservedIdentitySchema.optional(),
   /** Attestation verdict comparing `observedIdentity` to the launch identity.
-   * A Codex writer may only reach a mutating tool while this is `matching`;
+   * Attestation for legacy/reattest paths: only `matching` is affirmative;
    * `unattested`/`unknown`/`drift` all fail closed. Absent is read through
    * `attestationStateOf` as `unattested` — the fail-closed spawn default and
    * the reset value on an app-server->TUI fallback. */
