@@ -18,7 +18,7 @@ import type { AgentRecord } from "../schemas";
 import { HiveDatabase } from "./db";
 import type { LandReadiness } from "./landing";
 import { deleteAgentRow, listAuditEntries } from "./testing";
-import { readCredential, writeCredential, credentialPath } from "./credentials";
+import { readCredential, writeCredential, credentialPath, profilerSubject } from "./credentials";
 import { AUTO_REARM_BUDGET, HiveDaemon } from "./server";
 import type { SpawnRequest, Spawner } from "./spawner";
 
@@ -824,5 +824,65 @@ describe("a spent land grant is measured before a human is asked", () => {
     expect(refused.error).toContain("may not branch:land");
     expect(landed).toEqual([]);
     await daemon.stop();
+  });
+});
+
+describe("the profiling plane is split from every other role", () => {
+  // The whole point of a fifth role: the profiler holds ONLY inventory/submit,
+  // the operator/orchestrator hold ONLY read/request, and an ordinary agent
+  // holds none of it. Each `authorize` here is the exact rights matrix the
+  // profiling epic depends on, proved against the real CapabilityStore.
+  const allow = (daemon: HiveDaemon, subject: string, role: Parameters<typeof daemon.capabilities.mint>[1], action: string): boolean => {
+    const { capability } = daemon.capabilities.mint(subject, role);
+    return daemon.capabilities.authorize(capability, {
+      action: action as never,
+      route: `/mcp:${action}`,
+    }).ok;
+  };
+
+  test("the profiler may inventory and submit, and do nothing else", async () => {
+    const { daemon } = harness();
+    expect(allow(daemon, "profiler-p-r", "profiler", "profile:inventory")).toBe(true);
+    expect(allow(daemon, "profiler-p-r", "profiler", "profile:submit")).toBe(true);
+    // Not the read/request surface — that belongs to the human, not the model.
+    expect(allow(daemon, "profiler-p-r", "profiler", "profile:read")).toBe(false);
+    expect(allow(daemon, "profiler-p-r", "profiler", "profile:request")).toBe(false);
+    // And none of the ordinary control plane: a stolen profiler token cannot
+    // even read status, speak, spawn, land, or write memory.
+    for (const action of ["status:read", "message:send", "agent:spawn", "branch:land", "memory:write"]) {
+      expect([action, allow(daemon, "profiler-p-r", "profiler", action)]).toEqual([action, false]);
+    }
+    await daemon.stop();
+  });
+
+  test("operator and orchestrator read and request, but never inventory or submit", async () => {
+    const { daemon } = harness();
+    for (const role of ["operator", "orchestrator"] as const) {
+      expect([role, allow(daemon, role, role, "profile:read")]).toEqual([role, true]);
+      expect([role, allow(daemon, role, role, "profile:request")]).toEqual([role, true]);
+      // The profiler's two rights are exactly what these roles must NOT hold:
+      // ordinary agents consume only the validated profile, never the raw repo.
+      expect([role, allow(daemon, role, role, "profile:inventory")]).toEqual([role, false]);
+      expect([role, allow(daemon, role, role, "profile:submit")]).toEqual([role, false]);
+    }
+    await daemon.stop();
+  });
+
+  test("a writer or reader holds no profiling right at all", async () => {
+    const { daemon } = harness();
+    for (const role of ["writer", "reader"] as const) {
+      for (const action of ["profile:inventory", "profile:submit", "profile:read", "profile:request"]) {
+        expect([role, action, allow(daemon, "maya", role, action)]).toEqual([role, action, false]);
+      }
+    }
+    await daemon.stop();
+  });
+
+  test("a profiler subject carries its project and run, and never looks like an agent", () => {
+    // The credential file and audit trail are keyed by this; the service binds
+    // authority to the same {projectUuid, runId}. An ordinary agent name is a
+    // bare word, so the two name spaces cannot collide.
+    expect(profilerSubject("proj-uuid", "run-1")).toBe("profiler-proj-uuid-run-1");
+    expect(profilerSubject("p", "r")).toContain("profiler-");
   });
 });

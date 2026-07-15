@@ -6,6 +6,7 @@ export * from "./handoff";
 export * from "./memory";
 export * from "./message";
 export * from "./profile";
+export * from "./profile-tools";
 export * from "./project-profile";
 export * from "./quota";
 export * from "./routing-derivation";

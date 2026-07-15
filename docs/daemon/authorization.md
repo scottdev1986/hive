@@ -17,23 +17,25 @@ So the daemon does two things in order. It authenticates the bearer token and re
 
 The blueprint's XPC design gets this for free by omitting tenant IDs from method signatures. HTTP has no such affordance — the body is attacker-controlled and there is nowhere else to put the subject — so the daemon rejects on mismatch and audits the attempt. Same boundary, different road.
 
-## The four roles
+## The five roles
 
-Four roles exist (`src/daemon/capabilities.ts:94-133`), and the interesting property of each is what it *cannot* do.
+Five roles exist (`src/daemon/capabilities.ts:110-162`), and the interesting property of each is what it *cannot* do.
 
-**Operator** — the human's `hive` CLI and the Workspace acting for them. Holds all 26 actions. Unrestricted subject scope, deliberately: a caller that can already spawn and kill any agent gains no new authority from also being allowed to name one, so narrowing it would cost clarity and buy nothing.
+**Operator** — the human's `hive` CLI and the Workspace acting for them. Holds every action *except* the two the profiler is confined to (`profile:inventory`, `profile:submit`): reading the raw repo and authoring a profile candidate are the model's job, and the operator consumes only the *validated* profile. Its subject scope is unrestricted, deliberately: a caller that can already spawn and kill any agent gains no new authority from also being allowed to name one, so narrowing it would cost clarity and buy nothing.
 
-**Orchestrator** — the root agent. Spawns, approves, kills, recovers, reads the global inbox, reads autonomy. It holds **no landing right and no autonomy/routing/graphify write**, ever. This is the single most important line in the matrix: the process that decides *what work happens* must not be the process that can *put code on `main`*. An orchestrator compromised by prompt injection can waste money; it cannot merge.
+**Orchestrator** — the root agent. Spawns, approves, kills, recovers, reads the global inbox, reads autonomy, and reads/requests profiling. It holds **no landing right and no autonomy/routing/graphify write**, ever, and — like the operator — never `profile:inventory`/`profile:submit`. This is the single most important line in the matrix: the process that decides *what work happens* must not be the process that can *put code on `main`*. An orchestrator compromised by prompt injection can waste money; it cannot merge.
 
-**Writer** — a spawned agent with a worktree and a branch. It talks, reads its own inbox, acks its own controls, reports its own events, writes memory, and — exactly once, at the current epoch, for its own branch — lands.
+**Writer** — a spawned agent with a worktree and a branch. It talks, reads its own inbox, acks its own controls, reports its own events, writes memory, and — exactly once, at the current epoch, for its own branch — lands. It holds no profiling right at all; it consumes the validated profile only through generated prompts.
 
-**Reader** — read-only: talks and reports on itself. No `branch:land`, no `memory:write`.
+**Reader** — read-only: talks and reports on itself. No `branch:land`, no `memory:write`, no profiling right.
 
-The asymmetry is the design. **Neither orchestrator nor writer is a superset of the other**, so a captured credential of either kind buys a strict subset of the control plane. There is no role that both decides and merges (`src/daemon/capabilities.ts:93-95`).
+**Profiler** — the confined project-profiling agent, launched per project and bound to one profiling run. It holds **exactly two actions** — `profile:inventory` and `profile:submit` — and nothing else: no status, message, memory, spawn, or landing surface, and it may not name another subject. It learns about the repo only through the bounded `profile_inventory` tool and commits only through `profile_submit`. A profiler session does not even *see* the ordinary control-plane tools (`src/daemon/server.ts` `createMcpServer` returns early for the profiler role).
 
-## The 26 actions
+The asymmetry is the design. **No role is a superset of another that both decides and merges** — orchestrator and writer are disjoint, and the profiler is disjoint from both (its two rights are held by no other role, and it holds none of theirs). A captured credential of any kind buys a strict subset of the control plane (`src/daemon/capabilities.ts:110-113`).
 
-Enumerated from `src/daemon/capabilities.ts:21-48`. `O` operator, `R` orchestrator, `W` writer, `r` reader.
+## The 30 actions
+
+Enumerated from `src/daemon/capabilities.ts:26-59`. `O` operator, `R` orchestrator, `W` writer, `r` reader, `p` profiler.
 
 | Action | Roles | Notes |
 |---|---|---|
@@ -63,8 +65,12 @@ Enumerated from `src/daemon/capabilities.ts:21-48`. `O` operator, `R` orchestrat
 | `routing-policy:read` | O | |
 | `routing-policy:write` | O | an agent rewriting the router is self-authorization |
 | `graphify:write` | O | opting a repo into an indexing service is consent |
+| `profile:inventory` | **p** | profiler only; further bound to the active run |
+| `profile:submit` | **p** | profiler only; further bound to the active run |
+| `profile:read` | O R | status/read tools and `GET /profile/gate` |
+| `profile:request` | O R | reprofile for both; the bypass route is operator-only |
 
-`anySubject` (`src/daemon/capabilities.ts:59-64`): the operator for everything it holds; the orchestrator for exactly the four agent-directed actions. Writers and readers may only ever name themselves.
+`anySubject` (`src/daemon/capabilities.ts:70-75`): the operator for everything it holds; the orchestrator for exactly the four agent-directed actions. Writers, readers, and profilers may only ever name themselves.
 
 ## The routes and tools
 
@@ -104,6 +110,16 @@ Every HTTP route below `/handshake` in `src/daemon/server.ts:2349-2411` authenti
 | `hive_land` | `branch:land` | self | yes, **epoch + once** | `src/daemon/server.ts:3918-3927` |
 | `memory_search`, `memory_read` | `memory:read` | — | no | `src/daemon/server.ts:3981-3988`, `:4005-4012` |
 | `memory_write`, `memory_delete`, `memory_reindex` | `memory:write` | — | yes | `src/daemon/server.ts:3991-3998`, `:4019-4026`, `:4029-4036` |
+| `GET /profile/gate` | `profile:read` | — | no | `src/daemon/server.ts` `profileGateEndpoint` |
+| `POST /profile/continue-without` | `profile:request` + **operator role** | — | yes | `src/daemon/server.ts` `profileContinueWithoutEndpoint` |
+| `profile_status`, `profile_read` | `profile:read` | — | no | `src/daemon/server.ts` `registerProfileTools` |
+| `profile_reprofile` | `profile:request` | — | yes | `src/daemon/server.ts` `registerProfileTools` |
+| `profile_inventory` | `profile:inventory` | self (run-bound) | denials | `src/daemon/server.ts` `registerProfileTools` |
+| `profile_submit` | `profile:submit` | self (run-bound) | yes | `src/daemon/server.ts` `registerProfileTools` |
+
+The profile tools and the two `/profile/**` routes exist **only when a profile service is wired** (`HiveDaemonOptions.profileControl`); until it is, the daemon registers no profile tool and the routes `404`. An unwired gate is not an open gate. Visibility is decided at enumeration, not at the handler: a profiler session sees exactly `profile_inventory`/`profile_submit` and no ordinary tool; operator/orchestrator see `profile_status`/`profile_read`/`profile_reprofile`; writers and readers see none. This is the same rule the drift section teaches — a tool an agent should not use is not merely denied at call time, it is not enumerated into its context.
+
+Two subtleties. `profile:request` is held by both operator and orchestrator (either may ask for a reprofile), so `POST /profile/continue-without` — which sets the daemon-session spawn bypass — additionally requires the **operator role**: an orchestrator that could set it would be self-authorizing past its own spawn gate. And a profiler's authority to inventory or submit is not the role alone — the profile service checks the credential subject against the active `{projectUuid, runId}` (subject before run id, so an unauthorized probe learns nothing), so a token from another project, named instance, or completed run is refused even though it is a syntactically valid profiler credential.
 
 `/health` and `/handshake` are public and non-authorizing. Health proves liveness; the handshake proves *identity* (build hash, project, protocol range) so a launcher can decide whether this daemon is the right one to talk to. **Neither may ever grow a side effect** — a handshake that writes is a handshake that needs a capability, and the launcher has none by construction: it is trying to find out whether a capability would even be worth minting.
 
@@ -150,6 +166,8 @@ A token is `hv1.<capabilityId>.<secret>` (`src/daemon/capabilities.ts:214-225`).
 Tokens travel by file, never by environment variable and never by argv: `$HIVE_HOME/credentials/<subject>.cap`, mode `0600`, inside a `0700` directory outside every worktree (`src/daemon/credentials.ts:29-42`), read with `O_CLOEXEC` (`:45-60`). Claude Code fetches its header through `headersHelper` rather than `${ENV_VAR}` expansion — the env-var form is documented and simpler, and was rejected because an environment variable is inherited by every descendant of the agent process, which is precisely the grandchild we are trying to starve. Codex has no headers-helper, so its token goes into a `0600` `config.toml`; `bearer_token_env_var` was rejected for the same reason.
 
 Now the honest part. **Hive runs every agent as the user's own UID.** A same-UID process that knows the path can read the credential file, and a shell tool call inside an agent is such a process. No Unix socket, no `CLOEXEC` descriptor, and no peer check fixes that. What this design actually buys is not secrecy against a determined same-UID attacker — it is that **the credential an agent can steal is worth almost nothing**. A writer's token cannot spawn, cannot approve, cannot kill, cannot name another agent, cannot land twice, and stops working the moment its epoch rotates. The blast radius of theft is the authority the thief's own parent already had.
+
+**The profiler credential is the narrowest of all.** Its subject is `profiler-<projectUuid>-<runId>`, its role holds exactly `profile:inventory` and `profile:submit`, and even those are not honored on the role alone: the profile service re-checks the subject against the *live* `{projectUuid, runId}` on every call. So a profiler token stolen from another project, another named instance, or a run that has already completed authenticates as *something* and then does *nothing* — it cannot read a foreign repo's inventory or land a foreign profile, because the run it names is not the active one. The coordinator revokes the credential the instant its run is accepted, failed, timed out, or the daemon shuts down (TTL 30 minutes as a backstop), so the window in which even the right token works is exactly the run it was minted for. The binding lives in the service's run lookup, not in the parseable subject string, so forging a plausible subject buys nothing.
 
 The adversarial tests therefore prove a precise claim: a descendant of an agent process inherits **no** credential through its environment or its file descriptors. Closing the same-UID filesystem read requires a real privilege boundary — a separate UID, a sandbox profile, or a signed-XPC peer check — and that is the known, accepted residual risk, not a defect.
 

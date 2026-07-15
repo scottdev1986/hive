@@ -11,8 +11,20 @@ import {
   QuotaConfigSchema,
   type AgentRecord,
   type HookEvent,
+  type ProfileInventoryRequest,
+  type ProfileInventoryResult,
+  type ProfileReprofileResult,
+  type ProfileSpawnGate,
+  type ProfileStatus,
+  type ProjectProfile,
   type QuotaPoolStatus,
 } from "../schemas";
+import type { Role } from "./capabilities";
+import type {
+  ProfileControl,
+  ProfileReprofileCommand,
+} from "./profile-control";
+import type { ProfileSubmitResult } from "./project-profile";
 import { HiveDatabase } from "./db";
 import type { TmuxSender } from "./delivery";
 import {
@@ -23,7 +35,7 @@ import { QuotaService } from "./quota";
 import { HIVE_VERSION, HiveDaemon, inferLegacyControl } from "./server";
 import { readLiveClaudeModel } from "./live-model";
 import { formatStatusTable } from "../cli/status";
-import { actingAs, submitPaste } from "./testing";
+import { actingAs, listAuditEntries, submitPaste } from "./testing";
 import type { BuildFreshness } from "./build-freshness";
 import type { SpawnRequest, Spawner } from "./spawner";
 import { agentTmuxSession, orchestratorTmuxSession } from "./tmux-sessions";
@@ -3820,5 +3832,391 @@ describe("landed is not live", () => {
       });
       expect(notes(spawned)).toEqual([]);
     });
+  });
+});
+
+describe("the project-profile tools and gate routes", () => {
+  // A minimal valid profile the fake hands back for read/stale tests. The
+  // daemon owns every provenance field; this is what a stored profile looks
+  // like after acceptance.
+  function sampleProfile(): ProjectProfile {
+    return {
+      schemaVersion: 1,
+      generatedAt: timestamp,
+      project: { hiveUuid: "uuid-proj", inputDigest: "digest-1" },
+      profiler: {
+        agent: "profiler-proj-run1",
+        provider: "codex",
+        model: "gpt-5-codex",
+        runId: "run1",
+        toolSessionId: null,
+        request: {
+          requesters: [
+            { source: "operator", requestedAt: timestamp, requestedBy: "operator" },
+          ],
+          guidance: null,
+        },
+      },
+      languages: [],
+      packageManagers: [],
+      buildSystems: [],
+      workspaces: [],
+      commands: [],
+      docs: { primary: null, briefable: [] },
+      conventionFiles: [],
+      entryPoints: [],
+      unknowns: [{ subject: "tests", why: "empty repo" }],
+      ambiguities: [],
+      conflicts: [],
+      staleness: { paths: [], notes: [] },
+    };
+  }
+
+  // The seam the server routes every profile call through. It records what the
+  // server threaded to it (subjects, candidates, commands, requesters) and
+  // returns configurable results. `activeProfiler` models the run-binding: a
+  // subject that is not the active run's profiler is refused, exactly as a
+  // cross-project, named-instance, or completed-run token would be.
+  class FakeProfileControl implements ProfileControl {
+    activeProfiler: string | null = "profiler-proj-run1";
+    gateValue: ProfileSpawnGate = {
+      canSpawn: true,
+      basis: "validated-profile",
+      bypassed: false,
+    };
+    statusValue: ProfileStatus = {
+      lifecycle: "current",
+      hasCurrent: true,
+      currentPath: "/p/current.json",
+      statePath: "/p/state.json",
+      failure: null,
+      run: null,
+      refresh: { pending: false, deferredReason: null },
+      gate: this.gateValue,
+    };
+    profileValue: ProjectProfile | null = null;
+    submitValue: ProfileSubmitResult = { status: "accepted", profile: sampleProfile() };
+    inventoryValue: ProfileInventoryResult = {
+      status: "catalog",
+      entries: [],
+      nextCursor: null,
+    };
+    reprofileValue: ProfileReprofileResult = { status: "started", runId: "run-2" };
+    readonly inventoryCalls: Array<{ subject: string; request: ProfileInventoryRequest }> = [];
+    readonly submitCalls: Array<{ subject: string; candidate: unknown }> = [];
+    readonly reprofileCommands: ProfileReprofileCommand[] = [];
+    readonly bypassRequesters: string[] = [];
+
+    async status(): Promise<ProfileStatus> {
+      return this.statusValue;
+    }
+    async read(): Promise<ProjectProfile | null> {
+      return this.profileValue;
+    }
+    async gate(): Promise<ProfileSpawnGate> {
+      return this.gateValue;
+    }
+    async inventory(
+      subject: string,
+      request: ProfileInventoryRequest,
+    ): Promise<ProfileInventoryResult> {
+      this.inventoryCalls.push({ subject, request });
+      if (this.activeProfiler !== null && subject !== this.activeProfiler) {
+        return {
+          status: "denied",
+          code: "unauthorized",
+          message: "Caller is not the profiler for the active run.",
+        };
+      }
+      return this.inventoryValue;
+    }
+    async submit(subject: string, candidate: unknown): Promise<ProfileSubmitResult> {
+      this.submitCalls.push({ subject, candidate });
+      if (this.activeProfiler !== null && subject !== this.activeProfiler) {
+        return {
+          status: "rejected",
+          lifecycle: "profiling",
+          rejections: [
+            { code: "unauthorized", message: "Caller is not the profiler for the active run." },
+          ],
+        };
+      }
+      return this.submitValue;
+    }
+    async requestReprofile(
+      command: ProfileReprofileCommand,
+    ): Promise<ProfileReprofileResult> {
+      this.reprofileCommands.push(command);
+      return this.reprofileValue;
+    }
+    async continueWithoutProfile(requester: string): Promise<void> {
+      this.bypassRequesters.push(requester);
+    }
+  }
+
+  function profileDaemon(control?: ProfileControl): HiveDaemon {
+    return new HiveDaemon({
+      db: new HiveDatabase(":memory:"),
+      spawner: new StubSpawner(),
+      repoRoot: "/tmp/hive-profile-test",
+      ...(control === undefined ? {} : { profileControl: control }),
+    });
+  }
+
+  async function withClient<T>(
+    daemon: HiveDaemon,
+    subject: string,
+    role: Role,
+    body: (client: Client) => Promise<T>,
+  ): Promise<T> {
+    const client = new Client({ name: "profile-test", version: "0.0.0" });
+    const transport = new StreamableHTTPClientTransport(
+      new URL("http://hive/mcp"),
+      { fetch: actingAs(daemon, subject, role) },
+    );
+    try {
+      await client.connect(transport);
+      return await body(client);
+    } finally {
+      await client.close().catch(() => undefined);
+    }
+  }
+
+  async function toolNames(
+    daemon: HiveDaemon,
+    subject: string,
+    role: Role,
+  ): Promise<string[]> {
+    return withClient(daemon, subject, role, async (client) =>
+      (await client.listTools()).tools.map((tool) => tool.name),
+    );
+  }
+
+  async function callProfile(
+    daemon: HiveDaemon,
+    subject: string,
+    role: Role,
+    name: string,
+    args: Record<string, unknown> = {},
+  ): Promise<{ ok: boolean; value: unknown }> {
+    return withClient(daemon, subject, role, async (client) => {
+      const result = await client.callTool({ name, arguments: args });
+      return {
+        ok: result.isError !== true,
+        value: result.isError === true ? undefined : textValue(result),
+      };
+    });
+  }
+
+  const PROFILER = "profiler-proj-run1";
+
+  test("a profiler session sees only inventory and submit — never the control plane", async () => {
+    const daemon = profileDaemon(new FakeProfileControl());
+    const names = await toolNames(daemon, PROFILER, "profiler");
+    // The ENTIRE tool list, not just the profile_ subset: a profiler must not
+    // even enumerate hive_status, hive_send, hive_spawn, or any other tool.
+    expect(names.sort()).toEqual(["profile_inventory", "profile_submit"]);
+    await daemon.stop();
+  });
+
+  test("operator and orchestrator see status/read/reprofile and no profiler tools", async () => {
+    const daemon = profileDaemon(new FakeProfileControl());
+    for (const role of ["operator", "orchestrator"] as const) {
+      const names = await toolNames(daemon, role, role);
+      const profileTools = names.filter((name) => name.startsWith("profile_"));
+      expect([role, profileTools.sort()]).toEqual([
+        role,
+        ["profile_read", "profile_reprofile", "profile_status"],
+      ]);
+    }
+    await daemon.stop();
+  });
+
+  test("a writer or reader agent sees no profile tools at all", async () => {
+    const daemon = profileDaemon(new FakeProfileControl());
+    daemon.db.upsertAgent(agent());
+    for (const role of ["writer", "reader"] as const) {
+      const names = await toolNames(daemon, "maya", role);
+      expect([role, names.filter((name) => name.startsWith("profile_"))]).toEqual([role, []]);
+    }
+    await daemon.stop();
+  });
+
+  test("without a profile service, no profile tool or route exists", async () => {
+    const daemon = profileDaemon();
+    expect((await toolNames(daemon, "operator", "operator")).filter((n) => n.startsWith("profile_"))).toEqual([]);
+    const gate = await actingAs(daemon, "operator", "operator")("http://hive/profile/gate");
+    expect(gate.status).toBe(404);
+    const bypass = await actingAs(daemon, "operator", "operator")(
+      "http://hive/profile/continue-without",
+      { method: "POST" },
+    );
+    expect(bypass.status).toBe(404);
+    await daemon.stop();
+  });
+
+  test("profile_read returns null for an unreadable current, not an error", async () => {
+    const control = new FakeProfileControl();
+    control.profileValue = null;
+    const daemon = profileDaemon(control);
+    const read = await callProfile(daemon, "operator", "operator", "profile_read");
+    expect(read.ok).toBe(true);
+    expect(read.value).toBeNull();
+    await daemon.stop();
+  });
+
+  test("a stale current profile stays readable and gate-valid", async () => {
+    const control = new FakeProfileControl();
+    control.profileValue = sampleProfile();
+    control.gateValue = { canSpawn: true, basis: "validated-profile", bypassed: false };
+    control.statusValue = {
+      lifecycle: "stale",
+      hasCurrent: true,
+      currentPath: "/p/current.json",
+      statePath: "/p/state.json",
+      failure: null,
+      run: null,
+      refresh: { pending: true, deferredReason: null },
+      gate: control.gateValue,
+    };
+    const daemon = profileDaemon(control);
+
+    const read = await callProfile(daemon, "operator", "operator", "profile_read");
+    expect(read.value).toEqual(sampleProfile());
+
+    const status = await callProfile(daemon, "operator", "operator", "profile_status");
+    expect(status.value).toMatchObject({
+      lifecycle: "stale",
+      hasCurrent: true,
+      gate: { canSpawn: true },
+    });
+    await daemon.stop();
+  });
+
+  test("profile_submit carries every rejection code losslessly", async () => {
+    const control = new FakeProfileControl();
+    control.submitValue = {
+      status: "rejected",
+      lifecycle: "failed",
+      rejections: [
+        { code: "missing-path", message: "\"docs/x.md\" does not exist.", at: "docs.primary.path" },
+        { code: "missing-unknowns", message: "A silent profile is refused." },
+      ],
+    };
+    const daemon = profileDaemon(control);
+    const submit = await callProfile(daemon, PROFILER, "profiler", "profile_submit", {
+      candidate: { unknowns: [] },
+    });
+    expect(submit.ok).toBe(true);
+    expect(submit.value).toEqual({
+      status: "rejected",
+      lifecycle: "failed",
+      rejections: [
+        { code: "missing-path", message: "\"docs/x.md\" does not exist.", at: "docs.primary.path" },
+        { code: "missing-unknowns", message: "A silent profile is refused." },
+      ],
+    });
+    // The daemon threads the authenticated subject, never the payload, to the seam.
+    expect(control.submitCalls).toEqual([{ subject: PROFILER, candidate: { unknowns: [] } }]);
+    await daemon.stop();
+  });
+
+  test("profile_submit reports a bare acceptance", async () => {
+    const daemon = profileDaemon(new FakeProfileControl());
+    const submit = await callProfile(daemon, PROFILER, "profiler", "profile_submit", {
+      candidate: { unknowns: [{ subject: "x", why: "y" }] },
+    });
+    expect(submit.value).toEqual({ status: "accepted" });
+    await daemon.stop();
+  });
+
+  test("profile_inventory rejects a call that sets both cursor and paths", async () => {
+    const daemon = profileDaemon(new FakeProfileControl());
+    const both = await callProfile(daemon, PROFILER, "profiler", "profile_inventory", {
+      cursor: "c",
+      paths: ["a"],
+    });
+    expect(both.ok).toBe(false);
+    await daemon.stop();
+  });
+
+  test("a cross-project or completed-run token is denied at inventory", async () => {
+    const control = new FakeProfileControl();
+    const daemon = profileDaemon(control);
+    const foreign = "profiler-other-run9";
+    const denied = await callProfile(daemon, foreign, "profiler", "profile_inventory", {});
+    expect(denied.ok).toBe(false);
+    // The subject the seam saw is the authenticated one, and the refusal is audited.
+    expect(control.inventoryCalls).toEqual([{ subject: foreign, request: {} }]);
+    expect(
+      listAuditEntries(daemon.db, 50)
+        .filter((entry) => entry.decision === "deny")
+        .map((entry) => entry.reason),
+    ).toContain("profile.unauthorized");
+    await daemon.stop();
+  });
+
+  test("GET /profile/gate returns the gate to operator and orchestrator, denies a writer", async () => {
+    const control = new FakeProfileControl();
+    const daemon = profileDaemon(control);
+    daemon.db.upsertAgent(agent());
+    for (const role of ["operator", "orchestrator"] as const) {
+      const response = await actingAs(daemon, role, role)("http://hive/profile/gate");
+      expect([role, response.status]).toEqual([role, 200]);
+      expect(await response.json()).toEqual(control.gateValue);
+    }
+    const writer = await actingAs(daemon, "maya", "writer")("http://hive/profile/gate");
+    expect(writer.status).toBe(403);
+    await daemon.stop();
+  });
+
+  test("continue-without is operator-only", async () => {
+    const control = new FakeProfileControl();
+    const daemon = profileDaemon(control);
+    daemon.db.upsertAgent(agent());
+
+    const operator = await actingAs(daemon, "operator", "operator")(
+      "http://hive/profile/continue-without",
+      { method: "POST" },
+    );
+    expect(operator.status).toBe(200);
+    expect(await operator.json()).toEqual({ bypassed: true });
+    expect(control.bypassRequesters).toEqual(["operator"]);
+
+    // The orchestrator holds profile:request (for reprofile) but must not be
+    // able to open its own spawn gate: the bypass is the human's call alone.
+    const orchestrator = await actingAs(daemon, "orchestrator", "orchestrator")(
+      "http://hive/profile/continue-without",
+      { method: "POST" },
+    );
+    expect(orchestrator.status).toBe(403);
+    // A writer lacks the action outright.
+    const writer = await actingAs(daemon, "maya", "writer")(
+      "http://hive/profile/continue-without",
+      { method: "POST" },
+    );
+    expect(writer.status).toBe(403);
+    expect(control.bypassRequesters).toEqual(["operator"]);
+    await daemon.stop();
+  });
+
+  test("profile_reprofile threads requester provenance and normalized guidance", async () => {
+    const control = new FakeProfileControl();
+    const daemon = profileDaemon(control);
+
+    const started = await callProfile(daemon, "operator", "operator", "profile_reprofile", {
+      guidance: "look at\r\nthe workspace set",
+    });
+    expect(started.value).toEqual({ status: "started", runId: "run-2" });
+
+    control.reprofileValue = { status: "coalesced", runId: "run-2" };
+    const coalesced = await callProfile(daemon, "orchestrator", "orchestrator", "profile_reprofile");
+    expect(coalesced.value).toEqual({ status: "coalesced", runId: "run-2" });
+
+    expect(control.reprofileCommands).toEqual([
+      { source: "operator", requestedBy: "operator", guidance: "look at\nthe workspace set" },
+      { source: "orchestrator", requestedBy: "orchestrator", guidance: null },
+    ]);
+    await daemon.stop();
   });
 });

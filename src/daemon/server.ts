@@ -50,16 +50,22 @@ import {
   MemoryWriteInputSchema,
   MessagePrioritySchema,
   ORCHESTRATOR_NAME,
+  ProfileInventoryRequestSchema,
+  ProfileReprofileRequestSchema,
+  ProfileSubmitRequestSchema,
   QuotaObservationSchema,
   RoutingPolicyMutationSchema,
   StatuslineReportSchema,
+  normalizeProfileGuidance,
   unknownVendor,
   type AgentRecord,
   type HookEvent,
   type MemoryFact,
   type MemoryScope,
   type MemoryWriteInput,
+  type ProfileSubmitResponse,
 } from "../schemas";
+import type { ProfileControl } from "./profile-control";
 import { isAutonomy, type AutonomyControl } from "../config/autonomy";
 import { deriveOrchestratorStatus } from "./orchestrator-status";
 import {
@@ -504,6 +510,12 @@ export interface HiveDaemonOptions {
     | "resolveApproval"
     | "close"
   >;
+  /** The project-profile control seam. When present, the daemon registers the
+   * profile MCP tools (by authenticated role) and the gate/bypass routes, and
+   * routes every profile call through it — it never reaches storage directly.
+   * When omitted (production, until the coordinator lands), no profile tools or
+   * routes exist at all. Tests inject a fake. */
+  profileControl?: ProfileControl;
   /** Memory watchdog limits; the sweep stays off when omitted so embedded
    * daemons (tests, tooling) never sample or kill real processes. */
   resources?: ResourceLimits;
@@ -603,6 +615,7 @@ export class HiveDaemon {
   private readonly graphifyCalls = new Map<string, GraphifyCallCursor>();
   private readonly land: LandBranch;
   private readonly landReadiness: ReadLandReadiness;
+  private readonly profileControl: ProfileControl | undefined;
   private bunServer: Server<undefined> | null = null;
   private reconciliationTimer: ReturnType<typeof setInterval> | null = null;
   private maintenanceRunning = false;
@@ -660,6 +673,7 @@ export class HiveDaemon {
     this.codexControl = options.codexControl;
     this.autonomy = options.autonomy;
     this.graphify = options.graphify;
+    this.profileControl = options.profileControl;
     const tmuxSender = options.tmuxSender ?? new BunTmuxSender();
     this.delivery = new MessageDelivery(
       this.db,
@@ -2366,6 +2380,15 @@ export class HiveDaemon {
     if (url.pathname === "/codex-root-token" && request.method === "POST") {
       return this.mintCodexRootToken(request);
     }
+    if (url.pathname === "/profile/gate" && request.method === "GET") {
+      return this.profileGateEndpoint(request);
+    }
+    if (
+      url.pathname === "/profile/continue-without" &&
+      request.method === "POST"
+    ) {
+      return this.profileContinueWithoutEndpoint(request);
+    }
     if (
       url.pathname.startsWith("/agents/") &&
       url.pathname.endsWith("/kill") && request.method === "POST"
@@ -2404,6 +2427,79 @@ export class HiveDaemon {
       token,
       expiresAt: new Date(Date.now() + ttlMs).toISOString(),
     });
+  }
+
+  /** GET /profile/gate — the same gate object `profile_status` returns, for the
+   * hidden launchers that must ask the daemon (never derive their own answer)
+   * whether an orchestrator/worker may be created. Operator/orchestrator read.
+   * 404 when no profile service is wired: an unwired gate is not an open gate. */
+  private async profileGateEndpoint(request: Request): Promise<Response> {
+    if (this.profileControl === undefined) {
+      return json({ error: "Not found" }, { status: 404 });
+    }
+    const authenticated = this.authenticate(request, "/profile/gate");
+    if (!authenticated.ok) return this.denied(authenticated);
+    const authorized = this.authorize(
+      authenticated.capability,
+      "/profile/gate",
+      "profile:read",
+      undefined,
+      false,
+    );
+    if (!authorized.ok) return this.denied(authorized);
+    return json(await this.profileControl.gate());
+  }
+
+  /** POST /profile/continue-without — set the daemon-session bypass after the
+   * disclosure/failure UI. Operator only (this is not a profiler tool), and the
+   * act is audited. 404 when no profile service is wired. */
+  private async profileContinueWithoutEndpoint(
+    request: Request,
+  ): Promise<Response> {
+    if (this.profileControl === undefined) {
+      return json({ error: "Not found" }, { status: 404 });
+    }
+    const authenticated = this.authenticate(request, "/profile/continue-without");
+    if (!authenticated.ok) return this.denied(authenticated);
+    const capability = authenticated.capability;
+    const authorized = this.authorize(
+      capability,
+      "/profile/continue-without",
+      "profile:request",
+      undefined,
+      false,
+    );
+    if (!authorized.ok) return this.denied(authorized);
+    // `profile:request` is shared with the orchestrator (which may ask for a
+    // reprofile), but the bypass is the human's decision alone: an orchestrator
+    // that could set it would be self-authorizing past its own spawn gate. So
+    // the action is necessary but not sufficient — the role must be operator.
+    const auditShared = {
+      route: "/profile/continue-without",
+      action: "profile:request" as const,
+      callerSubject: capability.subject,
+      callerRole: capability.role,
+      capabilityId: capability.id,
+      requestedSubject: null,
+      epoch: capability.epoch,
+    };
+    if (capability.role !== "operator") {
+      this.capabilities.audit({
+        ...auditShared,
+        decision: "deny",
+        reason: "profile.operator-only",
+      });
+      return json(
+        {
+          error: "Continue Without Profile is operator-only",
+          reason: "profile.operator-only",
+        },
+        { status: 403 },
+      );
+    }
+    this.capabilities.audit({ ...auditShared, decision: "allow", reason: null });
+    await this.profileControl.continueWithoutProfile(capability.subject);
+    return json({ bypassed: true });
   }
 
   private async receiveStatusline(request: Request): Promise<Response> {
@@ -3270,6 +3366,15 @@ export class HiveDaemon {
       version: HIVE_VERSION,
     });
 
+    // The profiler is confined to its two tools and never sees the control
+    // plane. Returning early — rather than gating each hive_* registration —
+    // is what keeps the ordinary tools out of the profiler's model context
+    // entirely, instead of relying on a per-call denial to hide them.
+    if (capability.role === "profiler") {
+      this.registerProfileTools(server, capability);
+      return server;
+    }
+
     server.registerTool("hive_status", {
       title: "Hive agent status",
       description:
@@ -3892,7 +3997,163 @@ export class HiveDaemon {
       return toolResult(await graphLocate(this.repoRoot, question), "locate");
     });
 
+    this.registerProfileTools(server, capability);
+
     return server;
+  }
+
+  /** Register the project-profile tools, but only when a profile service is
+   * wired *and* the authenticated role should see them. Visibility is decided
+   * here, at enumeration, not at the handler: a profiler session sees only
+   * inventory/submit; operator/orchestrator see status/read/reprofile; every
+   * other role sees no profile tools at all. A hidden tool cannot be
+   * accidentally called, and its mere presence in an ordinary agent's context
+   * would be a leak of the profiling plane. */
+  private registerProfileTools(server: McpServer, capability: Capability): void {
+    const control = this.profileControl;
+    if (control === undefined) return;
+
+    if (capability.role === "profiler") {
+      server.registerTool("profile_inventory", {
+        title: "Inventory the project under profiling",
+        description:
+          "Inspect the project being profiled through the bounded, run-scoped " +
+          "safe inventory — the profiler's only window onto the repo. Call with " +
+          "{ cursor } (or nothing) to page the catalog of allowed files " +
+          "(path, type, size, content digest); call with { paths } to read the " +
+          "UTF-8 contents of up to 32 catalogued files. Excluded directories, " +
+          "credential stores, secret files, binaries, and out-of-tree symlinks " +
+          "never return content. Caps are daemon constants, not options.",
+        inputSchema: ProfileInventoryRequestSchema,
+      }, async ({ cursor, paths }) => {
+        this.authorizeTool(
+          capability,
+          "profile_inventory",
+          "profile:inventory",
+          undefined,
+          false,
+        );
+        if (cursor !== undefined && paths !== undefined) {
+          throw new Error(
+            "profile_inventory takes either { cursor } (catalog) or { paths } " +
+              "(content), never both.",
+          );
+        }
+        const request = paths !== undefined
+          ? { paths }
+          : cursor !== undefined
+          ? { cursor }
+          : {};
+        const result = await control.inventory(capability.subject, request);
+        if (result.status === "denied") {
+          // Reads pass auditAllow:false, so the run-binding denial (a
+          // cross-project, named-instance, or completed-run token) is audited
+          // here rather than silently dropped.
+          this.capabilities.audit({
+            route: "/mcp:profile_inventory",
+            action: "profile:inventory",
+            callerSubject: capability.subject,
+            callerRole: capability.role,
+            capabilityId: capability.id,
+            requestedSubject: null,
+            epoch: capability.epoch,
+            decision: "deny",
+            reason: `profile.${result.code}`,
+          });
+          throw new Error(result.message);
+        }
+        return toolResult(result, "inventory");
+      });
+
+      server.registerTool("profile_submit", {
+        title: "Submit the project profile candidate",
+        description:
+          "Submit the model-authored profile candidate for the active run. The " +
+          "daemon assembles run/project/provider/model/provenance itself — the " +
+          "candidate carries only the profile content. Returns " +
+          "{ status: 'accepted' } on success, or " +
+          "{ status: 'rejected', lifecycle, rejections } with every failure the " +
+          "daemon found, so the same bounded run can repair and resubmit. Stop " +
+          "after acceptance.",
+        inputSchema: ProfileSubmitRequestSchema,
+      }, async ({ candidate }) => {
+        this.authorizeTool(capability, "profile_submit", "profile:submit");
+        const result = await control.submit(capability.subject, candidate);
+        const response: ProfileSubmitResponse = result.status === "accepted"
+          ? { status: "accepted" }
+          : {
+              status: "rejected",
+              lifecycle: result.lifecycle,
+              rejections: result.rejections.map((rejection) => ({
+                code: rejection.code,
+                message: rejection.message,
+                ...(rejection.at === undefined ? {} : { at: rejection.at }),
+              })),
+            };
+        return toolResult(response, "submit");
+      });
+      return;
+    }
+
+    if (capability.role === "operator" || capability.role === "orchestrator") {
+      server.registerTool("profile_status", {
+        title: "Project profile status",
+        description:
+          "Report the profile lifecycle, whether a validated current profile is " +
+          "present and readable, the exact paths, the last failure verbatim, the " +
+          "run in flight, refresh state, and the authoritative spawn gate.",
+        inputSchema: z.object({}),
+      }, async () => {
+        this.authorizeTool(
+          capability,
+          "profile_status",
+          "profile:read",
+          undefined,
+          false,
+        );
+        return toolResult(await control.status(), "profile");
+      });
+
+      server.registerTool("profile_read", {
+        title: "Read the validated project profile",
+        description:
+          "Return the validated current project profile, or null when there is " +
+          "no readable one. A missing, malformed, or otherwise unreadable " +
+          "current profile reads as null, never an error, and a legacy " +
+          "profile.toml is never returned.",
+        inputSchema: z.object({}),
+      }, async () => {
+        this.authorizeTool(
+          capability,
+          "profile_read",
+          "profile:read",
+          undefined,
+          false,
+        );
+        return toolResult(await control.read(), "profile");
+      });
+
+      server.registerTool("profile_reprofile", {
+        title: "Request a project reprofile",
+        description:
+          "Request a refresh of the project profile. Coalesces onto a run " +
+          "already in flight rather than starting a second one, and records " +
+          "optional guidance as request provenance — an instruction to " +
+          "investigate, never a validation bypass. Reports 'started' or " +
+          "'coalesced'.",
+        inputSchema: ProfileReprofileRequestSchema,
+      }, async ({ guidance }) => {
+        this.authorizeTool(capability, "profile_reprofile", "profile:request");
+        return toolResult(
+          await control.requestReprofile({
+            source: capability.role,
+            requestedBy: capability.subject,
+            guidance: normalizeProfileGuidance(guidance),
+          }),
+          "reprofile",
+        );
+      });
+    }
   }
 
   private async handleMcp(request: Request): Promise<Response> {
