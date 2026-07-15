@@ -28,7 +28,7 @@ The gap that matters for a multi-vendor tool: **Claude Code reads `CLAUDE.md`, n
 
 > **Any cross-vendor design that assumes one filename will silently starve the other vendor's agents.**
 
-This is why Hive neither picks the filename nor injects the contents: the vendor loads its own conventions file natively, and *which* file a given repo uses is a repo-specific fact the profile records rather than a constant Hive hardcodes (SPEC decision 5; see [briefing.md](briefing.md) for how the profile discovers it).
+This is why Hive neither picks the filename nor injects the contents: the vendor loads its own conventions file natively, and *which* file a given repo uses is a repo-specific fact Hive leaves to the vendor rather than a constant it hardcodes (SPEC decision 5).
 
 ## Vendor mechanisms worth stealing from
 
@@ -87,11 +87,11 @@ Hive's accounting makes this explicit: the injected index is a **flat tax** (30 
 
 ## Where this lands in Hive
 
-The design decisions, token accounting, and rejected alternatives are argued in [SPEC.md decision 5](../../SPEC.md) and are deliberately not duplicated here. In one breath: Hive already sits on the industry-consensus shape (committed markdown + always-injected index + search-on-demand), and the growth areas the survey identified are a **write policy** (Mem0's dedup-before-write; suggestion, never silent shared write), **provenance + verification** (Copilot's re-validate-before-load-bearing), and a **repo profile** that front-loads the structured facts an agent would otherwise burn a cold exploration discovering.
+The design decisions, token accounting, and rejected alternatives are argued in [SPEC.md decision 5](../../SPEC.md) and are deliberately not duplicated here. In one breath: Hive already sits on the industry-consensus shape (committed markdown + always-injected index + search-on-demand), and the growth areas the survey identified are a **write policy** (Mem0's dedup-before-write; suggestion, never silent shared write) and **provenance + verification** (Copilot's re-validate-before-load-bearing).
 
 Two boundaries the survey did not supply but SPEC draws, and which matter when reading any of this back:
 
-- **Memory holds narrative truth; the profile holds structured truth; neither stores the other's.** Build commands and doc names live in the profile (validated structured JSON under `~/.hive/projects/<uuid>/profile/`, not wiki articles). Only non-derivable narrative lessons live in memory. How the profile is *produced* is SPEC decision 14 / [briefing.md](briefing.md) — not this article.
+- **Memory holds narrative truth, not derivable structure.** Only non-derivable narrative lessons live in memory. A build command lives in the repo's manifest and a doc name in its tree — both are read when needed, never copied into a memory article.
 - **A shipped skill is not a followed skill.** The `hive-memory` skill explains compilation and lint judgment, but the write contract (`topic`, `source`, `evidence`, explicit `status`, `supersedes`) is enforced at the MCP schema *and* re-parsed in the filesystem adapter — because telemetry already proved that progressive disclosure is not an enforcement path.
 
 ## Confidence caveats from the survey
@@ -107,7 +107,7 @@ Carried forward verbatim, because a spec that cites a marketing figure as eviden
 
 ## See Also
 
-- [Agent briefing](briefing.md) — the repo profile, and how it discovers the conventions file rather than assuming its name
+- [Agent briefing](briefing.md) — scoped doc briefing, and how it discovers a repo's docs rather than assuming their names
 - [Context degradation and agent recycling](context-and-recycling.md) — why a small injected surface is an accuracy budget, and the constraint-pinning result
 - [Rejected approaches](../routing/rejected-approaches.md) — measured token costs of what enters a spawn prompt
 - [Database resilience](../daemon/database-resilience.md) — the sibling invariant: absence is a finding, not a zero

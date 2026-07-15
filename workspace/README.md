@@ -14,7 +14,7 @@ ANSI parser) is gone; its evidence write-up survives in
 ## Launch contract
 
 The CLI launches the app; users never open it directly. `hive init` is the
-headless onboarding command (profile, then daemon), while bare `hive` opens
+headless onboarding command (repo-only setup, no daemon), while bare `hive` opens
 this Workspace after the same session boundary:
 
 ```sh

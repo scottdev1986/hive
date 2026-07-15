@@ -1,5 +1,29 @@
 # Wiki Log
 
+## [2026-07-15] change | Remove app profiling entirely; preserve scoped doc-briefing
+
+Both repo profilers are gone, as a deliberate product decision. The agent-authored
+profiling foundation and its P1 tools/capabilities/routes (the 2026-07-14 "landed
+foundation" entries below) and the legacy deterministic scanner (`src/adapters/profile.ts`,
+`ensureProfile`, `profile.toml`, `hive init --refresh`) were both removed: Hive no
+longer profiles a repo, detects its commands or conventions, stores a
+`profile/{current.json,state.json}`, or ships a `profiling` capability role or routing
+category.
+
+What survived is the one generic piece briefing depended on: **scoped doc discovery**.
+`rankPrimaryDoc` and the `DOC_DIRECTORIES` walk were extracted into
+`src/adapters/briefing-docs.ts` (`discoverBriefableDocs`); `brief.ts` and the
+orchestrator doc guidance read it on demand, so scoped briefs keep working repo-neutrally
+with no stored profile. The landing gate now names its verify steps in repo-neutral
+wording rather than a detected command.
+
+Docs reconciled to current state: README, SPEC (decision 5 memory split and decision 14
+rewritten to describe on-demand doc discovery), `docs/agents/briefing.md` (rewritten),
+`docs/agents/memory.md`, `docs/index.md`, `docs/daemon/multi-instance.md`,
+`docs/workspace/blueprint.md`, `workspace/README.md`. Deleted:
+`docs/design/profiling-implementation-plan.md`. The two 2026-07-14 profiling entries
+below are superseded by this removal.
+
 ## [2026-07-14] correction | Separate repo setup from fresh Workspace runtimes
 
 The default runtime had been shared across repositories through `~/.hive`, so a

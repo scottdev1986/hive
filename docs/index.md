@@ -66,7 +66,7 @@ What a spawned agent carries, remembers, and when it should be replaced.
 | --- | --- | --- |
 | [Context and recycling](agents/context-and-recycling.md) | Why percentage thresholds are the wrong unit, what context telemetry can honestly say, and why Hive still lacks the decision-7 recycle actuator. | 2026-07-14 |
 | [Agent memory](agents/memory.md) | Committed instructions and agent-authored durable memory are distinct tracks; Hive keeps scoped, provenance-bearing articles rather than an opaque note pile. | 2026-07-14 |
-| [Briefing](agents/briefing.md) | Scoped spawn briefs and doc ranking; agent-authored profile foundation landed, briefing still on the transitional reader until consumer cutover. | 2026-07-14 |
+| [Briefing](agents/briefing.md) | Scoped spawn briefs and repo-neutral doc discovery and ranking. | 2026-07-14 |
 
 ## release
 

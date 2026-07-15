@@ -23,7 +23,7 @@ The automated live test starts two real daemon processes on one repository, spaw
 
 `hiveInstanceSuffix()` is the first ten hexadecimal characters of SHA-256 over the resolved `HIVE_HOME`. That stable value scopes tmux sessions and other runtime names (`src/daemon/tmux-sessions.ts:9-29`).
 
-The global `--instance <name>` option selects a named home before a command runs. Without that option, the Workspace session boundary finishes repo-only preparation, snapshots that repository's registry binding and derived setup state into a new home, and calls `selectFreshInstance`, producing a new `run-<uuid>` runtime before it inspects or starts a daemon (`src/daemon/instances.ts`, `src/cli/start.ts`). The snapshot carries the init stamp, profile, and Graphify decision forward without sharing daemon lifecycle files or the database. The instances directory is the registry: Hive discovers the default home plus directories below `~/.hive/instances`, reads their lifecycle files, and accepts a running instance only when its handshake reports the expected instance id. There is no shared mutable instance-registry file.
+The global `--instance <name>` option selects a named home before a command runs. Without that option, the Workspace session boundary finishes repo-only preparation, snapshots that repository's registry binding and derived setup state into a new home, and calls `selectFreshInstance`, producing a new `run-<uuid>` runtime before it inspects or starts a daemon (`src/daemon/instances.ts`, `src/cli/start.ts`). The snapshot carries the init stamp and Graphify decision forward without sharing daemon lifecycle files or the database. The instances directory is the registry: Hive discovers the default home plus directories below `~/.hive/instances`, reads their lifecycle files, and accepts a running instance only when its handshake reports the expected instance id. There is no shared mutable instance-registry file.
 
 Each home permits one daemon:
 
@@ -48,7 +48,7 @@ A live PID is not ownership proof because PIDs are reused. Unknown state preserv
 
 | Scope | State | Coordination |
 |---|---|---|
-| Instance | `hive.db`, config, local control-plane capability files, project registry and derived project state (including agent-authored project profiles under `projects/<uuid>/profile/{current.json,state.json}`), runtime files, instance memory | Located below `HIVE_HOME`; named instances may independently profile the same Git project |
+| Instance | `hive.db`, config, local control-plane capability files, project registry and derived project state, runtime files, instance memory | Located below `HIVE_HOME`; each named instance keeps its own project state for the same Git project |
 | Preference bootstrap | Model Control chains, enablement consent, selection, and effort | One-time copy from the default policy into an empty/untouched named policy; never overwrites a named-instance edit |
 | Instance | daemon lock/PID/port, tmux sessions, provider session sockets | Instance suffix plus handshake identity |
 | Repository | `.hive/worktrees/*`, `hive/*` branches, Git common directory, repository memory and generated config | Ownership refs and file/landing locks |

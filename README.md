@@ -46,7 +46,7 @@ hive init
 hive
 ```
 
-`hive init` installs the agent skills used by the CLIs present on the machine, offers the optional local Graphify integration, seeds optional narrative memory, and performs repo-only setup: it does not start a daemon or open a Workspace. It is safe to run again. **Today** it still runs the outgoing deterministic repository profile pass (`ensureProfile` / `src/adapters/profile.ts`); `--refresh` forces that cache rebuild while otherwise running init. Long-term, profile authorship moves to a daemon-coordinated agent-authored job (SPEC decision 14; plan package P5 removes the init/legacy path). Use `hive init --no-graphify` to skip the Graphify prompt.
+`hive init` installs the agent skills used by the CLIs present on the machine, offers the optional local Graphify integration, seeds optional narrative memory, and performs repo-only setup: it does not start a daemon or open a Workspace. It is safe to run again. Use `hive init --no-graphify` to skip the Graphify prompt.
 
 Bare `hive` opens the Workspace with Claude as the default orchestrator. To choose another installed vendor explicitly, run `hive codex` or `hive grok`; `hive claude` is the explicit Claude spelling.
 
@@ -55,8 +55,7 @@ Bare `hive` opens the Workspace with Claude as the default orchestrator. To choo
 | Command | Purpose |
 | --- | --- |
 | `hive` | Create a fresh isolated instance and open its Workspace |
-| `hive init` | Install agent skills, seed optional memory, offer Graphify, and run the outgoing deterministic profile pass without starting a daemon |
-| `hive init --refresh` | Force the outgoing cache rebuild while otherwise running daemon-free init (removed with plan package P5) |
+| `hive init` | Install agent skills, seed optional memory, offer Graphify, and run repo-only setup without starting a daemon |
 | `hive claude`, `hive codex`, `hive grok` | Open the Workspace with that read-only orchestrator |
 | `hive status` | Show agent name, tool, model, state, context use, task, and failure |
 | `hive kill <agent>` | Stop one agent and preserve any unlanded work |
