@@ -1522,14 +1522,39 @@ export class QuotaService {
     let candidates = request.candidates.filter((candidate) =>
       request.explicitTool === undefined || candidate.tool === request.explicitTool
     );
+    // Independent review must not run on the same provider as the tool under
+    // review. Track what the independence filter removed so a chain that *had*
+    // a route is never reported as one that lacked it.
+    let excludedForIndependence: typeof candidates = [];
     if (request.reviewOfTool !== undefined && request.category === "code_review") {
+      excludedForIndependence = candidates.filter((candidate) =>
+        candidate.tool === request.reviewOfTool
+      );
       candidates = candidates.filter((candidate) =>
         candidate.tool !== request.reviewOfTool
       );
     }
     if (candidates.length === 0) {
+      if (excludedForIndependence.length > 0) {
+        // The candidate cleared policy and quota; it was removed only because
+        // reviewOfTool requires a different provider. Say exactly that — the
+        // old "has no route" text made diagnostics claim the chain lacked the
+        // provider entirely (e.g. "Codex had no route") when it did not.
+        const providers = [
+          ...new Set(excludedForIndependence.map((candidate) => candidate.tool)),
+        ].join(", ");
+        throw new QuotaExhaustedError(
+          `Independent review of ${request.reviewOfTool} has no independent route for ` +
+            `${request.category}: ${excludedForIndependence.length} candidate(s) passed ` +
+            `policy (${providers}) but were excluded because reviewOfTool requires a ` +
+            `provider other than the one under review. The chain has a route; it lacks an ` +
+            `independent one.`,
+        );
+      }
       throw new QuotaExhaustedError(
-        `Requested provider ${request.explicitTool} has no route for ${request.category}`,
+        request.explicitTool === undefined
+          ? `No route for ${request.category}`
+          : `Requested provider ${request.explicitTool} has no route for ${request.category}`,
       );
     }
 

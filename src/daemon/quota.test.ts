@@ -976,6 +976,40 @@ describe("quota-aware routing", () => {
     db.close();
   });
 
+  test("reports a same-provider review candidate as excluded for independence, not absent", async () => {
+    const { db } = await fileDatabase("review-independence");
+    const service = new QuotaService(
+      new QuotaLedger(db),
+      config([limit("codex")]),
+      () => new Date("2026-07-09T12:00:00.000Z"),
+    );
+    // The chain offers a Codex route, but this is an independent review of a
+    // Codex tool, so the same-provider candidate is filtered for independence.
+    const codexOnly = await authorizeForQuotaTest([
+      { tool: "codex" as const, model: "codex-model" },
+    ]);
+    let error: unknown;
+    try {
+      await service.routeAndReserve({
+        agentName: "maya",
+        category: "code_review",
+        selection: "strict",
+        reviewOfTool: "codex",
+        candidates: codexOnly,
+      });
+    } catch (caught) {
+      error = caught;
+    }
+    expect(error).toBeInstanceOf(QuotaExhaustedError);
+    const message = (error as Error).message;
+    // The truthful diagnostic: the candidate passed policy and was excluded for
+    // independence — never "Codex has no route".
+    expect(message).toContain("passed policy");
+    expect(message).toContain("reviewOfTool requires a provider other than");
+    expect(message).not.toContain("has no route for");
+    db.close();
+  });
+
   test("keeps legacy routing with explicit missing-confidence diagnostics when no limits are configured", async () => {
     const { db } = await fileDatabase("missing");
     const alerts: string[] = [];
