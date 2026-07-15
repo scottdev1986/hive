@@ -177,6 +177,120 @@ export async function reapCapturedTree(
   return { killed, survivors };
 }
 
+export interface SuspendOutcome {
+  /** Processes now halted — reported as `T` (stopped) or gone. Neither is
+   * running anyone's code. */
+  suspended: ReapedProcess[];
+  /** Processes signalled that are STILL RUNNING. A non-empty list is a failed
+   * suspend and must be surfaced: a paused agent that can still mutate is not
+   * paused. */
+  unstopped: ReapedProcess[];
+}
+
+/**
+ * SIGSTOP a captured tree — a NON-DESTRUCTIVE halt that preserves the process,
+ * its rollout/thread, and its tmux holder instead of killing them. This is the
+ * mechanism a critical `pause` uses: capability is revoked first, then the tree
+ * is frozen so a still-authorized-looking local shell cannot mutate, and a
+ * later `resumeCapturedTree` (SIGCONT) brings the exact same process back.
+ *
+ * Leaves are signalled first, exactly as the reap does, so a supervisor cannot
+ * notice a stopped child and act inside the window. Verification reads the same
+ * state table the reap uses: a process reporting `T` is stopped; one that is
+ * gone (`Z`/absent) is also not running code. Anything still running is an
+ * unstopped survivor.
+ */
+export async function suspendCapturedTree(
+  captured: CapturedTree,
+  dependencies: ReapDependencies = defaultReapDependencies(),
+  verificationPid: number = process.pid,
+): Promise<SuspendOutcome> {
+  if (captured.length === 0) return { suspended: [], unstopped: [] };
+
+  for (const entry of [...captured].reverse()) {
+    try {
+      dependencies.kill(entry.pid, "SIGSTOP");
+    } catch {
+      // Gone between the capture and the signal — that is a safely halted tree.
+    }
+  }
+
+  await dependencies.wait(REAP_SETTLE_MS);
+
+  const states = parseStateTable(await dependencies.psState());
+  if (!states.some((sample) => sample.pid === verificationPid)) {
+    throw new Error(
+      `Process-state verification did not contain verification pid ${verificationPid}`,
+    );
+  }
+  const running = new Set(
+    states
+      .filter((sample) =>
+        !sample.stat.startsWith("T") && !sample.stat.startsWith("Z")
+      )
+      .map((sample) => sample.pid),
+  );
+  const suspended: ReapedProcess[] = [];
+  const unstopped: ReapedProcess[] = [];
+  for (const entry of captured) {
+    if (running.has(entry.pid)) unstopped.push(entry);
+    else suspended.push(entry);
+  }
+  return { suspended, unstopped };
+}
+
+/** SIGCONT a captured tree, resuming the exact processes a suspend froze.
+ * Parents are continued before children (the reverse of suspend) so a child
+ * never resumes into a still-stopped parent. Best-effort: a process that exited
+ * while paused is simply skipped. */
+export async function resumeCapturedTree(
+  captured: CapturedTree,
+  dependencies: ReapDependencies = defaultReapDependencies(),
+): Promise<void> {
+  for (const entry of captured) {
+    try {
+      dependencies.kill(entry.pid, "SIGCONT");
+    } catch {
+      // Exited while paused; nothing to continue.
+    }
+  }
+}
+
+/** Non-destructively suspend a live tmux session's whole process tree. The
+ * session, panes, and pids are left intact for a later resume. */
+export async function suspendTmuxSession(
+  session: string,
+  dependencies: VerifiedStopDependencies,
+  extraRoots: readonly number[] = [],
+): Promise<SuspendOutcome> {
+  const reap = dependencies.reap ?? defaultReapDependencies();
+  const selfPid = dependencies.selfPid ?? process.pid;
+  const captured = await captureProcessTree(
+    [...await sessionRoots(session, dependencies.tmux), ...extraRoots],
+    reap,
+    selfPid,
+  );
+  return suspendCapturedTree(captured, reap, selfPid);
+}
+
+/** Resume a previously-suspended tmux session's process tree. The tree is
+ * re-captured from the surviving session (SIGSTOP does not remove the panes),
+ * so this works after a daemon restart as long as the session still exists. */
+export async function resumeTmuxSession(
+  session: string,
+  dependencies: VerifiedStopDependencies,
+  extraRoots: readonly number[] = [],
+): Promise<void> {
+  const reap = dependencies.reap ?? defaultReapDependencies();
+  const selfPid = dependencies.selfPid ?? process.pid;
+  const captured = await captureProcessTree(
+    [...await sessionRoots(session, dependencies.tmux), ...extraRoots],
+    reap,
+    selfPid,
+  );
+  await resumeCapturedTree(captured, reap);
+}
+
 async function defaultHostPid(agent: AgentRecord): Promise<number | null> {
   const path = codexAgentHostPidfile(agent);
   try {

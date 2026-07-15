@@ -2,7 +2,9 @@ import { describe, expect, test } from "bun:test";
 import {
   captureProcessTree,
   reapCapturedTree,
+  resumeCapturedTree,
   stopAgentSession,
+  suspendCapturedTree,
   type ReapDependencies,
 } from "./teardown";
 import { parseProcessTable, runPs } from "./resources";
@@ -66,6 +68,66 @@ async function waitForProcess(
   } while (Date.now() < deadline);
   return false;
 }
+
+/** A signal-aware world: SIGSTOP/SIGCONT flip a process's state instead of
+ * killing it, so a non-destructive pause can be observed. Every process stays
+ * alive (present in `ps`) — that is the whole point of suspend. */
+function suspendableWorld(processes: FakeProcess[]) {
+  const alive = new Map(processes.map((entry) => [entry.pid, { ...entry }]));
+  const signals: Array<{ pid: number; signal: string }> = [];
+  const dependencies: ReapDependencies = {
+    ps: async () =>
+      [...alive.values()]
+        .map((p) => `${p.pid} ${p.ppid} 1024 ${p.command}`)
+        .join("\n"),
+    psState: async () =>
+      [{ pid: 1, ppid: 0, command: "init", stat: "S" }, ...alive.values()]
+        .map((p) => `${p.pid} ${p.ppid} ${p.stat ?? "S"}`)
+        .join("\n"),
+    kill: (pid, signal) => {
+      signals.push({ pid, signal });
+      const target = alive.get(pid);
+      if (target === undefined || target.unkillable === true) return;
+      if (signal === "SIGSTOP") target.stat = "T";
+      else if (signal === "SIGCONT") target.stat = "S";
+    },
+    wait: async () => undefined,
+  };
+  return { dependencies, signals, alive };
+}
+
+describe("suspend/resume process tree (non-destructive pause)", () => {
+  test("SIGSTOPs the whole tree without killing it, then SIGCONT resumes it", async () => {
+    const { dependencies, alive } = suspendableWorld([
+      { pid: 100, ppid: 1, command: "-bash" },
+      { pid: 200, ppid: 100, command: "codex" },
+      { pid: 300, ppid: 200, command: "mcp-stdio" },
+    ]);
+    const captured = await captureProcessTree([100], dependencies, 1);
+    const outcome = await suspendCapturedTree(captured, dependencies, 1);
+
+    expect(outcome.suspended.map((p) => p.pid).sort()).toEqual([100, 200, 300]);
+    expect(outcome.unstopped).toEqual([]);
+    // Non-destructive: every process is still alive, just stopped.
+    expect([...alive.keys()].sort()).toEqual([100, 200, 300]);
+    expect([...alive.values()].every((p) => p.stat === "T")).toBe(true);
+
+    await resumeCapturedTree(captured, dependencies);
+    expect([...alive.values()].every((p) => p.stat === "S")).toBe(true);
+    expect([...alive.keys()].sort()).toEqual([100, 200, 300]);
+  });
+
+  test("a process that will not stop is reported as an unstopped survivor", async () => {
+    const { dependencies } = suspendableWorld([
+      { pid: 100, ppid: 1, command: "-bash" },
+      { pid: 200, ppid: 100, command: "codex", unkillable: true },
+    ]);
+    const captured = await captureProcessTree([100], dependencies, 1);
+    const outcome = await suspendCapturedTree(captured, dependencies, 1);
+    expect(outcome.unstopped.map((p) => p.pid)).toEqual([200]);
+    expect(outcome.suspended.map((p) => p.pid)).toEqual([100]);
+  });
+});
 
 describe("reapProcessTree", () => {
   test("kills what tmux cannot reach: the whole tree under the pane", async () => {
