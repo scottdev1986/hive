@@ -66,21 +66,6 @@ final class RoutingPolicyWireContractTests: XCTestCase {
         XCTAssertNil(complex[1].effort.asEffortTarget)
     }
 
-    /// A CATEGORY the daemon can emit must reach this decoder too — the same
-    /// failure the effort modes had, one axis over: a category the app cannot
-    /// name is a chain the user can neither see nor edit in Settings, while
-    /// the daemon routes real work through it.
-    func testTheProfilingCategoryCrossesTheWire() throws {
-        let document = try RoutingPolicyDocument.decode(from: try wireFixture())
-
-        let profiling = document.chain(for: .profiling)
-        XCTAssertEqual(profiling.count, 1, "the daemon's profiling chain must decode")
-        XCTAssertEqual(profiling[0].model, "gpt-5.6-sol")
-        XCTAssertTrue(
-            TaskCategory.allCases.contains(.profiling),
-            "Settings enumerates allCases; a category missing there is uneditable")
-    }
-
     /// THE CATEGORY PARITY GUARD, and the drift it exists to make impossible.
     ///
     /// `standard_coding` sat in the daemon's schema for months while this enum

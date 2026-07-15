@@ -45,7 +45,6 @@ describe("config loading", () => {
         heavy_research: 20,
         light_research: 4,
         planning: 10,
-        profiling: 8,
         simple_coding: 10,
         summarization: 4,
       },

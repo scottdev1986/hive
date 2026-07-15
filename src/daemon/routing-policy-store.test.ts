@@ -56,6 +56,48 @@ describe("fail-closed reading", () => {
     expect(migrated.selection).toEqual({ global: "never-configured", categories: {} });
   });
 
+  test("a stored policy with a retired profiling chain is migrated away rather than throwing", () => {
+    const current = store.read(NOW);
+    const defaultChain = [{
+      provider: "codex" as const,
+      model: "gpt-5.6-sol",
+      effort: { mode: "provider-controlled" as const },
+    }];
+    // Inject the retired key via JSON so the document looks like a pre-removal
+    // policy without needing the category in today's type system.
+    const withProfiling = {
+      ...current,
+      revision: 3,
+      chains: {
+        default: defaultChain,
+        profiling: defaultChain,
+      },
+      selection: {
+        global: "never-configured" as const,
+        categories: {
+          default: "choice" as const,
+          profiling: "choice",
+        },
+      },
+    };
+    db.database.run(
+      "INSERT INTO routing_policy (id, revision, updatedAt, document) VALUES (1, 3, ?, ?)",
+      [NOW.toISOString(), JSON.stringify(withProfiling)],
+    );
+
+    const migrated = new RoutingPolicyStore(db).read(NOW);
+
+    expect(migrated.chains).not.toHaveProperty("profiling");
+    expect(migrated.selection.categories).not.toHaveProperty("profiling");
+    expect(migrated.chains.default).toEqual(defaultChain);
+    expect(migrated.selection.categories.default).toBe("choice");
+    expect(migrated.revision).toBe(4);
+    // Durable: re-open on the same DB does not re-bump, and still has no profiling.
+    const again = new RoutingPolicyStore(db).read(NOW);
+    expect(again.revision).toBe(4);
+    expect(again.chains).not.toHaveProperty("profiling");
+  });
+
   test("a corrupt policy row THROWS — it never degrades to an empty, permissive-looking document", () => {
     db.database.run(
       "INSERT INTO routing_policy (id, revision, updatedAt, document) VALUES (1, 3, ?, ?)",

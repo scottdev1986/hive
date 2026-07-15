@@ -80,7 +80,100 @@ export class RoutingPolicyStore {
         after TEXT NOT NULL
       );
     `);
+    // Strip retired categories before any schema-strict parse: an unknown
+    // category key makes RoutingPolicySchema.safeParse throw on load.
+    this.migrateStoredStripProfilingCategory();
     this.migrateStoredV1();
+  }
+
+  /**
+   * The `profiling` routing category was removed (product decision). A
+   * persisted policy may still carry a `profiling` chain or selection row from
+   * an older baseline seed. RoutingPolicySchema rejects unknown categories —
+   * it does not drop them — so load would throw RoutingPolicyCorruptError.
+   * Strip the retired key(s) and rewrite, same defensive style as v1 migrate:
+   * unparseable JSON is left alone for the corrupt-row path to surface.
+   */
+  private migrateStoredStripProfilingCategory(now: Date = new Date()): void {
+    const row = this.db.database.query(
+      "SELECT document FROM routing_policy WHERE id = 1",
+    ).get() as { document: string } | null;
+    if (row === null) return;
+    let decoded: unknown;
+    try {
+      decoded = JSON.parse(row.document);
+    } catch {
+      return;
+    }
+    if (typeof decoded !== "object" || decoded === null || Array.isArray(decoded)) {
+      return;
+    }
+    const doc = { ...(decoded as Record<string, unknown>) };
+    let changed = false;
+
+    if (
+      typeof doc.chains === "object" &&
+      doc.chains !== null &&
+      !Array.isArray(doc.chains) &&
+      Object.prototype.hasOwnProperty.call(doc.chains, "profiling")
+    ) {
+      const { profiling: _removed, ...chains } = doc.chains as Record<string, unknown>;
+      doc.chains = chains;
+      changed = true;
+    }
+
+    if (
+      typeof doc.selection === "object" &&
+      doc.selection !== null &&
+      !Array.isArray(doc.selection)
+    ) {
+      const selection = { ...(doc.selection as Record<string, unknown>) };
+      if (
+        typeof selection.categories === "object" &&
+        selection.categories !== null &&
+        !Array.isArray(selection.categories) &&
+        Object.prototype.hasOwnProperty.call(selection.categories, "profiling")
+      ) {
+        const { profiling: _removed, ...categories } =
+          selection.categories as Record<string, unknown>;
+        selection.categories = categories;
+        doc.selection = selection;
+        changed = true;
+      }
+    }
+
+    if (!changed) return;
+
+    if (typeof doc.revision === "number" && Number.isFinite(doc.revision)) {
+      doc.revision = doc.revision + 1;
+    }
+    doc.updatedAt = now.toISOString();
+
+    // Prefer canonical v2 form when the rest of the document is already valid;
+    // otherwise keep the stripped raw document so a later v1 migration can run.
+    const parsed = RoutingPolicySchema.safeParse(doc);
+    const after = parsed.success
+      ? canonicalRoutingPolicyJson(parsed.data)
+      : JSON.stringify(doc);
+    const revision = parsed.success
+      ? parsed.data.revision
+      : typeof doc.revision === "number" ? doc.revision : 0;
+    const updatedAt = parsed.success
+      ? parsed.data.updatedAt
+      : typeof doc.updatedAt === "string" ? doc.updatedAt : now.toISOString();
+
+    this.db.database.transaction(() => {
+      this.db.database.run(
+        "UPDATE routing_policy SET revision = ?, updatedAt = ?, document = ? WHERE id = 1",
+        [revision, updatedAt, after],
+      );
+      this.db.database.run(
+        `INSERT INTO routing_policy_events
+           (at, actor, operation, revision, before, after)
+         VALUES (?, 'hive', 'migrate-strip-profiling-category', ?, ?, ?)`,
+        [now.toISOString(), revision, row.document, after],
+      );
+    }).immediate();
   }
 
   /**
@@ -512,9 +605,6 @@ function provisionalBaselineChains(
   assign("planning", claudeLed);
   assign("debugging", claudeLed);
   assign("summarization", grokLed);
-  // Profiling reads a codebase to describe it: code-shaped input, so the
-  // coding specialist leads, as it does for the other code-shaped categories.
-  assign("profiling", codexLed);
   assign("default", codexLed);
   return chains;
 }

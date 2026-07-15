@@ -95,7 +95,6 @@ const DEFAULT_ESTIMATES: Record<RoutingCategory, number> = {
   simple_coding: 10,
   default: 10,
   code_review: 8,
-  profiling: 8,
   light_research: 4,
   summarization: 4,
 };
@@ -149,10 +148,6 @@ export const DEFAULT_PERCENT_ESTIMATES: Record<
   simple_coding: { fiveHour: 4, weekly: 0.75 },
   default: { fiveHour: 4, weekly: 0.75 },
   code_review: { fiveHour: 3, weekly: 0.6 },
-  // A profiling run is one bounded read-only pass over a tree — the same work
-  // shape as a review, so it carries the review's guess until observations
-  // overwrite it.
-  profiling: { fiveHour: 3, weekly: 0.6 },
   light_research: { fiveHour: 1.5, weekly: 0.3 },
   summarization: { fiveHour: 1.5, weekly: 0.3 },
 };
