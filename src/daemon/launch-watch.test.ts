@@ -31,8 +31,7 @@ import { shellJoin } from "../adapters/tmux";
 const SESSION = `hive-launch-watch-${process.pid}`;
 const PROMPT = "Reply with the single word READY.";
 const DIALOG_MARKER = "Enter to confirm";
-// Broken homebrew/native-installer shims print this and exit before any dialog
-// or hook can fire; fail fast instead of waiting out the poll deadline.
+// Content still useful when capture succeeds before the sole pane dies.
 const DEAD_BINARY_MARKER = "native binary not installed";
 
 // Match production spawn resolution: Bun.which is existence-only and can pick a
@@ -50,6 +49,71 @@ const suite = runnable ? describe : describe.skip;
 // One root per case, all removed at the end.
 const temporaryRoots: string[] = [];
 
+/** Pure fail-fast for launch-watch pane polls. A sole-pane session that exits
+ * immediately is destroyed before content can be read; capture-pane then fails
+ * nonzero — that must not be swallowed into a 40s empty-poll timeout. */
+function diagnoseCapturePane(
+  exitCode: number,
+  stdout: string,
+  stderr: string,
+): { ok: true; pane: string } | { ok: false; diagnostic: string } {
+  if (exitCode !== 0) {
+    const detail =
+      [stderr.trim(), stdout.trim()].filter((s) => s.length > 0).join(" | ") ||
+      "(no output)";
+    return {
+      ok: false,
+      diagnostic:
+        `launch pane/session gone or unreadable (tmux capture-pane exit ${exitCode}): ${detail}`,
+    };
+  }
+  if (stdout.includes(DEAD_BINARY_MARKER)) {
+    return {
+      ok: false,
+      diagnostic:
+        `claude binary died in pane (${DEAD_BINARY_MARKER})\n--- pane ---\n${stdout}`,
+    };
+  }
+  return { ok: true, pane: stdout };
+}
+
+// Always-on unit coverage: no claude, no tmux, no paid turns.
+describe("diagnoseCapturePane", () => {
+  test("nonzero capture is an immediate failure with stderr", () => {
+    const d = diagnoseCapturePane(1, "", "can't find pane: hive-launch-watch");
+    expect(d.ok).toBe(false);
+    if (d.ok) throw new Error("expected failure");
+    expect(d.diagnostic).toContain("exit 1");
+    expect(d.diagnostic).toContain("can't find pane");
+  });
+
+  test("nonzero with empty streams still reports a diagnostic", () => {
+    const d = diagnoseCapturePane(127, "", "");
+    expect(d.ok).toBe(false);
+    if (d.ok) throw new Error("expected failure");
+    expect(d.diagnostic).toContain("exit 127");
+    expect(d.diagnostic).toContain("(no output)");
+  });
+
+  test("exit 0 with empty pane is still launching (not a failure)", () => {
+    expect(diagnoseCapturePane(0, "\n\n", "")).toEqual({
+      ok: true,
+      pane: "\n\n",
+    });
+  });
+
+  test("dead-binary marker fails even when capture succeeds", () => {
+    const d = diagnoseCapturePane(
+      0,
+      "Error: native binary not installed\n",
+      "",
+    );
+    expect(d.ok).toBe(false);
+    if (d.ok) throw new Error("expected failure");
+    expect(d.diagnostic).toContain(DEAD_BINARY_MARKER);
+  });
+});
+
 const run = async (argv: string[], cwd?: string): Promise<void> => {
   const child = Bun.spawn(argv, {
     ...(cwd === undefined ? {} : { cwd }),
@@ -66,13 +130,18 @@ const tmux = (...args: string[]): Promise<void> => run([tmuxBinary!, ...args]);
 const capturePane = async (): Promise<string> => {
   const child = Bun.spawn([tmuxBinary!, "capture-pane", "-p", "-t", SESSION], {
     stdout: "pipe",
-    stderr: "ignore",
+    stderr: "pipe",
   });
-  const [text] = await Promise.all([
+  const [stdout, stderr, exitCode] = await Promise.all([
     new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
     child.exited,
   ]);
-  return text;
+  const diagnosis = diagnoseCapturePane(exitCode, stdout, stderr);
+  if (!diagnosis.ok) {
+    throw new Error(diagnosis.diagnostic);
+  }
+  return diagnosis.pane;
 };
 
 afterAll(async () => {
@@ -174,12 +243,11 @@ suite("Claude spawn launch watch", () => {
       let reachedTurn = false;
       const deadline = Date.now() + 40_000;
       while (Date.now() < deadline) {
+        // capturePane throws immediately if the session/pane vanished (nonzero
+        // capture) or the pane text shows a known dead-binary shim message.
         pane = await capturePane();
         // Fail fast and loudly: a dialog here is the bug this test guards.
         if (pane.includes(DIALOG_MARKER)) break;
-        // Residual: a verified --version can still leave a dead pane if the
-        // binary collapses after launch; surface it instead of timing out.
-        if (pane.includes(DEAD_BINARY_MARKER)) break;
         const hooks = await readFile(hookLog, "utf8").catch(() => "");
         if (hooks.includes("turn-start")) {
           reachedTurn = true;
@@ -189,7 +257,6 @@ suite("Claude spawn launch watch", () => {
       }
 
       expect(pane).not.toContain(DIALOG_MARKER);
-      expect(pane).not.toContain(DEAD_BINARY_MARKER);
       // UserPromptSubmit only fires once the prompt is submitted, which is only
       // possible if nothing blocked the launch.
       expect(reachedTurn).toBe(true);
