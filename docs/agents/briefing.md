@@ -82,15 +82,17 @@ The first design shipped a committed `.hive/profile.toml`, then a silent `profil
 
 > **Humans do not maintain the profile file.** Corrections are not a committed override TOML in the new design; optional guidance is request provenance on a reprofile, and the daemon still validates every accepted claim.
 
-## What `hive init` is left owning
+## What `hive init` owns today (and what P5 will change)
 
-`hive init` (`src/cli/init.ts`) is **not** the profile author for the agent-authored design. It owns the tier that must be asked for because it writes into the user's repo or spends their tokens:
+**Today on main**, `hive init` (`src/cli/init.ts`) still runs the outgoing deterministic profile pass (`ensureProfile` / `regenerateProfile` in `src/adapters/profile.ts`) and `src/cli.ts` still registers `--refresh` to force that rebuild. That is current behavior until plan package **P5** removes the legacy init profiling path.
+
+**Long-term**, init is **not** the agent-authored profile owner. Independently of that cutover, it owns the tier that must be asked for because it writes into the user's repo or spends their tokens:
 
 - When no `AGENTS.md` exists, **offer** to scaffold one — opt-in, never blind. Codex caps the AGENTS.md chain at **32 KiB and truncates silently**, so Hive never appends to a human's existing instructions (`src/cli/init.ts:9-10`, `scaffoldAgentsMd` at `src/cli/init.ts:258`).
 - Seed a small set of narrative memory articles with `source: "init"` and a `verified` date — derived and re-derivable, distinct from the earned facts an agent learns. **Structured facts never become memory**; they belong in the profile.
 - Graphify enablement and starting the instance daemon.
 
-Running the command is the authorization, every action is printed, and it never ends by asking for another command: anything Hive can finish itself, it finishes there (seeded facts are indexed on the spot, not left with a note to go reindex them). Operator profile commands (`hive profile …`) are planned per the implementation plan (P5), not current CLI surface.
+Running the command is the authorization, every action is printed, and it never ends by asking for another command: anything Hive can finish itself, it finishes there (seeded facts are indexed on the spot, not left with a note to go reindex them). Operator profile commands (`hive profile …`) are planned with P5, not current CLI surface.
 
 ## The external survey behind all of this
 

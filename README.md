@@ -46,7 +46,7 @@ hive init
 hive
 ```
 
-`hive init` installs the agent skills used by the CLIs present on the machine, offers the optional local Graphify integration, seeds optional narrative memory, and starts an instance daemon on an ephemeral loopback port. It is safe to run again. Profile *authorship* is moving to a daemon-coordinated agent-authored job (see SPEC decision 14 and `docs/design/profiling-implementation-plan.md`); `hive init` is not the long-term profile owner. Use `hive init --no-graphify` to skip the Graphify prompt.
+`hive init` installs the agent skills used by the CLIs present on the machine, offers the optional local Graphify integration, seeds optional narrative memory, and starts an instance daemon on an ephemeral loopback port. It is safe to run again. **Today** it still runs the outgoing deterministic repository profile pass (`ensureProfile` / `src/adapters/profile.ts`); use `--refresh` to force that cache to rebuild. Long-term, profile authorship moves to a daemon-coordinated agent-authored job (SPEC decision 14; plan package P5 removes the init/legacy path). Use `hive init --no-graphify` to skip the Graphify prompt.
 
 Bare `hive` opens the Workspace with Claude as the default orchestrator. To choose another installed vendor explicitly, run `hive codex` or `hive grok`; `hive claude` is the explicit Claude spelling.
 
@@ -55,7 +55,7 @@ Bare `hive` opens the Workspace with Claude as the default orchestrator. To choo
 | Command | Purpose |
 | --- | --- |
 | `hive` | Start or reuse this instance and open its Workspace |
-| `hive init` | Install agent skills, seed optional memory, offer Graphify, and start the daemon |
+| `hive init [--refresh]` | Install agent skills, seed optional memory, offer Graphify, start the daemon; still runs the outgoing deterministic profile pass (`--refresh` rebuilds it until plan package P5) |
 | `hive claude`, `hive codex`, `hive grok` | Open the Workspace with that read-only orchestrator |
 | `hive status` | Show agent name, tool, model, state, context use, task, and failure |
 | `hive kill <agent>` | Stop one agent and preserve any unlanded work |

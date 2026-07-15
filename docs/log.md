@@ -17,12 +17,28 @@ routing category). Corrected passages that still presented the deterministic
   work packages. Briefing still on transitional `src/adapters/profile.ts` until P8.
 - **Touched:** `SPEC.md` (decisions 5/14, summary, roadmap v1), `README.md`,
   `docs/agents/briefing.md`, `docs/agents/memory.md`, `docs/index.md`,
-  `docs/daemon/multi-instance.md`. Excluded P1 surfaces (`docs/daemon/authorization.md`,
+  `docs/daemon/multi-instance.md`, `docs/design/profiling-implementation-plan.md`,
+  `docs/workspace/blueprint.md`. Excluded P1 surfaces (`docs/daemon/authorization.md`,
   `src/**`, capability matrix).
 
 Distinctions kept sharp: local profile file vs inventory sent to a provider;
 automatic background refresh vs explicit reprofiling; structured profile vs
 narrative memory; new foundation vs outgoing legacy reader.
+
+## [2026-07-14] correction | Profiling-docs re-review fixes (forrest)
+
+Cross-vendor review NO-LAND findings applied:
+
+1. **Plan F1/F2 as completed contract** — `docs/design/profiling-implementation-plan.md`
+   no longer presents bounded inventory / candidate-envelope / provenance as open
+   work; sequencing narrative starts at P1; obsolete full-payload and false
+   validation-line imperatives removed.
+2. **Current init profiling restored** — README, SPEC decision 14, briefing, and
+   Workspace blueprint state that `hive init` still runs legacy `ensureProfile`
+   and supports `--refresh` until plan package P5.
+3. **SPEC §15 summary split** — landed storage/acceptance vs transitional
+   `profile.ts` consumers vs planned P2/P8 authorship/consumption.
+4. **Log touched-list** — includes the design plan and blueprint (this entry's parent).
 
 ## [2026-07-14] measurement | Exercise three native instances; retain the GUI blocker
 
