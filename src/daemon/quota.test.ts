@@ -653,8 +653,8 @@ describe("quota persistence and reservations", () => {
   });
 
   test("persists reconciliation, releases unstarted cancellations, and conservatively recovers started reservations", async () => {
-    const { path, db } = await fileDatabase("recovery");
-    const ledger = new QuotaLedger(db);
+    const { root, path, db } = await fileDatabase("recovery");
+    const ledger = new QuotaLedger(db, "instance-a", join(root, "a"));
     const service = new QuotaService(
       ledger,
       config([limit("claude")], { reservationTtlMinutes: 1 }),
@@ -683,7 +683,12 @@ describe("quota persistence and reservations", () => {
     db.close();
 
     const restartedDb = new HiveDatabase(path);
-    const restartedLedger = new QuotaLedger(restartedDb);
+    const restartedLedger = new QuotaLedger(
+      restartedDb,
+      "instance-b",
+      join(root, "b"),
+      async () => "dead" as const,
+    );
     const restarted = new QuotaService(
       restartedLedger,
       service.config,
