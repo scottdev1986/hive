@@ -692,9 +692,9 @@ describe("HiveDaemon HTTP server", () => {
         controlMessageId: "original-run",
       });
       expect(ledger.getReservation(positiveControl.id)?.status).toEqual("active");
-      await daemon.delivery.send("orchestrator", "maya", "Pause.", {
+      await daemon.delivery.send("orchestrator", "maya", "Stop.", {
         priority: "critical",
-        intent: "pause",
+        intent: "stop",
       });
       expect(db.getAgentByName("maya")).toMatchObject({
         status: "failed",
@@ -739,8 +739,8 @@ describe("HiveDaemon HTTP server", () => {
       const message = await daemon.delivery.send(
         "orchestrator",
         "maya",
-        "Pause.",
-        { priority: "critical", intent: "pause" },
+        "Stop.",
+        { priority: "critical", intent: "stop" },
       );
 
       expect(message.state).toEqual("queued");
@@ -751,6 +751,114 @@ describe("HiveDaemon HTTP server", () => {
       });
     } finally {
       await daemon.stop();
+      db.close();
+    }
+  });
+
+  test("a critical pause is non-destructive: same process suspended, no restart, daemon-applied", async () => {
+    const db = new HiveDatabase(join(home, "control-pause-nondestructive.db"));
+    const suspended: string[] = [];
+    class NoRestartSpawner extends StubSpawner {
+      restartCalls = 0;
+      async restartForControl(): Promise<AgentRecord> {
+        this.restartCalls += 1;
+        throw new Error("restartForControl must not run for a non-destructive pause");
+      }
+    }
+    const spawner = new NoRestartSpawner();
+    const tmux = new FakeDaemonTmux();
+    tmux.sessions.add("hive-maya");
+    const daemon = new HiveDaemon({
+      db,
+      spawner,
+      tmux,
+      tmuxSender: new SilentTmuxSender(db),
+      suspendProcesses: async (session) => {
+        suspended.push(session);
+        return { suspended: [{ pid: 100, command: "codex" }], unstopped: [] };
+      },
+    });
+    db.insertAgent(agent());
+    try {
+      const control = await daemon.delivery.send(
+        "orchestrator",
+        "maya",
+        "Pause here.",
+        { priority: "critical", intent: "pause" },
+      );
+      // Non-destructive: the SAME process is suspended; no replacement launched,
+      // no session killed.
+      expect(suspended).toEqual(["hive-maya"]);
+      expect(spawner.restartCalls).toEqual(0);
+      expect(tmux.killed).toHaveLength(0);
+      const row = db.getAgentByName("maya")!;
+      expect(row.status).toBe("control-paused");
+      expect(row.writeRevoked).toBe(true);
+      expect(row.capabilityEpoch).toBe(1);
+      expect(row.controlMessageId).toBe(control.id);
+      // A suspended process cannot ACK; the daemon records the control applied,
+      // so the acknowledgement-deadline sweep does not alert on it.
+      expect(control.state).toBe("applied");
+    } finally {
+      db.close();
+    }
+  });
+
+  test("resume reattests and SIGCONTs a control-paused agent, clearing the control binding", async () => {
+    const db = new HiveDatabase(join(home, "control-pause-resume.db"));
+    const suspended: string[] = [];
+    const resumed: string[] = [];
+    const tmux = new FakeDaemonTmux();
+    tmux.sessions.add("hive-maya");
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new StubSpawner(),
+      tmux,
+      tmuxSender: new SilentTmuxSender(db),
+      suspendProcesses: async (session) => {
+        suspended.push(session);
+        return { suspended: [{ pid: 100, command: "codex" }], unstopped: [] };
+      },
+      resumeProcesses: async (session) => {
+        resumed.push(session);
+      },
+      telemetryReaders: {
+        codex: async () => ({ contextPct: null, lastActivityAt: null }),
+        // The paused agent did not drift; reattestation matches its launch.
+        codexIdentity: async () => ({
+          status: "observed",
+          model: "gpt-5.6-sol",
+          effort: "xhigh",
+          turnId: "t",
+          sessionId: "session-1",
+          observedAt: "2026-07-15T18:00:00.000Z",
+        }),
+      },
+    });
+    db.insertAgent(agent({
+      tool: "codex",
+      toolSessionId: "session-1",
+      executionIdentity: { tool: "codex", model: "gpt-5.6-sol", effort: "xhigh" },
+    }));
+    try {
+      const control = await daemon.delivery.send(
+        "orchestrator",
+        "maya",
+        "Pause.",
+        { priority: "critical", intent: "pause" },
+      );
+      expect(db.getAgentByName("maya")?.controlMessageId).toBe(control.id);
+
+      const outcome = await daemon.resumeAgentAfterPause("maya");
+      expect(outcome.resumed).toBe(true);
+      expect(outcome.identityState).toBe("matching");
+      const row = db.getAgentByName("maya")!;
+      expect(row.status).toBe("idle");
+      expect(row.writeRevoked).toBe(false);
+      // The control binding is cleared; the SAME process was SIGCONT'd.
+      expect(row.controlMessageId).toBeUndefined();
+      expect(resumed).toEqual(["hive-maya"]);
+    } finally {
       db.close();
     }
   });
@@ -919,11 +1027,11 @@ describe("HiveDaemon HTTP server", () => {
         id: "recover-stuck-control",
         from: "orchestrator",
         to: "maya",
-        body: "Pause.",
+        body: "Stop.",
         createdAt: timestamp,
         deliveredAt: null,
         priority: "critical",
-        intent: "pause",
+        intent: "stop",
         state: "queued",
         injectedAt: null,
         acknowledgedAt: null,
@@ -1256,8 +1364,8 @@ describe("HiveDaemon HTTP server", () => {
       const control = await daemon.delivery.send(
         "orchestrator",
         "maya",
-        "Pause before coding.",
-        { priority: "critical", intent: "pause" },
+        "Stop before coding.",
+        { priority: "critical", intent: "stop" },
       );
       expect(control.state).toEqual("queued");
       expect(db.getAgentByName("maya")).toMatchObject({

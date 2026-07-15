@@ -60,6 +60,7 @@ import {
   RoutingPolicyMutationSchema,
   StatuslineReportSchema,
   unknownVendor,
+  type AgentMessage,
   type AgentRecord,
   type HookEvent,
   type IdentityState,
@@ -714,6 +715,16 @@ export class HiveDaemon {
             // message. Reuse the surviving process and reservation exactly.
             return;
           }
+          // A critical `pause` is non-destructive: it must NOT kill the agent or
+          // replace it with a fresh read-only process (that destroyed live
+          // context in the field). Freeze the SAME process instead — capability
+          // is already revoked by delivery — and preserve the session for an
+          // authorized reattesting resume. stop/cancel/restrict-writes keep the
+          // existing revoke-and-replace path below.
+          if (message.intent === "pause") {
+            await this.pauseAgentForControl(agent, message);
+            return;
+          }
           if (!sameControlAttempt) {
             if (agent.tool === "codex" && this.codexControl?.hasAgent(agent.name)) {
               await this.codexControl.denyAgentApprovals(agent.name);
@@ -1346,6 +1357,62 @@ export class HiveDaemon {
    * revocation), so a daemon restart still sees a paused, revoked agent and
    * crash recovery never resumes it into mutation.
    */
+  /**
+   * Non-destructively freeze an agent's process tree: a provider-native turn
+   * interrupt for an app-server session, then a SIGSTOP of the whole tree. The
+   * process, rollout/thread, tmux holder, and toolSession are preserved. Shared
+   * by every pause path (identity drift and operator control). Returns the
+   * suspend outcome, or null when the suspension itself failed — either of which
+   * a caller must treat as unsafe if any process was left running.
+   */
+  private async freezeAgentProcessTree(
+    agent: AgentRecord,
+  ): Promise<SuspendOutcome | null> {
+    if (agent.tool === "codex" && this.codexControl?.hasAgent(agent.name)) {
+      await this.codexControl.interrupt(agent).catch(() => undefined);
+    }
+    return this.suspendAgentProcesses(agent.tmuxSession).catch((error) => {
+      console.error(
+        `Hive could not suspend ${agent.name}'s process tree: ${
+          error instanceof Error ? error.message : "unknown error"
+        }`,
+      );
+      return null;
+    });
+  }
+
+  /**
+   * Non-destructive handler for a critical control whose intent is `pause`. The
+   * revoke-first is already durable when this runs: delivery's
+   * `revokeAgentCapabilities` advanced the epoch, set writeRevoked, moved the
+   * row to control-paused, and denied pending approvals in one transaction
+   * BEFORE the process is touched. This then freezes the SAME process
+   * non-destructively and binds the control to the row. It never kills the
+   * process, never spawns a replacement, and reserves no control quota — a
+   * paused agent runs no turn. A suspension that leaves any process running
+   * throws, so the control is not falsely recorded as applied.
+   */
+  private async pauseAgentForControl(
+    agent: AgentRecord,
+    message: AgentMessage,
+  ): Promise<void> {
+    const suspend = await this.freezeAgentProcessTree(agent);
+    const current = this.db.getAgentById(agent.id) ?? agent;
+    this.db.upsertAgent({
+      ...current,
+      status: "control-paused",
+      writeRevoked: true,
+      controlMessageId: message.id,
+    });
+    if (suspend === null || suspend.unstopped.length > 0) {
+      throw new Error(
+        suspend === null
+          ? `Pause suspension failed for ${agent.name}; the process may still be running`
+          : `${suspend.unstopped.length} process(es) survived pause suspension for ${agent.name}`,
+      );
+    }
+  }
+
   private async pauseWriterForIdentityDrift(
     agent: AgentRecord,
     detail: string,
@@ -1359,19 +1426,7 @@ export class HiveDaemon {
     });
     this.capabilities.revokeSubject(agent.name);
     removeCredential(agent.name);
-    if (agent.tool === "codex" && this.codexControl?.hasAgent(agent.name)) {
-      await this.codexControl.interrupt(agent).catch(() => undefined);
-    }
-    const suspend = await this.suspendAgentProcesses(agent.tmuxSession).catch(
-      (error) => {
-        console.error(
-          `Hive identity guard could not suspend ${agent.name}: ${
-            error instanceof Error ? error.message : "unknown error"
-          }`,
-        );
-        return null;
-      },
-    );
+    const suspend = await this.freezeAgentProcessTree(agent);
     const halt = suspend === null
       ? "process suspension FAILED (see daemon log) — treat as unsafe"
       : suspend.unstopped.length > 0
@@ -1464,6 +1519,9 @@ export class HiveDaemon {
       writeRevoked: false,
       capabilityEpoch: nextEpoch,
       identityState,
+      // Clear the control binding: an operator `pause` recorded its
+      // controlMessageId here, and a resumed agent is no longer control-owned.
+      controlMessageId: undefined,
       ...(observed === undefined ? {} : { observedIdentity: observed }),
       ...(liveModel === undefined ? {} : { liveModel }),
       ...(liveEffort === undefined ? {} : { liveEffort }),

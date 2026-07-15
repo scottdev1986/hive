@@ -122,11 +122,14 @@ describe("priority control messages", () => {
         createdAt: timestamp,
         resolvedAt: null,
       });
+      // A stop/cancel/restrict-writes control revokes and replaces the process,
+      // so it stays `injected` until the read-only replacement acknowledges.
+      // (`pause` is non-destructive and daemon-applied — covered separately.)
       const control = await delivery.send(
         "orchestrator",
         "maya",
-        "Pause before coding.",
-        { priority: "critical", intent: "pause" },
+        "Stop before coding.",
+        { priority: "critical", intent: "stop" },
       );
       expect(control).toMatchObject({
         priority: "critical",
