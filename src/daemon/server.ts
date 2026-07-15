@@ -139,11 +139,14 @@ import {
 import {
   defaultReapDependencies,
   reapCapturedTree,
+  resumeTmuxSession,
   stopAgentSession,
   stopTmuxSession,
+  suspendTmuxSession,
   type ReapDependencies,
   type ReapOutcome,
   type SessionStopAdapter,
+  type SuspendOutcome,
 } from "./teardown";
 import {
   assessResources,
@@ -461,6 +464,10 @@ export interface HiveDaemonOptions {
    * exercise a stale release without building one (see build-freshness.ts). */
   buildFreshness?: () => Promise<BuildFreshness>;
   repoRoot?: string;
+  // Non-destructive process-tree suspend/resume for a critical pause; injectable
+  // so tests can drive pause/resume without real SIGSTOP.
+  suspendProcesses?: (session: string) => Promise<SuspendOutcome>;
+  resumeProcesses?: (session: string) => Promise<void>;
   removeWorktree?: (
     repoRoot: string,
     worktreePath: string,
@@ -646,6 +653,12 @@ export class HiveDaemon {
   private readonly stopTmuxProcesses: (
     session: string,
   ) => Promise<ReapOutcome>;
+  // Non-destructive halt/resume of an agent's process tree — the mechanism a
+  // pause uses to freeze a writer without terminating it. Injectable for tests.
+  private readonly suspendAgentProcesses: (
+    session: string,
+  ) => Promise<SuspendOutcome>;
+  private readonly resumeAgentProcesses: (session: string) => Promise<void>;
   private memoryPressure = false;
 
   constructor(options: HiveDaemonOptions) {
@@ -813,6 +826,18 @@ export class HiveDaemon {
         tmux: teardownTmux,
         reap: this.reapDependencies,
       });
+    this.suspendAgentProcesses = options.suspendProcesses ??
+      ((session) =>
+        suspendTmuxSession(session, {
+          tmux: teardownTmux,
+          reap: this.reapDependencies,
+        }));
+    this.resumeAgentProcesses = options.resumeProcesses ??
+      ((session) =>
+        resumeTmuxSession(session, {
+          tmux: teardownTmux,
+          reap: this.reapDependencies,
+        }));
     this.repoRoot = options.repoRoot ?? process.cwd();
     this.readClaudeTelemetry = options.telemetryReaders?.claude ??
       readClaudeTelemetry;
@@ -1303,6 +1328,66 @@ export class HiveDaemon {
    * stuck "spawning" row to working, which is exactly the row the field
    * test saw frozen while the agent had long since landed.
    */
+  /**
+   * Fail-closed, NON-DESTRUCTIVE response to a Codex writer whose observed
+   * identity has drifted from its authorized launch identity. Order matters and
+   * is load-bearing:
+   *   1. Revoke write/landing capability FIRST, durably and atomically — a
+   *      revoked-but-still-running writer can still mutate through local shell,
+   *      so revocation alone is not enough, but it must land before the freeze
+   *      so no window exists where a stale token could land.
+   *   2. Freeze the process non-destructively: a native turn interrupt for an
+   *      app-server session, then SIGSTOP the whole process tree. The process,
+   *      rollout, thread, tmux holder, and toolSession are all preserved.
+   *   3. Wake queen with a durable report. Control success is measured by the
+   *      daemon/process state, never by an acknowledgement — a suspended
+   *      process cannot ack.
+   * The drift is durable on the row (identityState + observedIdentity + the
+   * revocation), so a daemon restart still sees a paused, revoked agent and
+   * crash recovery never resumes it into mutation.
+   */
+  private async pauseWriterForIdentityDrift(
+    agent: AgentRecord,
+    detail: string,
+  ): Promise<void> {
+    const nextEpoch = agent.capabilityEpoch + 1;
+    this.db.upsertAgent({
+      ...agent,
+      status: "control-paused",
+      writeRevoked: true,
+      capabilityEpoch: nextEpoch,
+    });
+    this.capabilities.revokeSubject(agent.name);
+    removeCredential(agent.name);
+    if (agent.tool === "codex" && this.codexControl?.hasAgent(agent.name)) {
+      await this.codexControl.interrupt(agent).catch(() => undefined);
+    }
+    const suspend = await this.suspendAgentProcesses(agent.tmuxSession).catch(
+      (error) => {
+        console.error(
+          `Hive identity guard could not suspend ${agent.name}: ${
+            error instanceof Error ? error.message : "unknown error"
+          }`,
+        );
+        return null;
+      },
+    );
+    const halt = suspend === null
+      ? "process suspension FAILED (see daemon log) — treat as unsafe"
+      : suspend.unstopped.length > 0
+      ? `process suspension left ${suspend.unstopped.length} process(es) still running`
+      : "process tree suspended";
+    await this.delivery.send(
+      "hive-identity-guard",
+      ORCHESTRATOR_NAME,
+      `Codex writer ${agent.name} PAUSED for execution-identity drift: ${detail}. ` +
+        `Write/landing capability revoked (epoch ${nextEpoch}); ${halt}. ` +
+        `Session/process/tmux/toolSession are preserved for an authorized ` +
+        `reattesting resume; a suspended process cannot acknowledge, so this ` +
+        `pause is measured by process state, not an ACK.`,
+    );
+  }
+
   async refreshToolTelemetry(): Promise<void> {
     for (const agent of this.db.listAgents()) {
       if (
@@ -1528,6 +1613,23 @@ export class HiveDaemon {
       }
       if (Object.keys(updates).length > 0) {
         this.db.upsertAgent({ ...current, ...updates });
+      }
+      // Fail-closed enforcement (maintenance backstop): a Codex writer newly
+      // observed to have drifted from its authorized identity is paused
+      // non-destructively — capability revoked, process frozen, queen woken.
+      // `updates.identityState` is set only on the transition to drift, so this
+      // fires once; the writeRevoked it sets keeps every later sweep off it.
+      if (
+        current.tool === "codex" && !current.readOnly && !current.writeRevoked &&
+        updates.identityState === "drift"
+      ) {
+        const observed = updates.observedIdentity ?? current.observedIdentity;
+        const launch = current.executionIdentity;
+        const detail = observed === undefined
+          ? "observed identity differs from the authorized launch identity"
+          : `authorized ${launch?.model ?? current.model}/${launch?.effort ?? "?"}` +
+            `, observed ${observed.model}/${observed.effort ?? "?"}`;
+        await this.pauseWriterForIdentityDrift({ ...current, ...updates }, detail);
       }
     }
   }

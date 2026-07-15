@@ -3557,6 +3557,52 @@ describe("Codex execution-identity attestation sweep", () => {
     }
   });
 
+  test("pauses a drifted Codex writer non-destructively and wakes queen", async () => {
+    const db = new HiveDatabase(join(home, "attest-pause.db"));
+    const suspended: string[] = [];
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new StubSpawner(),
+      tmux: new FakeDaemonTmux(),
+      // Observe the non-destructive halt without real SIGSTOP.
+      suspendProcesses: async (session) => {
+        suspended.push(session);
+        return { suspended: [{ pid: 100, command: "codex" }], unstopped: [] };
+      },
+      telemetryReaders: {
+        codex: async () => ({ contextPct: null, lastActivityAt: null }),
+        codexIdentity: async () => ({
+          status: "observed",
+          model: "gpt-5.6-luna",
+          effort: "low",
+          turnId: "turn-2",
+          sessionId: "session-1",
+          observedAt: "2026-07-15T18:00:00.000Z",
+        }),
+      },
+    });
+    db.insertAgent(codexAgent());
+    try {
+      await daemon.refreshToolTelemetry();
+      const row = db.getAgentByName("maya")!;
+      expect(row.identityState).toBe("drift");
+      // Revoked-first and paused, capability epoch advanced.
+      expect(row.status).toBe("control-paused");
+      expect(row.writeRevoked).toBe(true);
+      expect(row.capabilityEpoch).toBe(1);
+      // Non-destructive: the tree was SUSPENDED, not killed or restarted.
+      expect(suspended).toEqual(["hive-maya"]);
+      // queen was woken durably; success is measured by daemon/process state.
+      const toQueen = db.listMessages().filter((message) =>
+        message.to === "queen" && message.from === "hive-identity-guard"
+      );
+      expect(toQueen).toHaveLength(1);
+      expect(toQueen[0]?.body).toContain("PAUSED for execution-identity drift");
+    } finally {
+      db.close();
+    }
+  });
+
   test("a live rollout with no readable identity is unknown, never synthesized", async () => {
     const db = new HiveDatabase(join(home, "attest-unknown.db"));
     const daemon = new HiveDaemon({
