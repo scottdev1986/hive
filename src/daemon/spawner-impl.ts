@@ -83,6 +83,7 @@ import {
   type RawLaunchCandidate,
   requireAuthorizedLaunch,
 } from "./authorized-launch";
+import { assertCodexWriterContained } from "./codex-containment";
 import { agentTmuxSession } from "./tmux-sessions";
 import { resolveAutoEffort, validateEffort } from "./effort";
 import type { CapabilityDiscoveryResult } from "./capability-discovery";
@@ -1832,6 +1833,11 @@ export class HiveSpawner implements Spawner {
       quotaReservationId = chosen.reservationId;
     }
     tool = authorized.tool;
+    // Codex writer authoring is contained: refuse before any worktree or launch,
+    // for an explicit model, a routed selection, or a fallback link alike. No
+    // silent fallback to another Codex driver or provider — the caller gets an
+    // actionable containment diagnostic. Read-only Codex is unaffected.
+    assertCodexWriterContained(tool, readOnly);
     const model: string = authorized.model;
     effort = authorized.effort;
     if (model !== "default") {

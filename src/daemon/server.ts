@@ -34,6 +34,7 @@ import {
   reconcileCodexIdentity,
   sameObservedIdentity,
 } from "./identity-attestation";
+import { codexWriterContainment } from "./codex-containment";
 import {
   assessStrandedWork,
   listUnmergedHiveBranches,
@@ -1463,6 +1464,17 @@ export class HiveDaemon {
         resumed: false,
         identityState: attestationStateOf(agent),
         reason: `${name} is not paused (status ${agent.status})`,
+      };
+    }
+    // Codex writer authoring is contained: a paused Codex writer must not have
+    // its write authority reissued (defense-in-depth for legacy paused writers;
+    // Codex writers can no longer be launched at all).
+    const containment = codexWriterContainment(agent.tool, agent.readOnly);
+    if (containment !== null) {
+      return {
+        resumed: false,
+        identityState: attestationStateOf(agent),
+        reason: containment,
       };
     }
     let identityState: IdentityState = attestationStateOf(agent);

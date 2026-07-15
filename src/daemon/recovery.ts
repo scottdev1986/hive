@@ -32,6 +32,7 @@ import {
   type ExecutionIdentity,
   type HiveConfig,
 } from "../schemas";
+import { codexWriterContainment } from "./codex-containment";
 import type { HiveDatabase } from "./db";
 import type { StopAgentSession } from "./teardown";
 import { readCodexTelemetry } from "./tool-telemetry";
@@ -357,6 +358,14 @@ export class CrashRecovery {
         };
       }
     }
+    // Codex writer authoring is contained: a crashed Codex writer must not be
+    // relaunched (defense-in-depth for legacy writers). Mark it dead with the
+    // actionable diagnostic; recovery never deletes the worktree, so the work
+    // survives for a read-only respawn or a different provider.
+    const writerContainment = codexWriterContainment(agent.tool, agent.readOnly);
+    if (writerContainment !== null) {
+      return this.markDead(agent, writerContainment);
+    }
     // Callers checked hasSession before entering, but that check is stale by
     // now if another recovery finished in between; resuming over a live
     // session would fail the tmux launch and mark a healthy agent dead.
@@ -397,6 +406,26 @@ export class CrashRecovery {
         agent,
         "no resumable tool session was found for this worktree",
       );
+    }
+    // Final authoritative terminal check IMMEDIATELY before the relaunch. The
+    // guard at the top of this method is stale after the awaited hasSession and
+    // session-discovery work above, during which hive_kill can mark this agent
+    // terminal (marks the row dead durably before tearing the session down). A
+    // relaunch here would resurrect a deliberately closed agent — so re-prove
+    // the fresh row is not closed right before the live-row upsert/launch.
+    if (!options.manual) {
+      const latest = this.deps.db.getAgentById(agent.id);
+      if (
+        latest === null || latest.closedAt !== undefined ||
+        isTerminalAgentStatus(latest.status)
+      ) {
+        return {
+          agent: agent.name,
+          action: "skipped",
+          reason:
+            "agent was closed during recovery preparation; recovery will not resurrect it",
+        };
+      }
     }
     return this.resume(agent, sessionId);
   }
