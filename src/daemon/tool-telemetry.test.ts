@@ -351,7 +351,6 @@ test("newest incomplete in-cwd turn_context is unknown, never older complete", (
       .toEqual(null);
   });
 
-  
   test("missing or non-cli source on newest in-cwd turn_context is unknown", () => {
     const cwd = resolve(WORKTREE);
     const older = turnContext("gpt-5.6-sol", "xhigh", cwd, "old", "2026-07-10T10:00:00.000Z");

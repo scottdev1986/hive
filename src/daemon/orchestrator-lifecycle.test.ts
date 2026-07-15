@@ -138,7 +138,9 @@ describe("event-driven orchestrator lifecycle", () => {
       spawner: unusedSpawner,
       tmuxSender: sender,
     });
-    db.insertAgent(agent());
+    // Claude writer: Codex legacy turn-start containment (missing executionIdentity
+    // pause → queen notify) is out of scope for this idle-wake invariant.
+    db.insertAgent(agent({ tool: "claude" }));
     try {
       await daemon.processEvent({
         kind: "turn-start",
