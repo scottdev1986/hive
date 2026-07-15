@@ -44,6 +44,8 @@ Liveness is deliberately three-valued:
 
 A live PID is not ownership proof because PIDs are reused. Unknown state preserves work and blocks destructive operations (`src/daemon/lifecycle.ts:48-83`).
 
+For a temporary acceptance instance outside the user registry, set a test-owned `HIVE_HOME` directly and omit `--instance`; record the resulting resolved-home hash as the instance id before any lifecycle action.
+
 ## Per-instance and shared state
 
 | Scope | State | Coordination |
@@ -56,6 +58,8 @@ A live PID is not ownership proof because PIDs are reused. Unknown state preserv
 | Machine | installed version directories, the `current` pointer, and the CLI link | Machine mutation lease plus final all-instance liveness gate |
 
 The default home remains compatible with pre-instance state. Legacy unsuffixed tmux sessions are recognized only for the default home, so a named instance cannot adopt them (`src/daemon/tmux-sessions.ts:31-47`). Policy inheritance reads the default database through SQLite's read-only WAL-aware connection and writes a normal audited `import-default-policy` revision into the named database (`src/daemon/instance-settings.ts`, `src/daemon/routing-policy-store.ts`). It does not copy the database file, share a writer, import a provisional no-consent policy, or overwrite a named policy after its own first edit.
+
+Acceptance may delete only manifest-owned per-instance development state. The installed instance is compare-only; repository paths and refs require their own recorded ownership; machine-scoped quota/audit state is shared and retained.
 
 ## One repository, multiple instances
 
@@ -87,6 +91,8 @@ An instance between lock acquisition and handshake publication is therefore prot
 
 `hive.db` remains a per-instance, single-process database. `quota.db` is the deliberate multi-process exception; see [Database resilience](database-resilience.md).
 
+An acceptance run therefore discloses shared quota reservations/audit rows and provider usage, lets normal instance teardown settle its active reservations, and never deletes the ledger to simulate hermetic cleanup.
+
 ## Machine-wide mutation gates
 
 Update, rollback, and native machine uninstall mutate global installation state. They acquire a machine mutation lease after any confirmation or safe staging work, then repeat the all-instance blocker check while holding it. Agent spawn and landing register operations in the same coordinator, so neither side can win a time-of-check/time-of-use race (`src/daemon/mutation-lease.ts:13-29`, `:162-255`, `:258-305`).
@@ -104,6 +110,8 @@ The refusal names the instance and the observed agents or unknown marker (`src/d
 
 Update may download, verify, and stage bytes while teams are working, because staging does not change `current`. Activation holds the lease, repeats the blocker check, and only then changes the active version (`src/cli/update.ts:291-365`). Rollback follows the same lease and final check (`src/cli/update.ts:199-221`).
 
+Acceptance testing is not a reason to enter these gates. A development release runs from an absolute temporary install with a temporary `HIVE_HOME`; the installed Hive and its machine-wide `current` pointer remain compare-only and continuously live. See [Pre-release acceptance testing](../release/acceptance-testing.md).
+
 Machine uninstall also checks before its prompt, acquires the lease after confirmation, checks again, and stops every idle daemon before removing machine state. If a daemon will not stop, uninstall refuses instead of deleting the binary underneath it (`src/cli/uninstall.ts:335-410`). Repository uninstall does not acquire the machine lease because it does not mutate the global `current` pointer.
 
 ## Failure rules
@@ -111,6 +119,7 @@ Machine uninstall also checks before its prompt, acquires the lease after confir
 - A lifecycle file records an act, not liveness. The matching lock, process identity, and handshake establish state.
 - A wrong instance id, project identity, build, schema epoch, or wire contract is a refusal, never a best-effort reuse.
 - Unknown ownership preserves reservations, branches, worktrees, sessions, and installation state.
+- An acceptance lifecycle action whose target is absent from the run ownership manifest is unknown and therefore forbidden; it must never fall back to the installed instance.
 - A branch ownership ref is evidence of ownership, not permission to destroy unlanded work. Ordinary teardown still preserves stranded work.
 - Successful staging is not successful activation. CLI messages distinguish the two.
 

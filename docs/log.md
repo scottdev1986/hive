@@ -1,5 +1,20 @@
 # Wiki Log
 
+## [2026-07-15] correction | Acceptance preserves the running installed Hive
+
+Development-build acceptance now runs from an absolute, marked temporary install in
+parallel with the already-running installed Hive on the same machine/account. The
+installed CLI/app/current/config and live process/handshake/health tuple are compare-only:
+the runbook forbids targeting them with installer, activation, update, rollback,
+uninstall, restart, stop, quit, signal, or cleanup operations.
+
+The authoritative runbook now requires a `RUN_ID` ownership manifest, source-supported
+temporary `HIVE_HOME`/`TMPDIR` isolation, both update-disable variables, a continuous
+production sentinel plus lifecycle/UI boundary checks, identity-guarded idempotent
+cleanup, explicit shared residuals, and a final unchanged-production attestation. Short
+guardrails were added to README, multi-instance, distribution, and teardown docs. This
+entry records the contract; it does not claim an acceptance run was performed.
+
 ## [2026-07-15] change | Remove app profiling entirely; preserve scoped doc-briefing
 
 Both repo profilers are gone, as a deliberate product decision. The agent-authored

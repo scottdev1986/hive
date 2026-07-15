@@ -25,6 +25,8 @@ The design called for the installer to verify the manifest signature, the Develo
 
 The reason it has not been closed is the one the research doc gave: portable POSIX shell cannot reliably verify Ed25519 on every supported macOS. The stated options are a tiny notarized installer binary, or a pinned Apple-native signature check plus a SHA from a versioned HTTPS script. Neither is built. `curl | sh` is convenient, not a trust argument; the script is short enough to audit, which is the only reason it is acceptable at all.
 
+The installer is never part of development-build acceptance on a machine with an installed Hive. Acceptance constructs the native layout below a marked temporary root and launches its CLI by absolute path; it does not run `install.sh`, change the installed CLI link or `current`, or invoke activation. See [Pre-release acceptance testing](acceptance-testing.md).
+
 ## Claims from the design that were never implemented
 
 Recorded so nobody re-derives them from the research doc as though they were behavior:
@@ -74,6 +76,8 @@ The desktop precedents agree, and this is why activation is gated on quiescence 
 **OrbStack.** Owns both the app and its bundled CLIs, linking them from an app-managed directory. Evidence for single-owner bundling; *not* evidence that daemon restarts are safe — its docs specify no no-interruption contract.
 
 The consequence for Hive is the one the code implements: a Unix process keeps executing its already-open image after a symlink changes, so atomic activation does **not** update a running daemon. Download and signed staging are safe while teams run; activation is a separate machine-wide event under the mutation lease and refuses until every instance is observable and idle; restarting a stale daemon is a third event. The handshake refuses to attach a new CLI to an old build. The all-instance gate is in `src/cli/update.ts:291-365`; the stale/foreign/busy triage and restart path are in [versioning-and-release.md](versioning-and-release.md); what restart must not corrupt is in [Database resilience](../daemon/database-resilience.md).
+
+Therefore acceptance never tests activation or restart against the installed Hive: it proves the installed process identity, start time, executable, handshake, and read-only health remained continuous while the temporary development instance ran.
 
 Two further rules from the design still stand as intent even though nothing enforces them yet. **Database migrations must follow expand/contract**: an automatically activated release may add compatible tables, columns, or indexes, but must not destroy state the previous binary needs for rollback; destructive migrations wait for a later release or an explicit user-confirmed upgrade. And **agent hooks are another client**: a live team should keep using the session's recorded executable path rather than whatever `hive` resolves to on `PATH`, so a team has one control-plane version from birth to quiescence.
 

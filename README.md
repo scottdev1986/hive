@@ -36,6 +36,8 @@ The installer supports macOS only. It requires non-empty Hive manifest signature
 
 Portable shell does not verify the manifest's Ed25519 signature; presence is required, but first-install authenticity still rests on TLS and GitHub Release hosting. The installer stores the exact manifest bytes and normalized signature so Hive can verify them before a future rollback. Native `hive update` is stricter: it requires a valid signature from an embedded release key, checks artifact hashes, and probes the candidate before activation. See [distribution](docs/release/distribution.md) for the complete trust boundary.
 
+Development-build acceptance never runs this installer over an existing Hive. It uses a marked temporary install while the installed app and daemon remain continuously live; see the [acceptance runbook](docs/release/acceptance-testing.md).
+
 ## Quick start
 
 From a git repository:
@@ -87,6 +89,8 @@ Instances have separate identity, daemon lock, ephemeral port, handshake, databa
 
 Machine-wide update, rollback, and uninstall operations refuse while any instance has a live or unobservable team. Repository uninstall removes only the current repository's Hive footprint. It stops the selected daemon only after its handshake proves it serves that repository; a daemon serving another repository is never signaled.
 
+For acceptance isolation outside `~/.hive`, set a test-owned `HIVE_HOME` directly and do not combine it with `--instance`, which selects a home below `~/.hive/instances`. Lifecycle and cleanup actions must resolve to the test run's recorded instance identity before they can act.
+
 ## Autonomy and routing
 
 Writer agents default to `sandboxed`: vendor permission controls remain active and risky operations enter Hive's approval path. `hive autonomy dangerous` removes those prompts for future spawns and resumes; it is equivalent to granting the underlying agent CLI broad access, so use it deliberately. Orchestrators remain read-only in either mode.
@@ -110,6 +114,8 @@ Hive rejects unknown configuration keys instead of silently ignoring misspelling
 `hive update rollback` works offline but is not an unsigned shortcut: it re-verifies the retained version's signed manifest and CLI hash before changing `current`. A legacy release without rollback verification material must be reinstalled first.
 
 Set `HIVE_NO_UPDATE_CHECK=1` to disable passive update checks, or `HIVE_DISABLE_UPDATES=1` to disable both checks and manual self-update.
+
+During development-build acceptance, set both variables and allow only the read-only `hive update status`; update, rollback, uninstall, activation, and installed-daemon restart are outside the acceptance contract.
 
 ## Development
 

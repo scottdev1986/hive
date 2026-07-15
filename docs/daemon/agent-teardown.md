@@ -12,6 +12,8 @@ So teardown now kills the **process tree**, and then it **looks again**. One pat
 
 **A signal delivered is an act. A process gone is a state.** Teardown reports what it *measured*, not what it *sent* — a process still standing after SIGKILL is reported as a survivor, never rounded down to a clean kill.
 
+For acceptance, a recorded act is also not proof of ownership: resolve the full manifest-owned development identity before signaling, and treat a missing or mismatched target as unknown rather than falling back to another Hive.
+
 ## What was actually leaking
 
 Measured on 2026-07-13 against a throwaway `HIVE_HOME`, with a staged agent whose shape matches a real one: pane shell → vendor CLI → MCP stdio child, plus a `nohup`ed background command, plus a Codex host.
@@ -47,6 +49,8 @@ SIGKILL, not SIGTERM: this path is only reached once the user has decided. The X
 
 Spawner cleanup uses the same capture-kill-readback primitive through `verifiedAgentStop`, including failed launches, failed critical restarts, and replacement of a failed Codex app-server host. If readback is unavailable or any process survives, Hive records the agent as `stuck`, revokes writes, preserves the worktree, and leaves its quota reservation active. It does not launch a fallback over an unverified predecessor or direct-kill around the verifier. Only a positively verified stop permits quota cancellation and failed-spawn cleanup (`src/daemon/teardown.ts:260-282`, `src/daemon/spawner-impl.ts:2267-2359`).
 
+An external acceptance cleanup follows the same ordering: capture the manifest-owned development tree before tmux/session destruction, then verify absence. It never signals an installed or unknown tree.
+
 ## Immediate is a UX constraint, not permission to destroy
 
 The agent dies at once — no confirmation, no blocking prompt. Nobody is asked whether the work mattered, which is exactly why nobody may decide it did not:
@@ -62,6 +66,8 @@ The agent dies at once — no confirmation, no blocking prompt. Nobody is asked 
 `stop()` used to kill the orchestrator's tmux session and exit, leaving every agent running with nothing alive to supervise, message, meter, or reap them. Quitting the app is the ordinary way a session ends, so that was the ordinary way Hive orphaned processes.
 
 Shutdown now closes **every live agent through the same kill path**, before the timers stop (teardown needs delivery and quota alive), and then reaps the orchestrator's own pane tree — the orchestrator has no agents row, so nothing else would have.
+
+That breadth is why an acceptance harness must resolve the full instance tuple before calling stop or closing a Workspace. It may quit only the temporary development app whose home, instance id, daemon/app PIDs and start times, executables, port/handshake, tmux namespace, and window match its ownership manifest. The already-running installed Hive is never a teardown target; unknown identity fails and is preserved. See [Pre-release acceptance testing](../release/acceptance-testing.md).
 
 ### How long it takes, and why the app's quit wait is not a deadline
 
