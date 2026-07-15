@@ -1040,28 +1040,57 @@ export class HiveDatabase {
     return this.upsertAgent(agent);
   }
 
-  markAgentDead(
+  /**
+   * Every terminal transition is one fail-closed transaction: bump epoch, set
+   * writeRevoked + closedAt, revoke capability rows, deny pending approvals.
+   * Callers must not upsert a live status over a terminal row afterwards.
+   */
+  markAgentTerminal(
     agentId: string,
     timestamp: string,
-    failureReason?: string,
+    status: "dead" | "failed" | "done",
+    options: { failureReason?: string; failedAt?: string } = {},
   ): AgentRecord | null {
-    // Terminal is authority-revoking: bump epoch and set writeRevoked in the
-    // same transaction as status=dead so a crash between "marked dead" and
-    // process teardown cannot leave a live process with a valid credential.
     return this.transaction(() => {
       const current = this.getAgentById(agentId);
       if (current === null) {
         return null;
       }
+      if (isTerminalAgentStatus(current.status) && current.status !== status) {
+        // Already terminal under another status — keep the first closure.
+        return current;
+      }
+      this.database.query(`
+        UPDATE capabilities SET revokedAt = ?
+        WHERE subject = ? AND revokedAt IS NULL
+      `).run(timestamp, current.name);
+      this.database.query(`
+        UPDATE approvals SET status = 'denied', resolvedAt = ?
+        WHERE agentName = ? AND status = 'pending'
+      `).run(timestamp, current.name);
       return this.upsertAgent({
         ...current,
-        status: "dead",
+        status,
         writeRevoked: true,
         capabilityEpoch: current.capabilityEpoch + 1,
-        failureReason: failureReason ?? current.failureReason,
+        failureReason: options.failureReason ?? current.failureReason,
+        failedAt: options.failedAt ??
+          (status === "failed" ? timestamp : current.failedAt),
         lastEventAt: timestamp,
         closedAt: current.closedAt ?? timestamp,
+        pauseCapture: undefined,
+        controlMessageId: undefined,
       });
+    });
+  }
+
+  markAgentDead(
+    agentId: string,
+    timestamp: string,
+    failureReason?: string,
+  ): AgentRecord | null {
+    return this.markAgentTerminal(agentId, timestamp, "dead", {
+      failureReason,
     });
   }
 

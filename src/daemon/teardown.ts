@@ -241,17 +241,55 @@ export async function suspendCapturedTree(
 
 /** SIGCONT a captured tree, resuming the exact processes a suspend froze.
  * Parents are continued before children (the reverse of suspend) so a child
- * never resumes into a still-stopped parent. Best-effort: a process that exited
- * while paused is simply skipped. */
+ * never resumes into a still-stopped parent. SIGCONT errors propagate, and
+ * every captured PID must read back non-stopped before success. */
 export async function resumeCapturedTree(
   captured: CapturedTree,
   dependencies: ReapDependencies = defaultReapDependencies(),
+  verificationPid: number = process.pid,
 ): Promise<void> {
+  if (captured.length === 0) {
+    throw new Error("resume refused: empty process capture");
+  }
+  const failures: string[] = [];
   for (const entry of captured) {
     try {
       dependencies.kill(entry.pid, "SIGCONT");
-    } catch {
-      // Exited while paused; nothing to continue.
+    } catch (error) {
+      failures.push(
+        `SIGCONT pid ${entry.pid}: ${
+          error instanceof Error ? error.message : "unknown error"
+        }`,
+      );
+    }
+  }
+  if (failures.length > 0) {
+    throw new Error(`SIGCONT failed: ${failures.join("; ")}`);
+  }
+  await dependencies.wait(REAP_SETTLE_MS);
+  const states = parseStateTable(await dependencies.psState());
+  if (!states.some((sample) => sample.pid === verificationPid)) {
+    throw new Error(
+      `Process-state verification did not contain verification pid ${verificationPid}`,
+    );
+  }
+  const byPid = new Map(states.map((sample) => [sample.pid, sample]));
+  for (const entry of captured) {
+    const live = byPid.get(entry.pid);
+    if (live === undefined) {
+      throw new Error(
+        `SIGCONT readback: pid ${entry.pid} vanished (not non-stopped)`,
+      );
+    }
+    if (live.stat.startsWith("T")) {
+      throw new Error(
+        `SIGCONT readback: pid ${entry.pid} is still stopped (${live.stat})`,
+      );
+    }
+    if (live.stat.startsWith("Z")) {
+      throw new Error(
+        `SIGCONT readback: pid ${entry.pid} is a zombie (${live.stat})`,
+      );
     }
   }
 }
@@ -314,42 +352,31 @@ export async function capturePauseBoundTree(
   }
   const birthRaw = await (dependencies.psBirth ?? runPsBirth)();
   const births = parseBirthTable(birthRaw);
-  const descendants = descendantsOf(processes, roots);
-  const byPid = new Map(descendants.map((sample) => [sample.pid, sample]));
   const rootSet = new Set(roots);
+  const treeRoots = hostPid === null ? roots : [...roots, hostPid];
+  const descendants = descendantsOf(processes, treeRoots);
+  const seen = new Set<number>();
   const tree: CapturedProcess[] = [];
   for (const sample of descendants) {
     if (sample.pid <= 1 || sample.pid === selfPid) continue;
+    if (seen.has(sample.pid)) continue;
+    seen.add(sample.pid);
     const birth = births.get(sample.pid);
     if (birth === undefined || birth.length === 0) {
       throw new Error(`Process ${sample.pid} has no readable birth/start identity`);
     }
+    let role: CapturedProcess["role"] = "descendant";
+    if (hostPid !== null && sample.pid === hostPid) role = "app-server-host";
+    else if (rootSet.has(sample.pid)) role = "tmux-root";
     tree.push({
       pid: sample.pid,
       command: sample.command,
       birth,
-      role: rootSet.has(sample.pid) ? "tmux-root" : "descendant",
+      role,
     });
   }
-  if (hostPid !== null && !byPid.has(hostPid)) {
-    const host = processes.find((process) => process.pid === hostPid);
-    if (host === undefined) {
-      throw new Error(`App-server host pid ${hostPid} vanished during capture`);
-    }
-    const birth = births.get(hostPid);
-    if (birth === undefined || birth.length === 0) {
-      throw new Error(`App-server host ${hostPid} has no readable birth/start identity`);
-    }
-    tree.push({
-      pid: host.pid,
-      command: host.command,
-      birth,
-      role: "app-server-host",
-    });
-  } else if (hostPid !== null) {
-    // Host was already under a tmux root; mark its role as host for validation.
-    const existing = tree.find((entry) => entry.pid === hostPid);
-    if (existing !== undefined) existing.role = "app-server-host";
+  if (hostPid !== null && !seen.has(hostPid)) {
+    throw new Error(`App-server host pid ${hostPid} vanished during capture`);
   }
   if (tree.length === 0) {
     throw new Error("pause capture produced an empty process tree");
@@ -380,10 +407,15 @@ export function buildPauseCapture(
  * re-lists panes or invents PIDs — only validates the stored capture against
  * live birth identities. Failure means resume must stay paused/revoked.
  */
+export interface PauseValidationDependencies extends PauseCaptureDependencies {
+  tmux?: SessionStopAdapter;
+  readHostPid?: (agent: AgentRecord) => Promise<number | null>;
+}
+
 export async function validatePauseCapture(
   agent: AgentRecord,
   capture: PauseCapture,
-  dependencies: PauseCaptureDependencies = defaultReapDependencies(),
+  dependencies: PauseValidationDependencies = defaultReapDependencies(),
 ): Promise<void> {
   if (capture.agentId !== agent.id || capture.agentName !== agent.name) {
     throw new Error(
@@ -404,6 +436,40 @@ export async function validatePauseCapture(
   }
   if (capture.tree.length === 0) {
     throw new Error("pause capture tree is empty");
+  }
+  // Live tmux pane roots must exactly match the captured tmux-root set.
+  if (dependencies.tmux !== undefined) {
+    if (!await dependencies.tmux.hasSession(capture.tmuxSession)) {
+      throw new Error(
+        `pause capture tmux session ${capture.tmuxSession} is missing (recreated or destroyed)`,
+      );
+    }
+    const livePanes = [...await dependencies.tmux.listPanePids(capture.tmuxSession)]
+      .filter((pid) => pid > 1)
+      .sort((a, b) => a - b);
+    const capturedRoots = capture.tree
+      .filter((entry) => entry.role === "tmux-root")
+      .map((entry) => entry.pid)
+      .sort((a, b) => a - b);
+    if (
+      livePanes.length !== capturedRoots.length ||
+      livePanes.some((pid, i) => pid !== capturedRoots[i])
+    ) {
+      throw new Error(
+        `pause capture tmux roots stale/replaced: captured [${capturedRoots.join(",")}] ` +
+          `live [${livePanes.join(",")}]`,
+      );
+    }
+  }
+  // Current app-server host must match the capture (null↔null or same pid).
+  if (dependencies.readHostPid !== undefined) {
+    const liveHost = await dependencies.readHostPid(agent);
+    if (liveHost !== capture.hostPid) {
+      throw new Error(
+        `pause capture host mismatch: captured ${capture.hostPid ?? "null"}, ` +
+          `live ${liveHost ?? "null"}`,
+      );
+    }
   }
   const processes = parseProcessTable(await dependencies.ps());
   const byPid = new Map(processes.map((sample) => [sample.pid, sample]));
@@ -428,7 +494,6 @@ export async function validatePauseCapture(
           `live birth ${JSON.stringify(birth)}`,
       );
     }
-    // Command drift is a replacement signal even when birth somehow matched.
     if (live.command !== entry.command) {
       throw new Error(
         `pause capture pid ${entry.pid} command changed: captured ${JSON.stringify(entry.command)}, ` +
@@ -452,10 +517,12 @@ export async function validatePauseCapture(
 export async function resumePauseCapture(
   capture: PauseCapture,
   dependencies: ReapDependencies = defaultReapDependencies(),
+  verificationPid: number = process.pid,
 ): Promise<void> {
   await resumeCapturedTree(
     capture.tree.map((entry) => ({ pid: entry.pid, command: entry.command })),
     dependencies,
+    verificationPid,
   );
 }
 
@@ -486,11 +553,14 @@ export async function resumeAgentFromPauseCapture(
   capture: PauseCapture,
   dependencies: VerifiedStopDependencies,
 ): Promise<void> {
-  const reap: PauseCaptureDependencies = {
+  const selfPid = dependencies.selfPid ?? process.pid;
+  const reap: PauseValidationDependencies = {
     ...(dependencies.reap ?? defaultReapDependencies()),
+    tmux: dependencies.tmux,
+    readHostPid: dependencies.readHostPid ?? readCodexHostPid,
   };
   await validatePauseCapture(agent, capture, reap);
-  await resumePauseCapture(capture, reap);
+  await resumePauseCapture(capture, reap, selfPid);
 }
 
 

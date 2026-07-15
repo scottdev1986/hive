@@ -6,7 +6,9 @@
 // It never synthesizes an observation from the launch request: an `absent` or
 // `unknown` observation leaves `observedIdentity` untouched and only records
 // that the verdict could not be confirmed. `matching` is the sole state that
-// lets a Codex writer reach a mutating tool.
+// is required for landing/reattest of any still-running legacy Codex process.
+// New Codex writers are refused at launch (codex-containment); this module is
+// not a per-mutation authorization gate.
 
 import {
   compareObservedIdentity,

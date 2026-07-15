@@ -313,7 +313,19 @@ describe("codex rollout telemetry", () => {
   });
 
 
-  test("newest incomplete in-cwd turn_context is unknown, never older complete", () => {
+  
+  test("actually malformed newest JSONL after valid context yields unknown", () => {
+    const cwd = "/repo/.hive/worktrees/maya";
+    const older = JSON.stringify({
+      type: "turn_context",
+      payload: { cwd, model: "gpt-5.6-sol", effort: "xhigh", turn_id: "old", source: "cli" },
+      timestamp: "2026-07-15T17:00:00.000Z",
+    });
+    const malformed = '{"type":"turn_context","payload":{"cwd":"' + cwd + '","model":"gpt-5.6-luna"';
+    expect(newestTurnContextIdentity(older + "\n" + malformed + "\n", cwd)).toEqual(null);
+  });
+
+test("newest incomplete in-cwd turn_context is unknown, never older complete", () => {
     const cwd = "/repo/.hive/worktrees/maya";
     const older = JSON.stringify({
       type: "turn_context",

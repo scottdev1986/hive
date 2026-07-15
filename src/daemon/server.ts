@@ -1622,8 +1622,6 @@ export class HiveDaemon {
     }
     try {
       if (this.usesInjectedResume) {
-        // Tests inject resumeProcesses; still require a persisted capture so
-        // the durable binding is exercised, then call the inject.
         await this.resumeAgentProcesses(agent.tmuxSession, agent);
       } else {
         await resumeAgentFromPauseCapture(agent, capture, {
@@ -1642,22 +1640,37 @@ export class HiveDaemon {
           }`,
       };
     }
-    const nextEpoch = agent.capabilityEpoch + 1;
+    // Final CAS after async identity/tree/SIGCONT: kill interleaving during
+    // awaits must leave the row terminal/revoked without reissuing authority.
+    const fresh = this.db.getAgentById(agent.id) ?? this.db.getAgentByName(name);
+    if (
+      fresh === null ||
+      fresh.status !== "control-paused" ||
+      !fresh.writeRevoked ||
+      fresh.capabilityEpoch !== agent.capabilityEpoch ||
+      isTerminalAgentStatus(fresh.status)
+    ) {
+      return {
+        resumed: false,
+        identityState,
+        reason:
+          `resume refused after SIGCONT: row is no longer the paused incarnation ` +
+          `(status=${fresh?.status ?? "missing"}, epoch=${fresh?.capabilityEpoch ?? "?"})`,
+      };
+    }
+    const nextEpoch = fresh.capabilityEpoch + 1;
     this.issueCredential(
-      agent.name,
-      agent.readOnly ? "reader" : "writer",
+      fresh.name,
+      fresh.readOnly ? "reader" : "writer",
       nextEpoch,
     );
     this.db.upsertAgent({
-      ...agent,
+      ...fresh,
       status: "idle",
       writeRevoked: false,
       capabilityEpoch: nextEpoch,
       identityState,
-      // Clear the control binding: an operator `pause` recorded its
-      // controlMessageId here, and a resumed agent is no longer control-owned.
       controlMessageId: undefined,
-      // Capture is one-shot: a successful resume drops it.
       pauseCapture: undefined,
       ...(observed === undefined ? {} : { observedIdentity: observed }),
       ...(liveModel === undefined ? {} : { liveModel }),
@@ -2666,9 +2679,9 @@ export class HiveDaemon {
       );
     }
     // Fail-closed attestation gate with FRESH exact-session reattestation —
-    // never trust a stored matching row alone. Unknown/incomplete/error/drift/
-    // replaced/terminal/revoked fail before Git. Claude/Grok keep their
-    // existing landing contract (no Codex identity gate).
+    // never trust a stored matching row alone. After the awaited read, only
+    // attestation fields are written so a concurrent kill cannot be clobbered
+    // by a full-row stale upsert. Claude/Grok skip the Codex identity gate.
     if (agent.tool === "codex") {
       const launch = agent.executionIdentity;
       if (launch === undefined || agent.worktreePath === null) {
@@ -2680,8 +2693,21 @@ export class HiveDaemon {
         launch,
         await this.readCodexIdentity(agent.worktreePath, agent.toolSessionId),
       );
+      // Attestation-only update: re-read the row and refuse if terminal/revoked.
+      const mid = this.db.getAgentById(agent.id) ?? this.db.getAgentByName(name);
+      if (mid === null || isTerminalAgentStatus(mid.status) || mid.writeRevoked) {
+        throw new Error(
+          `Cannot land ${name}: agent became terminal or revoked during reattestation; landing refused.`,
+        );
+      }
+      if (mid.capabilityEpoch !== capabilityEpoch) {
+        throw new Error(
+          `Cannot land ${name}: capabilityEpoch changed during reattestation ` +
+            `(${capabilityEpoch} → ${mid.capabilityEpoch}).`,
+        );
+      }
       this.db.upsertAgent({
-        ...agent,
+        ...mid,
         identityState: attestation.identityState,
         ...(attestation.observedIdentity === null
           ? {}
@@ -2700,12 +2726,37 @@ export class HiveDaemon {
         );
       }
     }
+    // Final CAS immediately before Git — every provider. Kill/control during
+    // reattest or lease wait must not reach merge.
+    const finalRow = this.db.getAgentById(agent.id) ?? this.db.getAgentByName(name);
+    if (
+      finalRow === null ||
+      isTerminalAgentStatus(finalRow.status) ||
+      finalRow.writeRevoked ||
+      finalRow.capabilityEpoch !== capabilityEpoch ||
+      finalRow.readOnly ||
+      finalRow.branch === null
+    ) {
+      throw new Error(
+        `Cannot land ${name}: final pre-Git authority check failed ` +
+          `(status=${finalRow?.status ?? "missing"}, epoch=${finalRow?.capabilityEpoch ?? "?"}, ` +
+          `revoked=${finalRow?.writeRevoked ?? "?"}).`,
+      );
+    }
     const operation = await this.machineMutations?.beginOperation("landing");
     try {
-      const landed = await this.land(this.repoRoot, agent.branch);
-      // The graph tracks main, and this is the one choke point every landing
-      // passes through. Fire-and-forget: the merge result is already decided
-      // and a graph rebuild must never appear in landing latency.
+      const recheck = this.db.getAgentById(agent.id);
+      if (
+        recheck === null ||
+        isTerminalAgentStatus(recheck.status) ||
+        recheck.writeRevoked ||
+        recheck.capabilityEpoch !== capabilityEpoch
+      ) {
+        throw new Error(
+          `Cannot land ${name}: agent lost landing authority after the mutation lease was taken.`,
+        );
+      }
+      const landed = await this.land(this.repoRoot, recheck.branch!);
       this.graphify?.scheduleRebuild();
       return landed;
     } finally {
@@ -3608,7 +3659,11 @@ export class HiveDaemon {
           ...(agent.status === "awaiting-approval" ? { status: "working" } : {}),
           ...(value.toolSessionId === undefined
             ? {}
-            : { toolSessionId: value.toolSessionId }),
+            : agent.toolSessionId === undefined ||
+                agent.toolSessionId === value.toolSessionId ||
+                agent.tool !== "codex"
+            ? { toolSessionId: value.toolSessionId }
+            : {}),
         });
         this.delivery.confirmSteerAtToolBoundary(value.agentName, value.timestamp);
         await this.delivery.flushUrgent(value.agentName);
@@ -3658,12 +3713,16 @@ export class HiveDaemon {
             ? value.contextPct
             : agent.contextPct,
           lastEventAt: new Date(value.timestamp).toISOString(),
-          // The tool-level session identity rides on hook traffic (Claude's
-          // stdin payload, Codex's notify thread-id); a resume forks Claude
-          // to a fresh id, so the newest observation always wins.
+          // Codex: bind toolSessionId once to the authorized parent; same-cwd
+          // children must not overwrite. Claude/Grok may rebind on native resume
+          // (forked session ids are legitimate parent reincarnations).
           ...(value.toolSessionId === undefined
             ? {}
-            : { toolSessionId: value.toolSessionId }),
+            : agent.toolSessionId === undefined ||
+                agent.toolSessionId === value.toolSessionId ||
+                agent.tool !== "codex"
+            ? { toolSessionId: value.toolSessionId }
+            : {}),
           // A completed turn proves the process is genuinely healthy, so the
           // crash-resume budget rearms.
           ...(value.kind === "turn-end" && agent.recoveryAttempts > 0
@@ -3713,27 +3772,40 @@ export class HiveDaemon {
       }
     }
 
-    // Fail-closed enforcement at the trusted turn boundary. A Codex writer that
-    // starts a turn is reattested from its own rollout right now, so a drift is
-    // caught here — before the turn's mutating tools — not up to a sweep later.
-    // Only a confirmed drift pauses; an `unknown` reading at an early boundary
-    // may be a rollout that has not written a turn_context yet, and is left to
-    // the per-mutation guard and the landing gate rather than a false pause.
+    // Fail-closed at the turn boundary for legacy Codex writers: any non-matching
+    // reattestation (unknown/absent/error/incomplete/drift) immediately persists
+    // the verdict, revokes, and pauses non-destructively. There is no per-mutation
+    // guard fallback — writers are contained at launch, and this path only covers
+    // still-running legacy processes.
     if (
       value.kind === "turn-start" && agent !== null && agent !== undefined &&
       agent.tool === "codex" && !agent.readOnly && !agent.writeRevoked &&
       agent.executionIdentity !== undefined && agent.worktreePath !== null
     ) {
       const launch = agent.executionIdentity;
-      const attestation = reconcileCodexIdentity(
-        launch,
-        await this.readCodexIdentity(agent.worktreePath, agent.toolSessionId),
-      );
-      if (attestation.identityState === "drift") {
+      let attestation;
+      try {
+        attestation = reconcileCodexIdentity(
+          launch,
+          await this.readCodexIdentity(agent.worktreePath, agent.toolSessionId),
+        );
+      } catch (error) {
+        attestation = {
+          identityState: "unknown" as const,
+          observedIdentity: null,
+          liveModel: null,
+          liveEffort: null,
+        };
+        void error;
+      }
+      if (attestation.identityState !== "matching") {
         const observed = attestation.observedIdentity;
+        const state = attestation.identityState === "unattested"
+          ? "unknown" as const
+          : attestation.identityState;
         await this.pauseWriterForIdentityDrift({
           ...agent,
-          identityState: "drift",
+          identityState: state,
           ...(observed === null ? {} : { observedIdentity: observed }),
           ...(attestation.liveModel === null
             ? {}
@@ -3741,10 +3813,7 @@ export class HiveDaemon {
           ...(attestation.liveEffort === null
             ? {}
             : { liveEffort: attestation.liveEffort }),
-        }, observed === null
-          ? "observed identity differs from the authorized launch identity"
-          : `authorized ${launch.model}/${launch.effort ?? "?"}, observed ` +
-            `${observed.model}/${observed.effort ?? "?"}`);
+        }, `turn-start reattestation is ${state}, not matching`);
       }
     }
 

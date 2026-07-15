@@ -167,14 +167,6 @@ export function attestationStateOf(
   return agent.identityState ?? "unattested";
 }
 
-/** A Codex writer may only reach a mutating tool while attestation is
- * `matching`. Every other state — including the `unattested` spawn default and
- * an `unknown` unreadable observation — fails closed. Exported so the guard,
- * the maintenance backstop, and the tests share one definition of "safe". */
-export function identityStatePermitsMutation(state: IdentityState): boolean {
-  return state === "matching";
-}
-
 // A closed agent is done with the world: it holds no tmux session, accepts no
 // messages, and its name is free to be issued again. Every other status —
 // including `spawning`, `control-paused`, and `stuck` — is a live holder that

@@ -427,7 +427,7 @@ export class CrashRecovery {
         };
       }
     }
-    return this.resume(agent, sessionId);
+    return this.resume(agent, sessionId, options);
   }
 
   /**
@@ -453,16 +453,43 @@ export class CrashRecovery {
     }
   }
 
+  private currentIfRecoverable(
+    agent: AgentRecord,
+    options: { manual: boolean },
+  ): AgentRecord | null {
+    const current = this.deps.db.getAgentById(agent.id);
+    if (current === null) return null;
+    // Automatic recovery must never resurrect a deliberately closed agent.
+    // Manual recovery may revive a dead/failed row on purpose.
+    if (!options.manual) {
+      if (current.closedAt !== undefined || isTerminalAgentStatus(current.status)) {
+        return null;
+      }
+    }
+    return current;
+  }
+
   private async resume(
     agent: AgentRecord,
     sessionId: string,
+    options: { manual: boolean },
   ): Promise<RecoveryOutcome> {
+    // Atomic current-row check immediately before any live upsert.
+    const live = this.currentIfRecoverable(agent, options);
+    if (live === null) {
+      return {
+        agent: agent.name,
+        action: "skipped",
+        reason:
+          "agent was deliberately closed before recovery upsert; recovery will not resurrect it",
+      };
+    }
     // Persist the attempt before launching so a crash mid-launch still
     // counts against the cap.
     let record = this.deps.db.upsertAgent({
-      ...agent,
+      ...live,
       toolSessionId: sessionId,
-      recoveryAttempts: agent.recoveryAttempts + 1,
+      recoveryAttempts: live.recoveryAttempts + 1,
       lastEventAt: new Date().toISOString(),
       // A new process must not inherit the predecessor's attestation. Matching
       // would authorize without observing the relaunched process.
@@ -593,6 +620,16 @@ export class CrashRecovery {
         throw new Error("resume authorization changed before the process adapter");
       }
       requireAuthorizedLaunch(revalidated);
+      // Fresh terminal check immediately before launch — kill during awaited
+      // config/policy work must not be resurrected.
+      if (this.currentIfRecoverable(record, options) === null) {
+        return {
+          agent: record.name,
+          action: "skipped",
+          reason:
+            "agent was deliberately closed before relaunch; recovery will not resurrect it",
+        };
+      }
       await this.deps.tmux.newSession(
         record.tmuxSession,
         worktreePath,
@@ -614,8 +651,18 @@ export class CrashRecovery {
 
     // A freshly resumed TUI sits at its prompt with the conversation
     // restored: idle is the honest status until an event says otherwise.
+    // Never spread a terminal row back to live after readiness awaits.
+    const afterReady = this.currentIfRecoverable(record, options);
+    if (afterReady === null) {
+      return {
+        agent: record.name,
+        action: "skipped",
+        reason:
+          "agent was deliberately closed after relaunch readiness; recovery will not mark it idle",
+      };
+    }
     record = this.deps.db.upsertAgent({
-      ...(this.deps.db.getAgentById(record.id) ?? record),
+      ...afterReady,
       status: "idle",
       lastEventAt: new Date().toISOString(),
       // Still unattested until the new process's own rollout is observed.
@@ -649,9 +696,14 @@ export class CrashRecovery {
     failure: string,
   ): Promise<RecoveryOutcome> {
     const reason = `resume launch failed: ${failure}`;
+    // Durably revoke terminal authority BEFORE process teardown so a crash
+    // mid-teardown cannot leave a live credential.
+    const now = new Date().toISOString();
+    this.deps.db.markAgentDead(agent.id, now, reason);
+    this.deps.revokeCapabilities?.(agent.name);
     if (this.deps.stopSession === undefined) {
       return this.preserveUnverifiedRecovery(
-        agent,
+        this.deps.db.getAgentById(agent.id) ?? agent,
         `${reason}; verified teardown is unavailable`,
       );
     }
@@ -659,19 +711,21 @@ export class CrashRecovery {
       const stopped = await this.deps.stopSession(agent);
       if (stopped.survivors.length > 0) {
         return this.preserveUnverifiedRecovery(
-          agent,
+          this.deps.db.getAgentById(agent.id) ?? agent,
           `${reason}; ${stopped.survivors.length} process(es) survived teardown`,
         );
       }
     } catch (error) {
       return this.preserveUnverifiedRecovery(
-        agent,
+        this.deps.db.getAgentById(agent.id) ?? agent,
         `${reason}; teardown could not be verified: ${
           error instanceof Error ? error.message : "unknown error"
         }`,
       );
     }
-    return await this.markDead(agent, reason);
+    await this.deps.settleQuota(agent);
+    this.denyPendingApprovals(agent.name);
+    return { agent: agent.name, action: "marked-dead", reason };
   }
 
   private async monitorResume(record: AgentRecord): Promise<string | null> {

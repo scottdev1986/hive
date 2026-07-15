@@ -917,6 +917,23 @@ export class MessageDelivery {
       const injectedAt = message.injectedAt;
       if (injectedAt === null) continue;
 
+      // Successful non-destructive pause is daemon-measured applied: the agent
+      // row is control-paused with this controlMessageId. A suspended process
+      // never ACKs and never takes a turn boundary, so without this path a
+      // recovered pause would sit injected forever and trip ACK deadlines.
+      if (message.intent === "pause" && message.priority === "critical") {
+        const recipient = this.db.getAgentByName(message.to);
+        if (
+          recipient !== null &&
+          recipient.status === "control-paused" &&
+          recipient.controlMessageId === message.id
+        ) {
+          this.db.transitionMessage(message.id, "applied", now);
+          confirmed += 1;
+          continue;
+        }
+      }
+
       // The recipient took a turn boundary after we injected. That boundary is
       // where the TUI submits whatever it had queued, so the message reached the
       // model — proof from the mechanism rather than from an exit code.

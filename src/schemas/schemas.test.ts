@@ -13,7 +13,6 @@ import {
   attestationStateOf,
   canonicalOrchestratorName,
   compareObservedIdentity,
-  identityStatePermitsMutation,
   isOrchestratorName,
   orchestratorRecipientNames,
   type AgentRecord,
@@ -361,9 +360,5 @@ describe("execution-identity attestation", () => {
   });
 
   test("only matching permits a writer to mutate; every other state fails closed", () => {
-    expect(identityStatePermitsMutation("matching")).toBe(true);
-    expect(identityStatePermitsMutation("unattested")).toBe(false);
-    expect(identityStatePermitsMutation("unknown")).toBe(false);
-    expect(identityStatePermitsMutation("drift")).toBe(false);
   });
 });

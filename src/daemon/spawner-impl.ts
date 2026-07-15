@@ -1653,22 +1653,71 @@ export class HiveSpawner implements Spawner {
       return result.authorized;
     };
     let authorized: AuthorizedLaunch;
+    const writeRouteAudit = (fields: {
+      attempts: string[];
+      selectedTool: string | null;
+      selectedModel: string | null;
+      selectedEffort: string | null;
+      reservationId: string | null;
+      category?: string;
+      policyRevision?: number;
+    }) => {
+      this.dependencies.db.insertRouteAudit({
+        id: crypto.randomUUID(),
+        agentName: name,
+        category: fields.category ?? request.category,
+        decidedAt: new Date().toISOString(),
+        policyRevision: fields.policyRevision ?? readPolicy().revision,
+        reviewOfTool: request.reviewOfTool ?? null,
+        attempts: fields.attempts,
+        selectedTool: fields.selectedTool,
+        selectedModel: fields.selectedModel,
+        selectedEffort: fields.selectedEffort,
+        reservationId: fields.reservationId,
+      });
+    };
     if (explicitModel !== undefined) {
-      // A user-named model is the only candidate and is never substituted:
-      // it passes the same gates as any link (a pin is a route, not a
-      // consent), and unsafe quota fails the spawn with the capacity report
-      // instead of sliding to a different model.
+      // A user-named model is the only candidate and is never substituted.
+      // Every explicit decision records exactly one prompt-free route audit —
+      // gate refusal, same-provider exclusion, and success alike.
       const raw: RawLaunchCandidate = {
         tool,
         model: explicitModel,
         ...(request.effort === undefined ? {} : { effort: request.effort }),
       };
-      const gated = await requireGate(raw);
+      const result = await authorizeCandidate(raw);
+      if (result.refusal !== undefined) {
+        writeRouteAudit({
+          attempts: [
+            `explicit: refused ${raw.tool}/${raw.model} — ${result.refusal.reason}: ${result.refusal.detail}`,
+          ],
+          selectedTool: null,
+          selectedModel: null,
+          selectedEffort: null,
+          reservationId: null,
+        });
+        throw new Error(
+          `Cannot spawn ${name}: ${result.refusal.reason} refused ` +
+            `${raw.tool}/${raw.model}: ${result.refusal.detail}`,
+        );
+      }
+      const gated = result.authorized;
       if (
         request.reviewOfTool !== undefined &&
         request.category === "code_review" &&
         gated.tool === request.reviewOfTool
       ) {
+        writeRouteAudit({
+          attempts: [
+            `explicit: eligible ${gated.tool}/${gated.model}`,
+            `explicit: excluded same-provider for reviewOfTool=${request.reviewOfTool}`,
+            `explicit: refused — no independent route`,
+          ],
+          selectedTool: null,
+          selectedModel: null,
+          selectedEffort: null,
+          reservationId: null,
+        });
         throw new Error(
           `Cannot spawn ${name}: independent review of ${request.reviewOfTool} ` +
             `refuses same-provider candidate ${gated.tool}/${gated.model}`,
@@ -1691,15 +1740,10 @@ export class HiveSpawner implements Spawner {
       } else {
         authorized = gated;
       }
-      this.dependencies.db.insertRouteAudit({
-        id: crypto.randomUUID(),
-        agentName: name,
-        category: request.category,
-        decidedAt: new Date().toISOString(),
-        policyRevision: readPolicy().revision,
-        reviewOfTool: request.reviewOfTool ?? null,
+      writeRouteAudit({
         attempts: [
           `explicit: eligible ${authorized.tool}/${authorized.model}`,
+          `explicit: selected ${authorized.tool}/${authorized.model}`,
           ...(request.reviewOfTool !== undefined &&
             request.category === "code_review"
             ? [`independence: reviewOfTool=${request.reviewOfTool}`]
@@ -1795,15 +1839,14 @@ export class HiveSpawner implements Spawner {
         ) {
           const excluded = candidates.filter((c) => c.tool === request.reviewOfTool);
           candidates = candidates.filter((c) => c.tool !== request.reviewOfTool);
-          if (excluded.length > 0) {
+          for (const c of excluded) {
             attempts.push(
-              `independence: excluded ${excluded.length} same-provider ` +
-                `candidate(s) for reviewOfTool=${request.reviewOfTool}`,
+              `independence: excluded ${c.tool}/${c.model} (same-provider reviewOfTool=${request.reviewOfTool})`,
             );
           }
           if (candidates.length === 0 && excluded.length > 0) {
             attempts.push(
-              `independence: no independent route remains for review of ${request.reviewOfTool}`,
+              `independence: refused — no independent route remains for review of ${request.reviewOfTool}`,
             );
             return null;
           }
@@ -1812,7 +1855,9 @@ export class HiveSpawner implements Spawner {
         if (this.dependencies.quota?.config.enabled !== true) {
           // Without quota there is no headroom to spread by; rank order is
           // the only honest signal left, for either mode.
-          return { authorized: candidates[0]! };
+          const pick = candidates[0]!;
+          attempts.push(`selected ${pick.tool}/${pick.model} (quota disabled/absent)`);
+          return { authorized: pick };
         }
         try {
           const decision = await this.dependencies.quota.routeAndReserve({
@@ -1825,13 +1870,16 @@ export class HiveSpawner implements Spawner {
               : { reviewOfTool: request.reviewOfTool }),
             candidates,
           });
+          attempts.push(
+            `selected ${decision.authorized.tool}/${decision.authorized.model} (quota)`,
+          );
           return {
             authorized: decision.authorized,
             reservationId: decision.reservation.id,
           };
         } catch (error) {
           attempts.push(
-            `quota: ${error instanceof Error ? error.message : String(error)}`,
+            `quota: refused — ${error instanceof Error ? error.message : String(error)}`,
           );
           return null;
         }

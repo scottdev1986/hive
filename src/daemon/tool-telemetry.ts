@@ -255,15 +255,36 @@ export function newestTurnContextIdentity(
   expectedCwd: string,
 ): { model: string; effort: string; turnId: string | null; observedAt: string | null } | null {
   const wanted = resolve(expectedCwd);
-  const entries = parseJsonLines(tail);
-  for (let index = entries.length - 1; index >= 0; index--) {
-    const entry = entries[index];
+  // Scan raw lines from newest to oldest so a truncated/malformed full line
+  // after a valid older turn_context cannot be discarded and promote stale
+  // matching. Only the first physical line of a mid-file tail may be skipped
+  // when unparseable (TAIL_BYTES can start mid-record).
+  const lines = tail.split("\n");
+  for (let index = lines.length - 1; index >= 0; index--) {
+    const line = lines[index]!;
+    if (line.length === 0) continue;
+    let entry: unknown;
+    try {
+      entry = JSON.parse(line);
+    } catch {
+      if (index === 0) continue;
+      return null;
+    }
     if (!isRecord(entry) || entry.type !== "turn_context") continue;
     // Newest in-cwd turn_context wins. Incomplete or unparseable payload is
     // unknown — never fall through to an older complete matching record.
     if (!isRecord(entry.payload)) return null;
     const payload = entry.payload;
     if (typeof payload.cwd !== "string" || resolve(payload.cwd) !== wanted) {
+      continue;
+    }
+    // Prefer main-thread CLI evidence when present; reject explicit non-cli
+    // sources so same-cwd children cannot masquerade as the parent.
+    if (
+      typeof payload.source === "string" &&
+      payload.source.length > 0 &&
+      payload.source !== "cli"
+    ) {
       continue;
     }
     const model = payload.model;

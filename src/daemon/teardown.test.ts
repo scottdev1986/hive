@@ -112,7 +112,7 @@ describe("suspend/resume process tree (non-destructive pause)", () => {
     expect([...alive.keys()].sort()).toEqual([100, 200, 300]);
     expect([...alive.values()].every((p) => p.stat === "T")).toBe(true);
 
-    await resumeCapturedTree(captured, dependencies);
+    await resumeCapturedTree(captured, dependencies, 1);
     expect([...alive.values()].every((p) => p.stat === "S")).toBe(true);
     expect([...alive.keys()].sort()).toEqual([100, 200, 300]);
   });
@@ -520,12 +520,16 @@ describe("pause capture birth binding (N5)", () => {
     ]);
     const tree = await capturePauseBoundTree([100], null, dependencies, 1);
     // Impostor is not in capture; resume must not CONT it.
-    await resumePauseCapture(buildPauseCapture({
-      id: "a",
-      name: "maya",
-      tmuxSession: "hive-maya",
-      toolSessionId: null,
-    } as unknown as import("../schemas").AgentRecord, tree, null), dependencies);
+    await resumePauseCapture(
+      buildPauseCapture({
+        id: "a",
+        name: "maya",
+        tmuxSession: "hive-maya",
+        toolSessionId: null,
+      } as unknown as import("../schemas").AgentRecord, tree, null),
+      dependencies,
+      1,
+    );
     const contPids = signals.filter((s) => s.signal === "SIGCONT").map((s) => s.pid).sort();
     expect(contPids).toEqual([100, 200]);
     expect(alive.get(999)?.stat).toBe("T");

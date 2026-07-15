@@ -73,7 +73,7 @@ class FakeTransport implements CodexAppServerTransport {
   }
 }
 
-function agent(): AgentRecord {
+function agent(overrides: Partial<AgentRecord> = {}): AgentRecord {
   return {
     id: "agent-maya",
     name: "maya",
@@ -90,8 +90,9 @@ function agent(): AgentRecord {
     lastEventAt: "2026-07-10T12:00:00.000Z",
     recoveryAttempts: 0,
     capabilityEpoch: 0,
-    readOnly: false,
+    readOnly: true,
     writeRevoked: false,
+    ...overrides,
   };
 }
 
@@ -147,7 +148,7 @@ describe("Codex app-server adapter", () => {
     });
 
     expect(await manager.isAvailable()).toEqual(true);
-    await manager.startAgent(agent(), "Build the feature", false, "high");
+    await manager.startAgent(agent({ readOnly: true }), "Build the feature", true, "high");
     expect(transport.sent.map((message) => message.method)).toEqual([
       "initialize",
       "initialized",
@@ -160,7 +161,7 @@ describe("Codex app-server adapter", () => {
       cwd: "/tmp/maya",
       approvalPolicy: "on-request",
       approvalsReviewer: "user",
-      sandbox: "workspace-write",
+      sandbox: "read-only",
     });
     expect(transport.sent[4]?.params).toMatchObject({
       threadId: "thread-1",
@@ -223,7 +224,7 @@ describe("Codex app-server adapter", () => {
       queueApproval: async () => "approval-1",
       observeRateLimits: async () => null,
     });
-    await manager.startAgent(agent(), "Build", false, "high");
+    await manager.startAgent(agent({ readOnly: true }), "Build", true, "high");
     // The initial turn completes; the session goes idle.
     transport.emit({
       method: "turn/completed",
@@ -259,7 +260,7 @@ describe("Codex app-server adapter", () => {
       },
       observeRateLimits: async () => null,
     });
-    await manager.startAgent(agent(), "Run checks", false, "medium");
+    await manager.startAgent(agent({ readOnly: true }), "Run checks", true, "medium");
 
     transport.emit({
       id: 91,
@@ -739,4 +740,16 @@ describe("reapOrphanCodexHosts", () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+});
+
+test("CodexAppServerManager refuses writer/workspace-write starts", async () => {
+  const manager = new CodexAppServerManager({
+    socketDir: await mkdtemp(join(tmpdir(), "hive-app-server-refuse-")),
+    queueApproval: async () => "x",
+    observeRateLimits: async () => null,
+    onEvent: async () => {},
+  } as never);
+  await expect(
+    manager.startAgent(agent({ readOnly: false }), "write code", false, "high"),
+  ).rejects.toThrow(/writer\/workspace-write threads are refused/);
 });

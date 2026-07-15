@@ -1705,9 +1705,10 @@ describe("HiveDaemon HTTP server", () => {
       }
       expect(db.getAgentByName("maya")?.contextPct).toEqual(47);
       expect(db.listEvents()).toEqual(events);
-      const approvals = db.listApprovals("pending");
-      expect(approvals.length).toEqual(1);
-      expect(approvals[0]?.description).toEqual("Run npm publish");
+      // Terminal markAgentDead denies pending approvals in the same transaction.
+      expect(db.listApprovals("pending")).toHaveLength(0);
+      const denied = db.listApprovals().filter((a) => a.status === "denied");
+      expect(denied.some((a) => a.description === "Run npm publish")).toBe(true);
 
       const invalid = await postEvent(daemon, { kind: "dead" });
       expect(invalid.status).toEqual(400);
@@ -2715,7 +2716,8 @@ describe("HiveDaemon HTTP server", () => {
         recoveryAttempts: 2,
       });
 
-      // A resume forks Claude to a fresh session id; the newest wins.
+      // Codex parent binding: a different authenticated session id (child/fork)
+      // must not overwrite the authorized parent toolSessionId.
       await daemon.processEvent({
         kind: "turn-end",
         agentName: "maya",
@@ -2723,7 +2725,7 @@ describe("HiveDaemon HTTP server", () => {
         toolSessionId: "0189-forked",
       });
       expect(db.getAgentByName("maya")).toMatchObject({
-        toolSessionId: "0189-forked",
+        toolSessionId: "0189-first",
         recoveryAttempts: 0,
       });
 
@@ -2733,7 +2735,7 @@ describe("HiveDaemon HTTP server", () => {
         agentName: "maya",
         timestamp: "2026-07-10T10:06:00.000Z",
       });
-      expect(db.getAgentByName("maya")?.toolSessionId).toEqual("0189-forked");
+      expect(db.getAgentByName("maya")?.toolSessionId).toEqual("0189-first");
     } finally {
       await daemon.stop();
       db.close();

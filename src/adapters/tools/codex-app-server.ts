@@ -375,6 +375,15 @@ export class CodexAppServerManager {
     readOnly: boolean,
     effort: string,
   ): Promise<void> {
+    // Fail closed at the manager itself: a workspace-write / writer thread is
+    // refused even if a caller bypasses the spawner containment gate.
+    if (!readOnly) {
+      throw new Error(
+        "Codex app-server writer/workspace-write threads are refused: Hive " +
+          "cannot enforce per-mutation execution-identity on Codex app-server. " +
+          "Launch read-only, or use a Claude or Grok writer.",
+      );
+    }
     const transport = await this.connectWithRetry(this.socketPath(agent));
     const client = new CodexAppServerClient(transport, {
       notification: (message) => this.handleNotification(agent.name, message),
@@ -395,7 +404,7 @@ export class CodexAppServerManager {
         cwd: agent.worktreePath,
         approvalPolicy: "on-request",
         approvalsReviewer: "user",
-        sandbox: readOnly ? "read-only" : "workspace-write",
+        sandbox: "read-only",
       }), "thread/start response");
       const thread = asObject(threadResult.thread, "thread");
       const session: CodexSession = {
