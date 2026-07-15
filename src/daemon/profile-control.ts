@@ -23,8 +23,8 @@ import type {
   ProfileReprofileResult,
   ProfileSpawnGate,
   ProfileStatus,
+  ProfileSubmitOutcome,
 } from "../schemas/profile-tools";
-import type { ProfileSubmitResult } from "./project-profile";
 
 /** A daemon-side reprofile command. The server assembles it from the
  * authenticated caller (never from the model): `source` is the caller's role,
@@ -48,16 +48,22 @@ export interface ProfileControl {
    * daemon-session bypass. Operator/orchestrator read. */
   gate(): Promise<ProfileSpawnGate>;
   /** Bounded catalog/content reads for the authenticated run. Profiler only;
-   * the subject is bound to the active run. */
+   * the subject is bound to the active run. A caller who is not the run's own
+   * profiler receives the opaque `{ status: "unauthorized" }` — never a
+   * `denied` code, a catalog, or content — so an implementation cannot leak run
+   * state down the refusal path while still satisfying this interface. */
   inventory(
     subject: string,
     request: ProfileInventoryRequest,
   ): Promise<ProfileInventoryResult>;
   /** Validate a candidate for the authenticated active run and atomically
-   * commit only on success. Profiler only; the subject is bound to the active
-   * run, and the service checks it before the run id so an unauthorized caller
-   * learns nothing. */
-  submit(subject: string, candidate: unknown): Promise<ProfileSubmitResult>;
+   * commit only on success. Profiler only. The run binding is enforced HERE, not
+   * merely deep in the service: a caller who is not the active run's profiler
+   * MUST get `{ status: "unauthorized" }` and nothing else — no lifecycle, no
+   * run id, no owner. Only the run's own profiler ever receives `accepted` or a
+   * lossless `rejected`. This is the F2 opacity property, made a type-enforced
+   * outcome of the seam so it survives per-caller. */
+  submit(subject: string, candidate: unknown): Promise<ProfileSubmitOutcome>;
   /** Coalesce a refresh request and record requester/guidance provenance; never
    * a validation bypass. Operator/orchestrator request. */
   requestReprofile(

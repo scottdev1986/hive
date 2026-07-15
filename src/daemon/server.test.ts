@@ -16,6 +16,7 @@ import {
   type ProfileReprofileResult,
   type ProfileSpawnGate,
   type ProfileStatus,
+  type ProfileSubmitOutcome,
   type ProjectProfile,
   type QuotaPoolStatus,
 } from "../schemas";
@@ -24,7 +25,7 @@ import type {
   ProfileControl,
   ProfileReprofileCommand,
 } from "./profile-control";
-import type { ProfileSubmitResult } from "./project-profile";
+import { assertProfileControlOpacity } from "./profile-control.test-support";
 import { HiveDatabase } from "./db";
 import type { TmuxSender } from "./delivery";
 import {
@@ -3895,7 +3896,7 @@ describe("the project-profile tools and gate routes", () => {
       gate: this.gateValue,
     };
     profileValue: ProjectProfile | null = null;
-    submitValue: ProfileSubmitResult = { status: "accepted", profile: sampleProfile() };
+    submitValue: ProfileSubmitOutcome = { status: "accepted" };
     inventoryValue: ProfileInventoryResult = {
       status: "catalog",
       entries: [],
@@ -3906,6 +3907,14 @@ describe("the project-profile tools and gate routes", () => {
     readonly submitCalls: Array<{ subject: string; candidate: unknown }> = [];
     readonly reprofileCommands: ProfileReprofileCommand[] = [];
     readonly bypassRequesters: string[] = [];
+
+    // The run binding, modeled the way a real coordinator must: a caller is the
+    // authorized profiler only when a run is active AND the subject is its own.
+    // No active run (activeProfiler === null) is unauthorized for EVERYONE, so a
+    // completed-run token is refused exactly as a foreign one is.
+    private authorized(subject: string): boolean {
+      return this.activeProfiler !== null && subject === this.activeProfiler;
+    }
 
     async status(): Promise<ProfileStatus> {
       return this.statusValue;
@@ -3921,26 +3930,12 @@ describe("the project-profile tools and gate routes", () => {
       request: ProfileInventoryRequest,
     ): Promise<ProfileInventoryResult> {
       this.inventoryCalls.push({ subject, request });
-      if (this.activeProfiler !== null && subject !== this.activeProfiler) {
-        return {
-          status: "denied",
-          code: "unauthorized",
-          message: "Caller is not the profiler for the active run.",
-        };
-      }
+      if (!this.authorized(subject)) return { status: "unauthorized" };
       return this.inventoryValue;
     }
-    async submit(subject: string, candidate: unknown): Promise<ProfileSubmitResult> {
+    async submit(subject: string, candidate: unknown): Promise<ProfileSubmitOutcome> {
       this.submitCalls.push({ subject, candidate });
-      if (this.activeProfiler !== null && subject !== this.activeProfiler) {
-        return {
-          status: "rejected",
-          lifecycle: "profiling",
-          rejections: [
-            { code: "unauthorized", message: "Caller is not the profiler for the active run." },
-          ],
-        };
-      }
+      if (!this.authorized(subject)) return { status: "unauthorized" };
       return this.submitValue;
     }
     async requestReprofile(
@@ -4005,6 +4000,23 @@ describe("the project-profile tools and gate routes", () => {
         ok: result.isError !== true,
         value: result.isError === true ? undefined : textValue(result),
       };
+    });
+  }
+
+  /** The raw error text a tool returned. Used to prove the run-binding refusal
+   * is byte-identical and id-free across every caller and tool. */
+  async function callProfileError(
+    daemon: HiveDaemon,
+    subject: string,
+    role: Role,
+    name: string,
+    args: Record<string, unknown> = {},
+  ): Promise<string> {
+    return withClient(daemon, subject, role, async (client) => {
+      const result = await client.callTool({ name, arguments: args });
+      if (result.isError !== true) throw new Error(`${name} did not error`);
+      const content = (result as { content?: Array<{ type: string; text?: string }> }).content ?? [];
+      return content.map((block) => block.text ?? "").join("");
     });
   }
 
@@ -4140,19 +4152,76 @@ describe("the project-profile tools and gate routes", () => {
     await daemon.stop();
   });
 
-  test("a cross-project or completed-run token is denied at inventory", async () => {
+  test("a foreign or completed-run token gets a byte-identical, id-free refusal from both tools", async () => {
     const control = new FakeProfileControl();
     const daemon = profileDaemon(control);
+
+    // A foreign token, while a run for someone else is active.
     const foreign = "profiler-other-run9";
-    const denied = await callProfile(daemon, foreign, "profiler", "profile_inventory", {});
-    expect(denied.ok).toBe(false);
-    // The subject the seam saw is the authenticated one, and the refusal is audited.
-    expect(control.inventoryCalls).toEqual([{ subject: foreign, request: {} }]);
-    expect(
-      listAuditEntries(daemon.db, 50)
-        .filter((entry) => entry.decision === "deny")
-        .map((entry) => entry.reason),
-    ).toContain("profile.unauthorized");
+    const foreignInv = await callProfileError(daemon, foreign, "profiler", "profile_inventory", {});
+    const foreignSub = await callProfileError(daemon, foreign, "profiler", "profile_submit", { candidate: {} });
+
+    // A once-valid token after its run completed (no active run).
+    control.activeProfiler = null;
+    const completedInv = await callProfileError(daemon, PROFILER, "profiler", "profile_inventory", {});
+    const completedSub = await callProfileError(daemon, PROFILER, "profiler", "profile_submit", { candidate: {} });
+
+    // Every refusal is exactly the same bytes — a caller cannot tell foreign
+    // from completed, inventory from submit, or learn that a run exists at all.
+    const refusals = [foreignInv, foreignSub, completedInv, completedSub];
+    expect(new Set(refusals).size).toBe(1);
+    // And it names no run id, project, or subject.
+    for (const refusal of refusals) {
+      for (const secret of ["proj", "run1", "run9", "other", "profiling run"]) {
+        // "profiling run" the phrase is allowed; a concrete run id is not.
+        if (secret === "profiling run") continue;
+        expect([refusal, secret, refusal.includes(secret)]).toEqual([refusal, secret, false]);
+      }
+    }
+    await daemon.stop();
+  });
+
+  test("profile_submit records exactly one final decision — allow to the run's profiler, deny to a foreigner", async () => {
+    const control = new FakeProfileControl();
+    const daemon = profileDaemon(control);
+
+    // Authorized, but the content is invalid: still an authorized ATTEMPT, so
+    // one allow and no deny — a validation rejection is not an access denial.
+    control.submitValue = {
+      status: "rejected",
+      lifecycle: "failed",
+      rejections: [{ code: "missing-unknowns", message: "A silent profile is refused." }],
+    };
+    await callProfile(daemon, PROFILER, "profiler", "profile_submit", { candidate: {} });
+
+    // A foreign token: one deny, no allow, and no service message forwarded.
+    await callProfile(daemon, "profiler-other-run", "profiler", "profile_submit", { candidate: {} });
+
+    const submitDecisions = listAuditEntries(daemon.db, 50)
+      .filter((entry) => entry.action === "profile:submit");
+    expect(submitDecisions.filter((entry) => entry.decision === "allow")).toHaveLength(1);
+    const denies = submitDecisions.filter((entry) => entry.decision === "deny");
+    expect(denies).toHaveLength(1);
+    expect(denies[0]?.reason).toBe("profile.unauthorized");
+    await daemon.stop();
+  });
+
+  test("the fake control satisfies the shared opacity conformance P3 reuses", async () => {
+    // The same executable contract the real coordinator must pass: a foreign
+    // subject gets an opaque unauthorized from both run-bound tools, carrying
+    // nothing about the active run.
+    await assertProfileControlOpacity(new FakeProfileControl(), "profiler-foreign-run");
+  });
+
+  test("an authorized inventory denial keeps its structured code, not a flattened message", async () => {
+    const control = new FakeProfileControl();
+    control.inventoryValue = { status: "denied", code: "stale-run", message: "the repo moved" };
+    const daemon = profileDaemon(control);
+    // The run's own profiler must be able to branch on the code — so it comes
+    // back as structured content, not as a thrown, code-less error.
+    const denied = await callProfile(daemon, PROFILER, "profiler", "profile_inventory", {});
+    expect(denied.ok).toBe(true);
+    expect(denied.value).toEqual({ status: "denied", code: "stale-run", message: "the repo moved" });
     await daemon.stop();
   });
 

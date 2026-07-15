@@ -538,6 +538,13 @@ function json(value: unknown, init?: ResponseInit): Response {
   return Response.json(value, init);
 }
 
+/** The single, constant, id-free error a profiler tool returns when the caller
+ * is not the active run's profiler. It is byte-identical for a cross-project
+ * token, a completed-run token, and a call while nothing is profiling — the
+ * whole point is that these are indistinguishable to the caller, so the refusal
+ * leaks neither the lifecycle nor the run's existence. */
+const PROFILE_ACCESS_DENIED = "Not authorized for the active profiling run.";
+
 /**
  * A `note` rides as a second text block rather than inside the payload: every
  * caller of these tools parses `content[0]` or `structuredContent[key]`, so a
@@ -964,6 +971,31 @@ export class HiveDaemon {
       auditAllow,
     );
     if (!decision.ok) throw new Error(decision.message);
+  }
+
+  /** Record exactly one final authorization decision for a profile operation
+   * whose verdict is not the role check alone but the run binding: the profiler
+   * tools authorize the *action* without auditing the allow, then call this once
+   * with the real outcome — `deny` for a run-binding failure, `allow` for an
+   * authorized attempt (accepted or merely invalid). */
+  private auditProfileDecision(
+    capability: Capability,
+    route: string,
+    action: Action,
+    decision: "allow" | "deny",
+    reason: string | null,
+  ): void {
+    this.capabilities.audit({
+      route,
+      action,
+      callerSubject: capability.subject,
+      callerRole: capability.role,
+      capabilityId: capability.id,
+      requestedSubject: null,
+      epoch: capability.epoch,
+      decision,
+      reason,
+    });
   }
 
   get server(): Server<undefined> | null {
@@ -2474,21 +2506,14 @@ export class HiveDaemon {
     // reprofile), but the bypass is the human's decision alone: an orchestrator
     // that could set it would be self-authorizing past its own spawn gate. So
     // the action is necessary but not sufficient — the role must be operator.
-    const auditShared = {
-      route: "/profile/continue-without",
-      action: "profile:request" as const,
-      callerSubject: capability.subject,
-      callerRole: capability.role,
-      capabilityId: capability.id,
-      requestedSubject: null,
-      epoch: capability.epoch,
-    };
     if (capability.role !== "operator") {
-      this.capabilities.audit({
-        ...auditShared,
-        decision: "deny",
-        reason: "profile.operator-only",
-      });
+      this.auditProfileDecision(
+        capability,
+        "/profile/continue-without",
+        "profile:request",
+        "deny",
+        "profile.operator-only",
+      );
       return json(
         {
           error: "Continue Without Profile is operator-only",
@@ -2497,7 +2522,13 @@ export class HiveDaemon {
         { status: 403 },
       );
     }
-    this.capabilities.audit({ ...auditShared, decision: "allow", reason: null });
+    this.auditProfileDecision(
+      capability,
+      "/profile/continue-without",
+      "profile:request",
+      "allow",
+      null,
+    );
     await this.profileControl.continueWithoutProfile(capability.subject);
     return json({ bypassed: true });
   }
@@ -4045,23 +4076,24 @@ export class HiveDaemon {
           ? { cursor }
           : {};
         const result = await control.inventory(capability.subject, request);
-        if (result.status === "denied") {
-          // Reads pass auditAllow:false, so the run-binding denial (a
-          // cross-project, named-instance, or completed-run token) is audited
-          // here rather than silently dropped.
-          this.capabilities.audit({
-            route: "/mcp:profile_inventory",
-            action: "profile:inventory",
-            callerSubject: capability.subject,
-            callerRole: capability.role,
-            capabilityId: capability.id,
-            requestedSubject: null,
-            epoch: capability.epoch,
-            decision: "deny",
-            reason: `profile.${result.code}`,
-          });
-          throw new Error(result.message);
+        if (result.status === "unauthorized") {
+          // A run-binding failure — a cross-project, named-instance, or
+          // completed-run token, or a call while nothing is profiling. Audit
+          // the one final deny and return the CONSTANT, id-free error so the
+          // caller cannot tell these cases apart.
+          this.auditProfileDecision(
+            capability,
+            "/mcp:profile_inventory",
+            "profile:inventory",
+            "deny",
+            "profile.unauthorized",
+          );
+          throw new Error(PROFILE_ACCESS_DENIED);
         }
+        // `denied` here is an operational refusal to the run's OWN profiler
+        // (the tree moved, the run ended) — safe to name, and returned with its
+        // structured code so the profiler can branch on it, not flattened into a
+        // message. Catalog/content are the success shapes.
         return toolResult(result, "inventory");
       });
 
@@ -4077,18 +4109,46 @@ export class HiveDaemon {
           "after acceptance.",
         inputSchema: ProfileSubmitRequestSchema,
       }, async ({ candidate }) => {
-        this.authorizeTool(capability, "profile_submit", "profile:submit");
-        const result = await control.submit(capability.subject, candidate);
-        const response: ProfileSubmitResponse = result.status === "accepted"
+        // Authorize the action WITHOUT auditing the allow: the run binding, not
+        // the role, is the real verdict, so exactly one final decision is
+        // recorded below once the seam has spoken.
+        this.authorizeTool(
+          capability,
+          "profile_submit",
+          "profile:submit",
+          undefined,
+          false,
+        );
+        const outcome = await control.submit(capability.subject, candidate);
+        if (outcome.status === "unauthorized") {
+          // Run-binding failure: one deny, and the same constant, id-free error
+          // as inventory. A foreign or completed-run token learns nothing — not
+          // the lifecycle, not the run id, not whether a run exists.
+          this.auditProfileDecision(
+            capability,
+            "/mcp:profile_submit",
+            "profile:submit",
+            "deny",
+            "profile.unauthorized",
+          );
+          throw new Error(PROFILE_ACCESS_DENIED);
+        }
+        // An authorized attempt — accepted, or invalid content the run's own
+        // profiler may repair. Either way it is one audited allow, and the
+        // rejection (if any) is forwarded losslessly.
+        this.auditProfileDecision(
+          capability,
+          "/mcp:profile_submit",
+          "profile:submit",
+          "allow",
+          null,
+        );
+        const response: ProfileSubmitResponse = outcome.status === "accepted"
           ? { status: "accepted" }
           : {
               status: "rejected",
-              lifecycle: result.lifecycle,
-              rejections: result.rejections.map((rejection) => ({
-                code: rejection.code,
-                message: rejection.message,
-                ...(rejection.at === undefined ? {} : { at: rejection.at }),
-              })),
+              lifecycle: outcome.lifecycle,
+              rejections: outcome.rejections,
             };
         return toolResult(response, "submit");
       });

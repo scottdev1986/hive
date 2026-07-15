@@ -124,34 +124,71 @@ export type ProfileInventoryOmissionReason = z.infer<
   typeof ProfileInventoryOmissionReasonSchema
 >;
 
-/** One content result: either `content` (UTF-8 bytes) or `omitted` (a reason),
- * never both and never neither. */
-export const ProfileInventoryContentFileSchema = z.strictObject({
-  path: z.string(),
-  content: z.string().optional(),
-  omitted: ProfileInventoryOmissionReasonSchema.optional(),
-});
+/** One content result: exactly one of `content` (UTF-8 bytes) or `omitted` (a
+ * reason). The refinement is load-bearing — a shape carrying both, or neither,
+ * is a bug in whatever produced it, not a thing a caller must interpret. */
+export const ProfileInventoryContentFileSchema = z
+  .strictObject({
+    path: z.string(),
+    content: z.string().optional(),
+    omitted: ProfileInventoryOmissionReasonSchema.optional(),
+  })
+  .refine(
+    (file) => (file.content === undefined) !== (file.omitted === undefined),
+    { message: "a content file carries exactly one of content or omitted" },
+  );
 export type ProfileInventoryContentFile = z.infer<
   typeof ProfileInventoryContentFileSchema
 >;
 
-/** Why an inventory call was refused before any bytes were read. `unauthorized`:
- * the subject is not the active run's profiler (a cross-project, named-instance,
- * or completed-run token). `no-active-run`: nothing is profiling. `stale-run`:
- * the tree changed under the profiler; the cursor/read is void and a new run is
- * scheduled. */
-export type ProfileInventoryDenialCode =
-  | "unauthorized"
-  | "no-active-run"
-  | "stale-run";
+/** Why an inventory call was refused to the AUTHORIZED active profiler — never
+ * to anyone else, who receives the opaque `unauthorized` outcome instead.
+ * `stale-run`: the tree changed under the profiler; the cursor/read is void and
+ * a new run is scheduled. `no-active-run`: the run ended out from under an
+ * otherwise-authorized call. Both are safe to name to the run's own profiler. */
+export const ProfileInventoryDenialCodeSchema = z.enum([
+  "stale-run",
+  "no-active-run",
+]);
+export type ProfileInventoryDenialCode = z.infer<
+  typeof ProfileInventoryDenialCodeSchema
+>;
 
-/** The result of an inventory call. Catalog and content are the two success
- * shapes; `denied` carries a lossless code so the profiler learns exactly why a
- * call was refused. */
-export type ProfileInventoryResult =
-  | { status: "catalog"; entries: ProfileInventoryCatalogEntry[]; nextCursor: string | null }
-  | { status: "content"; files: ProfileInventoryContentFile[] }
-  | { status: "denied"; code: ProfileInventoryDenialCode; message: string };
+const ProfileInventoryCatalogResultSchema = z.strictObject({
+  status: z.literal("catalog"),
+  entries: z.array(ProfileInventoryCatalogEntrySchema),
+  nextCursor: z.string().nullable(),
+});
+const ProfileInventoryContentResultSchema = z.strictObject({
+  status: z.literal("content"),
+  files: z.array(ProfileInventoryContentFileSchema),
+});
+const ProfileInventoryDeniedResultSchema = z.strictObject({
+  status: z.literal("denied"),
+  code: ProfileInventoryDenialCodeSchema,
+  message: z.string(),
+});
+/** The opaque run-binding refusal. It carries NOTHING but its discriminant: a
+ * caller who is not the active run's profiler must not learn the lifecycle, the
+ * run id, the owner, or even whether a run exists. Split from `denied` at the
+ * type level so no implementation can leak a code, message, or id down this
+ * path while still satisfying the interface. */
+const ProfileAccessDeniedResultSchema = z.strictObject({
+  status: z.literal("unauthorized"),
+});
+
+/** The result of an inventory call. Catalog and content are the success shapes;
+ * `denied` carries a lossless operational code to the run's own profiler;
+ * `unauthorized` is the opaque refusal to everyone else. */
+export const ProfileInventoryResultSchema = z.discriminatedUnion("status", [
+  ProfileInventoryCatalogResultSchema,
+  ProfileInventoryContentResultSchema,
+  ProfileInventoryDeniedResultSchema,
+  ProfileAccessDeniedResultSchema,
+]);
+export type ProfileInventoryResult = z.infer<
+  typeof ProfileInventoryResultSchema
+>;
 
 // --- submit (profiler only) -------------------------------------------------
 
@@ -175,9 +212,36 @@ export const ProfileRejectionWireSchema = z.strictObject({
 });
 export type ProfileRejectionWire = z.infer<typeof ProfileRejectionWireSchema>;
 
-/** The `profile_submit` response. Acceptance is a bare `{ status: "accepted" }`;
- * a rejection carries the resulting lifecycle and every rejection code the
- * daemon knows, so the profiler can repair and resubmit against the same run. */
+const ProfileSubmitAcceptedSchema = z.strictObject({
+  status: z.literal("accepted"),
+});
+/** The opaque run-binding refusal for submit — the exact mirror of inventory's:
+ * a caller who is not the active run's profiler learns nothing, not even the
+ * lifecycle. Distinct at the type level from a `rejected` validation outcome so
+ * an implementation cannot fill a leaky lifecycle/message/id down this path. */
+const ProfileSubmitUnauthorizedSchema = z.strictObject({
+  status: z.literal("unauthorized"),
+});
+const ProfileSubmitRejectedSchema = z.strictObject({
+  status: z.literal("rejected"),
+  lifecycle: ProjectProfileLifecycleSchema,
+  rejections: z.array(ProfileRejectionWireSchema),
+});
+
+/** What the seam returns from `submit`. Only the run's own profiler ever sees
+ * `accepted` or `rejected` (the latter lossless, so it can repair and resubmit);
+ * everyone else sees `unauthorized` and nothing more. */
+export const ProfileSubmitOutcomeSchema = z.discriminatedUnion("status", [
+  ProfileSubmitAcceptedSchema,
+  ProfileSubmitUnauthorizedSchema,
+  ProfileSubmitRejectedSchema,
+]);
+export type ProfileSubmitOutcome = z.infer<typeof ProfileSubmitOutcomeSchema>;
+
+/** The `profile_submit` tool response reaching an AUTHORIZED profiler. The
+ * `unauthorized` outcome never becomes a response — the daemon turns it into a
+ * single constant, id-free tool error — so the wire response is only acceptance
+ * or a lossless rejection. */
 export type ProfileSubmitResponse =
   | { status: "accepted" }
   | {
@@ -200,7 +264,10 @@ export type ProfileReprofileRequest = z.infer<
 
 /** What the daemon did with a reprofile request: `started` a fresh run, or
  * `coalesced` onto the one already in flight. `runId` names the run either way. */
-export type ProfileReprofileResult = {
-  status: "started" | "coalesced";
-  runId: string;
-};
+export const ProfileReprofileResultSchema = z.strictObject({
+  status: z.enum(["started", "coalesced"]),
+  runId: z.string().min(1),
+});
+export type ProfileReprofileResult = z.infer<
+  typeof ProfileReprofileResultSchema
+>;
