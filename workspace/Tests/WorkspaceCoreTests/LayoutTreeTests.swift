@@ -108,7 +108,7 @@ final class LayoutTreeTests: XCTestCase {
         var tree = makeTree(["orchestrator", "a", "b", "c"])
         let original = tree
         tree.promote("c")
-        tree.promote("orchestrator") // Return Orchestrator to Master
+        tree.promote("orchestrator") // Return Queen to Master (PaneID stays orchestrator)
         XCTAssertEqual(tree.master, "orchestrator")
         XCTAssertEqual(tree, original, "swap + swap-back restores the identical tree")
     }

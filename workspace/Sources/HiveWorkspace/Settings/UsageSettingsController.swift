@@ -280,16 +280,16 @@ final class UsageSettingsController: SettingsPageController {
 
     private func controlDetail(_ session: TokenUsageSession) -> String {
         guard let fleet = session.fleet.counts, let control = session.hiveControl.counts else {
-            return "Exact orchestrator tokens."
+            return "Exact Queen tokens."
         }
         // Both sides of the ratio come from the same basis, or it means nothing.
         let (orchestrator, total) = fleet.headline.newTokens.flatMap { fleetNew in
             control.headline.newTokens.map { ($0, fleetNew) }
         } ?? (control.totalTokens, fleet.totalTokens)
-        guard total > 0 else { return "Exact orchestrator tokens." }
+        guard total > 0 else { return "Exact Queen tokens." }
         let percent = Double(orchestrator) / Double(total) * 100
         return String(format:
-            "Exact orchestrator tokens; %.1f%% of the known total, a lower bound on Hive overhead.",
+            "Exact Queen tokens; %.1f%% of the known total, a lower bound on Hive overhead.",
             percent)
     }
 

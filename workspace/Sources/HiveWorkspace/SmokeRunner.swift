@@ -170,7 +170,7 @@ final class SmokeRunner {
             let paneMenu = NSApp.mainMenu?.items.compactMap(\.submenu).first { $0.title == "Pane" }
             if let paneMenu,
                let promoteIndex = paneMenu.items.firstIndex(where: { $0.title == "Promote to Master" }),
-               let returnIndex = paneMenu.items.firstIndex(where: { $0.title == "Return Orchestrator to Master" }) {
+               let returnIndex = paneMenu.items.firstIndex(where: { $0.title == "Return Queen to Master" }) {
                 let promoteItem = paneMenu.items[promoteIndex]
                 let returnItem = paneMenu.items[returnIndex]
                 check(paneMenu.autoenablesItems, "Pane menu uses automatic item validation")
@@ -212,7 +212,7 @@ final class SmokeRunner {
                 check(waitUntil(2) {
                     self.controller.state.layout.master == ProjectState.orchestratorPaneID
                         && self.controller.currentPaneFrames() == framesBefore
-                }, "Pane > Return Orchestrator to Master restores the grid")
+                }, "Pane > Return Queen to Master restores the grid")
                 waitUntil(LayoutTransition.duration + 0.1) { false }
                 check(controller.terminalChildRunning(pane: ProjectState.orchestratorPaneID),
                       "orchestrator terminal remains live after PTY resize")

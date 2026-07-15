@@ -47,14 +47,14 @@ enum MainMenuBuilder {
                                      keyEquivalent: "\r")
         promoteItem.keyEquivalentModifierMask = [.command]
         paneMenu.addItem(promoteItem)
-        let returnItem = NSMenuItem(title: "Return Orchestrator to Master",
+        let returnItem = NSMenuItem(title: "Return Queen to Master",
                                     action: #selector(ProjectWindowController.returnOrchestratorToMaster(_:)),
                                     keyEquivalent: "\r")
         returnItem.keyEquivalentModifierMask = [.command, .shift]
         paneMenu.addItem(returnItem)
         paneMenu.addItem(.separator())
 
-        let focusOrch = NSMenuItem(title: "Focus Orchestrator",
+        let focusOrch = NSMenuItem(title: "Focus Queen",
                                    action: #selector(ProjectWindowController.focusOrchestrator(_:)), keyEquivalent: "0")
         paneMenu.addItem(focusOrch)
         let arrows: [(String, Selector, String)] = [
