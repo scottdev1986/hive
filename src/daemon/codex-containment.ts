@@ -17,6 +17,11 @@ import type { CapabilityProvider } from "../schemas";
 // reattestation, and the terminal/capability gates) remain, but as
 // defense-in-depth for pre-activation and legacy/running processes — never as
 // authorization to write.
+//
+// Residual: real-provider Codex hook session-id acceptance was never
+// proven end-to-end; the PreToolUse guard subsystem that would have
+// relied on it has been removed, so that gap is closed by refusal
+// rather than by an unproven hook path.
 
 export const CODEX_WRITER_CONTAINMENT_REASON =
   "Codex writer authoring is contained: Hive cannot enforce per-mutation " +

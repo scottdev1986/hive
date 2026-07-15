@@ -1031,6 +1031,9 @@ export class HiveDatabase {
     timestamp: string,
     failureReason?: string,
   ): AgentRecord | null {
+    // Terminal is authority-revoking: bump epoch and set writeRevoked in the
+    // same transaction as status=dead so a crash between "marked dead" and
+    // process teardown cannot leave a live process with a valid credential.
     return this.transaction(() => {
       const current = this.getAgentById(agentId);
       if (current === null) {
@@ -1039,8 +1042,11 @@ export class HiveDatabase {
       return this.upsertAgent({
         ...current,
         status: "dead",
+        writeRevoked: true,
+        capabilityEpoch: current.capabilityEpoch + 1,
         failureReason: failureReason ?? current.failureReason,
         lastEventAt: timestamp,
+        closedAt: current.closedAt ?? timestamp,
       });
     });
   }

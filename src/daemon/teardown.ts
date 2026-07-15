@@ -291,7 +291,7 @@ export async function resumeTmuxSession(
   await resumeCapturedTree(captured, reap);
 }
 
-async function defaultHostPid(agent: AgentRecord): Promise<number | null> {
+export async function readCodexHostPid(agent: AgentRecord): Promise<number | null> {
   const path = codexAgentHostPidfile(agent);
   try {
     const value = (await readFile(path, "utf8")).trim();
@@ -376,7 +376,7 @@ export async function stopAgentSession(
   dependencies: VerifiedStopDependencies,
   beforeKill?: () => void | Promise<void>,
 ): Promise<ReapOutcome> {
-  const hostPid = await (dependencies.readHostPid ?? defaultHostPid)(agent);
+  const hostPid = await (dependencies.readHostPid ?? readCodexHostPid)(agent);
   return await stopTmuxSession(
     agent.tmuxSession,
     dependencies,

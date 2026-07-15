@@ -60,6 +60,7 @@ import {
   QuotaObservationSchema,
   RoutingPolicyMutationSchema,
   StatuslineReportSchema,
+  isTerminalAgentStatus,
   unknownVendor,
   type AgentMessage,
   type AgentRecord,
@@ -145,6 +146,7 @@ import {
   stopAgentSession,
   stopTmuxSession,
   suspendTmuxSession,
+  readCodexHostPid,
   type ReapDependencies,
   type ReapOutcome,
   type SessionStopAdapter,
@@ -659,8 +661,12 @@ export class HiveDaemon {
   // pause uses to freeze a writer without terminating it. Injectable for tests.
   private readonly suspendAgentProcesses: (
     session: string,
+    agent?: AgentRecord,
   ) => Promise<SuspendOutcome>;
-  private readonly resumeAgentProcesses: (session: string) => Promise<void>;
+  private readonly resumeAgentProcesses: (
+    session: string,
+    agent?: AgentRecord,
+  ) => Promise<void>;
   private memoryPressure = false;
 
   constructor(options: HiveDaemonOptions) {
@@ -670,9 +676,13 @@ export class HiveDaemon {
     this.spawner = options.spawner;
     this.capabilities = new CapabilityStore(this.db, (name) => {
       const record = this.db.getAgentByName(name);
-      return record === null ? null : {
+      if (record === null) return null;
+      // Terminal is independently authority-revoking: even a legacy dead row
+      // that never had writeRevoked flipped cannot authorize write/land.
+      const terminal = isTerminalAgentStatus(record.status);
+      return {
         capabilityEpoch: record.capabilityEpoch,
-        writeRevoked: record.writeRevoked,
+        writeRevoked: record.writeRevoked || terminal,
       };
     });
     this.port = options.port ?? readConfiguredPort();
@@ -839,17 +849,25 @@ export class HiveDaemon {
         reap: this.reapDependencies,
       });
     this.suspendAgentProcesses = options.suspendProcesses ??
-      ((session) =>
-        suspendTmuxSession(session, {
+      (async (session, agent) => {
+        const hostPid = agent === undefined
+          ? null
+          : await readCodexHostPid(agent);
+        return suspendTmuxSession(session, {
           tmux: teardownTmux,
           reap: this.reapDependencies,
-        }));
+        }, hostPid === null ? [] : [hostPid]);
+      });
     this.resumeAgentProcesses = options.resumeProcesses ??
-      ((session) =>
-        resumeTmuxSession(session, {
+      (async (session, agent) => {
+        const hostPid = agent === undefined
+          ? null
+          : await readCodexHostPid(agent);
+        return resumeTmuxSession(session, {
           tmux: teardownTmux,
           reap: this.reapDependencies,
-        }));
+        }, hostPid === null ? [] : [hostPid]);
+      });
     this.repoRoot = options.repoRoot ?? process.cwd();
     this.readClaudeTelemetry = options.telemetryReaders?.claude ??
       readClaudeTelemetry;
@@ -1372,14 +1390,23 @@ export class HiveDaemon {
     if (agent.tool === "codex" && this.codexControl?.hasAgent(agent.name)) {
       await this.codexControl.interrupt(agent).catch(() => undefined);
     }
-    return this.suspendAgentProcesses(agent.tmuxSession).catch((error) => {
+    try {
+      const outcome = await this.suspendAgentProcesses(agent.tmuxSession, agent);
+      // Empty capture is not a successful pause — missing/vanished roots fail closed.
+      if (outcome.suspended.length === 0 && outcome.unstopped.length === 0) {
+        throw new Error(
+          `pause capture for ${agent.name} was empty (session missing, incomplete, or vanished)`,
+        );
+      }
+      return outcome;
+    } catch (error) {
       console.error(
         `Hive could not suspend ${agent.name}'s process tree: ${
           error instanceof Error ? error.message : "unknown error"
         }`,
       );
       return null;
-    });
+    }
   }
 
   /**
@@ -1519,6 +1546,20 @@ export class HiveDaemon {
         };
       }
     }
+    // SIGCONT first, then credential/unrevoke. Failure leaves the agent
+    // paused and revoked — never report success with a stopped process.
+    try {
+      await this.resumeAgentProcesses(agent.tmuxSession, agent);
+    } catch (error) {
+      return {
+        resumed: false,
+        identityState,
+        reason:
+          `SIGCONT failed; write authority withheld: ${
+            error instanceof Error ? error.message : "unknown error"
+          }`,
+      };
+    }
     const nextEpoch = agent.capabilityEpoch + 1;
     this.issueCredential(
       agent.name,
@@ -1538,18 +1579,11 @@ export class HiveDaemon {
       ...(liveModel === undefined ? {} : { liveModel }),
       ...(liveEffort === undefined ? {} : { liveEffort }),
     });
-    await this.resumeAgentProcesses(agent.tmuxSession).catch((error) => {
-      console.error(
-        `Hive resume could not SIGCONT ${agent.name}: ${
-          error instanceof Error ? error.message : "unknown error"
-        }`,
-      );
-    });
     return {
       resumed: true,
       identityState,
       reason:
-        "reattested matching; capability reissued at a fresh epoch and the same process resumed",
+        "reattested matching; same process SIGCONT'd; capability reissued at a fresh epoch",
     };
   }
 
@@ -2082,18 +2116,19 @@ export class HiveDaemon {
     if (killed === null) {
       throw new Error(`Hive agent not found: ${agent.name}`);
     }
+    // Revoke in-memory capability and on-disk credential immediately after the
+    // durable terminal mark (which already bumped epoch + writeRevoked). Do not
+    // wait for process-tree capture — that window is the durable crash hole.
+    this.capabilities.revokeSubject(agent.name);
+    removeCredential(agent.name);
     let reaped: ReapOutcome;
     try {
-      reaped = await this.stopAgentProcesses(agent, () => {
-        this.capabilities.revokeSubject(agent.name);
-        removeCredential(agent.name);
-      });
+      reaped = await this.stopAgentProcesses(killed);
     } catch (error) {
-      // The teardown could not be verified — the process may still be live.
-      // Undo the terminal mark so nothing downstream (quota settlement,
-      // worktree cleanup, control ownership) treats an agent that may still be
-      // running as reaped. A live tmux session keeps recovery off it anyway.
-      this.db.upsertAgent(agent);
+      // Teardown could not be verified. Terminal truth and revoked authority
+      // stay: never restore the pre-kill live row or re-issue credentials. A
+      // still-running process is credential-less; recovery will not relaunch a
+      // deliberately closed agent.
       throw error;
     }
     await this.settleAgentQuota(killed, timestamp);
@@ -2529,6 +2564,11 @@ export class HiveDaemon {
         `Cannot land ${name}: it was launched read-only and has no landing authority.`,
       );
     }
+    if (isTerminalAgentStatus(agent.status)) {
+      throw new Error(
+        `Cannot land ${name}: its status is ${agent.status} (terminal). A terminal agent has no landing authority.`,
+      );
+    }
     if (agent.writeRevoked) {
       throw new Error(
         `Cannot land ${name}: its write authority was revoked by a critical control message, so it may not merge.\n` +
@@ -2541,21 +2581,40 @@ export class HiveDaemon {
           `Fix: call hive_land again with capabilityEpoch ${agent.capabilityEpoch}.`,
       );
     }
-    // Fail-closed attestation gate: a Codex land merges to main — the
-    // highest-stakes mutation there is. Refuse unless the running identity has
-    // attested MATCHING to the authorized launch identity. `unattested` and
-    // `unknown` read fail-closed through attestationStateOf, and a `drift`
-    // already trips the turn-boundary guard which revokes write authority
-    // (caught above); this refuses the residual case where a Codex writer
-    // reaches landing without a matching attestation on record. Claude/Grok
-    // keep their existing landing contract.
-    if (agent.tool === "codex" && attestationStateOf(agent) !== "matching") {
-      throw new Error(
-        `Cannot land ${name}: its Codex execution identity is ${
-          attestationStateOf(agent)
-        }, not attested matching to the authorized launch identity, so it may not merge.\n` +
-          `Fix: the running model+effort must reattest matching (a turn boundary or hive_resume) or ${name} must be restarted under the authorized identity before landing.`,
+    // Fail-closed attestation gate with FRESH exact-session reattestation —
+    // never trust a stored matching row alone. Unknown/incomplete/error/drift/
+    // replaced/terminal/revoked fail before Git. Claude/Grok keep their
+    // existing landing contract (no Codex identity gate).
+    if (agent.tool === "codex") {
+      const launch = agent.executionIdentity;
+      if (launch === undefined || agent.worktreePath === null) {
+        throw new Error(
+          `Cannot land ${name}: it has no immutable launch identity to reattest, so it may not merge.`,
+        );
+      }
+      const attestation = reconcileCodexIdentity(
+        launch,
+        await this.readCodexIdentity(agent.worktreePath, agent.toolSessionId),
       );
+      this.db.upsertAgent({
+        ...agent,
+        identityState: attestation.identityState,
+        ...(attestation.observedIdentity === null
+          ? {}
+          : { observedIdentity: attestation.observedIdentity }),
+        ...(attestation.liveModel === null ? {} : { liveModel: attestation.liveModel }),
+        ...(attestation.liveEffort === null
+          ? {}
+          : { liveEffort: attestation.liveEffort }),
+      });
+      if (attestation.identityState !== "matching") {
+        throw new Error(
+          `Cannot land ${name}: fresh Codex reattestation is ${
+            attestation.identityState
+          }, not matching the authorized launch identity, so it may not merge.\n` +
+            `Fix: the running model+effort must reattest matching or ${name} must be restarted under the authorized identity before landing.`,
+        );
+      }
     }
     const operation = await this.machineMutations?.beginOperation("landing");
     try {

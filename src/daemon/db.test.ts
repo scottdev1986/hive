@@ -221,6 +221,55 @@ describe("HiveDatabase", () => {
     }
   });
 
+
+  test("a genuinely pre-column DB migrates identity fields as unattested", () => {
+    // Opens a DB whose agents table never had liveEffort/observedIdentity/
+    // identityState, then lets HiveDatabase migrate and read a legacy row.
+    const path = join(home, "pre-identity-columns.db");
+    const legacy = new Database(path, { create: true });
+    legacy.exec(`
+      CREATE TABLE agents (
+        id TEXT PRIMARY KEY, name TEXT NOT NULL, tool TEXT NOT NULL,
+        model TEXT NOT NULL, category TEXT NOT NULL, status TEXT NOT NULL,
+        taskDescription TEXT NOT NULL, worktreePath TEXT, branch TEXT,
+        tmuxSession TEXT NOT NULL, contextPct REAL,
+        createdAt TEXT NOT NULL, lastEventAt TEXT NOT NULL,
+        recoveryAttempts INTEGER NOT NULL DEFAULT 0,
+        capabilityEpoch INTEGER NOT NULL DEFAULT 0,
+        readOnly INTEGER NOT NULL DEFAULT 0,
+        writeRevoked INTEGER NOT NULL DEFAULT 0
+      )
+    `);
+    legacy.exec(`
+      INSERT INTO agents (id, name, tool, model, category, status, taskDescription,
+        tmuxSession, contextPct, createdAt, lastEventAt, recoveryAttempts,
+        capabilityEpoch, readOnly, writeRevoked)
+      VALUES ('a1', 'maya', 'codex', 'gpt-5-codex', 'simple_coding', 'working',
+        'legacy', 'hive-maya', 10, '2026-07-09T12:00:00.000Z',
+        '2026-07-09T12:00:00.000Z', 0, 0, 0, 0)
+    `);
+    legacy.close();
+
+    const db = new HiveDatabase(path);
+    try {
+      const columns = new Set(
+        (db.database.query("PRAGMA table_info(agents)").all() as Array<{ name: string }>)
+          .map((c) => c.name),
+      );
+      expect(columns.has("liveEffort")).toBe(true);
+      expect(columns.has("observedIdentity")).toBe(true);
+      expect(columns.has("identityState")).toBe(true);
+      const row = db.getAgentByName("maya");
+      // Additive null-default: legacy rows are unattested, never matching.
+      expect(row?.liveEffort).toBeUndefined();
+      expect(row?.observedIdentity).toBeUndefined();
+      expect(row?.identityState).toBeUndefined();
+      expect(row?.tool).toBe("codex");
+    } finally {
+      db.close();
+    }
+  });
+
   test("stamps closure once and clears it when recovery revives the agent", () => {
     const db = new HiveDatabase(join(home, "closure.db"));
     try {
@@ -232,6 +281,9 @@ describe("HiveDatabase", () => {
         "2026-07-09T12:02:00.000Z",
       );
       expect(dead?.closedAt).toEqual("2026-07-09T12:02:00.000Z");
+      // Terminal is authority-revoking.
+      expect(dead?.writeRevoked).toBe(true);
+      expect(dead?.capabilityEpoch).toBe(1);
 
       // A later write that keeps the agent closed must not slide the instant.
       const rewritten = db.upsertAgent({

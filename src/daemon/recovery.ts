@@ -464,6 +464,12 @@ export class CrashRecovery {
       toolSessionId: sessionId,
       recoveryAttempts: agent.recoveryAttempts + 1,
       lastEventAt: new Date().toISOString(),
+      // A new process must not inherit the predecessor's attestation. Matching
+      // would authorize without observing the relaunched process.
+      identityState: undefined,
+      observedIdentity: undefined,
+      liveModel: undefined,
+      liveEffort: undefined,
     });
     this.denyPendingApprovals(record.name);
 
@@ -612,6 +618,11 @@ export class CrashRecovery {
       ...(this.deps.db.getAgentById(record.id) ?? record),
       status: "idle",
       lastEventAt: new Date().toISOString(),
+      // Still unattested until the new process's own rollout is observed.
+      identityState: undefined,
+      observedIdentity: undefined,
+      liveModel: undefined,
+      liveEffort: undefined,
     });
 
     await this.deps.send(

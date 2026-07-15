@@ -745,6 +745,8 @@ export function buildCodexAppServerCommand(
     "--stdio",
     "-c",
     "features.apps=false",
+    "-c",
+    "features.multi_agent=false",
     ...exclusions,
     "-c",
     `projects.${JSON.stringify(options.worktree)}.trust_level=\"trusted\"`,

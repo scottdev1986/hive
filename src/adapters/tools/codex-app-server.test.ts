@@ -105,6 +105,7 @@ describe("Codex app-server adapter", () => {
       graphifyUrl: "http://127.0.0.1:7799/mcp",
     }, ["idea", "hive", "graphify"]);
     expect(command).toContain("features.apps=false");
+    expect(command).toContain("features.multi_agent=false");
     expect(command).toContain("mcp_servers.idea.enabled=false");
     expect(command.join(" ")).not.toContain("mcp_servers.hive.enabled=false");
     expect(command.join(" ")).not.toContain("mcp_servers.graphify.enabled=false");

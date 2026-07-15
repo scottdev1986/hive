@@ -80,6 +80,26 @@ function agent(overrides: Partial<AgentRecord> = {}): AgentRecord {
   };
 }
 
+/** Codex writer fixture that can pass the fresh landing reattest gate. */
+function landableCodex(overrides: Partial<AgentRecord> = {}): AgentRecord {
+  return agent({
+    toolSessionId: "session-land",
+    executionIdentity: { tool: "codex", model: "gpt-5-codex", effort: "medium" },
+    identityState: "matching",
+    ...overrides,
+  });
+}
+
+const matchingCodexIdentity = async () => ({
+  status: "observed" as const,
+  model: "gpt-5-codex",
+  effort: "medium",
+  turnId: "t-land",
+  sessionId: "session-land",
+  observedAt: "2026-07-15T18:00:00.000Z",
+});
+
+
 class SilentTmuxSender implements TmuxSender {
   readonly calls: Array<[string, string]> = [];
 
@@ -256,12 +276,13 @@ test("agent kill refuses when a live session's process roots are unreadable", as
       error: "tmux pane probe failed",
     });
     expect(tmux.killed).toEqual([]);
+    // Durable kill intent + authority revoke stick; unverified teardown does not restore live.
     expect(db.getAgentByName("maya")).toMatchObject({
-      status: "working",
-      writeRevoked: false,
+      status: "dead",
+      writeRevoked: true,
     });
     expect((await agentFetch("http://hive/orchestrator-status")).status).toEqual(
-      200,
+      403,
     );
   } finally {
     await daemon.stop();
@@ -305,9 +326,10 @@ test("agent kill refuses when tmux reports success but leaves the session", asyn
       owned.exited,
       Bun.sleep(1_000).then(() => null),
     ])).not.toBeNull();
+    // Teardown unverified: terminal + revoked authority stay (never restore live).
     expect(db.getAgentByName("maya")).toMatchObject({
-      status: "working",
-      writeRevoked: false,
+      status: "dead",
+      writeRevoked: true,
     });
     expect((await agentFetch("http://hive/orchestrator-status")).status).toEqual(
       403,
@@ -342,7 +364,9 @@ test("managed shutdown refuses to exit after an agent teardown probe fails", asy
   try {
     await expect(daemon.stop()).rejects.toThrow("refused shutdown");
     expect(tmux.killed).toEqual([]);
-    expect(db.getAgentByName("maya")?.status).toEqual("working");
+    // Durable kill intent is not rolled back when the probe fails.
+    expect(db.getAgentByName("maya")?.status).toEqual("dead");
+    expect(db.getAgentByName("maya")?.writeRevoked).toBe(true);
   } finally {
     tmux.sessions.clear();
     await daemon.stop();
@@ -1331,8 +1355,10 @@ describe("HiveDaemon HTTP server", () => {
       expect(ledger.getReservation(reservation.id)).toMatchObject({
         status: "active",
       });
+      // Unverified teardown does not restore live authority; terminal/revoked sticks.
       expect(db.getAgentByName("maya")).toMatchObject({
-        status: "control-paused",
+        status: "dead",
+        writeRevoked: true,
         controlQuotaReservationId: reservation.id,
       });
       expect(tmux.killed).toEqual([]);
@@ -1401,11 +1427,14 @@ describe("HiveDaemon HTTP server", () => {
         landed.push(branch);
         return { commit: "abc123" };
       },
-    });
+          telemetryReaders: {
+        codexIdentity: matchingCodexIdentity,
+      },
+});
     try {
       // A Codex writer must have attested matching to land (the fail-closed
       // identity gate); a real agent gets this from its turn-boundary reattest.
-      db.insertAgent(agent({ identityState: "matching" }));
+      db.insertAgent(landableCodex());
       await daemon.landAgent("maya", 0);
       expect(landed).toEqual(["hive/maya-server"]);
 
@@ -1435,6 +1464,9 @@ describe("HiveDaemon HTTP server", () => {
   test("a Codex writer that has not attested matching cannot land", async () => {
     const db = new HiveDatabase(join(home, "land-attestation-gate.db"));
     const landed: string[] = [];
+    let observed = {
+      status: "unknown" as const,
+    };
     const daemon = new HiveDaemon({
       db,
       spawner: new StubSpawner(),
@@ -1444,15 +1476,26 @@ describe("HiveDaemon HTTP server", () => {
         landed.push(branch);
         return { commit: "landed" };
       },
+      telemetryReaders: {
+        codexIdentity: async () => observed as never,
+      },
     });
     try {
-      // Unattested — the fail-closed spawn default — cannot merge.
-      db.insertAgent(agent());
+      // Fresh reattest of an unreadable rollout is unknown — cannot merge.
+      db.insertAgent(landableCodex({ identityState: undefined }));
       await expect(daemon.landAgent("maya", 0)).rejects.toThrow(
-        /not attested matching/,
+        /fresh Codex reattestation is unknown/,
       );
-      // Drift is refused just the same.
-      db.upsertAgent({ ...db.getAgentByName("maya")!, identityState: "drift" });
+      // Drifted observation is refused even if a stale row still says matching.
+      observed = {
+        status: "observed",
+        model: "gpt-5.6-luna",
+        effort: "low",
+        turnId: "t",
+        sessionId: "session-land",
+        observedAt: "2026-07-15T18:00:00.000Z",
+      } as never;
+      db.upsertAgent(landableCodex({ identityState: "matching" }));
       await expect(daemon.landAgent("maya", 0)).rejects.toThrow(/is drift/);
       expect(landed).not.toContain("hive/maya-server");
 
@@ -1483,7 +1526,10 @@ describe("HiveDaemon HTTP server", () => {
         landed.push(branch);
         return { commit: "unreachable" };
       },
-    });
+          telemetryReaders: {
+        codexIdentity: matchingCodexIdentity,
+      },
+});
     db.insertAgent(agent({ readOnly: true }));
     try {
       await expect(daemon.landAgent("maya", 0)).rejects.toThrow(
@@ -1551,8 +1597,11 @@ describe("HiveDaemon HTTP server", () => {
         await landingMayFinish;
         return { commit: "abc123" };
       },
-    });
-    db.insertAgent(agent({ identityState: "matching" }));
+          telemetryReaders: {
+        codexIdentity: matchingCodexIdentity,
+      },
+});
+    db.insertAgent(landableCodex());
     const landing = daemon.landAgent("maya", 0);
     try {
       await landingStarted;

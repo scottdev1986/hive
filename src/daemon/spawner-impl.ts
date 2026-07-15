@@ -1664,6 +1664,16 @@ export class HiveSpawner implements Spawner {
         ...(request.effort === undefined ? {} : { effort: request.effort }),
       };
       const gated = await requireGate(raw);
+      if (
+        request.reviewOfTool !== undefined &&
+        request.category === "code_review" &&
+        gated.tool === request.reviewOfTool
+      ) {
+        throw new Error(
+          `Cannot spawn ${name}: independent review of ${request.reviewOfTool} ` +
+            `refuses same-provider candidate ${gated.tool}/${gated.model}`,
+        );
+      }
       if (this.dependencies.quota?.config.enabled === true) {
         const decision = await this.dependencies.quota.routeAndReserve({
           agentName: name,
@@ -1681,6 +1691,25 @@ export class HiveSpawner implements Spawner {
       } else {
         authorized = gated;
       }
+      this.dependencies.db.insertRouteAudit({
+        id: crypto.randomUUID(),
+        agentName: name,
+        category: request.category,
+        decidedAt: new Date().toISOString(),
+        policyRevision: readPolicy().revision,
+        reviewOfTool: request.reviewOfTool ?? null,
+        attempts: [
+          `explicit: eligible ${authorized.tool}/${authorized.model}`,
+          ...(request.reviewOfTool !== undefined &&
+            request.category === "code_review"
+            ? [`independence: reviewOfTool=${request.reviewOfTool}`]
+            : []),
+        ],
+        selectedTool: authorized.tool,
+        selectedModel: authorized.model,
+        selectedEffort: authorized.effort ?? null,
+        reservationId: quotaReservationId ?? null,
+      });
     } else {
       // THE CHAIN SELECTION. The category's chain names the CAPABLE models,
       // best first; it is not a strict always-try-#1 ladder, because a strict
@@ -1696,6 +1725,19 @@ export class HiveSpawner implements Spawner {
       const category = request.category;
       const selection = selectionModeFor(policy, category);
       if (selection === "never-configured") {
+        this.dependencies.db.insertRouteAudit({
+          id: crypto.randomUUID(),
+          agentName: name,
+          category,
+          decidedAt: new Date().toISOString(),
+          policyRevision: policy.revision,
+          reviewOfTool: request.reviewOfTool ?? null,
+          attempts: [`refused: preference for ${category} is never-configured`],
+          selectedTool: null,
+          selectedModel: null,
+          selectedEffort: null,
+          reservationId: null,
+        });
         throw new Error(
           `Cannot spawn ${name}: preference for ${category} is never-configured. ` +
             "Choose Hive decides or an exact chain in the Model Control Center.",
@@ -1735,6 +1777,7 @@ export class HiveSpawner implements Spawner {
             attempts.push(`${label} — ${gate.refusal.reason}: ${gate.refusal.detail}`);
             continue;
           }
+          attempts.push(`${label} — eligible`);
           eligible.push(gate.authorized);
         }
         return eligible;
@@ -1743,11 +1786,33 @@ export class HiveSpawner implements Spawner {
         eligible: AuthorizedLaunch[],
         quotaSelection = selection === "auto" ? "spread" as const : "strict" as const,
       ): Promise<{ authorized: AuthorizedLaunch; reservationId?: string } | null> => {
-        if (eligible.length === 0) return null;
+        // Same-provider code-review exclusion is an authorization rule, not a
+        // quota rule: enforce it even when QuotaService is absent/disabled.
+        let candidates = eligible;
+        if (
+          request.reviewOfTool !== undefined &&
+          request.category === "code_review"
+        ) {
+          const excluded = candidates.filter((c) => c.tool === request.reviewOfTool);
+          candidates = candidates.filter((c) => c.tool !== request.reviewOfTool);
+          if (excluded.length > 0) {
+            attempts.push(
+              `independence: excluded ${excluded.length} same-provider ` +
+                `candidate(s) for reviewOfTool=${request.reviewOfTool}`,
+            );
+          }
+          if (candidates.length === 0 && excluded.length > 0) {
+            attempts.push(
+              `independence: no independent route remains for review of ${request.reviewOfTool}`,
+            );
+            return null;
+          }
+        }
+        if (candidates.length === 0) return null;
         if (this.dependencies.quota?.config.enabled !== true) {
           // Without quota there is no headroom to spread by; rank order is
           // the only honest signal left, for either mode.
-          return { authorized: eligible[0]! };
+          return { authorized: candidates[0]! };
         }
         try {
           const decision = await this.dependencies.quota.routeAndReserve({
@@ -1758,7 +1823,7 @@ export class HiveSpawner implements Spawner {
             ...(request.reviewOfTool === undefined
               ? {}
               : { reviewOfTool: request.reviewOfTool }),
-            candidates: eligible,
+            candidates,
           });
           return {
             authorized: decision.authorized,
@@ -1786,6 +1851,21 @@ export class HiveSpawner implements Spawner {
         ? policy.chains.default ?? []
         : [];
       if (categoryChain.length === 0 && defaultChain.length === 0) {
+        this.dependencies.db.insertRouteAudit({
+          id: crypto.randomUUID(),
+          agentName: name,
+          category,
+          decidedAt: new Date().toISOString(),
+          policyRevision: policy.revision,
+          reviewOfTool: request.reviewOfTool ?? null,
+          attempts: [
+            `refused: category ${category} has no chain and global default is empty`,
+          ],
+          selectedTool: null,
+          selectedModel: null,
+          selectedEffort: null,
+          reservationId: null,
+        });
         throw new Error(
           `Cannot spawn ${name}: category ${category} has no chain and the ` +
             "global default chain is empty. Configure a chain in the Model " +

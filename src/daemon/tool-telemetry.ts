@@ -259,15 +259,17 @@ export function newestTurnContextIdentity(
   for (let index = entries.length - 1; index >= 0; index--) {
     const entry = entries[index];
     if (!isRecord(entry) || entry.type !== "turn_context") continue;
-    if (!isRecord(entry.payload)) continue;
+    // Newest in-cwd turn_context wins. Incomplete or unparseable payload is
+    // unknown — never fall through to an older complete matching record.
+    if (!isRecord(entry.payload)) return null;
     const payload = entry.payload;
     if (typeof payload.cwd !== "string" || resolve(payload.cwd) !== wanted) {
       continue;
     }
     const model = payload.model;
     const effort = payload.effort;
-    if (typeof model !== "string" || model.length === 0) continue;
-    if (typeof effort !== "string" || effort.length === 0) continue;
+    if (typeof model !== "string" || model.length === 0) return null;
+    if (typeof effort !== "string" || effort.length === 0) return null;
     const turnId = typeof payload.turn_id === "string" ? payload.turn_id : null;
     const observedAt = typeof entry.timestamp === "string"
       ? entry.timestamp

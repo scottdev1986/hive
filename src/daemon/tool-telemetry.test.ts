@@ -312,6 +312,31 @@ describe("codex rollout telemetry", () => {
     );
   });
 
+
+  test("newest incomplete in-cwd turn_context is unknown, never older complete", () => {
+    const cwd = "/repo/.hive/worktrees/maya";
+    const older = JSON.stringify({
+      type: "turn_context",
+      payload: { cwd, model: "gpt-5.6-sol", effort: "xhigh", turn_id: "old" },
+      timestamp: "2026-07-15T17:00:00.000Z",
+    });
+    const incomplete = JSON.stringify({
+      type: "turn_context",
+      payload: { cwd, model: "gpt-5.6-luna", turn_id: "new" },
+      timestamp: "2026-07-15T18:00:00.000Z",
+    });
+    // Newest in-cwd is incomplete (no effort) — must not promote older Sol/xhigh.
+    expect(newestTurnContextIdentity(older + "\n" + incomplete + "\n", cwd))
+      .toEqual(null);
+    const unparseablePayload = JSON.stringify({
+      type: "turn_context",
+      payload: "not-an-object",
+      timestamp: "2026-07-15T18:00:00.000Z",
+    });
+    expect(newestTurnContextIdentity(older + "\n" + unparseablePayload + "\n", cwd))
+      .toEqual(null);
+  });
+
   test("reads exact task boundaries for a hookless Codex orchestrator", () => {
     const started = JSON.stringify({
       type: "event_msg",
