@@ -11,7 +11,7 @@
       --surface: #fffdf8;
       --surface-2: #ece7dc;
       --ink: #1c2924;
-      --muted: #607069;
+      --muted: #52635b;
       --line: #cbc8bd;
       --line-strong: #9da79f;
       --green: #176b4b;
@@ -543,7 +543,7 @@
 
     .policy-strip {
       display: grid;
-      grid-template-columns: 0.8fr 1fr 1fr;
+      grid-template-columns: repeat(4, 1fr);
       gap: 1px;
       margin-top: 16px;
       overflow: hidden;
@@ -568,6 +568,7 @@
     .policy.green b { color: var(--green); }
     .policy.amber b { color: var(--amber); }
     .policy.red b { color: var(--red); }
+    .policy.files b { color: var(--blue); }
     .policy p { margin: 0; color: var(--muted); font-size: 13px; }
 
     .split {
@@ -702,7 +703,8 @@
     }
 
     .stat .flag,
-    .evidence-card .flag {
+    .evidence-card .flag,
+    .failure-row .flag {
       display: inline-flex;
       align-items: center;
       justify-content: center;
@@ -1036,7 +1038,7 @@
         border-left: 0;
         border-radius: 0;
       }
-      .diagram svg { min-width: 720px; }
+      .diagram svg { min-width: 1000px; }
       .failure-row { grid-template-columns: 1fr; gap: 5px; }
       .endnote { flex-direction: column; }
     }
@@ -1103,15 +1105,12 @@
         </div>
 
         <figure class="diagram" aria-label="Organization chart: Engineer to Queen to Leads to Workers, with reviewers on worker-to-lead merge edges">
-          <svg viewBox="0 0 1100 650" role="img" aria-labelledby="org-title org-desc">
+          <svg viewBox="0 0 1100 610" role="img" aria-labelledby="org-title org-desc">
             <title id="org-title">Hive Foreman Model hierarchy</title>
             <desc id="org-desc">The engineer directs the queen. The queen directs three leads. Each lead directs workers. Reviewers gate worker branch merges into lead branches.</desc>
             <defs>
               <marker id="org-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
                 <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--line-strong)"/>
-              </marker>
-              <marker id="org-review-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
-                <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--purple)"/>
               </marker>
             </defs>
 
@@ -1126,7 +1125,9 @@
             <text x="550" y="236" text-anchor="middle" class="svg-copy svg-muted">grill · scout · specify · route · escalate</text>
             <text x="550" y="257" text-anchor="middle" class="svg-small svg-muted">single input · never writes code</text>
 
-            <path d="M550 273 V312 H184 V334 M550 312 H550 V334 M550 312 H916 V334" class="connector" marker-end="url(#org-arrow)"/>
+            <path d="M550 273 V312 H184 V334" class="connector" marker-end="url(#org-arrow)"/>
+            <path d="M550 273 V334" class="connector" marker-end="url(#org-arrow)"/>
+            <path d="M550 273 V312 H916 V334" class="connector" marker-end="url(#org-arrow)"/>
             <text x="550" y="301" text-anchor="middle" class="svg-label svg-muted">Policy + status</text>
 
             <rect x="70" y="336" width="228" height="86" rx="16" class="node node-lead"/>
@@ -1139,7 +1140,12 @@
             <text x="916" y="369" text-anchor="middle" class="svg-title">Lead C</text>
             <text x="916" y="394" text-anchor="middle" class="svg-copy svg-muted">part owner · integrator</text>
 
-            <path d="M184 422 V461 H125 V493 M184 461 H243 V493 M550 422 V461 H491 V493 M550 461 H609 V493 M916 422 V461 H857 V493 M916 461 H975 V493" class="connector" marker-end="url(#org-arrow)"/>
+            <path d="M184 422 V461 H125 V493" class="connector" marker-end="url(#org-arrow)"/>
+            <path d="M184 422 V461 H243 V493" class="connector" marker-end="url(#org-arrow)"/>
+            <path d="M550 422 V461 H491 V493" class="connector" marker-end="url(#org-arrow)"/>
+            <path d="M550 422 V461 H609 V493" class="connector" marker-end="url(#org-arrow)"/>
+            <path d="M916 422 V461 H857 V493" class="connector" marker-end="url(#org-arrow)"/>
+            <path d="M916 422 V461 H975 V493" class="connector" marker-end="url(#org-arrow)"/>
 
             <g aria-label="Review gates attached to worker-to-lead edges">
               <rect x="139" y="447" width="90" height="28" rx="14" class="node node-review"/>
@@ -1171,10 +1177,8 @@
               <text x="975" y="545" text-anchor="middle" class="svg-small svg-muted">small task</text>
             </g>
 
-            <rect x="402" y="587" width="296" height="42" rx="21" class="node node-review"/>
-            <text x="550" y="613" text-anchor="middle" class="svg-copy" font-weight="750">Reviewer · mandatory merge gate</text>
-            <path d="M125 563 C125 608 318 608 398 608 M243 563 C243 590 350 596 398 599 M491 563 V582 M609 563 V582 M857 563 C857 590 750 596 702 599 M975 563 C975 608 782 608 702 608" class="connector-dashed" marker-end="url(#org-review-arrow)"/>
-            <text x="842" y="638" class="svg-small" fill="var(--purple)">different vendor when available</text>
+            <circle cx="350" cy="588" r="5" fill="var(--purple)"/>
+            <text x="365" y="592" class="svg-small" fill="var(--purple)">REVIEW = mandatory worker→lead merge gate · different vendor when available</text>
           </svg>
         </figure>
 
@@ -1340,7 +1344,8 @@
         <div class="policy-strip" aria-label="Review size discipline">
           <div class="policy green"><b>≤100 substantive LOC · Green</b><p>Preferred review size.</p></div>
           <div class="policy amber"><b>101–250 LOC · Amber</b><p>Proceed with care and a coherent reason.</p></div>
-          <div class="policy red"><b>&gt;250 LOC · Split</b><p>Required unless the change is mechanical. Maximum 10 files.</p></div>
+          <div class="policy red"><b>&gt;250 LOC · Split</b><p>Required unless the change is mechanical.</p></div>
+          <div class="policy files"><b>≤10 files · Every review</b><p>A peer constraint across green, amber, and mechanical changes.</p></div>
         </div>
       </div>
     </section>
@@ -1411,7 +1416,10 @@
             <text x="820" y="362" class="svg-copy" font-weight="750">worker/b2</text>
             <text x="820" y="386" class="svg-small svg-muted">from lead/b · own worktree</text>
 
-            <path d="M153 330 C153 302 160 275 194 251 M393 330 C393 290 370 264 342 251 M673 330 C673 296 685 270 714 251 M913 330 C913 292 895 266 867 251" class="connector-strong" marker-end="url(#git-arrow)"/>
+            <path d="M153 330 C153 302 160 275 194 251" class="connector-strong" marker-end="url(#git-arrow)"/>
+            <path d="M393 330 C393 290 370 264 342 251" class="connector-strong" marker-end="url(#git-arrow)"/>
+            <path d="M673 330 C673 296 685 270 714 251" class="connector-strong" marker-end="url(#git-arrow)"/>
+            <path d="M913 330 C913 292 895 266 867 251" class="connector-strong" marker-end="url(#git-arrow)"/>
             <text x="54" y="433" class="svg-small" fill="var(--purple)">mandatory review + synthetic-merge CI before each worker→lead merge</text>
 
             <rect x="40" y="474" width="1020" height="106" rx="18" fill="var(--surface-2)" stroke="var(--purple)" stroke-width="1.4" stroke-dasharray="8 7"/>
@@ -1419,7 +1427,8 @@
             <path d="M260 548 H1004" class="connector-dashed" marker-end="url(#git-blue-arrow)"/>
             <text x="70" y="556" class="svg-title">hive-next</text>
             <text x="700" y="542" class="svg-copy svg-muted">all lead tips · rebuilt daily · throwaway</text>
-            <path d="M500 252 C520 375 480 430 450 474 M1020 252 C990 375 970 430 930 474" class="connector-dashed" marker-end="url(#git-blue-arrow)"/>
+            <path d="M500 252 C520 375 480 430 450 474" class="connector-dashed" marker-end="url(#git-blue-arrow)"/>
+            <path d="M1020 252 C990 375 970 430 930 474" class="connector-dashed" marker-end="url(#git-blue-arrow)"/>
           </svg>
         </figure>
 
@@ -1511,7 +1520,9 @@
             <text x="550" y="212" text-anchor="middle" class="svg-title">Queen</text>
             <text x="550" y="236" text-anchor="middle" class="svg-copy svg-muted">status hub</text>
 
-            <path d="M501 264 L236 338 M550 285 V338 M599 264 L864 338" class="connector-strong" marker-start="url(#comms-arrow)" marker-end="url(#comms-arrow)"/>
+            <path d="M501 264 L236 338" class="connector-strong" marker-start="url(#comms-arrow)" marker-end="url(#comms-arrow)"/>
+            <path d="M550 285 V338" class="connector-strong" marker-start="url(#comms-arrow)" marker-end="url(#comms-arrow)"/>
+            <path d="M599 264 L864 338" class="connector-strong" marker-start="url(#comms-arrow)" marker-end="url(#comms-arrow)"/>
             <text x="290" y="277" class="svg-small" fill="var(--green)">status envelopes</text>
             <text x="290" y="294" class="svg-small svg-muted">periodic + on-demand</text>
 
@@ -1525,10 +1536,13 @@
             <text x="864" y="373" text-anchor="middle" class="svg-title">Lead C</text>
             <text x="864" y="396" text-anchor="middle" class="svg-small svg-muted">owns its crew</text>
 
-            <path d="M350 379 H436 M664 379 H750" class="connector-dashed" marker-start="url(#comms-purple-arrow)" marker-end="url(#comms-purple-arrow)"/>
+            <path d="M350 379 H436" class="connector-dashed" marker-start="url(#comms-purple-arrow)" marker-end="url(#comms-purple-arrow)"/>
+            <path d="M664 379 H750" class="connector-dashed" marker-start="url(#comms-purple-arrow)" marker-end="url(#comms-purple-arrow)"/>
             <text x="550" y="321" text-anchor="middle" class="svg-label" fill="var(--purple)">P2P: written interface contracts</text>
 
-            <path d="M236 418 V466 M550 418 V466 M864 418 V466" class="connector" marker-start="url(#comms-arrow)" marker-end="url(#comms-arrow)"/>
+            <path d="M236 418 V466" class="connector" marker-start="url(#comms-arrow)" marker-end="url(#comms-arrow)"/>
+            <path d="M550 418 V466" class="connector" marker-start="url(#comms-arrow)" marker-end="url(#comms-arrow)"/>
+            <path d="M864 418 V466" class="connector" marker-start="url(#comms-arrow)" marker-end="url(#comms-arrow)"/>
             <rect x="150" y="468" width="172" height="48" rx="24" class="node node-worker"/>
             <rect x="464" y="468" width="172" height="48" rx="24" class="node node-worker"/>
             <rect x="778" y="468" width="172" height="48" rx="24" class="node node-worker"/>
@@ -1545,6 +1559,7 @@
           <article class="detail-panel">
             <h3>Allowed channels</h3>
             <ul class="check-list">
+              <li><strong>Engineer → queen:</strong> G1/G2 approvals, architecture decisions, and stop or redirect.</li>
               <li><strong>Queen ↔ leads:</strong> periodic and on-demand status envelopes.</li>
               <li><strong>Lead ↔ lead:</strong> interface negotiation through written contracts.</li>
               <li><strong>Lead ↔ workers:</strong> tasking, monitoring, review, and lifecycle.</li>
@@ -1580,10 +1595,10 @@
           <article class="stat"><span class="flag e">E</span><strong>+90.2%</strong><p>Lead + subagents versus a single agent on Anthropic’s research evaluation.</p></article>
           <article class="stat"><span class="flag e">E</span><strong>~15×</strong><p>Multi-agent token use versus chat; a single agent used roughly 4×.</p></article>
           <article class="stat"><span class="flag e">E</span><strong>Up to 90%</strong><p>Research-time reduction from parallelization in Anthropic’s system.</p></article>
-          <article class="stat"><span class="flag e">E</span><strong>+26.7pp</strong><p>CAID uplift on PaperBench from isolation and dependency-aware delegation.</p></article>
+          <article class="stat"><span class="flag e">E</span><strong>+26.7 / +14.3pp</strong><p>CAID uplift on PaperBench / Commit0 from isolation and dependency-aware delegation.</p></article>
           <article class="stat"><span class="flag m">M</span><strong>41.7 / 19.8%</strong><p>Cross-agent versus intra-agent textual merge conflicts in an early July 2026 preprint.</p></article>
-          <article class="stat"><span class="flag e">E</span><strong>~44% F1</strong><p>Best multi-review aggregation in SWR-Bench; raw single reviews were often ~10–15%.</p></article>
-          <article class="stat"><span class="flag e">E</span><strong>−24pp</strong><p>Maintainer merge rate versus automated pass rate in METR’s study.</p></article>
+          <article class="stat"><span class="flag e">E</span><strong>Up to ~44%</strong><p>Improvement in review F1 from multi-review aggregation; single-review baseline ~10–15% F1.</p></article>
+          <article class="stat"><span class="flag e">E</span><strong>~½ / −24pp</strong><p>SWE-bench-passing PRs not merge-worthy / maintainer merge gap versus automated pass.</p></article>
           <article class="stat"><span class="flag m">M</span><strong>1–3%</strong><p>Turns where agents ask clarifying questions, while users push back roughly 44%.</p></article>
         </div>
 
@@ -1617,7 +1632,7 @@
           <article class="evidence-card">
             <span class="flag e">E</span>
             <h3>Review improves through aggregation</h3>
-            <p>SWR-Bench finds multi-review aggregation can raise review F1 to about 44%, while raw single automated review is often weak at roughly 10–15% F1.</p>
+            <p>SWR-Bench finds multi-review aggregation improves review F1 by up to about 44%; the single automated review baseline is roughly 10–15% F1.</p>
           </article>
           <article class="evidence-card">
             <span class="flag e">E</span>
@@ -1630,9 +1645,9 @@
             <p>Agents ask clarifying questions in only about 1–3% of turns while users push back around 44% of the time. Mandatory grill-me turns an exception into protocol.</p>
           </article>
           <article class="evidence-card">
-            <span class="flag e">E</span>
+            <span class="flag e">E</span> <span class="flag o">O · inference</span>
             <h3>Keep crews small and flat</h3>
-            <p>Claude Code agent-team documentation supports starting with 3–5 teammates and does not allow nested teams. Leads therefore remain a single managed tier.</p>
+            <p>Claude Code agent-team documentation says to start with 3–5 teammates and does not allow nested teams [E]. Those constraints support keeping leads as a single managed tier [O].</p>
           </article>
           <article class="evidence-card">
             <span class="flag e">E</span>
@@ -1706,7 +1721,7 @@
           <div class="failure-row"><strong>Drift off-task</strong><p>Lead supervision + regular on-task checks against the written task.</p></div>
           <div class="failure-row"><strong>Dead agents</strong><p>Lead liveness monitoring; the lead closes workers promptly after merge.</p></div>
           <div class="failure-row"><strong>Telephone-game context loss</strong><p>Specs, interface contracts, task lists, and results live as artifacts on disk—not chat relay.</p></div>
-          <div class="failure-row"><strong>Cost blowup (~15×)</strong><p>Reserve the hierarchy for high-value, parallelizable work. Use a solo agent otherwise.</p></div>
+          <div class="failure-row"><strong>Cost blowup (~15×) <span class="flag e">E</span></strong><p>Reserve the hierarchy for high-value, parallelizable work. Use a solo agent otherwise; see Evidence.</p></div>
           <div class="failure-row"><strong>False CI confidence</strong><p>Synthetic merge testing validates exact worker→lead and protected-main merge-result SHAs.</p></div>
           <div class="failure-row"><strong>Review rubber-stamping</strong><p>Cross-model reviewers + stale-approval dismissal + strict size and file-count limits.</p></div>
         </div>
@@ -1742,7 +1757,7 @@
             <li>Architecture and tradeoffs</li>
             <li>Security design</li>
             <li>Irreversible or outward-facing actions</li>
-            <li>Final land · G2</li>
+            <li>Assembled-feature approval · G2 (authorizes P5 Land)</li>
             <li>Escalations the queen cannot adjudicate</li>
           </ul>
         </div>
