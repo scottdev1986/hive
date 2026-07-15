@@ -2570,96 +2570,6 @@ export class HiveDaemon {
     }
   }
 
-  /**
-   * The authoritative per-mutation attestation check the Codex PreToolUse guard
-   * hook consults immediately before every mutating shell/patch/MCP action. A
-   * Codex writer may mutate only while it is not revoked AND its running
-   * identity has attested matching to the authorized launch identity. A stale
-   * non-matching row is reattested fresh before denying, so a legitimate first
-   * mutation — whose turn_context the sweep has not read yet — is not falsely
-   * blocked; unattested, unknown, and drift all fail closed.
-   */
-  async codexMutationGuard(
-    agentName: string,
-  ): Promise<{ allow: boolean; reason: string }> {
-    const agent = this.db.getAgentByName(agentName);
-    if (agent === null) {
-      return { allow: false, reason: `no agent named ${agentName} is registered` };
-    }
-    if (agent.tool !== "codex") {
-      return { allow: true, reason: "not a Codex agent" };
-    }
-    if (agent.readOnly) {
-      return { allow: false, reason: `${agentName} is read-only and may not mutate` };
-    }
-    if (agent.writeRevoked) {
-      return {
-        allow: false,
-        reason: `${agentName}'s write authority is revoked (paused or under critical control)`,
-      };
-    }
-    if (attestationStateOf(agent) === "matching") {
-      return { allow: true, reason: "identity attested matching" };
-    }
-    // The row is not matching yet — reattest fresh before denying, so a first
-    // mutation whose turn_context the sweep has not read is not falsely blocked.
-    const launch = agent.executionIdentity;
-    if (launch === undefined || agent.worktreePath === null) {
-      return {
-        allow: false,
-        reason: "no immutable launch identity to attest against",
-      };
-    }
-    const attestation = reconcileCodexIdentity(
-      launch,
-      await this.readCodexIdentity(agent.worktreePath, agent.toolSessionId),
-    );
-    this.db.upsertAgent({
-      ...agent,
-      identityState: attestation.identityState,
-      ...(attestation.observedIdentity === null
-        ? {}
-        : { observedIdentity: attestation.observedIdentity }),
-      ...(attestation.liveModel === null
-        ? {}
-        : { liveModel: attestation.liveModel }),
-      ...(attestation.liveEffort === null
-        ? {}
-        : { liveEffort: attestation.liveEffort }),
-    });
-    if (attestation.identityState === "matching") {
-      return { allow: true, reason: "reattested matching" };
-    }
-    return {
-      allow: false,
-      reason:
-        `Codex execution identity is ${attestation.identityState}, not matching the authorized launch identity`,
-    };
-  }
-
-  private async codexToolGuardEndpoint(
-    request: Request,
-    url: URL,
-  ): Promise<Response> {
-    const authenticated = this.authenticate(request, "/codex-tool-guard");
-    if (!authenticated.ok) return this.denied(authenticated);
-    const agentName = url.searchParams.get("agent") ?? "";
-    if (agentName === "") {
-      return json({ error: "agent required" }, { status: 400 });
-    }
-    // A hook speaks only for the agent it was installed for; allows are not
-    // audited (this fires before every mutating tool, hundreds per turn).
-    const decision = this.authorize(
-      authenticated.capability,
-      "/codex-tool-guard",
-      "event:report",
-      canonicalOrchestratorName(agentName),
-      false,
-    );
-    if (!decision.ok) return this.denied(decision);
-    return json(await this.codexMutationGuard(agentName));
-  }
-
   async acknowledgeControlMessage(
     agentName: string,
     messageId: string,
@@ -2760,9 +2670,6 @@ export class HiveDaemon {
     }
     if (url.pathname === "/statusline" && request.method === "POST") {
       return this.receiveStatusline(request);
-    }
-    if (url.pathname === "/codex-tool-guard" && request.method === "GET") {
-      return this.codexToolGuardEndpoint(request, url);
     }
     if (
       url.pathname === "/autonomy" &&

@@ -976,8 +976,8 @@ describe("Codex writer containment in recovery", () => {
     expect(outcomes).toMatchObject([{
       agent: "maya",
       action: "marked-dead",
+      reason: CODEX_WRITER_CONTAINMENT_REASON,
     }]);
-    expect(outcomes[0]?.reason).toBe(CODEX_WRITER_CONTAINMENT_REASON);
     const row = h.db.getAgentByName("maya")!;
     expect(row.status).toBe("dead");
     expect(row.failureReason).toBe(CODEX_WRITER_CONTAINMENT_REASON);

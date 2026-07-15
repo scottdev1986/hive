@@ -12,7 +12,6 @@ import {
   buildCodexTrustArgs,
   CODEX_CAPABILITY_TOKEN_ENV,
   CODEX_NOTIFY_SCRIPT,
-  CODEX_TOOL_GUARD_SCRIPT,
   wrapCodexSpawnWithCapabilityEnv,
   writeCodexAgentConfig,
 } from "./codex";
@@ -163,7 +162,7 @@ describe("Codex spawn-scoped MCP surface", () => {
 // precisely so it never edits that file (verified against codex 0.144.1).
 const expectedHookOverrides = (
   worktreePath: string,
-  options: { readOnly?: boolean } = {},
+  _options: { readOnly?: boolean } = {},
 ): string[] =>
   [
     ["SessionStart", "session-start"],
@@ -173,11 +172,9 @@ const expectedHookOverrides = (
   ].flatMap(([event, kind]) => [
     "-c",
     `hooks.${event}=[{hooks=[{type="command",command="${worktreePath}/.codex/${CODEX_NOTIFY_SCRIPT} ${kind}",timeout=5}]}]`,
-  ]).concat(options.readOnly ? [] : [
-    // Writers get the PreToolUse identity guard (no matcher: every mutating tool).
-    "-c",
-    `hooks.PreToolUse=[{hooks=[{type="command",command="${worktreePath}/.codex/${CODEX_TOOL_GUARD_SCRIPT}",timeout=5}]}]`,
   ]);
+  // No PreToolUse identity guard: Codex 0.144.4 hooks fail open / are
+  // writer-tamperable, so writers are refused at launch instead.
 
 describe("Codex adapter", () => {
   test("builds writer and read-only spawn argv", () => {
@@ -555,33 +552,13 @@ describe("Codex adapter", () => {
       ),
     ).toEqual(true);
 
-    // A writer also gets the PreToolUse identity guard script, whose stdout is
-    // the guard command's Codex hook decision.
-    const guardScript = await readFile(
-      join(worktreePath, ".codex", CODEX_TOOL_GUARD_SCRIPT),
-      "utf8",
-    );
-    expect(guardScript.startsWith("#!/bin/sh\n")).toEqual(true);
+    // Residual identity-guard scripts from older launches are removed.
     expect(
-      guardScript.includes(
-        "exec hive codex-tool-guard --agent agent-4 --port 4317",
-      ),
-    ).toEqual(true);
-
-    // A reader has no write authority, so it gets no guard script.
-    const readerRoot = await mkdtemp(join(tmpdir(), "hive-codex-reader-"));
-    await writeCodexAgentConfig(readerRoot, {
-      name: "reader-1",
-      daemonPort: 4317,
-      readOnly: true,
-    });
-    expect(
-      await stat(join(readerRoot, ".codex", CODEX_TOOL_GUARD_SCRIPT)).then(
+      await stat(join(worktreePath, ".codex", "hive-tool-guard.sh")).then(
         () => true,
         () => false,
       ),
     ).toEqual(false);
-    await rm(readerRoot, { recursive: true, force: true });
   });
 
   test("pins lifecycle hooks to the exact release binary", async () => {

@@ -1,0 +1,14 @@
+HONEST SCOPE STATUS on the fix round (branch WIP, NOT landing).
+
+Branch state: 8a5a843 committed — the CORE INVARIANT (refuse ALL Codex writer launches, your product decision) is implemented + applied at fresh spawn / resume-reauth / recovery, plus recovery N1 (final terminal re-check before relaunch). Typechecks. BUT it intentionally red-fails ~34 Codex-writer spawn tests (those spawns now correctly refuse) — test churn not yet applied. I'm getting it green next.
+
+This fix round is very large — a re-architecture (refuse-all-codex-writers invalidates a big fraction of the suite) + ~15 more substantive findings, each needing code + positive/negative tests. Honest read: this is roughly another full implementation cycle. I'll keep working, but flagging the true size so you can decide whether to parallelize across your reviewer/worker agents or have me continue solo.
+
+FINDING MATRIX (done / partial / TODO):
+- DONE (code): refuse-codex-writers invariant (spawn/resume/recovery); recovery N1 final terminal check.
+- IN PROGRESS: test churn to green for the invariant (~34 tests: codex-writer spawns -> read-only codex or Claude/Grok writer, + new negative writer-refusal tests per path).
+- TODO Noah: N2 reap-failure must preserve terminal truth (not restore live row); N3 resume SIGCONT-first fail-closed; N4 CRITICAL terminal-state atomic revoke+epoch+writeRevoked + auth/landing reject terminal regardless of epoch + revoke-before-teardown; N5 pause binds EXACT captured tree incl app-server host, empty/incomplete capture fails pause.
+- TODO Priya: P1/P3 remove the fail-open/tamperable PreToolUse hook subsystem (script+wiring+endpoint+CLI+guard) + false claims; P2 no stored-matching fast path / fresh landing reattest; P4 same-provider review exclusion in spawner auth path independent of QuotaService; P5 app-server writer refusal already covered by invariant + disable multi_agent on app-server argv even read-only (L5); P6 route-audit one-per-decision centralization.
+- TODO Lena: L1 telemetry newest-incomplete-in-cwd => unknown (no fallback to older complete); L3 recovery/relaunch resets attestation to unattested (never copy matching); L6 cli/status.ts render launch vs observed separately; L7 docs correct multi_agent/SubagentStart claims; L8 pre-column migration regression; L9 hook session-id residual note.
+
+Plan unless you redirect: (1) get invariant green + negative tests, (2) N4 terminal-state, (3) remove hook subsystem + L5, (4) N2/N3/N5 lifecycle, (5) L1/L3/L6, (6) P4/P6, (7) docs/L7/L8. Continuing on (1) now.

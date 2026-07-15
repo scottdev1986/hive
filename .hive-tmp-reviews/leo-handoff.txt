@@ -1,0 +1,22 @@
+PHASE-1 HANDOFF (NOT landing; NOT green yet — ran out of reliable context mid-churn, handing to your successor writer per your plan).
+
+EXACT HEAD: 19159df53560e785e3bf474c0362b9778d0a0228  (branch hive/leo-implement-and-land-the-systemi)
+Last GREEN review HEAD was d216841; containment delta since then = 5 files:
+- src/daemon/codex-containment.ts (NEW): single shared rule codexWriterContainment/assertCodexWriterContained + actionable diagnostic. INVARIANT CORE — DONE.
+- src/daemon/spawner-impl.ts (+6): assertCodexWriterContained at fresh spawn after tool resolution (covers explicit model, routed, fallback; no silent fallback).
+- src/daemon/server.ts (+12): resumeAgentAfterPause refuses reissuing write authority to a Codex writer.
+- src/daemon/recovery.ts (+29): recoverOneExclusive marks a crashed Codex writer dead (worktree preserved) + N1 FINAL terminal re-check immediately before relaunch (PRESERVED, per your instruction).
+- src/cli/spawner-impl.test.ts (+21): PARTIAL green-ing (harness default issueCredential; tool-agnostic codex spawns -> readOnly).
+
+STATUS: invariant implemented + typechecks clean. Test churn INCOMPLETE — still red: ~20 in cli/spawner-impl.test.ts + 8 across daemon/server|recovery|auth (more likely in other suites I didn't re-scan). Root cause is expected: those tests spawn Codex WRITERS which now correctly refuse.
+
+EXACT REMAINING PHASE-1 (for successor):
+1. Green-ing pattern: Codex spawn tests -> readOnly (a Codex READER keeps model/effort assertions; only argv becomes read-only sandbox, no writer credential, no guard hook) for tool-agnostic tests; for codex-writer-argv tests (launches Codex TUI, app-server host, explicit effort, "the rules reach a launched CODEX agent") either update to read-only argv OR convert to refusal assertions. Files with remaining reds: cli/spawner-impl.test.ts, daemon/server.test.ts (land/control), daemon/recovery.test.ts, daemon/auth.test.ts, cli/status.test.ts, daemon/multi-instance.live.test.ts, and any other codex-writer spawners.
+2. NEW positive/negative tests to add: Codex WRITER refused at fresh-spawn / routed / explicit-model / fallback / resume / recovery / app-server (assert CODEX_WRITER_CONTAINMENT_REASON, no worktree/launch); Codex READER allowed at each.
+
+REMAINING FULL-CYCLE MATRIX (NOT started, per your bound — keyed to the 3 FINAL reports):
+- Noah lifecycle ccd731c7: N2 reap preserves terminal truth; N3 resume SIGCONT-first fail-closed; N4 CRITICAL terminal-state atomic revoke+epoch+writeRevoked + auth/landing reject terminal regardless of epoch + revoke-before-teardown; N5 pause binds EXACT captured tree incl app-server host, empty/incomplete capture fails.
+- Priya guard/routing 8d5ecd4e: P1/P3 REMOVE the fail-open/tamperable PreToolUse hook subsystem (codex.ts guard script+wiring, /codex-tool-guard endpoint, runCodexToolGuard CLI, codexMutationGuard) + false claims; P2 fresh landing reattest (drop stored-matching); P4 same-provider review exclusion in spawner auth path indep of QuotaService; P5 app-server writer refusal (now subsumed by invariant) + L5 disable multi_agent on app-server argv even read-only; P6 route-audit one-per-decision centralization.
+- Lena identity ffa9fc5f: L1 telemetry newest-incomplete-in-cwd=>unknown; L3 recovery/relaunch resets attestation to unattested (never copy matching); L6 cli/status.ts render launch vs observed separately; L7 docs correct multi_agent/SubagentStart claims; L8 pre-column migration regression; L9 hook session-id residual note.
+
+NOTE: the current PreToolUse guard subsystem (endpoint/CLI/script/codexMutationGuard) is now DEAD once P1/P3 remove it — the invariant supersedes it. Successor should delete it, not fix it.

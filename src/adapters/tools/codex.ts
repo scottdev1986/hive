@@ -68,10 +68,6 @@ export type CodexAgentConfigOptions = Pick<
 };
 
 export const CODEX_NOTIFY_SCRIPT = "hive-notify.sh";
-// The PreToolUse identity guard runs before every mutating shell/patch/MCP
-// action and prints a Codex hook decision; its stdout must reach Codex, so it
-// is a script whose stdout is `hive codex-tool-guard`'s stdout. Writers only.
-export const CODEX_TOOL_GUARD_SCRIPT = "hive-tool-guard.sh";
 
 /** The env var codex reads the agent's bearer from (bearer_token_env_var).
  * Populated only inside the agent's tmux launch shell, never in any argv. */
@@ -188,19 +184,11 @@ function buildCodexConfigArgs(
     command: string,
     matcher?: string,
   ): string => `hooks.${event}=[${hookEntry(command, matcher)}]`;
-  // PreToolUse carries at most two entries and they share one array — two
-  // separate `-c hooks.PreToolUse=[...]` overrides replace rather than merge.
-  // The identity guard (writers only, no matcher so every mutating shell/patch/
-  // MCP tool is gated) comes first; the optional graphify Bash hook follows.
-  const guardPath = resolve(
-    options.worktreePath,
-    ".codex",
-    CODEX_TOOL_GUARD_SCRIPT,
-  );
+  // PreToolUse carries at most one Hive entry (graphify). The fail-open
+  // writer identity PreToolUse guard was removed: Codex 0.144.4 hooks fail
+  // open on error/timeout and are writer-tamperable, so they cannot authorize
+  // mutation. Codex writers are refused at launch instead.
   const preToolUseEntries: string[] = [];
-  if (!options.readOnly) {
-    preToolUseEntries.push(hookEntry(shellToken(guardPath)));
-  }
   if (options.graphifyUrl !== undefined) {
     preToolUseEntries.push(hookEntry(
       `${shellToken(graphifyHookPath(options.worktreePath, ".codex"))} ${
@@ -502,23 +490,8 @@ export async function writeCodexAgentConfig(
     ].join(" "),
     "",
   ].join("\n");
-  // The PreToolUse identity guard. `exec` so this script's stdout is the guard
-  // command's stdout — a Codex PreToolUse decision (deny when the writer's
-  // running identity is not attested matching). Written for writers only.
-  const guardPath = join(codexDirectory, CODEX_TOOL_GUARD_SCRIPT);
-  const guardScript = [
-    "#!/bin/sh",
-    [
-      `exec ${hiveInvocation} codex-tool-guard`,
-      "--agent",
-      shellToken(options.name),
-      "--port",
-      String(options.daemonPort),
-      "--instance-id",
-      hiveInstanceSuffix(),
-    ].join(" "),
-    "",
-  ].join("\n");
+  // No PreToolUse identity guard script: the fail-open/tamperable hook path
+  // was removed; Codex writers are refused at launch instead.
   // No hook tables and no Authorization header here: this project-local file
   // only loads for directories whose trust is persisted in the user's config,
   // which Hive never edits. The lifecycle hooks ride the spawn command's `-c`
@@ -536,11 +509,8 @@ export async function writeCodexAgentConfig(
   await Promise.all([
     writeFile(configPath, config, { mode: 0o600 }),
     writeFile(notifyPath, notifyScript, { mode: 0o755 }),
-    // Writers get the identity guard; a leftover guard from a reader respawn
-    // must not linger.
-    options.readOnly
-      ? rm(guardPath, { force: true })
-      : writeFile(guardPath, guardScript, { mode: 0o755 }),
+    // Remove any leftover identity-guard script from older launches.
+    rm(join(codexDirectory, "hive-tool-guard.sh"), { force: true }),
     writeGraphifyHook(graphifyPath, options.graphifyUrl),
     options.capabilityToken === undefined
       // A leftover token from an earlier process must not outlive the spawn
@@ -551,7 +521,6 @@ export async function writeCodexAgentConfig(
   await Promise.all([
     chmod(configPath, 0o600),
     chmod(notifyPath, 0o755),
-    ...(options.readOnly ? [] : [chmod(guardPath, 0o755)]),
     ...(options.capabilityToken === undefined ? [] : [chmod(tokenPath, 0o600)]),
   ]);
 }
