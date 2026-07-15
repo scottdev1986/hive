@@ -6,6 +6,7 @@ import {
   buildHookEvent,
   parseHookStdin,
   readHookStdin,
+  runCodexToolGuard,
   runHiveEvent,
   type EventFetcher,
 } from "./event";
@@ -240,5 +241,54 @@ describe("hive event", () => {
       stderr: "pipe",
     });
     expect(await malformed.exited).toEqual(0);
+  });
+});
+
+describe("hive codex-tool-guard (PreToolUse identity guard)", () => {
+  async function captureGuard(
+    agent: string,
+    fetcher: EventFetcher,
+  ): Promise<string> {
+    const chunks: string[] = [];
+    const original = process.stdout.write.bind(process.stdout);
+    process.stdout.write = ((chunk: string) => {
+      chunks.push(String(chunk));
+      return true;
+    }) as typeof process.stdout.write;
+    try {
+      await runCodexToolGuard(agent, 4317, fetcher);
+    } finally {
+      process.stdout.write = original;
+    }
+    return chunks.join("");
+  }
+
+  test("stays silent (allow) when the daemon attests matching", async () => {
+    const allow: EventFetcher = async () =>
+      new Response(JSON.stringify({ allow: true, reason: "matching" }), {
+        status: 200,
+      });
+    expect(await captureGuard("maya", allow)).toEqual("");
+  });
+
+  test("emits a Codex deny decision when the daemon denies", async () => {
+    const deny: EventFetcher = async () =>
+      new Response(
+        JSON.stringify({ allow: false, reason: "identity is drift" }),
+        { status: 200 },
+      );
+    const parsed = JSON.parse(await captureGuard("maya", deny));
+    expect(parsed.hookSpecificOutput.hookEventName).toEqual("PreToolUse");
+    expect(parsed.hookSpecificOutput.permissionDecision).toEqual("deny");
+    expect(parsed.hookSpecificOutput.permissionDecisionReason).toContain(
+      "drift",
+    );
+  });
+
+  test("fails closed (deny) when the daemon is unreachable", async () => {
+    const down: EventFetcher = () =>
+      Promise.reject(new TypeError("connection refused"));
+    const parsed = JSON.parse(await captureGuard("maya", down));
+    expect(parsed.hookSpecificOutput.permissionDecision).toEqual("deny");
   });
 });

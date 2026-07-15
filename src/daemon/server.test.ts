@@ -3848,6 +3848,58 @@ describe("Codex execution-identity attestation sweep", () => {
     }
   });
 
+  test("codexMutationGuard allows only an attested-matching, unrevoked writer", async () => {
+    const db = new HiveDatabase(join(home, "mutation-guard.db"));
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new StubSpawner(),
+      tmux: new FakeDaemonTmux(),
+      telemetryReaders: {
+        codex: async () => ({ contextPct: null, lastActivityAt: null }),
+        // A fresh reattest of a not-yet-matching row observes a drifted
+        // identity (launch is sol/xhigh).
+        codexIdentity: async () => ({
+          status: "observed",
+          model: "gpt-5.6-luna",
+          effort: "low",
+          turnId: "t",
+          sessionId: "session-1",
+          observedAt: "2026-07-15T18:00:00.000Z",
+        }),
+      },
+    });
+    try {
+      // A matching row is allowed on the fast path (no reattest).
+      db.insertAgent(codexAgent({ identityState: "matching" }));
+      expect((await daemon.codexMutationGuard("maya")).allow).toBe(true);
+
+      // A non-matching row reattests fresh and is denied on the drift.
+      db.upsertAgent({ ...db.getAgentByName("maya")!, identityState: "drift" });
+      const drift = await daemon.codexMutationGuard("maya");
+      expect(drift.allow).toBe(false);
+      expect(drift.reason).toContain("drift");
+
+      // A revoked (paused) writer is denied even if it last attested matching.
+      db.upsertAgent({
+        ...db.getAgentByName("maya")!,
+        identityState: "matching",
+        writeRevoked: true,
+      });
+      expect((await daemon.codexMutationGuard("maya")).allow).toBe(false);
+
+      // An unattested writer reattests fresh -> unknown here -> denied.
+      db.insertAgent(codexAgent({
+        id: "agent-nora",
+        name: "nora",
+        tmuxSession: "hive-nora",
+        worktreePath: "/tmp/hive-nora",
+      }));
+      expect((await daemon.codexMutationGuard("nora")).allow).toBe(false);
+    } finally {
+      db.close();
+    }
+  });
+
   test("a live rollout with no readable identity is unknown, never synthesized", async () => {
     const db = new HiveDatabase(join(home, "attest-unknown.db"));
     const daemon = new HiveDaemon({

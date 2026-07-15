@@ -20,6 +20,7 @@ import { runCredentialHelper } from "./cli/credential";
 import { runDaemon } from "./cli/daemon";
 import {
   readHookStdin,
+  runCodexToolGuard,
   runHiveEvent,
   type HookEventOptions,
 } from "./cli/event";
@@ -718,6 +719,35 @@ export function createProgram(): Command {
         // Commander option parsing and hook delivery must not break agent turns.
       }
     });
+
+  program
+    .command("codex-tool-guard")
+    .description(
+      "Codex PreToolUse identity guard: deny a mutating tool unless the writer's running identity is attested matching",
+    )
+    .requiredOption("--agent <name>", "agent name")
+    .option("--port <number>", "daemon port")
+    .requiredOption("--instance-id <id>", "expected Hive instance identity")
+    .action(
+      async (options: { agent: string; port?: string; instanceId?: string }) => {
+        try {
+          await runCodexToolGuard(options.agent, parsePort(options.port));
+        } catch {
+          // Any failure to evaluate the guard fails CLOSED: emit a deny so a
+          // writer whose identity could not be checked cannot mutate.
+          process.stdout.write(
+            JSON.stringify({
+              hookSpecificOutput: {
+                hookEventName: "PreToolUse",
+                permissionDecision: "deny",
+                permissionDecisionReason:
+                  "Hive execution-identity guard failed to evaluate; failing closed.",
+              },
+            }) + "\n",
+          );
+        }
+      },
+    );
 
   program
     .command("statusline")
