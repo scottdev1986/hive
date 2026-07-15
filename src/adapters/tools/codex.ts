@@ -116,7 +116,21 @@ function buildCodexConfigArgs(
   // Apps/connectors do not appear in mcp_servers, so inherited-server
   // exclusions cannot detach them. Hive agents have a deliberately scoped
   // tool surface; disable Apps for this process without changing user config.
-  const args: string[] = ["-c", "features.apps=false"];
+  //
+  // Disable Codex-internal subagents too. `codex features list` (0.144.4)
+  // reports `multi_agent` as a stable feature that is on by default; a worker
+  // that spawns its own children gives them execution identities Hive never
+  // authorized, reserved quota for, or attested — the /root/review and
+  // /root/review_grok rollouts of the incident. `features.multi_agent=false`
+  // (equivalently `--disable multi_agent`) is the verified disable surface;
+  // `multi_agent_v2` and `enable_fanout` are already off by default. A Hive
+  // worker is a single agent, so nothing legitimate is lost.
+  const args: string[] = [
+    "-c",
+    "features.apps=false",
+    "-c",
+    "features.multi_agent=false",
+  ];
   if (options.model !== "default") {
     args.push("-c", `model=${options.model}`);
   }

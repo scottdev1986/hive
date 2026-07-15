@@ -68,6 +68,11 @@ describe("Codex spawn-scoped MCP surface", () => {
     expect(command).toContain("features.apps=false");
   });
 
+  test("disables Codex-internal subagents so children get no implicit authority", () => {
+    const command = buildCodexSpawnCommand(base);
+    expect(command).toContain("features.multi_agent=false");
+  });
+
   test("changes nothing when the user has no servers of their own", () => {
     expect(buildCodexSpawnCommand({ ...base, excludeMcpServers: [] })).toEqual(
       buildCodexSpawnCommand(base),
@@ -181,6 +186,8 @@ describe("Codex adapter", () => {
       "-c",
       "features.apps=false",
       "-c",
+      "features.multi_agent=false",
+      "-c",
       "model=gpt-5-codex",
       "-c",
       "model_reasoning_effort=high",
@@ -201,6 +208,8 @@ describe("Codex adapter", () => {
       "codex",
       "-c",
       "features.apps=false",
+      "-c",
+      "features.multi_agent=false",
       "-c",
       "model=gpt-5-codex",
       "-c",
@@ -323,6 +332,8 @@ describe("Codex adapter", () => {
       "resume",
       "-c",
       "features.apps=false",
+      "-c",
+      "features.multi_agent=false",
       "-c",
       "model=gpt-5-codex",
       "-c",
