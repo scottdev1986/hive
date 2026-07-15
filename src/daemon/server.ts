@@ -1800,10 +1800,12 @@ export class HiveDaemon {
       note: string;
     } | null;
   }> {
-    const reaped = await this.stopAgentProcesses(agent, () => {
-      this.capabilities.revokeSubject(agent.name);
-      removeCredential(agent.name);
-    });
+    // Make the terminal reap intent durable BEFORE the process teardown is
+    // observable. A recovery sweep that races the teardown must read a closed
+    // row and refuse to resurrect a deliberately reaped agent — the incident
+    // where a finished, clean agent killed with removeWorktree was relaunched
+    // as a crash recovery. The recovery sweep additionally re-proves this row
+    // is not closed immediately before any relaunch.
     const timestamp = options.at ?? new Date().toISOString();
     const killed = this.db.markAgentDead(
       agent.id,
@@ -1812,6 +1814,20 @@ export class HiveDaemon {
     );
     if (killed === null) {
       throw new Error(`Hive agent not found: ${agent.name}`);
+    }
+    let reaped: ReapOutcome;
+    try {
+      reaped = await this.stopAgentProcesses(agent, () => {
+        this.capabilities.revokeSubject(agent.name);
+        removeCredential(agent.name);
+      });
+    } catch (error) {
+      // The teardown could not be verified — the process may still be live.
+      // Undo the terminal mark so nothing downstream (quota settlement,
+      // worktree cleanup, control ownership) treats an agent that may still be
+      // running as reaped. A live tmux session keeps recovery off it anyway.
+      this.db.upsertAgent(agent);
+      throw error;
     }
     await this.settleAgentQuota(killed, timestamp);
     let updated = killed;

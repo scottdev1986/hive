@@ -26,6 +26,7 @@ import {
 import {
   ORCHESTRATOR_NAME,
   CapabilityProviderSchema,
+  isTerminalAgentStatus,
   unknownVendor,
   type AgentRecord,
   type ExecutionIdentity,
@@ -335,6 +336,27 @@ export class CrashRecovery {
     agent: AgentRecord,
     options: { manual: boolean },
   ): Promise<RecoveryOutcome> {
+    // Re-prove the agent has not been deliberately closed since the sweep read
+    // it. hive_kill / reap marks the row terminal durably *before* it tears the
+    // tmux session down, so automatic recovery that raced the teardown reads
+    // this fresh row and refuses — it must never resurrect a deliberately
+    // closed agent (the finished, clean agent that was relaunched as a crash
+    // recovery). Manual recovery is the explicit "bring her back" path and may
+    // revive a dead/failed row on purpose, so it is exempt.
+    if (!options.manual) {
+      const current = this.deps.db.getAgentById(agent.id);
+      if (
+        current === null || current.closedAt !== undefined ||
+        isTerminalAgentStatus(current.status)
+      ) {
+        return {
+          agent: agent.name,
+          action: "skipped",
+          reason:
+            "agent was deliberately closed since the sweep observed it; recovery will not resurrect it",
+        };
+      }
+    }
     // Callers checked hasSession before entering, but that check is stale by
     // now if another recovery finished in between; resuming over a live
     // session would fail the tmux launch and mark a healthy agent dead.

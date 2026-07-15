@@ -237,6 +237,37 @@ describe("crash classification", () => {
     expect(h.settled).toEqual(["maya"]);
   });
 
+  test("does not resurrect an agent reaped between the sweep read and the relaunch", async () => {
+    const h = harness();
+    // A finished, clean agent: idle, no tmux session — a recovery candidate on
+    // paper (the Sarah reap-vs-recovery incident).
+    h.db.insertAgent(agent({ status: "idle" }));
+    h.tmux.sessions.delete("hive-maya");
+
+    // Simulate hive_kill completing its durable terminal mark in the window
+    // between the sweep reading the row and recovery relaunching it: the mark
+    // lands as the sweep probes the tmux session.
+    const probe = h.tmux.hasSession.bind(h.tmux);
+    h.tmux.hasSession = async (session: string) => {
+      const alive = await probe(session);
+      if (session === "hive-maya") {
+        h.db.markAgentDead("agent-maya", new Date().toISOString());
+      }
+      return alive;
+    };
+
+    const outcomes = await h.recovery.sweep();
+    expect(outcomes).toEqual([{
+      agent: "maya",
+      action: "skipped",
+      reason:
+        "agent was deliberately closed since the sweep observed it; recovery will not resurrect it",
+    }]);
+    // No resume was launched, and the deliberate close stands.
+    expect(h.tmux.created).toEqual([]);
+    expect(h.db.getAgentByName("maya")?.status).toEqual("dead");
+  });
+
   test("a spawning agent whose name is still reserved is an in-flight spawn and is left alone", async () => {
     const h = harness();
     h.db.insertAgent(agent({ status: "spawning" }));
