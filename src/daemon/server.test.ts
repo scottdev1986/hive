@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createWorktree } from "../adapters/worktrees";
 import {
+  AgentMessageSchema,
   QuotaConfigSchema,
   type AgentRecord,
   type HookEvent,
@@ -3623,6 +3624,58 @@ describe("delivery reconciliation runs in maintenance", () => {
         "Ship the fix.",
       );
       expect(instruction.from).toEqual("queen");
+    } finally {
+      db.close();
+    }
+  });
+
+  test("status provenance includes pre-rename from=orchestrator root instructions", async () => {
+    const db = new HiveDatabase(join(home, "root-status-legacy-from.db"));
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new StubSpawner(),
+      tmux: new FakeDaemonTmux(),
+      tmuxSender: new SilentTmuxSender(db),
+    });
+    try {
+      db.insertAgent(agent({
+        status: "working",
+        createdAt: "2026-07-09T11:00:00.000Z",
+      }));
+      // Historical instruction still stored under the synonym sender.
+      db.insertMessage(AgentMessageSchema.parse({
+        id: "legacy-root-instruction",
+        from: "orchestrator",
+        to: "maya",
+        body: "pre-rename instruction still in force",
+        createdAt: "2026-07-09T12:00:00.000Z",
+        deliveredAt: null,
+        priority: "normal",
+        intent: "instruction",
+        state: "queued",
+        sequence: 1,
+      }));
+
+      const transport = new StreamableHTTPClientTransport(
+        new URL("http://hive/mcp"),
+        { fetch: actingAs(daemon, "operator") },
+      );
+      const client = new Client({ name: "legacy-from-status", version: "1.0.0" });
+      await client.connect(transport);
+      const status = textValue(await client.callTool({
+        name: "hive_status",
+        arguments: { detail: "active" },
+      }));
+      expect(Array.isArray(status)).toBe(true);
+      const row = (status as Array<{
+        name: string;
+        latestInstruction?: string;
+        instructionCount?: number;
+      }>).find((entry) => entry.name === "maya");
+      expect(row).toBeDefined();
+      expect(row?.instructionCount).toEqual(1);
+      expect(row?.latestInstruction).toContain("pre-rename instruction");
+      await client.close();
     } finally {
       db.close();
     }

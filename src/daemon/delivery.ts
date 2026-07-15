@@ -11,6 +11,11 @@ import {
   type MessagePriority,
   type OrchestratorMessageEnvelope,
 } from "../schemas";
+
+/** Senders to probe for idempotency: root aliases during the rename window. */
+function idempotencySenders(from: string): readonly string[] {
+  return isOrchestratorName(from) ? orchestratorRecipientNames() : [from];
+}
 import { TmuxAdapter } from "../adapters/tmux";
 import type { PaneProcessState } from "./resources";
 import { HiveDatabase } from "./db";
@@ -236,13 +241,16 @@ export class MessageDelivery {
     options: SendOptions = {},
   ): Promise<AgentMessage> {
     // Preferred root address is queen; "orchestrator" (any case) is a synonym.
-    // Canonicalize both ends before idempotency lookup, provenance, and storage
-    // so worker-instruction status and history share one root identity.
+    // Canonicalize both ends before provenance and storage so worker-instruction
+    // status and history share one root identity. Idempotency still probes every
+    // root alias so a pre-rename from=orchestrator row satisfies post-upgrade
+    // retries that store as queen.
+    const sendersForIdempotency = idempotencySenders(from);
     from = canonicalOrchestratorName(from);
     to = canonicalOrchestratorName(to);
     if (options.idempotencyKey !== undefined) {
-      const existing = this.db.findMessageByIdempotency(
-        from,
+      const existing = this.db.findMessageByIdempotencyAmongSenders(
+        sendersForIdempotency,
         options.idempotencyKey,
       );
       if (existing !== null) return existing;
@@ -307,11 +315,13 @@ export class MessageDelivery {
     } catch (error) {
       const existing = options.idempotencyKey === undefined
         ? null
-        : this.db.findMessageByIdempotency(from, options.idempotencyKey);
+        : this.db.findMessageByIdempotencyAmongSenders(
+          sendersForIdempotency,
+          options.idempotencyKey,
+        );
       if (existing !== null) return existing;
       throw error;
     }
-
     if (to === ORCHESTRATOR_NAME) {
       await this.wakeOrchestrator().catch(() => undefined);
       return this.getStoredMessage(message.id);

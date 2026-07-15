@@ -3288,7 +3288,7 @@ export class HiveDaemon {
       await Promise.all(agents.map(async (agent) => {
         evidence.set(agent.name, {
           instructions: messages.filter((message) =>
-            message.from === ORCHESTRATOR_NAME &&
+            isOrchestratorName(message.from) &&
             message.to === agent.name && message.intent === "instruction" &&
             Date.parse(message.createdAt) > Date.parse(agent.createdAt)
           ).map((message) => message.body),

@@ -1101,6 +1101,29 @@ export class HiveDatabase {
     return row === null ? null : AgentMessageSchema.parse(row);
   }
 
+  /**
+   * Idempotency across root address aliases during the queen rename window.
+   * A pre-rename row stored as from=orchestrator must satisfy a post-upgrade
+   * retry that canonicalizes the sender to queen (and vice versa). Exact
+   * pair uniqueness still holds for non-root senders.
+   */
+  findMessageByIdempotencyAmongSenders(
+    senders: readonly string[],
+    idempotencyKey: string,
+  ): AgentMessage | null {
+    if (senders.length === 0) return null;
+    if (senders.length === 1) {
+      return this.findMessageByIdempotency(senders[0]!, idempotencyKey);
+    }
+    const placeholders = senders.map(() => "?").join(", ");
+    const row = this.database.query(`
+      SELECT * FROM messages
+      WHERE "from" IN (${placeholders}) AND idempotencyKey = ?
+      ORDER BY rowid ASC LIMIT 1
+    `).get(...senders, idempotencyKey);
+    return row === null ? null : AgentMessageSchema.parse(row);
+  }
+
   nextMessageSequence(agentName: string): number {
     const row = this.database.query(`
       SELECT COALESCE(MAX(sequence), 0) AS value FROM messages WHERE "to" = ?

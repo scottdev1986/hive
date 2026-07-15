@@ -595,6 +595,43 @@ describe("MessageDelivery", () => {
     }
   });
 
+  test("idempotency survives a genuine pre-rename from=orchestrator row after upgrade", async () => {
+    const db = new HiveDatabase(join(home, "root-sender-legacy-idempotency.db"));
+    const delivery = new MessageDelivery(db, new SubmittingTmuxSender(db));
+    try {
+      db.insertAgent(agent("idle"));
+      // Bypass send(): pre-activation row still keyed under the synonym.
+      const legacy = db.insertMessage(AgentMessageSchema.parse({
+        id: "legacy-root-idempotent",
+        from: "orchestrator",
+        to: "maya",
+        body: "instruction issued before queen rename",
+        createdAt: timestamp,
+        deliveredAt: null,
+        priority: "normal",
+        intent: "instruction",
+        state: "queued",
+        sequence: 0,
+        idempotencyKey: "pre-rename-control-k",
+      }));
+      expect(legacy.from).toEqual("orchestrator");
+
+      const retry = await delivery.send(
+        "Orchestrator",
+        "maya",
+        "instruction issued before queen rename",
+        { idempotencyKey: "pre-rename-control-k" },
+      );
+      expect(retry.id).toEqual(legacy.id);
+      // One row only — no second queen-keyed insert.
+      expect(
+        db.listMessages().filter((m) => m.idempotencyKey === "pre-rename-control-k"),
+      ).toHaveLength(1);
+    } finally {
+      db.close();
+    }
+  });
+
   test("orchestrator stays a valid recipient even when agents are dead", async () => {
     const db = new HiveDatabase(join(home, "orchestrator-always.db"));
     const delivery = new MessageDelivery(db, new RecordingTmuxSender());
