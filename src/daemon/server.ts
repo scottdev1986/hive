@@ -1388,6 +1388,101 @@ export class HiveDaemon {
     );
   }
 
+  /**
+   * Authorized, reattesting resume of a non-destructively paused agent. It
+   * reattests the running identity and only if it now MATCHES the launch
+   * identity does it reissue a fresh capability epoch + credential, clear the
+   * revocation, SIGCONT the exact same process, and return the agent to idle. A
+   * still-drifted or unreadable identity keeps it paused — resume never returns
+   * write authority to an unattested writer. Nothing is relaunched: because the
+   * agent CLI reads its credential from a file at write time, reissuing to the
+   * same subject restores authority to the surviving process.
+   */
+  async resumeAgentAfterPause(
+    name: string,
+  ): Promise<{ resumed: boolean; identityState: IdentityState; reason: string }> {
+    const agent = this.db.getAgentByName(name);
+    if (agent === null) throw new Error(`Hive agent not found: ${name}`);
+    if (agent.status !== "control-paused") {
+      return {
+        resumed: false,
+        identityState: attestationStateOf(agent),
+        reason: `${name} is not paused (status ${agent.status})`,
+      };
+    }
+    let identityState: IdentityState = attestationStateOf(agent);
+    let observed = agent.observedIdentity;
+    let liveModel = agent.liveModel;
+    let liveEffort = agent.liveEffort;
+    // Reattest a Codex agent from its own rollout; a non-Codex paused agent has
+    // no identity attestation and resumes on its existing row.
+    if (agent.tool === "codex" && agent.worktreePath !== null) {
+      const launch = agent.executionIdentity;
+      if (launch === undefined) {
+        return {
+          resumed: false,
+          identityState: "unknown",
+          reason: `${name} has no immutable launch identity; resume refused`,
+        };
+      }
+      const attestation = reconcileCodexIdentity(
+        launch,
+        await this.readCodexIdentity(agent.worktreePath, agent.toolSessionId),
+      );
+      identityState = attestation.identityState;
+      if (attestation.observedIdentity !== null) {
+        observed = attestation.observedIdentity;
+      }
+      if (attestation.liveModel !== null) liveModel = attestation.liveModel;
+      if (attestation.liveEffort !== null) liveEffort = attestation.liveEffort;
+      if (identityState !== "matching") {
+        // Persist the fresh verdict; the agent stays paused and revoked.
+        this.db.upsertAgent({
+          ...agent,
+          identityState,
+          ...(observed === undefined ? {} : { observedIdentity: observed }),
+          ...(liveModel === undefined ? {} : { liveModel }),
+          ...(liveEffort === undefined ? {} : { liveEffort }),
+        });
+        return {
+          resumed: false,
+          identityState,
+          reason:
+            `reattestation is ${identityState}, not matching; write authority withheld`,
+        };
+      }
+    }
+    const nextEpoch = agent.capabilityEpoch + 1;
+    this.issueCredential(
+      agent.name,
+      agent.readOnly ? "reader" : "writer",
+      nextEpoch,
+    );
+    this.db.upsertAgent({
+      ...agent,
+      status: "idle",
+      writeRevoked: false,
+      capabilityEpoch: nextEpoch,
+      identityState,
+      ...(observed === undefined ? {} : { observedIdentity: observed }),
+      ...(liveModel === undefined ? {} : { liveModel }),
+      ...(liveEffort === undefined ? {} : { liveEffort }),
+    });
+    await this.resumeAgentProcesses(agent.tmuxSession).catch((error) => {
+      console.error(
+        `Hive resume could not SIGCONT ${agent.name}: ${
+          error instanceof Error ? error.message : "unknown error"
+        }`,
+      );
+    });
+    return {
+      resumed: true,
+      identityState,
+      reason:
+        "reattested matching; capability reissued at a fresh epoch and the same process resumed",
+    };
+  }
+
   async refreshToolTelemetry(): Promise<void> {
     for (const agent of this.db.listAgents()) {
       if (
@@ -3608,6 +3703,16 @@ export class HiveDaemon {
     }, async ({ agent }) => {
       this.authorizeTool(capability, "hive_recover", "agent:recover", agent);
       return toolResult(await this.recoverCrashedAgents(agent), "outcomes");
+    });
+
+    server.registerTool("hive_resume", {
+      title: "Resume a paused Hive agent",
+      description:
+        "Resume a non-destructively paused agent (e.g. one paused for execution-identity drift). Reattests the running model+effort against the authorized launch identity; only on a match does it reissue capability at a fresh epoch and SIGCONT the SAME preserved process. A still-drifted or unreadable identity keeps the agent paused with write authority withheld. Nothing is relaunched.",
+      inputSchema: z.object({ agent: z.string().min(1) }),
+    }, async ({ agent }) => {
+      this.authorizeTool(capability, "hive_resume", "agent:recover", agent);
+      return toolResult(await this.resumeAgentAfterPause(agent), "resume");
     });
 
     server.registerTool("hive_mark_dead", {

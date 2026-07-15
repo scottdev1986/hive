@@ -3603,6 +3603,61 @@ describe("Codex execution-identity attestation sweep", () => {
     }
   });
 
+  test("resume reattests: still-drifted stays paused; now-matching resumes the same process", async () => {
+    const db = new HiveDatabase(join(home, "attest-resume.db"));
+    const resumed: string[] = [];
+    let observedModel = "gpt-5.6-luna";
+    let observedEffort = "low";
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new StubSpawner(),
+      tmux: new FakeDaemonTmux(),
+      suspendProcesses: async () => ({ suspended: [], unstopped: [] }),
+      resumeProcesses: async (session) => {
+        resumed.push(session);
+      },
+      telemetryReaders: {
+        codex: async () => ({ contextPct: null, lastActivityAt: null }),
+        codexIdentity: async () => ({
+          status: "observed",
+          model: observedModel,
+          effort: observedEffort,
+          turnId: "t",
+          sessionId: "session-1",
+          observedAt: "2026-07-15T18:00:00.000Z",
+        }),
+      },
+    });
+    db.insertAgent(codexAgent());
+    try {
+      await daemon.refreshToolTelemetry();
+      expect(db.getAgentByName("maya")?.status).toBe("control-paused");
+
+      // Reattest while still drifted: write authority stays withheld.
+      const stillDrifted = await daemon.resumeAgentAfterPause("maya");
+      expect(stillDrifted.resumed).toBe(false);
+      expect(stillDrifted.identityState).toBe("drift");
+      expect(db.getAgentByName("maya")?.status).toBe("control-paused");
+      expect(resumed).toEqual([]);
+
+      // The drift is corrected — the agent is back to its authorized identity.
+      observedModel = "gpt-5.6-sol";
+      observedEffort = "xhigh";
+      const ok = await daemon.resumeAgentAfterPause("maya");
+      expect(ok.resumed).toBe(true);
+      expect(ok.identityState).toBe("matching");
+      const row = db.getAgentByName("maya")!;
+      expect(row.status).toBe("idle");
+      expect(row.writeRevoked).toBe(false);
+      // paused bumped the epoch to 1; resume reissues at 2.
+      expect(row.capabilityEpoch).toBe(2);
+      // The SAME process was SIGCONT'd, never relaunched.
+      expect(resumed).toEqual(["hive-maya"]);
+    } finally {
+      db.close();
+    }
+  });
+
   test("a live rollout with no readable identity is unknown, never synthesized", async () => {
     const db = new HiveDatabase(join(home, "attest-unknown.db"));
     const daemon = new HiveDaemon({
