@@ -1,5 +1,15 @@
 # Wiki Log
 
+## [2026-07-15] change | Root orchestrator named queen
+
+The root orchestrator's name is queen. Prefer queen when addressing or referring to
+the root; the architectural role remains orchestrator, and input that says
+`orchestrator` is still understood. Authority is unchanged (read-only root, no agents
+row, no landing right). README, worker-facing briefing, status, authorization, Workspace
+blueprint, acceptance reply wording, and related docs were updated accordingly. Module
+paths, CLI flags (`--orchestrator`), and role-matrix language retain orchestrator where
+they describe the role or the code surface.
+
 ## [2026-07-15] correction | Acceptance attestation requires measured enforcement
 
 The acceptance runbook now binds every post-launch command to its captured instance

@@ -7,6 +7,10 @@ Sources: Hive source tree, 2026-07-15; [SPEC decision 14](../../SPEC.md)
 
 Every mechanism that makes a Hive spawn cheap — the scoped brief, the memory index — must not assume it knows the repo's shape. The one thing Hive derives from a repo it did not write is **which docs are briefable and which is primary**, and it discovers that **on demand** from the tree: `discoverBriefableDocs` (`src/adapters/briefing-docs.ts`) walks the repo when a spawn needs it, and `buildScopedBrief` (`src/adapters/brief.ts`) extracts the sections a task cites. Nothing is stored, cached, or compiled in — no document name, design-doc convention, or build command is Hive-repo-specific. This page records how discovery works, the load-bearing lessons behind it (scoped walks, links not mentions), what `hive init` owns, and the measured token facts that justify a scoped brief at all.
 
+## Agent hierarchy and addressing
+
+Workers report to queen. The root process is the orchestrator; its name is queen. Prefer queen in `hive_send`, completion reports, blockers, escalations, and any prose that tells a human or agent who to address. Explanatory wording such as "the orchestrator (queen) is in charge" is fine. The architectural role name orchestrator stays in capability matrices, routing prose ("the orchestrator classifies"), CLI flags (`--orchestrator`), and module paths. Input or docs that still say `orchestrator` as a recipient remain understood — naming is not a new authority boundary and does not change the read-only root role.
+
 ## How doc discovery actually works
 
 `discoverBriefableDocs` (`src/adapters/briefing-docs.ts:184`) reads the tree fresh on every call — zero model tokens, no cache — and returns the briefable `.md` set, the doc directories that held any, and the primary design doc. `loadBriefConfig` in `src/adapters/brief.ts` turns that into the brief inputs; a repo whose docs cannot be walked briefs **nothing** rather than falling back to Hive's own doc names. That is the safe, portable default, and it is why Scott's binding constraint — **Hive works with any repo; nothing Hive-repo-specific in the product** — holds at this seam.
@@ -90,7 +94,7 @@ The brief rides into the prompt through `options.brief` (`src/daemon/spawner-imp
 
 The caps are deliberate: a whole doc under `WHOLE_DOC_MAX_CHARS` (4,000) is cheaper to embed than to make the agent burn a tool call opening it; one section's body is capped at `SECTION_MAX_CHARS` (6,000) chars, and the whole brief at `BRIEF_MAX_CHARS` (12,000) (`src/adapters/brief.ts:37-41`). And the briefable-doc allowlist is a *security* boundary as much as an economy one: a task naming any path outside it is ignored, because **the brief must never become a way to paste arbitrary repo files into a prompt** (`src/adapters/brief.ts`, `resolveBriefablePath`).
 
-**The open measurement:** the brief only pays off if the orchestrator *writes* briefs that cite their sources. `ORCHESTRATOR_BRIEF` instructs it to ("Name the sections; never tell an agent to read a document whole"), and nothing measures whether it does. The cheapest check is a count of spawn task descriptors containing a `§` or a `.md` path, which the daemon already logs.
+**The open measurement:** the brief only pays off if queen *writes* briefs that cite their sources. `ORCHESTRATOR_BRIEF` instructs the orchestrator to ("Name the sections; never tell an agent to read a document whole"), and nothing measures whether it does. The cheapest check is a count of spawn task descriptors containing a `§` or a `.md` path, which the daemon already logs.
 
 ## See Also
 

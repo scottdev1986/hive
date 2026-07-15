@@ -22,7 +22,7 @@ The consequence, stated plainly: a long-running daemon learns about a release on
 
 ## Where the notice surfaces, and where it deliberately does not
 
-Hive has three possible surfaces and only one is right by default. The daemon has no UI. The orchestrator terminal belongs to a running Claude Code or Codex session, and injecting Hive chrome into it mid-session is both technically awkward and exactly the interruption this design forbids. That leaves the CLI.
+Hive has three possible surfaces and only one is right by default. The daemon has no UI. queen's terminal (the orchestrator) belongs to a running Claude Code or Codex session, and injecting Hive chrome into it mid-session is both technically awkward and exactly the interruption this design forbids. That leaves the CLI.
 
 The passive trailing notice appears only on the human-facing commands in `USER_FACING_COMMANDS` (`src/cli/update-notice.ts:35-47`). Session boundaries and machine-facing protocol commands are deliberately absent from that allowlist.
 
@@ -123,7 +123,7 @@ Measured from source and live docs on 2026-07-10. This is the survey the design 
 
 ## Rejected alternatives
 
-**A startup popup**, Codex-style. Codex owns its TUI and can ask a question. **Hive does not own the orchestrator terminal** — it belongs to Claude Code or Codex — and interrupting an agent session with Hive chrome is exactly the annoyance this design exists to avoid.
+**A startup popup**, Codex-style. Codex owns its TUI and can ask a question. **Hive does not own queen's terminal** — it belongs to Claude Code or Codex — and interrupting an agent session with Hive chrome is exactly the annoyance this design exists to avoid.
 
 **A "you're N versions behind" counter.** Noise at a patch-per-push cadence.
 

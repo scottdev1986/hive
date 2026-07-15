@@ -1,11 +1,13 @@
 # Orchestrator status
 
-Updated: 2026-07-14
-Source: Hive source tree, 2026-07-14
+Updated: 2026-07-15
+Source: Hive source tree, 2026-07-15
 
 ## Summary
 
-The orchestrator has no row in the `agents` table, so it has no `status` column to read — and for months the Workspace papered over that by inventing a status word in Swift, which the UI correctly degraded to "unknown", leaving the root's dot gray forever. The fix was not to give the root a fake row: it was to **derive its status from the only surface that actually records it, and to say nothing when that surface contradicts itself.**
+The root orchestrator is named queen. It has no row in the `agents` table, so it has no `status` column to read — and for months the Workspace papered over that by inventing a status word in Swift, which the UI correctly degraded to "unknown", leaving the root's dot gray forever. The fix was not to give the root a fake row: it was to **derive its status from the only surface that actually records it, and to say nothing when that surface contradicts itself.**
+
+Prefer queen when addressing or referring to the root. The architectural role remains orchestrator; old and user input that says `orchestrator` is still understood. Authority is unchanged: queen is still the read-only root role with no agents row and no landing right.
 
 The derivation is `src/daemon/orchestrator-status.ts`; provider-native boundary bridging is `src/cli/orchestrator-turn-monitor.ts`. This article is the *why*.
 
@@ -19,13 +21,13 @@ The derivation is `src/daemon/orchestrator-status.ts`; provider-native boundary 
 
 It reads event **kinds only, never timestamps**. That is not stylistic — it is the type signature enforcing the design. No timeout inference can be introduced without changing the function's signature, which is exactly the review a timeout deserves.
 
-Every provider feeds the same boundary stream under the agent name `orchestrator`:
+Every provider feeds the same boundary stream under the root's reserved name (queen; `orchestrator` remains accepted):
 
 - Claude posts `turn-start` on `UserPromptSubmit` and `turn-end` on `Stop` through its native hooks.
 - Codex's rollout records exact `task_started` and `task_complete` events.
 - Grok's `updates.jsonl` records streaming updates and the exact terminal `turn_completed` event.
 
-The Workspace orchestrator supervisor resolves the new Codex/Grok session artifact once, then reads only that bounded file tail. It ignores a predecessor session, reports transitions through the authenticated daemon event endpoint, and pairs a first-observed completed turn when a short turn finished before the first poll. Missing or malformed artifacts remain unknown. It never scrapes terminal text and never infers from elapsed time.
+The Workspace queen (orchestrator) supervisor resolves the new Codex/Grok session artifact once, then reads only that bounded file tail. It ignores a predecessor session, reports transitions through the authenticated daemon event endpoint, and pairs a first-observed completed turn when a short turn finished before the first poll. Missing or malformed artifacts remain unknown. It never scrapes terminal text and never infers from elapsed time.
 
 Agent reports follow the same provider boundary. Codex receives a native
 app-server item; Claude and Grok receive an instance-scoped tmux submission at
@@ -59,7 +61,7 @@ The same invariant appears in [database-resilience.md](database-resilience.md) a
 
 **No `needsUser` (red) for the root.** Red is reserved for *measured* blocked-on-human states — a pending approval record, control-paused, stuck. The root is a human-facing TUI, and a human sitting at it is not a blocked agent. There is no observation that would justify red, so no code path may produce it. A root that goes red is a bug by construction.
 
-**No fake `agents` row.** The "orchestrator has no agents row" invariant is load-bearing in at least four places — name reuse, capability grants (`src/daemon/capabilities.ts:243-247`: the operator and the orchestrator have no row, which is also why they are exempt from the epoch check), spawner reservations, and delivery all read that table and assume its members are spawned agents. Adding a fake row to satisfy a *colour* would be the expensive kind of clever.
+**No fake `agents` row.** The "queen / orchestrator has no agents row" invariant is load-bearing in at least four places — name reuse, capability grants (`src/daemon/capabilities.ts:243-247`: the operator and the root orchestrator have no row, which is also why they are exempt from the epoch check), spawner reservations, and delivery all read that table and assume its members are spawned agents. Adding a fake row to satisfy a *colour* would be the expensive kind of clever.
 
 **No terminal scraping.** Reading the root's pane buffer to guess what it is doing burns context on screenshots and turns the conductor into a babysitter. Codex and Grok already persist typed turn boundaries, so Hive reads those exact records instead.
 

@@ -6,13 +6,13 @@
 [![latest](https://img.shields.io/github/v/release/scottdev1986/hive)](https://github.com/scottdev1986/hive/releases/latest)
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Hive coordinates Claude Code, Codex, and Grok agents in a native macOS Workspace. A read-only orchestrator delegates work; each worker gets an isolated git worktree, branch, capability, and tmux session. The daemon owns process lifecycle and merges completed branches into `main` through a serialized fast-forward gate.
+Hive coordinates Claude Code, Codex, and Grok agents in a native macOS Workspace. A read-only orchestrator named queen delegates work; each worker gets an isolated git worktree, branch, capability, and tmux session. Talk to queen for decomposition and routing; workers report back to queen. The architectural role remains orchestrator, and addressing the root as `orchestrator` is still understood. The daemon owns process lifecycle and merges completed branches into `main` through a serialized fast-forward gate.
 
 Hive is currently a 0.0.x project. Its command and storage contracts may change between releases.
 
 ## Workspace
 
-Run `hive` in an initialized repository to create a fresh Hive instance and open its Workspace window. Running it again creates another isolated instance and another window, even from the same repository. The orchestrator is the master pane and worker agents appear as SwiftTerm panes attached to their daemon-owned tmux sessions. The vendor TUI remains interactive: clicking a pane focuses it, and typing goes directly to that Claude Code, Codex, or Grok session.
+Run `hive` in an initialized repository to create a fresh Hive instance and open its Workspace window. Running it again creates another isolated instance and another window, even from the same repository. queen is the master pane — the orchestrator that coordinates the team — and worker agents appear as SwiftTerm panes attached to their daemon-owned tmux sessions. The vendor TUI remains interactive: clicking a pane focuses it, and typing goes directly to that Claude Code, Codex, or Grok session.
 
 Agent state comes from structured daemon events, not terminal scraping. Unknown or disconnected state is displayed as unknown rather than inferred from pane contents.
 
@@ -50,7 +50,7 @@ hive
 
 `hive init` installs the agent skills used by the CLIs present on the machine, offers the optional local Graphify integration, seeds optional narrative memory, and performs repo-only setup: it does not start a daemon or open a Workspace. It is safe to run again. Use `hive init --no-graphify` to skip the Graphify prompt.
 
-Bare `hive` opens the Workspace with Claude as the default orchestrator. To choose another installed vendor explicitly, run `hive codex` or `hive grok`; `hive claude` is the explicit Claude spelling.
+Bare `hive` opens the Workspace with Claude as queen's default vendor. To choose another installed vendor for the orchestrator explicitly, run `hive codex` or `hive grok`; `hive claude` is the explicit Claude spelling.
 
 ## Commands
 
@@ -58,7 +58,7 @@ Bare `hive` opens the Workspace with Claude as the default orchestrator. To choo
 | --- | --- |
 | `hive` | Create a fresh isolated instance and open its Workspace |
 | `hive init` | Install agent skills, seed optional memory, offer Graphify, and run repo-only setup without starting a daemon |
-| `hive claude`, `hive codex`, `hive grok` | Open the Workspace with that read-only orchestrator |
+| `hive claude`, `hive codex`, `hive grok` | Open the Workspace with queen on that read-only orchestrator vendor |
 | `hive status` | Show agent name, tool, model, state, context use, task, and failure |
 | `hive kill <agent>` | Stop one agent and preserve any unlanded work |
 | `hive recover [name]` | Resume one or all recoverable crashed sessions |
@@ -93,7 +93,7 @@ For acceptance isolation outside `~/.hive`, set a test-owned `HIVE_HOME` directl
 
 ## Autonomy and routing
 
-Writer agents default to `sandboxed`: vendor permission controls remain active and risky operations enter Hive's approval path. `hive autonomy dangerous` removes those prompts for future spawns and resumes; it is equivalent to granting the underlying agent CLI broad access, so use it deliberately. Orchestrators remain read-only in either mode.
+Writer agents default to `sandboxed`: vendor permission controls remain active and risky operations enter Hive's approval path. `hive autonomy dangerous` removes those prompts for future spawns and resumes; it is equivalent to granting the underlying agent CLI broad access, so use it deliberately. queen (the orchestrator) remains read-only in either mode.
 
 Routing is explicit policy, not a compiled model ranking. The Model Control Center and `hive routing` keep provider consent, model consent, effort, automatic selection, exact selection, and ordered fallback chains as separate values. Hive uses provider quota readings when available and prints `unknown` when a meter cannot be read; it does not turn missing telemetry into zero.
 

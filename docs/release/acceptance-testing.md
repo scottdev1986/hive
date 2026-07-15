@@ -178,7 +178,7 @@ In each Workspace, select **Agents → Full Autonomy (No Permission Prompts)**. 
 
 Every root prompt is sent through the visible Workspace terminal:
 
-1. activate the intended Workspace process and focus its orchestrator pane;
+1. activate the intended Workspace process and focus queen's pane;
 2. type or paste the complete prompt as one editing action;
 3. confirm the instance's `runtime/composers/orchestrator.typing` marker exists;
 4. wait outside the TUI's paste-coalescing interval;
@@ -199,7 +199,7 @@ user data, or system state. Return the exact identifiers, `pwd`,
 `git rev-parse --show-toplevel`, `git rev-parse --git-common-dir`, and a
 read-only `git status --porcelain=v1` summary. Call graph_locate once for the
 composer lease implementation and report the top relevant Hive source path.
-Reply only to your originating orchestrator and identify your agent/provider.
+Reply only to queen (your originating orchestrator; `orchestrator` still works as a recipient) and identify your agent/provider.
 Finish the response and return to the provider's normal input prompt. Do not
 call an inbox, status, wait, or polling tool merely to remain alive.
 ```

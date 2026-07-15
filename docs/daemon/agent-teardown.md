@@ -42,7 +42,7 @@ After the fix, the same staged agent: `killed testagent — 5 process(es) reaped
 3. **SIGKILL the captured tree, then verify.** A zombie counts as dead — it is an exit nobody reaped.
 4. **Mark dead, settle the quota reservation.**
 5. **Preserve unlanded work** — if the agent holds unmerged commits or uncommitted files, its branch is written to `refs/hive-preserved/<branch>` before step 7 can remove the worktree it lives in.
-6. **Tell the orchestrator** what was preserved and where, and what would not die.
+6. **Tell queen** (the orchestrator) what was preserved and where, and what would not die.
 7. **Remove the worktree** only when asked. Stranded work refuses removal unless the caller explicitly passes `discardWork`.
 
 SIGKILL, not SIGTERM: this path is only reached once the user has decided. The X and the app quit both mean *now*, and a vendor CLI that traps SIGTERM to flush a transcript would turn "immediate" into "eventually". The graceful shutdown of the agent's *conversation* is the database's job and has already happened.
@@ -55,7 +55,7 @@ An external acceptance cleanup follows the same ordering: capture the manifest-o
 
 The agent dies at once — no confirmation, no blocking prompt. Nobody is asked whether the work mattered, which is exactly why nobody may decide it did not:
 
-- Unlanded commits or uncommitted files ⇒ **the branch is preserved as a git ref** and the orchestrator is told what was saved and where.
+- Unlanded commits or uncommitted files ⇒ **the branch is preserved as a git ref** and queen is told what was saved and where.
 - Worktree removal still **refuses** to delete stranded work unless the caller passes `discardWork`.
 - A preserve that *fails* says so in the result rather than proceeding quietly.
 
@@ -105,7 +105,7 @@ Its test was green throughout, because the fixture hand-typed `hive-codex-dead-a
 
 The recycled-PID guard matches process identity at the start of argv, not text anywhere in the command line: `basename(argv[0])` must be `codex` and `argv[1]` must be `app-server`. A prompt containing the words “codex app-server” can never satisfy that check (`src/adapters/tools/codex-app-server.ts:934-938`).
 
-**Verified on a real tick, not just in a unit test.** A unit test over production-generated filenames proves the *name* parses; it does not prove the timer fires, finds the file, resolves the agent, verifies argv, and kills the host. So: a genuinely orphaned process whose argv begins `codex app-server --listen unix://…`, a dead agent row, the pidfile at its production path, and then nothing but waiting. The maintenance tick is **30 seconds**. The host died, the socket and pidfile were removed, and the orchestrator was told. Run twice, because the first orphan died one second into the poll — which proves it *fired*, not that a *timer* drove it; the second, staged with clean phase, was reaped 8s later. Both inside one tick window.
+**Verified on a real tick, not just in a unit test.** A unit test over production-generated filenames proves the *name* parses; it does not prove the timer fires, finds the file, resolves the agent, verifies argv, and kills the host. So: a genuinely orphaned process whose argv begins `codex app-server --listen unix://…`, a dead agent row, the pidfile at its production path, and then nothing but waiting. The maintenance tick is **30 seconds**. The host died, the socket and pidfile were removed, and queen was told. Run twice, because the first orphan died one second into the poll — which proves it *fired*, not that a *timer* drove it; the second, staged with clean phase, was reaped 8s later. Both inside one tick window.
 
 That distinction is the article's own rule turned on its author: a reap observed is an act, and only the delay proves the timer is the thing that caused it.
 
