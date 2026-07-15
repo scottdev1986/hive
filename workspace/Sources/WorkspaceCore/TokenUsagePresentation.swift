@@ -102,8 +102,15 @@ extension TokenUsageSession {
     /// double-count it. An orchestrator generation with no reading is not in
     /// that sum and stays listed in `unknownSubjects`, exactly as before.
     public var usageRows: [TokenUsageRow] {
+        // The orchestrator and profiler are each collapsed into a single row from
+        // their own daemon aggregate. Everything else — workers, and any role
+        // this build does not yet name — is listed individually: a kind we cannot
+        // classify stays VISIBLE here rather than vanishing, and it is never
+        // folded into the profiler's row. A profiler, in particular, must never
+        // fall through into these worker rows.
         let orchestrators = subjects.filter { $0.role == "orchestrator" }
-        let workers = subjects.filter { $0.role != "orchestrator" }
+        let profilers = subjects.filter { $0.role == "profiler" }
+        let workers = subjects.filter { $0.role != "orchestrator" && $0.role != "profiler" }
         let workerRows = workers.map { subject -> TokenUsageRow in
             switch subject.reading {
             case .measured(let counts, _, _):
@@ -116,22 +123,42 @@ extension TokenUsageSession {
                     counts: nil, unknownReason: reason)
             }
         }
-        // The running orchestrator is the newest generation; it names the row.
-        guard let current = orchestrators.max(by: { $0.startedAt < $1.startedAt }) else {
-            return workerRows
+        var rows: [TokenUsageRow] = []
+        // Backup orchestrators are relaunches of the ONE orchestrator, so they
+        // collapse into a single row showing the daemon's own control aggregate.
+        if let orchestratorRow = collapsedRow(
+            name: "Orchestrator", generations: orchestrators, counts: hiveControl.counts) {
+            rows.append(orchestratorRow)
         }
-        let unknownReason: String? = orchestrators.compactMap { subject -> String? in
+        // The dedicated profiling row, from profilingSessions — never WORKERS.
+        if let profilingRow = collapsedRow(
+            name: "Profiling", generations: profilers, counts: profilingSessions?.counts) {
+            rows.append(profilingRow)
+        }
+        return rows + workerRows
+    }
+
+    /// Collapse one role's subjects (its generations) into a single row that
+    /// shows the daemon's own aggregate for that role. The newest generation
+    /// names the provider/model; `nil` counts becomes an honest unknown carrying
+    /// the first generation's reason. Returns nil when the role has no subjects.
+    private func collapsedRow(
+        name: String, generations: [TokenUsageSubject], counts: TokenCounts?
+    ) -> TokenUsageRow? {
+        guard let current = generations.max(by: { $0.startedAt < $1.startedAt }) else {
+            return nil
+        }
+        let unknownReason: String? = generations.compactMap { subject -> String? in
             if case .unknown(let reason) = subject.reading { return reason }
             return nil
         }.first
-        let orchestratorRow = TokenUsageRow(
-            name: "Orchestrator",
+        return TokenUsageRow(
+            name: name,
             provider: current.provider,
             model: current.model,
-            counts: hiveControl.counts,
-            unknownReason: hiveControl.counts == nil
+            counts: counts,
+            unknownReason: counts == nil
                 ? (unknownReason ?? "No provider token reading has been observed")
                 : nil)
-        return [orchestratorRow] + workerRows
     }
 }
