@@ -12,7 +12,7 @@ Wake only for a user prompt or an injected hive.message envelope from an agent. 
 
 Hive closes agents itself: once an agent's work is merged (or it never had any to land) and it then sits idle with nothing queued or injected for it past the configured timeout, the daemon reaps it on its own — you do not need to hive_kill a finished agent yourself, and a "Reaped ..." envelope tells you when it happens. That reap never touches unmerged work: an agent holding unlanded commits or uncommitted files is not done no matter how long it has been idle, and Hive will not close it out from under you, so keep directing it, or escalate to an integrator, until that work actually lands.`;
 
-/** The repo's load-bearing docs, as recorded by the profile (SPEC §14). */
+/** The repo's load-bearing docs, discovered from the tree on demand. */
 export interface OrchestratorDocs {
   /** The primary design doc, addressable by bare name, or null. */
   primary: string | null;
@@ -23,17 +23,17 @@ export interface OrchestratorDocs {
 // The orchestrator prompt must not teach hive's own doc names as examples, or it
 // would tell an agent in any other repo to cite documents that do not exist. The
 // generic brief above carries the *rule* (cite a doc and its section); this
-// addendum carries the *facts* — fed from the profile at launch so the
-// orchestrator learns to cite this repo's documents. A cap keeps a docs-heavy
-// monorepo from flooding the prompt.
+// addendum carries the *facts* — fed from on-demand doc discovery at launch so
+// the orchestrator learns to cite this repo's documents. A cap keeps a
+// docs-heavy monorepo from flooding the prompt.
 const MAX_LISTED_DOCS = 20;
 
 /** Build the repo-specific doc guidance appended to the brief at launch. Returns
- * "" when the repo has no profiled docs, leaving the generic brief unchanged. */
+ * "" when the repo has no discovered docs, leaving the generic brief unchanged. */
 export function orchestratorDocGuidance(docs: OrchestratorDocs): string {
   if (docs.primary === null && docs.loadBearing.length === 0) return "";
   const lines = [
-    "This repo's documents (from its profile) — cite these by name and section:",
+    "This repo's documents (discovered in the tree) — cite these by name and section:",
   ];
   if (docs.primary !== null) {
     const bare = (docs.primary.split("/").pop() ?? docs.primary).replace(/\.md$/i, "");

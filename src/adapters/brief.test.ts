@@ -329,12 +329,25 @@ describe("buildScopedBrief", () => {
     expect(attempted).toBe(false);
   });
 
-  test("with no config and no profile at root, produces no brief", async () => {
-    // Product path when a repo has not been bootstrapped: no doc is briefable,
-    // so the mechanism is a safe no-op rather than assuming hive's doc names.
+  test("with no config and nothing discoverable at root, produces no brief", async () => {
+    // Product path against a directory with no docs to discover: no doc is
+    // briefable, so the mechanism is a safe no-op rather than assuming hive's
+    // doc names.
     const brief = await buildScopedBrief("/no/such/repo", "Rework SPEC.md §6", {
       readDoc: readSpec,
     });
     expect(brief).toBe("");
+  });
+
+  test("with no config, builds a brief end to end through on-demand discovery", async () => {
+    // The full production path with nothing stubbed: no config passed, so
+    // buildScopedBrief must load it from on-demand doc discovery against this
+    // very repo, find SPEC.md as briefable, read it, and embed the reference.
+    // The other buildScopedBrief tests inject `config`, so this is the only one
+    // that exercises the discovery wiring the brief is fed from in production.
+    const root = new URL("../..", import.meta.url).pathname;
+    const brief = await buildScopedBrief(root, "Follow SPEC.md before you start");
+    expect(brief).toContain("SPEC.md");
+    expect(brief).toContain("Do not read these files whole");
   });
 });

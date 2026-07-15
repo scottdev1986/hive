@@ -319,13 +319,13 @@ describe("orchestrator brief", () => {
       "never tell an agent to read a document whole",
     );
     // The rule is generic: no hive-repo-specific doc name is compiled into the
-    // brief. The actual doc names are fed from the profile at launch.
+    // brief. The actual doc names are fed from on-demand doc discovery at launch.
     expect(ORCHESTRATOR_BRIEF).not.toContain("SPEC.md");
     expect(ORCHESTRATOR_BRIEF).not.toContain("docs/research");
     expect(ORCHESTRATOR_BRIEF).toContain("Cite this repo's own documents by the names listed below");
   });
 
-  describe("orchestratorDocGuidance (profile-fed at launch)", () => {
+  describe("orchestratorDocGuidance (doc-discovery-fed at launch)", () => {
     test("names this repo's primary and load-bearing docs, whatever they are", () => {
       const guidance = orchestratorDocGuidance({
         primary: "DESIGN.md",
@@ -339,7 +339,7 @@ describe("orchestrator brief", () => {
       expect(guidance.match(/DESIGN\.md/g)!.length).toBe(1);
     });
 
-    test("a repo with no profiled docs contributes nothing", () => {
+    test("a repo with no discovered docs contributes nothing", () => {
       expect(orchestratorDocGuidance({ primary: null, loadBearing: [] })).toBe("");
     });
 

@@ -19,3 +19,15 @@ describe("CLI command descriptions", () => {
     );
   });
 });
+
+describe("removed flags", () => {
+  test("hive init rejects the removed --refresh flag", async () => {
+    // Profiling is gone, so --refresh has nothing to refresh. `exitOverride()`
+    // turns the unknown option into a thrown CommanderError rather than a
+    // process exit, so reintroducing or aliasing the flag turns this red — a
+    // string-omission test on normal output could not catch that.
+    await expect(
+      createProgram().parseAsync(["node", "hive", "init", "--refresh"]),
+    ).rejects.toThrow(/unknown option.*--refresh/);
+  });
+});
