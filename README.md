@@ -46,7 +46,7 @@ hive init
 hive
 ```
 
-`hive init` installs the agent skills used by the CLIs present on the machine, offers the optional local Graphify integration, seeds optional narrative memory, and starts an instance daemon on an ephemeral loopback port. It is safe to run again. **Today** it still runs the outgoing deterministic repository profile pass (`ensureProfile` / `src/adapters/profile.ts`). `hive init --refresh` only rebuilds that legacy cache and **exits without starting the daemon** (`src/cli.ts`). Long-term, profile authorship moves to a daemon-coordinated agent-authored job (SPEC decision 14; plan package P5 removes the init/legacy path). Use `hive init --no-graphify` to skip the Graphify prompt.
+`hive init` installs the agent skills used by the CLIs present on the machine, offers the optional local Graphify integration, seeds optional narrative memory, and starts an instance daemon on an ephemeral loopback port. It is safe to run again. **Today** it still runs the outgoing deterministic repository profile pass (`ensureProfile` / `src/adapters/profile.ts`). `--refresh` forces the outgoing cache rebuild while otherwise running init, then exits without starting the daemon (`src/cli.ts`). Long-term, profile authorship moves to a daemon-coordinated agent-authored job (SPEC decision 14; plan package P5 removes the init/legacy path). Use `hive init --no-graphify` to skip the Graphify prompt.
 
 Bare `hive` opens the Workspace with Claude as the default orchestrator. To choose another installed vendor explicitly, run `hive codex` or `hive grok`; `hive claude` is the explicit Claude spelling.
 
@@ -56,7 +56,7 @@ Bare `hive` opens the Workspace with Claude as the default orchestrator. To choo
 | --- | --- |
 | `hive` | Start or reuse this instance and open its Workspace |
 | `hive init` | Install agent skills, seed optional memory, offer Graphify, run the outgoing deterministic profile pass, and start the daemon |
-| `hive init --refresh` | Rebuild the outgoing legacy profile cache only; does **not** start the daemon (removed with plan package P5) |
+| `hive init --refresh` | Forces the outgoing cache rebuild while otherwise running init; exits without starting the daemon (removed with plan package P5) |
 | `hive claude`, `hive codex`, `hive grok` | Open the Workspace with that read-only orchestrator |
 | `hive status` | Show agent name, tool, model, state, context use, task, and failure |
 | `hive kill <agent>` | Stop one agent and preserve any unlanded work |
