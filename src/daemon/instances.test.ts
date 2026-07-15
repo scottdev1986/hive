@@ -8,6 +8,7 @@ import {
   instanceMutationBlockers,
   machineHiveHome,
   namedInstanceHome,
+  ORDINARY_WORKSPACE_RUNTIME,
   selectFreshInstance,
   selectInstanceFromArgv,
 } from "./instances";
@@ -17,6 +18,7 @@ const originalHome = process.env.HIVE_HOME;
 afterEach(() => {
   if (originalHome === undefined) delete process.env.HIVE_HOME;
   else process.env.HIVE_HOME = originalHome;
+  delete process.env[ORDINARY_WORKSPACE_RUNTIME];
 });
 
 describe("instance selection", () => {
@@ -39,6 +41,13 @@ describe("instance selection", () => {
     expect(second).toBe(namedInstanceHome("run-second"));
     expect(second).not.toBe(first);
     expect(process.env.HIVE_HOME).toBe(second);
+    expect(process.env[ORDINARY_WORKSPACE_RUNTIME]).toBe("1");
+  });
+
+  test("an explicit named home is never mistaken for an ordinary runtime", () => {
+    selectFreshInstance("first");
+    selectInstanceFromArgv(["bun", "hive", "--instance", "run-explicit", "init"]);
+    expect(process.env[ORDINARY_WORKSPACE_RUNTIME]).toBeUndefined();
   });
 
   test("automatic runtimes share machine-scoped tools from the default home", () => {

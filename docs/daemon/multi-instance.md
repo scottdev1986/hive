@@ -4,7 +4,7 @@
 
 ## Summary
 
-A Hive instance is a `HIVE_HOME`. `~/.hive` is the default setup and preference home, but an ordinary `hive`, `hive claude`, `hive codex`, or `hive grok` launch switches to a fresh `~/.hive/instances/run-<uuid>` runtime before daemon lookup. `hive --instance <name>` remains the explicit stable-name form. Each runtime has its own identity, daemon lock, ephemeral port, handshake, database, local control-plane capabilities, runtime files, tmux sessions, and project state. Instances may operate on the same repository without sharing control-plane state. A fresh or named instance's empty or untouched provisional Model Control policy inherits a one-time copy of the default home's user-authored policy, so opening another window does not require re-enabling every model; later edits remain local to that instance. Provider authentication is outside Hive: it uses the vendor CLIs' existing signed-in sessions and never reads or writes provider passwords, API keys, session secrets, or keychain entries.
+A Hive instance is a `HIVE_HOME`. `~/.hive` is the default setup and preference home, but an ordinary `hive`, `hive claude`, `hive codex`, or `hive grok` launch switches to a fresh `~/.hive/instances/run-<uuid>` runtime before daemon lookup. `hive --instance <name>` remains the explicit stable-name form. Each runtime has its own identity, daemon lock, ephemeral port, handshake, database, local control-plane capabilities, runtime files, tmux sessions, and project state. Instances may operate on the same repository without sharing control-plane state. A fresh or named instance's empty or untouched provisional Model Control policy inherits a one-time copy of the default home's user-authored policy, so opening another window does not require re-enabling every model. Ordinary fresh Workspaces then overlay the machine selection-only preference; explicit named/default homes keep later edits local. Provider authentication is outside Hive: it uses the vendor CLIs' existing signed-in sessions and never reads or writes provider passwords, API keys, session secrets, or keychain entries.
 
 Workspace launch is order-independent and never focuses an existing Workspace.
 Every public launch asks LaunchServices for a new macOS process. Unqualified
@@ -51,13 +51,23 @@ For a temporary acceptance instance outside the user registry, set a test-owned 
 | Scope | State | Coordination |
 |---|---|---|
 | Instance | `hive.db`, config, local control-plane capability files, project registry and derived project state, runtime files, instance memory | Located below `HIVE_HOME`; each named instance keeps its own project state for the same Git project |
-| Preference bootstrap | Model Control chains, enablement consent, selection, and effort | One-time copy from the default policy into an empty/untouched named policy; never overwrites a named-instance edit |
+| Preference bootstrap | Model Control chains, enablement consent, selection, and effort | One-time copy from the default policy into an empty/untouched policy; never overwrites a named-instance edit |
+| Machine preference | Ordinary-Workspace global selection and category overrides only | Locked `~/.hive/routing-selection.json`; atomically published mutations, overlaid after copy/seed in every fresh `run-*` policy |
 | Instance | daemon lock/PID/port, tmux sessions, provider session sockets | Instance suffix plus handshake identity |
 | Repository | `.hive/worktrees/*`, `hive/*` branches, Git common directory, repository memory and generated config | Ownership refs and file/landing locks |
 | Machine | `~/.hive/quota.db` | SQLite WAL plus transactional admission and instance-owned reservations |
 | Machine | installed version directories, the `current` pointer, and the CLI link | Machine mutation lease plus final all-instance liveness gate |
 
 The default home remains compatible with pre-instance state. Legacy unsuffixed tmux sessions are recognized only for the default home, so a named instance cannot adopt them (`src/daemon/tmux-sessions.ts:31-47`). Policy inheritance reads the default database through SQLite's read-only WAL-aware connection and writes a normal audited `import-default-policy` revision into the named database (`src/daemon/instance-settings.ts`, `src/daemon/routing-policy-store.ts`). It does not copy the database file, share a writer, import a provisional no-consent policy, or overwrite a named policy after its own first edit.
+
+The ordinary-Workspace selection overlay has narrower and later precedence:
+default-policy copy, then provisional seed if needed, then selection overlay. Only an
+ordinary launch marks its daemon eligible to read/write that machine preference; an
+explicit `--instance` name—even one beginning with `run-`—does not. Simultaneous
+ordinary writers serialize through the preference lock. The last successful commit
+to one selection key wins; distinct category mutations compose. A missing file
+changes nothing, and corrupt content is reported without inventing a default or
+overwriting unrelated local policy fields.
 
 Acceptance may delete only manifest-owned per-instance development state. The installed instance is compare-only; repository paths and refs require their own recorded ownership; machine-scoped quota/audit state is shared and retained.
 

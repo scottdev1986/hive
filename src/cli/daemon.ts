@@ -48,7 +48,12 @@ import { readBillingWithMemory } from "../daemon/usage-credits";
 import { persistAutonomy } from "../config/autonomy";
 import { readModelInventory } from "../daemon/model-inventory";
 import { verifiedAgentStop } from "../daemon/teardown";
-import { inheritDefaultModelControlSettings } from "../daemon/instance-settings";
+import {
+  inheritDefaultModelControlSettings,
+  inheritOrdinaryWorkspaceSelection,
+} from "../daemon/instance-settings";
+import { ORDINARY_WORKSPACE_RUNTIME } from "../daemon/instances";
+import { SelectionPreferenceStore } from "../daemon/selection-preferences";
 
 export async function runDaemon(): Promise<void> {
   await acquireDaemonLock();
@@ -96,6 +101,12 @@ export async function runDaemon(): Promise<void> {
     })().catch(() => ({ vendorDefaults: {} }));
     routingPolicy.seedProvisionalBaseline(facts);
   }
+  const ordinarySelection = process.env[ORDINARY_WORKSPACE_RUNTIME] === "1"
+    ? new SelectionPreferenceStore()
+    : undefined;
+  inheritOrdinaryWorkspaceSelection(routingPolicy, {
+    ...(ordinarySelection === undefined ? {} : { preferences: ordinarySelection }),
+  });
   // Live limits come from the providers themselves. All three probes are
   // read-only and start no model turn, so a startup refresh costs nothing but
   // a subprocess.
@@ -207,6 +218,9 @@ export async function runDaemon(): Promise<void> {
         config.autonomy = value;
       },
     },
+    ...(ordinarySelection === undefined
+      ? {}
+      : { selectionPreferences: ordinarySelection }),
   });
   daemon.start();
 

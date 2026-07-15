@@ -2,15 +2,23 @@ import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 import { HiveDatabase, getHiveHome } from "./db";
-import { defaultHiveHome } from "./instances";
+import { defaultHiveHome, ORDINARY_WORKSPACE_RUNTIME } from "./instances";
 import {
   readRoutingPolicyDatabase,
   RoutingPolicyStore,
 } from "./routing-policy-store";
+import { SelectionPreferenceStore } from "./selection-preferences";
 
 export interface InstanceSettingsInheritanceOptions {
   readonly currentHome?: string;
   readonly sourceHome?: string;
+  readonly now?: Date;
+  readonly warn?: (message: string) => void;
+}
+
+export interface OrdinarySelectionInheritanceOptions {
+  readonly ordinaryWorkspace?: boolean;
+  readonly preferences?: Pick<SelectionPreferenceStore, "read">;
   readonly now?: Date;
   readonly warn?: (message: string) => void;
 }
@@ -45,5 +53,31 @@ export function inheritDefaultModelControlSettings(
     return false;
   } finally {
     source?.close();
+  }
+}
+
+/**
+ * Fresh ordinary Workspaces overlay the machine selection after their normal
+ * default-policy copy and provisional seed. Named/default homes never call
+ * this path, so their later edits remain local.
+ */
+export function inheritOrdinaryWorkspaceSelection(
+  target: RoutingPolicyStore,
+  options: OrdinarySelectionInheritanceOptions = {},
+): boolean {
+  const ordinary = options.ordinaryWorkspace ??
+    process.env[ORDINARY_WORKSPACE_RUNTIME] === "1";
+  if (!ordinary) return false;
+  try {
+    const selection = (options.preferences ?? new SelectionPreferenceStore()).read();
+    if (selection === null) return false;
+    return target.importSelectionPreference(selection, options.now).imported;
+  } catch (error) {
+    (options.warn ?? console.error)(
+      `Could not inherit the ordinary Workspace model selection: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+    return false;
   }
 }

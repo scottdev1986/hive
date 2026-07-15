@@ -196,6 +196,14 @@ is the sole writer.
   set-selection | set-chain | export` (`src/cli/routing-policy.ts`, dispatched from
   `src/cli.ts:357-501`).
 
+`set-selection` still CAS-writes the current daemon's policy first. In an ordinary
+fresh Workspace, the daemon then commits that explicit global/category mutation to
+the machine selection preference before returning success; a stale CAS never reaches
+the shared writer. The shared writer is locked and atomically renamed, so simultaneous
+Workspace writes have a serialized commit order: last successful commit wins for one
+key, while disjoint category edits merge. `hive`, `hive claude`, `hive codex`, and
+`hive grok` all use the same preference—the root vendor is not a key.
+
 The Settings controller keeps one data source while the window exists, but `show()` refreshes the model-control snapshot every time the window is shown before restoring the selected page (`workspace/Sources/HiveWorkspace/Settings/SettingsWindowController.swift:90-112`). Reopening Settings therefore cannot present the process's launch-time catalog or quota as if it were current; the in-window Refresh control is an additional explicit refresh, not the only one.
 
 ## Named instances inherit preferences, not runtime state
@@ -203,6 +211,12 @@ The Settings controller keeps one data source while the window exists, but `show
 Opening `hive --instance <name>` creates an independent daemon and database, but a new application window should not behave like a new user account. On startup, an empty named policy—or Hive's still-untouched provisional suggestions—receives a one-time copy of the default instance's user-authored Model Control document: provider switches, exact model enablement, chains, selection modes, and effort choices. That copy is an audited local revision. It carries the user's existing spend consent on the same machine without coupling the daemons.
 
 The import never overwrites a policy the named instance has edited, never imports a provisional source policy, and never synchronizes later edits. Agents, messages, credentials, ports, process namespaces, and every other runtime resource remain isolated. See `src/daemon/instance-settings.ts` and `RoutingPolicyStore.importDefaultPolicy`.
+
+Ordinary `run-*` Workspaces add one narrower rule: after the normal copy/seed step,
+each fresh runtime overlays only the machine global selection and category overrides.
+Clearing an override removes it from that preference, so later sessions again use the
+persisted global mode. Explicit named/default homes keep later edits local. Consent,
+chains, effort, and runtime state are not in the shared document and remain untouched.
 
 ## Status: partly built, not "not started"
 

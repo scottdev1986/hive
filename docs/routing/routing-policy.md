@@ -158,6 +158,15 @@ permissive. There is no `route_outcomes` table.
   called from `src/cli/daemon.ts:54`). Dropping a routing preference was the user's
   call; destroying his file is not ours.
 
+The selection modes have one deliberately narrower persistence layer. An ordinary
+Workspace runs in a fresh `run-*` database, so an accepted `set-selection` mutation
+also updates `~/.hive/routing-selection.json`. That machine preference contains only
+`selection.global` and `selection.categories`—no provider/model consent, chains,
+effort, or runtime state—and is never keyed to the root orchestrator vendor. Writers
+take one file lock, re-read the current document, apply one mutation, and publish by
+atomic rename. Mutations commit serially: the last successful commit to the same key
+wins, while concurrent changes to different category keys are preserved.
+
 ### The provisional baseline
 
 `seedProvisionalBaseline` (:254-271) runs on first boot only. It writes suggested
@@ -168,6 +177,13 @@ read is *skipped, not invented* (`provisionalBaselineChains`, :440-470). **The b
 ships the ORDER only.** It ships provisional-*and-active* — a router that refuses
 until confirmed fails "ready to use" — and any accepted mutation clears the
 `provisional` flag permanently. Hive **proposes** reorders; it never applies them.
+
+Fresh ordinary-Workspace bootstrap has explicit precedence: copy the default
+instance's eligible user policy once, seed the provisional baseline if the local
+store is still empty, then overlay the machine selection preference only. That
+overlay is an audited local revision. A missing preference is a no-op; a corrupt
+preference is reported and never guessed or reset. Explicit default and named homes
+do not apply the overlay, so their later local selection edits remain local.
 
 ## What survived the derivation era
 
@@ -189,6 +205,10 @@ non-empty authored chains are exhausted because every link is refused, it spread
 last-resort attempt across the remaining enabled models. A disabled or unconfigured
 model never enters that fallback. If both category and Default are empty, Hive refuses
 before constructing the fallback: **empty is not exhausted** (`src/daemon/spawner-impl.ts:1811-1849`; `src/cli/spawner-impl.test.ts:3538-3674`, `:3827-3838`). Under `auto`, enabled models that fit the category form the candidate set directly.
+
+This is also the persistence boundary: cross-session state is selection intent only.
+Provider/model consent, authored chains, and effort remain in the instance policy and
+are never promoted merely because selection changed.
 
 ## Known gaps (real, and unimplemented)
 

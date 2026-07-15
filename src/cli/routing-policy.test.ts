@@ -7,6 +7,7 @@ import {
   parseChainEntryArg,
   parseEffortTargetArg,
   setProviderPolicy,
+  setSelectionMode,
 } from "./routing-policy";
 
 describe("chain entry syntax — the CLI half of the Control Center contract", () => {
@@ -96,6 +97,66 @@ describe("Model Control Center daemon pinning", () => {
     try {
       await setProviderPolicy("claude", "enabled", "8", 4483);
       expect(requestedUrl).toEqual("http://127.0.0.1:4483/routing/policy");
+    } finally {
+      fetchSpy.mockRestore();
+      logSpy.mockRestore();
+      if (previousHome === undefined) delete process.env.HIVE_HOME;
+      else process.env.HIVE_HOME = previousHome;
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test("selection CLI sends global, category override, and override clearing through CAS", async () => {
+    const home = mkdtempSync(join(tmpdir(), "hive-routing-selection-"));
+    const previousHome = process.env.HIVE_HOME;
+    process.env.HIVE_HOME = home;
+    mkdirSync(home, { recursive: true });
+    writeCredential(OPERATOR_SUBJECT, "operator-test-token");
+    const bodies: unknown[] = [];
+    let revision = 0;
+    let selection = { global: "never-configured", categories: {} as Record<string, string> };
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async (_input, init) => {
+      const mutation = JSON.parse(String(init?.body)) as {
+        mode: string;
+        category?: string;
+      };
+      bodies.push(mutation);
+      if (mutation.category === undefined) selection.global = mutation.mode;
+      else if (mutation.mode === "unset") delete selection.categories[mutation.category];
+      else selection.categories[mutation.category] = mutation.mode;
+      revision += 1;
+      return new Response(JSON.stringify({
+        schemaVersion: 2,
+        revision,
+        updatedAt: "2026-07-13T12:00:00.000Z",
+        provisional: false,
+        providers: {},
+        models: [],
+        chains: {},
+        selection,
+      }), { headers: { "content-type": "application/json" } });
+    }) as typeof fetch);
+    const logSpy = spyOn(console, "log").mockImplementation(() => {});
+    try {
+      await setSelectionMode("choice", { port: 4483 }, "0");
+      await setSelectionMode("auto", { port: 4483, category: "debugging" }, "1");
+      await setSelectionMode("unset", { port: 4483, category: "debugging" }, "2");
+      expect(bodies).toEqual([
+        { op: "set-selection", expectedRevision: 0, mode: "choice" },
+        {
+          op: "set-selection",
+          expectedRevision: 1,
+          category: "debugging",
+          mode: "auto",
+        },
+        {
+          op: "set-selection",
+          expectedRevision: 2,
+          category: "debugging",
+          mode: "unset",
+        },
+      ]);
+      expect(selection).toEqual({ global: "choice", categories: {} });
     } finally {
       fetchSpy.mockRestore();
       logSpy.mockRestore();

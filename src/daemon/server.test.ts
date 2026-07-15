@@ -15,6 +15,7 @@ import {
   type QuotaPoolStatus,
 } from "../schemas";
 import { HiveDatabase } from "./db";
+import { RoutingPolicyStore } from "./routing-policy-store";
 import type { TmuxSender } from "./delivery";
 import {
   authorizeForQuotaTest,
@@ -136,6 +137,92 @@ test("managed daemon shutdown reaps the orchestrator session", async () => {
   try {
     await daemon.stop();
     expect(tmux.killed).toContain(orchestratorTmuxSession());
+  } finally {
+    db.close();
+  }
+});
+
+test("accepted selection CAS writes the ordinary preference; rejected and unrelated writes do not", async () => {
+  const db = new HiveDatabase(":memory:");
+  const persisted: unknown[] = [];
+  const daemon = new HiveDaemon({
+    db,
+    spawner: new StubSpawner(),
+    selectionPreferences: {
+      apply: async (mutation, fallback) => {
+        persisted.push({ mutation, fallback });
+        return fallback;
+      },
+    },
+  });
+  const operator = actingAs(daemon, "operator");
+  const post = (body: unknown) => operator("http://hive/routing/policy", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  try {
+    const selected = await post({
+      op: "set-selection",
+      expectedRevision: 0,
+      mode: "choice",
+    });
+    expect(selected.status).toBe(200);
+    expect(persisted).toEqual([{
+      mutation: { op: "set-selection", expectedRevision: 0, mode: "choice" },
+      fallback: { global: "choice", categories: {} },
+    }]);
+
+    expect((await post({
+      op: "set-provider",
+      expectedRevision: 1,
+      provider: "codex",
+      state: "enabled",
+    })).status).toBe(200);
+    expect(persisted).toHaveLength(1);
+
+    expect((await post({
+      op: "set-selection",
+      expectedRevision: 1,
+      mode: "auto",
+    })).status).toBe(409);
+    expect(persisted).toHaveLength(1);
+  } finally {
+    db.close();
+  }
+});
+
+test("a shared selection failure is explicit about the already-saved local policy", async () => {
+  const db = new HiveDatabase(":memory:");
+  const daemon = new HiveDaemon({
+    db,
+    spawner: new StubSpawner(),
+    selectionPreferences: {
+      apply: async () => {
+        throw new Error("disk full");
+      },
+    },
+  });
+  try {
+    const response = await actingAs(daemon, "operator")(
+      "http://hive/routing/policy",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          op: "set-selection",
+          expectedRevision: 0,
+          mode: "choice",
+        }),
+      },
+    );
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({
+      error:
+        "selection was saved in this Workspace but could not be saved " +
+        "for future ordinary Workspace sessions: disk full",
+    });
+    expect(new RoutingPolicyStore(db).read().selection.global).toBe("choice");
   } finally {
     db.close();
   }

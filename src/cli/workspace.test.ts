@@ -189,19 +189,27 @@ describe("bare hive opens the project you're in", () => {
     expect(launches).toEqual([{ session: { cwd: "/repo/root", port: 4483 } }]);
   });
 
-  test("an orchestrator entry uses the same session boundary and selects its tool", async () => {
-    const launches: LaunchDeps[] = [];
-    await runWorkspace({
-      orchestrator: "claude",
-      cwd: "/repo/root/subdir",
-      resolveRoot: () => "/repo/root",
-      isInitialized: () => true,
-      start: async () => ({ port: 4483, cwd: "/repo/root" }),
-      launch: async (deps) => (launches.push(deps), 0),
-    });
-    expect(launches).toEqual([{
-      session: { cwd: "/repo/root", port: 4483, orchestrator: "claude" },
-    }]);
+  test("hive, hive claude, hive codex, and hive grok share one session boundary", async () => {
+    for (const orchestrator of [undefined, "claude", "codex", "grok"] as const) {
+      const launches: LaunchDeps[] = [];
+      let starts = 0;
+      await runWorkspace({
+        ...(orchestrator === undefined ? {} : { orchestrator }),
+        cwd: "/repo/root/subdir",
+        resolveRoot: () => "/repo/root",
+        isInitialized: () => true,
+        start: async () => (starts += 1, { port: 4483, cwd: "/repo/root" }),
+        launch: async (deps) => (launches.push(deps), 0),
+      });
+      expect(starts).toBe(1);
+      expect(launches).toEqual([{
+        session: {
+          cwd: "/repo/root",
+          port: 4483,
+          ...(orchestrator === undefined ? {} : { orchestrator }),
+        },
+      }]);
+    }
   });
 
   test("a repo that never ran init is announced and initialized first", async () => {

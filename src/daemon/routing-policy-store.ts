@@ -8,12 +8,14 @@ import {
   ROUTING_CATEGORIES,
   RoutingPolicyMutationSchema,
   RoutingPolicySchema,
+  SelectionPolicySchema,
   type CapabilityProvider,
   type ChainEntry,
   type ModelEnablementDecision,
   type RoutingCategory,
   type RoutingPolicy,
   type RoutingPolicyMutation,
+  type SelectionPolicy,
 } from "../schemas";
 import type { HiveDatabase } from "./db";
 
@@ -380,6 +382,29 @@ export class RoutingPolicyStore {
     })();
   }
 
+  /** Overlay only the ordinary-Workspace selection preference. */
+  importSelectionPreference(
+    selection: SelectionPolicy,
+    now: Date = new Date(),
+  ): { imported: boolean; policy: RoutingPolicy } {
+    return this.db.database.transaction(() => {
+      const current = this.read(now);
+      const parsed = SelectionPolicySchema.parse(selection);
+      if (sameSelection(current.selection, parsed)) {
+        return { imported: false, policy: current };
+      }
+      const next = RoutingPolicySchema.parse({
+        ...current,
+        revision: current.revision + 1,
+        updatedAt: now.toISOString(),
+        provisional: false,
+        selection: parsed,
+      });
+      this.write(next, current, "import-shared-selection", "hive", now);
+      return { imported: true, policy: next };
+    })();
+  }
+
   private write(
     next: RoutingPolicy,
     before: RoutingPolicy | null,
@@ -410,6 +435,12 @@ export class RoutingPolicyStore {
       ],
     );
   }
+}
+
+function sameSelection(left: SelectionPolicy, right: SelectionPolicy): boolean {
+  return left.global === right.global && ROUTING_CATEGORIES.every((category) =>
+    left.categories[category] === right.categories[category]
+  );
 }
 
 /** Read without constructing a store, so a named daemon can inspect the live

@@ -14,6 +14,8 @@ import {
 
 const INSTANCE_NAME = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
 
+export const ORDINARY_WORKSPACE_RUNTIME = "HIVE_ORDINARY_WORKSPACE_RUNTIME";
+
 export function defaultHiveHome(): string {
   return join(homedir(), ".hive");
 }
@@ -39,6 +41,7 @@ export function namedInstanceHome(name: string): string {
 
 export function selectInstance(name: string): string {
   const home = namedInstanceHome(name);
+  delete process.env[ORDINARY_WORKSPACE_RUNTIME];
   process.env.HIVE_HOME = home;
   return home;
 }
@@ -48,7 +51,9 @@ export function selectInstance(name: string): string {
  * every unqualified launch gets a distinct daemon, database, tmux namespace,
  * and application process. */
 export function selectFreshInstance(id: string = randomUUID()): string {
-  return selectInstance(`run-${id}`);
+  const home = selectInstance(`run-${id}`);
+  process.env[ORDINARY_WORKSPACE_RUNTIME] = "1";
+  return home;
 }
 
 export function selectInstanceFromArgv(argv: readonly string[]): string | null {

@@ -78,6 +78,7 @@ import {
   RoutingPolicyConflictError,
   RoutingPolicyStore,
 } from "./routing-policy-store";
+import type { SelectionPreferenceControl } from "./selection-preferences";
 import { MemoryIndex } from "./memory-index";
 import {
   BunTmuxSender,
@@ -441,6 +442,8 @@ export interface HiveDaemonOptions {
    * resume matches the setting the user can see), written only through the
    * operator-gated `/autonomy` endpoint, which persists before it applies. */
   autonomy?: AutonomyControl;
+  /** Ordinary Workspace selection persistence; absent for named/default homes. */
+  selectionPreferences?: SelectionPreferenceControl;
   /** The per-repo graphify MCP server, when this repo opted in
    * (docs/graphify/integration.md). The daemon owns its
    * lifecycle: up on start, down on stop, rebuilt-and-reloaded after each
@@ -597,6 +600,7 @@ export class HiveDaemon {
   private routingPolicy: RoutingPolicyStore | null = null;
   private readonly codexControl: HiveDaemonOptions["codexControl"];
   private readonly autonomy: AutonomyControl | undefined;
+  private readonly selectionPreferences: SelectionPreferenceControl | undefined;
   private readonly graphify: GraphifyService | undefined;
   /** Per-agent graphify MCP call counts (integration doc, layer 3). Keyed by
    * AgentUUID, in memory on purpose: the transcripts are durable, so a
@@ -660,6 +664,7 @@ export class HiveDaemon {
     this.modelInventory = options.modelInventory;
     this.codexControl = options.codexControl;
     this.autonomy = options.autonomy;
+    this.selectionPreferences = options.selectionPreferences;
     this.graphify = options.graphify;
     const tmuxSender = options.tmuxSender ?? new BunTmuxSender();
     this.delivery = new MessageDelivery(
@@ -2905,7 +2910,21 @@ export class HiveDaemon {
       return json({ error: mutation.error.message }, { status: 400 });
     }
     try {
-      return json(store.apply(mutation.data, authenticated.capability.subject));
+      const policy = store.apply(mutation.data, authenticated.capability.subject);
+      if (mutation.data.op === "set-selection") {
+        try {
+          await this.selectionPreferences?.apply(mutation.data, policy.selection);
+        } catch (error) {
+          return json({
+            error:
+              "selection was saved in this Workspace but could not be saved " +
+              `for future ordinary Workspace sessions: ${
+                error instanceof Error ? error.message : String(error)
+              }`,
+          }, { status: 500 });
+        }
+      }
+      return json(policy);
     } catch (error) {
       if (error instanceof RoutingPolicyConflictError) {
         return json(

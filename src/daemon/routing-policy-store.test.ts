@@ -627,6 +627,41 @@ describe("named-instance Model Control inheritance", () => {
   });
 });
 
+describe("ordinary Workspace selection overlay", () => {
+  test("changes only selection, preserving consent, chains, effort, and provisional ownership", () => {
+    store.apply(
+      { op: "set-provider", expectedRevision: 0, provider: "codex", state: "enabled" },
+      "human",
+      NOW,
+    );
+    const before = store.apply({
+      op: "set-chain",
+      expectedRevision: 1,
+      category: "debugging",
+      entries: [{
+        provider: "codex",
+        model: "gpt-5.6-sol",
+        effort: { mode: "exact", value: "high" },
+      }],
+    }, "human", NOW);
+
+    const result = store.importSelectionPreference({
+      global: "auto",
+      categories: { planning: "choice" },
+    }, NOW);
+    expect(result.imported).toBeTrue();
+    expect(result.policy.selection).toEqual({
+      global: "auto",
+      categories: { planning: "choice" },
+    });
+    expect(result.policy.providers).toEqual(before.providers);
+    expect(result.policy.models).toEqual(before.models);
+    expect(result.policy.chains).toEqual(before.chains);
+    expect(result.policy.models[0]?.effort).toEqual({ mode: "exact", value: "high" });
+    expect(result.policy.provisional).toBeFalse();
+  });
+});
+
 describe("deterministic export", () => {
   test("identical logical policy exports byte-identically regardless of edit order", () => {
     const other = new HiveDatabase(":memory:");
