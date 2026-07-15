@@ -1,6 +1,7 @@
-import type { AgentMessage, AgentRecord } from "../schemas";
+import type { AgentMessage, AgentRecord, IdentityState } from "../schemas";
 import type { ApprovalKind } from "./db";
 import {
+  attestationStateOf,
   OrchestratorMessageEnvelopeSchema,
   type OrchestratorMessageEnvelope,
 } from "../schemas";
@@ -29,7 +30,18 @@ export interface ActiveAgentSummary {
   name: string;
   readOnly: boolean;
   tool: AgentRecord["tool"];
+  /** The immutable launch model — what the agent was *spawned* with. */
   model: string;
+  /** The observed running model, or null when Hive has not observed it. Never
+   * the launch model: presenting the requested identity as the observed one is
+   * exactly what this separation prevents. */
+  liveModel: string | null;
+  /** The observed running effort (Codex), null when unobserved. */
+  liveEffort?: string | null;
+  /** Codex execution-identity attestation verdict, present for Codex agents so
+   * drift between the launch and observed identity is explicit rather than
+   * hidden behind a single conflated model field. */
+  identityState?: IdentityState;
   /** Null when Hive has not observed this agent's context. The orchestrator's
    * reuse rule must read null as "not eligible", never as "plenty of room". */
   contextPct: number | null;
@@ -169,9 +181,20 @@ export function compactActiveTeam(
       name: agent.name,
       readOnly: agent.readOnly,
       tool: agent.tool,
-      // The model it is running, not the one it was spawned with — this is the
-      // view the orchestrator routes off.
-      model: agent.liveModel ?? agent.model,
+      // Launch and observed identity, kept separate. `model` is the immutable
+      // launch model; `liveModel` is what was actually observed running, and it
+      // stays null when unobserved rather than falling back to the launch model
+      // — a fallback would present the requested identity as the observed one.
+      model: agent.model,
+      liveModel: agent.liveModel ?? null,
+      // Attestation is a Codex concern; surfacing it only there keeps a truthful
+      // "unattested" for Claude/Grok from reading as a problem where none exists.
+      ...(agent.tool === "codex"
+        ? {
+          liveEffort: agent.liveEffort ?? null,
+          identityState: attestationStateOf(agent),
+        }
+        : {}),
       status: agent.status,
       contextPct: agent.contextPct === null
         ? null
