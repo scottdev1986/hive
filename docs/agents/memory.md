@@ -91,7 +91,7 @@ The design decisions, token accounting, and rejected alternatives are argued in 
 
 Two boundaries the survey did not supply but SPEC draws, and which matter when reading any of this back:
 
-- **Memory holds narrative truth; the profile holds structured truth; neither stores the other's.** Build commands and doc names live in the profile, read deterministically by product code. Only non-derivable narrative lessons live in memory.
+- **Memory holds narrative truth; the profile holds structured truth; neither stores the other's.** Build commands and doc names live in the profile (validated structured JSON under `~/.hive/projects/<uuid>/profile/`, not wiki articles). Only non-derivable narrative lessons live in memory. How the profile is *produced* is SPEC decision 14 / [briefing.md](briefing.md) — not this article.
 - **A shipped skill is not a followed skill.** The `hive-memory` skill explains compilation and lint judgment, but the write contract (`topic`, `source`, `evidence`, explicit `status`, `supersedes`) is enforced at the MCP schema *and* re-parsed in the filesystem adapter — because telemetry already proved that progressive disclosure is not an enforcement path.
 
 ## Confidence caveats from the survey

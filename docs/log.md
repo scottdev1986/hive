@@ -1,5 +1,29 @@
 # Wiki Log
 
+## [2026-07-14] correction | Reconcile docs with landed agent-authored profiling foundation
+
+Reconciled public and knowledge-base docs with the **landed** portion of the
+agent-authored project-profiling epic (schema/storage/lifecycle, F1 bounded
+inventory, F2 candidate/envelope + requester/guidance provenance, `profiling`
+routing category). Corrected passages that still presented the deterministic
+`profile.toml` / silent `ensureProfile` path as architecture truth.
+
+- **Landed surfaces cited:** `src/schemas/project-profile.ts`,
+  `src/daemon/project-profile.ts`, `src/daemon/project-profile-validate.ts`,
+  `src/schemas/routing-policy.ts` (`profiling` category).
+- **Unbuilt called planned only:** five `profile_*` MCP tools, launcher/skill,
+  spawn gate, operator CLI, drift refresh, consumer migration, legacy removal —
+  per `docs/design/profiling-implementation-plan.md` §Independently-landable
+  work packages. Briefing still on transitional `src/adapters/profile.ts` until P8.
+- **Touched:** `SPEC.md` (decisions 5/14, summary, roadmap v1), `README.md`,
+  `docs/agents/briefing.md`, `docs/agents/memory.md`, `docs/index.md`,
+  `docs/daemon/multi-instance.md`. Excluded P1 surfaces (`docs/daemon/authorization.md`,
+  `src/**`, capability matrix).
+
+Distinctions kept sharp: local profile file vs inventory sent to a provider;
+automatic background refresh vs explicit reprofiling; structured profile vs
+narrative memory; new foundation vs outgoing legacy reader.
+
 ## [2026-07-14] measurement | Exercise three native instances; retain the GUI blocker
 
 A fresh isolated native build opened three real Workspace processes from the same

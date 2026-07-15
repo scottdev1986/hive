@@ -344,17 +344,11 @@ Every package runs `bun test` and `bun run typecheck`; Swift packages also run t
 
 ## Documentation impact for Slice 8
 
-Do not reconcile these passages in the middle-slice implementation. The later docs package should update each precise contradiction:
+**Landed-foundation docs reconciliation (2026-07-14, agent forrest):** SPEC decision 14 / summary / roadmap, README init wording, `docs/agents/briefing.md` production sections, `docs/agents/memory.md` boundary note, `docs/index.md`, and `docs/daemon/multi-instance.md` instance-local profile row were updated against the landed foundation (schema, `current.json`/`state.json`, F1/F2, `profiling` category). Unbuilt packages are documented only as planned. Briefing consumption of `current.json` is explicitly still unbuilt (P8). Authorization matrix docs remain P1-owned and were not touched.
 
-- `SPEC.md:291` says derive-then-refine and never block; first agent-authored profiling now gates ordinary/orchestrator spawn unless the disclosed bypass is chosen.
-- `SPEC.md:295` names one `profile.toml`; storage is now `profile/current.json` plus `profile/state.json`.
-- `SPEC.md:297`, `:303`, and `:313` say generation is an instant deterministic zero-token scan; it is now a provider/model-authored background job that may send selected repo content and fail/refuse.
-- `SPEC.md:299` says there is no visible staleness state, hashes paths and sizes, silently rewrites before reads, and retains `hive init --refresh`; the epic has explicit stale/profiling/failed state, content digesting, background refresh, and `hive profile reprofile`.
-- `SPEC.md:301` defines `.hive/profile.override.toml`; optional user guidance is request provenance and can never bypass daemon validation.
-- `SPEC.md:305` says the CLI does not call a model and `hive init` owns token-spending asks; first-run profiling is daemon-launched and disclosed instead.
-- `SPEC.md:307` says profiling is not owned and “it happens”; the daemon coordinator now owns an observable lifecycle, retry, and bypass.
-- `docs/agents/briefing.md:61-69` describes ubiquitous silent `ensureProfile`, one TOML cache, and a 56 ms zero-token scan.
-- `docs/agents/briefing.md:71-79` argues against broad content/tree invalidation; Slice 5 explicitly requires content-based session inventory and filesystem-triggered stale/refresh. Document the new bounded inventory signal rather than preserving the old size/input-only claim.
-- `docs/agents/briefing.md:81-88` says profiling is not a command and init owns token-spending asks; the supported operator commands are now `hive profile reprofile|status|show`.
-- `docs/daemon/authorization.md:20-32`, `:34-67`, `:69-108`, and `:146-168` enumerate four roles/26 actions and the old route matrix; add the profiler role, four actions, five tools, internal gate/bypass routes, and credential exposure analysis.
-- `docs/daemon/multi-instance.md:47-58` is not contradictory, but should explicitly name profiles as instance-local derived project state and state that duplicate profiling across named instances is expected.
+Remaining or deferred documentation follow-ups (do not invent current behavior for unbuilt packages):
+
+- When P4 lands: SPEC / briefing must state that first agent-authored profiling gates ordinary/orchestrator spawn unless the disclosed bypass is chosen (Workspace/status never gated).
+- When P5 lands: document `hive profile reprofile|status|show` as the operator surface; `hive init --refresh` rejection line.
+- When P7 lands: expand drift/refresh operator-facing description beyond the foundation lifecycle already documented.
+- `docs/daemon/authorization.md:20-32`, `:34-67`, `:69-108`, and `:146-168` still enumerate four roles/26 actions and the old route matrix; add the profiler role, four actions, five tools, internal gate/bypass routes, and credential exposure analysis **with P1** (not the docs-only reconciliation).

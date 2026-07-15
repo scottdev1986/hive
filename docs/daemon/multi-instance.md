@@ -48,7 +48,7 @@ A live PID is not ownership proof because PIDs are reused. Unknown state preserv
 
 | Scope | State | Coordination |
 |---|---|---|
-| Instance | `hive.db`, config, local control-plane capability files, project registry and derived project state, runtime files, instance memory | Located below `HIVE_HOME` |
+| Instance | `hive.db`, config, local control-plane capability files, project registry and derived project state (including agent-authored project profiles under `projects/<uuid>/profile/{current.json,state.json}`), runtime files, instance memory | Located below `HIVE_HOME`; named instances may independently profile the same Git project |
 | Preference bootstrap | Model Control chains, enablement consent, selection, and effort | One-time copy from the default policy into an empty/untouched named policy; never overwrites a named-instance edit |
 | Instance | daemon lock/PID/port, tmux sessions, provider session sockets | Instance suffix plus handshake identity |
 | Repository | `.hive/worktrees/*`, `hive/*` branches, Git common directory, repository memory and generated config | Ownership refs and file/landing locks |

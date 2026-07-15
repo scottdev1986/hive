@@ -1,11 +1,11 @@
 # Briefing: how Hive discovers a repo and what a spawn actually carries
 
 Updated: 2026-07-14
-Sources: Hive source tree, 2026-07-14; [SPEC decision 14](../../SPEC.md)
+Sources: Hive source tree, 2026-07-14; [SPEC decision 14](../../SPEC.md); [profiling implementation plan](../design/profiling-implementation-plan.md)
 
 ## Summary
 
-Every mechanism that makes a Hive spawn cheap — the scoped brief, the memory index, the landing gate's test command — silently assumes it knows the repo's shape. That knowledge used to be compiled in; it is now **discovered**, by a tracked root-doc inventory, scoped on-disk walks of conventional doc directories, and an inbound-citation ranking that runs in 56 ms at every session boundary. This article records how discovery actually works, the two subtleties that are load-bearing and were learned the hard way, and the measured token facts that justify a scoped brief at all.
+Every mechanism that makes a Hive spawn cheap — the scoped brief, the memory index, the landing gate's test command — silently assumes it knows the repo's shape. That knowledge used to be compiled in; it is **discovered** and written into a structured **repo profile**. Profile *storage and acceptance* for the agent-authored design are landed under `~/.hive/projects/<hiveUuid>/profile/{current.json,state.json}` (`src/schemas/project-profile.ts`, `src/daemon/project-profile.ts`). Profile *consumption by briefing* still uses the transitional deterministic reader (`src/adapters/profile.ts` via `ensureProfile` / `loadBriefConfig`) until plan package P8; this article must not be read as "brief already reads `current.json`." This page records how the brief is built today, how profiles are produced under the landed foundation, the load-bearing doc-discovery lessons, and the measured token facts that justify a scoped brief at all.
 
 ## Correction: the allowlist is no longer hardcoded
 
@@ -20,6 +20,8 @@ Verified against the tree on 2026-07-14, it is fixed:
 Scott's binding constraint — **Hive works with any repo; nothing Hive-repo-specific in the product** — is satisfied at this seam.
 
 ## How doc discovery actually works
+
+The discovery rules below are what the **transitional** deterministic generator in `src/adapters/profile.ts` still uses, and what `loadBriefConfig` therefore still sees until consumer migration (plan package P8). The agent-authored profile will carry evidenced briefable/primary claims instead of re-running this scan in product code; the lessons (scoped walks, links not mentions) remain load-bearing for whoever authors those claims.
 
 Two properties of `src/adapters/profile.ts` are subtle, load-bearing, and each cost an incident to learn.
 
@@ -58,34 +60,37 @@ The measurement that settled it, taken when the fix landed:
 
 Deleting a doc that cites `SPEC.md` *lowers* SPEC.md's inbound count. A doc corpus is not inert: it is the input to a ranking that decides the primary design doc, and the primary design doc decides which bare-name `§` citations resolve. Restructure the docs tree with that in mind.
 
-## The profile is a cache, not a document
+## How profiles are produced (landed foundation vs transitional reader)
 
-`ensureProfile` runs at every session boundary — bare `hive` and the vendor-specific Workspace commands through `startSession` (`src/cli/start.ts:125`), the orchestrator (`src/cli/orchestrator.ts:192`), the daemon (`src/daemon/server.ts:1068-1077`), every spawn (`src/daemon/spawner-impl.ts:1893-1910`), and `loadBriefConfig` itself (`src/adapters/brief.ts:26`). It is **silent** when successful: there is no init step to run and no refresh to remember.
+**Structured profile vs narrative memory.** The profile is typed JSON product code can read; memory is narrative articles agents pull on demand. Neither stores the other's fields (SPEC decisions 5 and 14).
 
-It lives in Hive's own per-project state directory — `~/.hive/projects/<hiveUuid>/profile.toml` (`src/adapters/profile.ts:59-79`) — keyed by the identity the project registry already mints, so it survives the repo being moved or renamed, and **every linked worktree of a repo reads the one project profile** rather than quietly profiling its own branch. It is not in the repo, not in anyone's diff, and not anyone's business.
+**Local profile file vs content shown to a provider.** Accepted state lives only under the instance home: `projectProfileDir` → `…/profile/`, with `current.json` and `state.json` (`src/daemon/project-profile.ts`). That is not repository content and is not committed. A future profiler process sees a **bounded inventory** of selected paths (F1: caps, denylists, secret skipping, fail-closed limits in `computeProfileInventory`); inventory bytes are not the accepted profile file.
 
-**It shipped committed at `.hive/profile.toml` first, and lost to a measurement.** Generating it is a `git ls-files`, some `stat`s, and a read of the repo's markdown: **56 ms and zero model tokens.** What committing it spared a teammate was 56 ms. What it cost was a file in every diff plus — because a cached artifact in a tree that moves must be checked — a staleness concept, a staleness message, and a `hive init --refresh` command for a human to run. All three were built, and all three were the disease: the user updated, started Hive, and was told the profile was "20 commits stale" and that they should go fix it by hand. Regenerating produced **byte-identical** doc names and commands. The nag was real and the staleness was not.
+**Landed foundation.** Schema and lifecycle are in `src/schemas/project-profile.ts` (`unprofiled | profiling | current | stale | failed`). Daemon APIs in `src/daemon/project-profile.ts` own begin/submit/fail/stale, cross-process locking, and atomic temp+rename replacement of `current.json`. Validation and cited-path proof are in `src/daemon/project-profile-validate.ts`. F2 splits **candidate** (model-authored claims) from **envelope** (daemon-authored run/provider/model/provenance); requesters carry in-lock timestamps; optional guidance is capped request provenance, never a validation override. A legacy `profile.toml` or `.hive/profile.override.toml` is **not** a completed agent-authored profile.
 
-> **A derived artifact that is cheap to rebuild should never be something a human maintains, and should never be somewhere a human has to look at it.**
+**Automatic refresh vs explicit reprofiling.** Planned packages P3/P7 own background stale/refresh while keeping the last validated current readable; planned P5 owns operator `hive profile reprofile|status|show`. Those are different paths. Neither is "silent `ensureProfile` rewrote your TOML before you noticed," and neither is `hive init --refresh` as the supported long-term control surface.
 
-### Two traps in the durable-artifact design
+**Still transitional for briefing.** Session boundaries and `loadBriefConfig` still call `ensureProfile` on the deterministic adapter (`src/adapters/profile.ts`) so the scoped brief keeps working. Consumer cutover to `readCurrentProfile` is plan package P8 and is **unbuilt**. Do not document briefing as already consuming the new profile.
 
-**The staleness-fingerprint trap.** A fingerprint must hash the profile's own *inputs* — the doc inventory, manifests, lockfiles, conventional entry files.
+### Lessons retained from the deterministic cache (outgoing path)
 
-> **Do not fold the Git tree hash into that signal.** It is tempting because one hash covers every committed change, and it is wrong, because it makes every commit to every file invalidate a profile whose derived answers did not move. **A fingerprint must hash what *determines* the output, or "stale" stops meaning "wrong."**
+The first design shipped a committed `.hive/profile.toml`, then a silent `profile.toml` under `~/.hive/projects/<uuid>/` regenerated in ~56 ms with path/size fingerprints. Two traps that remain true for any durable profile signal:
 
-**The frozen-cap trap.** The profile used to carry an `index_budget` — a file count and a derived `map_tokens` cap, aider's `--map-tokens` made explicit, sized so a monorepo's index could not drown every context it touched. It was built and then deleted: nothing ever read the number, and caching it meant every commit that added a file invalidated the profile — which is precisely how a *correct* profile came to look stale. aider recomputes its map budget per run, and that is the right shape.
+**The staleness-fingerprint trap.** A fingerprint must hash what *determines* the accepted answers. Folding the whole Git tree hash in marks every unrelated commit "stale." The agent-authored foundation content-digests the bounded inventory instead of path/size alone (F1); continuous post-accept drift is plan package P7.
 
-> **A size-derived cap belongs at the point of use, not frozen into a durable artifact.**
+**The frozen-cap trap.** A cached `index_budget` / `map_tokens` with no reader made correct profiles look stale. Size-derived caps belong at the point of use.
+
+> **Humans do not maintain the profile file.** Corrections are not a committed override TOML in the new design; optional guidance is request provenance on a reprofile, and the daemon still validates every accepted claim.
 
 ## What `hive init` is left owning
 
-Profiling is not a command. `hive init` (`src/cli/init.ts:1-20`) owns **only** the tier that must be asked for, because it writes into the user's repo or spends their tokens:
+`hive init` (`src/cli/init.ts`) is **not** the profile author for the agent-authored design. It owns the tier that must be asked for because it writes into the user's repo or spends their tokens:
 
 - When no `AGENTS.md` exists, **offer** to scaffold one — opt-in, never blind. Codex caps the AGENTS.md chain at **32 KiB and truncates silently**, so Hive never appends to a human's existing instructions (`src/cli/init.ts:9-10`, `scaffoldAgentsMd` at `src/cli/init.ts:258`).
-- Seed a small set of narrative memory articles with `source: "init"` and a `verified` date — derived and re-derivable, distinct from the earned facts an agent learns. **Structured facts never become memory**; they are already in the profile.
+- Seed a small set of narrative memory articles with `source: "init"` and a `verified` date — derived and re-derivable, distinct from the earned facts an agent learns. **Structured facts never become memory**; they belong in the profile.
+- Graphify enablement and starting the instance daemon.
 
-Running the command is the authorization, every action is printed, and it never ends by asking for another command: anything Hive can finish itself, it finishes there (seeded facts are indexed on the spot, not left with a note to go reindex them).
+Running the command is the authorization, every action is printed, and it never ends by asking for another command: anything Hive can finish itself, it finishes there (seeded facts are indexed on the spot, not left with a note to go reindex them). Operator profile commands (`hive profile …`) are planned per the implementation plan (P5), not current CLI surface.
 
 ## The external survey behind all of this
 
@@ -97,7 +102,7 @@ Running the command is the authorization, every action is printed, and it never 
 
 **Cursor rules generation.** `/Generate Cursor Rules` works **by example, not by crawl**: attach a few of your best-written files and the model extracts the patterns. Convention capture grounded in **exemplar files** beats capture from a generic template. If Hive's init ever authors a conventions narrative, it should read the repo's own best files, not emit boilerplate.
 
-**The cross-cutting lesson Hive took further than the survey.** Every tool lands on "generate once, let a human maintain it," splitting cheap deterministic facts from expensive model-authored ones. Hive splits them by *who runs them*: the deterministic tier costs 56 ms and zero model tokens, so **every session boundary just does it, silently.** The measurement pushed Hive somewhere the survey did not — a fact this cheap to re-derive should never have been a human's to maintain.
+**The cross-cutting lesson Hive took further than the survey.** Every tool lands on "generate once, let a human maintain it." Hive first split by cost: a deterministic tier that could run silently at every session boundary. That un-hardcoded the brief, then hit monorepo/ambiguity limits. The architecture now splits by *role*: a specialized profiler authors evidenced claims from a bounded inventory; the daemon alone accepts and stores them; humans neither maintain a cache file nor override validation. Until the tools layer and consumer migration land, the transitional deterministic reader still feeds the brief — but it is no longer the design truth for how profiles are produced.
 
 ## Why a scoped brief at all: the measured token facts
 
@@ -125,6 +130,7 @@ The caps are deliberate: a whole doc under `WHOLE_DOC_MAX_CHARS` (4,000) is chea
 
 - [Context degradation and agent recycling](context-and-recycling.md) — what a respawn re-pays, and why the ~33K cold start is not free
 - [Agent memory](memory.md) — the narrative tier the profile deliberately does not hold
+- [Profiling implementation plan](../design/profiling-implementation-plan.md) — landed foundation vs independently landable packages (tools, gate, CLI, drift, consumer cutover)
 - [Rejected approaches](../routing/rejected-approaches.md) — the full token-efficiency measurements
 - [Launch mechanics](../providers/launch-mechanics.md) — how the spawn prompt reaches the vendor CLI
 - [Database resilience](../daemon/database-resilience.md) — the sibling invariant: an unobserved value is null, not zero
