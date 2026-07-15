@@ -56,6 +56,100 @@ export const ExecutionIdentitySchema = z.discriminatedUnion("tool", [
 
 export type ExecutionIdentity = z.infer<typeof ExecutionIdentitySchema>;
 
+// The provider surface an observation of the *running* identity was read from.
+// Codex is the only vendor Hive attests today; Claude and Grok keep their
+// existing `liveModel` reconciliation path untouched.
+export const ObservedIdentitySourceSchema = z.enum([
+  // Newest main-thread `source=cli` `turn_context` in the Codex TUI rollout.
+  "codex-rollout",
+  // A native Codex app-server thread/turn notification.
+  "codex-app-server",
+]);
+
+export type ObservedIdentitySource = z.infer<typeof ObservedIdentitySourceSchema>;
+
+// What Hive has *observed* the process running, with the provenance of the
+// observation. This is never synthesized from the launch request: an absent
+// `observedIdentity` means "not observed", never "the same as launch". It is
+// the richer companion of `liveModel`/`liveEffort`, which stay for wire
+// compatibility.
+export const ObservedIdentitySchema = z.strictObject({
+  model: z.string().min(1),
+  effort: z.string().min(1).optional(),
+  // The provider-native session id the observation came from (Codex rollout
+  // session id / app-server thread id), so a stale predecessor's artifact can
+  // never be mistaken for this agent's identity.
+  sessionId: z.string().min(1).optional(),
+  // The provider-native turn id the identity was read from.
+  turnId: z.string().min(1).optional(),
+  source: ObservedIdentitySourceSchema,
+  observedAt: z.iso.datetime(),
+});
+
+export type ObservedIdentity = z.infer<typeof ObservedIdentitySchema>;
+
+// How the observed identity relates to the immutable launch identity. A Codex
+// writer may only reach a mutating tool while this is `matching`; every other
+// value fails closed.
+// - `unattested`: never observed — the spawn default, before any turn boundary
+//   has produced an identity record. Also the reset value on app-server->TUI
+//   fallback.
+// - `matching`: observed model AND effort equal the launch identity.
+// - `drift`: a complete observation differs from the launch identity.
+// - `unknown`: an observation was attempted but the artifact was missing or
+//   unparseable, or was incomplete (e.g. model without effort). Unknown is not
+//   matching; it blocks writer mutation exactly like drift, without asserting a
+//   deliberate change occurred.
+export const IdentityStateSchema = z.enum([
+  "unattested",
+  "matching",
+  "drift",
+  "unknown",
+]);
+
+export type IdentityState = z.infer<typeof IdentityStateSchema>;
+
+/** The immutable launch identity — decision 6's execution identity. The durable
+ * field is `executionIdentity`; `hive status` surfaces it as `launchIdentity`
+ * beside `observedIdentity` so a reader never confuses intent with observation.
+ * This function names that concept without duplicating the stored field. */
+export function launchIdentityOf(
+  agent: Pick<AgentRecord, "executionIdentity">,
+): ExecutionIdentity | undefined {
+  return agent.executionIdentity;
+}
+
+/** Compare a *complete* observation against the launch intent. Both model and
+ * effort must match. A caller that could not read both fields must record
+ * `unknown` instead of calling this — a missing observation is never a match. */
+export function compareObservedIdentity(
+  launch: Pick<ExecutionIdentity, "model" | "effort">,
+  observed: Pick<ObservedIdentity, "model" | "effort">,
+): "matching" | "drift" {
+  const modelMatches = observed.model === launch.model;
+  const effortMatches = (launch.effort ?? undefined) ===
+    (observed.effort ?? undefined);
+  return modelMatches && effortMatches ? "matching" : "drift";
+}
+
+/** The attestation state of an agent, reading an absent field as the
+ * fail-closed `unattested`. Every consumer must go through this rather than
+ * touching `identityState` directly, so a null column can never be mistaken
+ * for a permissive value. */
+export function attestationStateOf(
+  agent: Pick<AgentRecord, "identityState">,
+): IdentityState {
+  return agent.identityState ?? "unattested";
+}
+
+/** A Codex writer may only reach a mutating tool while attestation is
+ * `matching`. Every other state — including the `unattested` spawn default and
+ * an `unknown` unreadable observation — fails closed. Exported so the guard,
+ * the maintenance backstop, and the tests share one definition of "safe". */
+export function identityStatePermitsMutation(state: IdentityState): boolean {
+  return state === "matching";
+}
+
 // A closed agent is done with the world: it holds no tmux session, accepts no
 // messages, and its name is free to be issued again. Every other status —
 // including `spawning`, `control-paused`, and `stuck` — is a live holder that
@@ -88,6 +182,21 @@ const AgentRecordShape = {
    * means "no observation" — never "the same as spawn", because a guess is what
    * this field exists to stop. Quota accounting and `hive status` read it first. */
   liveModel: z.string().min(1).optional(),
+  /** The effort this agent is *observed* running — the effort sibling of
+   * `liveModel`, kept separate from the immutable launch `executionIdentity.effort`
+   * for the same reason. Codex reads it from the newest `turn_context`; Claude
+   * and Grok leave it unset. Absent means "not observed", never "same as launch". */
+  liveEffort: z.string().min(1).optional(),
+  /** Provider-native observation of the running execution identity, with its
+   * provenance and timestamp. Distinct from `executionIdentity` (the immutable
+   * launch intent) and never synthesized from it. Populated for Codex only. */
+  observedIdentity: ObservedIdentitySchema.optional(),
+  /** Attestation verdict comparing `observedIdentity` to the launch identity.
+   * A Codex writer may only reach a mutating tool while this is `matching`;
+   * `unattested`/`unknown`/`drift` all fail closed. Absent is read through
+   * `attestationStateOf` as `unattested` — the fail-closed spawn default and
+   * the reset value on an app-server->TUI fallback. */
+  identityState: IdentityStateSchema.optional(),
   /** The task category this agent was spawned under (was `tier` before the
    * 2026-07-13 cutover; existing rows are migrated at database open). */
   category: RoutingCategorySchema,

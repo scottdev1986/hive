@@ -15,6 +15,7 @@ import {
   AgentRecordSchema,
   HookEventSchema,
   ExecutionIdentitySchema,
+  ObservedIdentitySchema,
   isTerminalAgentStatus,
   type AgentMessage,
   type AgentRecord,
@@ -116,6 +117,13 @@ const AgentDatabaseRowSchema = AgentRecordObjectSchema.extend({
   // Null on every row written before the model was observed separately from the
   // model it was launched with, and on every agent Hive has not observed yet.
   liveModel: z.string().nullable().default(null),
+  // Observed effort and the richer provider-native observation, both null until
+  // observed. Stored beside liveModel for the same reason it exists.
+  liveEffort: z.string().nullable().default(null),
+  observedIdentity: z.string().nullable().default(null),
+  // The attestation verdict; null on rows written before the column existed,
+  // read back as the schema default `unattested`.
+  identityState: z.string().nullable().default(null),
   quotaReservationId: z.string().nullable(),
   controlQuotaReservationId: z.string().nullable(),
   controlMessageId: z.string().nullable(),
@@ -136,6 +144,11 @@ function parseAgentRow(row: unknown): AgentRecord {
     failedAt: value.failedAt ?? undefined,
     closedAt: value.closedAt ?? undefined,
     liveModel: value.liveModel ?? undefined,
+    liveEffort: value.liveEffort ?? undefined,
+    observedIdentity: value.observedIdentity === null
+      ? undefined
+      : ObservedIdentitySchema.parse(JSON.parse(value.observedIdentity)),
+    identityState: value.identityState ?? undefined,
     quotaReservationId: value.quotaReservationId ?? undefined,
     controlQuotaReservationId: value.controlQuotaReservationId ?? undefined,
     controlMessageId: value.controlMessageId ?? undefined,
@@ -249,6 +262,9 @@ function agentsTableDdl(table: string, ifNotExists = false): string {
       tool TEXT NOT NULL,
       model TEXT NOT NULL,
       liveModel TEXT,
+      liveEffort TEXT,
+      observedIdentity TEXT,
+      identityState TEXT,
       category TEXT NOT NULL,
       status TEXT NOT NULL,
       taskDescription TEXT NOT NULL,
@@ -567,6 +583,18 @@ export class HiveDatabase {
     if (!agentColumnNames.has("liveModel")) {
       this.database.exec("ALTER TABLE agents ADD COLUMN liveModel TEXT");
     }
+    // Observed effort and the richer provider-native observation, plus the
+    // attestation verdict. Additive and null-defaulted: a pre-existing row
+    // reads back as `unattested`, which fails closed for a Codex writer.
+    if (!agentColumnNames.has("liveEffort")) {
+      this.database.exec("ALTER TABLE agents ADD COLUMN liveEffort TEXT");
+    }
+    if (!agentColumnNames.has("observedIdentity")) {
+      this.database.exec("ALTER TABLE agents ADD COLUMN observedIdentity TEXT");
+    }
+    if (!agentColumnNames.has("identityState")) {
+      this.database.exec("ALTER TABLE agents ADD COLUMN identityState TEXT");
+    }
     if (!agentColumnNames.has("writeRevoked")) {
       this.database.exec(
         "ALTER TABLE agents ADD COLUMN writeRevoked INTEGER NOT NULL DEFAULT 0",
@@ -856,18 +884,22 @@ export class HiveDatabase {
     const closedAt = this.resolveClosedAt(value);
     this.database.query(`
       INSERT INTO agents (
-        id, name, tool, model, liveModel, category, status, taskDescription,
+        id, name, tool, model, liveModel, liveEffort, observedIdentity,
+        identityState, category, status, taskDescription,
         worktreePath, branch, tmuxSession, contextPct,
         createdAt, lastEventAt, failureReason, failedAt,
         quotaReservationId, controlQuotaReservationId, controlMessageId,
         executionIdentity, toolSessionId, contextWindow, recoveryAttempts,
         capabilityEpoch, readOnly, writeRevoked, closedAt
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         name = excluded.name,
         tool = excluded.tool,
         model = excluded.model,
         liveModel = excluded.liveModel,
+        liveEffort = excluded.liveEffort,
+        observedIdentity = excluded.observedIdentity,
+        identityState = excluded.identityState,
         category = excluded.category,
         status = excluded.status,
         taskDescription = excluded.taskDescription,
@@ -896,6 +928,11 @@ export class HiveDatabase {
       value.tool,
       value.model,
       value.liveModel ?? null,
+      value.liveEffort ?? null,
+      value.observedIdentity === undefined
+        ? null
+        : JSON.stringify(value.observedIdentity),
+      value.identityState ?? null,
       value.category,
       value.status,
       value.taskDescription,

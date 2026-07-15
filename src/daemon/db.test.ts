@@ -119,6 +119,36 @@ describe("HiveDatabase", () => {
     }
   });
 
+  test("round-trips observed identity, liveEffort, and identityState", () => {
+    const db = new HiveDatabase(join(home, "observed-identity.db"));
+    try {
+      // A fresh row leaves the new fields unset; identityState reads back as
+      // absent (fail-closed `unattested` via attestationStateOf), never a guess.
+      const fresh = db.insertAgent(agent());
+      expect(fresh.liveEffort).toBeUndefined();
+      expect(fresh.observedIdentity).toBeUndefined();
+      expect(fresh.identityState).toBeUndefined();
+
+      const attested = agent({
+        liveModel: "gpt-5.6-luna",
+        liveEffort: "low",
+        observedIdentity: {
+          model: "gpt-5.6-luna",
+          effort: "low",
+          sessionId: "019f-session",
+          turnId: "019f-turn",
+          source: "codex-rollout",
+          observedAt: "2026-07-15T18:00:00.000Z",
+        },
+        identityState: "drift",
+      });
+      expect(db.upsertAgent(attested)).toEqual(attested);
+      expect(db.getAgentByName("maya")).toEqual(attested);
+    } finally {
+      db.close();
+    }
+  });
+
   test("migrates legacy readers without clearing genuine control revocation", () => {
     const path = join(home, "legacy-reader-authority.db");
     const initial = new HiveDatabase(path);
