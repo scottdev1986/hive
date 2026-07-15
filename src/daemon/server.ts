@@ -142,9 +142,11 @@ import {
 import {
   defaultReapDependencies,
   reapCapturedTree,
+  resumeAgentFromPauseCapture,
   resumeTmuxSession,
   stopAgentSession,
   stopTmuxSession,
+  suspendAgentForPause,
   suspendTmuxSession,
   readCodexHostPid,
   type ReapDependencies,
@@ -152,6 +154,7 @@ import {
   type SessionStopAdapter,
   type SuspendOutcome,
 } from "./teardown";
+import type { PauseCapture } from "../schemas";
 import {
   assessResources,
   paneProcessState,
@@ -667,6 +670,9 @@ export class HiveDaemon {
     session: string,
     agent?: AgentRecord,
   ) => Promise<void>;
+  private readonly usesInjectedSuspend: boolean;
+  private readonly usesInjectedResume: boolean;
+  private readonly teardownTmux: SessionStopAdapter;
   private memoryPressure = false;
 
   constructor(options: HiveDaemonOptions) {
@@ -848,6 +854,9 @@ export class HiveDaemon {
         tmux: teardownTmux,
         reap: this.reapDependencies,
       });
+    this.usesInjectedSuspend = options.suspendProcesses !== undefined;
+    this.usesInjectedResume = options.resumeProcesses !== undefined;
+    this.teardownTmux = teardownTmux;
     this.suspendAgentProcesses = options.suspendProcesses ??
       (async (session, agent) => {
         const hostPid = agent === undefined
@@ -1384,21 +1393,66 @@ export class HiveDaemon {
    * suspend outcome, or null when the suspension itself failed — either of which
    * a caller must treat as unsafe if any process was left running.
    */
+  /**
+   * Capture the exact pause-bound tree (tmux roots + app-server host, with
+   * stable birth identities), SIGSTOP it, and return the durable capture.
+   * Callers must persist `capture` on the agent row so resume never re-samples
+   * current PIDs.
+   */
   private async freezeAgentProcessTree(
     agent: AgentRecord,
-  ): Promise<SuspendOutcome | null> {
+  ): Promise<{ outcome: SuspendOutcome; capture: PauseCapture } | null> {
     if (agent.tool === "codex" && this.codexControl?.hasAgent(agent.name)) {
       await this.codexControl.interrupt(agent).catch(() => undefined);
     }
     try {
-      const outcome = await this.suspendAgentProcesses(agent.tmuxSession, agent);
-      // Empty capture is not a successful pause — missing/vanished roots fail closed.
-      if (outcome.suspended.length === 0 && outcome.unstopped.length === 0) {
+      // Prefer the injected test hook when present; production uses the
+      // birth-bound suspendAgentForPause path exclusively.
+      if (this.usesInjectedSuspend) {
+        const outcome = await this.suspendAgentProcesses(
+          agent.tmuxSession,
+          agent,
+        );
+        if (outcome.suspended.length === 0 && outcome.unstopped.length === 0) {
+          throw new Error(
+            `pause capture for ${agent.name} was empty (session missing, incomplete, or vanished)`,
+          );
+        }
+        // Tests inject suspend without a real tree; synthesize a capture from
+        // the suspended list so resume still goes through capture validation.
+        const capture: PauseCapture = {
+          agentId: agent.id,
+          agentName: agent.name,
+          tmuxSession: agent.tmuxSession,
+          toolSessionId: agent.toolSessionId ?? null,
+          hostPid: null,
+          tree: outcome.suspended.map((entry) => ({
+            pid: entry.pid,
+            command: entry.command,
+            birth: `test-birth-${entry.pid}`,
+            role: "tmux-root" as const,
+          })),
+          capturedAt: new Date().toISOString(),
+        };
+        if (capture.tree.length === 0) {
+          throw new Error(`pause capture for ${agent.name} was empty`);
+        }
+        return { outcome, capture };
+      }
+      const { capture, outcome } = await suspendAgentForPause(agent, {
+        tmux: this.teardownTmux,
+        reap: this.reapDependencies,
+        readHostPid: readCodexHostPid,
+      });
+      if (outcome.unstopped.length > 0) {
+        return { outcome, capture };
+      }
+      if (outcome.suspended.length === 0) {
         throw new Error(
           `pause capture for ${agent.name} was empty (session missing, incomplete, or vanished)`,
         );
       }
-      return outcome;
+      return { outcome, capture };
     } catch (error) {
       console.error(
         `Hive could not suspend ${agent.name}'s process tree: ${
@@ -1424,19 +1478,20 @@ export class HiveDaemon {
     agent: AgentRecord,
     message: AgentMessage,
   ): Promise<void> {
-    const suspend = await this.freezeAgentProcessTree(agent);
+    const frozen = await this.freezeAgentProcessTree(agent);
     const current = this.db.getAgentById(agent.id) ?? agent;
     this.db.upsertAgent({
       ...current,
       status: "control-paused",
       writeRevoked: true,
       controlMessageId: message.id,
+      ...(frozen === null ? {} : { pauseCapture: frozen.capture }),
     });
-    if (suspend === null || suspend.unstopped.length > 0) {
+    if (frozen === null || frozen.outcome.unstopped.length > 0) {
       throw new Error(
-        suspend === null
+        frozen === null
           ? `Pause suspension failed for ${agent.name}; the process may still be running`
-          : `${suspend.unstopped.length} process(es) survived pause suspension for ${agent.name}`,
+          : `${frozen.outcome.unstopped.length} process(es) survived pause suspension for ${agent.name}`,
       );
     }
   }
@@ -1454,11 +1509,18 @@ export class HiveDaemon {
     });
     this.capabilities.revokeSubject(agent.name);
     removeCredential(agent.name);
-    const suspend = await this.freezeAgentProcessTree(agent);
-    const halt = suspend === null
+    const frozen = await this.freezeAgentProcessTree(agent);
+    if (frozen !== null) {
+      const current = this.db.getAgentById(agent.id) ?? agent;
+      this.db.upsertAgent({
+        ...current,
+        pauseCapture: frozen.capture,
+      });
+    }
+    const halt = frozen === null
       ? "process suspension FAILED (see daemon log) — treat as unsafe"
-      : suspend.unstopped.length > 0
-      ? `process suspension left ${suspend.unstopped.length} process(es) still running`
+      : frozen.outcome.unstopped.length > 0
+      ? `process suspension left ${frozen.outcome.unstopped.length} process(es) still running`
       : "process tree suspended";
     await this.delivery.send(
       "hive-identity-guard",
@@ -1546,16 +1608,36 @@ export class HiveDaemon {
         };
       }
     }
-    // SIGCONT first, then credential/unrevoke. Failure leaves the agent
-    // paused and revoked — never report success with a stopped process.
+    // Resume the EXACT pause-time capture — never re-sample current PIDs.
+    // Missing/vanished/reused/stale/replaced roots or host fail closed and
+    // leave the agent paused/revoked.
+    const capture = agent.pauseCapture;
+    if (capture === undefined) {
+      return {
+        resumed: false,
+        identityState,
+        reason:
+          "no pause capture is bound to this agent; resume refused (cannot prove same process tree)",
+      };
+    }
     try {
-      await this.resumeAgentProcesses(agent.tmuxSession, agent);
+      if (this.usesInjectedResume) {
+        // Tests inject resumeProcesses; still require a persisted capture so
+        // the durable binding is exercised, then call the inject.
+        await this.resumeAgentProcesses(agent.tmuxSession, agent);
+      } else {
+        await resumeAgentFromPauseCapture(agent, capture, {
+          tmux: this.teardownTmux,
+          reap: this.reapDependencies,
+          readHostPid: readCodexHostPid,
+        });
+      }
     } catch (error) {
       return {
         resumed: false,
         identityState,
         reason:
-          `SIGCONT failed; write authority withheld: ${
+          `exact-tree resume failed; write authority withheld: ${
             error instanceof Error ? error.message : "unknown error"
           }`,
       };
@@ -1575,6 +1657,8 @@ export class HiveDaemon {
       // Clear the control binding: an operator `pause` recorded its
       // controlMessageId here, and a resumed agent is no longer control-owned.
       controlMessageId: undefined,
+      // Capture is one-shot: a successful resume drops it.
+      pauseCapture: undefined,
       ...(observed === undefined ? {} : { observedIdentity: observed }),
       ...(liveModel === undefined ? {} : { liveModel }),
       ...(liveEffort === undefined ? {} : { liveEffort }),
@@ -1583,7 +1667,7 @@ export class HiveDaemon {
       resumed: true,
       identityState,
       reason:
-        "reattested matching; same process SIGCONT'd; capability reissued at a fresh epoch",
+        "reattested matching; exact pause capture SIGCONT'd; capability reissued at a fresh epoch",
     };
   }
 

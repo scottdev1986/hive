@@ -86,7 +86,32 @@ export const ObservedIdentitySchema = z.strictObject({
   observedAt: z.iso.datetime(),
 });
 
+
 export type ObservedIdentity = z.infer<typeof ObservedIdentitySchema>;
+
+/** One process frozen at pause time, with a stable start identity so PID reuse
+ * cannot be mistaken for the same process. `birth` is `ps -o lstart=` text. */
+export const CapturedProcessSchema = z.strictObject({
+  pid: z.number().int().positive(),
+  command: z.string().min(1),
+  birth: z.string().min(1),
+  role: z.enum(["tmux-root", "descendant", "app-server-host"]),
+});
+export type CapturedProcess = z.infer<typeof CapturedProcessSchema>;
+
+/** Exact pause-time process-tree binding. Resume must validate and SIGCONT this
+ * capture — never re-sample current pane PIDs. Survives daemon restart via DB. */
+export const PauseCaptureSchema = z.strictObject({
+  agentId: z.string().min(1),
+  agentName: z.string().min(1),
+  tmuxSession: z.string().min(1),
+  toolSessionId: z.string().min(1).nullable(),
+  hostPid: z.number().int().positive().nullable(),
+  tree: z.array(CapturedProcessSchema).min(1),
+  capturedAt: z.iso.datetime(),
+});
+export type PauseCapture = z.infer<typeof PauseCaptureSchema>;
+
 
 // How the observed identity relates to the immutable launch identity. A Codex
 // writer may only reach a mutating tool while this is `matching`; every other
@@ -264,6 +289,10 @@ const AgentRecordShape = {
   // later revoked by critical control.
   readOnly: z.boolean().default(false),
   writeRevoked: z.boolean().default(false),
+  // Exact process-tree capture from a non-destructive pause. Present only while
+  // status is control-paused (and briefly until resume clears it). Resume uses
+  // this capture exclusively — never recaptures current PIDs.
+  pauseCapture: PauseCaptureSchema.optional(),
 } as const;
 
 export const AgentRecordObjectSchema = z.object(AgentRecordShape);

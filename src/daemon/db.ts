@@ -16,6 +16,7 @@ import {
   HookEventSchema,
   ExecutionIdentitySchema,
   ObservedIdentitySchema,
+  PauseCaptureSchema,
   isTerminalAgentStatus,
   type AgentMessage,
   type AgentRecord,
@@ -163,6 +164,7 @@ const AgentDatabaseRowSchema = AgentRecordObjectSchema.extend({
   capabilityEpoch: z.number().int().nonnegative().default(0),
   readOnly: z.union([z.boolean(), z.number().int()]).default(0),
   writeRevoked: z.union([z.boolean(), z.number().int()]).default(0),
+  pauseCapture: z.string().nullable().default(null),
 });
 
 function parseAgentRow(row: unknown): AgentRecord {
@@ -188,6 +190,9 @@ function parseAgentRow(row: unknown): AgentRecord {
       : ExecutionIdentitySchema.parse(JSON.parse(value.executionIdentity)),
     readOnly: value.readOnly === true || value.readOnly === 1,
     writeRevoked: value.writeRevoked === true || value.writeRevoked === 1,
+    pauseCapture: value.pauseCapture === null || value.pauseCapture === undefined
+      ? undefined
+      : PauseCaptureSchema.parse(JSON.parse(value.pauseCapture)),
   });
 }
 
@@ -318,7 +323,9 @@ function agentsTableDdl(table: string, ifNotExists = false): string {
       capabilityEpoch INTEGER NOT NULL DEFAULT 0,
       readOnly INTEGER NOT NULL DEFAULT 0,
       writeRevoked INTEGER NOT NULL DEFAULT 0,
-      closedAt TEXT
+      closedAt TEXT,
+      -- Exact process-tree capture from a non-destructive pause (JSON PauseCapture).
+      pauseCapture TEXT
     )
   `;
 }
@@ -640,6 +647,9 @@ export class HiveDatabase {
     if (!agentColumnNames.has("identityState")) {
       this.database.exec("ALTER TABLE agents ADD COLUMN identityState TEXT");
     }
+    if (!agentColumnNames.has("pauseCapture")) {
+      this.database.exec("ALTER TABLE agents ADD COLUMN pauseCapture TEXT");
+    }
     if (!agentColumnNames.has("writeRevoked")) {
       this.database.exec(
         "ALTER TABLE agents ADD COLUMN writeRevoked INTEGER NOT NULL DEFAULT 0",
@@ -935,8 +945,8 @@ export class HiveDatabase {
         createdAt, lastEventAt, failureReason, failedAt,
         quotaReservationId, controlQuotaReservationId, controlMessageId,
         executionIdentity, toolSessionId, contextWindow, recoveryAttempts,
-        capabilityEpoch, readOnly, writeRevoked, closedAt
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        capabilityEpoch, readOnly, writeRevoked, closedAt, pauseCapture
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         name = excluded.name,
         tool = excluded.tool,
@@ -966,7 +976,8 @@ export class HiveDatabase {
         capabilityEpoch = excluded.capabilityEpoch,
         readOnly = excluded.readOnly,
         writeRevoked = excluded.writeRevoked,
-        closedAt = excluded.closedAt
+        closedAt = excluded.closedAt,
+        pauseCapture = excluded.pauseCapture
     `).run(
       value.id,
       value.name,
@@ -1002,6 +1013,9 @@ export class HiveDatabase {
       value.readOnly ? 1 : 0,
       value.writeRevoked ? 1 : 0,
       closedAt,
+      value.pauseCapture === undefined
+        ? null
+        : JSON.stringify(value.pauseCapture),
     );
     return this.getAgentById(value.id)!;
   }

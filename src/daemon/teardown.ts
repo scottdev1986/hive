@@ -18,7 +18,7 @@
  */
 import { readFile } from "node:fs/promises";
 import { codexAgentHostPidfile } from "../adapters/tools/codex-app-server";
-import type { AgentRecord } from "../schemas";
+import type { AgentRecord, CapturedProcess, PauseCapture } from "../schemas";
 import {
   descendantsOf,
   parseProcessTable,
@@ -255,6 +255,244 @@ export async function resumeCapturedTree(
     }
   }
 }
+
+
+/** `ps -axo pid=,lstart=` — stable process start identity for PID-reuse detection. */
+export const runPsBirth: CommandOutput = async () => {
+  const child = Bun.spawn(["ps", "-axo", "pid=,lstart="], {
+    stdout: "pipe",
+    stderr: "ignore",
+  });
+  return await new Response(child.stdout).text();
+};
+
+export function parseBirthTable(raw: string): Map<number, string> {
+  const births = new Map<number, string>();
+  for (const line of raw.split("\n")) {
+    const match = /^\s*(\d+)\s+(\S.*\S|\S)\s*$/.exec(line);
+    if (match === null) continue;
+    births.set(Number(match[1]), match[2]!.trim());
+  }
+  return births;
+}
+
+export interface PauseCaptureDependencies extends ReapDependencies {
+  /** Optional override for process birth identity (`ps -o lstart=`). */
+  psBirth?: CommandOutput;
+}
+
+/**
+ * Capture a pause-time tree with stable birth identity for every process.
+ * `rootPids` are tmux pane roots; `hostPid` is an optional Codex app-server host
+ * (a daemon child unreachable from the pane). Empty roots with no host fail.
+ */
+export async function capturePauseBoundTree(
+  rootPids: readonly number[],
+  hostPid: number | null,
+  dependencies: PauseCaptureDependencies = defaultReapDependencies(),
+  selfPid: number = process.pid,
+): Promise<CapturedProcess[]> {
+  const roots = [...new Set(rootPids.filter((pid) =>
+    Number.isSafeInteger(pid) && pid > 1 && pid !== selfPid
+  ))];
+  if (hostPid !== null) {
+    if (!Number.isSafeInteger(hostPid) || hostPid <= 1 || hostPid === selfPid) {
+      throw new Error(`Refusing pause capture for invalid host pid ${hostPid}`);
+    }
+  }
+  if (roots.length === 0 && hostPid === null) {
+    throw new Error("pause capture refused: no tmux roots and no app-server host");
+  }
+  const processes = parseProcessTable(await dependencies.ps());
+  for (const pid of roots) {
+    if (!processes.some((process) => process.pid === pid)) {
+      throw new Error(`Process-tree probe did not contain root pid ${pid}`);
+    }
+  }
+  if (hostPid !== null && !processes.some((process) => process.pid === hostPid)) {
+    throw new Error(`Process-tree probe did not contain app-server host pid ${hostPid}`);
+  }
+  const birthRaw = await (dependencies.psBirth ?? runPsBirth)();
+  const births = parseBirthTable(birthRaw);
+  const descendants = descendantsOf(processes, roots);
+  const byPid = new Map(descendants.map((sample) => [sample.pid, sample]));
+  const rootSet = new Set(roots);
+  const tree: CapturedProcess[] = [];
+  for (const sample of descendants) {
+    if (sample.pid <= 1 || sample.pid === selfPid) continue;
+    const birth = births.get(sample.pid);
+    if (birth === undefined || birth.length === 0) {
+      throw new Error(`Process ${sample.pid} has no readable birth/start identity`);
+    }
+    tree.push({
+      pid: sample.pid,
+      command: sample.command,
+      birth,
+      role: rootSet.has(sample.pid) ? "tmux-root" : "descendant",
+    });
+  }
+  if (hostPid !== null && !byPid.has(hostPid)) {
+    const host = processes.find((process) => process.pid === hostPid);
+    if (host === undefined) {
+      throw new Error(`App-server host pid ${hostPid} vanished during capture`);
+    }
+    const birth = births.get(hostPid);
+    if (birth === undefined || birth.length === 0) {
+      throw new Error(`App-server host ${hostPid} has no readable birth/start identity`);
+    }
+    tree.push({
+      pid: host.pid,
+      command: host.command,
+      birth,
+      role: "app-server-host",
+    });
+  } else if (hostPid !== null) {
+    // Host was already under a tmux root; mark its role as host for validation.
+    const existing = tree.find((entry) => entry.pid === hostPid);
+    if (existing !== undefined) existing.role = "app-server-host";
+  }
+  if (tree.length === 0) {
+    throw new Error("pause capture produced an empty process tree");
+  }
+  return tree;
+}
+
+/** Build a durable PauseCapture bound to this agent and its toolSession. */
+export function buildPauseCapture(
+  agent: AgentRecord,
+  tree: CapturedProcess[],
+  hostPid: number | null,
+  capturedAt: string = new Date().toISOString(),
+): PauseCapture {
+  return {
+    agentId: agent.id,
+    agentName: agent.name,
+    tmuxSession: agent.tmuxSession,
+    toolSessionId: agent.toolSessionId ?? null,
+    hostPid,
+    tree,
+    capturedAt,
+  };
+}
+
+/**
+ * Prove the paused process tree is still the exact same incarnation. Never
+ * re-lists panes or invents PIDs — only validates the stored capture against
+ * live birth identities. Failure means resume must stay paused/revoked.
+ */
+export async function validatePauseCapture(
+  agent: AgentRecord,
+  capture: PauseCapture,
+  dependencies: PauseCaptureDependencies = defaultReapDependencies(),
+): Promise<void> {
+  if (capture.agentId !== agent.id || capture.agentName !== agent.name) {
+    throw new Error(
+      `pause capture is bound to ${capture.agentName}/${capture.agentId}, not ${agent.name}/${agent.id}`,
+    );
+  }
+  if (capture.tmuxSession !== agent.tmuxSession) {
+    throw new Error(
+      `pause capture tmux session ${capture.tmuxSession} does not match ${agent.tmuxSession}`,
+    );
+  }
+  const currentTool = agent.toolSessionId ?? null;
+  if (capture.toolSessionId !== currentTool) {
+    throw new Error(
+      `pause capture toolSession ${capture.toolSessionId ?? "null"} does not match ` +
+        `current ${currentTool ?? "null"} (session replaced or cleared)`,
+    );
+  }
+  if (capture.tree.length === 0) {
+    throw new Error("pause capture tree is empty");
+  }
+  const processes = parseProcessTable(await dependencies.ps());
+  const byPid = new Map(processes.map((sample) => [sample.pid, sample]));
+  const birthRaw = await (dependencies.psBirth ?? runPsBirth)();
+  const births = parseBirthTable(birthRaw);
+  for (const entry of capture.tree) {
+    const live = byPid.get(entry.pid);
+    if (live === undefined) {
+      throw new Error(
+        `pause capture pid ${entry.pid} (${entry.role}) has vanished`,
+      );
+    }
+    const birth = births.get(entry.pid);
+    if (birth === undefined || birth.length === 0) {
+      throw new Error(
+        `pause capture pid ${entry.pid} has no readable birth identity now`,
+      );
+    }
+    if (birth !== entry.birth) {
+      throw new Error(
+        `pause capture pid ${entry.pid} was reused: captured birth ${JSON.stringify(entry.birth)}, ` +
+          `live birth ${JSON.stringify(birth)}`,
+      );
+    }
+    // Command drift is a replacement signal even when birth somehow matched.
+    if (live.command !== entry.command) {
+      throw new Error(
+        `pause capture pid ${entry.pid} command changed: captured ${JSON.stringify(entry.command)}, ` +
+          `live ${JSON.stringify(live.command)}`,
+      );
+    }
+  }
+  if (capture.hostPid !== null) {
+    const host = capture.tree.find((entry) =>
+      entry.pid === capture.hostPid && entry.role === "app-server-host"
+    );
+    if (host === undefined) {
+      throw new Error(
+        `pause capture claims host pid ${capture.hostPid} but tree has no app-server-host entry`,
+      );
+    }
+  }
+}
+
+/** SIGCONT the exact pause capture after validation. Never recaptures. */
+export async function resumePauseCapture(
+  capture: PauseCapture,
+  dependencies: ReapDependencies = defaultReapDependencies(),
+): Promise<void> {
+  await resumeCapturedTree(
+    capture.tree.map((entry) => ({ pid: entry.pid, command: entry.command })),
+    dependencies,
+  );
+}
+
+/** Capture + SIGSTOP a full pause-bound tree (tmux roots + optional host). */
+export async function suspendAgentForPause(
+  agent: AgentRecord,
+  dependencies: VerifiedStopDependencies,
+): Promise<{ capture: PauseCapture; outcome: SuspendOutcome }> {
+  const reap: PauseCaptureDependencies = {
+    ...(dependencies.reap ?? defaultReapDependencies()),
+  };
+  const selfPid = dependencies.selfPid ?? process.pid;
+  const hostPid = await (dependencies.readHostPid ?? readCodexHostPid)(agent);
+  const roots = await sessionRoots(agent.tmuxSession, dependencies.tmux);
+  const tree = await capturePauseBoundTree(roots, hostPid, reap, selfPid);
+  const capture = buildPauseCapture(agent, tree, hostPid);
+  const outcome = await suspendCapturedTree(
+    tree.map((entry) => ({ pid: entry.pid, command: entry.command })),
+    reap,
+    selfPid,
+  );
+  return { capture, outcome };
+}
+
+/** Validate the stored capture and SIGCONT it. Throws on any identity failure. */
+export async function resumeAgentFromPauseCapture(
+  agent: AgentRecord,
+  capture: PauseCapture,
+  dependencies: VerifiedStopDependencies,
+): Promise<void> {
+  const reap: PauseCaptureDependencies = {
+    ...(dependencies.reap ?? defaultReapDependencies()),
+  };
+  await validatePauseCapture(agent, capture, reap);
+  await resumePauseCapture(capture, reap);
+}
+
 
 /** Non-destructively suspend a live tmux session's whole process tree. The
  * session, panes, and pids are left intact for a later resume. */

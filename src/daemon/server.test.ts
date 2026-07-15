@@ -90,6 +90,28 @@ function landableCodex(overrides: Partial<AgentRecord> = {}): AgentRecord {
   });
 }
 
+
+function testPauseCapture(
+  agent: AgentRecord,
+  overrides: Partial<import("../schemas").PauseCapture> = {},
+): import("../schemas").PauseCapture {
+  return {
+    agentId: agent.id,
+    agentName: agent.name,
+    tmuxSession: agent.tmuxSession,
+    toolSessionId: agent.toolSessionId ?? null,
+    hostPid: null,
+    tree: [{
+      pid: 100,
+      command: "codex",
+      birth: "test-birth-100",
+      role: "tmux-root",
+    }],
+    capturedAt: "2026-07-15T18:00:00.000Z",
+    ...overrides,
+  };
+}
+
 const matchingCodexIdentity = async () => ({
   status: "observed" as const,
   model: "gpt-5-codex",
@@ -821,6 +843,10 @@ describe("HiveDaemon HTTP server", () => {
       expect(row.writeRevoked).toBe(true);
       expect(row.capabilityEpoch).toBe(1);
       expect(row.controlMessageId).toBe(control.id);
+      // Exact tree binding is durable on the row for a later same-process resume.
+      expect(row.pauseCapture).toBeDefined();
+      expect(row.pauseCapture?.tree.length).toBeGreaterThan(0);
+      expect(row.pauseCapture?.agentName).toBe("maya");
       // A suspended process cannot ACK; the daemon records the control applied,
       // so the acknowledgement-deadline sweep does not alert on it.
       expect(control.state).toBe("applied");
@@ -3832,13 +3858,17 @@ describe("Codex execution-identity attestation sweep", () => {
     });
     // Contained writers cannot be reauthorized. Start a paused Codex reader
     // so reattest + SIGCONT of the same process remains covered.
-    db.insertAgent(codexAgent({
+    const paused = codexAgent({
       readOnly: true,
       status: "control-paused",
       writeRevoked: true,
       capabilityEpoch: 1,
       identityState: "drift",
-    }));
+    });
+    db.insertAgent({
+      ...paused,
+      pauseCapture: testPauseCapture(paused),
+    });
     try {
       // Reattest while still drifted: authority stays withheld.
       const stillDrifted = await daemon.resumeAgentAfterPause("maya");
@@ -4489,7 +4519,7 @@ describe("Codex writer containment on resume", () => {
         }),
       },
     });
-    db.insertAgent(agent({
+    const writer = agent({
       tool: "codex",
       readOnly: false,
       status: "control-paused",
@@ -4498,7 +4528,11 @@ describe("Codex writer containment on resume", () => {
       toolSessionId: "session-1",
       identityState: "matching",
       executionIdentity: { tool: "codex", model: "gpt-5.6-sol", effort: "xhigh" },
-    }));
+    });
+    db.insertAgent({
+      ...writer,
+      pauseCapture: testPauseCapture(writer),
+    });
     try {
       const outcome = await daemon.resumeAgentAfterPause("maya");
       expect(outcome.resumed).toBe(false);
@@ -4508,6 +4542,157 @@ describe("Codex writer containment on resume", () => {
       expect(row.status).toBe("control-paused");
       expect(row.writeRevoked).toBe(true);
       expect(row.capabilityEpoch).toBe(1);
+    } finally {
+      db.close();
+    }
+  });
+});
+
+
+describe("exact pause capture resume (N5)", () => {
+  test("resume without a bound pauseCapture stays paused/revoked", async () => {
+    const db = new HiveDatabase(join(home, "n5-no-capture.db"));
+    const resumed: string[] = [];
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new StubSpawner(),
+      tmux: new FakeDaemonTmux(),
+      resumeProcesses: async (session) => {
+        resumed.push(session);
+      },
+      telemetryReaders: {
+        codexIdentity: matchingCodexIdentity,
+      },
+    });
+    db.insertAgent(agent({
+      tool: "codex",
+      readOnly: true,
+      status: "control-paused",
+      writeRevoked: true,
+      capabilityEpoch: 1,
+      toolSessionId: "session-1",
+      executionIdentity: { tool: "codex", model: "gpt-5-codex", effort: "medium" },
+      identityState: "matching",
+      // deliberately no pauseCapture
+    }));
+    try {
+      const outcome = await daemon.resumeAgentAfterPause("maya");
+      expect(outcome.resumed).toBe(false);
+      expect(outcome.reason).toContain("no pause capture");
+      expect(resumed).toEqual([]);
+      expect(db.getAgentByName("maya")).toMatchObject({
+        status: "control-paused",
+        writeRevoked: true,
+      });
+    } finally {
+      db.close();
+    }
+  });
+
+  test("pauseCapture survives a daemon restart (DB round-trip) and resumes the same tree", async () => {
+    const path = join(home, "n5-restart.db");
+    const capture = {
+      agentId: "agent-maya",
+      agentName: "maya",
+      tmuxSession: "hive-maya",
+      toolSessionId: "session-1",
+      hostPid: 900 as number | null,
+      tree: [
+        { pid: 100, command: "codex", birth: "birth-100", role: "tmux-root" as const },
+        { pid: 900, command: "codex app-server", birth: "birth-900", role: "app-server-host" as const },
+      ],
+      capturedAt: "2026-07-15T18:00:00.000Z",
+    };
+    {
+      const db = new HiveDatabase(path);
+      db.insertAgent(agent({
+        tool: "codex",
+        readOnly: true,
+        status: "control-paused",
+        writeRevoked: true,
+        capabilityEpoch: 1,
+        toolSessionId: "session-1",
+        executionIdentity: { tool: "codex", model: "gpt-5-codex", effort: "medium" },
+        identityState: "matching",
+        pauseCapture: capture,
+      }));
+      db.close();
+    }
+    // "Restart": new connection, new daemon, same durable row.
+    const db = new HiveDatabase(path);
+    const resumed: string[] = [];
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new StubSpawner(),
+      tmux: new FakeDaemonTmux(),
+      resumeProcesses: async (session) => {
+        resumed.push(session);
+      },
+      telemetryReaders: {
+        codexIdentity: matchingCodexIdentity,
+      },
+    });
+    try {
+      const row = db.getAgentByName("maya")!;
+      expect(row.pauseCapture).toEqual(capture);
+      const outcome = await daemon.resumeAgentAfterPause("maya");
+      expect(outcome.resumed).toBe(true);
+      expect(resumed).toEqual(["hive-maya"]);
+      expect(db.getAgentByName("maya")?.pauseCapture).toBeUndefined();
+      expect(db.getAgentByName("maya")?.status).toBe("idle");
+    } finally {
+      db.close();
+    }
+  });
+
+  test("replacement toolSession on the row fails resume and stays revoked", async () => {
+    const db = new HiveDatabase(join(home, "n5-toolsession.db"));
+    const resumed: string[] = [];
+    // No injected resume — use production validation path with a fake reap table.
+    const reap = {
+      ps: async () => "100 1 1024 codex\n",
+      psState: async () => "1 0 S\n100 1 T\n",
+      psBirth: async () => "100 birth-100\n",
+      kill: () => undefined,
+      wait: async () => undefined,
+    };
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new StubSpawner(),
+      tmux: new FakeDaemonTmux(),
+      resourceRunners: { reap: reap as never, orphans: null },
+      telemetryReaders: {
+        codexIdentity: matchingCodexIdentity,
+      },
+    });
+    const paused = agent({
+      tool: "codex",
+      readOnly: true,
+      status: "control-paused",
+      writeRevoked: true,
+      capabilityEpoch: 1,
+      toolSessionId: "session-NEW",
+      executionIdentity: { tool: "codex", model: "gpt-5-codex", effort: "medium" },
+      identityState: "matching",
+      pauseCapture: {
+        agentId: "agent-maya",
+        agentName: "maya",
+        tmuxSession: "hive-maya",
+        toolSessionId: "session-OLD",
+        hostPid: null,
+        tree: [{ pid: 100, command: "codex", birth: "birth-100", role: "tmux-root" }],
+        capturedAt: "2026-07-15T18:00:00.000Z",
+      },
+    });
+    db.insertAgent(paused);
+    try {
+      const outcome = await daemon.resumeAgentAfterPause("maya");
+      expect(outcome.resumed).toBe(false);
+      expect(outcome.reason).toMatch(/toolSession|exact-tree resume failed/);
+      expect(db.getAgentByName("maya")).toMatchObject({
+        status: "control-paused",
+        writeRevoked: true,
+      });
     } finally {
       db.close();
     }

@@ -379,3 +379,162 @@ describe("reapProcessTree", () => {
     expect(signalled).toEqual([]);
   });
 });
+
+describe("pause capture birth binding (N5)", () => {
+  function pauseWorld(
+    processes: Array<FakeProcess & { birth?: string }>,
+  ) {
+    const alive = new Map(processes.map((entry) => [entry.pid, { ...entry }]));
+    const signals: Array<{ pid: number; signal: string }> = [];
+    const dependencies = {
+      ps: async () =>
+        [...alive.values()]
+          .map((p) => `${p.pid} ${p.ppid} 1024 ${p.command}`)
+          .join("\n"),
+      psState: async () =>
+        [{ pid: 1, ppid: 0, command: "init", stat: "S" }, ...alive.values()]
+          .map((p) => `${p.pid} ${p.ppid} ${p.stat ?? "S"}`)
+          .join("\n"),
+      psBirth: async () =>
+        [...alive.values()]
+          .map((p) => `${p.pid} ${p.birth ?? `birth-${p.pid}`}`)
+          .join("\n"),
+      kill: (pid: number, signal: NodeJS.Signals) => {
+        signals.push({ pid, signal });
+        const target = alive.get(pid);
+        if (target === undefined || target.unkillable === true) return;
+        if (signal === "SIGSTOP") target.stat = "T";
+        else if (signal === "SIGCONT") target.stat = "S";
+      },
+      wait: async () => undefined,
+    };
+    return { dependencies, signals, alive };
+  }
+
+  test("capturePauseBoundTree records birth and roles including app-server host", async () => {
+    const { capturePauseBoundTree } = await import("./teardown");
+    const { dependencies } = pauseWorld([
+      { pid: 100, ppid: 1, command: "-zsh", birth: "Mon Jul 13 10:00:00 2026" },
+      { pid: 200, ppid: 100, command: "codex", birth: "Mon Jul 13 10:00:01 2026" },
+      { pid: 900, ppid: 1, command: "codex app-server", birth: "Mon Jul 13 10:00:02 2026" },
+    ]);
+    const tree = await capturePauseBoundTree([100], 900, dependencies, 1);
+    expect(tree.map((e) => e.pid).sort()).toEqual([100, 200, 900]);
+    expect(tree.find((e) => e.pid === 100)?.role).toBe("tmux-root");
+    expect(tree.find((e) => e.pid === 200)?.role).toBe("descendant");
+    expect(tree.find((e) => e.pid === 900)).toMatchObject({
+      role: "app-server-host",
+      birth: "Mon Jul 13 10:00:02 2026",
+    });
+  });
+
+  test("validatePauseCapture fails on PID reuse (birth mismatch)", async () => {
+    const { capturePauseBoundTree, validatePauseCapture, buildPauseCapture } =
+      await import("./teardown");
+    const { dependencies, alive } = pauseWorld([
+      { pid: 100, ppid: 1, command: "-zsh", birth: "birth-A" },
+      { pid: 200, ppid: 100, command: "codex", birth: "birth-B" },
+    ]);
+    const tree = await capturePauseBoundTree([100], null, dependencies, 1);
+    const agent = {
+      id: "agent-maya",
+      name: "maya",
+      tmuxSession: "hive-maya",
+      toolSessionId: "session-1",
+    } as unknown as import("../schemas").AgentRecord;
+    const capture = buildPauseCapture(agent, tree, null);
+    // PID 200 reused by a different process
+    alive.get(200)!.birth = "birth-REUSED";
+    await expect(validatePauseCapture(agent, capture, dependencies))
+      .rejects.toThrow(/reused/);
+  });
+
+  test("validatePauseCapture fails when a captured pid vanishes", async () => {
+    const { capturePauseBoundTree, validatePauseCapture, buildPauseCapture } =
+      await import("./teardown");
+    const { dependencies, alive } = pauseWorld([
+      { pid: 100, ppid: 1, command: "-zsh", birth: "birth-A" },
+      { pid: 200, ppid: 100, command: "codex", birth: "birth-B" },
+    ]);
+    const tree = await capturePauseBoundTree([100], null, dependencies, 1);
+    const agent = {
+      id: "agent-maya",
+      name: "maya",
+      tmuxSession: "hive-maya",
+      toolSessionId: "session-1",
+    } as unknown as import("../schemas").AgentRecord;
+    const capture = buildPauseCapture(agent, tree, null);
+    alive.delete(200);
+    await expect(validatePauseCapture(agent, capture, dependencies))
+      .rejects.toThrow(/vanished/);
+  });
+
+  test("validatePauseCapture fails when toolSession was replaced", async () => {
+    const { capturePauseBoundTree, validatePauseCapture, buildPauseCapture } =
+      await import("./teardown");
+    const { dependencies } = pauseWorld([
+      { pid: 100, ppid: 1, command: "-zsh", birth: "birth-A" },
+    ]);
+    const tree = await capturePauseBoundTree([100], null, dependencies, 1);
+    const agent = {
+      id: "agent-maya",
+      name: "maya",
+      tmuxSession: "hive-maya",
+      toolSessionId: "session-OLD",
+    } as unknown as import("../schemas").AgentRecord;
+    const capture = buildPauseCapture(agent, tree, null);
+    await expect(validatePauseCapture(
+      { ...agent, toolSessionId: "session-NEW" },
+      capture,
+      dependencies,
+    )).rejects.toThrow(/toolSession/);
+  });
+
+  test("validatePauseCapture fails when host is missing from live processes", async () => {
+    const { capturePauseBoundTree, validatePauseCapture, buildPauseCapture } =
+      await import("./teardown");
+    const { dependencies, alive } = pauseWorld([
+      { pid: 100, ppid: 1, command: "-zsh", birth: "birth-A" },
+      { pid: 900, ppid: 1, command: "codex app-server", birth: "birth-HOST" },
+    ]);
+    const tree = await capturePauseBoundTree([100], 900, dependencies, 1);
+    const agent = {
+      id: "agent-maya",
+      name: "maya",
+      tmuxSession: "hive-maya",
+      toolSessionId: "session-1",
+    } as unknown as import("../schemas").AgentRecord;
+    const capture = buildPauseCapture(agent, tree, 900);
+    alive.delete(900);
+    await expect(validatePauseCapture(agent, capture, dependencies))
+      .rejects.toThrow(/vanished/);
+  });
+
+  test("resumePauseCapture SIGCONTs the exact persisted pids, never invents new ones", async () => {
+    const { capturePauseBoundTree, resumePauseCapture, buildPauseCapture } =
+      await import("./teardown");
+    const { dependencies, signals, alive } = pauseWorld([
+      { pid: 100, ppid: 1, command: "-zsh", birth: "birth-A", stat: "T" },
+      { pid: 200, ppid: 100, command: "codex", birth: "birth-B", stat: "T" },
+      { pid: 999, ppid: 1, command: "impostor", birth: "birth-X", stat: "T" },
+    ]);
+    const tree = await capturePauseBoundTree([100], null, dependencies, 1);
+    // Impostor is not in capture; resume must not CONT it.
+    await resumePauseCapture(buildPauseCapture({
+      id: "a",
+      name: "maya",
+      tmuxSession: "hive-maya",
+      toolSessionId: null,
+    } as unknown as import("../schemas").AgentRecord, tree, null), dependencies);
+    const contPids = signals.filter((s) => s.signal === "SIGCONT").map((s) => s.pid).sort();
+    expect(contPids).toEqual([100, 200]);
+    expect(alive.get(999)?.stat).toBe("T");
+  });
+
+  test("empty roots without host refuse capture", async () => {
+    const { capturePauseBoundTree } = await import("./teardown");
+    const { dependencies } = pauseWorld([]);
+    await expect(capturePauseBoundTree([], null, dependencies, 1))
+      .rejects.toThrow(/no tmux roots and no app-server host/);
+  });
+});
