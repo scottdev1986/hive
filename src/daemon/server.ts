@@ -2529,6 +2529,22 @@ export class HiveDaemon {
           `Fix: call hive_land again with capabilityEpoch ${agent.capabilityEpoch}.`,
       );
     }
+    // Fail-closed attestation gate: a Codex land merges to main — the
+    // highest-stakes mutation there is. Refuse unless the running identity has
+    // attested MATCHING to the authorized launch identity. `unattested` and
+    // `unknown` read fail-closed through attestationStateOf, and a `drift`
+    // already trips the turn-boundary guard which revokes write authority
+    // (caught above); this refuses the residual case where a Codex writer
+    // reaches landing without a matching attestation on record. Claude/Grok
+    // keep their existing landing contract.
+    if (agent.tool === "codex" && attestationStateOf(agent) !== "matching") {
+      throw new Error(
+        `Cannot land ${name}: its Codex execution identity is ${
+          attestationStateOf(agent)
+        }, not attested matching to the authorized launch identity, so it may not merge.\n` +
+          `Fix: the running model+effort must reattest matching (a turn boundary or hive_resume) or ${name} must be restarted under the authorized identity before landing.`,
+      );
+    }
     const operation = await this.machineMutations?.beginOperation("landing");
     try {
       const landed = await this.land(this.repoRoot, agent.branch);

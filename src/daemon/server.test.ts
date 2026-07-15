@@ -1401,7 +1401,9 @@ describe("HiveDaemon HTTP server", () => {
       },
     });
     try {
-      db.insertAgent(agent());
+      // A Codex writer must have attested matching to land (the fail-closed
+      // identity gate); a real agent gets this from its turn-boundary reattest.
+      db.insertAgent(agent({ identityState: "matching" }));
       await daemon.landAgent("maya", 0);
       expect(landed).toEqual(["hive/maya-server"]);
 
@@ -1423,6 +1425,45 @@ describe("HiveDaemon HTTP server", () => {
         new RegExp(`capabilityEpoch ${current}\\b`),
       );
       expect(landed).toHaveLength(1);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("a Codex writer that has not attested matching cannot land", async () => {
+    const db = new HiveDatabase(join(home, "land-attestation-gate.db"));
+    const landed: string[] = [];
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new StubSpawner(),
+      tmuxSender: new SilentTmuxSender(db),
+      repoRoot: "/repo",
+      landBranch: async (_root, branch) => {
+        landed.push(branch);
+        return { commit: "landed" };
+      },
+    });
+    try {
+      // Unattested — the fail-closed spawn default — cannot merge.
+      db.insertAgent(agent());
+      await expect(daemon.landAgent("maya", 0)).rejects.toThrow(
+        /not attested matching/,
+      );
+      // Drift is refused just the same.
+      db.upsertAgent({ ...db.getAgentByName("maya")!, identityState: "drift" });
+      await expect(daemon.landAgent("maya", 0)).rejects.toThrow(/is drift/);
+      expect(landed).not.toContain("hive/maya-server");
+
+      // A Claude writer is unaffected by the Codex identity gate.
+      db.insertAgent(agent({
+        id: "agent-cara",
+        name: "cara",
+        tool: "claude",
+        tmuxSession: "hive-cara",
+        branch: "hive/cara-x",
+      }));
+      await daemon.landAgent("cara", 0);
+      expect(landed).toEqual(["hive/cara-x"]);
     } finally {
       db.close();
     }
@@ -1509,7 +1550,7 @@ describe("HiveDaemon HTTP server", () => {
         return { commit: "abc123" };
       },
     });
-    db.insertAgent(agent());
+    db.insertAgent(agent({ identityState: "matching" }));
     const landing = daemon.landAgent("maya", 0);
     try {
       await landingStarted;
