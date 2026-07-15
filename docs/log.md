@@ -1,5 +1,21 @@
 # Wiki Log
 
+## [2026-07-15] correction | Acceptance attestation requires measured enforcement
+
+The acceptance runbook now binds every post-launch command to its captured instance
+home and identity, uses cheap process/handshake checks for the continuous watcher,
+and reserves SQLite-backed `/health` for bounded phase checkpoints. It also records
+that shell update/install variables do not automatically cross LaunchServices,
+Workspace, root, or UI boundaries.
+
+Strict acceptance now fails closed unless a runner actually enforces and preserves
+the owner manifest, target allowlist, traps, action journal, watcher, and filesystem
+trace. Hive does not yet ship that runner, so manual or prompt-only runs have reduced
+assurance and cannot attest that production was never targeted. The exact candidate
+is built and identified before acceptance, and every run-owned runtime and disposable
+artifact must be absent after cleanup; only transferred evidence, shared audit/provider
+records, or preservation-required work may remain.
+
 ## [2026-07-15] correction | Acceptance preserves the running installed Hive
 
 Development-build acceptance now runs from an absolute, marked temporary install in

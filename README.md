@@ -89,7 +89,7 @@ Instances have separate identity, daemon lock, ephemeral port, handshake, databa
 
 Machine-wide update, rollback, and uninstall operations refuse while any instance has a live or unobservable team. Repository uninstall removes only the current repository's Hive footprint. It stops the selected daemon only after its handshake proves it serves that repository; a daemon serving another repository is never signaled.
 
-For acceptance isolation outside `~/.hive`, set a test-owned `HIVE_HOME` directly and do not combine it with `--instance`, which selects a home below `~/.hive/instances`. Lifecycle and cleanup actions must resolve to the test run's recorded instance identity before they can act.
+For acceptance isolation outside `~/.hive`, set a test-owned `HIVE_HOME` directly and do not combine it with `--instance`, which selects a home below `~/.hive/instances`. Bind every later CLI operation to that recorded home and verify its port/handshake identity before lifecycle or UI actions. Shell environment does not automatically cross LaunchServices, Workspace, root, or UI boundaries; verify the absolute Hive executable and complete instance tuple at each boundary. See [Pre-release acceptance testing](docs/release/acceptance-testing.md).
 
 ## Autonomy and routing
 
@@ -115,7 +115,7 @@ Hive rejects unknown configuration keys instead of silently ignoring misspelling
 
 Set `HIVE_NO_UPDATE_CHECK=1` to disable passive update checks, or `HIVE_DISABLE_UPDATES=1` to disable both checks and manual self-update.
 
-During development-build acceptance, set both variables and allow only the read-only `hive update status`; update, rollback, uninstall, activation, and installed-daemon restart are outside the acceptance contract.
+During development-build acceptance, bind both variables on each shell invocation and allow only the read-only `hive update status`; update, rollback, uninstall, activation, and installed-daemon restart are outside the acceptance contract. These variables are defense in depth only when the process actually receives them; the acceptance runner must enforce ownership separately. Hive does not yet ship that complete runner, so manual or prompt-only evidence cannot make the strict “never targeted” attestation.
 
 ## Development
 
