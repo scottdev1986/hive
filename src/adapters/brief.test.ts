@@ -11,10 +11,10 @@ import {
   selectSections,
 } from "./brief";
 
-// The brief inputs this repo's generated profile produces. Passing
-// them explicitly keeps the unit tests independent of the cached profile while
+// The brief inputs on-demand doc discovery produces for this repo. Passing them
+// explicitly keeps the unit tests independent of a live tree walk while
 // exercising exactly the config product code derives from it. A dedicated test
-// below asserts `loadBriefConfig` recovers these from the committed profile.
+// below asserts `loadBriefConfig` recovers these from the repo's docs on disk.
 const CONFIG: BriefConfig = {
   briefableDocs: ["SPEC.md", "README.md", "CLAUDE.md"],
   briefableDirectories: ["docs/", "research/"],
@@ -194,10 +194,10 @@ describe("selectSections", () => {
 });
 
 describe("loadBriefConfig", () => {
-  test("recovers this repo's briefable docs and primary from the profile", async () => {
+  test("recovers this repo's briefable docs and primary from on-demand discovery", async () => {
     // Against this very repo, two directories up from this file (src/adapters/ →
-    // repo root). Nothing is committed for it to read: the profile is derived on
-    // demand, which is exactly what product code relies on.
+    // repo root). Nothing is cached for it to read: the docs are discovered on
+    // demand from the tree, which is exactly what product code relies on.
     const root = new URL("../..", import.meta.url).pathname;
     const config = await loadBriefConfig(root);
     expect(config.briefableDocs).toContain("SPEC.md");
@@ -210,7 +210,7 @@ describe("loadBriefConfig", () => {
     expect(config.briefableDocs.length).toBeLessThan(100);
   });
 
-  test("a repo with no profile briefs nothing rather than assuming doc names", async () => {
+  test("a repo with no discoverable docs briefs nothing rather than assuming doc names", async () => {
     const config = await loadBriefConfig("/no/such/repo");
     expect(config).toEqual({
       briefableDocs: [],
