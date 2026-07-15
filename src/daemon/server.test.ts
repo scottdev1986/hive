@@ -3481,6 +3481,107 @@ describe("the model an agent is actually running", () => {
   });
 });
 
+describe("Codex execution-identity attestation sweep", () => {
+  const codexAgent = (overrides: Partial<AgentRecord> = {}): AgentRecord =>
+    agent({
+      tool: "codex",
+      status: "working",
+      contextPct: null,
+      toolSessionId: "session-1",
+      executionIdentity: { tool: "codex", model: "gpt-5.6-sol", effort: "xhigh" },
+      ...overrides,
+    });
+
+  test("records observed identity and marks drift the launch model cannot", async () => {
+    const db = new HiveDatabase(join(home, "attest-drift.db"));
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new StubSpawner(),
+      tmux: new FakeDaemonTmux(),
+      telemetryReaders: {
+        codex: async () => ({ contextPct: null, lastActivityAt: null }),
+        // The productive parent drifted to Luna/low after launching Sol/xhigh.
+        codexIdentity: async () => ({
+          status: "observed",
+          model: "gpt-5.6-luna",
+          effort: "low",
+          turnId: "turn-2",
+          sessionId: "session-1",
+          observedAt: "2026-07-15T18:00:00.000Z",
+        }),
+      },
+    });
+    db.insertAgent(codexAgent());
+    try {
+      await daemon.refreshToolTelemetry();
+      const row = db.getAgentByName("maya")!;
+      // The immutable launch model is untouched; the observation is separate.
+      expect(row.model).toBe("gpt-5-codex");
+      expect(row.identityState).toBe("drift");
+      expect(row.liveModel).toBe("gpt-5.6-luna");
+      expect(row.liveEffort).toBe("low");
+      expect(row.observedIdentity).toMatchObject({
+        model: "gpt-5.6-luna",
+        effort: "low",
+        source: "codex-rollout",
+      });
+    } finally {
+      db.close();
+    }
+  });
+
+  test("matching when the observed identity equals the launch identity", async () => {
+    const db = new HiveDatabase(join(home, "attest-match.db"));
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new StubSpawner(),
+      tmux: new FakeDaemonTmux(),
+      telemetryReaders: {
+        codex: async () => ({ contextPct: null, lastActivityAt: null }),
+        codexIdentity: async () => ({
+          status: "observed",
+          model: "gpt-5.6-sol",
+          effort: "xhigh",
+          turnId: "turn-1",
+          sessionId: "session-1",
+          observedAt: "2026-07-15T18:00:00.000Z",
+        }),
+      },
+    });
+    db.insertAgent(codexAgent());
+    try {
+      await daemon.refreshToolTelemetry();
+      expect(db.getAgentByName("maya")?.identityState).toBe("matching");
+    } finally {
+      db.close();
+    }
+  });
+
+  test("a live rollout with no readable identity is unknown, never synthesized", async () => {
+    const db = new HiveDatabase(join(home, "attest-unknown.db"));
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new StubSpawner(),
+      tmux: new FakeDaemonTmux(),
+      telemetryReaders: {
+        codex: async () => ({ contextPct: null, lastActivityAt: null }),
+        codexIdentity: async () => ({ status: "unknown" }),
+      },
+    });
+    db.insertAgent(codexAgent());
+    try {
+      await daemon.refreshToolTelemetry();
+      const row = db.getAgentByName("maya")!;
+      expect(row.identityState).toBe("unknown");
+      // Never guessed from the launch model.
+      expect(row.liveModel).toBeUndefined();
+      expect(row.observedIdentity).toBeUndefined();
+    } finally {
+      db.close();
+    }
+  });
+});
+
 describe("an unobservable agent reads unknown, never 0", () => {
   test("telemetry that returns null clears a stale number instead of leaving it standing", async () => {
     const db = new HiveDatabase(join(home, "unknown-context.db"));

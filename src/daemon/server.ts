@@ -31,6 +31,10 @@ import {
 import { checkBuildFreshness, type BuildFreshness } from "./build-freshness";
 import { readLiveClaudeModel } from "./live-model";
 import {
+  reconcileCodexIdentity,
+  sameObservedIdentity,
+} from "./identity-attestation";
+import {
   assessStrandedWork,
   listUnmergedHiveBranches,
   markBranchPreserved,
@@ -49,6 +53,7 @@ import {
   MemoryWriteInputSchema,
   MessagePrioritySchema,
   ORCHESTRATOR_NAME,
+  attestationStateOf,
   canonicalOrchestratorName,
   isOrchestratorName,
   QuotaObservationSchema,
@@ -57,6 +62,7 @@ import {
   unknownVendor,
   type AgentRecord,
   type HookEvent,
+  type IdentityState,
   type MemoryFact,
   type MemoryScope,
   type MemoryWriteInput,
@@ -93,9 +99,11 @@ import {
   clampPct,
   type ClaudeTelemetryReader,
   type GraphifyCallCursor,
+  type CodexIdentityObservation,
   type GrokTelemetry,
   type GrokTelemetryReader,
   readClaudeTelemetry,
+  readCodexObservedIdentity,
   readCodexTelemetry,
   readGraphifyCalls,
   readGrokTelemetry,
@@ -496,6 +504,10 @@ export interface HiveDaemonOptions {
       worktreePath: string,
       toolSessionId: string | undefined,
     ) => Promise<string | null>;
+    codexIdentity?: (
+      worktreePath: string,
+      toolSessionId: string | undefined,
+    ) => Promise<CodexIdentityObservation>;
   };
   codexControl?: Pick<
     CodexAppServerManager,
@@ -579,6 +591,10 @@ export class HiveDaemon {
     worktreePath: string,
     toolSessionId: string | undefined,
   ) => Promise<string | null>;
+  private readonly readCodexIdentity: (
+    worktreePath: string,
+    toolSessionId: string | undefined,
+  ) => Promise<CodexIdentityObservation>;
   private readonly handshake: () => ReturnType<typeof expectedDaemonHandshake>;
   private readonly buildFreshness: () => Promise<BuildFreshness>;
   private readonly cleanupWorktree: typeof removeWorktree;
@@ -813,6 +829,9 @@ export class HiveDaemon {
         toolSessionId === undefined
           ? Promise.resolve(null)
           : readLiveGrokModel(worktreePath, toolSessionId));
+    this.readCodexIdentity = options.telemetryReaders?.codexIdentity ??
+      ((worktreePath, toolSessionId) =>
+        readCodexObservedIdentity(worktreePath, toolSessionId));
     this.handshake = () => expectedDaemonHandshake(this.repoRoot);
     this.buildFreshness = options.buildFreshness ??
       (() => checkBuildFreshness(this.repoRoot));
@@ -1295,6 +1314,7 @@ export class HiveDaemon {
       let telemetry: ToolTelemetry | null = null;
       let claudeContext: number | null = null;
       let grokTelemetry: GrokTelemetry | null = null;
+      let codexIdentity: CodexIdentityObservation | null = null;
       // The vendor switch sits outside the read's catch: a failed read is
       // routine and skips the agent, but a vendor with no reader is a bug that
       // must be heard — swallowing it would report this agent's context off
@@ -1311,6 +1331,13 @@ export class HiveDaemon {
         case "codex":
           try {
             telemetry = await this.readCodexTelemetry(
+              worktree,
+              agent.toolSessionId,
+            );
+            // The running identity is a different fact from occupancy: the
+            // rollout's mtime proves liveness, its newest turn_context proves
+            // which model+effort is actually executing. Read both here.
+            codexIdentity = await this.readCodexIdentity(
               worktree,
               agent.toolSessionId,
             );
@@ -1412,6 +1439,47 @@ export class HiveDaemon {
           ) {
             updates.lastEventAt = telemetry.lastActivityAt;
             if (current.status === "spawning") updates.status = "working";
+          }
+          // Execution-identity attestation. The launch identity is an intention;
+          // this records what the process is *observed* running and the verdict
+          // comparing them. The observation is never synthesized from the launch
+          // request — an absent/unknown reading leaves observedIdentity alone and
+          // only marks the verdict, which fails closed for a writer.
+          {
+            const launch = current.executionIdentity;
+            const attestation = launch === undefined
+              ? {
+                identityState: (codexIdentity?.status === "absent"
+                  ? "unattested"
+                  : "unknown") as IdentityState,
+                observedIdentity: null,
+                liveModel: null,
+                liveEffort: null,
+              }
+              : reconcileCodexIdentity(
+                launch,
+                codexIdentity ?? { status: "absent" },
+              );
+            if (attestation.identityState !== attestationStateOf(current)) {
+              updates.identityState = attestation.identityState;
+            }
+            if (
+              attestation.observedIdentity !== null &&
+              !sameObservedIdentity(
+                current.observedIdentity,
+                attestation.observedIdentity,
+              )
+            ) {
+              updates.observedIdentity = attestation.observedIdentity;
+            }
+            if (
+              attestation.liveModel !== null &&
+              attestation.liveModel !== current.liveModel
+            ) updates.liveModel = attestation.liveModel;
+            if (
+              attestation.liveEffort !== null &&
+              attestation.liveEffort !== current.liveEffort
+            ) updates.liveEffort = attestation.liveEffort;
           }
           break;
         }
