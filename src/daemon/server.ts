@@ -3478,6 +3478,41 @@ export class HiveDaemon {
       }
     }
 
+    // Fail-closed enforcement at the trusted turn boundary. A Codex writer that
+    // starts a turn is reattested from its own rollout right now, so a drift is
+    // caught here — before the turn's mutating tools — not up to a sweep later.
+    // Only a confirmed drift pauses; an `unknown` reading at an early boundary
+    // may be a rollout that has not written a turn_context yet, and is left to
+    // the per-mutation guard and the landing gate rather than a false pause.
+    if (
+      value.kind === "turn-start" && agent !== null && agent !== undefined &&
+      agent.tool === "codex" && !agent.readOnly && !agent.writeRevoked &&
+      agent.executionIdentity !== undefined && agent.worktreePath !== null
+    ) {
+      const launch = agent.executionIdentity;
+      const attestation = reconcileCodexIdentity(
+        launch,
+        await this.readCodexIdentity(agent.worktreePath, agent.toolSessionId),
+      );
+      if (attestation.identityState === "drift") {
+        const observed = attestation.observedIdentity;
+        await this.pauseWriterForIdentityDrift({
+          ...agent,
+          identityState: "drift",
+          ...(observed === null ? {} : { observedIdentity: observed }),
+          ...(attestation.liveModel === null
+            ? {}
+            : { liveModel: attestation.liveModel }),
+          ...(attestation.liveEffort === null
+            ? {}
+            : { liveEffort: attestation.liveEffort }),
+        }, observed === null
+          ? "observed identity differs from the authorized launch identity"
+          : `authorized ${launch.model}/${launch.effort ?? "?"}, observed ` +
+            `${observed.model}/${observed.effort ?? "?"}`);
+      }
+    }
+
     // Visibility is the whole point: a status nobody reads is not a fix. The
     // agent cannot report this itself — it is blocked mid-turn, which is
     // precisely why this went unnoticed — so the daemon speaks for it.

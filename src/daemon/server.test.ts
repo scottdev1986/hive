@@ -3658,6 +3658,47 @@ describe("Codex execution-identity attestation sweep", () => {
     }
   });
 
+  test("turn-boundary reattest pauses a Codex writer that drifted before its turn", async () => {
+    const db = new HiveDatabase(join(home, "attest-turn-boundary.db"));
+    const suspended: string[] = [];
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new StubSpawner(),
+      tmux: new FakeDaemonTmux(),
+      suspendProcesses: async (session) => {
+        suspended.push(session);
+        return { suspended: [], unstopped: [] };
+      },
+      telemetryReaders: {
+        codex: async () => ({ contextPct: null, lastActivityAt: null }),
+        codexIdentity: async () => ({
+          status: "observed",
+          model: "gpt-5.6-luna",
+          effort: "low",
+          turnId: "t",
+          sessionId: "session-1",
+          observedAt: "2026-07-15T18:00:00.000Z",
+        }),
+      },
+    });
+    db.insertAgent(codexAgent());
+    try {
+      // The trusted turn boundary reattests before the turn's mutating tools.
+      await daemon.processEvent({
+        kind: "turn-start",
+        agentName: "maya",
+        timestamp: "2026-07-15T18:00:00.000Z",
+      });
+      const row = db.getAgentByName("maya")!;
+      expect(row.identityState).toBe("drift");
+      expect(row.status).toBe("control-paused");
+      expect(row.writeRevoked).toBe(true);
+      expect(suspended).toEqual(["hive-maya"]);
+    } finally {
+      db.close();
+    }
+  });
+
   test("a live rollout with no readable identity is unknown, never synthesized", async () => {
     const db = new HiveDatabase(join(home, "attest-unknown.db"));
     const daemon = new HiveDaemon({
