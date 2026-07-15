@@ -25,6 +25,13 @@ Distinctions kept sharp: local profile file vs inventory sent to a provider;
 automatic background refresh vs explicit reprofiling; structured profile vs
 narrative memory; new foundation vs outgoing legacy reader.
 
+## [2026-07-14] correction | README init --refresh does not start the daemon
+
+Plain `hive init` starts the daemon; `hive init --refresh` only rebuilds the
+legacy profile cache and exits (`src/cli.ts` skips `runStart` when
+`options.refresh === true`). README quick-start prose and the commands table now
+state that split explicitly (final re-review blocker).
+
 ## [2026-07-14] correction | Profiling-docs re-review fixes (forrest)
 
 Cross-vendor review NO-LAND findings applied:
