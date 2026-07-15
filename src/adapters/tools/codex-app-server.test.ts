@@ -212,6 +212,38 @@ describe("Codex app-server adapter", () => {
     });
   });
 
+  test("an idle follow-up turn retains the authorized effort", async () => {
+    const transport = new FakeTransport();
+    const manager = new CodexAppServerManager({
+      transport: async () => transport,
+      commandRunner: async () => 0,
+      sleep: async () => undefined,
+      onEvent: async () => undefined,
+      queueApproval: async () => "approval-1",
+      observeRateLimits: async () => null,
+    });
+    await manager.startAgent(agent(), "Build", false, "high");
+    // The initial turn completes; the session goes idle.
+    transport.emit({
+      method: "turn/completed",
+      params: {
+        threadId: "thread-1",
+        turn: { id: "turn-5", status: "completed" },
+      },
+    });
+    await Bun.sleep(0);
+    // A follow-up delivered while idle starts a fresh turn. It must carry the
+    // thread's authorized effort, not silently drop to the server-side default.
+    await manager.deliver(agent(), "Next task");
+    const lastTurnStart = [...transport.sent].reverse().find(
+      (message) => message.method === "turn/start",
+    );
+    expect(lastTurnStart?.params).toMatchObject({
+      effort: "high",
+      input: [{ type: "text", text: "Next task" }],
+    });
+  });
+
   test("routes app-server approvals through Hive and translates the decision", async () => {
     const transport = new FakeTransport();
     const queued: string[] = [];

@@ -228,6 +228,11 @@ interface CodexSession {
   activeTurnId: string | null;
   quotaBaselines: Map<string, CodexQuotaReading | null>;
   contextPct: number;
+  // The authorized effort for this thread. Every turn — the initial one, an
+  // idle follow-up, or a steer that falls back to a fresh turn — must carry it,
+  // or the thread reverts to the server-side default effort (the incident's
+  // productive parent silently ran a lower effort than it was authorized for).
+  authorizedEffort: string;
 }
 
 interface CodexQuotaSample {
@@ -400,6 +405,7 @@ export class CodexAppServerManager {
         activeTurnId: null,
         quotaBaselines: new Map(),
         contextPct: 0,
+        authorizedEffort: effort,
       };
       this.sessions.set(agent.name, session);
       await this.options.onEvent({
@@ -418,12 +424,15 @@ export class CodexAppServerManager {
   async startTurn(agent: AgentRecord, text: string, effort?: string): Promise<void> {
     const session = this.requireSession(agent.name);
     session.agent = agent;
+    // Default to the thread's authorized effort so an idle follow-up or a steer
+    // that starts a fresh turn never silently drops to the server-side default.
+    const turnEffort = effort ?? session.authorizedEffort;
     const quotaBaseline = (await this.readRateLimits(session).catch(() => null))
       ?.reading ?? null;
     const response = asObject(await session.client.request("turn/start", {
       threadId: session.threadId,
       input: [{ type: "text", text }],
-      ...(effort === undefined ? {} : { effort }),
+      ...(turnEffort === undefined ? {} : { effort: turnEffort }),
     }), "turn/start response");
     const turn = asObject(response.turn, "turn");
     session.activeTurnId = stringField(turn, "id");

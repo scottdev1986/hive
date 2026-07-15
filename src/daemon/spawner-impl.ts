@@ -2128,6 +2128,13 @@ export class HiveSpawner implements Spawner {
           this.dependencies.db.insertAgent({
             ...record,
             status: "spawning",
+            // A different driver is taking over; any app-server observation is
+            // stale. Reset attestation to unknown (fail-closed) and drop the
+            // stale observation so the TUI rollout re-attests before write.
+            identityState: "unknown",
+            observedIdentity: undefined,
+            liveModel: undefined,
+            liveEffort: undefined,
             lastEventAt: new Date().toISOString(),
           });
           const fallback = buildCodexSpawnCommand({
