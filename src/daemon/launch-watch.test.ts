@@ -22,6 +22,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   buildClaudeSpawnCommand,
+  resolveWorkingClaudeExecutable,
   seedClaudeWorktreeTrust,
   writeClaudeAgentConfig,
 } from "../adapters/tools/claude";
@@ -30,8 +31,16 @@ import { shellJoin } from "../adapters/tmux";
 const SESSION = `hive-launch-watch-${process.pid}`;
 const PROMPT = "Reply with the single word READY.";
 const DIALOG_MARKER = "Enter to confirm";
+// Broken homebrew/native-installer shims print this and exit before any dialog
+// or hook can fire; fail fast instead of waiting out the poll deadline.
+const DEAD_BINARY_MARKER = "native binary not installed";
 
-const claudeBinary = Bun.which("claude");
+// Match production spawn resolution: Bun.which is existence-only and can pick a
+// stale PATH entry that fails at exec (ENOEXEC). Only a --version-verified path
+// is runnable; a null version means skip so the suite stays green without claude.
+const resolvedClaude = resolveWorkingClaudeExecutable();
+const claudeBinary =
+  resolvedClaude.version !== null ? resolvedClaude.path : null;
 const tmuxBinary = Bun.which("tmux");
 // Skip rather than fail on a machine without the real CLIs; there is nothing to
 // watch and a red test there would say nothing about Hive.
@@ -168,6 +177,9 @@ suite("Claude spawn launch watch", () => {
         pane = await capturePane();
         // Fail fast and loudly: a dialog here is the bug this test guards.
         if (pane.includes(DIALOG_MARKER)) break;
+        // Residual: a verified --version can still leave a dead pane if the
+        // binary collapses after launch; surface it instead of timing out.
+        if (pane.includes(DEAD_BINARY_MARKER)) break;
         const hooks = await readFile(hookLog, "utf8").catch(() => "");
         if (hooks.includes("turn-start")) {
           reachedTurn = true;
@@ -177,6 +189,7 @@ suite("Claude spawn launch watch", () => {
       }
 
       expect(pane).not.toContain(DIALOG_MARKER);
+      expect(pane).not.toContain(DEAD_BINARY_MARKER);
       // UserPromptSubmit only fires once the prompt is submitted, which is only
       // possible if nothing blocked the launch.
       expect(reachedTurn).toBe(true);
