@@ -904,6 +904,12 @@ export class HiveSpawner implements Spawner {
         category: agent.category,
         tool: identity.tool,
         model: identity.model,
+        // Reserve against the *complete* identity. Dropping effort charged the
+        // control run to (model, null) — a different route than the one that
+        // actually launched — so quota and route health tracked a run that
+        // never existed. The immutable identity always carries effort here
+        // (the guard above rejects a Codex/Grok row that lacks it).
+        effort: identity.effort,
         controlMessageId: message.id,
       });
       reservationId = reservation.id;

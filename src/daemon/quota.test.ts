@@ -622,6 +622,37 @@ describe("quota persistence and reservations", () => {
     db.close();
   });
 
+  test("reserveControlRun records the complete identity including effort", async () => {
+    const { db } = await fileDatabase("control-effort");
+    const service = new QuotaService(
+      new QuotaLedger(db),
+      config([limit("codex", 100, { pool: "general", models: ["*"] })]),
+      () => new Date("2026-07-09T12:00:00.000Z"),
+    );
+    // A control restart reserves against the exact launch identity. Effort must
+    // travel with model, or the run is charged to a route (model, null) that was
+    // never launched.
+    const withEffort = await service.reserveControlRun({
+      agentName: "maya",
+      category: "complex_coding",
+      tool: "codex",
+      model: "codex-model",
+      effort: "xhigh",
+      controlMessageId: "control-effort",
+    });
+    expect(withEffort.effort).toEqual("xhigh");
+    // Omitting effort stores null, never a guess.
+    const withoutEffort = await service.reserveControlRun({
+      agentName: "sam",
+      category: "complex_coding",
+      tool: "codex",
+      model: "codex-model",
+      controlMessageId: "control-no-effort",
+    });
+    expect(withoutEffort.effort).toBeNull();
+    db.close();
+  });
+
   test("atomically prevents concurrent control restarts from overcommitting headroom", async () => {
     const { path, db } = await fileDatabase("control-concurrency");
     const secondDb = new HiveDatabase(path);
