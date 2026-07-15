@@ -148,7 +148,7 @@ Xcode 26 machines and CI runners frequently lack.
 | --- | --- |
 | Promote focused pane to master | ⌘↩ (or double-click pane header) |
 | Return Orchestrator to Master | ⇧⌘↩ |
-| Focus orchestrator | ⌘0 |
+| Focus Orchestrator | ⌘0 |
 | Move focus spatially | ⌥⌘←/→/↑/↓ |
 | Acknowledge focused pane | ⇧⌘K |
 | Close pane (detach, never kill) | ⇧⌘W |
