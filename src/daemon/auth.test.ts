@@ -46,8 +46,14 @@ function agentRecord(overrides: Partial<AgentRecord> = {}): AgentRecord {
     capabilityEpoch: 0,
     readOnly: false,
     writeRevoked: false,
-    // A healthy Codex writer has attested matching (from its turn-boundary
-    // reattest); the fail-closed landing gate requires it to merge.
+    // Fresh landing reattest needs an immutable launch identity plus a live
+    // observation (mocked in harness) that matches it.
+    toolSessionId: "session-auth-land",
+    executionIdentity: {
+      tool: "codex",
+      model: "gpt-5-codex",
+      effort: "medium",
+    },
     identityState: "matching",
     ...overrides,
   };
@@ -103,6 +109,16 @@ function harness(
     },
     readLandReadiness: async () => readiness,
     resourceRunners: { orphans: null },
+    telemetryReaders: {
+      codexIdentity: async () => ({
+        status: "observed",
+        model: "gpt-5-codex",
+        effort: "medium",
+        turnId: "t-auth-land",
+        sessionId: "session-auth-land",
+        observedAt: "2026-07-15T18:00:00.000Z",
+      }),
+    },
   });
   return { daemon, db, spawner, landed, landFailures };
 }
