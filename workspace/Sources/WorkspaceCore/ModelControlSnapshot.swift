@@ -539,10 +539,6 @@ public struct TokenUsageSession: Codable, Equatable, Sendable {
     public var fleet: TokenUsageBreakdown
     public var hiveControl: TokenUsageBreakdown
     public var workerSessions: TokenUsageBreakdown
-    /// Specialized project-profiler runs, kept separate from workerSessions so a
-    /// profiler is never counted as task work. Optional so a daemon that predates
-    /// profiling attribution still decodes: absent reads as nil, never a crash.
-    public var profilingSessions: TokenUsageBreakdown? = nil
     public var subjects: [TokenUsageSubject]
 }
 

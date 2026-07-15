@@ -114,29 +114,22 @@ extension TokenUsageSession {
     /// partition — a neutral bucket, so an axis drift can never quietly
     /// reclassify a new kind as task work.
     public var unclassifiedSubjects: [TokenUsageSubject] {
-        let known: Set<String> = ["orchestrator", "worker", "profiler"]
+        let known: Set<String> = ["orchestrator", "worker"]
         return subjects.filter { !known.contains($0.role) }
     }
 
     public var usageRows: [TokenUsageRow] {
-        // The orchestrator and profiler each collapse into a single row from
-        // their own daemon aggregate. Workers (role == "worker", exactly) are
-        // listed individually, then any unrecognised role — visible, but kept out
-        // of the worker partition and never folded into the profiler's row. A
-        // profiler, in particular, must never fall through into WORKERS.
+        // The orchestrator collapses into a single row from its own daemon
+        // aggregate. Workers (role == "worker", exactly) are listed individually,
+        // then any unrecognised role — visible, but kept out of the worker
+        // partition.
         let orchestrators = subjects.filter { $0.role == "orchestrator" }
-        let profilers = subjects.filter { $0.role == "profiler" }
         var rows: [TokenUsageRow] = []
         // Backup orchestrators are relaunches of the ONE orchestrator, so they
         // collapse into a single row showing the daemon's own control aggregate.
         if let orchestratorRow = collapsedRow(
             name: "Orchestrator", generations: orchestrators, counts: hiveControl.counts) {
             rows.append(orchestratorRow)
-        }
-        // The dedicated profiling row, from profilingSessions — never WORKERS.
-        if let profilingRow = collapsedRow(
-            name: "Profiling", generations: profilers, counts: profilingSessions?.counts) {
-            rows.append(profilingRow)
         }
         return rows + workerSubjects.map(individualRow) + unclassifiedSubjects.map(individualRow)
     }

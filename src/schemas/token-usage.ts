@@ -31,9 +31,8 @@ export type TokenUsageReading = z.infer<typeof TokenUsageReadingSchema>;
  * the axis that has drifted before (a wire kind the Swift decoder had never
  * heard of), so it is a named, enumerable list: the wire-contract test iterates
  * it and fails until the shared fixture carries every kind, which forces the
- * Swift side to face each new kind before it can reach a user. `profiler` is the
- * specialized project-profiler run; its spend is its own bucket, never a worker. */
-export const TOKEN_USAGE_ROLES = ["orchestrator", "worker", "profiler"] as const;
+ * Swift side to face each new kind before it can reach a user. */
+export const TOKEN_USAGE_ROLES = ["orchestrator", "worker"] as const;
 export const TokenUsageRoleSchema = z.enum(TOKEN_USAGE_ROLES);
 export type TokenUsageRole = z.infer<typeof TokenUsageRoleSchema>;
 
@@ -69,9 +68,6 @@ export const TokenUsageSessionSchema = z.strictObject({
   fleet: TokenUsageBreakdownSchema,
   hiveControl: TokenUsageBreakdownSchema,
   workerSessions: TokenUsageBreakdownSchema,
-  // Specialized project-profiler runs. Their spend is attributed here, never
-  // folded into workerSessions, so a profiler never masquerades as task work.
-  profilingSessions: TokenUsageBreakdownSchema,
   subjects: z.array(TokenUsageSubjectSchema),
 });
 export type TokenUsageSession = z.infer<typeof TokenUsageSessionSchema>;

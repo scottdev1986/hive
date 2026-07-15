@@ -48,54 +48,30 @@ describe("token usage wire contract (shared with the Swift Usage decoder)", () =
     ].sort();
 
     // A role the fixture never carries is a role the Swift decoder is never
-    // tested against — exactly how a new wire kind ships broken. `profiler` is
-    // the one this package added; the guard is what keeps the next one honest.
+    // tested against — exactly how a new wire kind ships broken. The guard is
+    // what keeps the next role added to the axis honest.
     expect(fixtureRoles).toEqual(schemaRoles);
   });
 
-  test("every session carries all four breakdown buckets", () => {
+  test("every session carries the three breakdown buckets", () => {
     const snapshot = TokenUsageSnapshotSchema.parse(fixture);
     for (const session of snapshot.sessions) {
       // strictObject parsing already requires these keys; asserting them here
-      // documents that a profiling bucket is part of the contract, not optional
-      // daemon garnish.
+      // documents that they are part of the contract, not optional daemon garnish.
       expect(session.fleet).toBeDefined();
       expect(session.hiveControl).toBeDefined();
       expect(session.workerSessions).toBeDefined();
-      expect(session.profilingSessions).toBeDefined();
     }
   });
 
-  test("profiler spend lands in profilingSessions, never in workerSessions", () => {
+  test("a Codex/Grok worker keeps a headline from cache reads with null cache-creation", () => {
     const snapshot = TokenUsageSnapshotSchema.parse(fixture);
-    const session = snapshot.sessions[0]!;
-
-    const profilers = session.subjects.filter((subject) => subject.role === "profiler");
-    expect(profilers.length).toBeGreaterThan(0);
-    expect(session.profilingSessions.subjectCount).toBe(profilers.length);
-
-    // The profiler's measured tokens are in profilingSessions and are NOT part
-    // of the worker aggregate.
-    expect(session.profilingSessions.counts?.totalTokens).toBe(460);
-    const profilerTotals = profilers
-      .map((subject) =>
-        subject.reading.state === "measured" ? subject.reading.counts.totalTokens : 0
-      )
-      .reduce((sum, total) => sum + total, 0);
-    expect(session.profilingSessions.counts?.totalTokens).toBe(profilerTotals);
-    expect(session.workerSessions.counts?.totalTokens).not.toBe(
-      session.profilingSessions.counts?.totalTokens,
-    );
-  });
-
-  test("a Codex/Grok profiler keeps a headline from cache reads with null cache-creation", () => {
-    const snapshot = TokenUsageSnapshotSchema.parse(fixture);
-    const bucket = snapshot.sessions[0]!.profilingSessions;
+    const bucket = snapshot.sessions[0]!.workerSessions;
     // The null-cache-subset lesson: a provider that reports cache READS but not
     // cache CREATION must not null the whole bucket. Reads survive; creation is
     // an honest null; the headline derives from reads alone.
     expect(bucket.counts).not.toBeNull();
-    expect(bucket.counts?.cachedInputTokens).toBe(250);
+    expect(bucket.counts?.cachedInputTokens).toBe(300);
     expect(bucket.counts?.cacheCreationInputTokens).toBeNull();
   });
 });

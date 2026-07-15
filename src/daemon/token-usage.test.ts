@@ -409,111 +409,14 @@ describe("TokenUsageStore", () => {
       .toBe(sessionId);
   });
 
-  test("a profiler is attributed to profilingSessions, never to workers, and tolerates null cache-creation", async () => {
-    const adapter: TokenUsageAdapter = {
-      provider: "codex",
-      discover: async (subject) => ({ paths: [`virtual://${subject.id}`] }),
-      read: async () => ({
-        cursorBytes: 1,
-        events: [{
-          key: "cumulative",
-          cumulative: true,
-          counts: {
-            inputTokens: 400,
-            cachedInputTokens: 250,
-            // Codex/Grok report reads but not cache-creation; the bucket must
-            // survive with a live reads figure and an honest null here.
-            cacheCreationInputTokens: null,
-            outputTokens: 60,
-            reasoningTokens: 20,
-          },
-          observedAt: at,
-          source: "codex-test",
-        }],
-      }),
-    };
-    const db = new HiveDatabase(":memory:");
-    const repo = "/tmp/hive-profiler-bucket-test";
-    const store = new TokenUsageStore(db, [adapter]);
-    const session = await store.startSession(repo, at);
-
-    store.startOrchestrator(session, "codex", repo, at);
-    store.registerOrchestratorProviderSession("orchestrator-session", repo);
-    db.insertAgent({
-      id: "agent-maya",
-      name: "maya",
-      tool: "codex",
-      model: "gpt-5.6-sol",
-      category: "complex_coding",
-      status: "working",
-      taskDescription: "Task work",
-      worktreePath: join(repo, ".hive", "worktrees", "maya"),
-      branch: "hive/maya",
-      tmuxSession: "hive-maya",
-      contextPct: 1,
-      createdAt: at,
-      lastEventAt: at,
-      recoveryAttempts: 0,
-      capabilityEpoch: 0,
-      readOnly: false,
-      writeRevoked: false,
-      toolSessionId: "worker-session",
-    });
-
-    const profiler = store.startProfiler(
-      session, "run-abc", "profile-run-1", "codex", "gpt-5.6-sol",
-      join(repo, ".hive", "profile"), null, at,
-    );
-    store.registerProfilerProviderSession(profiler, "profiler-session");
-    await store.refreshSubject(profiler);
-    await store.endSubject(profiler); // terminal finalization records the reading
-
-    const current = (await store.snapshot(repo)).sessions[0]!;
-    expect(current.subjects.find((s) => s.id === profiler)!.role).toBe("profiler");
-    expect(current.profilingSessions.subjectCount).toBe(1);
-    expect(current.profilingSessions.counts).toEqual({
-      inputTokens: 400,
-      cachedInputTokens: 250,
-      cacheCreationInputTokens: null,
-      outputTokens: 60,
-      reasoningTokens: 20,
-      totalTokens: 460,
-    });
-    // The worker bucket holds only the worker; the fleet holds all three.
-    expect(current.workerSessions.subjectCount).toBe(1);
-    expect(current.fleet.subjectCount).toBe(3);
-  });
-
-  test("a profiler with no observed provider session is an honest unknown, not zero or failure", async () => {
-    const adapter: TokenUsageAdapter = {
-      provider: "codex",
-      discover: async () => ({ paths: [] }),
-      read: async () => ({ cursorBytes: 0, events: [] }),
-    };
-    const repo = "/tmp/hive-profiler-unknown-test";
-    const store = new TokenUsageStore(new HiveDatabase(":memory:"), [adapter]);
-    const session = await store.startSession(repo, at);
-    const profiler = store.startProfiler(
-      session, "run-x", "profile-run-1", "codex", "gpt-5.6-sol", repo, null, at,
-    );
-    // The provider session is never observed, so there is nothing to measure.
-    const current = (await store.snapshot(repo)).sessions[0]!;
-    expect(current.profilingSessions.counts).toBeNull();
-    expect(current.profilingSessions.subjectCount).toBe(0);
-    expect(current.complete).toBe(false);
-    expect(current.unknownSubjects).toEqual(["profile-run-1 (codex)"]);
-    expect(current.subjects.find((s) => s.id === profiler)!.reading).toEqual({
-      state: "unknown",
-      reason: "codex provider session id has not been observed",
-    });
-  });
-
-  test("a pre-profiler database migrates: profiler rows insert and legacy rows survive", async () => {
+  test("a profiling-era database migrates: profiler rows and their events are dropped, legacy rows survive", async () => {
     const db = new HiveDatabase(":memory:");
     const repo = "/tmp/hive-token-migrate-test";
     const sessionId = "11111111-1111-4111-8111-111111111111";
     const legacyId = "22222222-2222-4222-8222-222222222222";
-    // The pre-profiler schema: the old role CHECK, no profileRunId column.
+    const profilerId = "33333333-3333-4333-8333-333333333333";
+    // The profiling-era schema: the wide role CHECK, the profileRunId column, and
+    // the one-profiler-per-run index.
     db.database.exec(`
       CREATE TABLE token_usage_sessions (
         id TEXT PRIMARY KEY, repoRoot TEXT NOT NULL, startedAt TEXT NOT NULL, endedAt TEXT
@@ -522,10 +425,12 @@ describe("TokenUsageStore", () => {
         id TEXT PRIMARY KEY,
         sessionId TEXT NOT NULL REFERENCES token_usage_sessions(id),
         agentId TEXT, name TEXT NOT NULL,
-        role TEXT NOT NULL CHECK(role IN ('orchestrator', 'worker')),
+        role TEXT NOT NULL CHECK(role IN ('orchestrator', 'worker', 'profiler')),
         provider TEXT NOT NULL, model TEXT, cwd TEXT NOT NULL, providerSessionId TEXT,
-        startedAt TEXT NOT NULL, endedAt TEXT, unknownReason TEXT
+        profileRunId TEXT, startedAt TEXT NOT NULL, endedAt TEXT, unknownReason TEXT
       );
+      CREATE UNIQUE INDEX token_usage_one_profiler_per_run
+        ON token_usage_subjects(sessionId, profileRunId) WHERE profileRunId IS NOT NULL;
       CREATE TABLE token_usage_artifacts (
         subjectId TEXT NOT NULL REFERENCES token_usage_subjects(id),
         path TEXT NOT NULL, cursorBytes INTEGER NOT NULL DEFAULT 0,
@@ -546,94 +451,64 @@ describe("TokenUsageStore", () => {
     db.database.query(`
       INSERT INTO token_usage_subjects (
         id, sessionId, agentId, name, role, provider, model, cwd,
-        providerSessionId, startedAt, endedAt, unknownReason
-      ) VALUES (?, ?, NULL, 'Orchestrator', 'orchestrator', 'codex', NULL, ?, NULL, ?, NULL, NULL)
+        providerSessionId, profileRunId, startedAt, endedAt, unknownReason
+      ) VALUES (?, ?, NULL, 'Orchestrator', 'orchestrator', 'codex', NULL, ?, NULL, NULL, ?, NULL, NULL)
     `).run(legacyId, sessionId, repo, at);
-    // A child event proves the rebuild preserves foreign-key-referenced rows.
+    // A profiler subject from the removed surface, keyed by a profileRunId.
+    db.database.query(`
+      INSERT INTO token_usage_subjects (
+        id, sessionId, agentId, name, role, provider, model, cwd,
+        providerSessionId, profileRunId, startedAt, endedAt, unknownReason
+      ) VALUES (?, ?, NULL, 'profile-run-1', 'profiler', 'codex', NULL, ?, NULL, 'run-1', ?, NULL, NULL)
+    `).run(profilerId, sessionId, repo, at);
+    // A child event on each: the legacy one proves the rebuild preserves
+    // foreign-key-referenced rows; the profiler's proves its children are cleaned.
     db.database.query(`
       INSERT INTO token_usage_events (
         subjectId, eventKey, cumulative, inputTokens, cachedInputTokens,
         cacheCreationInputTokens, outputTokens, reasoningTokens, observedAt, source
       ) VALUES (?, 'e1', 1, 10, 5, NULL, 2, NULL, ?, 'legacy')
     `).run(legacyId, at);
+    db.database.query(`
+      INSERT INTO token_usage_events (
+        subjectId, eventKey, cumulative, inputTokens, cachedInputTokens,
+        cacheCreationInputTokens, outputTokens, reasoningTokens, observedAt, source
+      ) VALUES (?, 'p1', 1, 400, 250, NULL, 60, 20, ?, 'codex-rollout')
+    `).run(profilerId, at);
 
     // Constructing the store runs the migration.
-    const store = new TokenUsageStore(db, []);
+    new TokenUsageStore(db, []);
 
+    // The profileRunId column is gone.
     const columns = db.database
       .query("PRAGMA table_info(token_usage_subjects)").all() as { name: string }[];
-    expect(columns.some((c) => c.name === "profileRunId")).toBe(true);
+    expect(columns.some((c) => c.name === "profileRunId")).toBe(false);
+    // The legacy orchestrator and its event survive untouched.
     expect(
       db.database.query("SELECT name, role FROM token_usage_subjects WHERE id = ?").get(legacyId),
     ).toEqual({ name: "Orchestrator", role: "orchestrator" });
     expect(
       db.database.query("SELECT COUNT(*) AS n FROM token_usage_events WHERE subjectId = ?").get(legacyId),
     ).toEqual({ n: 1 });
-    // A profiler now inserts where the old CHECK would have rejected it.
-    const profiler = store.startProfiler(sessionId, "run-1", "profile-run-1", "codex", "gpt-5.6-sol", repo, null, at);
+    // The profiler subject and its event are gone.
     expect(
-      db.database.query("SELECT role, profileRunId FROM token_usage_subjects WHERE id = ?").get(profiler),
-    ).toEqual({ role: "profiler", profileRunId: "run-1" });
+      db.database.query("SELECT COUNT(*) AS n FROM token_usage_subjects WHERE role = 'profiler'").get(),
+    ).toEqual({ n: 0 });
+    expect(
+      db.database.query("SELECT COUNT(*) AS n FROM token_usage_events WHERE subjectId = ?").get(profilerId),
+    ).toEqual({ n: 0 });
+    // The narrowed CHECK now rejects a profiler insert.
+    expect(() =>
+      db.database.query(`
+        INSERT INTO token_usage_subjects (
+          id, sessionId, agentId, name, role, provider, model, cwd,
+          providerSessionId, startedAt, endedAt, unknownReason
+        ) VALUES (?, ?, NULL, 'x', 'profiler', 'codex', NULL, ?, NULL, ?, NULL, NULL)
+      `).run("44444444-4444-4444-8444-444444444444", sessionId, repo, at),
+    ).toThrow();
     // Foreign-key enforcement is restored after the rebuild.
     expect(
       (db.database.query("PRAGMA foreign_keys").all() as { foreign_keys: number }[])[0]!.foreign_keys,
     ).toBe(1);
-  });
-
-  test("an unfinished profiler keeps its session live so a later start joins it", async () => {
-    const db = new HiveDatabase(":memory:");
-    const repo = "/tmp/hive-profiler-reuse-test";
-    const store = new TokenUsageStore(db, []);
-    // Profiling starts before the orchestrator, when no agent is live.
-    const session = await store.startSession(repo, at);
-    const profiler = store.startProfiler(session, "run-1", "profile-run-1", "codex", "gpt-5.6-sol", repo, null, at);
-    expect(db.listAgents().length).toBe(0);
-    // The orchestrator's later startSession must JOIN, not close-and-replace.
-    const rejoined = await store.startSession(repo, "2026-07-13T12:05:00.000Z");
-    expect(rejoined).toBe(session);
-    // Once the profiler finishes and no agent is live, the session is disposable.
-    await store.endSubject(profiler, "2026-07-13T12:06:00.000Z");
-    const fresh = await store.startSession(repo, "2026-07-13T12:07:00.000Z");
-    expect(fresh).not.toBe(session);
-  });
-
-  test("startProfiler is idempotent by run: a retry reacquires the same subject, never a duplicate or a throw", async () => {
-    const db = new HiveDatabase(":memory:");
-    const store = new TokenUsageStore(db, []);
-    const repo = "/tmp/hive-profiler-dup-test";
-    const session = await store.startSession(repo, at);
-    const first = store.startProfiler(session, "run-1", "profile-run-1", "codex", "gpt-5.6-sol", repo, null, at);
-    // A retry for the same run — even with different metadata — returns the same
-    // durable subject instead of hitting the unique index.
-    const second = store.startProfiler(session, "run-1", "profile-run-1-again", "grok", "grok-4.5", repo, null, at);
-    expect(second).toBe(first);
-    expect(
-      db.database.query("SELECT COUNT(*) AS n FROM token_usage_subjects WHERE profileRunId = 'run-1'").get(),
-    ).toEqual({ n: 1 });
-  });
-
-  test("a profiler subject is reacquirable by run identity so a crash-restart closes the orphan and rotates", async () => {
-    const db = new HiveDatabase(":memory:");
-    const repo = "/tmp/hive-profiler-recovery-test";
-    const store = new TokenUsageStore(db, []);
-    const session = await store.startSession(repo, at);
-    const subjectId = store.startProfiler(session, "run-1", "profile-run-1", "codex", "gpt-5.6-sol", repo, null, at);
-    // While unfinished and with no live agent, the profiler pins its session.
-    expect(await store.startSession(repo, "2026-07-13T12:05:00.000Z")).toBe(session);
-
-    // Daemon restart: a fresh store over the same database. The ephemeral
-    // subjectId is treated as lost; recovery must find the row by the durable
-    // identity (session, runId), not the UUID.
-    const restarted = new TokenUsageStore(db, []);
-    const recovered = restarted.profilerSubjectId(session, "run-1");
-    expect(recovered).toBe(subjectId);
-    // Retrying the SAME run reacquires rather than throwing on the unique index.
-    expect(restarted.startProfiler(session, "run-1", "profile-run-1", "codex", "gpt-5.6-sol", repo, null, at))
-      .toBe(subjectId);
-
-    // Positive terminal evidence closes the orphan, and the session can rotate.
-    await restarted.endSubject(recovered!, "2026-07-13T12:06:00.000Z");
-    const fresh = await restarted.startSession(repo, "2026-07-13T12:07:00.000Z");
-    expect(fresh).not.toBe(session);
   });
 });

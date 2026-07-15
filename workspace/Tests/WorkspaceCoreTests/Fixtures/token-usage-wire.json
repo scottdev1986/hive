@@ -11,14 +11,14 @@
       "complete": false,
       "unknownSubjects": ["quinn (grok)"],
       "fleet": {
-        "subjectCount": 3,
+        "subjectCount": 2,
         "counts": {
-          "inputTokens": 1900,
-          "cachedInputTokens": 1150,
+          "inputTokens": 1500,
+          "cachedInputTokens": 900,
           "cacheCreationInputTokens": null,
-          "outputTokens": 340,
+          "outputTokens": 280,
           "reasoningTokens": null,
-          "totalTokens": 2240
+          "totalTokens": 1780
         }
       },
       "hiveControl": {
@@ -43,40 +43,7 @@
           "totalTokens": 580
         }
       },
-      "profilingSessions": {
-        "subjectCount": 1,
-        "counts": {
-          "inputTokens": 400,
-          "cachedInputTokens": 250,
-          "cacheCreationInputTokens": null,
-          "outputTokens": 60,
-          "reasoningTokens": 20,
-          "totalTokens": 460
-        }
-      },
       "subjects": [
-        {
-          "id": "b0000000-0000-4000-8000-000000000004",
-          "name": "profile-run-1",
-          "role": "profiler",
-          "provider": "codex",
-          "model": "gpt-5.6-sol",
-          "startedAt": "2026-07-13T11:59:00.000Z",
-          "endedAt": "2026-07-13T12:05:00.000Z",
-          "reading": {
-            "state": "measured",
-            "counts": {
-              "inputTokens": 400,
-              "cachedInputTokens": 250,
-              "cacheCreationInputTokens": null,
-              "outputTokens": 60,
-              "reasoningTokens": 20,
-              "totalTokens": 460
-            },
-            "source": "codex-rollout",
-            "observedAt": "2026-07-13T12:05:00.000Z"
-          }
-        },
         {
           "id": "b0000000-0000-4000-8000-000000000001",
           "name": "Orchestrator",

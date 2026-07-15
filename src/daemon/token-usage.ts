@@ -29,7 +29,6 @@ const SubjectRowSchema = z.object({
   model: z.string().nullable(),
   cwd: z.string(),
   providerSessionId: z.string().nullable(),
-  profileRunId: z.string().nullable(),
   startedAt: z.string(),
   endedAt: z.string().nullable(),
   unknownReason: z.string().nullable(),
@@ -350,12 +349,11 @@ export class TokenUsageStore {
         sessionId TEXT NOT NULL REFERENCES token_usage_sessions(id),
         agentId TEXT,
         name TEXT NOT NULL,
-        role TEXT NOT NULL CHECK(role IN ('orchestrator', 'worker', 'profiler')),
+        role TEXT NOT NULL CHECK(role IN ('orchestrator', 'worker')),
         provider TEXT NOT NULL,
         model TEXT,
         cwd TEXT NOT NULL,
         providerSessionId TEXT,
-        profileRunId TEXT,
         startedAt TEXT NOT NULL,
         endedAt TEXT,
         unknownReason TEXT
@@ -380,31 +378,33 @@ export class TokenUsageStore {
         PRIMARY KEY(subjectId, eventKey)
       );
     `);
-    // A pre-profiler database keeps its old table (CREATE ... IF NOT EXISTS is a
-    // no-op there): the role CHECK still rejects 'profiler' and there is no
-    // profileRunId column. Widen it before creating the subject indexes, because
-    // a rebuild drops the old table and its indexes with it.
+    // A database from when profiling was tracked keeps its old table (CREATE ...
+    // IF NOT EXISTS is a no-op there): the role CHECK still admits 'profiler' and
+    // the profileRunId column survives. Narrow it before creating the subject
+    // indexes, because a rebuild drops the old table and its indexes with it.
     this.migrateSubjects();
     this.database.exec(`
       CREATE UNIQUE INDEX IF NOT EXISTS token_usage_one_subject_per_agent
         ON token_usage_subjects(sessionId, agentId) WHERE agentId IS NOT NULL;
-      CREATE UNIQUE INDEX IF NOT EXISTS token_usage_one_profiler_per_run
-        ON token_usage_subjects(sessionId, profileRunId) WHERE profileRunId IS NOT NULL;
     `);
   }
 
-  /** Bring a pre-profiler `token_usage_subjects` up to the current shape. SQLite
-   * cannot ALTER a CHECK constraint, so the table is rebuilt to widen `role` and
-   * gain the nullable `profileRunId`; existing rows are copied and their
-   * profileRunId defaults to NULL. Keyed on the column's absence so it runs at
-   * most once. Follows the SQLite table-rebuild recipe (build the new table,
-   * copy, drop the old, rename into place) with foreign keys disabled around it,
-   * because artifacts/events reference this table. */
+  /** Bring a database that still carries the removed profiler surface down to the
+   * current shape. That schema had a `profileRunId` column and a `role` CHECK
+   * that admitted 'profiler'; profiling has been deleted, so this drops any
+   * profiler subjects (and their child artifacts/events) and rebuilds the table
+   * to the narrowed CHECK without `profileRunId`. SQLite cannot ALTER a CHECK
+   * constraint or drop a column in older builds, so the table is rebuilt (build
+   * the new table, copy, drop the old, rename into place). Keyed on the column's
+   * presence so it runs at most once, and it is a no-op on a database that never
+   * had the profiler surface. Foreign keys are disabled around the rebuild
+   * because artifacts/events reference this table, and restored in a finally even
+   * if it throws. Non-profiler rows are copied through untouched. */
   private migrateSubjects(): void {
     const hasProfileRunId = z.object({ name: z.string() }).array().parse(
       this.database.query("PRAGMA table_info(token_usage_subjects)").all(),
     ).some((column) => column.name === "profileRunId");
-    if (hasProfileRunId) return;
+    if (!hasProfileRunId) return;
     // Restore enforcement to whatever it was, even if the rebuild throws.
     const enforced = z.array(z.object({ foreign_keys: z.number() })).parse(
       this.database.query("PRAGMA foreign_keys").all(),
@@ -413,27 +413,33 @@ export class TokenUsageStore {
     try {
       this.database.transaction(() => {
         this.database.exec(`
+          DELETE FROM token_usage_events WHERE subjectId IN (
+            SELECT id FROM token_usage_subjects WHERE role = 'profiler'
+          );
+          DELETE FROM token_usage_artifacts WHERE subjectId IN (
+            SELECT id FROM token_usage_subjects WHERE role = 'profiler'
+          );
+          DELETE FROM token_usage_subjects WHERE role = 'profiler';
           CREATE TABLE token_usage_subjects_rebuilt (
             id TEXT PRIMARY KEY,
             sessionId TEXT NOT NULL REFERENCES token_usage_sessions(id),
             agentId TEXT,
             name TEXT NOT NULL,
-            role TEXT NOT NULL CHECK(role IN ('orchestrator', 'worker', 'profiler')),
+            role TEXT NOT NULL CHECK(role IN ('orchestrator', 'worker')),
             provider TEXT NOT NULL,
             model TEXT,
             cwd TEXT NOT NULL,
             providerSessionId TEXT,
-            profileRunId TEXT,
             startedAt TEXT NOT NULL,
             endedAt TEXT,
             unknownReason TEXT
           );
           INSERT INTO token_usage_subjects_rebuilt (
             id, sessionId, agentId, name, role, provider, model, cwd,
-            providerSessionId, profileRunId, startedAt, endedAt, unknownReason
+            providerSessionId, startedAt, endedAt, unknownReason
           )
           SELECT id, sessionId, agentId, name, role, provider, model, cwd,
-            providerSessionId, NULL, startedAt, endedAt, unknownReason
+            providerSessionId, startedAt, endedAt, unknownReason
           FROM token_usage_subjects;
           DROP TABLE token_usage_subjects;
           ALTER TABLE token_usage_subjects_rebuilt RENAME TO token_usage_subjects;
@@ -460,23 +466,9 @@ export class TokenUsageStore {
       .nullable().parse(row);
   }
 
-  private hasLiveProfiler(sessionId: string): boolean {
-    return this.database.query(`
-      SELECT 1 FROM token_usage_subjects
-      WHERE sessionId = ? AND role = 'profiler' AND endedAt IS NULL LIMIT 1
-    `).get(sessionId) !== null;
-  }
-
   async startSession(repoRoot: string, at = new Date().toISOString()): Promise<string> {
     const active = this.activeSession(repoRoot);
-    // Gate-critical profiling runs before the orchestrator, when no agent is yet
-    // live. An unfinished profiler subject keeps its session alive so the
-    // orchestrator's later startSession joins it instead of closing the
-    // profiler's run into a throwaway session.
-    if (
-      active !== null &&
-      (this.db.listAgents().some(isLiveAgent) || this.hasLiveProfiler(active.id))
-    ) return active.id;
+    if (active !== null && this.db.listAgents().some(isLiveAgent)) return active.id;
     if (active !== null) await this.endSession(active.id, at);
     const id = crypto.randomUUID();
     this.database.query(`
@@ -509,67 +501,6 @@ export class TokenUsageStore {
       ) VALUES (?, ?, NULL, 'Orchestrator', 'orchestrator', ?, NULL, ?, NULL, ?, NULL, NULL)
     `).run(id, sessionId, provider, cwd, at);
     return id;
-  }
-
-  /** The durable id of the profiler subject for a run, or null if none exists.
-   * Recovery keys on this identity — `(sessionId, runId)` — never on the
-   * ephemeral subject UUID a crashed caller may not have retained. */
-  profilerSubjectId(sessionId: string, runId: string): string | null {
-    return z.object({ id: z.string() }).nullable().parse(
-      this.database.query(`
-        SELECT id FROM token_usage_subjects
-        WHERE sessionId = ? AND role = 'profiler' AND profileRunId = ? LIMIT 1
-      `).get(sessionId, runId),
-    )?.id ?? null;
-  }
-
-  /** Open (or reacquire) a usage subject for a specialized profiler run. It
-   * carries the run's id and name, its isolated runtime cwd, and its
-   * provider/model, but never an ordinary `agentId` — a profiler has no row in
-   * the agents table. The provider session id is attached later, once observed,
-   * via `registerProfilerProviderSession`.
-   *
-   * Idempotent by run: a retry for the same `(sessionId, runId)` — the common
-   * case after a daemon crash, when the caller no longer holds the returned
-   * UUID — reacquires the existing subject by its durable identity rather than
-   * inserting a duplicate the unique index would reject. So a legitimate same-run
-   * recovery closes or continues the row instead of dead-ending on a hard error,
-   * while a superseding rerun still uses a fresh runId and gets a fresh subject.
-   * The unique `(sessionId, profileRunId)` index remains a backstop against any
-   * raw double insert. */
-  startProfiler(
-    sessionId: string,
-    runId: string,
-    name: string,
-    provider: string,
-    model: string | null,
-    cwd: string,
-    providerSessionId: string | null = null,
-    at = new Date().toISOString(),
-  ): string {
-    const existing = this.profilerSubjectId(sessionId, runId);
-    if (existing !== null) return existing;
-    const id = crypto.randomUUID();
-    this.database.query(`
-      INSERT INTO token_usage_subjects (
-        id, sessionId, agentId, name, role, provider, model, cwd,
-        providerSessionId, profileRunId, startedAt, endedAt, unknownReason
-      ) VALUES (?, ?, NULL, ?, 'profiler', ?, ?, ?, ?, ?, ?, NULL, NULL)
-    `).run(id, sessionId, name, provider, model, cwd, providerSessionId, runId, at);
-    return id;
-  }
-
-  /** Attach the observed provider session id to a profiler subject. Until this
-   * is set, the adapter cannot locate the run's token artifact and the subject
-   * reads as an honest unknown. */
-  registerProfilerProviderSession(
-    subjectId: string,
-    providerSessionId: string,
-  ): void {
-    this.database.query(`
-      UPDATE token_usage_subjects SET providerSessionId = ?
-      WHERE id = ? AND role = 'profiler'
-    `).run(providerSessionId, subjectId);
   }
 
   async endSubject(id: string, at = new Date().toISOString()): Promise<void> {
@@ -925,9 +856,6 @@ export class TokenUsageStore {
       ),
       workerSessions: this.breakdown(
         subjects.filter((subject) => subject.role === "worker"),
-      ),
-      profilingSessions: this.breakdown(
-        subjects.filter((subject) => subject.role === "profiler"),
       ),
       subjects,
     };
