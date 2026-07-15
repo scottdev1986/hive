@@ -147,8 +147,8 @@ Xcode 26 machines and CI runners frequently lack.
 | Command | Keys |
 | --- | --- |
 | Promote focused pane to master | ⌘↩ (or double-click pane header) |
-| Return Orchestrator to Master | ⇧⌘↩ |
-| Focus Orchestrator | ⌘0 |
+| Return Queen to Master | ⇧⌘↩ |
+| Focus Queen | ⌘0 |
 | Move focus spatially | ⌥⌘←/→/↑/↓ |
 | Acknowledge focused pane | ⇧⌘K |
 | Close pane (detach, never kill) | ⇧⌘W |
