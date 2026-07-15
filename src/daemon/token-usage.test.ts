@@ -597,13 +597,43 @@ describe("TokenUsageStore", () => {
     expect(fresh).not.toBe(session);
   });
 
-  test("two profiler subjects for the same run in one session are refused", async () => {
-    const store = new TokenUsageStore(new HiveDatabase(":memory:"), []);
+  test("startProfiler is idempotent by run: a retry reacquires the same subject, never a duplicate or a throw", async () => {
+    const db = new HiveDatabase(":memory:");
+    const store = new TokenUsageStore(db, []);
     const repo = "/tmp/hive-profiler-dup-test";
     const session = await store.startSession(repo, at);
-    store.startProfiler(session, "run-1", "profile-run-1", "codex", "gpt-5.6-sol", repo, null, at);
-    expect(() =>
-      store.startProfiler(session, "run-1", "profile-run-1b", "codex", "gpt-5.6-sol", repo, null, at)
-    ).toThrow();
+    const first = store.startProfiler(session, "run-1", "profile-run-1", "codex", "gpt-5.6-sol", repo, null, at);
+    // A retry for the same run — even with different metadata — returns the same
+    // durable subject instead of hitting the unique index.
+    const second = store.startProfiler(session, "run-1", "profile-run-1-again", "grok", "grok-4.5", repo, null, at);
+    expect(second).toBe(first);
+    expect(
+      db.database.query("SELECT COUNT(*) AS n FROM token_usage_subjects WHERE profileRunId = 'run-1'").get(),
+    ).toEqual({ n: 1 });
+  });
+
+  test("a profiler subject is reacquirable by run identity so a crash-restart closes the orphan and rotates", async () => {
+    const db = new HiveDatabase(":memory:");
+    const repo = "/tmp/hive-profiler-recovery-test";
+    const store = new TokenUsageStore(db, []);
+    const session = await store.startSession(repo, at);
+    const subjectId = store.startProfiler(session, "run-1", "profile-run-1", "codex", "gpt-5.6-sol", repo, null, at);
+    // While unfinished and with no live agent, the profiler pins its session.
+    expect(await store.startSession(repo, "2026-07-13T12:05:00.000Z")).toBe(session);
+
+    // Daemon restart: a fresh store over the same database. The ephemeral
+    // subjectId is treated as lost; recovery must find the row by the durable
+    // identity (session, runId), not the UUID.
+    const restarted = new TokenUsageStore(db, []);
+    const recovered = restarted.profilerSubjectId(session, "run-1");
+    expect(recovered).toBe(subjectId);
+    // Retrying the SAME run reacquires rather than throwing on the unique index.
+    expect(restarted.startProfiler(session, "run-1", "profile-run-1", "codex", "gpt-5.6-sol", repo, null, at))
+      .toBe(subjectId);
+
+    // Positive terminal evidence closes the orphan, and the session can rotate.
+    await restarted.endSubject(recovered!, "2026-07-13T12:06:00.000Z");
+    const fresh = await restarted.startSession(repo, "2026-07-13T12:07:00.000Z");
+    expect(fresh).not.toBe(session);
   });
 });

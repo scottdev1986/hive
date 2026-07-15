@@ -101,28 +101,31 @@ extension TokenUsageSession {
     /// control bucket already displays, so collapsing can neither lose usage nor
     /// double-count it. An orchestrator generation with no reading is not in
     /// that sum and stays listed in `unknownSubjects`, exactly as before.
+    /// The genuine workers — role == "worker" EXACTLY, mirroring the daemon's
+    /// workerSessions aggregate (src/daemon/token-usage.ts). Partitioning by
+    /// exclusion instead would let a future role drift silently into WORKERS; the
+    /// worker partition is defined by what a worker IS, never by what it is not.
+    public var workerSubjects: [TokenUsageSubject] {
+        subjects.filter { $0.role == "worker" }
+    }
+
+    /// Subjects whose role this build does not recognise. They stay VISIBLE in
+    /// the agent list (never silently dropped) but are held OUT of the worker
+    /// partition — a neutral bucket, so an axis drift can never quietly
+    /// reclassify a new kind as task work.
+    public var unclassifiedSubjects: [TokenUsageSubject] {
+        let known: Set<String> = ["orchestrator", "worker", "profiler"]
+        return subjects.filter { !known.contains($0.role) }
+    }
+
     public var usageRows: [TokenUsageRow] {
-        // The orchestrator and profiler are each collapsed into a single row from
-        // their own daemon aggregate. Everything else — workers, and any role
-        // this build does not yet name — is listed individually: a kind we cannot
-        // classify stays VISIBLE here rather than vanishing, and it is never
-        // folded into the profiler's row. A profiler, in particular, must never
-        // fall through into these worker rows.
+        // The orchestrator and profiler each collapse into a single row from
+        // their own daemon aggregate. Workers (role == "worker", exactly) are
+        // listed individually, then any unrecognised role — visible, but kept out
+        // of the worker partition and never folded into the profiler's row. A
+        // profiler, in particular, must never fall through into WORKERS.
         let orchestrators = subjects.filter { $0.role == "orchestrator" }
         let profilers = subjects.filter { $0.role == "profiler" }
-        let workers = subjects.filter { $0.role != "orchestrator" && $0.role != "profiler" }
-        let workerRows = workers.map { subject -> TokenUsageRow in
-            switch subject.reading {
-            case .measured(let counts, _, _):
-                return TokenUsageRow(
-                    name: subject.name, provider: subject.provider, model: subject.model,
-                    counts: counts, unknownReason: nil)
-            case .unknown(let reason):
-                return TokenUsageRow(
-                    name: subject.name, provider: subject.provider, model: subject.model,
-                    counts: nil, unknownReason: reason)
-            }
-        }
         var rows: [TokenUsageRow] = []
         // Backup orchestrators are relaunches of the ONE orchestrator, so they
         // collapse into a single row showing the daemon's own control aggregate.
@@ -135,7 +138,21 @@ extension TokenUsageSession {
             name: "Profiling", generations: profilers, counts: profilingSessions?.counts) {
             rows.append(profilingRow)
         }
-        return rows + workerRows
+        return rows + workerSubjects.map(individualRow) + unclassifiedSubjects.map(individualRow)
+    }
+
+    /// One agent's own row, from its own reading.
+    private func individualRow(_ subject: TokenUsageSubject) -> TokenUsageRow {
+        switch subject.reading {
+        case .measured(let counts, _, _):
+            return TokenUsageRow(
+                name: subject.name, provider: subject.provider, model: subject.model,
+                counts: counts, unknownReason: nil)
+        case .unknown(let reason):
+            return TokenUsageRow(
+                name: subject.name, provider: subject.provider, model: subject.model,
+                counts: nil, unknownReason: reason)
+        }
     }
 
     /// Collapse one role's subjects (its generations) into a single row that

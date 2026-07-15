@@ -104,6 +104,18 @@ final class TokenUsageWireContractTests: XCTestCase {
         XCTAssertTrue(
             decoded.usageRows.contains { $0.name == "maya" },
             "an unrenderable role must stay visible, not disappear")
+        // And it is NOT in the worker partition — the drift the two-green-suites
+        // lesson exists to stop. It lands in the neutral unclassified bucket
+        // instead, while the genuine worker "quinn" stays a worker.
+        XCTAssertFalse(
+            decoded.workerSubjects.contains { $0.name == "maya" },
+            "a role this build cannot name must never be counted as a worker")
+        XCTAssertTrue(
+            decoded.unclassifiedSubjects.contains { $0.name == "maya" },
+            "the unknown role belongs to the neutral, still-visible bucket")
+        XCTAssertTrue(
+            decoded.workerSubjects.contains { $0.name == "quinn" },
+            "a real worker is still partitioned as a worker")
         // It is not a profiler: the Profiling row still comes only from the real
         // profiler, whose count is unchanged.
         let profilingRow = try XCTUnwrap(decoded.usageRows.first { $0.name == "Profiling" })

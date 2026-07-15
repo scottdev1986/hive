@@ -511,13 +511,32 @@ export class TokenUsageStore {
     return id;
   }
 
-  /** Open a usage subject for a specialized profiler run. It carries the run's
-   * id and name, its isolated runtime cwd, and its provider/model, but never an
-   * ordinary `agentId` — a profiler has no row in the agents table. The provider
-   * session id is attached later, once observed, via
-   * `registerProfilerProviderSession`. The unique `(sessionId, profileRunId)`
-   * index makes a duplicate start for the same run a hard error, not a second
-   * subject. */
+  /** The durable id of the profiler subject for a run, or null if none exists.
+   * Recovery keys on this identity — `(sessionId, runId)` — never on the
+   * ephemeral subject UUID a crashed caller may not have retained. */
+  profilerSubjectId(sessionId: string, runId: string): string | null {
+    return z.object({ id: z.string() }).nullable().parse(
+      this.database.query(`
+        SELECT id FROM token_usage_subjects
+        WHERE sessionId = ? AND role = 'profiler' AND profileRunId = ? LIMIT 1
+      `).get(sessionId, runId),
+    )?.id ?? null;
+  }
+
+  /** Open (or reacquire) a usage subject for a specialized profiler run. It
+   * carries the run's id and name, its isolated runtime cwd, and its
+   * provider/model, but never an ordinary `agentId` — a profiler has no row in
+   * the agents table. The provider session id is attached later, once observed,
+   * via `registerProfilerProviderSession`.
+   *
+   * Idempotent by run: a retry for the same `(sessionId, runId)` — the common
+   * case after a daemon crash, when the caller no longer holds the returned
+   * UUID — reacquires the existing subject by its durable identity rather than
+   * inserting a duplicate the unique index would reject. So a legitimate same-run
+   * recovery closes or continues the row instead of dead-ending on a hard error,
+   * while a superseding rerun still uses a fresh runId and gets a fresh subject.
+   * The unique `(sessionId, profileRunId)` index remains a backstop against any
+   * raw double insert. */
   startProfiler(
     sessionId: string,
     runId: string,
@@ -528,6 +547,8 @@ export class TokenUsageStore {
     providerSessionId: string | null = null,
     at = new Date().toISOString(),
   ): string {
+    const existing = this.profilerSubjectId(sessionId, runId);
+    if (existing !== null) return existing;
     const id = crypto.randomUUID();
     this.database.query(`
       INSERT INTO token_usage_subjects (
