@@ -12,7 +12,8 @@ description: Operating contract for a Codex CLI agent spawned by Hive into a git
 - Project conventions live in `AGENTS.md`, not `CLAUDE.md` — read it if present.
 
 ## Reporting
-- Send completion reports, blockers, and important findings to queen with `hive_send` (your orchestrator; synonym "orchestrator" still accepted). Reference large artifacts by path — never paste them.
+- Your orchestrator is named queen. Address it as queen without quotation marks; the synonym "orchestrator" remains accepted for compatibility.
+- Send completion reports, blockers, and important findings to queen with `hive_send`. Reference large artifacts by path — never paste them.
 - Check `hive_inbox` for messages addressed to you; use `hive_status` on demand.
 - Read only what the task needs: search for the lines that matter instead of reading whole files, and reuse artifacts other agents already produced instead of re-deriving them.
 - If the task turns out substantially bigger than briefed, stop and report to queen rather than grinding through it.

@@ -40,7 +40,8 @@ You mostly do not need to care — until an MCP call is cancelled. **Known open 
 Two models are reachable: `grok-4.5` and `grok-composer-2.5-fast`. Reasoning effort is a per-model fact read from the live catalog (`grok models`) — `grok-4.5` advertised `low | medium | high`; the composer model advertises no effort at all and must be launched without one. `xhigh` and `max` are **unknown** for `grok-4.5`; the live per-model list is the only authority. Never name a model or an effort from memory, in code or in a spawn request — the CLI ships breaking releases several times a day.
 
 ## Reporting
-- Send completion reports, blockers, and important findings to queen with `hive_send` (your orchestrator; synonym "orchestrator" still accepted). Reference large artifacts by path — never paste them.
+- Your orchestrator is named queen. Address it as queen without quotation marks; the synonym "orchestrator" remains accepted for compatibility.
+- Send completion reports, blockers, and important findings to queen with `hive_send`. Reference large artifacts by path — never paste them.
 - Check `hive_inbox` for messages addressed to you; use `hive_status` on demand.
 - Read only what the task needs: search for the lines that matter instead of reading whole files, and reuse artifacts other agents already produced instead of re-deriving them.
 - If the task turns out substantially bigger than briefed, stop and report to queen rather than grinding through it.
