@@ -26,18 +26,6 @@ const O_CLOEXEC =
 /** The human's `hive` CLI. Not an agent; it has no row in the agents table. */
 export const OPERATOR_SUBJECT = "operator";
 
-/** The canonical subject for a profiler credential: one project, one run. The
- * launcher mints under this name and the profile service binds authority to the
- * same `{projectUuid, runId}` — so the two never drift on the format. This is a
- * naming convention for the credential FILE and the audit trail, never an
- * authorization primitive: the service checks the subject against live run
- * state, so a plausibly-shaped subject that names a foreign or dead run is still
- * refused. A profiler subject deliberately never collides with an ordinary
- * agent name, which is always a bare word. */
-export function profilerSubject(projectUuid: string, runId: string): string {
-  return `profiler-${projectUuid}-${runId}`;
-}
-
 export function credentialDirectory(): string {
   return join(getHiveHome(), "credentials");
 }

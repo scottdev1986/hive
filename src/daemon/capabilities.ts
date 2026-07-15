@@ -20,8 +20,7 @@ export type Role =
   | "operator"
   | "orchestrator"
   | "writer"
-  | "reader"
-  | "profiler";
+  | "reader";
 
 export type Action =
   | "status:read"
@@ -49,14 +48,7 @@ export type Action =
   | "autonomy:write"
   | "routing-policy:read"
   | "routing-policy:write"
-  | "graphify:write"
-  // The project-profiling plane. `inventory` and `submit` are the profiler's
-  // only two rights; `read` and `request` are the operator/orchestrator surface
-  // for the status/read/reprofile tools and the gate/bypass routes.
-  | "profile:inventory"
-  | "profile:submit"
-  | "profile:read"
-  | "profile:request";
+  | "graphify:write";
 
 export interface RoleGrant {
   /** The explicit action allowlist. Anything absent is denied. */
@@ -97,11 +89,6 @@ const OPERATOR_ACTIONS: readonly Action[] = [
   // the launcher mints the Codex root's capability (SPEC decision 4's "no
   // delegation" rule carves out exactly this exchange).
   "root-token:mint",
-  // The project-profile read/request surface: status, read, and reprofile are
-  // the operator's own observability and refresh controls. The operator never
-  // holds `profile:inventory`/`profile:submit`: those are the confined
-  // profiler's, and an ordinary caller consumes only the validated profile.
-  "profile:read", "profile:request",
 ];
 
 // The orchestrator decides what work happens; the writer puts code on main.
@@ -125,21 +112,8 @@ export const ROLE_GRANTS: Readonly<Record<Role, RoleGrant>> = {
       "message:send", "message:ack", "message:read", "inbox:read",
       "memory:read", "memory:write", "event:report", "telemetry:report",
       "autonomy:read",
-      // The orchestrator observes and requests profiling, exactly as the
-      // operator does; it never profiles (no inventory/submit).
-      "profile:read", "profile:request",
     ],
     anySubject: AGENT_DIRECTED,
-    oneShot: [],
-  },
-  // The profiler is the confined project-profiling agent. It has exactly two
-  // rights — bounded inventory reads and one candidate submission — and no
-  // status, message, memory, or landing surface at all. A stolen profiler
-  // token cannot even name another agent, and its authority to inventory or
-  // submit is further bound to the active run by the profile service.
-  profiler: {
-    actions: ["profile:inventory", "profile:submit"],
-    anySubject: [],
     oneShot: [],
   },
   writer: {

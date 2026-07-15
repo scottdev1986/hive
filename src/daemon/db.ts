@@ -24,7 +24,7 @@ import {
 const StoredCapabilitySchema = z.object({
   id: z.string().min(1),
   subject: z.string().min(1),
-  role: z.enum(["operator", "orchestrator", "writer", "reader", "profiler"]),
+  role: z.enum(["operator", "orchestrator", "writer", "reader"]),
   epoch: z.number().int().nonnegative(),
   secretHash: z.string().min(1),
   issuedAt: z.string().min(1),
