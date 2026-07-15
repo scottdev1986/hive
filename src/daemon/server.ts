@@ -2892,9 +2892,13 @@ export class HiveDaemon {
    * born of conflating an intention with an observation; the fix does not repeat
    * it in the other direction.
    *
-   * No observation — a Codex rollout, which records no model name, or a Claude
-   * session that has not answered yet — leaves `liveModel` untouched, and the
-   * launch model stands. An unknown model is unknown, never a guess.
+   * For Claude and Grok, no observation — a session that has not answered yet —
+   * leaves `liveModel` untouched and the launch model stands. An unknown model
+   * is unknown, never a guess. Codex is NOT unobservable: its rollout carries
+   * the running model+effort in each turn's `turn_context` (verified against
+   * real 0.144.4 rollouts), attested by the identity sweep in
+   * `refreshToolTelemetry`. This statusline path therefore defers Codex to that
+   * sweep and returns the known value unchanged.
    */
   private async reconcileModel(agent: AgentRecord): Promise<string> {
     const known = agent.liveModel ?? agent.model;
@@ -2913,6 +2917,8 @@ export class HiveDaemon {
           .catch(() => null);
         break;
       case "codex":
+        // Attested by refreshToolTelemetry from the newest turn_context, not
+        // from this statusline-shaped path.
         return known;
       default:
         return unknownVendor(agent.tool, "live model reconciliation");
