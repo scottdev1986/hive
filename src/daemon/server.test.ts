@@ -15,6 +15,7 @@ import {
   type QuotaPoolStatus,
 } from "../schemas";
 import { HiveDatabase } from "./db";
+import { CODEX_WRITER_CONTAINMENT_REASON } from "./codex-containment";
 import { RoutingPolicyStore } from "./routing-policy-store";
 import type { TmuxSender } from "./delivery";
 import {
@@ -837,6 +838,7 @@ describe("HiveDaemon HTTP server", () => {
     });
     db.insertAgent(agent({
       tool: "codex",
+      readOnly: true,
       toolSessionId: "session-1",
       executionIdentity: { tool: "codex", model: "gpt-5.6-sol", effort: "xhigh" },
     }));
@@ -2761,6 +2763,7 @@ describe("HiveDaemon HTTP server", () => {
     });
     db.insertAgent(agent({
       status: "dead",
+      readOnly: true,
       toolSessionId: "0189-session",
       executionIdentity: {
         tool: "codex",
@@ -2832,7 +2835,7 @@ describe("HiveDaemon HTTP server", () => {
       tmux,
       recovery: { worktreeExists: () => false },
     });
-    db.insertAgent(agent({ status: "idle" }));
+    db.insertAgent(agent({ status: "idle", readOnly: true }));
     try {
       await daemon.reconcileAgents();
 
@@ -2961,7 +2964,7 @@ describe("HiveDaemon HTTP server", () => {
       tmux,
       recovery: { worktreeExists: () => false },
     });
-    db.insertAgent(agent({ status: "stuck" }));
+    db.insertAgent(agent({ status: "stuck", readOnly: true }));
     try {
       await daemon.reconcileAgents();
 
@@ -3024,6 +3027,7 @@ describe("HiveDaemon HTTP server", () => {
     });
     db.insertAgent(agent({
       status: "working",
+      readOnly: true,
       quotaReservationId: decision.reservation.id,
     }));
     try {
@@ -3777,12 +3781,17 @@ describe("Codex execution-identity attestation sweep", () => {
         }),
       },
     });
-    db.insertAgent(codexAgent());
+    // Contained writers cannot be reauthorized. Start a paused Codex reader
+    // so reattest + SIGCONT of the same process remains covered.
+    db.insertAgent(codexAgent({
+      readOnly: true,
+      status: "control-paused",
+      writeRevoked: true,
+      capabilityEpoch: 1,
+      identityState: "drift",
+    }));
     try {
-      await daemon.refreshToolTelemetry();
-      expect(db.getAgentByName("maya")?.status).toBe("control-paused");
-
-      // Reattest while still drifted: write authority stays withheld.
+      // Reattest while still drifted: authority stays withheld.
       const stillDrifted = await daemon.resumeAgentAfterPause("maya");
       expect(stillDrifted.resumed).toBe(false);
       expect(stillDrifted.identityState).toBe("drift");
@@ -3798,7 +3807,7 @@ describe("Codex execution-identity attestation sweep", () => {
       const row = db.getAgentByName("maya")!;
       expect(row.status).toBe("idle");
       expect(row.writeRevoked).toBe(false);
-      // paused bumped the epoch to 1; resume reissues at 2.
+      // paused at epoch 1; resume reissues at 2.
       expect(row.capabilityEpoch).toBe(2);
       // The SAME process was SIGCONT'd, never relaunched.
       expect(resumed).toEqual(["hive-maya"]);
@@ -4456,5 +4465,54 @@ describe("landed is not live", () => {
       });
       expect(notes(spawned)).toEqual([]);
     });
+  });
+});
+
+
+describe("Codex writer containment on resume", () => {
+  test("refuses to reissue write authority to a paused Codex writer", async () => {
+    const db = new HiveDatabase(join(home, "contain-resume-writer.db"));
+    const resumed: string[] = [];
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new StubSpawner(),
+      tmux: new FakeDaemonTmux(),
+      resumeProcesses: async (session) => {
+        resumed.push(session);
+      },
+      telemetryReaders: {
+        codex: async () => ({ contextPct: null, lastActivityAt: null }),
+        codexIdentity: async () => ({
+          status: "observed",
+          model: "gpt-5.6-sol",
+          effort: "xhigh",
+          turnId: "t",
+          sessionId: "session-1",
+          observedAt: "2026-07-15T18:00:00.000Z",
+        }),
+      },
+    });
+    db.insertAgent(agent({
+      tool: "codex",
+      readOnly: false,
+      status: "control-paused",
+      writeRevoked: true,
+      capabilityEpoch: 1,
+      toolSessionId: "session-1",
+      identityState: "matching",
+      executionIdentity: { tool: "codex", model: "gpt-5.6-sol", effort: "xhigh" },
+    }));
+    try {
+      const outcome = await daemon.resumeAgentAfterPause("maya");
+      expect(outcome.resumed).toBe(false);
+      expect(outcome.reason).toBe(CODEX_WRITER_CONTAINMENT_REASON);
+      expect(resumed).toEqual([]);
+      const row = db.getAgentByName("maya")!;
+      expect(row.status).toBe("control-paused");
+      expect(row.writeRevoked).toBe(true);
+      expect(row.capabilityEpoch).toBe(1);
+    } finally {
+      db.close();
+    }
   });
 });

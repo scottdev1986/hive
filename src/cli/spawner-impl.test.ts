@@ -21,6 +21,7 @@ import {
   type AccountBilling,
 } from "../daemon/usage-credits";
 import type { Approval, RouteAudit } from "../daemon/db";
+import { CODEX_WRITER_CONTAINMENT_REASON } from "../daemon/codex-containment";
 import {
   QuotaConfigSchema,
   isLiveAgent,
@@ -1018,12 +1019,14 @@ describe("HiveSpawner name pool", () => {
       task: "First task",
       category: "simple_coding",
       name: "cara",
+      readOnly: true,
     });
     expect(store.reservations.has("cara")).toEqual(true);
     await expect(spawner.spawn({
       task: "Conflicting task",
       category: "simple_coding",
       name: "cara",
+      readOnly: true,
     })).rejects.toThrow('"cara" is already being assigned');
 
     continueRouting();
@@ -1168,7 +1171,7 @@ describe("HiveSpawner wiring", () => {
       },
     });
 
-    await spawner.spawn({ task: "Visible interactive task", category: "simple_coding" });
+    await spawner.spawn({ task: "Visible interactive task", category: "simple_coding", readOnly: true });
     expect(probedAppServer).toEqual(false);
     expect(tmux.sessions).toHaveLength(1);
     expect(tmux.sessions[0]?.[2]).toContain("'codex'");
@@ -1225,6 +1228,7 @@ describe("HiveSpawner wiring", () => {
     const spawned = await spawner.spawn({
       task: "Implement native control",
       category: "simple_coding",
+      readOnly: true,
     });
     expect(tmux.sessions[0]?.[2]).toContain("'codex-app-server-host'");
     expect(tmux.sessions[0]?.[2]).not.toContain("Implement native control");
@@ -1278,7 +1282,7 @@ describe("HiveSpawner wiring", () => {
       },
     });
 
-    await spawner.spawn({ task: "Fallback task", category: "simple_coding" });
+    await spawner.spawn({ task: "Fallback task", category: "simple_coding", readOnly: true });
     expect(disconnected).toEqual(["maya"]);
     expect(stopped).toEqual([agentTmuxSession("maya")]);
     expect(tmux.sessions).toHaveLength(2);
@@ -1334,6 +1338,7 @@ describe("HiveSpawner wiring", () => {
     const stuck = await spawner.spawn({
       task: "Do not fallback over an unverified stop",
       category: "simple_coding",
+      readOnly: true,
     });
 
     expect(stopAttempts).toBeGreaterThanOrEqual(1);
@@ -1692,6 +1697,7 @@ describe("HiveSpawner wiring", () => {
       task: "Route only among effort-eligible candidates",
       category: "complex_coding",
       effort: "ultra",
+      readOnly: true,
     });
     expect(probes.sort()).toEqual(["claude", "codex"]);
     expect(spawned.executionIdentity).toEqual({
@@ -1851,6 +1857,7 @@ describe("HiveSpawner wiring", () => {
       tool: "codex",
       model: "gpt-test",
       effort: "ultra",
+      readOnly: true,
     });
     expect(spawned.executionIdentity).toEqual({
       tool: "codex",
@@ -2170,6 +2177,7 @@ describe("HiveSpawner wiring", () => {
     const codex = await spawner.spawn({
       task: "Add route tests",
       category: "simple_coding",
+      readOnly: true,
     });
 
     expect(claude.name).toEqual("maya");
@@ -2271,7 +2279,7 @@ describe("HiveSpawner wiring", () => {
         sleep: signalReadiness(store),
       });
 
-      await spawner.spawn({ task: "Fix the flaky test", category: "simple_coding" });
+      await spawner.spawn({ task: "Fix the flaky test", category: "simple_coding", readOnly: true });
 
       const launched = await deliveredPrompt(tmux.sessions[0]?.[2] ?? "");
       expect(launched).toContain("Hive memory index");
@@ -2322,6 +2330,7 @@ describe("HiveSpawner wiring", () => {
     const spawned = await spawner.spawn({
       task: "Become ready during polling",
       category: "simple_coding",
+      readOnly: true,
     });
 
     expect(spawned.status).toEqual("working");
@@ -2375,6 +2384,7 @@ describe("HiveSpawner wiring", () => {
       category: "complex_coding",
       name: "Riley",
       tool: "codex",
+      readOnly: true,
     });
 
     expect(claude.name).toEqual("quinn-2");
@@ -2497,6 +2507,7 @@ describe("HiveSpawner wiring", () => {
     const failed = await spawner.spawn({
       task: "Fail at startup",
       category: "simple_coding",
+      readOnly: true,
     });
 
     expect(failed.status).toEqual("failed");
@@ -2562,6 +2573,7 @@ describe("HiveSpawner wiring", () => {
     const stuck = await spawner.spawn({
       task: "Fail without proving the process stopped",
       category: "simple_coding",
+      readOnly: true,
     });
 
     expect(stopAttempts).toBeGreaterThanOrEqual(1);
@@ -2607,6 +2619,7 @@ describe("HiveSpawner wiring", () => {
     const failed = await spawner.spawn({
       task: "Fail before readiness",
       category: "simple_coding",
+      readOnly: true,
     });
 
     expect(failed.status).toEqual("failed");
@@ -2656,6 +2669,7 @@ describe("HiveSpawner wiring", () => {
     const spawned = await spawner.spawn({
       task: "Fix the error handling",
       category: "simple_coding",
+      readOnly: true,
     });
 
     expect(spawned.status).toEqual("working");
@@ -2700,6 +2714,7 @@ describe("HiveSpawner wiring", () => {
     const spawned = await spawner.spawn({
       task: "Survive cosmetic failures",
       category: "simple_coding",
+      readOnly: true,
     });
 
     expect(spawned.status).toEqual("working");
@@ -2757,6 +2772,7 @@ describe("HiveSpawner wiring", () => {
     const spawned = await spawner.spawn({
       task: "Prove life without borrowing another rollout",
       category: "simple_coding",
+      readOnly: true,
     });
 
     // A process-backed screen heartbeat is positive launch proof. Even if the
@@ -2803,6 +2819,7 @@ describe("HiveSpawner wiring", () => {
     const failed = await spawner.spawn({
       task: "Hang at launch forever",
       category: "simple_coding",
+      readOnly: true,
     });
 
     // Exhausting the poll budget with no positive signal is a failed launch,
@@ -3184,7 +3201,7 @@ describe("coding guidelines are guaranteed in context at spawn", () => {
 
     // Codex has no --append-system-prompt; the prompt IS the carrier, on both drivers.
     const tuiTmux = new FakeTmux();
-    await codexSpawner("tui", tuiTmux).spawn({ task: "Build auth API", category: "simple_coding" });
+    await codexSpawner("tui", tuiTmux).spawn({ task: "Build auth API", category: "simple_coding", readOnly: true });
     const tuiCommand = tuiTmux.sessions[0]?.[2] ?? "";
     expect(tuiCommand).toContain("'codex'");
     const tuiLaunched = await deliveredPrompt(tuiCommand);
@@ -3194,6 +3211,7 @@ describe("coding guidelines are guaranteed in context at spawn", () => {
     await codexSpawner("app-server", hostTmux).spawn({
       task: "Build auth API",
       category: "simple_coding",
+      readOnly: true,
     });
     expect(starts).toHaveLength(1);
     for (const rule of RULES) expect(starts[0]).toContain(rule);
@@ -3473,6 +3491,7 @@ describe("a refusal names the reason it actually refused for", () => {
       policy?: RoutingPolicy;
       claudeAllowance?: number;
       category?: RoutingCategory;
+      readOnly?: boolean;
     } = {},
   ): Promise<{ failure: string; store: FakeStore; tmux: FakeTmux }> {
     const store = new FakeStore();
@@ -3534,6 +3553,7 @@ describe("a refusal names the reason it actually refused for", () => {
       await spawner.spawn({
         task: "the spawn that was refused for a route that existed",
         category: options.category ?? "simple_coding",
+        ...(options.readOnly ? { readOnly: true } : {}),
       });
     } catch (error) {
       failure = error instanceof Error ? error.message : String(error);
@@ -3642,7 +3662,7 @@ describe("a refusal names the reason it actually refused for", () => {
       root,
       "grok-4.5",
       true,
-      { policy, claudeAllowance: 1 },
+      { policy, claudeAllowance: 1, readOnly: true },
     );
 
     expect(failure).toBe("");
@@ -3940,4 +3960,143 @@ test("Grok safety facts ride the spawn prompt, not skill uptake", () => {
   expect(prompt).toContain("CLAUDE.md");
   expect(buildAgentPrompt("maya", "Fix auth", worktree, "/repo"))
     .not.toContain("Grok safety facts");
+});
+
+
+describe("Codex writer containment", () => {
+  test("refuses an explicit Codex writer before worktree or process launch", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-codex-writer-refuse-"));
+    tempRoots.push(root);
+    let worktrees = 0;
+    let sessions = 0;
+    const tmux = new FakeTmux();
+    const origNew = tmux.newSession.bind(tmux);
+    tmux.newSession = async (...args: Parameters<FakeTmux["newSession"]>) => {
+      sessions += 1;
+      return origNew(...args);
+    };
+    const spawner = newTestSpawner({
+      isModelEnabled: async () => true,
+      db: new FakeStore(),
+      repoRoot: root,
+      port: 4317,
+      config: {},
+      readRoutingPolicy: () => policyFromRoute(CODEX_ROUTE),
+      tmux,
+      createWorktree: async () => {
+        worktrees += 1;
+        throw new Error("must not create worktree for a contained writer");
+      },
+      sleep: async () => {},
+    });
+
+    await expect(spawner.spawn({
+      task: "Write code with Codex",
+      category: "simple_coding",
+      tool: "codex",
+      model: "gpt-test",
+    })).rejects.toThrow(CODEX_WRITER_CONTAINMENT_REASON);
+    expect(worktrees).toEqual(0);
+    expect(sessions).toEqual(0);
+    expect(tmux.sessions).toHaveLength(0);
+  });
+
+  test("refuses a routed Codex writer with no silent fallback", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-codex-routed-refuse-"));
+    tempRoots.push(root);
+    let worktrees = 0;
+    const spawner = newTestSpawner({
+      isModelEnabled: async () => true,
+      db: new FakeStore(),
+      repoRoot: root,
+      port: 4317,
+      config: {},
+      readRoutingPolicy: () => policyFromRoute(CODEX_ROUTE),
+      tmux: new FakeTmux(),
+      createWorktree: async () => {
+        worktrees += 1;
+        throw new Error("must not create");
+      },
+      sleep: async () => {},
+    });
+
+    await expect(spawner.spawn({
+      task: "Routed writer",
+      category: "simple_coding",
+    })).rejects.toThrow(CODEX_WRITER_CONTAINMENT_REASON);
+    expect(worktrees).toEqual(0);
+  });
+
+  test("allows a Codex reader on the same routes", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-codex-reader-allow-"));
+    tempRoots.push(root);
+    const store = new FakeStore();
+    const tmux = new FakeTmux();
+    const spawner = newTestSpawner({
+      isModelEnabled: async () => true,
+      db: store,
+      repoRoot: root,
+      port: 4317,
+      config: {},
+      readRoutingPolicy: () => policyFromRoute(CODEX_ROUTE),
+      tmux,
+      createWorktree: async (_repoRoot, name, slug) => {
+        const path = join(root, name);
+        await mkdir(path, { recursive: true });
+        return { path, branch: `hive/${name}-${slug}` };
+      },
+      sleep: signalReadiness(store),
+    });
+
+    const spawned = await spawner.spawn({
+      task: "Review only",
+      category: "simple_coding",
+      tool: "codex",
+      readOnly: true,
+    });
+    expect(spawned.tool).toEqual("codex");
+    expect(spawned.readOnly).toBeTrue();
+    expect(tmux.sessions).toHaveLength(1);
+    expect(tmux.sessions[0]?.[2]).toContain("'--sandbox' 'read-only'");
+  });
+
+  test("refuses a Codex app-server writer before host launch", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-codex-app-writer-refuse-"));
+    tempRoots.push(root);
+    let hostStarts = 0;
+    let worktrees = 0;
+    const spawner = newTestSpawner({
+      isModelEnabled: async () => true,
+      db: new FakeStore(),
+      repoRoot: root,
+      port: 4317,
+      config: { codex: { driver: "app-server" } },
+      readRoutingPolicy: () => policyFromRoute({
+        ...CODEX_ROUTE,
+        tool: "codex",
+        codex: { model: "gpt-test", effort: "high" },
+      }),
+      tmux: new FakeTmux(),
+      createWorktree: async () => {
+        worktrees += 1;
+        throw new Error("must not create");
+      },
+      sleep: async () => {},
+      codexAppServer: {
+        isAvailable: async () => true,
+        buildHostCommand: () => ["hive", "codex-app-server-host"],
+        startAgent: async () => {
+          hostStarts += 1;
+        },
+        disconnect: () => undefined,
+      },
+    });
+
+    await expect(spawner.spawn({
+      task: "App-server writer",
+      category: "simple_coding",
+    })).rejects.toThrow(CODEX_WRITER_CONTAINMENT_REASON);
+    expect(worktrees).toEqual(0);
+    expect(hostStarts).toEqual(0);
+  });
 });

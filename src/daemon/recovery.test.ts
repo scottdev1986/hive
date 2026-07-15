@@ -19,6 +19,7 @@ import {
   MAX_AUTO_RESUME_ATTEMPTS,
   type CrashRecoveryDependencies,
 } from "./recovery";
+import { CODEX_WRITER_CONTAINMENT_REASON } from "./codex-containment";
 import { verifiedAgentStop } from "./teardown";
 import { authorizeForQuotaTest } from "./authorized-launch.test-support";
 
@@ -426,6 +427,9 @@ describe("crash resume", () => {
       tool: "codex",
       model: "gpt-5-codex",
       status: "working",
+      // Contained writers are not relaunched; reader recovery still exercises
+      // the codex resume argv path.
+      readOnly: true,
       toolSessionId: "019f-codex-thread",
       executionIdentity: {
         tool: "codex",
@@ -442,7 +446,7 @@ describe("crash resume", () => {
     expect(command).toContain("resume");
     expect(command).toContain("019f-codex-thread");
     expect(command).toContain("model_reasoning_effort=high");
-    expect(command).toContain("workspace-write");
+    expect(command).toContain("read-only");
   });
 
   test("a resume resolves the daemon port after an ephemeral bind", async () => {
@@ -460,6 +464,7 @@ describe("crash resume", () => {
       tool: "codex",
       model: "gpt-5-codex",
       status: "working",
+      readOnly: true,
       toolSessionId: "019f-dynamic-port",
       executionIdentity: {
         tool: "codex",
@@ -946,5 +951,62 @@ describe("manual recovery", () => {
     expect(h.recovery.recoverAgent("ghost")).rejects.toThrow(
       "Hive agent not found: ghost",
     );
+  });
+});
+
+
+describe("Codex writer containment in recovery", () => {
+  test("marks a crashed Codex writer dead with the containment reason and keeps the worktree", async () => {
+    const h = harness();
+    h.db.insertAgent(agent({
+      tool: "codex",
+      model: "gpt-5-codex",
+      status: "working",
+      readOnly: false,
+      toolSessionId: "legacy-writer",
+      executionIdentity: {
+        tool: "codex",
+        model: "gpt-5-codex",
+        effort: "high",
+      },
+      worktreePath: "/repo/.hive/worktrees/maya",
+    }));
+
+    const outcomes = await h.recovery.sweep();
+    expect(outcomes).toMatchObject([{
+      agent: "maya",
+      action: "marked-dead",
+    }]);
+    expect(outcomes[0]?.reason).toBe(CODEX_WRITER_CONTAINMENT_REASON);
+    const row = h.db.getAgentByName("maya")!;
+    expect(row.status).toBe("dead");
+    expect(row.failureReason).toBe(CODEX_WRITER_CONTAINMENT_REASON);
+    // Recovery never deletes the worktree; work survives for a reader respawn.
+    expect(row.worktreePath).toBe("/repo/.hive/worktrees/maya");
+    expect(h.tmux.created).toHaveLength(0);
+  });
+
+  test("still recovers a Codex reader", async () => {
+    const h = harness({
+      readCodexActivity: async () =>
+        new Date(Date.now() + 60_000).toISOString(),
+    });
+    h.db.insertAgent(agent({
+      tool: "codex",
+      model: "gpt-5-codex",
+      status: "working",
+      readOnly: true,
+      toolSessionId: "reader-thread",
+      executionIdentity: {
+        tool: "codex",
+        model: "gpt-5-codex",
+        effort: "high",
+      },
+    }));
+
+    const outcomes = await h.recovery.sweep();
+    expect(outcomes).toMatchObject([{ agent: "maya", action: "resumed" }]);
+    expect(h.tmux.created[0]!.command).toContain("codex");
+    expect(h.tmux.created[0]!.command).toContain("resume");
   });
 });
