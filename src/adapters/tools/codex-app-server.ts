@@ -214,25 +214,36 @@ export interface CodexApprovalRequest {
   description: string;
 }
 
-/** One mutation a Codex writer is asking Hive to allow.
+/**
+ * What a live Codex session says about ITSELF: the holder it was started for,
+ * the thread/turn running right now, and the rollout the app-server named for
+ * that thread.
  *
- * `agentId` plus the `processIncarnation`/`capabilityEpoch` this session was
- * started with are the holder snapshot: the daemon re-fetches the row by id and
- * refuses if any of them moved, so a stale predecessor, a same-name
- * replacement, or a re-armed epoch cannot inherit this session's authority.
- * `rolloutPath` is the rollout the app-server itself named for this thread, so
- * the identity read is bound to this connection rather than discovered by
- * scanning the worktree. */
-export interface CodexMutationAuthorizationRequest {
+ * The direction matters. A caller looks a session up by agent NAME, and a name
+ * is reusable — so the session must hand back its own `agentId` and have the
+ * caller compare that to the row it meant, rather than the caller handing the
+ * session a row's identifiers and getting them politely echoed back. That is
+ * the difference between proving the session belongs to this holder and
+ * assuming it.
+ */
+export interface CodexTurnBinding {
   agentId: string;
   agentName: string;
   processIncarnation: number;
   capabilityEpoch: number;
   threadId: string;
   turnId: string;
-  method: string;
   rolloutPath: string | null;
 }
+
+/** One mutation a Codex writer is asking Hive to allow: a session's own
+ * binding, plus what it wants to do. The daemon re-fetches the row by
+ * `agentId` and refuses if the snapshot moved, so a stale predecessor, a
+ * same-name replacement, or a re-armed epoch cannot inherit this session's
+ * authority. */
+export type CodexMutationAuthorizationRequest = CodexTurnBinding & {
+  method: string;
+};
 
 /** Deny-by-default: only an explicit `allowed: true` is permission. */
 export type CodexMutationDecision =
@@ -246,6 +257,10 @@ export interface CodexAppServerManagerOptions {
   sleep?: (milliseconds: number) => Promise<void>;
   onEvent: (event: HookEvent, holder: AgentRecord) => Promise<void>;
   queueApproval: (request: CodexApprovalRequest) => Promise<string>;
+  /** Mark a durable approval row denied. Called when an approval can no longer
+   * be delivered (the transport dropped), so the row cannot linger in
+   * `hive_approvals` for a human to approve into a decision nobody receives. */
+  denyApproval: (id: string) => Promise<void>;
   /** The daemon-owned authorization for one writer mutation. It re-fetches the
    * exact holder row and re-attests the provider-applied identity for this
    * exact thread/turn. Called once before the approval is queued and again
@@ -265,6 +280,10 @@ interface CodexSession {
   client: CodexAppServerClient;
   threadId: string;
   activeTurnId: string | null;
+  /** The transport dropped or the session was torn down. Latched, and checked
+   * before any approval is registered: a decision made after this can never be
+   * delivered, so it must never be waited on. */
+  closed: boolean;
   quotaBaselines: Map<string, CodexQuotaReading | null>;
   contextPct: number;
   // The authorized effort for this thread. Every turn — the initial one, an
@@ -424,22 +443,22 @@ export class CodexAppServerManager {
   }
 
   /**
-   * The live thread/turn binding for an agent's brokered session, or null when
-   * it has none. Landing is itself a mutation, so the daemon re-uses the very
-   * same authority for it: this hands back the exact thread, the turn that is
-   * running right now (the one whose tool call is asking to land), and the
-   * rollout the app-server names for that thread. Null when there is no live
-   * session, no running turn, or no path — each of which is a refusal to land,
-   * because an unbrokered Codex writer is exactly what containment forbids.
+   * The live binding for an agent's brokered session, or null when it has none.
+   *
+   * Landing and daemon-side mutating tools are mutations too, so they re-use
+   * the very same authority as a broker request. The session reports the holder
+   * it was started for; the CALLER must check that against the row it means to
+   * authorize (see `CodexTurnBinding`). Null when there is no live session, no
+   * running turn, or no rollout path — each of which is a refusal, because an
+   * unbrokered or unattestable Codex writer is what containment forbids.
    */
-  async activeTurnBinding(agentName: string): Promise<
-    { threadId: string; turnId: string; rolloutPath: string | null } | null
-  > {
+  async activeTurnBinding(agentName: string): Promise<CodexTurnBinding | null> {
     const session = this.sessions.get(agentName);
     if (session === undefined || session.activeTurnId === null) return null;
     const turnId = session.activeTurnId;
     try {
       return {
+        ...this.holderSnapshot(session),
         threadId: session.threadId,
         turnId,
         rolloutPath: await this.threadRolloutPath(session),
@@ -447,6 +466,21 @@ export class CodexAppServerManager {
     } catch {
       return null;
     }
+  }
+
+  /** The holder this session was started for, as the session itself records it. */
+  private holderSnapshot(
+    session: CodexSession,
+  ): Pick<
+    CodexTurnBinding,
+    "agentId" | "agentName" | "processIncarnation" | "capabilityEpoch"
+  > {
+    return {
+      agentId: session.agent.id,
+      agentName: session.agent.name,
+      processIncarnation: session.agent.processIncarnation ?? 0,
+      capabilityEpoch: session.agent.capabilityEpoch,
+    };
   }
 
   isTurnActive(agentName: string): boolean {
@@ -503,6 +537,7 @@ export class CodexAppServerManager {
         client,
         threadId: stringField(thread, "id"),
         activeTurnId: null,
+        closed: false,
         quotaBaselines: new Map(),
         contextPct: 0,
         authorizedEffort: effort,
@@ -601,15 +636,21 @@ export class CodexAppServerManager {
   }
 
   async denyAgentApprovals(agentName: string): Promise<void> {
+    // Latch the session closed FIRST, so an approval being created concurrently
+    // sees the flag and denies itself instead of registering behind this sweep.
+    const session = this.sessions.get(agentName);
+    if (session !== undefined) session.closed = true;
     for (const [id, pending] of [...this.pendingApprovals]) {
       if (pending.agentName !== agentName) continue;
       this.pendingApprovals.delete(id);
       pending.resolve(false);
+      await this.settleDurableApproval(id);
     }
   }
 
   disconnect(agentName: string): void {
     const session = this.sessions.get(agentName);
+    if (session !== undefined) session.closed = true;
     session?.client.close();
     this.sessions.delete(agentName);
     void this.denyAgentApprovals(agentName);
@@ -788,10 +829,7 @@ export class CodexAppServerManager {
       const rolloutPath = await this.threadRolloutPath(session);
       const decision = await withTimeout(
         this.options.authorizeMutation({
-          agentId: session.agent.id,
-          agentName: session.agent.name,
-          processIncarnation: session.agent.processIncarnation ?? 0,
-          capabilityEpoch: session.agent.capabilityEpoch,
+          ...this.holderSnapshot(session),
           threadId,
           turnId,
           method,
@@ -820,12 +858,21 @@ export class CodexAppServerManager {
       : null;
   }
 
-  /** Queue one approval and wait for its decision. A disconnect or a session
-   * teardown resolves it as denied rather than leaving Codex waiting. */
+  /** Queue one approval and wait for its decision. A disconnect, a teardown, or
+   * a dropped transport resolves it as denied rather than leaving Codex waiting.
+   *
+   * The two awaits here are the subtle part: the connection can drop while the
+   * gate's `thread/read` is in flight or while the approval is being inserted,
+   * so by the time we have an id the session may already be closed. Settling
+   * only what is ALREADY in `pendingApprovals` at close time therefore misses
+   * exactly the entries created just after it. Every insert re-checks the flag,
+   * and an insert after close is an immediate denial — including the durable
+   * row, which must not be left pending for a human to approve later. */
   private async awaitApproval(
     session: CodexSession,
     description: string,
   ): Promise<boolean> {
+    if (session.closed) return false;
     let id: string;
     try {
       id = await this.options.queueApproval({
@@ -835,9 +882,19 @@ export class CodexAppServerManager {
     } catch {
       return false;
     }
+    if (session.closed) {
+      await this.settleDurableApproval(id);
+      return false;
+    }
     return await new Promise<boolean>((resolve) => {
       this.pendingApprovals.set(id, { agentName: session.agent.name, resolve });
     });
+  }
+
+  /** Deny the durable approval row so it cannot sit in `hive_approvals`
+   * waiting for a human whose decision can no longer reach anyone. */
+  private async settleDurableApproval(id: string): Promise<void> {
+    await this.options.denyApproval(id).catch(() => undefined);
   }
 }
 

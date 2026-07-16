@@ -43,6 +43,18 @@ import { join, resolve } from "node:path";
 
 export type LandBranchOptions = {
   /** Called immediately before `git merge --ff-only`. Must throw to abort. */
+  /** The async half of the merge boundary, run after diagnosis, collision
+   * cleanup, and the landing lease's wait — everything before this point
+   * happened at an earlier, staler moment. A Codex writer's applied identity
+   * has to be re-read from the provider here, and that read is I/O.
+   *
+   * It is deliberately separate from `preMergeCheck` rather than making that
+   * callback async: an `await` between the authority check and the merge spawn
+   * would let a queued control message interleave in exactly the window the
+   * check exists to close. So the async attestation runs FIRST, and the
+   * synchronous check keeps its unbroken adjacency to the spawn below. */
+  preMergeAttest?: () => Promise<void>;
+  /** Runs immediately before `git merge`, with nothing awaited in between. */
   preMergeCheck?: () => void;
   /** Test seam around the process adapter. Production always uses runGit. */
   spawnMerge?: (repoRoot: string, branch: string) => Promise<GitResult>;
@@ -599,6 +611,9 @@ const landBranchUnlocked: LandBranch = async (repoRoot, branch, options) => {
   // and collision cleanup, immediately before git merge.
   let mergePromise!: Promise<GitResult>;
   try {
+    // Any I/O the boundary needs happens here, before the synchronous check —
+    // never between it and the spawn.
+    if (options?.preMergeAttest !== undefined) await options.preMergeAttest();
     options?.preMergeCheck?.();
     mergePromise = options?.spawnMerge?.(repoRoot, sourceCommit) ??
       runGit(repoRoot, ["merge", "--ff-only", sourceCommit]);

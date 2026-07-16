@@ -480,6 +480,7 @@ describe("pause capture birth binding (N5)", () => {
     const manager = new CodexAppServerManager({
       onEvent: async () => {},
       queueApproval: async () => "unused",
+      denyApproval: async () => undefined,
       authorizeMutation: async () => ({ allowed: false, reason: "test default deny" }),
       observeRateLimits: async () => null,
     });

@@ -139,6 +139,7 @@ describe("Codex app-server adapter", () => {
       commandRunner: async () => 0,
       onEvent: async () => undefined,
       queueApproval: async () => "approval-1",
+      denyApproval: async () => undefined,
       authorizeMutation: async () => ({ allowed: false, reason: "test default deny" }),
       observeRateLimits: async () => null,
     });
@@ -205,6 +206,7 @@ describe("Codex app-server adapter", () => {
       commandRunner: async () => 0,
       onEvent: async () => undefined,
       queueApproval: async () => "approval-1",
+      denyApproval: async () => undefined,
       authorizeMutation: async () => ({ allowed: false, reason: "test default deny" }),
       observeRateLimits: async () => null,
     });
@@ -225,6 +227,7 @@ describe("Codex app-server adapter", () => {
         events.push(event);
       },
       queueApproval: async () => "approval-1",
+      denyApproval: async () => undefined,
       authorizeMutation: async () => ({ allowed: false, reason: "test default deny" }),
       observeRateLimits: async (_model, response) => {
         observations.push(response);
@@ -316,6 +319,7 @@ describe("Codex app-server adapter", () => {
       sleep: async () => undefined,
       onEvent: async () => undefined,
       queueApproval: async () => "approval-1",
+      denyApproval: async () => undefined,
       authorizeMutation: async () => ({ allowed: false, reason: "test default deny" }),
       observeRateLimits: async () => null,
     });
@@ -356,6 +360,7 @@ describe("Codex app-server adapter", () => {
         queued.push(description);
         return "approval-1";
       },
+      denyApproval: async () => undefined,
       authorizeMutation: async () => ({ allowed: false, reason: "test default deny" }),
       observeRateLimits: async () => null,
     });
@@ -439,6 +444,7 @@ describe("Codex app-server adapter", () => {
           queued.push(description);
           return "approval-1";
         }),
+        denyApproval: async () => undefined,
         authorizeMutation: async (request) => {
           gateCalls.push(request);
           return options.authorize === undefined
@@ -685,6 +691,92 @@ describe("Codex app-server adapter", () => {
       expect((await asked).result).toEqual({ decision: "decline" });
       // And the decision arriving late cannot resurrect it into an allow.
       expect(await manager.resolveApproval("approval-1", true)).toBe(false);
+    });
+
+    // Settling only what is ALREADY pending cannot settle an entry that does
+    // not exist yet, so a close has to be denied at every point an approval
+    // could still be created. Two distinct windows, each with its own check:
+    // the gate (whose thread/read is a round trip) and the queue insert itself.
+    test("a transport that closes while the first gate is in flight denies the mutation", async () => {
+      const transport = new FakeTransport();
+      let queued = 0;
+      const manager = new CodexAppServerManager({
+        transport: async () => transport,
+        commandRunner: async () => 0,
+        sleep: async () => undefined,
+        onEvent: async () => undefined,
+        queueApproval: async () => {
+          queued += 1;
+          return "approval-late";
+        },
+        denyApproval: async () => undefined,
+        authorizeMutation: async () => {
+          // The connection dies while the gate is still deciding.
+          transport.close();
+          return { allowed: true };
+        },
+        observeRateLimits: async () => null,
+      });
+      await manager.startAgent(agent({ readOnly: false }), {
+        developerInstructions: "writer rules",
+        initialUserPrompt: "write code",
+      }, "high");
+      transport.emit({
+        method: "turn/started",
+        params: { threadId: "thread-1", turn: { id: "turn-9" } },
+      });
+      await Bun.sleep(0);
+
+      const response = await ask(transport, COMMAND, {
+        ...bound,
+        command: "touch x",
+      }, 571);
+      expect(response.result).toEqual({ decision: "decline" });
+      // Nothing should even have been queued: the session was already gone.
+      expect(queued).toBe(0);
+    });
+
+    test("a transport that closes DURING queueApproval denies the row it just created", async () => {
+      // The insert-after-close window. queueApproval is an await, so the close
+      // sweep can run to completion between "not closed yet" and the insert —
+      // and the entry created afterwards would wait on a decision that can
+      // never arrive.
+      const transport = new FakeTransport();
+      const denied: string[] = [];
+      const manager = new CodexAppServerManager({
+        transport: async () => transport,
+        commandRunner: async () => 0,
+        sleep: async () => undefined,
+        onEvent: async () => undefined,
+        queueApproval: async () => {
+          // The connection dies while the durable row is being written.
+          transport.close();
+          return "approval-late";
+        },
+        denyApproval: async (id) => {
+          denied.push(id);
+        },
+        authorizeMutation: async () => ({ allowed: true }),
+        observeRateLimits: async () => null,
+      });
+      await manager.startAgent(agent({ readOnly: false }), {
+        developerInstructions: "writer rules",
+        initialUserPrompt: "write code",
+      }, "high");
+      transport.emit({
+        method: "turn/started",
+        params: { threadId: "thread-1", turn: { id: "turn-9" } },
+      });
+      await Bun.sleep(0);
+
+      const response = await ask(transport, COMMAND, {
+        ...bound,
+        command: "touch x",
+      }, 581);
+      expect(response.result).toEqual({ decision: "decline" });
+      // And the durable row is denied, not left pending in hive_approvals for
+      // a human to approve into a decision nobody receives.
+      expect(denied).toContain("approval-late");
     });
 
     test("resolveApproval on an unknown id is never an allow", async () => {
@@ -1163,6 +1255,7 @@ test("a writer thread still starts in the read-only sandbox", async () => {
     sleep: async () => undefined,
     onEvent: async () => undefined,
     queueApproval: async () => "approval-1",
+    denyApproval: async () => undefined,
     authorizeMutation: async () => ({ allowed: false, reason: "not under test" }),
     observeRateLimits: async () => null,
   });
@@ -1184,6 +1277,7 @@ test("CodexAppServerManager refuses a worker without an initial user prompt", as
       return new FakeTransport();
     },
     queueApproval: async () => "x",
+    denyApproval: async () => undefined,
     authorizeMutation: async () => ({ allowed: false, reason: "test default deny" }),
     observeRateLimits: async () => null,
     onEvent: async () => {},

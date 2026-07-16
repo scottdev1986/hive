@@ -1207,6 +1207,49 @@ export class HiveDaemon {
     if (!decision.ok) throw new Error(decision.message);
   }
 
+  /**
+   * The second half of Codex writer containment, for daemon-side tools that
+   * write the filesystem.
+   *
+   * The sandbox + broker gate covers what Codex runs INSIDE its sandbox. It
+   * does not cover this: an MCP tool call leaves the sandbox entirely and
+   * arrives here as an authorized HTTP request, and Hive's own MCP server is
+   * always attached to every Codex session. `memory:write` is in the writer
+   * role's action set and mutates real files under `<repo>/.hive/memory` and
+   * `~/.hive/memory` — so without this, admitting Codex writers would open a
+   * mutation path with no identity gate at all, straight past the broker.
+   *
+   * A capability answers "who is speaking"; for a Codex writer we still need
+   * "what is running", so these calls pass the same exact-holder + fresh
+   * exact-turn attestation as a brokered mutation. Non-Codex writers are
+   * untouched: their containment story is not this one.
+   */
+  private async assertCodexWriterMayMutate(
+    capability: Capability,
+    tool: string,
+  ): Promise<void> {
+    // Resolve the exact holder behind this credential. `agentId` is the exact
+    // handle; the subject name is the legacy fallback and is only ever used to
+    // FIND a row, never to prove one.
+    const holder = capability.agentId != null
+      ? this.db.getAgentById(capability.agentId)
+      : this.db.getAgentByName(capability.subject);
+    // Not an agent-held credential (the operator's, say) or not Codex: this
+    // gate has nothing to say. Every other check still applies.
+    if (holder === null || holder.tool !== "codex" || holder.readOnly) return;
+    const decision = await this.authorizeCodexMutationForHolder(
+      holder.name,
+      holder.id,
+      `/mcp:${tool}`,
+    );
+    if (!decision.allowed) {
+      throw new Error(
+        `Codex writer ${holder.name} may not call ${tool}: ${decision.reason}\n` +
+          "A Codex writer's filesystem mutations are gated per-mutation against its live, attested identity — including the ones that arrive through Hive's own MCP server rather than its sandbox.",
+      );
+    }
+  }
+
   get server(): Server<undefined> | null {
     return this.bunServer;
   }
@@ -3011,20 +3054,26 @@ export class HiveDaemon {
         );
       }
     };
+    // The Git boundary. `assertLandAuthority` re-CASes the holder row, but a
+    // row CAS cannot see an identity that drifted: for a Codex writer the
+    // provider's applied model/effort must be re-read HERE, at the merge, not
+    // before the landing lease (which waits up to 30s) and not before the
+    // diagnosis and collision cleanup that follow it. Everything checked
+    // earlier describes a repo and a process that WERE.
+    const attestCodexAtMergeBoundary = async (): Promise<void> => {
+      if (finalRow.tool !== "codex") return;
+      const reattested = await this.authorizeCodexLanding(finalRow);
+      if (!reattested.allowed) {
+        throw new Error(
+          `Cannot land ${name}: Codex reattestation failed at the Git boundary — ${reattested.reason}`,
+        );
+      }
+    };
     try {
       assertLandAuthority();
-      // Reattest the Codex writer's identity here, against the row that just
-      // passed the final CAS: the checks above ran before the lease and the
-      // authority snapshot, and an identity can drift in between.
-      if (finalRow.tool === "codex") {
-        const reattested = await this.authorizeCodexLanding(finalRow);
-        if (!reattested.allowed) {
-          throw new Error(
-            `Cannot land ${name}: pre-Git Codex reattestation failed — ${reattested.reason}`,
-          );
-        }
-      }
+      await attestCodexAtMergeBoundary();
       const landed = await this.land(this.repoRoot, branch, {
+        preMergeAttest: attestCodexAtMergeBoundary,
         preMergeCheck: assertLandAuthority,
       });
       this.graphify?.scheduleRebuild();
@@ -3120,31 +3169,57 @@ export class HiveDaemon {
     return { allowed: true };
   }
 
-  /** Landing authority for a Codex writer: the same gate its mutations pass,
-   * bound to the live turn that is asking to land. Re-run immediately before
-   * Git so a drift that appears while the merge is being set up still stops it. */
-  private async authorizeCodexLanding(
-    agent: AgentRecord,
+  /**
+   * Landing authority for a Codex writer: the same gate its mutations pass,
+   * bound to the live turn that is asking to land.
+   *
+   * The session is looked up by name, so it must prove it belongs to `holderId`
+   * rather than being handed that id and echoing it back — a name is reusable,
+   * and a stale same-name session must not be able to answer for a replacement
+   * row.
+   */
+  private async authorizeCodexMutationForHolder(
+    agentName: string,
+    holderId: string,
+    method: string,
   ): Promise<CodexMutationDecision> {
-    const binding = await this.codexControl?.activeTurnBinding(agent.name) ??
+    const binding = await this.codexControl?.activeTurnBinding(agentName) ??
       null;
     if (binding === null) {
       return {
         allowed: false,
         reason:
-          "it has no live brokered Codex app-server turn to attest against, so Hive cannot prove which identity is asking to land.",
+          `${agentName} has no live brokered Codex app-server turn to attest against, so Hive cannot prove which identity is asking.`,
       };
     }
-    return await this.authorizeCodexMutation({
-      agentId: agent.id,
-      agentName: agent.name,
-      processIncarnation: agent.processIncarnation ?? 0,
-      capabilityEpoch: agent.capabilityEpoch,
-      threadId: binding.threadId,
-      turnId: binding.turnId,
-      method: "branch:land",
-      rolloutPath: binding.rolloutPath,
-    });
+    // The session's own claim about whose it is, checked against the holder we
+    // actually mean to authorize.
+    if (binding.agentId !== holderId) {
+      return {
+        allowed: false,
+        reason:
+          `the live Codex session answering to ${agentName} belongs to holder ${binding.agentId}, not ${holderId} — a replacement cannot inherit its predecessor's session.`,
+      };
+    }
+    return await this.authorizeCodexMutation({ ...binding, method });
+  }
+
+  /** Landing authority for a Codex writer, bound to the live turn asking. */
+  private async authorizeCodexLanding(
+    agent: AgentRecord,
+  ): Promise<CodexMutationDecision> {
+    return await this.authorizeCodexMutationForHolder(
+      agent.name,
+      agent.id,
+      "branch:land",
+    );
+  }
+
+  /** Mark a queued Codex approval denied because it can no longer be
+   * delivered. Without this the row sits pending in `hive_approvals` and a
+   * human can still "approve" it into a decision nobody receives. */
+  denyCodexApproval(id: string): void {
+    this.db.resolveApproval(id, "denied", new Date().toISOString());
   }
 
   async queueCodexApproval(
@@ -5079,6 +5154,7 @@ export class HiveDaemon {
       inputSchema: MemoryWriteRequestSchema,
     }, async (input) => {
       this.authorizeTool(capability, "memory_write", "memory:write");
+      await this.assertCodexWriterMayMutate(capability, "memory_write");
       const written = await this.writeMemoryFact(input);
       return toolResult(
         compactMemoryWriteResult(written, written.rawPath),
@@ -5107,6 +5183,7 @@ export class HiveDaemon {
       inputSchema: MemoryFactRequestSchema,
     }, async ({ scope, id }) => {
       this.authorizeTool(capability, "memory_delete", "memory:write");
+      await this.assertCodexWriterMayMutate(capability, "memory_delete");
       return toolResult({ deleted: await this.deleteMemoryFact(scope, id) }, "result");
     });
 
@@ -5117,6 +5194,7 @@ export class HiveDaemon {
       inputSchema: z.object({}),
     }, async () => {
       this.authorizeTool(capability, "memory_reindex", "memory:write");
+      await this.assertCodexWriterMayMutate(capability, "memory_reindex");
       return toolResult(await this.rebuildMemoryIndex(), "result");
     });
 

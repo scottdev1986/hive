@@ -5,6 +5,9 @@ import { join, resolve } from "node:path";
 import type { AgentRecord } from "../schemas";
 import type { SpawnRequest, Spawner } from "./spawner";
 import { HiveDatabase } from "./db";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { actingAs } from "./testing";
 import { HiveDaemon } from "./server";
 
 // The daemon half of the Codex writer mutation gate. Every test here asks the
@@ -238,6 +241,114 @@ test("a holder with no immutable launch identity has nothing to attest against",
   const { db, ask } = gate(writerRow({ executionIdentity: undefined }));
   try {
     expect((await ask()).allowed).toBe(false);
+  } finally {
+    db.close();
+  }
+});
+
+test("MCP: a Codex writer's memory mutation is gated, not waved through by its capability", async () => {
+  // The bypass leo found. An MCP tool call leaves the Codex sandbox entirely,
+  // so the broker never sees it — it arrives at the daemon as an authorized
+  // request, and `memory:write` is in the writer role's action set and mutates
+  // real files under .hive/memory. Holding a valid capability answers "who is
+  // speaking"; it must not be allowed to answer "what is running".
+  const db = new HiveDatabase(":memory:");
+  const daemon = new HiveDaemon({ db, spawner: new NoopSpawner() });
+  db.insertAgent(writerRow({ status: "working" }));
+  try {
+    const client = new Client({ name: "codex-writer-test", version: "1.0.0" });
+    await client.connect(
+      new StreamableHTTPClientTransport(new URL("http://hive/mcp"), {
+        // A genuine, unexpired, correctly-scoped writer credential for the
+        // exact holder — everything a capability check asks for.
+        fetch: actingAs(daemon, "maya", "writer"),
+      }),
+    );
+    const result = await client.callTool({
+      name: "memory_write",
+      arguments: {
+        scope: "repo",
+        id: "smuggled",
+        topic: "provider",
+        title: "Smuggled",
+        body: "written without an attested identity",
+        source: "agent",
+        evidence: "none",
+        status: "unverified",
+        supersedes: [],
+      },
+    }) as { isError?: boolean; content: Array<{ text?: string }> };
+
+    // This agent has no live brokered app-server turn, so there is no identity
+    // to attest — and that is a denial, not a shrug.
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text ?? "").toContain(
+      "may not call memory_write",
+    );
+    await client.close();
+  } finally {
+    db.close();
+  }
+});
+
+test("LANDING: identity that drifts during land preparation refuses the merge at the Git boundary", async () => {
+  // The gate used to run before land(), but land() then waits on the landing
+  // lease (up to 30s) and does diagnosis and collision cleanup before it
+  // merges. An identity read before all that describes a process that WAS.
+  // This drifts the identity inside exactly that window: the pre-land check
+  // passes, and the merge boundary must still refuse.
+  const db = new HiveDatabase(":memory:");
+  const rolloutPath = join(WORKTREE, "rollout-landing.jsonl");
+  const writeIdentity = (model: string): void => {
+    writeFileSync(
+      rolloutPath,
+      JSON.stringify({
+        timestamp: "2026-07-16T08:58:49.081Z",
+        type: "turn_context",
+        payload: { turn_id: "turn-land", cwd: WORKTREE, model, effort: "xhigh" },
+      }) + "\n",
+    );
+  };
+  writeIdentity("gpt-5.6-sol");
+
+  let merged = false;
+  let preMergeChecks = 0;
+  const daemon = new HiveDaemon({
+    db,
+    spawner: new NoopSpawner(),
+    repoRoot: "/repo",
+    codexControl: {
+      activeTurnBinding: async () => ({
+        agentId: "agent-maya",
+        agentName: "maya",
+        processIncarnation: 2,
+        capabilityEpoch: 3,
+        threadId: "thread-1",
+        turnId: "turn-land",
+        rolloutPath,
+      }),
+      hasAgent: () => true,
+      isTurnActive: () => true,
+    } as never,
+    landBranch: async (_repoRoot, _branch, options) => {
+      // Stand in for the lease wait + diagnosis + collision cleanup, during
+      // which the provider silently flips the writer to another model.
+      writeIdentity("gpt-5.6-luna");
+      preMergeChecks += 1;
+      await options?.preMergeAttest?.();
+      options?.preMergeCheck?.();
+      merged = true;
+      return { commit: "must-not-be-reached" };
+    },
+  });
+  db.insertAgent(writerRow({ status: "working" }));
+  try {
+    await expect(daemon.landAgent("maya", 3)).rejects.toThrow(
+      /Codex reattestation failed at the Git boundary/,
+    );
+    // The boundary callback ran, and no merge followed it.
+    expect(preMergeChecks).toBe(1);
+    expect(merged).toBe(false);
   } finally {
     db.close();
   }
