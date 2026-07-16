@@ -3384,9 +3384,30 @@ export class HiveDaemon {
 
   /** Mark a queued Codex approval denied because it can no longer be
    * delivered. Without this the row sits pending in `hive_approvals` and a
-   * human can still "approve" it into a decision nobody receives. */
+   * human can still "approve" it into a decision nobody receives. The agent's
+   * status is un-parked too: an interrupt or turn completion that settles the
+   * approval must not leave the row reading `awaiting-approval` forever. */
   denyCodexApproval(id: string): void {
-    this.db.resolveApproval(id, "denied", new Date().toISOString());
+    const approval = this.db.resolveApproval(
+      id,
+      "denied",
+      new Date().toISOString(),
+    );
+    if (approval === null) return;
+    const agent = this.db.getAgentByName(approval.agentName);
+    if (
+      agent?.status === "awaiting-approval" &&
+      !this.db.listApprovals().some((row) =>
+        row.agentName === approval.agentName && row.status === "pending"
+      )
+    ) {
+      this.db.upsertAgent({
+        ...agent,
+        status: this.codexControl?.isTurnActive(approval.agentName)
+          ? "working"
+          : "idle",
+      });
+    }
   }
 
   async queueCodexApproval(request: CodexApprovalRequest): Promise<string> {
@@ -4747,8 +4768,19 @@ export class HiveDaemon {
    * same credential could already message.
    */
   private async receivePaneInput(request: Request): Promise<Response> {
-    const authenticated = this.authenticate(request, "/pane-input");
+    // Conversation-grade authentication (`authenticatePaneConversation`): the
+    // host's ORIGINAL launch token keeps typing alive across authority
+    // rotation — a pause/resume reissue or a critical epoch advance rotates
+    // the credential while the same rendered host keeps its env — because
+    // revocation/expiry/epoch are authority facts and this route carries no
+    // authority. The exact-holder binding below is what still refuses a
+    // replacement incarnation's pane.
+    const authenticated = this.capabilities.authenticatePaneConversation(
+      bearerToken(request),
+      "/pane-input",
+    );
     if (!authenticated.ok) return this.denied(authenticated);
+    const capability = authenticated.capability;
     let body: unknown;
     try {
       body = await request.json();
@@ -4763,19 +4795,21 @@ export class HiveDaemon {
       );
     }
     const input = parsed.data;
-    const decision = this.authorize(
-      authenticated.capability,
-      "/pane-input",
-      "pane:input",
-      input.agentName,
-      false,
-    );
-    if (!decision.ok) return this.denied(decision);
-    const exact = this.exactAgentForCapability(
-      authenticated.capability,
-      input.agentName,
-    );
-    if (exact === null) {
+    // Self-subject only: a pane token types into its own pane, nothing else.
+    if (capability.subject !== input.agentName) {
+      return json(
+        { error: `${capability.subject} may not type into ${input.agentName}'s pane` },
+        { status: 403 },
+      );
+    }
+    // The exact process binding: id + incarnation + name must all still
+    // describe the current durable row. Identity state, live status, and
+    // writeRevoked are deliberately NOT consulted.
+    const row = this.db.getAgentById(capability.agentId!);
+    if (
+      row === null || row.name !== input.agentName ||
+      (row.processIncarnation ?? 0) !== capability.processIncarnation
+    ) {
       return json(
         {
           error:
@@ -4785,7 +4819,7 @@ export class HiveDaemon {
       );
     }
     if (
-      exact.tool !== "codex" || exact.codexDriver !== "app-server" ||
+      row.tool !== "codex" || row.codexDriver !== "app-server" ||
       this.codexControl === undefined
     ) {
       return json(
@@ -4795,7 +4829,7 @@ export class HiveDaemon {
     }
     try {
       const outcome = await this.codexControl.paneInput(
-        exact,
+        row,
         input.kind === "text"
           ? { kind: "text", text: input.text }
           : { kind: "interrupt" },

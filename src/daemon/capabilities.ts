@@ -202,7 +202,8 @@ export type DenialReason =
   | "capability.forbidden-action"
   | "capability.foreign-subject"
   | "capability.replayed"
-  | "capability.write-revoked";
+  | "capability.write-revoked"
+  | "capability.no-exact-holder";
 
 export interface Denial {
   readonly ok: false;
@@ -491,6 +492,78 @@ export class CapabilityStore {
       this.audit({
         route,
         action: null,
+        callerSubject: null,
+        callerRole: null,
+        capabilityId: null,
+        requestedSubject: null,
+        epoch: null,
+        decision: "deny",
+        reason: decision.reason,
+      });
+    }
+    return decision;
+  }
+
+  /**
+   * Pane-conversation authentication, for `/pane-input` and nothing else.
+   *
+   * It verifies the ORIGINAL token — id + secret — and a pane-capable role,
+   * but deliberately does NOT treat revokedAt, expiry, or epoch as reasons to
+   * refuse: those are authority facts, and pane input is conversation. A
+   * pause/resume reissue or a critical-control epoch advance rotates the
+   * holder's credential while the same rendered host keeps its launch token —
+   * a normal authentication would cut off typing exactly when the human most
+   * needs to steer or interrupt. What never relaxes is the holder itself: the
+   * token must be exact-holder bound, and the route re-proves the durable row
+   * against agentId + processIncarnation + name + driver, so a replacement
+   * incarnation's pane still refuses. Conversation ceiling only — a token
+   * accepted here has exactly the power to type into its own pane.
+   *
+   * This depends on revoked capability rows being RETAINED (revocation is an
+   * `UPDATE ... SET revokedAt`, never a delete); if rows are ever deleted,
+   * this mechanism must be revisited.
+   */
+  authenticatePaneConversation(token: string | null, route: string): Decision {
+    const decision = ((): Decision => {
+      if (token === null) {
+        return deny("capability.absent", 401, "No capability was presented");
+      }
+      const parsed = parseToken(token);
+      if (parsed === null) {
+        return deny("capability.malformed", 401, "Malformed capability token");
+      }
+      const found = this.db.getCapability(parsed.id);
+      if (found === null) {
+        return deny("capability.unknown", 401, "Unknown capability");
+      }
+      if (!secretMatches(parsed.secret, found.secretHash)) {
+        return deny("capability.unknown", 401, "Unknown capability");
+      }
+      const capability = found.capability;
+      if (capability.role !== "reader" && capability.role !== "writer") {
+        return deny(
+          "capability.forbidden-action",
+          403,
+          `Role ${capability.role} has no pane conversation`,
+        );
+      }
+      if (
+        capability.agentId === undefined || capability.agentId === null ||
+        capability.processIncarnation === undefined ||
+        capability.processIncarnation === null
+      ) {
+        return deny(
+          "capability.no-exact-holder",
+          403,
+          "The credential carries no exact holder, so Hive cannot prove which pane is typing",
+        );
+      }
+      return { ok: true, capability };
+    })();
+    if (!decision.ok) {
+      this.audit({
+        route,
+        action: "pane:input",
         callerSubject: null,
         callerRole: null,
         capabilityId: null,

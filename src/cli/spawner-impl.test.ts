@@ -1994,6 +1994,58 @@ describe("HiveSpawner wiring", () => {
     expect(tmux.sessions[0]?.[2]).not.toContain("codex-app-server-host");
   });
 
+  test("a WRITER auto-engages the app-server even when config says TUI: the brokered driver is the only writer surface", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-spawner-writer-autoengage-"));
+    tempRoots.push(root);
+    const store = new FakeStore();
+    const tmux = new FakeTmux();
+    let probedAppServer = false;
+    const starts: string[] = [];
+    const spawner = newTestSpawner({
+      isModelEnabled: async () => true,
+      db: store,
+      repoRoot: root,
+      port: 4317,
+      // Deliberately NOT opted into app-server: readers keep the TUI here,
+      // but a writer must engage the broker whenever it is available.
+      config: {},
+      readRoutingPolicy: () => policyFromRoute({
+        ...CODEX_ROUTE,
+        tool: "codex",
+        codex: { model: "gpt-test", effort: "high" },
+      }),
+      tmux,
+      createWorktree: async (_repoRoot, name, slug) => {
+        const path = join(root, name);
+        await mkdir(path, { recursive: true });
+        return { path, branch: `hive/${name}-${slug}` };
+      },
+      sleep: async () => {},
+      codexAppServer: {
+        isAvailable: async () => {
+          probedAppServer = true;
+          return true;
+        },
+        buildHostCommand: () => ["hive", "codex-app-server-host"],
+        startAgent: async (value) => {
+          starts.push(value.name);
+          store.insertAgent({ ...value, status: "working" });
+        },
+        disconnect: () => undefined,
+      },
+    });
+
+    const spawned = await spawner.spawn({
+      task: "Write the feature",
+      category: "simple_coding",
+      readOnly: false,
+    });
+    expect(probedAppServer).toBe(true);
+    expect(spawned.codexDriver).toBe("app-server");
+    expect(tmux.sessions[0]?.[2] ?? "").toContain("'codex-app-server-host'");
+    expect(starts).toEqual([spawned.name]);
+  });
+
   test("launches Codex through the app-server host and delivers the assignment with turn/start", async () => {
     const root = await mkdtemp(join(tmpdir(), "hive-spawner-app-server-"));
     tempRoots.push(root);

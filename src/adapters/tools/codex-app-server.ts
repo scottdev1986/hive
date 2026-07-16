@@ -1,6 +1,7 @@
 import { createServer, connect, type Socket } from "node:net";
 import { chmod, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { StringDecoder } from "node:string_decoder";
 import { basename, join } from "node:path";
 import type { AgentRecord, DaemonHookEvent } from "../../schemas";
 import { HIVE_VERSION } from "../../version";
@@ -303,6 +304,11 @@ interface CodexSession {
   client: CodexAppServerClient;
   threadId: string;
   activeTurnId: string | null;
+  /** The bootstrap turn has started. Between `sessions.set` and the initial
+   * `turn/start` the session is live but NOT ready for pane input — a typed
+   * line delivered in that window would race (or steal) the bootstrap prompt,
+   * so input queues until this flips. */
+  bootReady: boolean;
   /** The transport dropped or the session was torn down. Latched, and checked
    * before any approval is registered: a decision made after this can never be
    * delivered, so it must never be waited on. */
@@ -405,13 +411,27 @@ export class CodexAppServerManager {
    * must settle these, or a Codex turn waits forever on a promise nobody owns. */
   private readonly pendingApprovals = new Map<string, {
     agentName: string;
+    /** The exact turn whose mutation waits. An interrupt or completion of
+     * that turn settles the approval as denied — a decision for a turn that
+     * no longer runs can never be delivered anywhere useful. */
+    threadId: string;
+    turnId: string;
     resolve: (approved: boolean) => void;
   }>();
-  /** Pane input that arrived before the holder's session existed, keyed by the
-   * EXACT holder (agentId + processIncarnation) — never by name, which is
-   * reusable. Flushed in order once the session's initial turn has started;
-   * a replacement or disconnect clears its own key and never inherits. */
+  /** Pane input that arrived before the holder's session was boot-ready,
+   * keyed by the EXACT holder (agentId + processIncarnation) — never by name,
+   * which is reusable. Flushed in order once the session's initial turn has
+   * started. A replacement never inherits it (its key differs); a same-holder
+   * reconnect DOES (disconnect deliberately preserves the queue, so a line
+   * the host was told is queued cannot silently vanish). */
   private readonly pendingInput = new Map<string, string[]>();
+  /** One serialized action lane per exact holder. Every pane action — typed
+   * line, Ctrl-C, and the automatic post-bootstrap flush — passes through it,
+   * so two drains can never race one queue and typing can never interleave
+   * with the bootstrap. Interrupt CANCELLATION is the one deliberate
+   * exception: it clears the queue synchronously at arrival so a drain
+   * mid-flight stops before its next line. */
+  private readonly holderActions = new Map<string, Promise<unknown>>();
   private availability: Promise<boolean> | null = null;
   private readonly socketPath: (agent: AgentRecord) => string;
   private readonly transport: (path: string) => Promise<CodexAppServerTransport>;
@@ -558,54 +578,117 @@ export class CodexAppServerManager {
     return `${agent.id}#${agent.processIncarnation ?? 0}`;
   }
 
+  /** Append `action` to this holder's serialized lane. Actions run strictly
+   * one at a time per exact holder, in arrival order, and a failed action
+   * never wedges the lane. */
+  private runHolderAction<T>(key: string, action: () => Promise<T>): Promise<T> {
+    const previous = this.holderActions.get(key) ?? Promise.resolve();
+    const run = previous.then(action, action);
+    this.holderActions.set(key, run.catch(() => undefined));
+    return run;
+  }
+
+  /** The exact holder's boot-ready session, or null. Rechecked after EVERY
+   * await inside a lane action: a replacement or teardown during an awaited
+   * delivery must strand the action, never cross it over by name. */
+  private readySession(agent: AgentRecord): CodexSession | null {
+    const session = this.holderSession(agent);
+    return session === null || !session.bootReady ? null : session;
+  }
+
   /**
    * Route one piece of human pane input. This is conversation, not authority:
    * it deliberately never reads identityState, status, or writeRevoked — a
    * revoked writer's human must still be able to type, steer, and interrupt.
    *
-   * Text goes to the live session (idle starts a turn, an active turn is
-   * steered); before the session exists it queues under the exact holder and
-   * flushes in order once the initial turn has started. An interrupt stops the
-   * active turn, and also discards this holder's queued text — the human
-   * canceled what they had typed, and it must not submit later.
+   * Text goes to the boot-ready session (idle starts a turn, an active turn
+   * is steered); before that it queues under the exact holder and flushes in
+   * order once the initial turn has started. An interrupt stops the active
+   * turn — confirmed stopped before this returns, so the next line finds a
+   * clear turn — and discards this holder's queued text: the human canceled
+   * what they had typed, and it must not submit later.
    */
   async paneInput(
     agent: AgentRecord,
     input: CodexPaneInput,
   ): Promise<CodexPaneInputOutcome> {
     const key = CodexAppServerManager.holderKey(agent);
-    const session = this.holderSession(agent);
     if (input.kind === "interrupt") {
+      // The cancellation is synchronous, outside the lane: a drain mid-flight
+      // notices the queue it holds is no longer the live one and stops before
+      // its next line.
       this.pendingInput.delete(key);
-      if (session === null || session.activeTurnId === null) return "no-turn";
-      await this.interrupt(agent);
+      return await this.runHolderAction(key, async () => {
+        const session = this.readySession(agent);
+        if (session === null || session.activeTurnId === null) return "no-turn";
+        await this.interruptForPane(session, agent);
+        return "delivered";
+      });
+    }
+    return await this.runHolderAction(key, async () => {
+      const enqueue = (): CodexPaneInputOutcome => {
+        const queue = this.pendingInput.get(key) ?? [];
+        queue.push(input.text);
+        this.pendingInput.set(key, queue);
+        return "queued";
+      };
+      if (this.readySession(agent) === null) return enqueue();
+      // Anything still queued for this holder goes first, so typing that
+      // spanned session startup keeps its order.
+      await this.drainPendingInput(agent);
+      // The drain awaited; re-prove the exact holder before the new line.
+      if (this.readySession(agent) === null) return enqueue();
+      await this.deliver(agent, input.text);
       return "delivered";
+    });
+  }
+
+  /** Interrupt the pane's active turn and wait — bounded, fail-visible — for
+   * the provider to confirm the turn is over. Host POSTs are serialized, so
+   * the line typed right after Ctrl-C would otherwise steer the interrupted
+   * turn's corpse. Confirmation also settles any mutation approval still
+   * waiting inside that turn: a decision for a turn that no longer runs can
+   * never be delivered anywhere useful. */
+  private async interruptForPane(
+    session: CodexSession,
+    agent: AgentRecord,
+  ): Promise<void> {
+    const threadId = session.threadId;
+    const turnId = session.activeTurnId;
+    if (turnId === null) return;
+    await session.client.request("turn/interrupt", { threadId, turnId });
+    for (
+      let attempt = 0;
+      attempt < 50 && session.activeTurnId === turnId;
+      attempt += 1
+    ) {
+      await this.sleep(100);
     }
-    if (session === null) {
-      const queue = this.pendingInput.get(key) ?? [];
-      queue.push(input.text);
-      this.pendingInput.set(key, queue);
-      return "queued";
+    if (session.activeTurnId === turnId) {
+      throw new Error(
+        `Codex did not confirm the interrupt for ${agent.name}; the turn may still be running`,
+      );
     }
-    // Anything still queued for this holder goes first, so typing that spanned
-    // session startup keeps its order.
-    await this.flushPendingInput(agent);
-    await this.deliver(agent, input.text);
-    return "delivered";
+    await this.settleTurnApprovals(agent.name, threadId, turnId);
   }
 
   /** Deliver this exact holder's queued pane input, in order, into its live
-   * session. Entries drain one at a time; a failure keeps the remainder queued
-   * for the next flush rather than dropping it. */
-  private async flushPendingInput(agent: AgentRecord): Promise<void> {
+   * session. Runs only inside the holder lane. A failure keeps the remainder
+   * queued for the next drain; an interrupt that arrived mid-delivery cleared
+   * the live queue, and the remainder of THIS drain is canceled with it. */
+  private async drainPendingInput(agent: AgentRecord): Promise<void> {
     const key = CodexAppServerManager.holderKey(agent);
     const queue = this.pendingInput.get(key);
     if (queue === undefined) return;
     while (queue.length > 0) {
+      if (this.readySession(agent) === null) return; // stays queued
       await this.deliver(agent, queue[0]!);
+      // An interrupt while that await was in flight replaced or cleared the
+      // live queue: this drain no longer owns what it holds.
+      if (this.pendingInput.get(key) !== queue) return;
       queue.shift();
     }
-    this.pendingInput.delete(key);
+    if (this.pendingInput.get(key) === queue) this.pendingInput.delete(key);
   }
 
   /** Start a thread for `agent`. A writer is admissible here — the app-server
@@ -657,6 +740,7 @@ export class CodexAppServerManager {
         client,
         threadId: stringField(thread, "id"),
         activeTurnId: null,
+        bootReady: false,
         closed: false,
         quotaBaselines: new Map(),
         contextPct: 0,
@@ -669,22 +753,32 @@ export class CodexAppServerManager {
         timestamp: timestamp(),
       }, session.agent);
       await this.startTurn(agent, bootstrap.initialUserPrompt, effort);
+      // Only now is the session ready for pane input: a line delivered
+      // between sessions.set and this point would race the bootstrap prompt.
+      session.bootReady = true;
     } catch (error) {
       client.close();
       this.sessions.delete(agent.name);
       throw error;
     }
-    // Pane input typed before the session existed flushes only now, AFTER the
-    // initial prompt's turn has started, so it lands as ordered follow-up
-    // steering rather than racing the bootstrap. A stale queue from another
-    // incarnation of this holder is refused, never inherited: only the exact
-    // key flushes. Failures keep the remainder queued; the human's next input
-    // retries the drain.
-    await this.flushPendingInput(agent).catch(() => undefined);
+    // Pane input typed before the session was boot-ready flushes now, through
+    // the same serialized holder lane every pane action uses, so it lands as
+    // ordered follow-up steering. A failure keeps the remainder queued — the
+    // next pane input retries the drain — and is logged rather than silent.
+    await this.runHolderAction(
+      CodexAppServerManager.holderKey(agent),
+      () => this.drainPendingInput(agent),
+    ).catch((error) => {
+      console.error(
+        `Hive could not deliver ${agent.name}'s queued pane input (kept queued): ${
+          error instanceof Error ? error.message : "delivery failed"
+        }`,
+      );
+    });
   }
 
   async startTurn(agent: AgentRecord, text: string, effort?: string): Promise<void> {
-    const session = this.requireSession(agent.name);
+    const session = this.requireExactSession(agent);
     session.agent = agent;
     // Default to the thread's authorized effort so an idle follow-up or a steer
     // that starts a fresh turn never silently drops to the server-side default.
@@ -702,7 +796,7 @@ export class CodexAppServerManager {
   }
 
   async steer(agent: AgentRecord, text: string): Promise<void> {
-    const session = this.requireSession(agent.name);
+    const session = this.requireExactSession(agent);
     if (session.activeTurnId === null) {
       await this.startTurn(agent, text);
       return;
@@ -719,7 +813,7 @@ export class CodexAppServerManager {
     text: string,
     options: { interrupt?: boolean } = {},
   ): Promise<void> {
-    const session = this.requireSession(agent.name);
+    const session = this.requireExactSession(agent);
     if (options.interrupt === true && session.activeTurnId !== null) {
       await this.interruptAndStart(agent, text);
     } else if (session.activeTurnId !== null) {
@@ -730,8 +824,10 @@ export class CodexAppServerManager {
   }
 
   async interrupt(agent: AgentRecord): Promise<void> {
-    const session = this.sessions.get(agent.name);
-    if (session === undefined || session.activeTurnId === null) return;
+    // Exact holder or nothing: a caller holding a replaced row has no turn of
+    // ITS OWN to interrupt in the session now answering to this name.
+    const session = this.holderSession(agent);
+    if (session === null || session.activeTurnId === null) return;
     await session.client.request("turn/interrupt", {
       threadId: session.threadId,
       turnId: session.activeTurnId,
@@ -739,7 +835,7 @@ export class CodexAppServerManager {
   }
 
   async interruptAndStart(agent: AgentRecord, text: string): Promise<void> {
-    const session = this.requireSession(agent.name);
+    const session = this.requireExactSession(agent);
     await this.interrupt(agent);
     for (let attempt = 0; attempt < 50 && session.activeTurnId !== null; attempt += 1) {
       await this.sleep(100);
@@ -778,6 +874,28 @@ export class CodexAppServerManager {
     }
   }
 
+  /** Settle the mutation approvals still waiting inside ONE exact turn, as
+   * denied, without touching the session. Runs when that turn is interrupted
+   * or completes: the decision a human might still make could only authorize
+   * a mutation of a turn that no longer runs. */
+  private async settleTurnApprovals(
+    agentName: string,
+    threadId: string,
+    turnId: string,
+  ): Promise<void> {
+    for (const [id, pending] of [...this.pendingApprovals]) {
+      if (
+        pending.agentName !== agentName || pending.threadId !== threadId ||
+        pending.turnId !== turnId
+      ) {
+        continue;
+      }
+      this.pendingApprovals.delete(id);
+      pending.resolve(false);
+      await this.settleDurableApproval(id);
+    }
+  }
+
   async denyAgentApprovals(agentName: string): Promise<void> {
     // Latch the session closed FIRST, so an approval being created concurrently
     // sees the flag and denies itself instead of registering behind this sweep.
@@ -790,12 +908,11 @@ export class CodexAppServerManager {
 
   disconnect(agentName: string): void {
     const session = this.sessions.get(agentName);
-    if (session !== undefined) {
-      session.closed = true;
-      // The queue belongs to the exact holder whose session this was; a
-      // replacement must never receive it.
-      this.pendingInput.delete(CodexAppServerManager.holderKey(session.agent));
-    }
+    if (session !== undefined) session.closed = true;
+    // The pending-input queue is deliberately PRESERVED: the host was told
+    // "queued", so the line must not silently vanish on a transport drop. A
+    // same-holder reconnect flushes it; a replacement never sees it (its
+    // exact-holder key differs).
     session?.client.close();
     this.sessions.delete(agentName);
     void this.denyAgentApprovals(agentName);
@@ -826,6 +943,26 @@ export class CodexAppServerManager {
     const session = this.sessions.get(agentName);
     if (session === undefined) {
       throw new Error(`Codex app-server session unavailable: ${agentName}`);
+    }
+    return session;
+  }
+
+  /** A name is reusable; a session is not. Every turn-mutating verb resolves
+   * the session by name and then proves it belongs to the CALLER'S exact
+   * holder — after any await, a name-only lookup could hand a replacement's
+   * session to a stale caller (and `startTurn` would even rebind
+   * `session.agent` to the stale record, poisoning the holder snapshot the
+   * broker authorizes against). */
+  private requireExactSession(agent: AgentRecord): CodexSession {
+    const session = this.requireSession(agent.name);
+    if (
+      session.agent.id !== agent.id ||
+      (session.agent.processIncarnation ?? 0) !==
+        (agent.processIncarnation ?? 0)
+    ) {
+      throw new Error(
+        `Codex app-server session answering to ${agent.name} belongs to a different holder`,
+      );
     }
     return session;
   }
@@ -887,6 +1024,13 @@ export class CodexAppServerManager {
       const turn = asObject(params.turn, "completed turn");
       const completedTurnId = stringField(turn, "id");
       if (session.activeTurnId === completedTurnId) session.activeTurnId = null;
+      // A mutation approval still waiting inside the finished turn can never
+      // be delivered a usable decision — settle it as denied, session open.
+      await this.settleTurnApprovals(
+        agentName,
+        session.threadId,
+        completedTurnId,
+      );
       const current = await this.readRateLimits(session).catch(() => null);
       const quotaBaseline = session.quotaBaselines.get(completedTurnId) ?? null;
       session.quotaBaselines.delete(completedTurnId);
@@ -967,7 +1111,12 @@ export class CodexAppServerManager {
     // human approval row.
     let humanApproved = false;
     if ((this.options.autonomy?.() ?? "sandboxed") !== "dangerous") {
-      const approved = await this.awaitApproval(session, description);
+      const approved = await this.awaitApproval(
+        session,
+        description,
+        threadId,
+        turnId,
+      );
       if (!approved) return deny();
       humanApproved = true;
     }
@@ -1049,6 +1198,8 @@ export class CodexAppServerManager {
   private async awaitApproval(
     session: CodexSession,
     description: string,
+    threadId: string,
+    turnId: string,
   ): Promise<boolean> {
     if (session.closed) return false;
     let id: string;
@@ -1064,8 +1215,19 @@ export class CodexAppServerManager {
       await this.settleDurableApproval(id);
       return false;
     }
+    // The turn can have been interrupted or completed while the row was being
+    // inserted; registering behind that settlement would wait forever.
+    if (session.activeTurnId !== turnId) {
+      await this.settleDurableApproval(id);
+      return false;
+    }
     return await new Promise<boolean>((resolve) => {
-      this.pendingApprovals.set(id, { agentName: session.agent.name, resolve });
+      this.pendingApprovals.set(id, {
+        agentName: session.agent.name,
+        threadId,
+        turnId,
+        resolve,
+      });
     });
   }
 
@@ -1237,6 +1399,9 @@ export function createPaneInputForwarder(options: PaneInputForwarderOptions): {
   const doFetch = options.fetchImpl ?? fetch;
   let chain = Promise.resolve();
   let lineBuffer = "";
+  // Streaming decode: a multibyte character split across stdin chunks must
+  // not be corrupted by per-chunk toString.
+  const decoder = new StringDecoder("utf8");
   const post = (input: CodexPaneInput): void => {
     chain = chain.then(async () => {
       try {
@@ -1278,7 +1443,7 @@ export function createPaneInputForwarder(options: PaneInputForwarderOptions): {
   };
   return {
     onData: (chunk) => {
-      lineBuffer += typeof chunk === "string" ? chunk : chunk.toString("utf8");
+      lineBuffer += typeof chunk === "string" ? chunk : decoder.write(chunk);
       while (true) {
         const newline = lineBuffer.indexOf("\n");
         if (newline < 0) break;

@@ -6260,17 +6260,51 @@ describe("POST /pane-input", () => {
     }
   });
 
-  test("a stale holder is refused: epoch advance or replacement unbinds the credential", async () => {
-    // A real epoch advance (reissue — revocation deliberately keeps the epoch)
-    // invalidates the old bearer at the capability layer itself (403); a
-    // replacement incarnation that somehow kept its token stops at the exact
-    // holder check (409). Either way nothing reaches the manager.
+  test("conversation SURVIVES authority rotation: the launch token still types after an epoch advance and an exact-holder revoke", async () => {
+    // A pause/resume reissue or a critical epoch advance rotates the holder's
+    // credential while the same rendered host keeps its launch env token.
+    // That token must keep typing for the SAME id/incarnation — a resumed
+    // reader with a deaf pane is the hard failure — while carrying no
+    // authority whatsoever (this route cannot approve, attest, or mutate).
+    const { db, daemon, post, paneCalls, record } = paneHarness();
+    try {
+      // Authority rotation 1: the durable epoch advances (reissue).
+      db.upsertAgent({ ...record, capabilityEpoch: record.capabilityEpoch + 1 });
+      expect((await post(LINE)).status).toBe(200);
+      // Authority rotation 2: the exact holder's capabilities are revoked
+      // outright (rows are retained, so the original token still resolves).
+      daemon.capabilities.revokeAgentHolder(
+        record.id,
+        record.processIncarnation ?? 0,
+      );
+      expect((await post(LINE)).status).toBe(200);
+      expect(paneCalls).toHaveLength(2);
+      expect(paneCalls.every((call) =>
+        call.agentId === record.id &&
+        call.incarnation === record.processIncarnation
+      )).toBe(true);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("a REPLACEMENT incarnation still refuses: rotation-proof is not replacement-proof", async () => {
     const { db, post, paneCalls, record } = paneHarness();
     try {
-      db.upsertAgent({ ...record, capabilityEpoch: record.capabilityEpoch + 1 });
-      expect((await post(LINE)).status).toBeGreaterThanOrEqual(400);
       db.upsertAgent({ ...record, processIncarnation: 9 });
-      expect((await post(LINE)).status).toBeGreaterThanOrEqual(400);
+      expect((await post(LINE)).status).toBe(409);
+      expect(paneCalls).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("a token with no exact holder cannot type: name-grade credentials prove no pane", async () => {
+    const { db, daemon, post, paneCalls } = paneHarness();
+    try {
+      // A legacy-shaped writer token, valid but unbound to any process.
+      const unbound = daemon.capabilities.mint("maya", "writer").token;
+      expect((await post(LINE, unbound)).status).toBe(403);
       expect(paneCalls).toEqual([]);
     } finally {
       db.close();
@@ -6380,4 +6414,32 @@ describe("queueCodexApproval exact-holder validation", () => {
       db.close();
     }
   });
+});
+
+test("an auto-denied approval un-parks the agent: awaiting-approval recovers to idle", async () => {
+  // Interrupt/turn-completion settles approvals through denyCodexApproval;
+  // the row must not read awaiting-approval forever afterwards.
+  const db = new HiveDatabase(join(home, `deny-status-${crypto.randomUUID()}.db`));
+  const daemon = new HiveDaemon({
+    db,
+    spawner: new StubSpawner(),
+    tmux: new FakeDaemonTmux(),
+  });
+  db.insertAgent(agent({ status: "awaiting-approval" }));
+  db.insertApproval({
+    id: "settled-by-interrupt",
+    agentName: "maya",
+    kind: "tool-permission",
+    description: "Codex wants to run touch x",
+    status: "pending",
+    createdAt: new Date().toISOString(),
+    resolvedAt: null,
+  });
+  try {
+    daemon.denyCodexApproval("settled-by-interrupt");
+    expect(db.getApproval("settled-by-interrupt")?.status).toBe("denied");
+    expect(db.getAgentByName("maya")?.status).toBe("idle");
+  } finally {
+    db.close();
+  }
 });
