@@ -418,7 +418,7 @@ export const SessionInspectionSchema = z.strictObject({
   checkpointSeq: DecimalUint64Schema,
   checkpointAvailable: z.boolean(),
   input: z.strictObject({
-    state: z.string(),
+    state: InputArbiterStateSchema,
     ownerViewerId: z.string().min(1).nullable(),
     claimId: z.string().min(1).nullable(),
   }),
@@ -568,44 +568,28 @@ export const SESSION_WIRE_SCHEMAS = {
 } as const;
 
 type Assert<T extends true> = T;
-type Assignable<From, To> = [From] extends [To] ? true : false;
+type Equals<Left, Right> =
+  (<T>() => T extends Left ? 1 : 2) extends
+  (<T>() => T extends Right ? 1 : 2) ? true : false;
 
-type SessionSubjectSchemaToContract = Assert<Assignable<z.infer<typeof SessionSubjectSchema>, SessionHostContract.SessionSubject>>;
-type SessionSubjectContractToSchema = Assert<Assignable<SessionHostContract.SessionSubject, z.infer<typeof SessionSubjectSchema>>>;
-type SessionLocatorSchemaToContract = Assert<Assignable<z.infer<typeof SessionLocatorSchema>, SessionHostContract.SessionLocator>>;
-type SessionLocatorContractToSchema = Assert<Assignable<SessionHostContract.SessionLocator, z.infer<typeof SessionLocatorSchema>>>;
-type SessionSpecSchemaToContract = Assert<Assignable<z.infer<typeof SessionSpecSchema>, SessionHostContract.SessionSpec>>;
-type SessionSpecContractToSchema = Assert<Assignable<SessionHostContract.SessionSpec, z.infer<typeof SessionSpecSchema>>>;
-type TerminalGeometrySchemaToContract = Assert<Assignable<z.infer<typeof TerminalGeometrySchema>, SessionHostContract.TerminalGeometry>>;
-type TerminalGeometryContractToSchema = Assert<Assignable<SessionHostContract.TerminalGeometry, z.infer<typeof TerminalGeometrySchema>>>;
-type SessionInspectionSchemaToContract = Assert<Assignable<z.infer<typeof SessionInspectionSchema>, SessionHostContract.SessionInspection>>;
-type SessionInspectionContractToSchema = Assert<Assignable<SessionHostContract.SessionInspection, z.infer<typeof SessionInspectionSchema>>>;
-type CreateResultSchemaToContract = Assert<Assignable<z.infer<typeof CreateResultSchema>, SessionHostContract.CreateResult>>;
-type CreateResultContractToSchema = Assert<Assignable<SessionHostContract.CreateResult, z.infer<typeof CreateResultSchema>>>;
-type CaptureRequestSchemaToContract = Assert<Assignable<z.infer<typeof CaptureRequestSchema>, SessionHostContract.CaptureRequest>>;
-type CaptureRequestContractToSchema = Assert<Assignable<SessionHostContract.CaptureRequest, z.infer<typeof CaptureRequestSchema>>>;
-type CaptureResultSchemaToContract = Assert<Assignable<z.infer<typeof CaptureResultSchema>, SessionHostContract.CaptureResult>>;
-type CaptureResultContractToSchema = Assert<Assignable<SessionHostContract.CaptureResult, z.infer<typeof CaptureResultSchema>>>;
-type AttachRequestSchemaToContract = Assert<Assignable<z.infer<typeof AttachRequestSchema>, SessionHostContract.AttachRequest>>;
-type AttachRequestContractToSchema = Assert<Assignable<SessionHostContract.AttachRequest, z.infer<typeof AttachRequestSchema>>>;
-type AttachGrantSchemaToContract = Assert<Assignable<z.infer<typeof AttachGrantSchema>, SessionHostContract.AttachGrant>>;
-type AttachGrantContractToSchema = Assert<Assignable<SessionHostContract.AttachGrant, z.infer<typeof AttachGrantSchema>>>;
-type VisibilityRequestSchemaToContract = Assert<Assignable<z.infer<typeof VisibilityRequestSchema>, SessionHostContract.VisibilityRequest>>;
-type VisibilityRequestContractToSchema = Assert<Assignable<SessionHostContract.VisibilityRequest, z.infer<typeof VisibilityRequestSchema>>>;
-type VisibilityLeaseSchemaToContract = Assert<Assignable<z.infer<typeof VisibilityLeaseSchema>, SessionHostContract.VisibilityLease>>;
-type VisibilityLeaseContractToSchema = Assert<Assignable<SessionHostContract.VisibilityLease, z.infer<typeof VisibilityLeaseSchema>>>;
-type ResizeResultSchemaToContract = Assert<Assignable<z.infer<typeof ResizeResultSchema>, SessionHostContract.ResizeResult>>;
-type ResizeResultContractToSchema = Assert<Assignable<SessionHostContract.ResizeResult, z.infer<typeof ResizeResultSchema>>>;
-type AutomatedInputSchemaToContract = Assert<Assignable<z.infer<typeof AutomatedInputSchema>, SessionHostContract.AutomatedInput>>;
-type AutomatedInputContractToSchema = Assert<Assignable<SessionHostContract.AutomatedInput, z.infer<typeof AutomatedInputSchema>>>;
-type InputReceiptSchemaToContract = Assert<Assignable<z.infer<typeof InputReceiptSchema>, SessionHostContract.InputReceipt>>;
-type InputReceiptContractToSchema = Assert<Assignable<SessionHostContract.InputReceipt, z.infer<typeof InputReceiptSchema>>>;
-type TerminationRequestSchemaToContract = Assert<Assignable<z.infer<typeof TerminationRequestSchema>, SessionHostContract.TerminationRequest>>;
-type TerminationRequestContractToSchema = Assert<Assignable<SessionHostContract.TerminationRequest, z.infer<typeof TerminationRequestSchema>>>;
-type TerminationResultSchemaToContract = Assert<Assignable<z.infer<typeof TerminationResultSchema>, SessionHostContract.TerminationResult>>;
-type TerminationResultContractToSchema = Assert<Assignable<SessionHostContract.TerminationResult, z.infer<typeof TerminationResultSchema>>>;
-type SessionEventSchemaToContract = Assert<Assignable<z.infer<typeof SessionEventSchema>, SessionHostContract.SessionEvent>>;
-type SessionEventContractToSchema = Assert<Assignable<SessionHostContract.SessionEvent, z.infer<typeof SessionEventSchema>>>;
+type SessionSubjectSchemaMatchesContract = Assert<Equals<z.infer<typeof SessionSubjectSchema>, SessionHostContract.SessionSubject>>;
+type SessionLocatorSchemaMatchesContract = Assert<Equals<z.infer<typeof SessionLocatorSchema>, SessionHostContract.SessionLocator>>;
+type SessionSpecSchemaMatchesContract = Assert<Equals<z.infer<typeof SessionSpecSchema>, SessionHostContract.SessionSpec>>;
+type TerminalGeometrySchemaMatchesContract = Assert<Equals<z.infer<typeof TerminalGeometrySchema>, SessionHostContract.TerminalGeometry>>;
+type SessionInspectionSchemaMatchesContract = Assert<Equals<z.infer<typeof SessionInspectionSchema>, SessionHostContract.SessionInspection>>;
+type CreateResultSchemaMatchesContract = Assert<Equals<z.infer<typeof CreateResultSchema>, SessionHostContract.CreateResult>>;
+type CaptureRequestSchemaMatchesContract = Assert<Equals<z.infer<typeof CaptureRequestSchema>, SessionHostContract.CaptureRequest>>;
+type CaptureResultSchemaMatchesContract = Assert<Equals<z.infer<typeof CaptureResultSchema>, SessionHostContract.CaptureResult>>;
+type AttachRequestSchemaMatchesContract = Assert<Equals<z.infer<typeof AttachRequestSchema>, SessionHostContract.AttachRequest>>;
+type AttachGrantSchemaMatchesContract = Assert<Equals<z.infer<typeof AttachGrantSchema>, SessionHostContract.AttachGrant>>;
+type VisibilityRequestSchemaMatchesContract = Assert<Equals<z.infer<typeof VisibilityRequestSchema>, SessionHostContract.VisibilityRequest>>;
+type VisibilityLeaseSchemaMatchesContract = Assert<Equals<z.infer<typeof VisibilityLeaseSchema>, SessionHostContract.VisibilityLease>>;
+type ResizeResultSchemaMatchesContract = Assert<Equals<z.infer<typeof ResizeResultSchema>, SessionHostContract.ResizeResult>>;
+type AutomatedInputSchemaMatchesContract = Assert<Equals<z.infer<typeof AutomatedInputSchema>, SessionHostContract.AutomatedInput>>;
+type InputReceiptSchemaMatchesContract = Assert<Equals<z.infer<typeof InputReceiptSchema>, SessionHostContract.InputReceipt>>;
+type TerminationRequestSchemaMatchesContract = Assert<Equals<z.infer<typeof TerminationRequestSchema>, SessionHostContract.TerminationRequest>>;
+type TerminationResultSchemaMatchesContract = Assert<Equals<z.infer<typeof TerminationResultSchema>, SessionHostContract.TerminationResult>>;
+type SessionEventSchemaMatchesContract = Assert<Equals<z.infer<typeof SessionEventSchema>, SessionHostContract.SessionEvent>>;
 
 export const SESSION_HOST_PERMISSIONS = {
   inspect: ["authorized-instance"],

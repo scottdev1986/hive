@@ -56,7 +56,7 @@ describe("terminal foundation WP0 contracts", () => {
     const evidence = await runConformance();
     expect(evidence).toEqual({
       validCases: 21,
-      invalidCases: 24,
+      invalidCases: 25,
       validHeaders: 2,
       ignoredHeaders: 1,
       invalidHeaders: 6,

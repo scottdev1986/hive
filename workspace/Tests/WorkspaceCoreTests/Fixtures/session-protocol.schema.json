@@ -551,7 +551,17 @@
           "type": "object",
           "properties": {
             "state": {
-              "type": "string"
+              "type": "string",
+              "enum": [
+                "FREE",
+                "HUMAN_GESTURE",
+                "HUMAN_OWNED",
+                "HUMAN_ORPHANED",
+                "AUTOMATION_BUFFERING",
+                "AUTOMATION_COMMITTED",
+                "TERMINATING",
+                "CLOSED"
+              ]
             },
             "ownerViewerId": {
               "anyOf": [
@@ -1069,7 +1079,17 @@
               "type": "object",
               "properties": {
                 "state": {
-                  "type": "string"
+                  "type": "string",
+                  "enum": [
+                    "FREE",
+                    "HUMAN_GESTURE",
+                    "HUMAN_OWNED",
+                    "HUMAN_ORPHANED",
+                    "AUTOMATION_BUFFERING",
+                    "AUTOMATION_COMMITTED",
+                    "TERMINATING",
+                    "CLOSED"
+                  ]
                 },
                 "ownerViewerId": {
                   "anyOf": [

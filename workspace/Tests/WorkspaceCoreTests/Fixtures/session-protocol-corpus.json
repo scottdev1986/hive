@@ -611,7 +611,7 @@
       }
     },
     {
-      "name": "inspection rejects invented state",
+      "name": "inspection rejects invented presence",
       "schema": "sessionInspection",
       "value": {
         "schemaVersion": 1,
@@ -643,6 +643,66 @@
         "checkpointAvailable": true,
         "input": {
           "state": "FREE",
+          "ownerViewerId": null,
+          "claimId": null
+        },
+        "viewerCount": 1,
+        "geometry": {
+          "columns": 120,
+          "rows": 40,
+          "widthPx": 1200,
+          "heightPx": 800,
+          "cellWidthPx": 10,
+          "cellHeightPx": 20
+        },
+        "resources": {
+          "rssBytes": 16777216
+        },
+        "visibility": {
+          "state": "visible",
+          "workspaceSessionId": "workspace-fixture",
+          "openTerminalRevision": "7",
+          "expiresAt": "2026-07-16T12:00:15.000Z"
+        },
+        "exit": null,
+        "survivors": [],
+        "evidenceAt": "2026-07-16T12:00:00.000Z",
+        "diagnosticIds": []
+      }
+    },
+    {
+      "name": "inspection rejects invented input state",
+      "schema": "sessionInspection",
+      "value": {
+        "schemaVersion": 1,
+        "locator": {
+          "schemaVersion": 1,
+          "instanceId": "hive-fixture",
+          "subject": {
+            "kind": "agent",
+            "agentId": "agent-fixture"
+          },
+          "generation": 3,
+          "sessionId": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+          "hostKind": "sessiond",
+          "engineBuildId": "engine-fixture"
+        },
+        "presence": "present",
+        "complete": true,
+        "hostPid": 4100,
+        "hostStartToken": "4100:123456",
+        "providerRoot": {
+          "pid": 4101,
+          "startToken": "4101:123457",
+          "processGroupId": 4101
+        },
+        "expectedExecutable": "/usr/local/bin/codex",
+        "executableVerified": true,
+        "outputSeq": "4096",
+        "checkpointSeq": "2048",
+        "checkpointAvailable": true,
+        "input": {
+          "state": "AUTOMATION_WRITING",
           "ownerViewerId": null,
           "claimId": null
         },
