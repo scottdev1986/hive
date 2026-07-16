@@ -61,7 +61,7 @@ import {
   modelCategoryFit,
   type ChainEntry,
 } from "../schemas";
-import type { HiveDatabase } from "./db";
+import { agentStateCas, type HiveDatabase } from "./db";
 import { readinessFailureLayer } from "./launch-failure";
 import type { LaunchFailureLayer } from "./launch-failure";
 import { promptArgument, writeLaunchPrompt } from "./launch-prompt";
@@ -213,9 +213,12 @@ type AgentStore = Pick<
   | "getAgentById"
   | "getLiveAgentByName"
   | "insertAgent"
+  | "updateAgentIfCurrent"
+  | "beginAgentProcess"
   | "insertRouteAudit"
   | "listAgents"
   | "markAgentTerminal"
+  | "markAgentTerminalIfCurrent"
   | "releaseAgentName"
   | "reserveAgentName"
 >;
@@ -243,6 +246,21 @@ type CapabilityDiscoverer = (
 /** The binary a launch argv will actually run, as `ps` will report it. */
 function launchedCommandName(argv: string[]): string {
   return processCommandName(argv[0] ?? "");
+}
+
+function sameSpawnerProcess(
+  expected: AgentRecord,
+  current: AgentRecord,
+): boolean {
+  return current.id === expected.id &&
+    (current.processIncarnation ?? 0) ===
+      (expected.processIncarnation ?? 0) &&
+    (current.processStartedAt ?? null) ===
+      (expected.processStartedAt ?? null) &&
+    current.capabilityEpoch === expected.capabilityEpoch &&
+    current.writeRevoked === expected.writeRevoked &&
+    current.readOnly === expected.readOnly && current.branch === expected.branch &&
+    (current.toolSessionId ?? null) === (expected.toolSessionId ?? null);
 }
 
 /** Mints one agent's capability, writes it to its 0600 credential file, and
@@ -1094,6 +1112,29 @@ export class HiveSpawner implements Spawner {
             prepared.record,
             `Codex app-server fallback for ${agent.name}`,
           );
+          const stopped = this.dependencies.db.getAgentById(
+            prepared.record.id,
+          );
+          if (
+            stopped === null || !sameSpawnerProcess(prepared.record, stopped)
+          ) {
+            throw new Error(
+              `Codex fallback refused for ${agent.name}: control process incarnation changed`,
+            );
+          }
+          const fallbackRecord = this.dependencies.db.beginAgentProcess(
+            agentStateCas(stopped),
+            new Date().toISOString(),
+            null,
+            stopped.recoveryAttempts,
+            { status: "control-paused" },
+          );
+          if (fallbackRecord === null) {
+            throw new Error(
+              `Codex fallback refused for ${agent.name}: could not allocate a replacement process incarnation`,
+            );
+          }
+          prepared = { record: fallbackRecord };
           const fallback = buildCodexSpawnCommand({
             daemonPort: this.daemonPort(),
             effort: identity.tool === "codex"
@@ -1136,7 +1177,10 @@ export class HiveSpawner implements Spawner {
         : "control acknowledgement process failed to launch";
       const current = this.dependencies.db.getAgentById(prepared.record.id) ??
         prepared.record;
-      if (current.status !== "stuck") {
+      if (
+        current.status !== "stuck" &&
+        sameSpawnerProcess(prepared.record, current)
+      ) {
         await this.stopVerifiedSession(
           current,
           `Critical control ${message.id} restart failed`,
@@ -1165,8 +1209,7 @@ export class HiveSpawner implements Spawner {
         );
         throw new Error(stuck.failureReason!, { cause: cancelError });
       }
-      this.dependencies.db.insertAgent({
-        ...stopped,
+      this.dependencies.db.updateAgentIfCurrent(agentStateCas(stopped), {
         status: "control-paused",
         writeRevoked: true,
         failureReason: `Critical control ${message.id} restart failed: ${reason}`,
@@ -1188,16 +1231,36 @@ export class HiveSpawner implements Spawner {
     failureReason?: string,
   ): Promise<{ record: AgentRecord }> {
     const current = this.dependencies.db.getAgentById(agent.id) ?? agent;
-    const record = this.dependencies.db.insertAgent({
-      ...current,
+    const preparedAt = new Date().toISOString();
+    const prepared = this.dependencies.db.updateAgentIfCurrent(
+      agentStateCas(current),
+      {
       status: "control-paused",
       readOnly: true,
       writeRevoked: true,
       controlMessageId: message.id,
       controlQuotaReservationId: reservationId,
       failureReason,
-      lastEventAt: new Date().toISOString(),
-    });
+        lastEventAt: preparedAt,
+      },
+    );
+    if (prepared === null) {
+      throw new Error(
+        `Cannot prepare control restart for ${agent.name}: session/incarnation/authority changed`,
+      );
+    }
+    const record = this.dependencies.db.beginAgentProcess(
+      agentStateCas(prepared),
+      preparedAt,
+      null,
+      prepared.recoveryAttempts,
+      { status: "control-paused" },
+    );
+    if (record === null) {
+      throw new Error(
+        `Cannot allocate control process incarnation for ${agent.name}: state changed`,
+      );
+    }
     return { record };
   }
 
@@ -1206,12 +1269,16 @@ export class HiveSpawner implements Spawner {
     message: AgentMessage,
     reason: string,
   ): Promise<void> {
-    await this.prepareControlRestart(
-      agent,
-      message,
-      undefined,
-      `Critical control ${message.id} is pending: ${reason}`,
-    );
+    const current = this.dependencies.db.getAgentById(agent.id) ?? agent;
+    this.dependencies.db.updateAgentIfCurrent(agentStateCas(current), {
+      status: "control-paused",
+      readOnly: true,
+      writeRevoked: true,
+      controlMessageId: message.id,
+      controlQuotaReservationId: undefined,
+      failureReason: `Critical control ${message.id} is pending: ${reason}`,
+      lastEventAt: new Date().toISOString(),
+    });
   }
 
   private async monitorControlReadiness(
@@ -2121,7 +2188,7 @@ export class HiveSpawner implements Spawner {
     // the first moment. This is the same defect that already bit the liveModel
     // reader, fixed there the same way.
     const grokSessionId = tool === "grok" ? crypto.randomUUID() : undefined;
-    const record = this.dependencies.db.insertAgent({
+    let record = this.dependencies.db.insertAgent({
       // A fresh AgentUUID, always. Reusing a closed holder's id would overwrite
       // its row — erasing the very closure record that lets history tell the
       // two agents apart.
@@ -2323,18 +2390,25 @@ export class HiveSpawner implements Spawner {
             record,
             `Codex app-server fallback for ${record.name}`,
           );
-          this.dependencies.db.insertAgent({
-            ...record,
-            status: "spawning",
-            // A different driver is taking over; any app-server observation is
-            // stale. Reset attestation to unknown (fail-closed) and drop the
-            // stale observation so the TUI rollout re-attests before write.
-            identityState: "unknown",
-            observedIdentity: undefined,
-            liveModel: undefined,
-            liveEffort: undefined,
-            lastEventAt: new Date().toISOString(),
-          });
+          const stopped = this.dependencies.db.getAgentById(record.id);
+          if (stopped === null || !sameSpawnerProcess(record, stopped)) {
+            throw new Error(
+              `Codex fallback refused for ${record.name}: process incarnation changed`,
+            );
+          }
+          const fallbackRecord = this.dependencies.db.beginAgentProcess(
+            agentStateCas(stopped),
+            new Date().toISOString(),
+            null,
+            stopped.recoveryAttempts,
+            { status: "spawning" },
+          );
+          if (fallbackRecord === null) {
+            throw new Error(
+              `Codex fallback refused for ${record.name}: could not allocate a replacement process incarnation`,
+            );
+          }
+          record = fallbackRecord;
           const fallback = buildCodexSpawnCommand({
             daemonPort: this.daemonPort(),
             effort: effort ?? "medium",
@@ -2377,8 +2451,12 @@ export class HiveSpawner implements Spawner {
       // claim launch is still in flight forever. Promote only if no stronger
       // lifecycle event has already moved the row elsewhere.
       const ready = this.dependencies.db.getAgentById(record.id);
-      if (ready?.status === "spawning") {
-        this.dependencies.db.insertAgent({ ...ready, status: "working" });
+      if (
+        ready?.status === "spawning" && sameSpawnerProcess(record, ready)
+      ) {
+        this.dependencies.db.updateAgentIfCurrent(agentStateCas(ready), {
+          status: "working",
+        });
       }
       if (quotaReservationId !== undefined) {
         this.dependencies.quota?.markStarted(quotaReservationId);
@@ -2437,21 +2515,30 @@ export class HiveSpawner implements Spawner {
     record: AgentRecord,
     failureReason: string,
   ): AgentRecord {
-    return this.dependencies.db.insertAgent({
-      ...(this.dependencies.db.getAgentById(record.id) ?? record),
+    const current = this.dependencies.db.getAgentById(record.id);
+    if (current === null || !sameSpawnerProcess(record, current)) {
+      return current ?? record;
+    }
+    return this.dependencies.db.updateAgentIfCurrent(agentStateCas(current), {
       status: "stuck",
       writeRevoked: true,
       failureReason,
       lastEventAt: new Date().toISOString(),
-    });
+    }) ?? this.dependencies.db.getAgentById(record.id) ?? current;
   }
 
   private async stopVerifiedSession(
     record: AgentRecord,
     context: string,
   ): Promise<void> {
+    const current = this.dependencies.db.getAgentById(record.id);
+    if (current === null || !sameSpawnerProcess(record, current)) {
+      throw new Error(
+        `${context}: process incarnation changed before verified teardown`,
+      );
+    }
     try {
-      const outcome = await this.dependencies.stopSession(record);
+      const outcome = await this.dependencies.stopSession(current);
       if (outcome.survivors.length > 0) {
         throw new Error(
           `${outcome.survivors.length} process(es) survived teardown`,
@@ -2474,7 +2561,10 @@ export class HiveSpawner implements Spawner {
     layer: LaunchFailureLayer,
   ): Promise<AgentRecord> {
     const current = this.dependencies.db.getAgentById(record.id);
-    if (current !== null && current.status !== "spawning") {
+    if (
+      current !== null &&
+      (current.status !== "spawning" || !sameSpawnerProcess(record, current))
+    ) {
       return current;
     }
     return await this.failSpawn(record, worktree, failureReason, layer);
@@ -2520,19 +2610,16 @@ export class HiveSpawner implements Spawner {
     }
     const failedAt = new Date().toISOString();
     const base = this.dependencies.db.getAgentById(record.id) ?? stopping;
-    let failed = this.dependencies.db.markAgentTerminal(
-      base.id,
+    const terminal = this.dependencies.db.markAgentTerminalIfCurrent(
+      agentStateCas(base),
       failedAt,
       "failed",
       { failureReason, failedAt },
-    ) ?? {
-      ...base,
-      status: "failed" as const,
-      writeRevoked: true,
-      failureReason,
-      failedAt,
-      lastEventAt: failedAt,
-    };
+    );
+    if (terminal === null) {
+      return this.dependencies.db.getAgentById(record.id) ?? base;
+    }
+    let failed = terminal;
     const cleanupErrors: string[] = [];
     let preserved: string | null = null;
 

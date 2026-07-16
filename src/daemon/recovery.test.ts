@@ -406,6 +406,7 @@ describe("crash resume", () => {
       status: "idle",
       recoveryAttempts: 1,
       toolSessionId: "0189-claude-session",
+      processIncarnation: 1,
     });
     // The resumed tmux session receives the recovery notice.
     expect(h.sender.sent.some(({ session, text }) =>
@@ -447,6 +448,85 @@ describe("crash resume", () => {
     expect(command).toContain("019f-codex-thread");
     expect(command).toContain("model_reasoning_effort=high");
     expect(command).toContain("read-only");
+  });
+
+  test("a replacement incarnation during prelaunch authorization prevents predecessor launch", async () => {
+    let h!: Harness;
+    let checks = 0;
+    h = harness({
+      authorizeLaunch: async (identity) => {
+        const authorized = (await authorizeForQuotaTest([identity]))[0]!;
+        checks += 1;
+        if (checks === 2) {
+          const current = h.db.getAgentById("agent-maya")!;
+          h.db.upsertAgent({
+            ...current,
+            processIncarnation: (current.processIncarnation ?? 0) + 1,
+            processStartedAt: "2026-07-15T20:00:00.000Z",
+            status: "working",
+            lastEventAt: "2026-07-15T20:00:00.000Z",
+          });
+        }
+        return authorized;
+      },
+    });
+    h.db.insertAgent(agent({
+      status: "working",
+      toolSessionId: "0189-prelaunch-session",
+    }));
+
+    const outcomes = await h.recovery.sweep();
+
+    expect(outcomes).toEqual([{
+      agent: "maya",
+      action: "skipped",
+      reason:
+        "agent session/incarnation/authority changed before relaunch; predecessor recovery will not launch",
+    }]);
+    expect(h.tmux.created).toEqual([]);
+    expect(h.db.getAgentById("agent-maya")).toMatchObject({
+      processIncarnation: 2,
+      status: "working",
+    });
+  });
+
+  test("a replacement after readiness is not overwritten by predecessor recovery", async () => {
+    let db!: HiveDatabase;
+    let replaced = false;
+    const h = harness({
+      sleep: async () => {
+        if (replaced) return;
+        replaced = true;
+        const current = db.getAgentById("agent-maya")!;
+        db.upsertAgent({
+          ...current,
+          processIncarnation: (current.processIncarnation ?? 0) + 1,
+          processStartedAt: "2099-07-15T20:01:00.000Z",
+          status: "working",
+          lastEventAt: "2099-07-15T20:01:00.000Z",
+        });
+      },
+    });
+    db = h.db;
+    h.db.insertAgent(agent({
+      status: "working",
+      toolSessionId: "0189-post-ready-session",
+    }));
+
+    const outcomes = await h.recovery.sweep();
+
+    expect(outcomes).toEqual([{
+      agent: "maya",
+      action: "skipped",
+      reason:
+        "agent session/incarnation/authority changed after relaunch readiness; predecessor recovery will not persist state",
+    }]);
+    expect(h.tmux.created).toHaveLength(1);
+    expect(h.db.getAgentById("agent-maya")).toMatchObject({
+      processIncarnation: 2,
+      processStartedAt: "2099-07-15T20:01:00.000Z",
+      status: "working",
+    });
   });
 
   test("a resume resolves the daemon port after an ephemeral bind", async () => {

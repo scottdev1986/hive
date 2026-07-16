@@ -71,8 +71,9 @@ type RecoveryStore = Pick<
   | "getAgentByName"
   | "getAgentById"
   | "upsertAgent"
+  | "updateAgentIfCurrent"
   | "beginAgentProcess"
-  | "markAgentDead"
+  | "markAgentTerminalIfCurrent"
   | "isAgentNameReserved"
   | "getUndeliveredMessages"
   | "markMessageAlerted"
@@ -157,6 +158,25 @@ function tailLines(value: string, count: number): string {
 
 function boundedTask(task: string, limit = 500): string {
   return task.length <= limit ? task : `${task.slice(0, limit)}…`;
+}
+
+function sameRecoveryProcess(
+  expected: AgentRecord,
+  current: AgentRecord,
+): boolean {
+  return current.id === expected.id &&
+    (current.processIncarnation ?? 0) ===
+      (expected.processIncarnation ?? 0) &&
+    (current.processStartedAt ?? null) ===
+      (expected.processStartedAt ?? null) &&
+    current.capabilityEpoch === expected.capabilityEpoch &&
+    current.writeRevoked === expected.writeRevoked &&
+    current.readOnly === expected.readOnly &&
+    current.branch === expected.branch &&
+    (current.toolSessionId ?? null) === (expected.toolSessionId ?? null) &&
+    current.recoveryAttempts === expected.recoveryAttempts &&
+    (current.controlMessageId ?? null) ===
+      (expected.controlMessageId ?? null);
 }
 
 export class CrashRecovery {
@@ -460,6 +480,12 @@ export class CrashRecovery {
   ): AgentRecord | null {
     const current = this.deps.db.getAgentById(agent.id);
     if (current === null) return null;
+    if (
+      !sameRecoveryProcess(agent, current) || current.status !== agent.status ||
+      current.lastEventAt !== agent.lastEventAt
+    ) {
+      return null;
+    }
     // Never accept a concurrent terminal/closed row — including manual mode
     // once kill has marked the row after recovery started.
     if (current.closedAt !== undefined || isTerminalAgentStatus(current.status)) {
@@ -642,29 +668,32 @@ export class CrashRecovery {
       requireAuthorizedLaunch(revalidated);
       // Fresh terminal check immediately before launch — kill during awaited
       // config/policy work must not be resurrected.
-      if (this.currentIfRecoverable(record, options) === null) {
+      const launchCurrent = this.deps.db.updateAgentIfCurrent(
+        agentStateCas(record),
+        {},
+      );
+      if (launchCurrent === null) {
         return {
           agent: record.name,
           action: "skipped",
           reason:
-            "agent was deliberately closed before relaunch; recovery will not resurrect it",
+            "agent session/incarnation/authority changed before relaunch; predecessor recovery will not launch",
         };
       }
-      await this.deps.tmux.newSession(
+      record = launchCurrent;
+      const launch = this.deps.tmux.newSession(
         record.tmuxSession,
         worktreePath,
         command,
       );
+      await launch;
       const failure = await this.monitorResume(record);
       if (failure !== null) {
-        return await this.failResume(
-          this.deps.db.getAgentById(record.id) ?? record,
-          failure,
-        );
+        return await this.failResume(record, failure);
       }
     } catch (error) {
       return await this.failResume(
-        this.deps.db.getAgentById(record.id) ?? record,
+        record,
         error instanceof Error ? error.message : "unknown error",
       );
     }
@@ -672,25 +701,45 @@ export class CrashRecovery {
     // A freshly resumed TUI sits at its prompt with the conversation
     // restored: idle is the honest status until an event says otherwise.
     // Never spread a terminal row back to live after readiness awaits.
-    const afterReady = this.currentIfRecoverable(record, options);
-    if (afterReady === null) {
+    const afterReady = this.deps.db.getAgentById(record.id);
+    if (
+      afterReady === null || !sameRecoveryProcess(record, afterReady) ||
+      isTerminalAgentStatus(afterReady.status) || afterReady.writeRevoked ||
+      afterReady.status === "control-paused"
+    ) {
       return {
         agent: record.name,
         action: "skipped",
         reason:
-          "agent was deliberately closed after relaunch readiness; recovery will not mark it idle",
+          "agent session/incarnation/authority changed after relaunch readiness; predecessor recovery will not persist state",
       };
     }
-    record = this.deps.db.upsertAgent({
-      ...afterReady,
-      status: "idle",
-      lastEventAt: new Date().toISOString(),
-      // Still unattested until the new process's own rollout is observed.
-      identityState: undefined,
-      observedIdentity: undefined,
-      liveModel: undefined,
-      liveEffort: undefined,
-    });
+    if (afterReady.status === "spawning") {
+      const idle = this.deps.db.updateAgentIfCurrent(agentStateCas(afterReady), {
+        status: "idle",
+        lastEventAt: new Date().toISOString(),
+      });
+      if (idle === null) {
+        const fresh = this.deps.db.getAgentById(record.id);
+        if (
+          fresh === null || !sameRecoveryProcess(record, fresh) ||
+          isTerminalAgentStatus(fresh.status) || fresh.writeRevoked ||
+          fresh.status === "control-paused"
+        ) {
+          return {
+            agent: record.name,
+            action: "skipped",
+            reason:
+              "agent state changed during the final recovery CAS; predecessor recovery did not overwrite it",
+          };
+        }
+        record = fresh;
+      } else {
+        record = idle;
+      }
+    } else {
+      record = afterReady;
+    }
 
     await this.deps.send(
       "hive-recovery",
@@ -719,7 +768,32 @@ export class CrashRecovery {
     // Durably revoke terminal authority BEFORE process teardown so a crash
     // mid-teardown cannot leave a live credential.
     const now = new Date().toISOString();
-    this.deps.db.markAgentDead(agent.id, now, reason);
+    const current = this.deps.db.getAgentById(agent.id);
+    if (
+      current === null || !sameRecoveryProcess(agent, current) ||
+      isTerminalAgentStatus(current.status) || current.writeRevoked ||
+      current.status === "control-paused"
+    ) {
+      return {
+        agent: agent.name,
+        action: "skipped",
+        reason:
+          `${reason}; predecessor failure lost to a newer process/control state`,
+      };
+    }
+    const terminal = this.deps.db.markAgentTerminalIfCurrent(
+      agentStateCas(current),
+      now,
+      "dead",
+      { failureReason: reason },
+    );
+    if (terminal === null) {
+      return {
+        agent: agent.name,
+        action: "skipped",
+        reason: `${reason}; final terminal CAS lost to a newer state`,
+      };
+    }
     this.deps.revokeCapabilities?.(agent.name);
     if (this.deps.stopSession === undefined) {
       return this.preserveUnverifiedRecovery(
@@ -790,14 +864,22 @@ export class CrashRecovery {
     reason: string,
   ): Promise<RecoveryOutcome> {
     const now = new Date().toISOString();
-    const current = this.deps.db.getAgentById(agent.id) ?? agent;
-    this.deps.db.upsertAgent({
-      ...current,
+    const current = this.deps.db.getAgentById(agent.id);
+    if (
+      current === null || isTerminalAgentStatus(current.status) ||
+      !sameRecoveryProcess(agent, current)
+    ) {
+      return { agent: agent.name, action: "skipped", reason };
+    }
+    const preserved = this.deps.db.updateAgentIfCurrent(agentStateCas(current), {
       status: "stuck",
       writeRevoked: true,
       failureReason: reason,
       lastEventAt: now,
     });
+    if (preserved === null) {
+      return { agent: agent.name, action: "skipped", reason };
+    }
     this.deps.revokeCapabilities?.(agent.name);
     this.denyPendingApprovals(agent.name);
     await this.deps.send(
@@ -839,11 +921,43 @@ export class CrashRecovery {
     reason: string,
   ): Promise<RecoveryOutcome> {
     const now = new Date().toISOString();
-    this.deps.db.markAgentDead(
-      agent.id,
-      now,
-      reason,
-    );
+    const current = this.deps.db.getAgentById(agent.id);
+    if (current === null) {
+      return { agent: agent.name, action: "skipped", reason };
+    }
+    if (!isTerminalAgentStatus(current.status)) {
+      if (
+        current.status !== agent.status || current.lastEventAt !== agent.lastEventAt ||
+        !sameRecoveryProcess(agent, current)
+      ) {
+        return {
+          agent: agent.name,
+          action: "skipped",
+          reason: `${reason}; predecessor state changed before terminal CAS`,
+        };
+      }
+      const terminal = this.deps.db.markAgentTerminalIfCurrent(
+        agentStateCas(current),
+        now,
+        "dead",
+        { failureReason: reason },
+      );
+      if (terminal === null) {
+        return {
+          agent: agent.name,
+          action: "skipped",
+          reason: `${reason}; final terminal CAS lost to a newer state`,
+        };
+      }
+    } else {
+      return current.status === agent.status && sameRecoveryProcess(agent, current)
+        ? { agent: agent.name, action: "marked-dead", reason }
+        : {
+          agent: agent.name,
+          action: "skipped",
+          reason: `${reason}; terminal holder changed before recovery bookkeeping`,
+        };
+    }
     this.deps.revokeCapabilities?.(agent.name);
     await this.deps.settleQuota(agent);
     this.denyPendingApprovals(agent.name);

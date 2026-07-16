@@ -1406,6 +1406,70 @@ export class HiveDatabase {
     });
   }
 
+  /** Terminalize only the exact live process holder observed by an async
+   * operation. A predecessor's late failure must never close or revoke a
+   * replacement incarnation that reused the same durable agent id. */
+  markAgentTerminalIfCurrent(
+    expected: AgentStateCas,
+    timestamp: string,
+    status: "dead" | "failed" | "done",
+    options: { failureReason?: string; failedAt?: string } = {},
+  ): AgentRecord | null {
+    if (isTerminalAgentStatus(expected.status)) return null;
+    return this.transaction(() => {
+      const current = this.getAgentById(expected.id);
+      if (
+        current === null || isTerminalAgentStatus(current.status) ||
+        JSON.stringify(agentStateCas(current)) !== JSON.stringify(expected)
+      ) {
+        return null;
+      }
+      const failureReason = options.failureReason ?? current.failureReason;
+      const failedAt = options.failedAt ??
+        (status === "failed" ? timestamp : current.failedAt);
+      const changed = this.database.query(`
+        UPDATE agents SET
+          status = ?, writeRevoked = 1,
+          capabilityEpoch = capabilityEpoch + 1,
+          failureReason = ?, failedAt = ?, lastEventAt = ?, closedAt = ?,
+          pauseCapture = NULL, controlMessageId = NULL
+        WHERE id = ? AND processIncarnation = ? AND processStartedAt IS ?
+          AND capabilityEpoch = ? AND status = ? AND writeRevoked = ?
+          AND readOnly = ? AND branch IS ? AND toolSessionId IS ?
+          AND controlMessageId IS ? AND pauseCapture IS ? AND lastEventAt = ?
+          AND status NOT IN ('done', 'dead', 'failed')
+      `).run(
+        status,
+        failureReason ?? null,
+        failedAt ?? null,
+        timestamp,
+        current.closedAt ?? timestamp,
+        expected.id,
+        expected.processIncarnation,
+        expected.processStartedAt,
+        expected.capabilityEpoch,
+        expected.status,
+        expected.writeRevoked ? 1 : 0,
+        expected.readOnly ? 1 : 0,
+        expected.branch,
+        expected.toolSessionId,
+        expected.controlMessageId,
+        expected.pauseCapture,
+        expected.lastEventAt,
+      );
+      if (changed.changes !== 1) return null;
+      this.database.query(`
+        UPDATE capabilities SET revokedAt = ?
+        WHERE subject = ? AND revokedAt IS NULL
+      `).run(timestamp, current.name);
+      this.database.query(`
+        UPDATE approvals SET status = 'denied', resolvedAt = ?
+        WHERE agentName = ? AND status = 'pending'
+      `).run(timestamp, current.name);
+      return this.getAgentById(expected.id);
+    });
+  }
+
   markAgentDead(
     agentId: string,
     timestamp: string,

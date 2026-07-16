@@ -20,7 +20,13 @@ import {
   accountBillingFromCodexRateLimits,
   type AccountBilling,
 } from "../daemon/usage-credits";
-import type { Approval, RouteAudit } from "../daemon/db";
+import {
+  agentStateCas,
+  type AgentStateCas,
+  type Approval,
+  type ConditionalAgentUpdate,
+  type RouteAudit,
+} from "../daemon/db";
 import { CODEX_WRITER_CONTAINMENT_REASON } from "../daemon/codex-containment";
 import {
   QuotaConfigSchema,
@@ -397,6 +403,41 @@ class FakeStore {
     return record;
   }
 
+  updateAgentIfCurrent(
+    expected: AgentStateCas,
+    updates: ConditionalAgentUpdate,
+  ): AgentRecord | null {
+    const current = this.getAgentById(expected.id);
+    if (
+      current === null ||
+      JSON.stringify(agentStateCas(current)) !== JSON.stringify(expected)
+    ) {
+      return null;
+    }
+    return this.insertAgent({ ...current, ...updates });
+  }
+
+  beginAgentProcess(
+    expected: AgentStateCas,
+    startedAt: string,
+    sessionId: string | null,
+    recoveryAttempts: number,
+    options: { status: Exclude<AgentRecord["status"], "done" | "dead" | "failed"> },
+  ): AgentRecord | null {
+    return this.updateAgentIfCurrent(expected, {
+      status: options.status,
+      toolSessionId: sessionId ?? undefined,
+      processIncarnation: expected.processIncarnation + 1,
+      processStartedAt: startedAt,
+      recoveryAttempts,
+      lastEventAt: startedAt,
+      identityState: undefined,
+      observedIdentity: undefined,
+      liveModel: undefined,
+      liveEffort: undefined,
+    });
+  }
+
   markAgentTerminal(
     agentId: string,
     timestamp: string,
@@ -418,6 +459,22 @@ class FakeStore {
       pauseCapture: undefined,
       controlMessageId: undefined,
     });
+  }
+
+  markAgentTerminalIfCurrent(
+    expected: AgentStateCas,
+    timestamp: string,
+    status: "dead" | "failed" | "done",
+    options: { failureReason?: string; failedAt?: string } = {},
+  ): AgentRecord | null {
+    const current = this.getAgentById(expected.id);
+    if (
+      current === null ||
+      JSON.stringify(agentStateCas(current)) !== JSON.stringify(expected)
+    ) {
+      return null;
+    }
+    return this.markAgentTerminal(current.id, timestamp, status, options);
   }
 
 }
@@ -617,6 +674,10 @@ describe("HiveSpawner name pool", () => {
       expect(command).toContain(model);
       expect(command).toContain("high");
       const restarted = store.getAgentById(controlled.id)!;
+      expect(restarted.processIncarnation).toBe(
+        (controlled.processIncarnation ?? 0) + 1,
+      );
+      expect(restarted.processStartedAt).toBeString();
       expect(restarted.controlQuotaReservationId).toBeString();
       expect(
         controlQuota.quota.ledger.getReservation(
@@ -1319,6 +1380,10 @@ describe("HiveSpawner wiring", () => {
     expect(await deliveredPrompt(tmux.sessions[1]?.[2] ?? "")).toContain(
       "Fallback task",
     );
+    expect(store.listAgents()[0]).toMatchObject({
+      processIncarnation: 2,
+      status: "working",
+    });
   });
 
   test("does not launch a TUI fallback when the app-server stop is unverified", async () => {

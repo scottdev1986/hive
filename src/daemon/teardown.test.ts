@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import {
   captureProcessTree,
   reapCapturedTree,
@@ -10,6 +13,7 @@ import {
 } from "./teardown";
 import { parseProcessTable, runPs } from "./resources";
 import type { AgentRecord } from "../schemas";
+import { codexAgentHostPidfile } from "../adapters/tools/codex-app-server";
 
 /** capture + reap, the way every caller uses them when nothing reparents. */
 const reapProcessTree = async (
@@ -427,6 +431,66 @@ describe("pause capture birth binding (N5)", () => {
       role: "app-server-host",
       birth: "Mon Jul 13 10:00:02 2026",
     });
+  });
+
+  test("production manager pidfile binds the app-server host into pause capture", async () => {
+    const { suspendAgentForPause } = await import("./teardown");
+    const root = mkdtempSync(join(tmpdir(), "hive-pause-pidfile-"));
+    const previousHiveHome = Bun.env.HIVE_HOME;
+    Bun.env.HIVE_HOME = root;
+    const agent = {
+      id: "agent-maya",
+      name: "maya",
+      tool: "codex",
+      model: "gpt-test",
+      category: "simple_coding",
+      status: "working",
+      taskDescription: "test",
+      worktreePath: "/tmp/maya",
+      branch: "hive/maya-test",
+      tmuxSession: "hive-maya",
+      contextPct: null,
+      createdAt: "2026-07-15T20:00:00.000Z",
+      lastEventAt: "2026-07-15T20:00:00.000Z",
+      recoveryAttempts: 0,
+      capabilityEpoch: 0,
+      processIncarnation: 4,
+      processStartedAt: "2026-07-15T20:00:00.000Z",
+      readOnly: true,
+      writeRevoked: false,
+    } satisfies AgentRecord;
+    const { dependencies } = pauseWorld([
+      { pid: 100, ppid: 1, command: "-zsh", birth: "birth-PANE" },
+      { pid: 900, ppid: 1, command: "codex app-server", birth: "birth-HOST" },
+    ]);
+    try {
+      const pidfile = codexAgentHostPidfile(agent);
+      mkdirSync(dirname(pidfile), { recursive: true });
+      writeFileSync(pidfile, "900\n", { mode: 0o600 });
+
+      const paused = await suspendAgentForPause(agent, {
+        tmux: {
+          hasSession: async () => true,
+          listPanePids: async () => [100],
+          killSession: async () => undefined,
+        },
+        reap: dependencies,
+        selfPid: 1,
+        requireAppServerHost: true,
+      });
+
+      expect(paused.capture).toMatchObject({
+        hostPid: 900,
+        processIncarnation: 4,
+      });
+      expect(paused.capture.tree.find((entry) => entry.pid === 900))
+        .toMatchObject({ role: "app-server-host", birth: "birth-HOST" });
+      expect(paused.outcome.unstopped).toEqual([]);
+    } finally {
+      if (previousHiveHome === undefined) delete Bun.env.HIVE_HOME;
+      else Bun.env.HIVE_HOME = previousHiveHome;
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   test("validatePauseCapture fails on PID reuse (birth mismatch)", async () => {
