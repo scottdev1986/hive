@@ -23,15 +23,19 @@ Owners use the component names from terminal-stack-transition §04:
 | Caller | Current operations | Postconditions represented below |
 | --- | --- | --- |
 | `src/adapters/tmux.ts:83–329` | The sole TypeScript tmux subprocess runner and adapter: `has-session`, `new-session`, options/history, buffered paste, interrupt keys, capture, clients, pane PIDs, kill, list | All `TST.TERM.LEGACY.TMUX.*` adapter rows |
+| `src/daemon/tmux-sessions.ts:8–55` | Derives the per-`HIVE_HOME` socket and suffixed root/agent session names, validates instance ownership, and recognizes default-home legacy names | `INSTANCE_SCOPE` |
 | `src/daemon/delivery.ts:197–205` | Sends normal and interrupting control text through the adapter | `LITERAL_INPUT`, `INTERRUPT_INPUT` |
+| `src/daemon/orchestrator-root-delivery.ts:24–32` | Pastes and submits root protocol messages through the instance-scoped terminal sender while delivery holds the composer lease and session lock | `LITERAL_INPUT` |
 | `src/daemon/spawner-impl.ts:1059,1111,1213–1240,2089,2206–2207` | Creates/replaces provider sessions; readiness capture; pane-root/resource discovery | `SESSION_CREATE`, `LAUNCH_FAILURE_EVIDENCE`, `SESSION_DISCOVERY`, `CAPTURE_VISIBLE`, `PROCESS_ROOT_DISCOVERY` |
 | `src/daemon/recovery.ts:231,305,341,539,626–637` | Proves old session presence, recreates when allowed, and captures bounded recovery diagnostics | `SESSION_DISCOVERY`, `SESSION_CREATE`, `CAPTURE_VISIBLE`, `REATTACH_RECOVERY` |
 | `src/daemon/readiness.ts:271–294` | Uses injected session-existence and capture operations during provider readiness | `SESSION_DISCOVERY`, `LAUNCH_FAILURE_EVIDENCE`, `CAPTURE_VISIBLE` |
 | `src/daemon/teardown.ts:198–234` | Captures pane roots before kill, kills the session, then verifies it is absent | `PROCESS_ROOT_DISCOVERY`, `TERMINATE_READBACK` |
 | `src/daemon/server.ts:682,759,775,784–787,3438` | Liveness/status probing, process-root attribution, kill wiring, and lifecycle guards | `SESSION_DISCOVERY`, `PROCESS_ROOT_DISCOVERY`, `TERMINATE_READBACK` |
+| `src/daemon/resources.ts:1–29,203–240` | Attributes process trees and resource-watchdog decisions to pane roots supplied for each tmux-backed session | `PROCESS_ROOT_DISCOVERY` |
 | `src/cli/control.ts:58–84` | Enumerates instance sessions, captures roots, kills, and verifies the remaining set during stop | `SESSION_ENUMERATION`, `PROCESS_ROOT_DISCOVERY`, `TERMINATE_READBACK` |
 | `src/cli/orchestrator.ts:131–145,343–396` | Refuses to replace an attached root session, removes an unattached stale one, and directly builds provider-specific `tmux new-session` commands | `CLIENT_TTY_DISCOVERY`, `TERMINATE_READBACK`, `ORCHESTRATOR_LAUNCH` |
 | `src/cli/daemon.ts:126,195` | Wires one instance-scoped adapter into daemon lifecycle and delivery | `INSTANCE_SCOPE`, `LITERAL_INPUT`, `INTERRUPT_INPUT` |
+| `src/cli/workspace.ts:151–155` | Passes the exact orchestrator session and instance-scoped tmux socket into the native Workspace launch | `WORKSPACE_ATTACH`, `ORCHESTRATOR_LAUNCH` |
 | `workspace/Sources/HiveWorkspace/ProjectWindowController.swift:300–310` | Polls the exact agent target and starts a tmux attach client; the root path starts the Workspace orchestrator, which creates its own tmux session | `WORKSPACE_ATTACH`, `ORCHESTRATOR_LAUNCH`, `REATTACH_RECOVERY` |
 | `workspace/Sources/HiveWorkspace/TerminalPaneView.swift:25–100` | Direct tmux copy-mode/scroll subprocesses, coalesced on a serial queue | `SCROLL_ROUTING` |
 | `workspace/Sources/HiveWorkspace/SmokeRunner.swift:62–68` and `workspace/scripts/smoke.sh:31–119` | Real-substrate verification creates, attaches, inspects, captures, and kills tmux sessions | Evidence for `SESSION_CREATE`, `WORKSPACE_ATTACH`, `DETACH_WITHOUT_KILL`, `SCROLL_ROUTING`, `LITERAL_INPUT`, and `TERMINATE_READBACK`; it is a harness, not a production owner |
@@ -40,7 +44,7 @@ Owners use the component names from terminal-stack-transition §04:
 
 | Current postcondition and source evidence | New owner | Conformance-test ID |
 | --- | --- | --- |
-| Only syntactically valid sessions in Hive's instance-scoped socket namespace are targeted; foreign-instance targets are rejected (`tmux.ts:27–35,107–148`). | SessionHost defines exact locators; Hive daemon authorizes the instance/subject/generation. | `TST.TERM.LEGACY.TMUX.INSTANCE_SCOPE` |
+| Only syntactically valid sessions in Hive's instance-scoped socket namespace are targeted; foreign-instance targets are rejected (`tmux.ts:27–35,107–148`). Legacy compatibility deliberately treats unsuffixed `hive-*` sessions as belonging to this instance only for the default `HIVE_HOME` (`tmux-sessions.ts:44–55`, `isLegacyHiveSession`). | SessionHost defines exact locators; Hive daemon authorizes the instance/subject/generation. | `TST.TERM.LEGACY.TMUX.INSTANCE_SCOPE` |
 | Existence can be distinguished from absence; “no server” is absence, while unrelated command errors are not rounded down (`tmux.ts:55–62,129–152`). | SessionHost contract; sessiond broker/host registry. | `TST.TERM.LEGACY.TMUX.SESSION_DISCOVERY` |
 | A provider session is created detached, in the requested working directory, with the requested command, mouse enabled, bounded history, and positive post-create readback (`tmux.ts:155–187`). | SessionHost create contract; sessiond host and Provider adapter launch contract. | `TST.TERM.LEGACY.TMUX.SESSION_CREATE` |
 | A nonzero provider exit remains visible briefly so readiness can capture the real failure rather than report only disappearance (`tmux.ts:43–74`; `readiness.ts:271–294`). | Provider adapters emit structured readiness/exit evidence; Hive daemon retains it. | `TST.TERM.LEGACY.TMUX.LAUNCH_FAILURE_EVIDENCE` |

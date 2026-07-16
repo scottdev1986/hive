@@ -4,6 +4,12 @@
   "status": "frozen-before-implementation",
   "source": "docs/design/terminal-stack-transition.html",
   "stabilityRule": "IDs are immutable once published. Change a title or proof in place; add a new ID for a distinct obligation; never reuse or renumber a retired ID.",
+  "ownerVocabulary": {
+    "default": "Values in owners name target-architecture components from §04.",
+    "exceptions": {
+      "Native supply chain": "WP1 · Native supply chain from §28; §04 defines no build or release owner."
+    }
+  },
   "tests": [
     {
       "id": "TST.TERM.INV.I01",
@@ -108,7 +114,7 @@
       "requirement": "TG3",
       "title": "Renderer resource budget",
       "owners": ["HiveTerminalKit", "sessiond service"],
-      "proof": "Measure the current supported attached-pane profile and 19 visible hosts on supported Intel and Apple Silicon against every §28 CPU, memory, GPU, latency, and disk budget."
+      "proof": "Measure the current supported attached-pane profile and 19 visible hosts on supported Intel and Apple Silicon against every §28 CPU, memory, GPU, latency, and disk budget. The future one-selected-plus-two-warm profile is measured and recorded separately as nonblocking Split Horizon input."
     },
     {
       "id": "TST.TERM.GATE.TG04",
@@ -197,7 +203,7 @@
       "requirement": "SLO-07",
       "title": "Attached renderer memory budget",
       "owners": ["HiveTerminalKit", "sessiond service"],
-      "proof": "Measure the current attached-pane profile on representative TUIs, screens, images, and scrollback; total terminal infrastructure for 19 sessions must be at most 1.5 GiB with per-session caps."
+      "proof": "Measure the current attached-pane profile on representative TUIs, screens, images, and scrollback; total terminal infrastructure for 19 sessions must be at most 1.5 GiB with per-session caps. The future one-selected-plus-two-warm profile is measured and recorded separately as nonblocking Split Horizon input."
     },
     {
       "id": "TST.TERM.SLO.08",
