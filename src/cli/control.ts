@@ -64,6 +64,11 @@ function compatibilityStopAdapter(
   return {
     async listSessions(): Promise<string[]> {
       const result = await sessions.listDetailed(instanceId);
+      if (!result.complete && result.legacyUnbound.length === 0) {
+        throw new Error(
+          `tmux session enumeration is incomplete: ${result.diagnosticIds.join(", ")}`,
+        );
+      }
       const unknown = result.inspections.find((entry) => entry.presence === "unknown");
       if (unknown !== undefined) {
         throw new Error("tmux session enumeration is unknown");

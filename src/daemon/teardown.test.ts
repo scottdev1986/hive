@@ -7,6 +7,10 @@ import {
 } from "./teardown";
 import { parseProcessTable, runPs } from "./resources";
 import type { AgentRecord } from "../schemas";
+import {
+  mintAgentTmuxSessionLocator,
+  TmuxSessionHost,
+} from "./session-host/tmux-host";
 
 /** capture + reap, the way every caller uses them when nothing reparents. */
 const reapProcessTree = async (
@@ -240,6 +244,7 @@ describe("reapProcessTree", () => {
       worktreePath: "/tmp/maya",
       branch: "hive/maya-test",
       tmuxSession: "hive-maya",
+      sessionLocator: mintAgentTmuxSessionLocator("agent-maya"),
       contextPct: null,
       createdAt: "2026-07-13T00:00:00.000Z",
       lastEventAt: "2026-07-13T00:00:00.000Z",
@@ -252,15 +257,24 @@ describe("reapProcessTree", () => {
       expect(() => process.kill(host.pid, 0)).not.toThrow();
       expect(() => process.kill(unrelated.pid, 0)).not.toThrow();
 
-      const outcome = await stopAgentSession(record, {
-        tmux: {
+      const sessions = new TmuxSessionHost({
+        adapter: {
           hasSession: async () => false,
-          listPanePids: async () => {
-            throw new Error("pane lookup must not run for a missing session");
+          newSession: async () => {
+            throw new Error("session creation must not run during teardown");
+          },
+          capturePane: async () => {
+            throw new Error("pane capture must not run during teardown");
           },
           killSession: async (session) => {
             killedSessions.push(session);
           },
+        },
+      });
+      const outcome = await stopAgentSession(record, {
+        sessions,
+        sessionRoots: async () => {
+          throw new Error("pane lookup must not run for a missing session");
         },
         readHostPid: async () => host.pid,
       });

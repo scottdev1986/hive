@@ -139,7 +139,6 @@ import {
   stopTmuxSession,
   type ReapDependencies,
   type ReapOutcome,
-  type SessionStopAdapter,
 } from "./teardown";
 import {
   assessResources,
@@ -791,17 +790,6 @@ export class HiveDaemon {
       : options.resourceRunners.orphans;
     this.reapDependencies = options.resourceRunners?.reap ??
       defaultReapDependencies();
-    const teardownTmux: SessionStopAdapter = {
-      hasSession: async (session) => {
-        const inspection = await this.tmux.inspectLegacyTmuxSession(session);
-        if (inspection.presence === "unknown") {
-          throw new Error(`tmux session ${session} presence is unknown`);
-        }
-        return inspection.presence === "present";
-      },
-      listPanePids: (session) => this.panePids(session),
-      killSession: (session) => this.tmux.terminateLegacyTmuxSession(session),
-    };
     this.stopAgentProcesses = (agent, beforeKill) =>
       stopAgentSession(
         agent,
@@ -814,8 +802,9 @@ export class HiveDaemon {
       );
     this.stopTmuxProcesses = (session) =>
       stopTmuxSession(session, {
-        tmux: teardownTmux,
+        sessions: this.tmux,
         reap: this.reapDependencies,
+        legacySessionRoots: (tmuxSession) => this.panePids(tmuxSession),
       });
     this.repoRoot = options.repoRoot ?? process.cwd();
     this.readClaudeTelemetry = options.telemetryReaders?.claude ??

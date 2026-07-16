@@ -126,6 +126,12 @@ describe("TmuxSessionHost", () => {
     const receipt = await host.writeAutomated(locator, input);
     expect(receipt.state).toBe("written");
     expect(await host.writeAutomated(locator, input)).toBe(receipt);
+    const changedBytes = new TextEncoder().encode("different message");
+    await expect(host.writeAutomated(locator, {
+      ...input,
+      bytes: changedBytes,
+      sha256: createHash("sha256").update(changedBytes).digest("hex"),
+    })).rejects.toThrow("idempotency key was reused");
     expect(calls.filter((call) => call.args[0] === "load-buffer")).toHaveLength(1);
 
     await host.resize(locator, { ...geometry, columns: 100 });
@@ -181,6 +187,7 @@ describe("TmuxSessionHost", () => {
         diagnosticIds: ["TMUX_LEGACY_UNBOUND"],
       })],
       complete: false,
+      diagnosticIds: ["TMUX_LEGACY_UNBOUND"],
     });
     expect(host.list("another-instance")).rejects.toBeInstanceOf(
       LegacyUnboundTmuxSessionsError,

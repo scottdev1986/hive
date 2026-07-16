@@ -83,6 +83,7 @@ export type TmuxListResult = Readonly<{
   inspections: readonly SessionInspection[];
   legacyUnbound: readonly LegacyUnboundTmuxSession[];
   complete: boolean;
+  diagnosticIds: readonly string[];
 }>;
 
 export class LegacyUnboundTmuxSessionsError extends Error {
@@ -91,6 +92,15 @@ export class LegacyUnboundTmuxSessionsError extends Error {
       `tmux contains ${sessions.length} legacy session(s) without persisted SessionLocator bindings`,
     );
     this.name = "LegacyUnboundTmuxSessionsError";
+  }
+}
+
+export class IncompleteTmuxSessionListError extends Error {
+  constructor(readonly result: TmuxListResult) {
+    super(
+      `tmux session enumeration is incomplete: ${result.diagnosticIds.join(", ")}`,
+    );
+    this.name = "IncompleteTmuxSessionListError";
   }
 }
 
@@ -132,7 +142,13 @@ export class TmuxSessionHost implements SessionHost {
   private readonly now: () => Date;
   private readonly reap?: ReapDependencies;
   private readonly bindings = new Map<string, Binding>();
-  private readonly receipts = new Map<string, InputReceipt>();
+  private readonly receipts = new Map<string, Readonly<{
+    transactionId: string;
+    messageId: string;
+    sha256: string;
+    receipt: InputReceipt;
+  }>>();
+  private readonly inputLanes = new Map<string, Promise<void>>();
   private readonly events: SessionEvent[] = [];
   private readonly subscribers = new Set<(event: SessionEvent) => void>();
   private eventSeq = 0n;
@@ -292,7 +308,9 @@ export class TmuxSessionHost implements SessionHost {
   async list(instanceId: string): Promise<readonly SessionInspection[]> {
     const result = await this.listDetailed(instanceId);
     if (!result.complete) {
-      throw new LegacyUnboundTmuxSessionsError(result.legacyUnbound);
+      throw result.legacyUnbound.length > 0
+        ? new LegacyUnboundTmuxSessionsError(result.legacyUnbound)
+        : new IncompleteTmuxSessionListError(result);
     }
     return result.inspections;
   }
@@ -301,11 +319,21 @@ export class TmuxSessionHost implements SessionHost {
     let sessions: readonly string[];
     try {
       if (this.adapter.listSessions === undefined) {
-        return { inspections: [], legacyUnbound: [], complete: false };
+        return {
+          inspections: [],
+          legacyUnbound: [],
+          complete: false,
+          diagnosticIds: ["TMUX_ENUMERATION_UNAVAILABLE"],
+        };
       }
       sessions = await this.adapter.listSessions();
     } catch {
-      return { inspections: [], legacyUnbound: [], complete: false };
+      return {
+        inspections: [],
+        legacyUnbound: [],
+        complete: false,
+        diagnosticIds: ["TMUX_ENUMERATION_UNKNOWN"],
+      };
     }
     const live = new Set(sessions);
     const boundNames = new Set<string>();
@@ -325,10 +353,17 @@ export class TmuxSessionHost implements SessionHost {
         evidenceAt: this.now().toISOString(),
         diagnosticIds: ["TMUX_LEGACY_UNBOUND"],
       }));
+    const entryUnknown = inspections.some((entry) =>
+      entry.presence === "unknown"
+    );
     return {
       inspections,
       legacyUnbound,
-      complete: legacyUnbound.length === 0,
+      complete: legacyUnbound.length === 0 && !entryUnknown,
+      diagnosticIds: [
+        ...(legacyUnbound.length === 0 ? [] : ["TMUX_LEGACY_UNBOUND"]),
+        ...(entryUnknown ? ["TMUX_ENTRY_UNKNOWN"] : []),
+      ],
     };
   }
 
@@ -336,6 +371,15 @@ export class TmuxSessionHost implements SessionHost {
     locator: SessionLocator,
     request: CaptureRequest,
   ): Promise<CaptureResult> {
+    if (!Number.isSafeInteger(request.maxRows) || request.maxRows < 1) {
+      throw new Error("Capture maxRows must be a positive safe integer");
+    }
+    if (
+      request.expectedOutputSeq !== undefined &&
+      request.expectedOutputSeq !== "0"
+    ) {
+      throw new Error("tmux cannot satisfy the requested output sequence");
+    }
     const binding = this.binding(locator);
     if (binding.retired) {
       throw new Error("Cannot capture a retired SessionLocator generation");
@@ -487,57 +531,75 @@ export class TmuxSessionHost implements SessionHost {
     locator: SessionLocator,
     input: AutomatedInput,
   ): Promise<InputReceipt> {
-    const prior = this.receipts.get(input.idempotencyKey);
-    if (prior !== undefined) return prior;
-    const binding = this.binding(locator);
-    if (binding.retired) {
-      throw new Error("Cannot write to a retired SessionLocator generation");
-    }
-    if (input.recipientGeneration !== locator.generation) {
-      throw new Error("Automated input recipient generation is stale");
-    }
-    if (input.capabilityEpoch !== binding.capabilityEpoch) {
-      throw new Error("Automated input capability epoch is stale");
-    }
-    const actualSha = createHash("sha256").update(input.bytes).digest("hex");
-    if (actualSha !== input.sha256) {
-      throw new Error("Automated input sha256 does not match bytes");
-    }
-    let receipt: InputReceipt;
-    try {
-      if (this.adapter.sendBytes === undefined) {
-        throw new Error("tmux engine cannot inject bytes");
+    return await this.withInputLane(locator, async () => {
+      const receiptKey = `${locatorKey(locator)}\0${input.idempotencyKey}`;
+      const prior = this.receipts.get(receiptKey);
+      if (prior !== undefined) {
+        if (
+          prior.transactionId !== input.transactionId ||
+          prior.messageId !== input.messageId || prior.sha256 !== input.sha256
+        ) {
+          throw new Error(
+            "Automated input idempotency key was reused with different content",
+          );
+        }
+        return prior.receipt;
       }
-      await this.adapter.sendBytes(binding.tmuxSession, input.bytes, {
-        interrupt: input.providerStrategy.includes("interrupt"),
-        submit: input.submit,
+      const binding = this.binding(locator);
+      if (binding.retired) {
+        throw new Error("Cannot write to a retired SessionLocator generation");
+      }
+      if (input.recipientGeneration !== locator.generation) {
+        throw new Error("Automated input recipient generation is stale");
+      }
+      if (input.capabilityEpoch !== binding.capabilityEpoch) {
+        throw new Error("Automated input capability epoch is stale");
+      }
+      const actualSha = createHash("sha256").update(input.bytes).digest("hex");
+      if (actualSha !== input.sha256) {
+        throw new Error("Automated input sha256 does not match bytes");
+      }
+      let receipt: InputReceipt;
+      try {
+        if (this.adapter.sendBytes === undefined) {
+          throw new Error("tmux engine cannot inject bytes");
+        }
+        await this.adapter.sendBytes(binding.tmuxSession, input.bytes, {
+          interrupt: input.providerStrategy.includes("interrupt"),
+          submit: input.submit,
+        });
+        receipt = {
+          transactionId: input.transactionId,
+          messageId: input.messageId,
+          state: "written",
+          byteRange: null,
+          providerObservation: "unavailable",
+          evidenceAt: this.now().toISOString(),
+          diagnosticId: "TMUX_PROVIDER_RECEIPT_UNAVAILABLE",
+        };
+        this.emit(locator, "input-written", {
+          transactionId: input.transactionId,
+          messageId: input.messageId,
+        });
+      } catch {
+        receipt = {
+          transactionId: input.transactionId,
+          messageId: input.messageId,
+          state: "in-doubt",
+          byteRange: null,
+          providerObservation: "unavailable",
+          evidenceAt: this.now().toISOString(),
+          diagnosticId: "TMUX_INPUT_IN_DOUBT",
+        };
+      }
+      this.receipts.set(receiptKey, {
+        transactionId: input.transactionId,
+        messageId: input.messageId,
+        sha256: input.sha256,
+        receipt,
       });
-      receipt = {
-        transactionId: input.transactionId,
-        messageId: input.messageId,
-        state: "written",
-        byteRange: null,
-        providerObservation: "unavailable",
-        evidenceAt: this.now().toISOString(),
-        diagnosticId: "TMUX_PROVIDER_RECEIPT_UNAVAILABLE",
-      };
-      this.emit(locator, "input-written", {
-        transactionId: input.transactionId,
-        messageId: input.messageId,
-      });
-    } catch {
-      receipt = {
-        transactionId: input.transactionId,
-        messageId: input.messageId,
-        state: "in-doubt",
-        byteRange: null,
-        providerObservation: "unavailable",
-        evidenceAt: this.now().toISOString(),
-        diagnosticId: "TMUX_INPUT_IN_DOUBT",
-      };
-    }
-    this.receipts.set(input.idempotencyKey, receipt);
-    return receipt;
+      return receipt;
+    });
   }
 
   async terminate(
@@ -744,6 +806,10 @@ export class TmuxSessionHost implements SessionHost {
 
   async *subscribe(afterEventSeq: string): AsyncIterable<SessionEvent> {
     const cursor = parseSequence(afterEventSeq);
+    const first = this.events[0];
+    if (first !== undefined && cursor + 1n < BigInt(first.eventSeq)) {
+      throw new Error("SNAPSHOT_REQUIRED");
+    }
     for (const event of this.events) {
       if (BigInt(event.eventSeq) > cursor) yield event;
     }
@@ -765,6 +831,27 @@ export class TmuxSessionHost implements SessionHost {
       throw new Error("SessionLocator has no exact tmux compatibility binding");
     }
     return binding;
+  }
+
+  private async withInputLane<T>(
+    locator: SessionLocator,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    const key = locatorKey(locator);
+    const previous = this.inputLanes.get(key) ?? Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const tail = previous.then(() => current);
+    this.inputLanes.set(key, tail);
+    await previous;
+    try {
+      return await operation();
+    } finally {
+      release();
+      if (this.inputLanes.get(key) === tail) this.inputLanes.delete(key);
+    }
   }
 
   private inspection(

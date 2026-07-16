@@ -22,6 +22,7 @@ import type { AgentRecord } from "../schemas";
 import {
   bindAgentSession,
   TmuxSessionHost,
+  type TmuxEngine,
 } from "./session-host/tmux-host";
 import {
   descendantsOf,
@@ -58,21 +59,12 @@ export interface ReapOutcome {
   survivors: ReapedProcess[];
 }
 
-export interface SessionStopAdapter {
-  hasSession: (session: string) => Promise<boolean>;
-  listPanePids: (session: string) => Promise<number[]>;
-  killSession: (
-    session: string,
-    options: { ignoreMissing: true },
-  ) => Promise<void>;
-}
-
 export interface VerifiedStopDependencies {
-  tmux?: SessionStopAdapter;
-  sessions?: TmuxSessionHost;
+  sessions: TmuxSessionHost;
   reap?: ReapDependencies;
   readHostPid?: (agent: AgentRecord) => Promise<number | null>;
   sessionRoots?: (agent: AgentRecord) => Promise<readonly number[]>;
+  legacySessionRoots?: (session: string) => Promise<readonly number[]>;
   selfPid?: number;
 }
 
@@ -197,33 +189,31 @@ async function defaultHostPid(agent: AgentRecord): Promise<number | null> {
   }
 }
 
-async function sessionRoots(
-  session: string,
-  tmux: SessionStopAdapter,
-): Promise<number[]> {
-  if (!await tmux.hasSession(session)) return [];
-  const roots = await tmux.listPanePids(session);
-  if (roots.length === 0) {
-    throw new Error(
-      `Process-root probe returned no panes for live tmux session ${session}`,
-    );
-  }
-  return roots;
-}
-
 export async function stopTmuxSession(
   session: string,
   dependencies: VerifiedStopDependencies,
   extraRoots: readonly number[] = [],
   beforeKill?: () => void | Promise<void>,
 ): Promise<ReapOutcome> {
-  if (dependencies.tmux === undefined) {
-    throw new Error("Legacy tmux teardown requires a compatibility adapter");
+  const inspection = await dependencies.sessions.inspectLegacyTmuxSession(
+    session,
+  );
+  if (inspection.presence === "unknown") {
+    throw new Error(`tmux session ${session} presence is unknown`);
   }
   const reap = dependencies.reap ?? defaultReapDependencies();
   const selfPid = dependencies.selfPid ?? process.pid;
+  const roots = inspection.presence === "present"
+    ? await (dependencies.legacySessionRoots?.(session) ??
+      Promise.resolve(inspection.panePids))
+    : [];
+  if (inspection.presence === "present" && roots.length === 0) {
+    throw new Error(
+      `Process-root probe returned no panes for live tmux session ${session}`,
+    );
+  }
   const captured = await captureProcessTree(
-    [...await sessionRoots(session, dependencies.tmux), ...extraRoots],
+    [...roots, ...extraRoots],
     reap,
     selfPid,
   );
@@ -231,14 +221,19 @@ export async function stopTmuxSession(
 
   let killError: unknown;
   try {
-    await dependencies.tmux.killSession(session, { ignoreMissing: true });
+    await dependencies.sessions.terminateLegacyTmuxSession(session);
   } catch (error) {
     killError = error;
   }
 
   let sessionError: unknown;
   try {
-    if (await dependencies.tmux.hasSession(session)) {
+    const readback = await dependencies.sessions.inspectLegacyTmuxSession(
+      session,
+    );
+    if (readback.presence === "unknown") {
+      sessionError = new Error(`tmux session ${session} presence is unknown`);
+    } else if (readback.presence === "present") {
       sessionError = killError ??
         new Error(`Tmux session ${session} survived kill-session`);
     }
@@ -272,54 +267,44 @@ export async function stopAgentSession(
   beforeKill?: () => void | Promise<void>,
 ): Promise<ReapOutcome> {
   const hostPid = await (dependencies.readHostPid ?? defaultHostPid)(agent);
-  if (dependencies.sessions !== undefined) {
-    const locator = bindAgentSession(dependencies.sessions, agent, {
-      extraRoots: async () => {
-        const inspection = await dependencies.sessions!.inspect(locator);
-        if (inspection.presence === "unknown") {
-          throw new Error(`Session presence is unknown for ${agent.name}`);
-        }
-        return [
-          ...(inspection.presence === "present"
-            ? await dependencies.sessionRoots?.(agent) ?? []
-            : []),
-          ...(hostPid === null ? [] : [hostPid]),
-        ];
-      },
-      ...(beforeKill === undefined ? {} : { beforeTerminate: beforeKill }),
-    });
-    const outcome = await dependencies.sessions.terminateWithProcessOutcome(locator, {
-      mode: "immediate",
-      reason: `stop agent ${agent.id}`,
-      requestId: crypto.randomUUID(),
-    });
-    if (outcome.result.state === "unknown") {
-      throw outcome.failure ?? new Error(
-        `SessionHost could not verify termination for ${agent.name}: ${
-          outcome.result.errors.map((error) => error.diagnosticId).join(", ") || "unknown"
-        }`,
-      );
-    }
-    return outcome.reaped;
+  const locator = bindAgentSession(dependencies.sessions, agent, {
+    extraRoots: async () => {
+      const inspection = await dependencies.sessions.inspect(locator);
+      if (inspection.presence === "unknown") {
+        throw new Error(`Session presence is unknown for ${agent.name}`);
+      }
+      return [
+        ...(inspection.presence === "present"
+          ? await dependencies.sessionRoots?.(agent) ?? []
+          : []),
+        ...(hostPid === null ? [] : [hostPid]),
+      ];
+    },
+    ...(beforeKill === undefined ? {} : { beforeTerminate: beforeKill }),
+  });
+  const outcome = await dependencies.sessions.terminateWithProcessOutcome(locator, {
+    mode: "immediate",
+    reason: `stop agent ${agent.id}`,
+    requestId: crypto.randomUUID(),
+  });
+  if (outcome.result.state === "unknown") {
+    throw outcome.failure ?? new Error(
+      `SessionHost could not verify termination for ${agent.name}: ${
+        outcome.result.errors.map((error) => error.diagnosticId).join(", ") || "unknown"
+      }`,
+    );
   }
-  if (dependencies.tmux === undefined) {
-    throw new Error("Agent teardown requires SessionHost or legacy tmux adapter");
-  }
-  return await stopTmuxSession(
-    agent.tmuxSession,
-    dependencies,
-    hostPid === null ? [] : [hostPid],
-    beforeKill,
-  );
+  return outcome.reaped;
 }
 
 export function verifiedAgentStop(
-  tmux: SessionStopAdapter,
+  tmux: TmuxEngine,
   reap?: ReapDependencies,
 ): StopAgentSession {
+  const sessions = new TmuxSessionHost({ adapter: tmux, reap });
   return (agent) =>
     stopAgentSession(
       agent,
-      { tmux, ...(reap === undefined ? {} : { reap }) },
+      { sessions, ...(reap === undefined ? {} : { reap }) },
     );
 }
