@@ -431,7 +431,7 @@ to detached hosts; a host crash can lose only its own generation.</pre>
 
         <pre aria-label="Message path">sender MCP / native command
   → immutable MessageEnvelope
-  → hierarchy router: identity + edge + capability epoch + task scope
+  → authorization router: C0 identity + Assignment + capability epoch; C1 hierarchy edge + task scope
   → durable message ledger
   → provider delivery scheduler: turn/tool boundary policy
   → sessiond input arbiter: wait behind human claim
@@ -450,8 +450,8 @@ to detached hosts; a host crash can lose only its own generation.</pre>
           <table>
             <thead><tr><th>Contract</th><th>Required behavior</th><th>Proof</th></tr></thead>
             <tbody>
-              <tr><td>MessageEnvelope</td><td><strong>Immutable sender, recipient, intent, priority, task scope, capability epoch, idempotency key, body digest, creation revision.</strong></td><td>Forgery, stale-epoch, duplicate, wrong-edge, and replay tests fail closed.</td></tr>
-              <tr><td>Hierarchy edges</td><td><strong>Edge policy is supplied by The Queen's Hive and evaluated by the daemon; transport treats the authorization decision as opaque.</strong> Today's flat queen↔workers policy is the shipping baseline; the transport carries an authorization event ID either way.</td><td>One policy hook is shared by MCP, CLI, daemon, and UI tests. UI visibility does not grant authority. Edge rules live in <a href="agentic-hierarchy.html">agentic-hierarchy.html</a> and the communication contract.</td></tr>
+              <tr><td>MessageEnvelope</td><td><strong>Immutable sender, recipient, intent, priority, resolved MessageScope, idempotency key, body digest, creation revision.</strong></td><td>Forgery, stale-binding/epoch, duplicate, unauthorized-route, and replay tests fail closed.</td></tr>
+              <tr><td>Authorization policy</td><td><strong>The daemon evaluates C0's flat Assignment/capability policy; The Queen's Hive later supplies hierarchy edges as an opaque policy input. Transport consumes the authorization event ID in either phase.</strong></td><td>One policy hook is shared by MCP, CLI, daemon, and UI tests. UI visibility does not grant authority. Policy rules live in <a href="agentic-hierarchy.html">agentic-hierarchy.html</a> and the communication contract.</td></tr>
               <tr><td>Priority</td><td><strong>normal, steer, urgent, critical keep existing semantics.</strong></td><td>Provider matrix verifies normal/steer boundaries, urgent cancellation, critical write revocation/recovery.</td></tr>
               <tr><td>Human claim</td><td><strong>Acquired before first input byte; released only on submit, cancel, or explicit discard/recovery.</strong></td><td>Crash at every claim transition produces no interleave and no timed unlock.</td></tr>
               <tr><td>Delivery evidence</td><td><strong>The terminal appends immutable attempt evidence; the Communication Fabric owns the canonical receipt projection.</strong></td><td>No stage is inferred from elapsed time. See <a href="hive-communication.html">hive-communication.html</a>; the UI can distinguish unheard, transport-written, provider-observed, acknowledged, and applied without terminal code owning those transitions.</td></tr>
