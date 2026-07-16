@@ -44,6 +44,10 @@ export interface CodexAppServerTransport {
 export interface CodexAppServerHandlers {
   notification(message: RpcMessage): void | Promise<void>;
   request(message: RpcMessage): Promise<unknown>;
+  /** The connection dropped. Inbound requests we are still holding — a
+   * mutation approval waiting on a human — can never be answered now, so the
+   * owner must settle them rather than leave them pending forever. */
+  closed?(error?: Error): void;
 }
 
 export class CodexAppServerClient {
@@ -131,6 +135,7 @@ export class CodexAppServerClient {
       pending.reject(error ?? new Error("Codex app-server connection closed"));
     }
     this.pending.clear();
+    this.handlers.closed?.(error);
   }
 }
 
@@ -467,6 +472,12 @@ export class CodexAppServerManager {
     const client = new CodexAppServerClient(transport, {
       notification: (message) => this.handleNotification(agent.name, message),
       request: (message) => this.handleRequest(agent.name, message),
+      // A dropped connection denies every mutation this agent had waiting: the
+      // decision could not be delivered anyway, and a pending approval that
+      // outlives its transport is authority with nobody watching it.
+      closed: () => {
+        void this.denyAgentApprovals(agent.name);
+      },
     });
     try {
       await client.request("initialize", {

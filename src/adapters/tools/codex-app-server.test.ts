@@ -673,6 +673,20 @@ describe("Codex app-server adapter", () => {
       expect(response.result).toEqual({ decision: "decline" });
     });
 
+    test("a dropped transport settles a waiting approval as denied", async () => {
+      const { manager, transport } = await writerSession({
+        authorize: async () => ({ allowed: true }),
+      });
+      const asked = ask(transport, COMMAND, { ...bound, command: "slow" }, 561);
+      await Bun.sleep(1);
+      // Codex crashed while a human was still deciding. The waiting request
+      // must settle, not hang on a promise nobody can ever resolve.
+      transport.close();
+      expect((await asked).result).toEqual({ decision: "decline" });
+      // And the decision arriving late cannot resurrect it into an allow.
+      expect(await manager.resolveApproval("approval-1", true)).toBe(false);
+    });
+
     test("resolveApproval on an unknown id is never an allow", async () => {
       const { manager } = await writerSession();
       expect(await manager.resolveApproval("never-queued", true)).toBe(false);
