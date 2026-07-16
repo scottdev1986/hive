@@ -899,7 +899,11 @@ export class HiveSpawner implements Spawner {
         if (this.dependencies.discoverCapabilities === undefined) return null;
         const discovery = await this.discoverOnce(candidate.tool);
         if (discovery === undefined || discovery.status !== "ok") {
-          return `${candidate.tool}'s model catalog is unreadable`;
+          // Carry the probe's own reason (see authorizeCandidate.resolution).
+          return `${candidate.tool}'s model catalog is unreadable` +
+            (discovery?.status === "unavailable"
+              ? ` — ${discovery.reason}`
+              : "");
         }
         record = discovery.records.find((entry) =>
           entry.launchToken === candidate.model ||
@@ -1867,7 +1871,13 @@ export class HiveSpawner implements Spawner {
           if (this.dependencies.discoverCapabilities === undefined) return null;
           const discovery = await this.discoverOnce(candidate.tool);
           if (discovery === undefined || discovery.status !== "ok") {
-            return `${candidate.tool}'s model catalog is unreadable`;
+            // Carry the probe's own reason: "unreadable" alone turned every
+            // distinct failure (CLI missing, stale cache, no live signal)
+            // into the same unactionable mystery in the route audit.
+            return `${candidate.tool}'s model catalog is unreadable` +
+              (discovery?.status === "unavailable"
+                ? ` — ${discovery.reason}`
+                : "");
           }
           record = discovery.records.find((entry) =>
             entry.launchToken === candidate.model ||

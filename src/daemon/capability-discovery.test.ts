@@ -342,6 +342,32 @@ describe("Grok models catalog", () => {
     expect(result).toMatchObject({ status: "ok" });
   });
 
+  test("a rejected cache names the cause instead of a generic unreadable", async () => {
+    // The etag-skew case: CLI self-updated, HTTP 304 preserved the old cache.
+    const skewed = { ...GROK_PAYLOAD, cliVersion: "99.0.0" };
+    const result = await new GrokCapabilityProbe({
+      readCatalog: async () => skewed,
+    }).read();
+    expect(result.status).toBe("unavailable");
+    if (result.status === "unavailable") {
+      expect(result.reason).toContain("written by grok");
+      expect(result.reason).toContain("99.0.0");
+    }
+  });
+
+  test("one transient probe failure is retried before reporting unavailable", async () => {
+    let attempts = 0;
+    const result = await new GrokCapabilityProbe({
+      readCatalog: async () => {
+        attempts += 1;
+        if (attempts === 1) throw new Error("transient settings-fetch failure");
+        return GROK_PAYLOAD;
+      },
+    }).read();
+    expect(attempts).toBe(2);
+    expect(result).toMatchObject({ status: "ok" });
+  });
+
   test("requires positive live-fetch evidence instead of trusting exit zero", () => {
     expect(grokModelsProvedLive(
       "Fetched remote settings from cli-chat-proxy\n",

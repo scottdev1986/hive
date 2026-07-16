@@ -42,6 +42,10 @@ export interface ActiveAgentSummary {
    * drift between the launch and observed identity is explicit rather than
    * hidden behind a single conflated model field. */
   identityState?: IdentityState;
+  /** Provenance of the observed identity ("codex-rollout" scan is display
+   * grade; "codex-app-server" is the attestation surface), null when
+   * unobserved. Present for Codex agents beside identityState. */
+  identitySource?: string | null;
   /** Null when Hive has not observed this agent's context. The orchestrator's
    * reuse rule must read null as "not eligible", never as "plenty of room". */
   contextPct: number | null;

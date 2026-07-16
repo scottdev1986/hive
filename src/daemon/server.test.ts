@@ -4538,7 +4538,9 @@ describe("Codex execution-identity attestation sweep", () => {
         }),
       },
     });
-    db.insertAgent(codexAgent());
+    // The rollout scan is the READER observation surface; writers are never
+    // scanned (their identity is the app-server manager's exact observation).
+    db.insertAgent(codexAgent({ readOnly: true }));
     try {
       await daemon.refreshToolTelemetry();
       const row = db.getAgentByName("maya")!;
@@ -4690,7 +4692,7 @@ describe("Codex execution-identity attestation sweep", () => {
     }
   });
 
-  test("pauses a drifted legacy Codex writer non-destructively and wakes queen", async () => {
+  test("pauses a writer whose only matching claim is rollout-sourced, non-destructively, and wakes queen", async () => {
     const db = new HiveDatabase(join(home, "attest-pause.db"));
     const suspended: string[] = [];
     const daemon = new HiveDaemon({
@@ -4703,23 +4705,29 @@ describe("Codex execution-identity attestation sweep", () => {
         return { suspended: [{ pid: 100, command: "codex" }], unstopped: [] };
       },
       telemetryReaders: {
-        codexSession: async () => "session-1",
+        codexSession: async () => {
+          throw new Error("a writer row must never be rollout-scanned");
+        },
         codex: async () => ({ contextPct: null, lastActivityAt: null }),
-        codexIdentity: async () => ({
-          status: "observed",
-          model: "gpt-5.6-luna",
-          effort: "low",
-          turnId: "turn-2",
-          sessionId: "session-1",
-          observedAt: "2026-07-15T18:00:00.000Z",
-        }),
+        codexIdentity: async () => {
+          throw new Error("a writer row must never be rollout-scanned");
+        },
       },
     });
-    db.insertAgent(codexAgent());
+    // A scan-derived "matching" somehow persisted on a writer is display
+    // grade, not the app-server attestation writers are contained on.
+    db.insertAgent(codexAgent({
+      identityState: "matching",
+      observedIdentity: {
+        model: "gpt-5.6-sol",
+        effort: "xhigh",
+        source: "codex-rollout",
+        observedAt: "2026-07-15T18:00:00.000Z",
+      },
+    }));
     try {
       await daemon.refreshToolTelemetry();
       const row = db.getAgentByName("maya")!;
-      expect(row.identityState).toBe("drift");
       // Revoked-first and paused, capability epoch advanced.
       expect(row.status).toBe("control-paused");
       expect(row.writeRevoked).toBe(true);
@@ -4732,6 +4740,55 @@ describe("Codex execution-identity attestation sweep", () => {
       );
       expect(toQueen).toHaveLength(1);
       expect(toQueen[0]?.body).toContain("PAUSED for execution-identity drift");
+    } finally {
+      db.close();
+    }
+  });
+
+  test("an app-server-attested matching writer is neither rescanned nor paused by the sweep", async () => {
+    const db = new HiveDatabase(join(home, "attest-appserver-writer.db"));
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new StubSpawner(),
+      tmux: new FakeDaemonTmux(),
+      suspendProcesses: async () => {
+        throw new Error("an attested writer must not be paused");
+      },
+      telemetryReaders: {
+        // The TUI finder cannot even see an app-server rollout (its
+        // session_meta.source is the editor client, not "cli").
+        codexSession: async () => null,
+        codex: async () => {
+          throw new Error("a writer row must never be rollout-scanned");
+        },
+        codexIdentity: async () => {
+          throw new Error("a writer row must never be rollout-scanned");
+        },
+      },
+    });
+    const observed = {
+      model: "gpt-5.6-sol",
+      effort: "xhigh",
+      source: "codex-app-server" as const,
+      turnId: "turn-7",
+      observedAt: "2026-07-15T18:00:00.000Z",
+    };
+    db.insertAgent(codexAgent({
+      identityState: "matching",
+      observedIdentity: observed,
+      liveModel: "gpt-5.6-sol",
+      liveEffort: "xhigh",
+    }));
+    try {
+      await daemon.refreshToolTelemetry();
+      const row = db.getAgentByName("maya")!;
+      // The exact app-server observation stands; the sweep neither rewrites
+      // it with a scan verdict nor pauses the writer holding it.
+      expect(row.status).toBe("working");
+      expect(row.writeRevoked).toBe(false);
+      expect(row.identityState).toBe("matching");
+      expect(row.observedIdentity).toMatchObject(observed);
+      expect(row.liveModel).toBe("gpt-5.6-sol");
     } finally {
       db.close();
     }
@@ -4845,6 +4902,51 @@ describe("Codex execution-identity attestation sweep", () => {
     }
   });
 
+  test("turn-start pauses a writer even when the rollout scan reads matching (display grade is not admission)", async () => {
+    const db = new HiveDatabase(join(home, "attest-turn-scan-matching.db"));
+    const suspended: string[] = [];
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new StubSpawner(),
+      tmux: new FakeDaemonTmux(),
+      suspendProcesses: async (session) => {
+        suspended.push(session);
+        return { suspended: [], unstopped: [] };
+      },
+      telemetryReaders: {
+        codexSession: async () => "session-1",
+        codex: async () => ({ contextPct: null, lastActivityAt: null }),
+        // The rollout agrees with the launch identity — but it is still the
+        // chronology-picked TUI scan, not the app-server attestation.
+        codexIdentity: async () => ({
+          status: "observed",
+          model: "gpt-5.6-sol",
+          effort: "xhigh",
+          turnId: "t",
+          sessionId: "session-1",
+          observedAt: "2026-07-15T18:00:00.000Z",
+        }),
+      },
+    });
+    db.insertAgent(codexAgent());
+    try {
+      await daemon.processEvent({
+        kind: "turn-start",
+        agentName: "maya",
+        timestamp: "2026-07-15T18:00:00.000Z",
+      });
+      const row = db.getAgentByName("maya")!;
+      expect(row.writeRevoked).toBe(true);
+      expect(["control-paused", "stuck"]).toContain(row.status);
+      const toQueen = db.listMessages().filter((message) =>
+        message.to === "queen" && message.from === "hive-identity-guard"
+      );
+      expect(toQueen[0]?.body).toContain("display grade");
+    } finally {
+      db.close();
+    }
+  });
+
   test("a live rollout with no readable identity is unknown, never synthesized", async () => {
     const db = new HiveDatabase(join(home, "attest-unknown.db"));
     const daemon = new HiveDaemon({
@@ -4857,7 +4959,7 @@ describe("Codex execution-identity attestation sweep", () => {
         codexIdentity: async () => ({ status: "unknown" }),
       },
     });
-    db.insertAgent(codexAgent());
+    db.insertAgent(codexAgent({ readOnly: true }));
     try {
       await daemon.refreshToolTelemetry();
       const row = db.getAgentByName("maya")!;
@@ -4899,8 +5001,10 @@ describe("Codex execution-identity attestation sweep", () => {
     }));
     try {
       await daemon.refreshToolTelemetry();
+      // The sweep never scans a writer, so no verdict is written — but the
+      // backstop still pauses on the absent attestation (hive_status renders
+      // the absent verdict as unknown via attestationStateOf).
       expect(db.getAgentById("agent-maya")).toMatchObject({
-        identityState: "unknown",
         status: "control-paused",
         writeRevoked: true,
         capabilityEpoch: 1,
@@ -4939,6 +5043,8 @@ describe("an unobservable agent reads unknown, never 0", () => {
       status: "working",
       tmuxSession: "hive-lucas",
       worktreePath: "/tmp/hive-lucas",
+      // Rollout telemetry is the READER surface; a writer row is not swept.
+      readOnly: true,
       // The 0 he was born with, which nothing ever corrected because a null
       // observation used to be skipped as "no new information".
       contextPct: 0,

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   discoverCodexRecoverySessionId,
+  findCodexRolloutBySessionId,
   findCodexRolloutForProcess,
   findLatestCodexSessionId,
   codexCapabilityTokenPath,
@@ -442,7 +443,7 @@ describe("Codex adapter", () => {
       .toEqual("large-meta-session");
   });
 
-  test("process binding excludes predecessor rollouts and picks the earliest created after process start", async () => {
+  test("process binding excludes predecessors; earliest-after-start is a DISPLAY-GRADE pick that a same-cwd child can win", async () => {
     const fakeHome = join(tempRoot, "process-bound-codex-home");
     const dayDir = join(codexSessionsDirectory(fakeHome), "2026", "07", "15");
     await mkdir(dayDir, { recursive: true });
@@ -462,20 +463,24 @@ describe("Codex adapter", () => {
       join(dayDir, "rollout-predecessor.jsonl"),
       meta("predecessor", "2026-07-15T17:59:59.000Z"),
     );
+    // KNOWN AMBIGUITY, encoded on purpose: a same-cwd child session created
+    // just before the parent's rollout wins the earliest-after-start pick.
+    // 0.144.4 metadata has no PID/nonce to tell them apart, which is exactly
+    // why this result is display-grade observation and never authority.
     await writeFile(
-      join(dayDir, "rollout-launch.jsonl"),
-      meta("launch", "2026-07-15T18:00:00.100Z"),
+      join(dayDir, "rollout-child.jsonl"),
+      meta("child", "2026-07-15T18:00:00.100Z"),
     );
     await writeFile(
-      join(dayDir, "rollout-later.jsonl"),
-      meta("later", "2026-07-15T18:00:00.200Z"),
+      join(dayDir, "rollout-parent.jsonl"),
+      meta("parent", "2026-07-15T18:00:00.200Z"),
     );
 
     expect((await findCodexRolloutForProcess(
       worktreePath,
       "2026-07-15T18:00:00.000Z",
       fakeHome,
-    ))?.sessionId).toBe("launch");
+    ))?.sessionId).toBe("child");
 
     // A process started after every rollout observes nothing rather than
     // inheriting a predecessor.
@@ -484,6 +489,37 @@ describe("Codex adapter", () => {
       "2026-07-15T19:00:00.000Z",
       fakeHome,
     )).toBeNull();
+  });
+
+  test("exact session-id lookup survives 100+ newer rollouts (filename index, meta verified)", async () => {
+    const fakeHome = join(tempRoot, "indexed-lookup-codex-home");
+    const dayDir = join(codexSessionsDirectory(fakeHome), "2026", "07", "15");
+    await mkdir(dayDir, { recursive: true });
+    const meta = (id: string, cwd: string) => `${JSON.stringify({
+      timestamp: "2026-07-15T18:00:00.000Z",
+      type: "session_meta",
+      payload: { id, cwd, source: "cli" },
+    })}\n`;
+    const wanted = "019f0000-0000-0000-0000-00000000aaaa";
+    await writeFile(
+      join(dayDir, `rollout-2026-07-15T18-00-00-${wanted}.jsonl`),
+      meta(wanted, worktreePath),
+    );
+    // 110 newer sessions from other work push the wanted one far out of any
+    // newest-N window; a live-but-idle agent must not go absent for it.
+    for (let index = 0; index < 110; index++) {
+      const id = `019f0000-0000-0000-0000-${String(index).padStart(12, "0")}`;
+      await writeFile(
+        join(dayDir, `rollout-2026-07-15T19-00-00-${id}.jsonl`),
+        meta(id, "/somewhere/else"),
+      );
+    }
+
+    expect((await findCodexRolloutBySessionId(
+      worktreePath,
+      wanted,
+      fakeHome,
+    ))?.sessionId).toBe(wanted);
   });
 
   test("refuses a session_meta record whose session id key is unknown", async () => {

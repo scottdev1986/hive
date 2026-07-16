@@ -60,9 +60,13 @@ export type ExecutionIdentity = z.infer<typeof ExecutionIdentitySchema>;
 // Codex is the only vendor Hive attests today; Claude and Grok keep their
 // existing `liveModel` reconciliation path untouched.
 export const ObservedIdentitySourceSchema = z.enum([
-  // Newest `turn_context` in the process-bound, source=cli Codex TUI rollout.
+  // Newest `turn_context` in a Codex TUI rollout selected by cwd + process
+  // start time (session_meta.source === "cli"). DISPLAY GRADE: 0.144.4 gives
+  // no PID/nonce binding a rollout to a process, so this observation informs
+  // status only and never write admission.
   "codex-rollout",
-  // A native Codex app-server thread/turn notification.
+  // A native Codex app-server thread/turn notification — the exact,
+  // process-bound surface writer authority requires.
   "codex-app-server",
 ]);
 

@@ -47,7 +47,8 @@ public struct AgentSnapshot: Equatable, Decodable {
     public let toolSessionID: String?
     public let processIncarnation: Int?
     public let contextPct: Double?
-    /// Nil means the wire did not answer. It must fail closed for authoring.
+    /// Nil means the wire did not answer. Write authority is daemon-enforced
+    /// (landing/mutation); it is header information here, never an input gate.
     public let writeRevoked: Bool?
     /// ISO datetime; present means the agent is closed and must not get a pane.
     public let closedAt: String?

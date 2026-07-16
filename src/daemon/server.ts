@@ -2003,6 +2003,14 @@ export class HiveDaemon {
           }
           break;
         case "codex":
+          // The process-time rollout scan is READER observation on the TUI
+          // driver. A writer is only admissible on the app-server driver,
+          // whose exact thread+turn observation the manager records with
+          // source "codex-app-server" — the chronology scan (which cannot
+          // even see an app-server rollout: its session_meta.source is the
+          // editor client, not "cli") must never run for it, or a healthy
+          // writer's exact observation is overwritten with "unknown".
+          if (!agent.readOnly) break;
           try {
             codexSession = agent.processStartedAt === undefined
               ? null
@@ -2016,8 +2024,9 @@ export class HiveDaemon {
             if (codexSessionTrusted) {
               telemetry = await this.readCodexTelemetry(worktree, codexSession!);
               // The running identity is a different fact from occupancy: the
-              // exact process-bound rollout proves which model+effort is
-              // actually executing. Hook payloads never choose this session.
+              // process-time rollout candidate records which model+effort is
+              // observed running — display grade, never write admission.
+              // Hook payloads never choose this session.
               codexIdentity = await this.readCodexIdentity(
                 worktree,
                 codexSession!,
@@ -2138,7 +2147,10 @@ export class HiveDaemon {
           // comparing them. The observation is never synthesized from the launch
           // request — an absent/unknown reading leaves observedIdentity alone and
           // only marks the verdict, which fails closed for a writer.
-          {
+          // READERS only: a writer's identity is the app-server manager's exact
+          // thread+turn observation, which this TUI-scan verdict must never
+          // overwrite with "unknown".
+          if (current.readOnly) {
             const launch = current.executionIdentity;
             const attestation = !codexSessionTrusted
               ? {
@@ -4407,7 +4419,15 @@ export class HiveDaemon {
         const mid = this.db.updateAgentIfCurrent(agentStateCas(agent), {});
         if (mid === null || isTerminalAgentStatus(mid.status)) {
           // concurrent kill/terminal/incarnation change wins
-        } else if (attestation.identityState !== "matching") {
+        } else if (
+          attestation.identityState !== "matching" ||
+          // This hook path reattests from the TUI rollout scan
+          // (source "codex-rollout"), and a scan-matching verdict is display
+          // grade: it must never let a writer keep authority past the turn
+          // boundary. Only the app-server's exact thread+turn observation is
+          // writer-grade, and it never arrives through this path.
+          attestation.observedIdentity?.source !== "codex-app-server"
+        ) {
           const observed = attestation.observedIdentity;
           const state = attestation.identityState === "unattested"
             ? "unknown" as const
@@ -4422,7 +4442,9 @@ export class HiveDaemon {
             ...(attestation.liveEffort === null
               ? {}
               : { liveEffort: attestation.liveEffort }),
-          }, `turn-start reattestation is ${state}, not matching`);
+          }, state === "matching"
+            ? "turn-start reattestation is rollout-scan matching (display grade), not app-server-attested"
+            : `turn-start reattestation is ${state}, not matching`);
         }
       }
     }

@@ -381,6 +381,26 @@ async function findCodexRollout(
 ): Promise<CodexRolloutLocation | null> {
   const target = resolve(worktreePath);
   const rollouts = await listCodexRollouts(home);
+  // An exact session id is indexed by the vendor's own filename convention
+  // (rollout-<timestamp>-<session id>.jsonl), so the lookup never falls out
+  // of a newest-N window when other sessions accumulate — a live-but-idle
+  // agent's identity must not go absent because an editor wrote 100 newer
+  // rollouts. The session_meta line stays authoritative: a filename hit that
+  // fails meta verification falls through to the bounded scan below.
+  if (sessionId !== undefined) {
+    for (const rollout of rollouts) {
+      if (!rollout.path.endsWith(`-${sessionId}.jsonl`)) continue;
+      const meta = await readRolloutSessionMeta(rollout.path);
+      if (meta !== null && meta.cwd === target && meta.sessionId === sessionId) {
+        return {
+          path: rollout.path,
+          sessionId: meta.sessionId,
+          createdAt: meta.createdAt,
+          mtimeMs: rollout.mtimeMs,
+        };
+      }
+    }
+  }
   rollouts.sort((a, b) => b.mtimeMs - a.mtimeMs);
   for (const rollout of rollouts.slice(0, ROLLOUT_SCAN_LIMIT)) {
     const meta = await readRolloutSessionMeta(rollout.path);
@@ -445,14 +465,17 @@ export async function findCodexRolloutBySessionId(
   return findCodexRollout(worktreePath, home, sessionId);
 }
 
-/** The rollout this agent's process wrote, found by cwd plus creation time:
- * only rollouts created in this worktree AT OR AFTER this process started
- * qualify, so a reused worktree's dead-predecessor rollout (created before
- * this process existed) is never selected; the earliest qualifying rollout is
- * the launch conversation. Codex 0.144.4 rollout metadata has no PID or launch
- * nonce, so this binding is OBSERVATION for status/telemetry display — never
- * proof of execution identity, and never mutation or landing authority (the
- * app-server driver's thread-named rollout is the only attestation surface). */
+/** A DISPLAY-GRADE candidate for the rollout this agent's process wrote,
+ * found by cwd plus creation time: only rollouts created in this worktree AT
+ * OR AFTER this process started qualify, so a reused worktree's
+ * dead-predecessor rollout (created before this process existed) is never
+ * selected. The earliest qualifying rollout is usually the launch
+ * conversation — but a same-cwd child session created in the same window can
+ * win instead, and Codex 0.144.4 rollout metadata has no PID or launch nonce
+ * to tell them apart. This binding is OBSERVATION for status/telemetry
+ * display only — never proof of execution identity, and never mutation or
+ * landing authority (the app-server driver's thread-named rollout is the
+ * only attestation surface). */
 export async function findCodexRolloutForProcess(
   worktreePath: string,
   processStartedAt: string,
@@ -463,6 +486,10 @@ export async function findCodexRolloutForProcess(
   const target = resolve(worktreePath);
   const candidates: CodexRolloutLocation[] = [];
   for (const rollout of await listCodexRollouts(home)) {
+    // mtime never precedes creation, so anything last written before this
+    // process started cannot qualify — the whole session history is never
+    // opened file-by-file on every sweep.
+    if (rollout.mtimeMs < launchedAt) continue;
     const meta = await readRolloutSessionMeta(rollout.path);
     if (meta === null || meta.cwd !== target) continue;
     const createdAt = Date.parse(meta.createdAt);
