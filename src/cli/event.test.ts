@@ -268,3 +268,50 @@ describe("hive event", () => {
     expect(await malformed.exited).toEqual(0);
   });
 });
+
+import { hookFailureTracePath } from "./event";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join as joinPath } from "node:path";
+
+describe("runHiveEvent durable failure repair", () => {
+  test("a persistent HTTP failure retries once then leaves a durable trace; a transient one heals silently", async () => {
+    const home = mkdtempSync(joinPath(tmpdir(), "hive-hook-trace-"));
+    const previous = Bun.env.HIVE_HOME;
+    Bun.env.HIVE_HOME = home;
+    try {
+      // Persistent: both attempts rejected → one trace line, exit still 0.
+      let attempts = 0;
+      expect(
+        await runHiveEvent("turn-end", 1, { agent: "maya" }, async () => {
+          attempts += 1;
+          return new Response("nope", { status: 500 });
+        }),
+      ).toBe(0);
+      expect(attempts).toBe(2);
+      const trace = await Bun.file(hookFailureTracePath()).text();
+      const lines = trace.trim().split("\n").map((line) => JSON.parse(line));
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toMatchObject({ kind: "turn-end", agent: "maya" });
+      expect(lines[0].error).toContain("500");
+
+      // Transient: first attempt fails, the retry lands → no new trace.
+      let second = 0;
+      expect(
+        await runHiveEvent("turn-start", 1, { agent: "maya" }, async () => {
+          second += 1;
+          return second === 1
+            ? new Response("blip", { status: 502 })
+            : Response.json({ ok: true });
+        }),
+      ).toBe(0);
+      expect(second).toBe(2);
+      const after = await Bun.file(hookFailureTracePath()).text();
+      expect(after.trim().split("\n")).toHaveLength(1);
+    } finally {
+      if (previous === undefined) delete Bun.env.HIVE_HOME;
+      else Bun.env.HIVE_HOME = previous;
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+});

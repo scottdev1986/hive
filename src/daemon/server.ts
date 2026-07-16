@@ -68,6 +68,7 @@ import {
   type AgentRecord,
   type AssignmentRecord,
   type DaemonHookEvent,
+  type ExecutionIdentity,
   type HookEvent,
   type IdentityState,
   type MemoryFact,
@@ -264,6 +265,28 @@ function defaultOrphanDependencies(): ReapOrphanDependencies {
     },
     kill: (pid) => process.kill(pid, "SIGKILL"),
   };
+}
+
+/**
+ * Cross-vendor provenance verdict for the vendors whose only observation
+ * surface is the live model — Claude transcripts and Grok session logs. The
+ * launch and observed ids share one concrete domain (verified against real
+ * rows: `executionIdentity.model` and the transcript id are both e.g.
+ * `claude-fable-5`), so the comparison is exact, on MODEL ONLY: neither
+ * vendor exposes an applied-effort surface, and comparing an unobservable
+ * field would read as permanent drift. A failed read is `unknown` — never a
+ * silently preserved stale verdict — and nothing-observed-yet is
+ * `unattested`. Display-grade truth for status surfaces; never authority.
+ */
+function liveModelVerdict(
+  launch: ExecutionIdentity | undefined,
+  live: string | null,
+  readFailed: boolean,
+): IdentityState {
+  if (readFailed) return "unknown";
+  if (live === null) return "unattested";
+  if (launch === undefined) return "unknown";
+  return live === launch.model ? "matching" : "drift";
 }
 
 /** The host's pane-input wire shape: one typed line or one Ctrl-C. Strict, so
@@ -2055,16 +2078,18 @@ export class HiveDaemon {
       let codexSession: string | null = null;
       let codexSessionTrusted = false;
       // The vendor switch sits outside the read's catch: a failed read is
-      // routine and skips the agent, but a vendor with no reader is a bug that
-      // must be heard — swallowing it would report this agent's context off
-      // Codex's rollout parser and call the wrong number telemetry.
+      // routine — the reads stay null and the update arms record what that
+      // MEANS (unknown is a finding) — but a vendor with no reader is a bug
+      // that must be heard. A failed read must never `continue` past the
+      // update arms: skipping the whole agent left every stale field standing
+      // as if it were current.
       switch (agent.tool) {
         case "claude":
           try {
             claudeContext = (await this
               .readClaudeTelemetry(worktree, agent.toolSessionId)).contextTokens;
           } catch {
-            continue;
+            claudeContext = null;
           }
           break;
         case "codex":
@@ -2114,7 +2139,7 @@ export class HiveDaemon {
               agent.toolSessionId,
             );
           } catch {
-            continue;
+            grokTelemetry = null;
           }
           break;
         default:
@@ -2171,13 +2196,31 @@ export class HiveDaemon {
           // this too, but only for agents whose statusline reports actually
           // arrive — which is a subscriber-only path — so the sweep is what
           // makes it true for everyone. A row nobody corrects is a row
-          // `hive status` lies from.
+          // `hive status` lies from. The verdict comparing it to the launch
+          // identity is recorded alongside: Claude rows carry a provenance
+          // verdict exactly like Codex rows do, and a failed read writes
+          // `unknown` instead of letting a stale verdict stand.
           if (current.worktreePath !== null) {
-            const live = await this
-              .readLiveModel(current.worktreePath, current.toolSessionId)
-              .catch(() => null);
+            let live: string | null = null;
+            let liveReadFailed = false;
+            try {
+              live = await this.readLiveModel(
+                current.worktreePath,
+                current.toolSessionId,
+              );
+            } catch {
+              liveReadFailed = true;
+            }
             if (live !== null && live !== current.liveModel) {
               updates.liveModel = live;
+            }
+            const verdict = liveModelVerdict(
+              current.executionIdentity,
+              live,
+              liveReadFailed,
+            );
+            if (verdict !== attestationStateOf(current)) {
+              updates.identityState = verdict;
             }
           }
           break;
@@ -2299,11 +2342,30 @@ export class HiveDaemon {
             }
           }
           if (current.worktreePath !== null) {
-            const live = await this
-              .readGrokLiveModel(current.worktreePath, current.toolSessionId)
-              .catch(() => null);
+            let live: string | null = null;
+            let liveReadFailed = false;
+            try {
+              live = await this.readGrokLiveModel(
+                current.worktreePath,
+                current.toolSessionId,
+              );
+            } catch {
+              liveReadFailed = true;
+            }
             if (live !== null && live !== current.liveModel) {
               updates.liveModel = live;
+            }
+            // Grok rows carry the same live-model provenance verdict as
+            // Claude rows. The id-domain equivalence for Grok is unverified
+            // live (no grok fixture until the discovery fix activates) — the
+            // activation checklist re-proves it.
+            const verdict = liveModelVerdict(
+              current.executionIdentity,
+              live,
+              liveReadFailed,
+            );
+            if (verdict !== attestationStateOf(current)) {
+              updates.identityState = verdict;
             }
           }
           break;
@@ -4651,6 +4713,46 @@ export class HiveDaemon {
             ? "turn-start reattestation is rollout-scan matching (display grade), not app-server-attested"
             : `turn-start reattestation is ${state}, not matching`);
         }
+      }
+    } // Boundary-triggered observation for TUI READERS: the sweep's cadence
+    // left a fresh reader identity-unknown for its first ~30 seconds, and the
+    // first turn boundary is the earliest moment its rollout can answer. Same
+    // display-grade scan the sweep runs — never authority — so a failure here
+    // simply leaves the sweep in charge.
+    else if (
+      value.kind === "turn-start" && agent !== null && agent !== undefined &&
+      agent.tool === "codex" && agent.readOnly &&
+      agent.codexDriver !== "app-server" &&
+      agent.observedIdentity?.source !== "codex-app-server" &&
+      agent.worktreePath !== null && agent.executionIdentity !== undefined
+    ) {
+      try {
+        const sessionId = agent.toolSessionId ??
+          (agent.processStartedAt === undefined ? null : await this
+            .readCodexProcessSession(agent.worktreePath, agent.processStartedAt));
+        if (sessionId !== null) {
+          const attestation = reconcileCodexIdentity(
+            agent.executionIdentity,
+            await this.readCodexIdentity(agent.worktreePath, sessionId),
+          );
+          this.db.updateAgentIfCurrent(agentStateCas(agent), {
+            identityState: attestation.identityState,
+            ...(agent.toolSessionId === undefined
+              ? { toolSessionId: sessionId }
+              : {}),
+            ...(attestation.observedIdentity === null
+              ? {}
+              : { observedIdentity: attestation.observedIdentity }),
+            ...(attestation.liveModel === null
+              ? {}
+              : { liveModel: attestation.liveModel }),
+            ...(attestation.liveEffort === null
+              ? {}
+              : { liveEffort: attestation.liveEffort }),
+          });
+        }
+      } catch {
+        // The sweep remains the retry; its verdict semantics stay in charge.
       }
     }
 

@@ -6443,3 +6443,174 @@ test("an auto-denied approval un-parks the agent: awaiting-approval recovers to 
     db.close();
   }
 });
+
+// ————— cross-vendor sweep honesty: verdicts for every vendor, unknown on failure —————
+describe("cross-vendor identity provenance", () => {
+  function vendorDaemon(
+    db: HiveDatabase,
+    readers: NonNullable<ConstructorParameters<typeof HiveDaemon>[0]["telemetryReaders"]>,
+  ) {
+    return new HiveDaemon({
+      db,
+      spawner: new StubSpawner(),
+      tmux: new FakeDaemonTmux(),
+      telemetryReaders: readers,
+    });
+  }
+
+  test("a Claude read failure writes unknown and never skips the row", async () => {
+    const db = new HiveDatabase(join(home, `claude-unknown-${crypto.randomUUID()}.db`));
+    const daemon = vendorDaemon(db, {
+      claude: async () => {
+        throw new Error("transcript unreadable");
+      },
+      liveModel: async () => {
+        throw new Error("transcript unreadable");
+      },
+    });
+    db.insertAgent(agent({
+      tool: "claude",
+      status: "working",
+      liveModel: "claude-fable-5",
+      identityState: "matching",
+      executionIdentity: { tool: "claude", model: "claude-fable-5" },
+    }));
+    try {
+      await daemon.refreshToolTelemetry();
+      const row = db.getAgentByName("maya")!;
+      // The verdict is honest — unknown, not a preserved stale "matching" —
+      // while the last observed model stays as history, never as proof.
+      expect(row.identityState).toBe("unknown");
+      expect(row.liveModel).toBe("claude-fable-5");
+    } finally {
+      db.close();
+    }
+  });
+
+  test("a healthy Claude row reads matching; a moved model reads drift", async () => {
+    const db = new HiveDatabase(join(home, `claude-verdicts-${crypto.randomUUID()}.db`));
+    let live = "claude-fable-5";
+    const daemon = vendorDaemon(db, {
+      claude: async () => ({ contextTokens: 10_000, lastActivityAt: null }),
+      liveModel: async () => live,
+    });
+    db.insertAgent(agent({
+      tool: "claude",
+      status: "working",
+      executionIdentity: { tool: "claude", model: "claude-fable-5" },
+    }));
+    try {
+      await daemon.refreshToolTelemetry();
+      expect(db.getAgentByName("maya")?.identityState).toBe("matching");
+      expect(db.getAgentByName("maya")?.liveModel).toBe("claude-fable-5");
+      live = "claude-opus-4-8";
+      await daemon.refreshToolTelemetry();
+      expect(db.getAgentByName("maya")?.identityState).toBe("drift");
+      expect(db.getAgentByName("maya")?.liveModel).toBe("claude-opus-4-8");
+    } finally {
+      db.close();
+    }
+  });
+
+  test("a Grok read failure writes unknown and never skips the row", async () => {
+    const db = new HiveDatabase(join(home, `grok-unknown-${crypto.randomUUID()}.db`));
+    const daemon = vendorDaemon(db, {
+      grok: async () => {
+        throw new Error("updates.jsonl unreadable");
+      },
+      grokLiveModel: async () => {
+        throw new Error("updates.jsonl unreadable");
+      },
+    });
+    db.insertAgent(agent({
+      tool: "grok",
+      status: "working",
+      identityState: "matching",
+      executionIdentity: {
+        tool: "grok",
+        model: "grok-4-1-fast",
+        cliVersion: "1.0.0",
+        cliBuildHash: "abc123",
+      },
+    }));
+    try {
+      await daemon.refreshToolTelemetry();
+      expect(db.getAgentByName("maya")?.identityState).toBe("unknown");
+    } finally {
+      db.close();
+    }
+  });
+
+  test("a Grok row that has produced nothing yet reads unattested, not stale", async () => {
+    const db = new HiveDatabase(join(home, `grok-unattested-${crypto.randomUUID()}.db`));
+    const daemon = vendorDaemon(db, {
+      grok: async () => ({
+        contextPct: null,
+        lastActivityAt: null,
+        turnCompleted: null,
+      }),
+      grokLiveModel: async () => null,
+    });
+    db.insertAgent(agent({
+      tool: "grok",
+      status: "working",
+      executionIdentity: {
+        tool: "grok",
+        model: "grok-4-1-fast",
+        cliVersion: "1.0.0",
+        cliBuildHash: "abc123",
+      },
+    }));
+    try {
+      await daemon.refreshToolTelemetry();
+      // The verdict equals the fail-closed default, so no write happens; the
+      // canonical reader (attestationStateOf) reports it either way.
+      expect(db.getAgentByName("maya")?.identityState ?? "unattested")
+        .toBe("unattested");
+    } finally {
+      db.close();
+    }
+  });
+});
+
+// ————— the first-30s window: TUI reader identity observes at the turn boundary —————
+test("a TUI reader's FIRST turn-start observes identity immediately — no sweep wait", async () => {
+  const db = new HiveDatabase(join(home, `reader-boundary-${crypto.randomUUID()}.db`));
+  const daemon = new HiveDaemon({
+    db,
+    spawner: new StubSpawner(),
+    tmux: new FakeDaemonTmux(),
+    telemetryReaders: {
+      codexIdentity: async () => ({
+        status: "observed",
+        model: "gpt-5.6-sol",
+        effort: "xhigh",
+        turnId: "turn-1",
+        sessionId: "session-1",
+        observedAt: "2026-07-16T18:00:00.000Z",
+      }),
+    },
+  });
+  db.insertAgent(agent({
+    tool: "codex",
+    status: "working",
+    readOnly: true,
+    codexDriver: "tui",
+    toolSessionId: "session-1",
+    executionIdentity: { tool: "codex", model: "gpt-5.6-sol", effort: "xhigh" },
+  }));
+  try {
+    // The very first boundary — no telemetry sweep has run.
+    await daemon.processEvent({
+      kind: "turn-start",
+      agentName: "maya",
+      timestamp: "2026-07-16T18:00:01.000Z",
+    });
+    const row = db.getAgentByName("maya")!;
+    expect(row.identityState).toBe("matching");
+    expect(row.liveModel).toBe("gpt-5.6-sol");
+    expect(row.liveEffort).toBe("xhigh");
+  } finally {
+    db.close();
+  }
+});
