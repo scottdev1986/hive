@@ -46,7 +46,7 @@ Authentication (who is calling) and authorization (what they may do) are separat
 
 ## The terminal-renderer landscape
 
-The one-line decision: **do not start a libghostty integration** ([blueprint.md](blueprint.md)). The rest is why.
+**Superseded terminal decision (2026-07-16):** the earlier "do not start a libghostty integration" constraint is superseded by [ADR 0001](../adr/0001-native-terminal-foundation.md) and [terminal-stack-transition.html](../design/terminal-stack-transition.html) §§01/§05. Libghostty pinned to commit `73534c4680a809398b396c94ac7f12fcccb7963d` behind the bounded Hive bridge is now binding, conditional on TG1 and TG2. The caution below survives as the fallback posture: tmux/SwiftTerm remain the admission fallback if either gate fails.
 
 | Candidate | Layer | What you get | What you must build |
 |---|---|---|---|
@@ -54,7 +54,7 @@ The one-line decision: **do not start a libghostty integration** ([blueprint.md]
 | `libghostty` (MIT, Zig) | Surface + Metal | Embeddable, real | Nothing — but the API is **untagged and explicitly unstable** |
 | `libghostty-vt`, `alacritty_terminal`, `wezterm-term`, `termwiz`, `libvterm` | **Core only** | VT parsing, grid, buffer, pty | Renderer, view, input stack, IME, accessibility — all four |
 
-- **libghostty's surface API is untagged.** Ghostty's own C API overview says it is "not yet stabilized for general-purpose embedding" and "may change significantly between releases"; the repo states no version has been tagged. That is the disqualifier: an unversioned upstream cannot be the floor of a shipped ABI. Embedding also imports a Zig toolchain into an Xcode notarization pipeline. Revisit only if a tagged surface library ships.
+- **libghostty's surface API is untagged.** Ghostty's own C API overview says it is "not yet stabilized for general-purpose embedding" and "may change significantly between releases"; the repo states no version has been tagged. This remains the reason for the exact source pin, fenced bridge, ABI tests, and TG1/TG2 stop gates in [ADR 0001](../adr/0001-native-terminal-foundation.md); it is no longer a blanket disqualifier.
 - **The core-only crates are not alternatives to SwiftTerm — they are alternatives to the *parser inside* SwiftTerm.** Choosing one means writing the renderer, the AppKit view, the IME integration, and the accessibility tree yourself. Zed embeds `alacritty_terminal` and supplies its own GPUI renderer; that is the true cost.
 - **SwiftTerm's weakness is accessibility and selection, NOT IME.** This corrects the obvious guess. In the pinned checkout, `TerminalView` conforms to `NSTextInputClient` with the complete marked-text suite (`setMarkedText`, `unmarkText`, `firstRect(forCharacterRange:)`, `attributedSubstring`, `validAttributesForMarkedText`). Meanwhile its macOS `AccessibilityService` is a 15-line class with one empty `invalidate()`. IME is done; accessibility is a stub. Point the caveat at the right subsystem.
 - **A CALayer/Metal-drawn view gets zero accessibility for free.** Every `NSAccessibility` role, value, and range API must be hand-written before VoiceOver can read a single cell. This cost is invisible in a renderer bake-off and dominates it.

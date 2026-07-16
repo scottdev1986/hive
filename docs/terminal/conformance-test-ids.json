@@ -1,0 +1,534 @@
+{
+  "schemaVersion": 1,
+  "namespace": "TST.TERM",
+  "status": "frozen-before-implementation",
+  "source": "docs/design/terminal-stack-transition.html",
+  "stabilityRule": "IDs are immutable once published. Change a title or proof in place; add a new ID for a distinct obligation; never reuse or renumber a retired ID.",
+  "tests": [
+    {
+      "id": "TST.TERM.INV.I01",
+      "kind": "invariant",
+      "requirement": "I1",
+      "title": "Real vendor TUI fidelity",
+      "owners": ["HiveTerminalKit", "sessiond service"],
+      "proof": "Replay the canonical provider VT corpus through the headless host and attached surface and compare cells, cursor, modes, effects, and frames with the uninterrupted real TUI and standalone Ghostty reference."
+    },
+    {
+      "id": "TST.TERM.INV.I02",
+      "kind": "invariant",
+      "requirement": "I2",
+      "title": "User-known live terminal",
+      "owners": ["Hive daemon", "sessiond service"],
+      "proof": "Close pane/window, quit, crash, and expire visibility for exact generations; require positive PTY, host, and process-tree absence or explicit survivors/unknown."
+    },
+    {
+      "id": "TST.TERM.INV.I03",
+      "kind": "invariant",
+      "requirement": "I3",
+      "title": "Single PTY writer",
+      "owners": ["sessiond service"],
+      "proof": "Instrument every PTY write during mixed human, automated, renderer-effect, reconnect, and fault traffic; require one host arbiter and one total byte order."
+    },
+    {
+      "id": "TST.TERM.INV.I04",
+      "kind": "invariant",
+      "requirement": "I4",
+      "title": "Human draft priority",
+      "owners": ["sessiond service", "HiveTerminalKit"],
+      "proof": "Inject typing, paste, IME, mouse, automated transactions, disconnects, and lease expiry at every claim boundary; automation must never enter while the human claim is held or uncertain."
+    },
+    {
+      "id": "TST.TERM.INV.I05",
+      "kind": "invariant",
+      "requirement": "I5",
+      "title": "Exact locator addressing",
+      "owners": ["SessionHost", "sessiond service"],
+      "proof": "Exercise display-name reuse, stale generation, foreign instance, and tagged root/agent subjects; only the exact locator may operate and all stale targets return typed errors."
+    },
+    {
+      "id": "TST.TERM.INV.I06",
+      "kind": "invariant",
+      "requirement": "I6",
+      "title": "Structured sourced status",
+      "owners": ["Hive daemon"],
+      "proof": "Run duplicate, gap, conflict, spoof, freshness, and reducer-prefix fixtures; every visible field retains source, observed time, revision, freshness, and confidence and terminal text remains diagnostic only."
+    },
+    {
+      "id": "TST.TERM.INV.I07",
+      "kind": "invariant",
+      "requirement": "I7",
+      "title": "No focus steal",
+      "owners": ["HiveTerminalKit"],
+      "proof": "Emit output, status, message, attention, attach, and recovery events into key and non-key windows; first responder changes only after explicit human navigation."
+    },
+    {
+      "id": "TST.TERM.INV.I08",
+      "kind": "invariant",
+      "requirement": "I8",
+      "title": "Daemon-owned authority",
+      "owners": ["Hive daemon"],
+      "proof": "Attempt delivery across denied sender, recipient, instance, edge, capability epoch, and gate combinations; agents and terminal channels cannot create an authoritative transition."
+    },
+    {
+      "id": "TST.TERM.INV.I09",
+      "kind": "invariant",
+      "requirement": "I9",
+      "title": "Self-contained universal macOS release",
+      "owners": ["Native supply chain"],
+      "proof": "Install quarantined artifacts on supported Intel and Apple Silicon Macs with tmux, Ghostty, Zig, shell plugins, package managers, and network absent; verify inventory, signatures, notarization, and launch."
+    },
+    {
+      "id": "TST.TERM.INV.I10",
+      "kind": "invariant",
+      "requirement": "I10",
+      "title": "Bounded terminal resources",
+      "owners": ["sessiond service", "HiveTerminalKit"],
+      "proof": "Run the 19-session soak and renderer-churn corpus; enforce visibility admission plus measured journal, checkpoint, image, scrollback, client-queue, RSS, disk, CPU, and GPU caps."
+    },
+
+    {
+      "id": "TST.TERM.GATE.TG01",
+      "kind": "qualification-gate",
+      "requirement": "TG1",
+      "title": "Manual-I/O bridge",
+      "owners": ["HiveTerminalKit", "Native supply chain"],
+      "proof": "Build the exact §23 C ABI against the pinned commit, verify one header/six implementation files/1,500 non-test lines, and pass key, text, IME, mouse, output, reconnect, header, and symbol ABI tests."
+    },
+    {
+      "id": "TST.TERM.GATE.TG02",
+      "kind": "qualification-gate",
+      "requirement": "TG2",
+      "title": "Complete checkpoint",
+      "owners": ["sessiond service", "HiveTerminalKit"],
+      "proof": "At every adversarial byte boundary restore both screens and all §23 opaque state; restored digest and subsequent effects must equal uninterrupted execution."
+    },
+    {
+      "id": "TST.TERM.GATE.TG03",
+      "kind": "qualification-gate",
+      "requirement": "TG3",
+      "title": "Renderer resource budget",
+      "owners": ["HiveTerminalKit", "sessiond service"],
+      "proof": "Measure the current supported attached-pane profile and 19 visible hosts on supported Intel and Apple Silicon against every §28 CPU, memory, GPU, latency, and disk budget."
+    },
+    {
+      "id": "TST.TERM.GATE.TG04",
+      "kind": "qualification-gate",
+      "requirement": "TG4",
+      "title": "Provider delivery evidence",
+      "owners": ["Provider adapters", "Hive daemon"],
+      "proof": "For every supported Claude, Codex, and Grok build verify §25 readiness and receipt behavior under idle, busy, approval, modal, backpressure, crash, and 1 MiB input without timer or screen-text substitution."
+    },
+    {
+      "id": "TST.TERM.GATE.TG05",
+      "kind": "qualification-gate",
+      "requirement": "TG5",
+      "title": "Crash isolation and visibility lease",
+      "owners": ["sessiond service"],
+      "proof": "Kill broker, Workspace, and individual hosts; re-adopt only exact visible generations with complete identity evidence, expire invisible generations, and prove one-host blast radius."
+    },
+    {
+      "id": "TST.TERM.GATE.TG06",
+      "kind": "qualification-gate",
+      "requirement": "TG6",
+      "title": "Process containment",
+      "owners": ["sessiond service", "Provider adapters"],
+      "proof": "Exercise provider roots, double-fork, setsid, app servers, recovery children, PID reuse, and unrelated sentinels; require verified absence or explicit survivors for every captured identity."
+    },
+    {
+      "id": "TST.TERM.GATE.TG07",
+      "kind": "qualification-gate",
+      "requirement": "TG7",
+      "title": "Legacy deletion",
+      "owners": ["SessionHost", "HiveTerminalKit"],
+      "proof": "After two stable releases prove zero live legacy generations, no compatibility writes/direct calls, clean offline install with tmux absent, and successful admission rollback before deleting readers and flags."
+    },
+
+    {
+      "id": "TST.TERM.SLO.01",
+      "kind": "release-slo",
+      "requirement": "SLO-01",
+      "title": "First correct frame latency",
+      "owners": ["HiveTerminalKit", "sessiond service"],
+      "proof": "Across 500 randomized attaches/retargets in the 19-session corpus, require target frame digest before timing ends and p95 at most 150 ms warm and 500 ms cold."
+    },
+    {
+      "id": "TST.TERM.SLO.02",
+      "kind": "release-slo",
+      "requirement": "SLO-02",
+      "title": "Human input acceptance latency",
+      "owners": ["HiveTerminalKit", "sessiond service"],
+      "proof": "Timestamp 10,000 local key, text, IME, paste, and mouse events; Hive overhead to PTY-write-queue acceptance must be p95 at most 8 ms and p99 at most 16 ms."
+    },
+    {
+      "id": "TST.TERM.SLO.03",
+      "kind": "release-slo",
+      "requirement": "SLO-03",
+      "title": "Visible status latency",
+      "owners": ["Hive daemon", "HiveTerminalKit"],
+      "proof": "Run 10,000 live-source events through the flat reducer while UI is visible; visible projection must be p95 at most 250 ms and p99 at most 500 ms."
+    },
+    {
+      "id": "TST.TERM.SLO.04",
+      "kind": "release-slo",
+      "requirement": "SLO-04",
+      "title": "Lossless ordered exact-target I/O",
+      "owners": ["sessiond service"],
+      "proof": "Digest and sequence-check 100 MiB output per session and 1 MiB transactions with reconnect/crash at every chunk boundary; require zero loss, duplication, reorder, or wrong target."
+    },
+    {
+      "id": "TST.TERM.SLO.05",
+      "kind": "release-slo",
+      "requirement": "SLO-05",
+      "title": "Crash adoption and teardown latency",
+      "owners": ["sessiond service"],
+      "proof": "Across 1,000 injected failures require visible-host re-adoption p95 at most 2 s and zero owned providers after the 15 s visibility lease plus 4 s graceful-stop bound."
+    },
+    {
+      "id": "TST.TERM.SLO.06",
+      "kind": "release-slo",
+      "requirement": "SLO-06",
+      "title": "Idle host resource budget",
+      "owners": ["sessiond service"],
+      "proof": "After warmup measure five-minute steady-state medians on supported Intel and Apple Silicon: 19 hosts plus broker CPU at most 1%, broker RSS at most 64 MiB, fresh host overhead at most 24 MiB."
+    },
+    {
+      "id": "TST.TERM.SLO.07",
+      "kind": "release-slo",
+      "requirement": "SLO-07",
+      "title": "Attached renderer memory budget",
+      "owners": ["HiveTerminalKit", "sessiond service"],
+      "proof": "Measure the current attached-pane profile on representative TUIs, screens, images, and scrollback; total terminal infrastructure for 19 sessions must be at most 1.5 GiB with per-session caps."
+    },
+    {
+      "id": "TST.TERM.SLO.08",
+      "kind": "release-slo",
+      "requirement": "SLO-08",
+      "title": "Visible refresh and detached GPU quiescence",
+      "owners": ["HiveTerminalKit"],
+      "proof": "Use Instruments during high output and rapid retarget: visible interaction sustains display refresh/60 fps where supported, and detached or destroyed surfaces submit no display-link or render work."
+    },
+    {
+      "id": "TST.TERM.SLO.09",
+      "kind": "release-slo",
+      "requirement": "SLO-09",
+      "title": "Bounded terminal storage",
+      "owners": ["sessiond service"],
+      "proof": "Run 19 sessions for eight hours with scrollback, images, checkpoints, and forced failures; storage remains at most 2 GiB per HIVE_HOME with bounded journals and exactly two checkpoints."
+    },
+    {
+      "id": "TST.TERM.SLO.10",
+      "kind": "release-slo",
+      "requirement": "SLO-10",
+      "title": "No authority, truth, focus, or supply-chain violation",
+      "owners": ["Hive daemon", "sessiond service", "HiveTerminalKit", "Provider adapters", "Native supply chain"],
+      "proof": "Run security, UI, provider, Gatekeeper, offline, capability-epoch, cross-instance, and hostile-sequence suites; require no focus steal, unauthorized observe/input/kill, false receipt/state, or unsigned/runtime-fetched code."
+    },
+
+    {
+      "id": "TST.TERM.SUITE.GHOSTTY_FIDELITY",
+      "kind": "verification-suite",
+      "requirement": "§13 Ghostty fidelity",
+      "title": "Ghostty fidelity suite",
+      "owners": ["HiveTerminalKit", "sessiond service"],
+      "proof": "Run VT goldens and real Claude/Codex/Grok login, tool, approval, alternate-screen, resize, scrollback, search, image, and synchronized-output workflows against standalone Ghostty."
+    },
+    {
+      "id": "TST.TERM.SUITE.INPUT",
+      "kind": "verification-suite",
+      "requirement": "§13 Input",
+      "title": "Input suite",
+      "owners": ["HiveTerminalKit", "sessiond service"],
+      "proof": "Cover layouts, Option/control/function keys, IME, 1-byte through 1-MiB paste, bracketed paste, mouse, slow PTY, claims/disconnects, and all message priorities without loss, reorder, interleave, wrong target, logging, or premature release."
+    },
+    {
+      "id": "TST.TERM.SUITE.CRASH_RECOVERY",
+      "kind": "verification-suite",
+      "requirement": "§13 Crash/recovery",
+      "title": "Crash and recovery suite",
+      "owners": ["sessiond service", "Hive daemon", "HiveTerminalKit"],
+      "proof": "Kill each Workspace, renderer, client, daemon, broker, host, provider root, and app server during every lifecycle/input/output state and verify lease, isolation, reattach, receipt, lock, and survivor truth."
+    },
+    {
+      "id": "TST.TERM.SUITE.IDENTITY_SECURITY",
+      "kind": "verification-suite",
+      "requirement": "§13 Identity/security",
+      "title": "Identity and security suite",
+      "owners": ["Hive daemon", "sessiond service", "HiveTerminalKit"],
+      "proof": "Exercise PID and display-name reuse, stale/foreign identity, socket/token attacks, epoch/gate denial, hostile escape sequences, OSC 52, hyperlinks, and oversized images/frames; fail every unauthorized or unbounded operation."
+    },
+    {
+      "id": "TST.TERM.SUITE.STATUS",
+      "kind": "verification-suite",
+      "requirement": "§13 Status",
+      "title": "Status suite",
+      "owners": ["Hive daemon", "Provider adapters"],
+      "proof": "Cover out-of-order, duplicate, missing, stale, conflicting, disconnected, spoofed, generation-changed, snapshot-gap, and cross-language reducer cases without self-approval or invented freshness/work."
+    },
+    {
+      "id": "TST.TERM.SUITE.SCALE_PERFORMANCE",
+      "kind": "verification-suite",
+      "requirement": "§13 Scale/performance",
+      "title": "Scale and performance suite",
+      "owners": ["sessiond service", "HiveTerminalKit"],
+      "proof": "Exercise 19+ sessions, transient reviewers, output bursts, selection churn, idle, images, scrollback, sleep/wake, display changes, renderer churn, and eight-hour soak without backpressure loss, unbounded resources, lag, or hot off-screen rendering."
+    },
+    {
+      "id": "TST.TERM.SUITE.RELEASE",
+      "kind": "verification-suite",
+      "requirement": "§13 Release",
+      "title": "Release suite",
+      "owners": ["Native supply chain"],
+      "proof": "On supported clean Intel and Apple Silicon macOS versions test install, upgrade, rollback, quarantine, Gatekeeper, notarization, offline launch, missing tmux/Ghostty/Zig, architecture compatibility, and preservation of live generations."
+    },
+
+    {
+      "id": "TST.TERM.LEGACY.TMUX.INSTANCE_SCOPE",
+      "kind": "legacy-postcondition",
+      "requirement": "tmux adapter target validation",
+      "title": "Instance-scoped session target",
+      "owners": ["SessionHost", "Hive daemon"],
+      "proof": "Foreign-instance and invalid session targets are rejected before operation; exact instance/subject/generation locators are required."
+    },
+    {
+      "id": "TST.TERM.LEGACY.TMUX.SESSION_DISCOVERY",
+      "kind": "legacy-postcondition",
+      "requirement": "tmux has-session",
+      "title": "Session existence discovery",
+      "owners": ["SessionHost", "sessiond service"],
+      "proof": "Exact live generation returns present, missing service/generation returns absent, and all other discovery failures remain typed errors/unknown."
+    },
+    {
+      "id": "TST.TERM.LEGACY.TMUX.SESSION_CREATE",
+      "kind": "legacy-postcondition",
+      "requirement": "tmux new-session",
+      "title": "Detached session creation",
+      "owners": ["SessionHost", "sessiond service", "Provider adapters"],
+      "proof": "Create exactly once in the requested worktree with bounded geometry/profile and verify locator, process/start token, PTY, executable, process group, engine, and socket before returning created."
+    },
+    {
+      "id": "TST.TERM.LEGACY.TMUX.LAUNCH_FAILURE_EVIDENCE",
+      "kind": "legacy-postcondition",
+      "requirement": "tmux failed-pane hold and capture",
+      "title": "Launch failure remains observable",
+      "owners": ["Provider adapters", "Hive daemon"],
+      "proof": "A provider launch failure yields structured exit/readiness evidence and a bounded diagnostic path before cleanup; absence of a terminal screen never erases the cause."
+    },
+    {
+      "id": "TST.TERM.LEGACY.TMUX.LITERAL_INPUT",
+      "kind": "legacy-postcondition",
+      "requirement": "tmux load-buffer/paste-buffer/send Enter",
+      "title": "Literal ordered message input",
+      "owners": ["sessiond service", "Provider adapters"],
+      "proof": "Send binary-safe text plus submit as one authorized transaction to the exact generation under slow PTY and faults; verify bytes once, in order, with honest receipt."
+    },
+    {
+      "id": "TST.TERM.LEGACY.TMUX.INTERRUPT_INPUT",
+      "kind": "legacy-postcondition",
+      "requirement": "tmux Escape/C-u/urgent control",
+      "title": "Interrupt clears stale composer before control",
+      "owners": ["sessiond service", "Provider adapters"],
+      "proof": "Urgent/critical cancellation revokes the in-flight turn, clears the old composer through the provider adapter, and admits control only after ordered evidence; cancelled work cannot resume."
+    },
+    {
+      "id": "TST.TERM.LEGACY.TMUX.CAPTURE_VISIBLE",
+      "kind": "legacy-postcondition",
+      "requirement": "tmux capture-pane",
+      "title": "Bounded terminal observation",
+      "owners": ["SessionHost", "sessiond service"],
+      "proof": "Authorized inspect/snapshot returns bounded terminal observation for diagnostics and reconnect while status and delivery truth remain structured rather than inferred from screen text."
+    },
+    {
+      "id": "TST.TERM.LEGACY.TMUX.CLIENT_TTY_DISCOVERY",
+      "kind": "legacy-postcondition",
+      "requirement": "tmux list-clients",
+      "title": "Attached-user protection",
+      "owners": ["sessiond service", "Hive daemon"],
+      "proof": "A user-visible attached generation is represented by a current Workspace lease and cannot be replaced or terminated as stale; detached transport alone grants no lifetime."
+    },
+    {
+      "id": "TST.TERM.LEGACY.TMUX.PROCESS_ROOT_DISCOVERY",
+      "kind": "legacy-postcondition",
+      "requirement": "tmux list-panes pane_pid",
+      "title": "Provider process-root discovery",
+      "owners": ["sessiond service", "Provider adapters"],
+      "proof": "Inspect returns verified root and auxiliary PID/start-token identities before signaling and attributes their resource use to one exact generation."
+    },
+    {
+      "id": "TST.TERM.LEGACY.TMUX.TERMINATE_READBACK",
+      "kind": "legacy-postcondition",
+      "requirement": "tmux kill-session plus has-session",
+      "title": "Exact-generation verified termination",
+      "owners": ["sessiond service", "Hive daemon"],
+      "proof": "Close/kill revokes input, captures roots, stops the exact generation, closes PTY/host, and requires wait/absence evidence for every identity or returns survivors/unknown."
+    },
+    {
+      "id": "TST.TERM.LEGACY.TMUX.SESSION_ENUMERATION",
+      "kind": "legacy-postcondition",
+      "requirement": "tmux list-sessions",
+      "title": "Instance generation enumeration",
+      "owners": ["SessionHost", "sessiond service"],
+      "proof": "List returns only the canonical HIVE_HOME/instance generation records that live hosts re-prove; missing service is empty and corrupt/unverifiable records are quarantined as unknown."
+    },
+    {
+      "id": "TST.TERM.LEGACY.TMUX.ORCHESTRATOR_LAUNCH",
+      "kind": "legacy-postcondition",
+      "requirement": "direct tmux orchestrator new-session",
+      "title": "Persistent real orchestrator TUI launch",
+      "owners": ["SessionHost", "Provider adapters", "sessiond service"],
+      "proof": "Launch the selected root provider once in the requested directory/profile, show its real TUI, and preserve it across renderer detachment only while visibility remains current."
+    },
+    {
+      "id": "TST.TERM.LEGACY.TMUX.WORKSPACE_ATTACH",
+      "kind": "legacy-postcondition",
+      "requirement": "Workspace has-session loop and attach-session",
+      "title": "Workspace attach waits for exact live target",
+      "owners": ["HiveTerminalKit", "SessionHost", "sessiond service"],
+      "proof": "An attach grant binds the exact locator; the surface stays in an honest attaching state until verified checkpoint/journal/live output reaches the target high-water and first correct frame."
+    },
+    {
+      "id": "TST.TERM.LEGACY.TMUX.DETACH_WITHOUT_KILL",
+      "kind": "legacy-postcondition",
+      "requirement": "tmux client detach",
+      "title": "Renderer replacement does not kill a visible generation",
+      "owners": ["HiveTerminalKit", "sessiond service"],
+      "proof": "Renderer/transport detach or retarget leaves the exact process alive only under a current visibility lease; user Close follows termination and never this detach path."
+    },
+    {
+      "id": "TST.TERM.LEGACY.TMUX.SCROLL_ROUTING",
+      "kind": "legacy-postcondition",
+      "requirement": "tmux mouse/copy-mode scroll",
+      "title": "Bounded scroll and mouse routing",
+      "owners": ["HiveTerminalKit"],
+      "proof": "Wheel gestures reach the provider's active mouse protocol at correct cells or bounded native scrollback without unbounded subprocess/gesture queues or false button events."
+    },
+    {
+      "id": "TST.TERM.LEGACY.TMUX.BOUNDED_HISTORY",
+      "kind": "legacy-postcondition",
+      "requirement": "tmux history-limit",
+      "title": "Bounded scrollback history",
+      "owners": ["sessiond service", "HiveTerminalKit"],
+      "proof": "Long output retains the configured bounded scrollback/checkpoint/journal history needed for display and search without exceeding per-session and HIVE_HOME caps."
+    },
+    {
+      "id": "TST.TERM.LEGACY.TMUX.REATTACH_RECOVERY",
+      "kind": "legacy-postcondition",
+      "requirement": "tmux session persistence and recovery",
+      "title": "Same-generation reconnect",
+      "owners": ["sessiond service", "SessionHost"],
+      "proof": "Broker/renderer reconnect proves the same locator, process/start token, build, socket, secret, visibility, and output high-water; it never substitutes a new process or partial screen."
+    },
+
+    {
+      "id": "TST.TERM.LEGACY.SWIFTTERM.REAL_TUI",
+      "kind": "legacy-postcondition",
+      "requirement": "LocalProcessTerminalView rendering",
+      "title": "Authentic terminal rendering and modes",
+      "owners": ["HiveTerminalKit"],
+      "proof": "Render real provider primary/alternate screens, Unicode/graphemes, colors, cursor, hyperlinks, keyboard/mouse modes, images, and synchronized output against the canonical corpus and standalone Ghostty."
+    },
+    {
+      "id": "TST.TERM.LEGACY.SWIFTTERM.INITIAL_GEOMETRY",
+      "kind": "legacy-postcondition",
+      "requirement": "deferred LocalProcessTerminalView start",
+      "title": "Child starts with settled cell geometry",
+      "owners": ["HiveTerminalKit", "sessiond service"],
+      "proof": "Defer create/attach until nonzero settled pane geometry, apply one canonical cell/pixel size, and require the first frame and PTY size to agree."
+    },
+    {
+      "id": "TST.TERM.LEGACY.SWIFTTERM.LIVE_RESIZE",
+      "kind": "legacy-postcondition",
+      "requirement": "SwiftTerm frame-driven winsize",
+      "title": "Live resize and reflow",
+      "owners": ["HiveTerminalKit", "sessiond service"],
+      "proof": "Rapid window/layout/display resizes coalesce to monotonic geometry revisions, update PTY/headless/surface state in order, and preserve correct reflow, cursor, and final frame."
+    },
+    {
+      "id": "TST.TERM.LEGACY.SWIFTTERM.ENVIRONMENT",
+      "kind": "legacy-postcondition",
+      "requirement": "SwiftTerm terminal environment",
+      "title": "Bounded provider terminal environment",
+      "owners": ["Provider adapters", "sessiond service"],
+      "proof": "Launch receives the Hive terminal profile and required PATH/TMPDIR/worktree values without importing Ghostty configuration or leaking unrelated secrets."
+    },
+    {
+      "id": "TST.TERM.LEGACY.SWIFTTERM.KEY_TEXT_INPUT",
+      "kind": "legacy-postcondition",
+      "requirement": "TerminalView native key/text send",
+      "title": "Native key and text encoding",
+      "owners": ["HiveTerminalKit", "sessiond service"],
+      "proof": "macOS layouts, modifiers, control/function keys, text, and terminal keyboard modes encode through Ghostty and enter the claimed exact-generation arbiter once and in order."
+    },
+    {
+      "id": "TST.TERM.LEGACY.SWIFTTERM.PASTE",
+      "kind": "legacy-postcondition",
+      "requirement": "TerminalView paste",
+      "title": "Claimed bounded paste",
+      "owners": ["HiveTerminalKit", "sessiond service"],
+      "proof": "Paste from 1 byte through 1 MiB acquires the human claim, honors bracketed-paste mode and clipboard policy, remains exact-target and ordered, and never enters content logs."
+    },
+    {
+      "id": "TST.TERM.LEGACY.SWIFTTERM.MOUSE",
+      "kind": "legacy-postcondition",
+      "requirement": "TerminalView mouse reporting",
+      "title": "Native mouse encoding",
+      "owners": ["HiveTerminalKit", "sessiond service"],
+      "proof": "Clicks, drags, motion, and wheels at pane edges and scaled geometry encode the correct terminal cell/mode under a human claim without wrong-target bytes."
+    },
+    {
+      "id": "TST.TERM.LEGACY.SWIFTTERM.MALFORMED_MOTION",
+      "kind": "legacy-postcondition",
+      "requirement": "WorkspaceTerminalView malformed SGR filter",
+      "title": "No false mouse release",
+      "owners": ["HiveTerminalKit"],
+      "proof": "All-motion hover never emits a no-button packet that decodes as release; real clicks, drags, and wheels remain byte-correct."
+    },
+    {
+      "id": "TST.TERM.LEGACY.SWIFTTERM.FOCUS",
+      "kind": "legacy-postcondition",
+      "requirement": "TerminalView first responder",
+      "title": "Honest explicit terminal focus",
+      "owners": ["HiveTerminalKit"],
+      "proof": "Click and keyboard navigation make the intended surface first responder and align its focus indicator; new panes, output, status, attach, and recovery never steal focus."
+    },
+    {
+      "id": "TST.TERM.LEGACY.SWIFTTERM.CHILD_TERMINATION",
+      "kind": "legacy-postcondition",
+      "requirement": "LocalProcessTerminalView terminate",
+      "title": "Surface child cleanup",
+      "owners": ["HiveTerminalKit", "sessiond service"],
+      "proof": "Destroying a renderer closes its transport resources without killing a still-visible generation; terminal Close separately requests verified exact-generation termination."
+    },
+    {
+      "id": "TST.TERM.LEGACY.SWIFTTERM.EXIT_EVENT",
+      "kind": "legacy-postcondition",
+      "requirement": "LocalProcessTerminalViewDelegate processTerminated",
+      "title": "Terminal exit is surfaced",
+      "owners": ["sessiond service", "Hive daemon", "HiveTerminalKit"],
+      "proof": "Host/provider exit publishes structured wait, last-sequence, checkpoint, survivor, and failure evidence to daemon and surface; renderer disappearance alone cannot invent exit."
+    },
+    {
+      "id": "TST.TERM.LEGACY.SWIFTTERM.VISIBLE_SCREEN",
+      "kind": "legacy-postcondition",
+      "requirement": "TerminalView visibleText smoke introspection",
+      "title": "Deterministic visible-grid inspection",
+      "owners": ["HiveTerminalKit", "sessiond service"],
+      "proof": "Test-only visible-grid and frame digests identify the exact applied high-water and match canonical headless state without becoming production status or receipt evidence."
+    },
+    {
+      "id": "TST.TERM.LEGACY.SWIFTTERM.COMPOSER_SIGNAL",
+      "kind": "legacy-postcondition",
+      "requirement": "Workspace key/paste composer classification",
+      "title": "Human composer claim signals",
+      "owners": ["HiveTerminalKit", "Hive daemon", "sessiond service"],
+      "proof": "First editing key, paste, IME start, deletion, or edit command acquires/renews the claim; submit/cancel releases only after ordered acknowledgement and selection changes do not retarget composition."
+    },
+    {
+      "id": "TST.TERM.LEGACY.SWIFTTERM.SELECTION_COPY",
+      "kind": "legacy-postcondition",
+      "requirement": "TerminalView responder-chain Copy/Select All",
+      "title": "Native selection and copy",
+      "owners": ["HiveTerminalKit"],
+      "proof": "Mouse/keyboard selection, Select All, and Copy operate on the attached surface's semantic cells and scrollback, obey clipboard policy, and do not mutate focus or terminal bytes."
+    }
+  ]
+}
