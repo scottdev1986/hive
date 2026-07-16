@@ -1533,9 +1533,7 @@ describe("HiveDaemon HTTP server", () => {
       },
 });
     try {
-      // Persisted pre-containment Codex writer rows still need a fresh matching
-      // provider reattestation; new Codex writers never reach this boundary.
-      db.insertAgent(landableLegacyCodex());
+      db.insertAgent(agent({ tool: "claude", model: "sonnet" }));
       await daemon.landAgent("maya", 0);
       expect(landed).toEqual(["hive/maya-server"]);
 
@@ -1622,101 +1620,42 @@ describe("HiveDaemon HTTP server", () => {
     }
   });
 
-  test("landing boundary CAS rejects attestation-only drift after fresh reattestation", async () => {
-    const db = new HiveDatabase(join(home, "land-attestation-boundary-cas.db"));
+  test("a migrated Codex writer is refused before identity reads or Git without maintenance", async () => {
+    const db = new HiveDatabase(join(home, "legacy-codex-land-refusal.db"));
+    let identityReads = 0;
     let mergeSpawned = false;
     const daemon = new HiveDaemon({
       db,
       spawner: new StubSpawner(),
       repoRoot: "/repo",
-      telemetryReaders: { codexIdentity: matchingCodexIdentity },
-      landBranch: async (_root, _branch, options) => {
-        const current = db.getAgentById("agent-maya")!;
-        expect(db.updateAgentIfCurrent(agentStateCas(current), {
-          identityState: "drift",
-          liveModel: "gpt-5.6-luna",
-          liveEffort: "low",
-          observedIdentity: {
-            model: "gpt-5.6-luna",
-            effort: "low",
-            turnId: "replacement-turn",
-            sessionId: "session-land",
-            observedAt: "2026-07-15T20:03:00.000Z",
-            source: "codex-rollout",
-          },
-        })).not.toBeNull();
-        options?.preMergeCheck?.();
+      telemetryReaders: {
+        codexIdentity: async () => {
+          identityReads += 1;
+          return matchingCodexIdentity();
+        },
+      },
+      landBranch: async () => {
         mergeSpawned = true;
         return { commit: "unreachable" };
       },
     });
-    db.insertAgent(landableLegacyCodex());
+    db.insertAgent(landableLegacyCodex({
+      toolSessionId: "migrated-hook-or-child-session",
+      identityState: "matching",
+    }));
     try {
       await expect(daemon.landAgent("maya", 0)).rejects.toThrow(
-        /authority\/incarnation check failed at the Git boundary/,
+        /mechanically forbids every Codex writer landing before attestation or Git/,
       );
+      expect(identityReads).toBe(0);
       expect(mergeSpawned).toBe(false);
       expect(db.getAgentById("agent-maya")).toMatchObject({
         status: "working",
         writeRevoked: false,
-        identityState: "drift",
-        liveModel: "gpt-5.6-luna",
+        identityState: "matching",
       });
     } finally {
       await daemon.stop();
-      db.close();
-    }
-  });
-
-  test("a legacy Codex writer without matching attestation cannot land", async () => {
-    const db = new HiveDatabase(join(home, "land-attestation-gate.db"));
-    const landed: string[] = [];
-    let observed = {
-      status: "unknown" as const,
-    };
-    const daemon = new HiveDaemon({
-      db,
-      spawner: new StubSpawner(),
-      tmuxSender: new SilentTmuxSender(db),
-      repoRoot: "/repo",
-      landBranch: async (_root, branch) => {
-        landed.push(branch);
-        return { commit: "landed" };
-      },
-      telemetryReaders: {
-        codexIdentity: async () => observed as never,
-      },
-    });
-    try {
-      // Fresh reattest of an unreadable rollout is unknown — cannot merge.
-      db.insertAgent(landableLegacyCodex({ identityState: undefined }));
-      await expect(daemon.landAgent("maya", 0)).rejects.toThrow(
-        /fresh Codex reattestation is unknown/,
-      );
-      // Drifted observation is refused even if a stale row still says matching.
-      observed = {
-        status: "observed",
-        model: "gpt-5.6-luna",
-        effort: "low",
-        turnId: "t",
-        sessionId: "session-land",
-        observedAt: "2026-07-15T18:00:00.000Z",
-      } as never;
-      db.upsertAgent(landableLegacyCodex({ identityState: "matching" }));
-      await expect(daemon.landAgent("maya", 0)).rejects.toThrow(/is drift/);
-      expect(landed).not.toContain("hive/maya-server");
-
-      // A Claude writer is unaffected by the Codex identity gate.
-      db.insertAgent(agent({
-        id: "agent-cara",
-        name: "cara",
-        tool: "claude",
-        tmuxSession: "hive-cara",
-        branch: "hive/cara-x",
-      }));
-      await daemon.landAgent("cara", 0);
-      expect(landed).toEqual(["hive/cara-x"]);
-    } finally {
       db.close();
     }
   });
@@ -1808,7 +1747,7 @@ describe("HiveDaemon HTTP server", () => {
         codexIdentity: matchingCodexIdentity,
       },
 });
-    db.insertAgent(landableLegacyCodex());
+    db.insertAgent(agent({ tool: "claude", model: "sonnet" }));
     const landing = daemon.landAgent("maya", 0);
     try {
       await landingStarted;

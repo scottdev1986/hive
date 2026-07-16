@@ -5,10 +5,10 @@
 // own turn_context. This module compares the two into a fail-closed verdict.
 // It never synthesizes an observation from the launch request: an `absent` or
 // `unknown` observation leaves `observedIdentity` untouched and only records
-// that the verdict could not be confirmed. `matching` is the sole state that
-// is required for landing/reattest of any still-running legacy Codex process.
-// New Codex writers are refused at launch (codex-containment); this module is
-// not a per-mutation authorization gate.
+// that the verdict could not be confirmed. New Codex writers are refused at
+// launch, and persisted legacy Codex writers cannot land: 0.144.4 exposes no
+// independent process binding for a rollout/session. This observation remains
+// useful for non-destructive containment, never as mutation authority.
 
 import {
   compareObservedIdentity,

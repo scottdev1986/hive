@@ -56,7 +56,7 @@ describe("orchestrator brief", () => {
     expect(command[2]).toContain(
       "exec 'codex' '--remote' 'unix:///tmp/hive-root.sock' '--no-alt-screen' '-c' 'features.multi_agent=false'",
     );
-    expect(command[2].match(/features\.multi_agent=false/g)).toHaveLength(2);
+    expect(command[2]!.match(/features\.multi_agent=false/g)).toHaveLength(2);
   });
   test("is non-empty and names every orchestration MCP tool", () => {
     expect(ORCHESTRATOR_BRIEF.trim().length).toBeGreaterThan(100);

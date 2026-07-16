@@ -83,7 +83,6 @@ import {
 } from "./capabilities";
 import { OPERATOR_SUBJECT, removeCredential, writeCredential } from "./credentials";
 import {
-  agentAttestationCas,
   agentStateCas,
   HiveDatabase,
   type Approval,
@@ -2800,6 +2799,12 @@ export class HiveDaemon {
         `Cannot land ${name}: it was launched read-only and has no landing authority.`,
       );
     }
+    if (agent.tool === "codex") {
+      throw new Error(
+        `Cannot land ${name}: Codex 0.144.4 does not expose an independent process binding for rollout/session identity, so reader-only containment mechanically forbids every Codex writer landing before attestation or Git.\n` +
+          `Fix: have a non-Codex integrator revalidate and land this preserved branch.`,
+      );
+    }
     if (isTerminalAgentStatus(agent.status)) {
       throw new Error(
         `Cannot land ${name}: its status is ${agent.status} (terminal). A terminal agent has no landing authority.`,
@@ -2817,58 +2822,13 @@ export class HiveDaemon {
           `Fix: call hive_land again with capabilityEpoch ${agent.capabilityEpoch}.`,
       );
     }
-    // Fail-closed attestation gate with FRESH exact-session reattestation —
-    // never trust a stored matching row alone. After the awaited read, only
-    // attestation fields are written so a concurrent kill cannot be clobbered
-    // by a full-row stale upsert. Claude/Grok skip the Codex identity gate.
-    let authorityRow = agent;
-    if (agent.tool === "codex") {
-      const launch = agent.executionIdentity;
-      if (launch === undefined || agent.worktreePath === null) {
-        throw new Error(
-          `Cannot land ${name}: it has no immutable launch identity to reattest, so it may not merge.`,
-        );
-      }
-      const attestation = reconcileCodexIdentity(
-        launch,
-        await this.readCodexIdentity(agent.worktreePath, agent.toolSessionId),
-      );
-      // Narrow exact-holder update. A same-name successor or any process,
-      // session, epoch, branch, status, or revocation change wins this race.
-      const attested = this.db.updateAgentIfCurrent(agentStateCas(agent), {
-        identityState: attestation.identityState,
-        ...(attestation.observedIdentity === null
-          ? {}
-          : { observedIdentity: attestation.observedIdentity }),
-        ...(attestation.liveModel === null ? {} : { liveModel: attestation.liveModel }),
-        ...(attestation.liveEffort === null
-          ? {}
-          : { liveEffort: attestation.liveEffort }),
-      });
-      if (attested === null) {
-        throw new Error(
-          `Cannot land ${name}: exact agent/session/incarnation changed during reattestation; landing refused.`,
-        );
-      }
-      authorityRow = attested;
-      if (attestation.identityState !== "matching") {
-        throw new Error(
-          `Cannot land ${name}: fresh Codex reattestation is ${
-            attestation.identityState
-          }, not matching the authorized launch identity, so it may not merge.\n` +
-            `Fix: the running model+effort must reattest matching or ${name} must be restarted under the authorized identity before landing.`,
-        );
-      }
-    }
-    // Final CAS immediately before Git — every provider. Kill/control during
-    // reattest or lease wait must not reach merge.
-    const landingAttestation = agent.tool === "codex"
-      ? agentAttestationCas(authorityRow)
-      : undefined;
+    // Final CAS immediately before Git. Codex writers were refused above;
+    // Claude/Grok still require the exact row to remain current through every
+    // later lease and process boundary.
+    const authorityRow = agent;
     const finalRow = this.db.updateAgentIfCurrent(
       agentStateCas(authorityRow),
       {},
-      landingAttestation,
     );
     if (finalRow === null || finalRow.branch === null) {
       const current = this.db.getAgentById(agent.id);
@@ -2881,15 +2841,11 @@ export class HiveDaemon {
     }
     const operation = await this.machineMutations?.beginOperation("landing");
     const authoritySnapshot = agentStateCas(finalRow);
-    const attestationSnapshot = agent.tool === "codex"
-      ? agentAttestationCas(finalRow)
-      : undefined;
     const branch = finalRow.branch;
     const assertLandAuthority = () => {
       const row = this.db.updateAgentIfCurrent(
         authoritySnapshot,
         {},
-        attestationSnapshot,
       );
       if (row === null) {
         const current = this.db.getAgentById(authoritySnapshot.id);
