@@ -386,6 +386,70 @@ describe("an agent capability is bound to the exact process holder", () => {
   });
 });
 
+describe("a native app-server reader can use its scoped Hive bearer", () => {
+  test("fresh reader status and replacement control acknowledgement authenticate", async () => {
+    const { daemon, db } = harness();
+    const fresh = db.upsertAgent(agentRecord({
+      tool: "codex",
+      model: "gpt-5.6-sol",
+      executionIdentity: {
+        tool: "codex",
+        model: "gpt-5.6-sol",
+        effort: "high",
+      },
+      readOnly: true,
+      processIncarnation: 3,
+      toolSessionId: undefined,
+      identityState: "unknown",
+    }));
+    const freshToken = daemon.capabilities.mint("maya", "reader", {
+      epoch: 0,
+      holder: { agentId: fresh.id, processIncarnation: 3 },
+    }).token;
+    expect((await callTool(daemon, freshToken, "hive_status")).ok).toBe(true);
+
+    const replacement = db.upsertAgent({
+      ...fresh,
+      status: "control-paused",
+      capabilityEpoch: 1,
+      processIncarnation: 4,
+      writeRevoked: true,
+      controlMessageId: "native-control",
+    });
+    db.insertMessage({
+      id: "native-control",
+      from: "orchestrator",
+      to: "maya",
+      body: "Stop and acknowledge.",
+      createdAt: timestamp,
+      deliveredAt: timestamp,
+      priority: "critical",
+      intent: "stop",
+      state: "injected",
+      injectedAt: timestamp,
+      acknowledgedAt: null,
+      appliedAt: null,
+      deadlineAt: "2026-07-10T12:01:00.000Z",
+      alertAt: null,
+      sequence: 1,
+      idempotencyKey: null,
+      capabilityEpoch: 1,
+    });
+    const replacementToken = daemon.capabilities.mint("maya", "reader", {
+      epoch: 1,
+      holder: { agentId: replacement.id, processIncarnation: 4 },
+    }).token;
+    expect((await callTool(daemon, replacementToken, "hive_ack_message", {
+      agent: "maya",
+      messageId: "native-control",
+      capabilityEpoch: 1,
+      applied: true,
+    })).ok).toBe(true);
+    expect(db.getMessage("native-control")).toMatchObject({ state: "applied" });
+    await daemon.stop();
+  });
+});
+
 describe("an agent-bound capability requires a live authority record", () => {
   test("a writer whose agent row vanished is refused instead of inheriting permission", async () => {
     const { daemon, db } = harness();

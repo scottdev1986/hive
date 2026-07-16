@@ -744,6 +744,67 @@ describe("HiveSpawner name pool", () => {
     }
   });
 
+  test("a native Codex control restart exports its replacement reader credential", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-control-codex-app-server-"));
+    tempRoots.push(root);
+    const controlled = {
+      ...agent("maya", "control-paused"),
+      tool: "codex",
+      model: "gpt-5.6-sol",
+      worktreePath: root,
+      capabilityEpoch: 1,
+      writeRevoked: true,
+      executionIdentity: {
+        tool: "codex",
+        model: "gpt-5.6-sol",
+        effort: "high",
+      },
+    } satisfies AgentRecord;
+    const controlQuota = makeControlQuota(root);
+    const store = new FakeStore([controlled]);
+    const tmux = new FakeTmux();
+    const starts: Array<{ prompt: string; readOnly: boolean }> = [];
+    const spawner = newTestSpawner({
+      isModelEnabled: async () => true,
+      db: store,
+      repoRoot: root,
+      port: 4317,
+      config: { codex: { driver: "app-server" } },
+      readRoutingPolicy: () => {
+        throw new Error("control restart must use its recorded identity");
+      },
+      tmux,
+      sleep: signalControlReadiness(store),
+      quota: controlQuota.quota,
+      issueCredential: () => "control-reader-secret",
+      codexAppServer: {
+        isAvailable: async () => true,
+        buildHostCommand: () => ["hive", "codex-app-server-host"],
+        startAgent: async (_record, prompt, readOnly) => {
+          starts.push({ prompt, readOnly });
+        },
+        disconnect: () => undefined,
+      },
+    });
+    const message = controlMessage("app-server-control");
+
+    await spawner.restartForControl(controlled, message);
+
+    const command = tmux.sessions[0]?.[2] ?? "";
+    expect(command).toContain("'codex-app-server-host'");
+    expect(command).toContain(
+      `HIVE_CAPABILITY_TOKEN="$(cat ${root}/.codex/capability-token)"`,
+    );
+    expect(command).not.toContain("control-reader-secret");
+    expect(await readFile(join(root, ".codex", "capability-token"), "utf8"))
+      .toEqual("control-reader-secret");
+    expect(starts).toEqual([{
+      prompt: expect.stringContaining("hive_ack_message"),
+      readOnly: true,
+    }]);
+    controlQuota.db.close();
+  });
+
   test("fails closed when the recorded model cannot launch", async () => {
     const root = await mkdtemp(join(tmpdir(), "hive-control-unavailable-"));
     tempRoots.push(root);
@@ -1698,8 +1759,17 @@ describe("HiveSpawner wiring", () => {
       category: "simple_coding",
       readOnly: true,
     });
-    expect(tmux.sessions[0]?.[2]).toContain("'codex-app-server-host'");
-    expect(tmux.sessions[0]?.[2]).not.toContain("Implement native control");
+    const hostCommand = tmux.sessions[0]?.[2] ?? "";
+    expect(hostCommand).toContain("'codex-app-server-host'");
+    expect(hostCommand).toContain(
+      `HIVE_CAPABILITY_TOKEN="$(cat ${spawned.worktreePath}/.codex/capability-token)"`,
+    );
+    expect(hostCommand).not.toContain("test-capability");
+    expect(hostCommand).not.toContain("Implement native control");
+    expect(await readFile(
+      join(spawned.worktreePath!, ".codex", "capability-token"),
+      "utf8",
+    )).toEqual("test-capability");
     expect(starts).toHaveLength(1);
     expect(starts[0]).toMatchObject({ name: "maya", effort: "high" });
     expect(starts[0]?.prompt).toContain("Implement native control");

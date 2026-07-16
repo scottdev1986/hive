@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import type { AgentRecord, HookEvent } from "../../schemas";
 import { basename, join } from "node:path";
@@ -14,6 +14,7 @@ import {
   hostPidfileAgentId,
   reapOrphanCodexHosts,
   renderCodexHostMessage,
+  runCodexAppServerHost,
 } from "./codex-app-server";
 
 class FakeTransport implements CodexAppServerTransport {
@@ -107,6 +108,9 @@ describe("Codex app-server adapter", () => {
     }, ["idea", "hive", "graphify"]);
     expect(command).toContain("features.apps=false");
     expect(command).toContain("features.multi_agent=false");
+    expect(command).toContain(
+      'mcp_servers.hive.bearer_token_env_var="HIVE_CAPABILITY_TOKEN"',
+    );
     expect(command).toContain("mcp_servers.idea.enabled=false");
     expect(command.join(" ")).not.toContain("mcp_servers.hive.enabled=false");
     expect(command.join(" ")).not.toContain("mcp_servers.graphify.enabled=false");
@@ -124,6 +128,56 @@ describe("Codex app-server adapter", () => {
     });
     expect(manager.buildHostCommand(agent(), 4317, "http://127.0.0.1:7799/mcp"))
       .toContain("--graphify-url");
+  });
+
+  test("the host exports its bearer environment to Codex without putting the token in argv", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-codex-host-bearer-"));
+    const executable = join(root, "codex");
+    const capturedEnv = join(root, "captured-env");
+    const capturedArgv = join(root, "captured-argv");
+    const socket = join(root, "agent.sock");
+    const previous = {
+      token: Bun.env.HIVE_CAPABILITY_TOKEN,
+      envPath: Bun.env.HIVE_CAPTURE_ENV_PATH,
+      argvPath: Bun.env.HIVE_CAPTURE_ARGV_PATH,
+    };
+    try {
+      await writeFile(executable, [
+        "#!/bin/sh",
+        'printf "%s" "$HIVE_CAPABILITY_TOKEN" > "$HIVE_CAPTURE_ENV_PATH"',
+        'printf "%s\\n" "$@" > "$HIVE_CAPTURE_ARGV_PATH"',
+        "",
+      ].join("\n"));
+      await chmod(executable, 0o755);
+      Bun.env.HIVE_CAPABILITY_TOKEN = "hv1.native-reader-secret";
+      Bun.env.HIVE_CAPTURE_ENV_PATH = capturedEnv;
+      Bun.env.HIVE_CAPTURE_ARGV_PATH = capturedArgv;
+
+      expect(await runCodexAppServerHost({
+        socket,
+        worktree: root,
+        daemonPort: 4317,
+        agentName: "maya",
+        executable,
+      })).toEqual(0);
+      expect(await readFile(capturedEnv, "utf8")).toEqual(
+        "hv1.native-reader-secret",
+      );
+      const argv = await readFile(capturedArgv, "utf8");
+      expect(argv).toContain(
+        'mcp_servers.hive.bearer_token_env_var="HIVE_CAPABILITY_TOKEN"',
+      );
+      expect(argv).not.toContain("hv1.native-reader-secret");
+    } finally {
+      const restore = (key: string, value: string | undefined): void => {
+        if (value === undefined) delete Bun.env[key];
+        else Bun.env[key] = value;
+      };
+      restore("HIVE_CAPABILITY_TOKEN", previous.token);
+      restore("HIVE_CAPTURE_ENV_PATH", previous.envPath);
+      restore("HIVE_CAPTURE_ARGV_PATH", previous.argvPath);
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   test("the public host boundary refuses a writer before building its command", () => {

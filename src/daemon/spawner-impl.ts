@@ -1079,8 +1079,7 @@ export class HiveSpawner implements Spawner {
         if (identity.tool === "grok") {
           return wrapGrokSpawnWithCompatibilityEnv(command);
         }
-        return identity.tool === "codex" && !nativeCodex &&
-            capabilityToken !== undefined
+        return identity.tool === "codex" && capabilityToken !== undefined
           ? wrapCodexSpawnWithCapabilityEnv(command, restartWorktreePath)
           : command;
       };
@@ -2392,7 +2391,7 @@ export class HiveSpawner implements Spawner {
       // The token value enters through the launch shell, never an argv.
       const withCapabilityEnv = (command: string): string => {
         if (tool === "grok") return wrapGrokSpawnWithCompatibilityEnv(command);
-        return tool === "codex" && !nativeCodex && capabilityToken !== undefined
+        return tool === "codex" && capabilityToken !== undefined
           ? wrapCodexSpawnWithCapabilityEnv(command, worktree.path)
           : command;
       };

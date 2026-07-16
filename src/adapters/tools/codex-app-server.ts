@@ -10,6 +10,7 @@ import {
   HIVE_MCP_SERVERS,
   listInheritedCodexMcpServers,
 } from "./mcp-scope";
+import { CODEX_CAPABILITY_TOKEN_ENV } from "./codex";
 import type {
   CodexQuotaReading,
   CodexRateLimitsResponse,
@@ -713,6 +714,8 @@ export interface CodexAppServerHostOptions {
   daemonPort: number;
   agentName: string;
   graphifyUrl?: string;
+  /** Exact binary used by deterministic host-boundary tests. */
+  executable?: string;
 }
 
 /** Build the scoped Codex app-server authority. Apps/connectors and global MCP
@@ -731,7 +734,7 @@ export function buildCodexAppServerCommand(
     keep,
   ).args;
   return [
-    "codex",
+    options.executable ?? "codex",
     "app-server",
     "--stdio",
     "-c",
@@ -743,6 +746,8 @@ export function buildCodexAppServerCommand(
     `projects.${JSON.stringify(options.worktree)}.trust_level=\"trusted\"`,
     "-c",
     `mcp_servers.hive.url=${JSON.stringify(`http://127.0.0.1:${options.daemonPort}/mcp`)}`,
+    "-c",
+    `mcp_servers.hive.bearer_token_env_var=${JSON.stringify(CODEX_CAPABILITY_TOKEN_ENV)}`,
     ...(options.graphifyUrl === undefined
       ? []
       : [
@@ -762,6 +767,10 @@ export async function runCodexAppServerHost(
     await listInheritedCodexMcpServers(),
   ), {
     cwd: options.worktree,
+    // The tmux launch shell reads the 0600 capability file into the host's
+    // environment. Pass that environment explicitly across the second process
+    // boundary so Codex can resolve bearer_token_env_var without a secret argv.
+    env: { ...Bun.env },
     detached: true,
     stdin: "pipe",
     stdout: "pipe",
