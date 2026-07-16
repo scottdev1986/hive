@@ -32,8 +32,8 @@ function agentRecord(overrides: Partial<AgentRecord> = {}): AgentRecord {
   return {
     id: `agent-${overrides.name ?? "maya"}`,
     name: "maya",
-    tool: "codex",
-    model: "gpt-5-codex",
+    tool: "claude",
+    model: "sonnet",
     category: "simple_coding",
     status: "working",
     taskDescription: "Phase 0",
@@ -47,13 +47,10 @@ function agentRecord(overrides: Partial<AgentRecord> = {}): AgentRecord {
     capabilityEpoch: 0,
     readOnly: false,
     writeRevoked: false,
-    // Fresh landing reattest needs an immutable launch identity plus a live
-    // observation (mocked in harness) that matches it.
     toolSessionId: "session-auth-land",
     executionIdentity: {
-      tool: "codex",
-      model: "gpt-5-codex",
-      effort: "medium",
+      tool: "claude",
+      model: "sonnet",
     },
     identityState: "matching",
     ...overrides,

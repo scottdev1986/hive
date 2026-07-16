@@ -2339,6 +2339,23 @@ export class HiveDaemon {
     for (const reservationId of owned) {
       await this.quota?.cancel(reservationId, at);
     }
+    // A control restart can reserve before it durably writes the pointer. The
+    // name lookup is safe only while this exact holder is still nonterminal:
+    // the partial unique index then makes same-name reuse impossible. Once a
+    // row is terminal, captured ids above are the only ownership evidence.
+    const current = this.db.getAgentByName(agent.name);
+    if (
+      owned.size === 0 && current?.id === agent.id &&
+      (current.processIncarnation ?? 0) === (agent.processIncarnation ?? 0) &&
+      current.capabilityEpoch === agent.capabilityEpoch &&
+      !isTerminalAgentStatus(current.status)
+    ) {
+      while (true) {
+        const held = this.quota?.ledger.getActiveReservationForAgent(agent.name);
+        if (held === null || held === undefined) break;
+        await this.quota?.cancel(held.id, at);
+      }
+    }
   }
 
   /**
@@ -2400,6 +2417,8 @@ export class HiveDaemon {
     const timestamp = options.at ?? new Date().toISOString();
     const killed = options.expected === undefined
       ? this.db.markAgentDead(agent.id, timestamp, options.failureReason)
+      : isTerminalAgentStatus(options.expected.status)
+      ? this.db.updateTerminalAgentIfCurrent(options.expected, {})
       : this.db.markAgentTerminalIfCurrent(
         options.expected,
         timestamp,
