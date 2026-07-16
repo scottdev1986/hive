@@ -7,16 +7,13 @@ import WorkspaceCore
 /// through byte-for-byte. Hover highlighting is optional; committing is not.
 private final class WorkspaceTerminalView: LocalProcessTerminalView {
     var onComposerInput: ((ComposerInputAction) -> Void)?
-    var authoringEnabled = true
 
     override func paste(_ sender: Any) {
-        guard authoringEnabled else { return }
         onComposerInput?(.editing)
         super.paste(sender)
     }
 
     override func send(source: TerminalView, data: ArraySlice<UInt8>) {
-        if !authoringEnabled, !isMouseWheelPacket(Array(data)) { return }
         if case .anyEvent = source.getTerminal().mouseMode,
            isMalformedNoButtonMotion(Array(data)) {
             return
@@ -122,8 +119,6 @@ final class TerminalPaneView: NSView, LocalProcessTerminalViewDelegate {
 
     private var pendingLaunch: (command: String, workingDirectory: String)?
     private(set) var childRunning = false
-    private(set) var authoringEnabled = true
-    private(set) var authoringDisabledReason: String?
     var onChildExit: ((Int32?) -> Void)?
     var onComposerInput: ((ComposerInputAction) -> Void)? {
         didSet {
@@ -176,12 +171,6 @@ final class TerminalPaneView: NSView, LocalProcessTerminalViewDelegate {
                       let responder = self.window?.firstResponder as? NSView,
                       responder === self.terminal || responder.isDescendant(of: self.terminal)
                 else { return event }
-                if !self.authoringEnabled {
-                    let character = (event.charactersIgnoringModifiers ?? "").lowercased()
-                    let readOnlyShortcut = event.modifierFlags.contains(.command)
-                        && ["a", "c", "f"].contains(character)
-                    return readOnlyShortcut ? event : nil
-                }
                 let action = classifyComposerInput(
                     characters: event.charactersIgnoringModifiers ?? event.characters ?? "",
                     command: event.modifierFlags.contains(.command),
@@ -283,13 +272,6 @@ final class TerminalPaneView: NSView, LocalProcessTerminalViewDelegate {
         window?.makeFirstResponder(terminal)
     }
 
-    func setAuthoringEnabled(_ enabled: Bool, reason: String?) {
-        authoringEnabled = enabled
-        authoringDisabledReason = enabled ? nil : reason
-        (terminal as? WorkspaceTerminalView)?.authoringEnabled = enabled
-        terminal.setAccessibilityHelp(enabled ? nil : reason)
-    }
-
     // MARK: Smoke introspection
 
     /// The visible screen contents (no scrollback), newline-joined.
@@ -302,7 +284,6 @@ final class TerminalPaneView: NSView, LocalProcessTerminalViewDelegate {
 
     /// Types into the pty exactly as the keyboard would.
     func send(text: String) {
-        guard authoringEnabled else { return }
         terminal.send(txt: text)
     }
 

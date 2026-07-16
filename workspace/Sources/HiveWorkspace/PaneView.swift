@@ -217,9 +217,6 @@ final class PaneView: NSView {
         titleLabel.toolTip = state.title
         detailLabel.stringValue = state.headerDescription
         detailLabel.toolTip = state.headerDescription
-        contentView.setAuthoringEnabled(
-            state.allowsAuthoring,
-            reason: state.authoringBlocker?.rawValue)
 
         let appearance = FeedStatusMap.activity(
             for: state.feedStatus, paneStatus: state.status).appearance

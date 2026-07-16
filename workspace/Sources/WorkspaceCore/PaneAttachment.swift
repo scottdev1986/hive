@@ -62,14 +62,3 @@ public enum PaneAttachmentTransition: Equatable {
         }
     }
 }
-
-public enum AgentAuthoringBlocker: String, Equatable, Sendable {
-    case attachmentUnavailable = "viewer disconnected"
-    case unattested = "identity unattested"
-    case drift = "identity drift"
-    case unknownIdentity = "identity unknown"
-    case observedIdentityUnavailable = "observed identity unavailable"
-    case writeRevoked = "write authority revoked"
-    case writeAuthorityUnknown = "write authority unknown"
-    case controlPaused = "control paused"
-}

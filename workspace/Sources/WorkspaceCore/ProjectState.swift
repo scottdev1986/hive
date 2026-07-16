@@ -22,7 +22,6 @@ public struct PaneState: Equatable {
     public var taskDescription: String?
     public var tmuxSession: String?
     public var attachmentIdentity: PaneAttachmentIdentity?
-    public var authoringBlocker: AgentAuthoringBlocker?
     public var contextPct: Double?
     /// True once the feed reported `closedAt` (or dropped the agent): the pane
     /// is in its grace window and the UI will close it shortly.
@@ -35,7 +34,6 @@ public struct PaneState: Equatable {
                 feedStatus: String, status: PaneStatus,
                 taskDescription: String? = nil, tmuxSession: String? = nil,
                 attachmentIdentity: PaneAttachmentIdentity? = nil,
-                authoringBlocker: AgentAuthoringBlocker? = nil,
                 contextPct: Double? = nil, closePending: Bool = false) {
         self.id = id
         self.kind = kind
@@ -51,7 +49,6 @@ public struct PaneState: Equatable {
         self.taskDescription = taskDescription
         self.tmuxSession = tmuxSession
         self.attachmentIdentity = attachmentIdentity
-        self.authoringBlocker = authoringBlocker
         self.contextPct = contextPct
         self.closePending = closePending
     }
@@ -74,13 +71,8 @@ public struct PaneState: Equatable {
         if let contextPct {
             parts.append("ctx \(Int(contextPct.rounded()))%")
         }
-        if let authoringBlocker {
-            parts.append("authoring disabled (\(authoringBlocker.rawValue))")
-        }
         return parts.joined(separator: " · ")
     }
-
-    public var allowsAuthoring: Bool { authoringBlocker == nil }
 
     private static func describe(model: String?, effort: String?) -> String {
         guard let model else { return "unknown" }
@@ -317,7 +309,6 @@ public final class ProjectState {
             pane.taskDescription = nil
             pane.tmuxSession = nil
             pane.attachmentIdentity = nil
-            pane.authoringBlocker = .attachmentUnavailable
             pane.closePending = false
             panes[paneID] = pane
             attention.resolveAll(paneID: paneID, projectID: projectID)
@@ -329,8 +320,7 @@ public final class ProjectState {
             id: paneID, kind: .agent, title: name, identityState: "unknown",
             feedStatus: "unknown",
             status: .disconnected(
-                reason: "ambiguous same-name agents", lastConfirmed: "unknown"),
-            authoringBlocker: .attachmentUnavailable)
+                reason: "ambiguous same-name agents", lastConfirmed: "unknown"))
         panes[paneID] = pane
         layout.insert(paneID, in: layoutBounds)
         var changes: [StateChange] = [.paneAdded(paneID), .layoutChanged]
@@ -398,9 +388,6 @@ public final class ProjectState {
             let previous = pane
             pane.status = .disconnected(reason: reason, lastConfirmed: pane.feedStatus)
             pane.feedStatus = "unknown"
-            if pane.kind == .agent {
-                pane.authoringBlocker = .unknownIdentity
-            }
             guard pane != previous else { continue }
             panes[paneID] = pane
             changes.append(.statusChanged(paneID))
@@ -424,8 +411,6 @@ public final class ProjectState {
             taskDescription: agent.taskDescription,
             tmuxSession: agent.tmuxSession,
             attachmentIdentity: attachment,
-            authoringBlocker: agent.authoringBlocker(
-                attachmentAvailable: attachment != nil),
             contextPct: agent.contextPct)
         var changes: [StateChange] = []
         panes[paneID] = pane
@@ -448,8 +433,6 @@ public final class ProjectState {
         let attachment = agent.attachmentIdentity(in: workspaceIdentity)
         let attachmentTransition = PaneAttachmentTransition.between(
             pane.attachmentIdentity, attachment)
-        let authoringBlocker = agent.authoringBlocker(
-            attachmentAvailable: attachment != nil)
         let statusWordChanged = pane.feedStatus != agent.status
         let headerChanged = statusWordChanged
             || pane.tool != agent.tool
@@ -461,7 +444,6 @@ public final class ProjectState {
             || pane.taskDescription != agent.taskDescription
             || pane.tmuxSession != agent.tmuxSession
             || pane.attachmentIdentity != attachment
-            || pane.authoringBlocker != authoringBlocker
             || pane.contextPct != agent.contextPct
             || pane.closePending
 
@@ -474,7 +456,6 @@ public final class ProjectState {
         pane.taskDescription = agent.taskDescription
         pane.tmuxSession = agent.tmuxSession
         pane.attachmentIdentity = attachment
-        pane.authoringBlocker = authoringBlocker
         pane.contextPct = agent.contextPct
         pane.closePending = false // a live snapshot revives a pending close
 

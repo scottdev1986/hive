@@ -127,7 +127,7 @@ final class AppDelegateLifecycleTests: XCTestCase {
         XCTAssertNil(pane.subviews[focusIndex].hitTest(.zero))
     }
 
-    func testExactAttachmentChangeReplacesPaneChildAndDriftDisablesAuthoring() throws {
+    func testExactAttachmentChangeReplacesPaneChildAndDriftKeepsAuthoringOpen() throws {
         _ = NSApplication.shared
         let state = ProjectState(
             projectID: "project", displayName: "Project",
@@ -164,7 +164,9 @@ final class AppDelegateLifecycleTests: XCTestCase {
 
         XCTAssertNotEqual(controller.paneViewObjectID(paneID), firstView)
         XCTAssertEqual(controller.paneAttachmentIdentity(paneID)?.agentID, "uuid-new")
-        XCTAssertEqual(controller.paneAllowsAuthoring(paneID), false)
+        // Identity drift is header information, never a keyboard lock: the
+        // human must always be able to type into a live pane.
+        XCTAssertEqual(controller.paneAllowsAuthoring(paneID), true)
     }
 
     func testPaneTitleTruncatesWithoutDrivingWindowWidth() throws {

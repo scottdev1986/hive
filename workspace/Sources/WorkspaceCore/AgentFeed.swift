@@ -117,9 +117,10 @@ public struct AgentSnapshot: Equatable, Decodable {
     /// The exact tmux child this pane may view. Deliberately does NOT require
     /// `toolSessionID`: that is provider conversation identity, and the Codex
     /// path never binds it, so gating here would leave Codex panes permanently
-    /// closed. Authoring stays fail-closed on its own terms (`authoringBlocker`
-    /// via identity attestation, which reads "unknown" for Codex); only pane
-    /// viewing is decoupled here.
+    /// closed. Identity/authority states render in the header as information;
+    /// they never gate the human's keyboard (a pane the user can see but not
+    /// type into is a bug, not a safety posture — landing/mutation authority
+    /// is enforced daemon-side, not at the keyboard).
     public func attachmentIdentity(
         in workspace: WorkspaceInstanceIdentity
     ) -> PaneAttachmentIdentity? {
@@ -132,23 +133,6 @@ public struct AgentSnapshot: Equatable, Decodable {
             workspace: workspace, agentID: id,
             processIncarnation: processIncarnation,
             tmuxSession: tmuxSession)
-    }
-
-    public func authoringBlocker(attachmentAvailable: Bool) -> AgentAuthoringBlocker? {
-        guard attachmentAvailable else { return .attachmentUnavailable }
-        if status == "control-paused" { return .controlPaused }
-        guard let writeRevoked else { return .writeAuthorityUnknown }
-        if writeRevoked { return .writeRevoked }
-        switch identityState {
-        case "matching":
-            return observedIdentity == nil ? .observedIdentityUnavailable : nil
-        case "drift":
-            return .drift
-        case "unknown":
-            return .unknownIdentity
-        default:
-            return .unattested
-        }
     }
 
     private static func normalizedIdentityState(_ value: String) -> String {

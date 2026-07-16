@@ -231,7 +231,6 @@ final class ProjectStateTests: XCTestCase {
         XCTAssertTrue(changes.contains(.paneAttachmentChanged(paneID)))
         XCTAssertNil(pane.attachmentIdentity)
         XCTAssertEqual(pane.identityState, "unknown")
-        XCTAssertEqual(pane.authoringBlocker, .attachmentUnavailable)
         if case .disconnected = pane.status {} else {
             XCTFail("a contradictory same-name sibling set must not select a child")
         }
@@ -274,8 +273,9 @@ final class ProjectStateTests: XCTestCase {
 
     // The Codex path never binds a provider conversation id, so its wire row
     // carries no toolSessionId and identity reads "unknown". The agent is fully
-    // live, so its pane must still attach — while authoring stays fail-closed.
-    func testCodexWithoutToolSessionGetsAttachablePaneWithFailClosedAuthoring() throws {
+    // live, so its pane must still attach — and unknown identity is header
+    // information, never a keyboard lock.
+    func testCodexWithoutToolSessionGetsAttachableTypablePane() throws {
         let state = state()
         let paneID = ProjectState.paneID(forAgent: "codex-worker")
         state.apply(feed: [agent(
@@ -293,12 +293,12 @@ final class ProjectStateTests: XCTestCase {
         }
         // The wire activity status is preserved, not flattened to "unknown".
         XCTAssertEqual(pane.feedStatus, "working")
-        // Authoring stays fail-closed: identity is unknown on the Codex path.
-        XCTAssertEqual(pane.authoringBlocker, .unknownIdentity)
-        XCTAssertFalse(pane.allowsAuthoring)
+        // Unknown identity renders in the header and never blocks typing.
+        XCTAssertTrue(pane.headerDescription.contains("identity unknown"))
+        XCTAssertFalse(pane.headerDescription.contains("authoring disabled"))
     }
 
-    func testRequestedAndObservedIdentityRenderSeparatelyAndDriftDisablesAuthoring() throws {
+    func testRequestedAndObservedIdentityRenderSeparately() throws {
         let state = state()
         let paneID = ProjectState.paneID(forAgent: "worker")
         state.apply(feed: [agent(
@@ -311,41 +311,43 @@ final class ProjectStateTests: XCTestCase {
         XCTAssertTrue(pane.headerDescription.contains("launch gpt-requested @ high"))
         XCTAssertTrue(pane.headerDescription.contains("observed gpt-observed @ low"))
         XCTAssertTrue(pane.headerDescription.contains("identity drift"))
-        XCTAssertEqual(pane.authoringBlocker, .drift)
-        XCTAssertFalse(pane.allowsAuthoring)
+        XCTAssertFalse(pane.headerDescription.contains("authoring disabled"))
     }
 
-    func testUnattestedUnknownRevokedPausedAndIncompleteIdentityDisableAuthoring() throws {
-        let cases: [(AgentSnapshot, AgentAuthoringBlocker)] = [
-            (agent("worker", identityState: "unattested"), .unattested),
-            (agent("worker", identityState: "unknown"), .unknownIdentity),
-            (agent("worker", writeRevoked: true), .writeRevoked),
-            (agent("worker", status: "control-paused"), .controlPaused),
-            (agent("worker", writeRevoked: nil), .writeAuthorityUnknown),
-            (agent("worker", observedModel: nil, identityState: "matching",
-                   hasObservedIdentity: false), .observedIdentityUnavailable),
-            (agent("worker", completeAttachment: false), .attachmentUnavailable),
+    // Identity, write-authority, and pause states are information, never input
+    // gates: every such pane still binds its attachment so the human can type.
+    // Only a physically incomplete attachment (no tmux child to type into)
+    // renders disconnected.
+    func testIdentityAuthorityAndPauseStatesNeverDetachTheTypablePane() throws {
+        let liveCases: [AgentSnapshot] = [
+            agent("worker", identityState: "unattested"),
+            agent("worker", identityState: "unknown"),
+            agent("worker", identityState: "drift"),
+            agent("worker", writeRevoked: true),
+            agent("worker", status: "control-paused"),
+            agent("worker", writeRevoked: nil),
+            agent("worker", observedModel: nil, identityState: "matching",
+                  hasObservedIdentity: false),
         ]
 
-        for (snapshot, blocker) in cases {
+        for snapshot in liveCases {
             let state = state()
             state.apply(feed: [snapshot])
             let pane = try XCTUnwrap(
                 state.panes[ProjectState.paneID(forAgent: snapshot.name)])
-            XCTAssertEqual(pane.authoringBlocker, blocker)
-            XCTAssertFalse(pane.allowsAuthoring)
-            if blocker == .attachmentUnavailable {
-                XCTAssertNil(pane.attachmentIdentity)
-                if case .disconnected = pane.status {} else {
-                    XCTFail("incomplete attachment must render disconnected")
-                }
-            }
+            XCTAssertNotNil(pane.attachmentIdentity,
+                            "\(snapshot.name) must keep a typable tmux child")
+            XCTAssertFalse(pane.headerDescription.contains("authoring disabled"))
         }
 
         let state = state()
-        state.apply(feed: [agent("writer")])
-        XCTAssertTrue(try XCTUnwrap(
-            state.panes[ProjectState.paneID(forAgent: "writer")]).allowsAuthoring)
+        state.apply(feed: [agent("worker", completeAttachment: false)])
+        let pane = try XCTUnwrap(
+            state.panes[ProjectState.paneID(forAgent: "worker")])
+        XCTAssertNil(pane.attachmentIdentity)
+        if case .disconnected = pane.status {} else {
+            XCTFail("incomplete attachment must render disconnected")
+        }
     }
 
     func testCloseSuppressionDoesNotHideDirectSameNameSuccessor() {

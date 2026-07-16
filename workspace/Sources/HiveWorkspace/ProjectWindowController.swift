@@ -471,8 +471,11 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
         paneViews[pane]?.attachmentIdentity
     }
 
+    /// Always true for an existing pane: keyboard input is never gated on
+    /// identity, authority, or status. Kept as an introspection hook so smoke
+    /// and regression tests can assert the invariant.
     func paneAllowsAuthoring(_ pane: PaneID) -> Bool? {
-        paneViews[pane]?.contentView.authoringEnabled
+        paneViews[pane] != nil ? true : nil
     }
 
     /// Delivers a real left-click at the pane's center through the window's own
