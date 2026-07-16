@@ -171,7 +171,8 @@
         <thead><tr><th>Record</th><th>Required fields</th><th>Rule</th></tr></thead>
         <tbody>
           <tr><td><strong>Address</strong></td><td><code>kind</code> plus kind-specific stable subject</td><td><code>operator</code>, <code>root</code>, and <code>system</code> are logical instance-scoped identities; <code>agent</code> is agentId + generation. The immutable address says who spoke or receives—it grants no authority. The exact authenticated Workspace/CLI session, root provider generation, or daemon process binding that performed an action is recorded in AdmissionDecision or DeliveryAttempt rather than smuggled into the logical address.</td></tr>
-          <tr><td><strong>MessageEnvelopeV2</strong></td><td>messageId, protocolVersion, sender Address, recipient Address or channelId, recipient sequence, tagged message scope, threadId, causal parents, priority, intent, content parts, idempotency key, policy revision, created/admitted/expiry times, digest</td><td>Immutable after admission. Exactly one scope is frozen at admission: <code>instance</code> (operator↔root conversation and non-control daemon notice), <code>flat-assignment</code> (assignmentId + assignmentGeneration; the daemon infers the exact open Assignment that authorizes the route from current sender/recipient bindings), <code>hierarchy-task</code> (run/task plus revisions/epochs, C1), <code>channel</code> (channel plus revision/epochs, C1), or <code>control</code> (typed controlId, target binding, capability epoch). Scope identifies the conversation/work boundary; it never mints route authority, and a C0 envelope never fabricates a runId or taskId. Inline content is capped at 16 KiB; critical control explanation is capped at 2 KiB and must be self-contained — it may not overflow into a MessageContentRef. Larger ordinary bodies travel by <code>MessageContentRef</code>; reusable work products by hierarchy-owned <code>ArtifactRef</code> from C1.</td></tr>
+          <tr><td><strong>MessageScope</strong></td><td>tagged union: <code>instance</code> = instanceId; <code>flat-assignment</code> = assignmentId + assignmentGeneration; <code>hierarchy-task</code> = runId + runEpoch + taskId + taskRevision + hierarchyRevision; <code>channel</code> = channelId + channelRevision + hierarchyRevision + runEpoch; <code>control</code> = controlId + exact target binding + capabilityEpoch</td><td>The daemon constructs scope from the authenticated binding and current records; a caller may choose an authorized channel but never restates Assignment, Task, Run, or epoch truth. <code>instance</code> covers ordinary operator↔root guidance and non-control daemon notice in C0. Scope identifies the conversation/work boundary and idempotency domain; it never authorizes a route.</td></tr>
+          <tr><td><strong>MessageEnvelopeV2</strong></td><td>messageId, protocolVersion, sender Address, recipient Address or channelId, recipient sequence, scope, threadId, causal parents, priority, intent, content parts, idempotency key, policy revision, created/admitted/expiry times, digest</td><td>Immutable after admission. Exactly one MessageScope is frozen at admission; the daemon infers the exact open Assignment that authorizes a flat route from current sender/recipient bindings, and a C0 envelope never fabricates a runId or taskId — <code>hierarchy-task</code> and <code>channel</code> scopes exist only from C1. Inline content is capped at 16 KiB; critical control explanation is capped at 2 KiB and must be self-contained — it may not overflow into a MessageContentRef. Larger ordinary bodies travel by <code>MessageContentRef</code>; reusable work products by hierarchy-owned <code>ArtifactRef</code> from C1.</td></tr>
           <tr><td><strong>MessageContentRef</strong></td><td>contentId (ledger-internal), messageId, part index, SHA-256, byte length, media type, inline preview, createdAt, retention class</td><td>Communication-owned, immutable, and envelope-scoped. The content digest participates in the envelope body digest and idempotency check. The reference is not independently addressable: a bounded range read reauthorizes the containing message. Full bytes charge the sender budget; terminal state and message retention bound their lifetime, and orphaned objects are garbage-collected.</td></tr>
           <tr><td><strong>AdmissionDecision</strong></td><td>messageId, actor binding, allow/reject, reason code, evaluated policy revisions, decidedAt</td><td>Authorization failure is explicit and durable. A rejected envelope never enters a recipient queue. At C0 the decision records the exact instance route binding and capability epoch and, for flat-assignment scope, the Assignment binding; C1 adds hierarchyRevision, runEpoch, and channel revision.</td></tr>
           <tr><td><strong>DeliveryAttempt</strong></td><td>messageId, attempt, exact recipient binding (agent generation, current root provider generation, or authenticated operator inbox/Workspace session — ordinary logical-operator mail may wait until an authenticated inbox session pulls it), adapter, delivery mode, startedAt, completedAt, adapter result, downgrade reason</td><td>A successful transport call proves only what that adapter contract says it proves. The terminal transport emits immutable attempt evidence; this contract owns retry, idempotency, and the canonical projection.</td></tr>
@@ -228,9 +229,10 @@
         <thead><tr><th>Route</th><th>Default</th><th>Authority</th></tr></thead>
         <tbody>
           <tr><td>Engineer ↔ queen</td><td>Allowed</td><td>Workspace/root control binding; G1/G2 and run-control operations remain typed, not prose.</td></tr>
-          <tr><td>Queen ↔ owned node (direct worker or lead)</td><td>Allowed within run</td><td>Current hierarchy ownership and run epoch; in direct and flat topologies the queen is the current owner.</td></tr>
+          <tr><td>Queen ↔ flat worker (C0)</td><td>Allowed</td><td>Exact open Assignment and capability epoch.</td></tr>
+          <tr><td>Queen ↔ owned node (direct worker or lead, C1)</td><td>Allowed within run</td><td>Current hierarchy ownership and run epoch; in direct and flat topologies the queen is the current owner.</td></tr>
           <tr><td>Lead ↔ crew worker (full hive)</td><td>Allowed within task</td><td>Current ownership edge and attenuated delegation grant.</td></tr>
-          <tr><td>Worker → owner</td><td>Allowed</td><td>Current task ownership. If the owner is measured dead or detached, the daemon reroutes control/status to queen through the recovery record.</td></tr>
+          <tr><td>Worker → owner</td><td>Allowed</td><td>Open Assignment at C0; current Task ownership at C1. If the owner is measured dead or detached, the daemon reroutes control/status to queen through the recovery record.</td></tr>
           <tr><td>Worker → queen emergency escalation</td><td>Narrow exception</td><td>Rate-limited <code>safety</code> or <code>owner-unavailable</code> intent, always audited; it grants no direct task reassignment.</td></tr>
           <tr><td>Lead worker ↔ lead worker</td><td>Denied unless channel exists</td><td>Queen-owned interface channel bound to accepted InterfaceContract participants and revision.</td></tr>
           <tr><td>Worker ↔ worker</td><td>Denied unless channel exists</td><td>Owner- or queen-created pair/task channel with explicit participants, purpose, budget, and expiry.</td></tr>
@@ -269,8 +271,8 @@
       <table>
         <thead><tr><th>Operation</th><th>Input</th><th>Result contract</th></tr></thead>
         <tbody>
-          <tr><td><strong>hive_send</strong></td><td><code>to</code> = queen, owner, agentId, or current display alias, resolved once by the daemon to an exact Address; nodeId and channelId targets from C1; body/parts; optional threadId; priority; structured intent; idempotency key; expiry</td><td>No <code>from</code>, and no caller-supplied scope at C0: the daemon infers the flat-assignment or instance scope from the authenticated route; task and channel scopes become selectable only at C1. Returns messageId, resolved stable recipient, admission result, and current measured projection. <code>queued</code> is reported as not received.</td></tr>
-          <tr><td><strong>hive_inbox</strong></td><td>cursor, limit, maxBytes, optional task/channel filters</td><td>The authenticated recipient is implicit. Results are bounded and at least once. Reading appends a read receipt but never marks content applied.</td></tr>
+          <tr><td><strong>hive_send</strong></td><td><code>to</code> = queen, owner, agentId, or current display alias, resolved once by the daemon to an exact Address; nodeId targets from C1, and channelId only selects an already-authorized channel; body/parts; optional threadId; priority; structured intent; idempotency key; expiry</td><td>No <code>from</code>, and no caller-restated scope truth: the daemon infers instance/Assignment at C0 and the current Task from C1; channelId only selects an already-authorized channel. Returns messageId, resolved stable recipient, admission result, and current measured projection. <code>queued</code> is reported as not received.</td></tr>
+          <tr><td><strong>hive_inbox</strong></td><td>cursor, limit, maxBytes, optional scope/channel filters</td><td>The authenticated recipient is implicit. Results are bounded and at least once. Reading appends a read receipt but never marks content applied.</td></tr>
           <tr><td><strong>hive_read_message</strong></td><td>messageId, optional bounded content range</td><td>Returns authorized inline parts and/or bounded ranges of a message-scoped content object after digest checks. Reads are audited, do not acknowledge action, and never make the content independently addressable.</td></tr>
           <tr><td><strong>hive_ack_message</strong></td><td>one or more messageIds, envelope digests, disposition = accepted/deferred/rejected/applied, optional evidence or bound state revision</td><td>Idempotently appends agent receipt events. <code>applied</code> requires a typed state transition or evidence reference when the message requested work.</td></tr>
           <tr><td><strong>hive_message_status</strong></td><td>messageId or sender-owned idempotency key</td><td>Returns the derived event timeline visible to the sender, owner, or queen; it never exposes unauthorized body content.</td></tr>
@@ -309,7 +311,7 @@
       <table>
         <thead><tr><th>Priority</th><th>Scheduling</th><th>Proof boundary</th></tr></thead>
         <tbody>
-          <tr><td><strong>normal</strong></td><td>Next measured turn boundary. Pending messages coalesce into one wake containing IDs, senders, task/channel, and bounded previews.</td><td>Wake transport may become transport-written; only a provider boundary becomes provider-observed.</td></tr>
+          <tr><td><strong>normal</strong></td><td>Next measured turn boundary. Pending messages coalesce into one wake containing IDs, senders, resolved scope, and bounded previews.</td><td>Wake transport may become transport-written; only a provider boundary becomes provider-observed.</td></tr>
           <tr><td><strong>steer</strong></td><td>Non-destructive guidance at the nearest provider tool hook. If an adapter lacks a hook, it degrades to normal and records the downgrade.</td><td>Never report mid-turn steering merely because content was queued or typed.</td></tr>
           <tr><td><strong>urgent</strong></td><td>Cancels the in-flight model turn and injects before normal traffic. The cancelled reasoning is never resumed.</td><td>Cancellation and subsequent provider observation are separate events. Urgent does not by itself revoke durable authority.</td></tr>
           <tr><td><strong>critical</strong></td><td>Uses the isolated control lane and structured intent. Authority fencing occurs before any process operation.</td><td>The final state depends on intent-specific measured process evidence, not on message delivery.</td></tr>
@@ -374,7 +376,7 @@
       </article>
       <article class="detail-panel">
         <h3>Alert once, with evidence</h3>
-        <p>Missed urgent deadlines, terminal recipient loss, queue pressure, and adapter degradation append durable incidents. Current owners receive subtree aggregates; queen receives run rollups. Repeated maintenance polls do not flood agent context with identical alerts.</p>
+        <p>Missed urgent deadlines, terminal recipient loss, queue pressure, and adapter degradation append durable incidents. At C0 the queen receives instance and Assignment aggregates; C1 adds owner-subtree and run rollups. Repeated maintenance polls do not flood agent context with identical alerts.</p>
       </article>
     </div>
   </div>
@@ -387,24 +389,24 @@
         <p class="section-label">10 · Context and flow control</p>
         <h2>The queue has budgets because context has a price.</h2>
       </div>
-      <p>Multi-agent communication carries a measurable token and attention tax. Hive treats bytes, wakeups, and artifact reads as run resources rather than allowing a noisy peer to consume the hive.</p>
+      <p>Multi-agent communication carries a measurable token and attention tax. Hive treats bytes, wakeups, and content reads as resolved-scope resources rather than allowing a noisy peer to consume the hive.</p>
     </div>
 
     <div class="split">
       <article class="detail-panel">
         <h3>Bounded delivery</h3>
         <ul class="check-list">
-          <li>Per-recipient message-count and byte limits; per-channel and per-run budgets.</li>
+          <li>Per-recipient message-count and byte limits; C0 budgets instance and Assignment scopes, C1 adds channel and run budgets.</li>
           <li>One ordinary wake per available provider boundary, containing a bounded batch.</li>
-          <li>Fair scheduling across eligible task/channel senders after the isolated control lane.</li>
+          <li>Fair scheduling across eligible scope senders after the isolated control lane.</li>
           <li>Explicit backpressure with retry guidance; no silent drop and no unbounded SQLite queue.</li>
           <li>Expiry for advisory traffic; durable task and control records use their own lifecycle.</li>
         </ul>
       </article>
       <article class="detail-panel">
-        <h3>Artifacts carry the weight</h3>
+        <h3>References carry the weight</h3>
         <ul class="check-list">
-          <li>Summaries cite ArtifactRefs, task revisions, commits, diffs, tests, and decisions.</li>
+          <li>Summaries cite message IDs and digests, MessageContentRefs, Assignment evidence, commits, diffs, tests, and decisions at C0; C1 adds Task revisions and ArtifactRefs.</li>
           <li>Rollups contain deltas since the receiver’s acknowledged snapshot, not repeated full state.</li>
           <li>Large content is range-readable and digest-checked.</li>
           <li>Messages do not duplicate source files, full transcripts, or status already available through typed tools.</li>
@@ -433,13 +435,13 @@
       <table>
         <thead><tr><th>Control</th><th>Requirement</th></tr></thead>
         <tbody>
-          <tr><td>Credentials</td><td>Per agentId + generation + capability epoch; never placed in prompts, message bodies, command-line arguments, or logs.</td></tr>
-          <tr><td>Storage</td><td>SQLite database, WAL, artifacts, and runtime bindings use owner-only permissions. Message bodies and secrets are redacted from routine logs.</td></tr>
-          <tr><td>Authorization</td><td>Validate the current delegation chain and all relevant revisions at invocation time. A stale admission is not a future permit.</td></tr>
+          <tr><td>Credentials</td><td>Per agentId + generation + capability epoch for agents; operator, root, and system actions bind their exact authenticated action binding. Never placed in prompts, message bodies, command-line arguments, or logs.</td></tr>
+          <tr><td>Storage</td><td>SQLite database, WAL, message-content objects, artifacts, and runtime bindings use owner-only permissions. Message bodies and secrets are redacted from routine logs.</td></tr>
+          <tr><td>Authorization</td><td>Validate the current instance, Assignment, and capability bindings at C0 — delegation chains and hierarchy fences from C1 — at invocation time. A stale admission is not a future permit.</td></tr>
           <tr><td>Content trust</td><td>Peer text is untrusted data. Control fields are rendered separately and raw body content cannot call tools, change priority, or mint grants.</td></tr>
-          <tr><td>Artifact access</td><td>ArtifactRef resolves only through the daemon after task/channel authorization; arbitrary sender-provided paths are rejected.</td></tr>
-          <tr><td>Audit</td><td>Body reads, artifact opens, channel changes, authority failures, and control operations append actor-bound records.</td></tr>
-          <tr><td>Retention</td><td>Every content object has a retention class. The default retains bodies through the active run and closure review; cleanup removes content only after engineer-approved run retention while preserving the minimum audit metadata and digests.</td></tr>
+          <tr><td>Content access</td><td>ArtifactRef resolves only through the daemon after task/channel authorization; a MessageContentRef resolves only through its containing envelope’s authorization. Arbitrary sender-provided paths are rejected.</td></tr>
+          <tr><td>Audit</td><td>Body and message-content reads, artifact opens, channel changes, authority failures, and control operations append actor-bound records.</td></tr>
+          <tr><td>Retention</td><td>Every content object has a retention class. The default retains bodies through the resolved scope’s closure and review — Assignment or instance at C0, Run at C1; cleanup removes content only after engineer-approved retention while preserving the minimum audit metadata and digests.</td></tr>
           <tr><td>External gateways</td><td>A2A or other remote bridges terminate at a separately authorized gateway identity. Remote agent cards or credentials never become internal hierarchy authority.</td></tr>
         </tbody>
       </table>
@@ -538,7 +540,7 @@
         <h3>Definition of done</h3>
         <ul class="check-list">
           <li>No official operation accepts actor identity as caller-controlled data.</li>
-          <li>No queued message can cross generation, run, or revoked channel boundaries.</li>
+          <li>No agent-addressed envelope or generation-bound control crosses its exact binding; only ordinary logical-root/operator mail may survive process replacement, and it is reauthorized before delivery. No envelope crosses a revoked Assignment, Run, or channel boundary.</li>
           <li>No UI or CLI string says received, stopped, applied, or safe without the corresponding durable evidence.</li>
           <li>Legacy message rows and active sessions drain before ambiguous paths are deleted.</li>
         </ul>
@@ -561,9 +563,9 @@
       <table>
         <thead><tr><th>Consumer</th><th>Receives</th><th>Does not own</th></tr></thead>
         <tbody>
-          <tr><td>Terminal Stack Transition</td><td>Immutable envelope ID, bounded delivery request, priority/intent, exact recipient binding, adapter receipt callback</td><td>Hierarchy roles, task lifecycle, routing policy, or UI workflow</td></tr>
-          <tr><td>The Queen’s Hive</td><td>Stable addresses, authorized channels, event timelines, artifacts, bounded rollups, control/evidence hooks</td><td>PTY bytes, provider keystrokes, Ghostty rendering, or composer implementation</td></tr>
-          <tr><td>Split Horizon</td><td>Read-only projections plus typed engineer actions for queues, messages, tasks, channels, artifacts, receipts, and incidents</td><td>Receipt synthesis, direct SQLite mutation, or transport selection</td></tr>
+          <tr><td>Terminal Stack Transition</td><td>Immutable envelope ID, bounded delivery request, priority/intent, exact recipient binding, immutable attempt-evidence callback</td><td>Hierarchy roles, task lifecycle, routing policy, or UI workflow</td></tr>
+          <tr><td>The Queen’s Hive</td><td>Stable Address/MessageScope primitives, ledger event timelines, channel admission and enforcement hooks, bounded rollups, and control/evidence hooks</td><td>PTY bytes, provider keystrokes, Ghostty rendering, or composer implementation</td></tr>
+          <tr><td>Split Horizon</td><td>Read-only projections plus typed engineer actions for queues, messages, message-content ranges, tasks, channels, artifacts, receipts, and incidents</td><td>Receipt synthesis, direct SQLite mutation, or transport selection</td></tr>
         </tbody>
       </table>
     </div>
