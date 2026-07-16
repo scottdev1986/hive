@@ -659,6 +659,43 @@ describe("crash resume", () => {
     }]);
   });
 
+  test("terminalization between preserve read and CAS wins over unverified recovery", async () => {
+    const h = harness({
+      resolveClaudeSessionId: async () => {
+        throw new Error("ambiguous provider session");
+      },
+    });
+    h.db.insertAgent(agent({ toolSessionId: undefined }));
+    const update = h.db.updateAgentIfCurrent.bind(h.db);
+    let terminalized = false;
+    h.db.updateAgentIfCurrent = ((...args: Parameters<typeof update>) => {
+      const updates = args[1];
+      if (!terminalized && updates.status === "stuck") {
+        terminalized = true;
+        h.db.markAgentDead(
+          "agent-maya",
+          "2026-07-10T10:00:00.000Z",
+          "operator terminalization won",
+        );
+      }
+      return update(...args);
+    }) as typeof h.db.updateAgentIfCurrent;
+
+    expect(await h.recovery.sweep()).toMatchObject([{
+      action: "skipped",
+      reason: expect.stringContaining("ambiguous provider session"),
+    }]);
+    expect(terminalized).toBe(true);
+    expect(h.db.getAgentById("agent-maya")).toMatchObject({
+      status: "dead",
+      writeRevoked: true,
+      capabilityEpoch: 1,
+      failureReason: "operator terminalization won",
+      closedAt: "2026-07-10T10:00:00.000Z",
+    });
+    expect(h.revoked).toEqual([]);
+  });
+
   test("manual recovery resumes a read-only agent as a reader", async () => {
     let configuredReadOnly: boolean | undefined;
     const h = harness({

@@ -31,6 +31,7 @@ import { CODEX_WRITER_CONTAINMENT_REASON } from "../daemon/codex-containment";
 import {
   QuotaConfigSchema,
   isLiveAgent,
+  isTerminalAgentStatus,
   known,
   unknown,
 } from "../schemas";
@@ -517,6 +518,7 @@ class FakeStore {
     status: "dead" | "failed" | "done",
     options: { failureReason?: string; failedAt?: string } = {},
   ): AgentRecord | null {
+    if (isTerminalAgentStatus(expected.status)) return null;
     const current = this.getAgentById(expected.id);
     if (
       current === null ||
@@ -2987,6 +2989,69 @@ describe("HiveSpawner wiring", () => {
     expect(store.agents).toEqual([failed]);
     expect(stopped).toEqual([agentTmuxSession("maya")]);
     expect(removals).toEqual([[root, worktreePath]]);
+  });
+
+  test("terminalization between preserve read and CAS wins over stuck spawn bookkeeping", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-spawner-terminal-race-"));
+    tempRoots.push(root);
+    const worktreePath = join(root, "maya");
+    await mkdir(worktreePath, { recursive: true });
+    class TerminalizingStore extends FakeStore {
+      terminalized = false;
+
+      override updateAgentIfCurrent(
+        expected: AgentStateCas,
+        updates: ConditionalAgentUpdate,
+      ): AgentRecord | null {
+        if (!this.terminalized && updates.status === "stuck") {
+          this.terminalized = true;
+          this.markAgentTerminal(
+            expected.id,
+            "2026-07-09T12:05:00.000Z",
+            "dead",
+            { failureReason: "operator terminalization won" },
+          );
+        }
+        return super.updateAgentIfCurrent(expected, updates);
+      }
+    }
+    const store = new TerminalizingStore();
+    const tmux = new FakeTmux("Error: model not supported for this account");
+    let removals = 0;
+    const spawner = newTestSpawner({
+      isModelEnabled: async () => true,
+      db: store,
+      repoRoot: root,
+      port: 4317,
+      config: {},
+      readRoutingPolicy: () => policyFromRoute(CODEX_ROUTE),
+      tmux,
+      createWorktree: async () => ({
+        path: worktreePath,
+        branch: "hive/maya-terminal-race",
+      }),
+      removeWorktree: async () => {
+        removals += 1;
+      },
+      sleep: async () => {},
+    });
+
+    const result = await spawner.spawn({
+      task: "Fail while an operator terminalizes the holder",
+      category: "simple_coding",
+      readOnly: true,
+    });
+
+    expect(store.terminalized).toBe(true);
+    expect(result).toMatchObject({
+      status: "dead",
+      writeRevoked: true,
+      capabilityEpoch: 1,
+      failureReason: "operator terminalization won",
+      closedAt: "2026-07-09T12:05:00.000Z",
+    });
+    expect(store.getAgentById(result.id)).toEqual(result);
+    expect(removals).toBe(0);
   });
 
   test("an unverified failed spawn stop stays stuck and preserves work and quota", async () => {

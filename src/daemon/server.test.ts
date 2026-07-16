@@ -858,6 +858,74 @@ describe("HiveDaemon HTTP server", () => {
     }
   });
 
+  test.each([
+    ["tool session", (rival: HiveDatabase) => {
+      rival.database.query(
+        "UPDATE agents SET toolSessionId = ? WHERE id = ?",
+      ).run("replacement-session", "agent-maya");
+      return { toolSessionId: "replacement-session", processIncarnation: 1 };
+    }],
+    ["process incarnation", (rival: HiveDatabase) => {
+      rival.database.query(
+        "UPDATE agents SET processIncarnation = processIncarnation + 1 WHERE id = ?",
+      ).run("agent-maya");
+      return { toolSessionId: "session-1", processIncarnation: 2 };
+    }],
+  ] as const)("a replacement %s during awaited freeze cannot receive stale pause capture", async (
+    _label,
+    replace,
+  ) => {
+    const path = join(home, `control-pause-freeze-${crypto.randomUUID()}.db`);
+    const db = new HiveDatabase(path);
+    const rival = new HiveDatabase(path);
+    let enteredFreeze!: () => void;
+    let releaseFreeze!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      enteredFreeze = resolve;
+    });
+    const gate = new Promise<void>((resolve) => {
+      releaseFreeze = resolve;
+    });
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new StubSpawner(),
+      tmux: new FakeDaemonTmux(),
+      tmuxSender: new SilentTmuxSender(db),
+      suspendProcesses: async () => {
+        enteredFreeze();
+        await gate;
+        return { suspended: [{ pid: 100, command: "codex" }], unstopped: [] };
+      },
+    });
+    db.insertAgent(agent({ toolSessionId: "session-1" }));
+    try {
+      const sending = daemon.delivery.send(
+        "orchestrator",
+        "maya",
+        "Pause.",
+        { priority: "critical", intent: "pause" },
+      );
+      await entered;
+      const successor = replace(rival);
+      releaseFreeze();
+      const control = await sending;
+
+      expect(control.state).toBe("queued");
+      expect(control.alertAt).not.toBeNull();
+      expect(db.getAgentById("agent-maya")).toMatchObject({
+        ...successor,
+        status: "control-paused",
+        writeRevoked: true,
+        pauseCapture: undefined,
+      });
+    } finally {
+      releaseFreeze();
+      await daemon.stop();
+      rival.close();
+      db.close();
+    }
+  });
+
   test("resume reattests and SIGCONTs a control-paused agent, clearing the control binding", async () => {
     const db = new HiveDatabase(join(home, "control-pause-resume.db"));
     const suspended: string[] = [];
@@ -1029,6 +1097,9 @@ describe("HiveDaemon HTTP server", () => {
       expect(tmux.killed).toHaveLength(0);
       expect(db.getMessage("recover-control")?.state).toEqual("injected");
       expect(ledger.getReservation(reservation.id)?.status).toEqual("active");
+      await quota.cancel(reservation.id);
+      await daemon.runMaintenance();
+      expect(db.getMessage("recover-control")?.state).toEqual("applied");
     } finally {
       db.close();
     }

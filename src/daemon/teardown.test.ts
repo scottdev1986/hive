@@ -1,7 +1,14 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import {
   captureProcessTree,
   reapCapturedTree,
@@ -13,7 +20,11 @@ import {
 } from "./teardown";
 import { parseProcessTable, runPs } from "./resources";
 import type { AgentRecord } from "../schemas";
-import { codexAgentHostPidfile } from "../adapters/tools/codex-app-server";
+import {
+  CodexAppServerManager,
+  codexAgentHostPidfile,
+  runCodexAppServerHost,
+} from "../adapters/tools/codex-app-server";
 
 /** capture + reap, the way every caller uses them when nothing reparents. */
 const reapProcessTree = async (
@@ -437,6 +448,7 @@ describe("pause capture birth binding (N5)", () => {
     const { suspendAgentForPause } = await import("./teardown");
     const root = mkdtempSync(join(tmpdir(), "hive-pause-pidfile-"));
     const previousHiveHome = Bun.env.HIVE_HOME;
+    const previousPath = Bun.env.PATH;
     Bun.env.HIVE_HOME = root;
     const agent = {
       id: "agent-maya",
@@ -446,7 +458,7 @@ describe("pause capture birth binding (N5)", () => {
       category: "simple_coding",
       status: "working",
       taskDescription: "test",
-      worktreePath: "/tmp/maya",
+      worktreePath: root,
       branch: "hive/maya-test",
       tmuxSession: "hive-maya",
       contextPct: null,
@@ -459,14 +471,44 @@ describe("pause capture birth binding (N5)", () => {
       readOnly: true,
       writeRevoked: false,
     } satisfies AgentRecord;
-    const { dependencies } = pauseWorld([
-      { pid: 100, ppid: 1, command: "-zsh", birth: "birth-PANE" },
-      { pid: 900, ppid: 1, command: "codex app-server", birth: "birth-HOST" },
-    ]);
+    const bin = join(root, "bin");
+    mkdirSync(bin, { recursive: true });
+    const fakeCodex = join(bin, "codex");
+    await Bun.write(fakeCodex, "#!/bin/sh\nexec /bin/sleep 30\n");
+    chmodSync(fakeCodex, 0o755);
+    Bun.env.PATH = `${bin}:${previousPath ?? ""}`;
+    const manager = new CodexAppServerManager({
+      onEvent: async () => {},
+      queueApproval: async () => "unused",
+      observeRateLimits: async () => null,
+    });
+    const command = manager.buildHostCommand(agent, 4317);
+    const socket = command[command.indexOf("--socket") + 1]!;
+    let hostPid: number | null = null;
+    let hostRun: Promise<number> | null = null;
     try {
       const pidfile = codexAgentHostPidfile(agent);
-      mkdirSync(dirname(pidfile), { recursive: true });
-      writeFileSync(pidfile, "900\n", { mode: 0o600 });
+      expect(`${socket}.pid`).toBe(pidfile);
+      hostRun = runCodexAppServerHost({
+        socket,
+        worktree: root,
+        daemonPort: 4317,
+        agentName: agent.name,
+      });
+      for (let attempt = 0; attempt < 100 && !existsSync(pidfile); attempt += 1) {
+        await Bun.sleep(10);
+      }
+      hostPid = Number(readFileSync(pidfile, "utf8").trim());
+      expect(hostPid).toBeGreaterThan(1);
+      const { dependencies } = pauseWorld([
+        { pid: 100, ppid: 1, command: "-zsh", birth: "birth-PANE" },
+        {
+          pid: hostPid,
+          ppid: 1,
+          command: "codex app-server",
+          birth: "birth-HOST",
+        },
+      ]);
 
       const paused = await suspendAgentForPause(agent, {
         tmux: {
@@ -480,15 +522,26 @@ describe("pause capture birth binding (N5)", () => {
       });
 
       expect(paused.capture).toMatchObject({
-        hostPid: 900,
+        hostPid,
         processIncarnation: 4,
       });
-      expect(paused.capture.tree.find((entry) => entry.pid === 900))
+      expect(paused.capture.tree.find((entry) => entry.pid === hostPid))
         .toMatchObject({ role: "app-server-host", birth: "birth-HOST" });
       expect(paused.outcome.unstopped).toEqual([]);
     } finally {
+      if (hostPid !== null) {
+        try {
+          process.kill(-hostPid, "SIGKILL");
+        } catch {
+          // The fake host already exited.
+        }
+      }
+      await hostRun?.catch(() => undefined);
+      manager.close();
       if (previousHiveHome === undefined) delete Bun.env.HIVE_HOME;
       else Bun.env.HIVE_HOME = previousHiveHome;
+      if (previousPath === undefined) delete Bun.env.PATH;
+      else Bun.env.PATH = previousPath;
       rmSync(root, { recursive: true, force: true });
     }
   });
