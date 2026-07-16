@@ -291,6 +291,82 @@ test("MCP: a Codex writer's memory mutation is gated, not waved through by its c
   }
 });
 
+test("MCP: a stale unbound writer token cannot borrow a same-name replacement's attestation", async () => {
+  // The fail-open leo found in my own fix. Capabilities persist nullable
+  // agentId/processIncarnation, so a legacy writer token carries neither — and
+  // every upstream guard that would catch it is skipped for exactly that
+  // reason: the replacement-binding check only runs when both exact fields are
+  // present, memory:write is not epoch-checked, and replacement issuance
+  // revokes by exact holder rather than by subject. So the token stays valid.
+  //
+  // Resolving it by SUBJECT NAME would then land it on whatever row now
+  // answers to "maya" — and the Codex gate would run correctly against the
+  // wrong holder, borrowing the replacement's live attestation. The gate
+  // firing is not the same as the gate firing for the right process.
+  const db = new HiveDatabase(":memory:");
+  // The replacement has a perfectly good live, attested session of its own.
+  // That is what makes this an exploit rather than a wording change: resolved
+  // by name, the predecessor's token reaches a holder whose attestation PASSES,
+  // and the write lands. The denial must come from being unable to identify the
+  // caller, not from the replacement happening to be idle.
+  const daemon = new HiveDaemon({
+    db,
+    spawner: new NoopSpawner(),
+    repoRoot: WORKTREE,
+    codexControl: {
+      activeTurnBinding: async () => ({
+        agentId: "agent-maya-replacement",
+        agentName: "maya",
+        processIncarnation: 2,
+        capabilityEpoch: 3,
+        threadId: "thread-1",
+        turnId: "turn-live",
+        rolloutPath: writeRollout({
+          turnId: "turn-live",
+          model: "gpt-5.6-sol",
+          effort: "xhigh",
+        }),
+      }),
+      hasAgent: () => true,
+      isTurnActive: () => true,
+    } as never,
+  });
+  try {
+    // No row named "maya" yet, so this mints an UNBOUND legacy-shaped token:
+    // a real, valid, unexpired writer credential with no exact holder.
+    const staleToken = actingAs(daemon, "maya", "writer");
+    // Now a replacement claims the name — a different agent id entirely.
+    db.insertAgent(writerRow({ id: "agent-maya-replacement", status: "working" }));
+
+    const client = new Client({ name: "stale-token-test", version: "1.0.0" });
+    await client.connect(
+      new StreamableHTTPClientTransport(new URL("http://hive/mcp"), {
+        fetch: staleToken,
+      }),
+    );
+    const result = await client.callTool({
+      name: "memory_write",
+      arguments: {
+        scope: "repo",
+        id: "borrowed",
+        topic: "provider",
+        title: "Borrowed",
+        body: "written by a predecessor's token",
+        source: "agent",
+        evidence: "none",
+        status: "unverified",
+        supersedes: [],
+      },
+    }) as { isError?: boolean; content: Array<{ text?: string }> };
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text ?? "").toContain("no exact holder");
+    await client.close();
+  } finally {
+    db.close();
+  }
+});
+
 test("LANDING: identity that drifts during land preparation refuses the merge at the Git boundary", async () => {
   // The gate used to run before land(), but land() then waits on the landing
   // lease (up to 30s) and does diagnosis and collision cleanup before it

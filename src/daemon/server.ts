@@ -1228,23 +1228,52 @@ export class HiveDaemon {
     capability: Capability,
     tool: string,
   ): Promise<void> {
-    // Resolve the exact holder behind this credential. `agentId` is the exact
-    // handle; the subject name is the legacy fallback and is only ever used to
-    // FIND a row, never to prove one.
-    const holder = capability.agentId != null
-      ? this.db.getAgentById(capability.agentId)
-      : this.db.getAgentByName(capability.subject);
-    // Not an agent-held credential (the operator's, say) or not Codex: this
-    // gate has nothing to say. Every other check still applies.
-    if (holder === null || holder.tool !== "codex" || holder.readOnly) return;
+    // Operator and orchestrator credentials are not agent-held; this gate is
+    // about an agent's own process, and has nothing to say about them.
+    if (capability.role !== "writer") return;
+    const refuse = (reason: string): never => {
+      throw new Error(
+        `${capability.subject} may not call ${tool}: ${reason}\n` +
+          "A writer credential must name its exact durable holder, because a Codex writer's filesystem mutations are gated against that holder's live, attested identity.",
+      );
+    };
+    // A writer credential MUST name its exact holder, and there is no name
+    // fallback. A subject name is reusable: resolving by it lets a still-valid
+    // legacy token — minted before holder binding existed, and never revoked
+    // because replacement issuance revokes by exact holder rather than by
+    // subject — land on whatever row now answers to that name. The gate below
+    // would then run perfectly correctly against the WRONG holder and borrow a
+    // same-name replacement session's attestation. `revokeAgentHolder` and the
+    // stale-epoch check are both skipped for such a token precisely because its
+    // exact fields are null, so nothing upstream catches it either.
+    //
+    // Nor can the "not Codex, nothing to do" exit come first: that is a claim
+    // about the holder, and without the exact holder we cannot establish it.
+    // Unknown is not "probably fine".
+    if (capability.agentId == null || capability.processIncarnation == null) {
+      refuse(
+        "the credential carries no exact holder (agentId/processIncarnation), so Hive cannot prove which process is calling",
+      );
+    }
+    const holder = this.db.getAgentById(capability.agentId!);
+    if (holder === null) {
+      refuse(`no holder row exists for agent id ${capability.agentId}`);
+    }
+    if ((holder!.processIncarnation ?? 0) !== capability.processIncarnation) {
+      refuse(
+        `the credential was minted for process incarnation ${capability.processIncarnation}, but ${holder!.name} is now at ${holder!.processIncarnation ?? 0}`,
+      );
+    }
+    // Proven, by exact id, to be someone this gate has nothing to say about.
+    if (holder!.tool !== "codex" || holder!.readOnly) return;
     const decision = await this.authorizeCodexMutationForHolder(
-      holder.name,
-      holder.id,
+      holder!.name,
+      holder!.id,
       `/mcp:${tool}`,
     );
     if (!decision.allowed) {
       throw new Error(
-        `Codex writer ${holder.name} may not call ${tool}: ${decision.reason}\n` +
+        `Codex writer ${holder!.name} may not call ${tool}: ${decision.reason}\n` +
           "A Codex writer's filesystem mutations are gated per-mutation against its live, attested identity — including the ones that arrive through Hive's own MCP server rather than its sandbox.",
       );
     }
