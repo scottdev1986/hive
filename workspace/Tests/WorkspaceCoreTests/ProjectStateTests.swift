@@ -104,8 +104,7 @@ final class ProjectStateTests: XCTestCase {
                         : nil,
                       identityState: identityState, status: status,
                       taskDescription: task, tmuxSession: session ?? "hive-\(name)",
-                      toolSessionID: completeAttachment
-                        ? (toolSessionID ?? "session-\(agentID)") : nil,
+                      toolSessionID: toolSessionID,
                       processIncarnation: completeAttachment ? processIncarnation : nil,
                       contextPct: contextPct, writeRevoked: writeRevoked,
                       closedAt: closedAt)
@@ -238,7 +237,7 @@ final class ProjectStateTests: XCTestCase {
         }
     }
 
-    func testAttachmentChangesForSessionToolSessionIncarnationAndSocket() throws {
+    func testAttachmentTracksSessionIncarnationAndSocketNotToolSession() throws {
         let state = state()
         let paneID = ProjectState.paneID(forAgent: "worker")
         var current = agent(
@@ -246,13 +245,17 @@ final class ProjectStateTests: XCTestCase {
             processIncarnation: 1)
         state.apply(feed: [current])
 
+        // The provider conversation id is not viewer identity: a change to it
+        // alone must not tear down and rebuild the tmux child.
+        let toolOnly = state.apply(feed: [agent(
+            "worker", session: "tmux-1", toolSessionID: "tool-2",
+            processIncarnation: 1)])
+        XCTAssertFalse(toolOnly.contains(.paneAttachmentChanged(paneID)))
+
+        // Session and process incarnation are exact viewer identity and rebind.
         for changed in [
-            agent("worker", session: "tmux-2", toolSessionID: "tool-1",
-                  processIncarnation: 1),
-            agent("worker", session: "tmux-2", toolSessionID: "tool-2",
-                  processIncarnation: 1),
-            agent("worker", session: "tmux-2", toolSessionID: "tool-2",
-                  processIncarnation: 2),
+            agent("worker", session: "tmux-2", processIncarnation: 1),
+            agent("worker", session: "tmux-2", processIncarnation: 2),
         ] {
             let changes = state.apply(feed: [changed])
             XCTAssertTrue(changes.contains(.paneAttachmentChanged(paneID)))
@@ -267,6 +270,32 @@ final class ProjectStateTests: XCTestCase {
         XCTAssertEqual(PaneAttachmentTransition.between(first, second), .recreate)
         XCTAssertNotEqual(first, second,
                           "same agent name/process values in two HIVE_HOMEs are distinct")
+    }
+
+    // The Codex path never binds a provider conversation id, so its wire row
+    // carries no toolSessionId and identity reads "unknown". The agent is fully
+    // live, so its pane must still attach — while authoring stays fail-closed.
+    func testCodexWithoutToolSessionGetsAttachablePaneWithFailClosedAuthoring() throws {
+        let state = state()
+        let paneID = ProjectState.paneID(forAgent: "codex-worker")
+        state.apply(feed: [agent(
+            "codex-worker", status: "working", tool: "codex", model: "gpt-5.6-sol",
+            toolSessionID: nil, identityState: "unknown",
+            hasObservedIdentity: false)], now: 1)
+
+        let pane = try XCTUnwrap(state.panes[paneID])
+        // A live tmux child is schedulable: attachment binds without a provider
+        // conversation id, so ProjectWindowController.terminalCommand fires.
+        XCTAssertEqual(pane.attachmentIdentity?.tmuxSession, "hive-codex-worker")
+        XCTAssertEqual(pane.attachmentIdentity?.agentID, "agent-codex-worker")
+        if case .disconnected = pane.status {
+            XCTFail("a live Codex process must not read attachment-incomplete")
+        }
+        // The wire activity status is preserved, not flattened to "unknown".
+        XCTAssertEqual(pane.feedStatus, "working")
+        // Authoring stays fail-closed: identity is unknown on the Codex path.
+        XCTAssertEqual(pane.authoringBlocker, .unknownIdentity)
+        XCTAssertFalse(pane.allowsAuthoring)
     }
 
     func testRequestedAndObservedIdentityRenderSeparatelyAndDriftDisablesAuthoring() throws {

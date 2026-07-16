@@ -20,21 +20,23 @@ public struct WorkspaceInstanceIdentity: Equatable, Sendable {
 
 /// Everything that must still agree before a pane may reuse a tmux child.
 /// Agent names are deliberately absent: they are presentation/routing labels,
-/// not process identity.
+/// not process identity. The provider conversation id (`toolSessionID`) is also
+/// absent: it is telemetry/resume/attestation identity, and the Codex path never
+/// binds it, so gating tmux viewing on it left Codex panes permanently closed.
+/// This tuple — instance + agent UUID + process incarnation + tmux session —
+/// already distinguishes cross-instance, reused-name, and process-replacement
+/// cases exactly.
 public struct PaneAttachmentIdentity: Equatable, Sendable {
     public let workspace: WorkspaceInstanceIdentity
     public let agentID: String
     public let processIncarnation: Int
-    public let toolSessionID: String
     public let tmuxSession: String
 
     public init(workspace: WorkspaceInstanceIdentity, agentID: String,
-                processIncarnation: Int, toolSessionID: String,
-                tmuxSession: String) {
+                processIncarnation: Int, tmuxSession: String) {
         self.workspace = workspace
         self.agentID = agentID
         self.processIncarnation = processIncarnation
-        self.toolSessionID = toolSessionID
         self.tmuxSession = tmuxSession
     }
 }

@@ -12,17 +12,24 @@ export const WORKSPACE_FEED_SNAPSHOT_FIXTURE = resolve(
   "../../test/fixtures/workspace-feed-snapshot.json",
 );
 
+// A real Codex wire row: the daemon never binds a Codex `toolSessionId` to a
+// process incarnation, so it is absent here, while `identityState` reads
+// "unknown" and `processIncarnation`/`tmuxSession` are present. The Workspace
+// must still open a pane from this (viewing is bound on instance + agent UUID +
+// incarnation + tmux session), with authoring fail-closed as identity-unknown.
 export const workspaceFeedAgentFixture: AgentRecord = {
   id: "agent-indexer",
   name: "indexer",
   tool: "codex",
   model: "gpt-5.4",
+  identityState: "unknown",
   category: "standard_coding",
   status: "working",
   taskDescription: "Index the repository",
   worktreePath: "/tmp/hive/indexer",
   branch: "hive/indexer",
   tmuxSession: "hive-indexer",
+  processIncarnation: 1,
   contextPct: 41.5,
   createdAt: OBSERVED_AT,
   lastEventAt: OBSERVED_AT,

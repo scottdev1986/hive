@@ -51,6 +51,28 @@ final class WorkspaceFeedWireContractTests: XCTestCase {
         XCTAssertEqual(agent.writeRevoked, true)
     }
 
+    // The shared fixture is a real Codex wire row: no toolSessionId, identity
+    // "unknown". Pane viewing must bind from it anyway; only authoring blocks.
+    func testCodexRowWithoutToolSessionStillYieldsAPaneAttachment() throws {
+        let decoded = try XCTUnwrap(FeedLine.parse(try wireFixture()))
+        let agent = try XCTUnwrap(decoded.agents?.first)
+
+        XCTAssertEqual(agent.tool, "codex")
+        XCTAssertNil(agent.toolSessionID)
+        XCTAssertEqual(agent.identityState, "unknown")
+        XCTAssertEqual(agent.status, "working")
+
+        let workspace = WorkspaceInstanceIdentity(
+            instanceID: "instance-a", instanceHome: "/tmp/hive-a",
+            daemonPort: 4317, tmuxSocket: "hive-a")
+        let attachment = try XCTUnwrap(agent.attachmentIdentity(in: workspace))
+        XCTAssertEqual(attachment.tmuxSession, "hive-indexer")
+        XCTAssertEqual(attachment.processIncarnation, 1)
+
+        XCTAssertEqual(
+            agent.authoringBlocker(attachmentAvailable: true), .unknownIdentity)
+    }
+
     func testMissingOrMalformedLoadBearingAgentIDRejectsOnlyTheSnapshot() throws {
         for line in [
             #"{"v":1,"agents":[{"name":"missing"}],"autonomy":"dangerous"}"#,

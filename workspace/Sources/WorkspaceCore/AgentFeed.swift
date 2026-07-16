@@ -114,6 +114,12 @@ public struct AgentSnapshot: Equatable, Decodable {
         observedIdentity == nil ? liveEffort : observedIdentity?.effort
     }
 
+    /// The exact tmux child this pane may view. Deliberately does NOT require
+    /// `toolSessionID`: that is provider conversation identity, and the Codex
+    /// path never binds it, so gating here would leave Codex panes permanently
+    /// closed. Authoring stays fail-closed on its own terms (`authoringBlocker`
+    /// via identity attestation, which reads "unknown" for Codex); only pane
+    /// viewing is decoupled here.
     public func attachmentIdentity(
         in workspace: WorkspaceInstanceIdentity
     ) -> PaneAttachmentIdentity? {
@@ -121,12 +127,11 @@ public struct AgentSnapshot: Equatable, Decodable {
               !workspace.instanceHome.isEmpty, workspace.daemonPort > 0,
               !workspace.tmuxSocket.isEmpty,
               let processIncarnation, processIncarnation > 0,
-              let toolSessionID, !toolSessionID.isEmpty,
               let tmuxSession, !tmuxSession.isEmpty else { return nil }
         return PaneAttachmentIdentity(
             workspace: workspace, agentID: id,
             processIncarnation: processIncarnation,
-            toolSessionID: toolSessionID, tmuxSession: tmuxSession)
+            tmuxSession: tmuxSession)
     }
 
     public func authoringBlocker(attachmentAvailable: Bool) -> AgentAuthoringBlocker? {
