@@ -327,6 +327,14 @@ export function buildCodexSpawnCommand(options: CodexSpawnOptions): string[] {
   return ["codex", ...buildCodexConfigArgs(options, { asConfigOverride: false })];
 }
 
+export function buildCodexResumeOptions(options: CodexSpawnOptions): string[] {
+  return [
+    "codex",
+    "resume",
+    ...buildCodexConfigArgs(options, { asConfigOverride: true }),
+  ];
+}
+
 // Relaunches a crashed agent's recorded rollout (`codex resume [OPTIONS]
 // [SESSION_ID]`, verified against codex CLI help) with the same config
 // overrides the original spawn used.
@@ -335,9 +343,7 @@ export function buildCodexResumeCommand(
   sessionId: string,
 ): string[] {
   return [
-    "codex",
-    "resume",
-    ...buildCodexConfigArgs(options, { asConfigOverride: true }),
+    ...buildCodexResumeOptions(options),
     sessionId,
   ];
 }

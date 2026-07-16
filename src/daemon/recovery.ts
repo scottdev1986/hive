@@ -14,6 +14,7 @@ import {
 } from "../adapters/tools/claude";
 import {
   buildCodexResumeCommand,
+  buildCodexResumeOptions,
   discoverCodexRecoverySessionId,
   writeCodexAgentConfig,
 } from "../adapters/tools/codex";
@@ -38,6 +39,10 @@ import type { StopAgentSession } from "./teardown";
 import { readCodexTelemetry } from "./tool-telemetry";
 import { hiveCliSpawnArgv } from "./lifecycle";
 import { IS_RELEASE_BUILD } from "../version";
+import {
+  buildCodexTuiShellCommand,
+  codexDeveloperPromptPath,
+} from "./launch-prompt";
 
 // Three auto-resumes for one agent means the process is dying on its own,
 // not being killed by crashes; after that the sweep stops retrying and
@@ -606,6 +611,8 @@ export class CrashRecovery {
       // the launch-failure catch below naming it. Splitting the two would let
       // a future vendor write one harness's config and launch the other's CLI.
       let argv: string[];
+      let codexResumeOptions: string[] | undefined;
+      let codexDeveloperPath: string | undefined;
       switch (record.tool) {
         case "claude": {
           // Re-seed rather than assume: the operator's ~/.claude.json may have
@@ -653,7 +660,7 @@ export class CrashRecovery {
             readOnly: record.readOnly,
             hiveCommand: hiveCliSpawnArgv(IS_RELEASE_BUILD, process.execPath),
           });
-          argv = buildCodexResumeCommand({
+          const codexOptions = {
             daemonPort: this.daemonPort(),
             effort: identity?.tool === "codex" ? identity.effort : "medium",
             model,
@@ -661,7 +668,17 @@ export class CrashRecovery {
             readOnly: record.readOnly,
             dangerous,
             worktreePath,
-          }, sessionId);
+          };
+          codexResumeOptions = buildCodexResumeOptions(codexOptions);
+          argv = buildCodexResumeCommand(codexOptions, sessionId);
+          const developerPath = codexDeveloperPromptPath(record.tmuxSession);
+          if (existsSync(developerPath)) {
+            codexDeveloperPath = developerPath;
+          } else {
+            console.warn(
+              `Hive resumed legacy Codex session ${record.name} with its original visible bootstrap semantics`,
+            );
+          }
           break;
         }
         case "grok": {
@@ -683,6 +700,12 @@ export class CrashRecovery {
       }
       const command = record.tool === "grok"
         ? wrapGrokSpawnWithCompatibilityEnv(shellJoin(argv))
+        : record.tool === "codex" && codexDeveloperPath !== undefined
+        ? buildCodexTuiShellCommand(
+            codexResumeOptions!,
+            { developerPath: codexDeveloperPath },
+            [sessionId],
+          )
         : shellJoin(argv);
       const revalidated = await this.deps.authorizeLaunch?.(
         identity,

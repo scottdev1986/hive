@@ -5,6 +5,7 @@ import {
   beforeEach,
   describe,
   expect,
+  spyOn,
   test,
 } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -22,6 +23,7 @@ import {
 import { CODEX_WRITER_CONTAINMENT_REASON } from "./codex-containment";
 import { verifiedAgentStop } from "./teardown";
 import { authorizeForQuotaTest } from "./authorized-launch.test-support";
+import { writeCodexSessionBootstrap } from "./launch-prompt";
 
 const timestamp = "2026-07-10T09:00:00.000Z";
 
@@ -118,12 +120,17 @@ interface Harness {
 }
 
 let home = "";
+let previousHiveHome: string | undefined;
 
 beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), "hive-recovery-"));
+  previousHiveHome = process.env.HIVE_HOME;
+  process.env.HIVE_HOME = home;
 });
 
 afterEach(() => {
+  if (previousHiveHome === undefined) delete process.env.HIVE_HOME;
+  else process.env.HIVE_HOME = previousHiveHome;
   rmSync(home, { recursive: true, force: true });
 });
 
@@ -435,6 +442,10 @@ describe("crash resume", () => {
   });
 
   test("a codex agent resumes through `codex resume <thread-id>` with its spawn config overrides", async () => {
+    const bootstrap = await writeCodexSessionBootstrap("hive-maya", {
+      developerInstructions: "durable developer contract",
+      initialUserPrompt: "original task must not replay",
+    });
     // The resumed codex TUI emits no hook event before its first turn-end;
     // fresh rollout-file activity is its proof of life, injected here.
     const h = harness({
@@ -466,6 +477,48 @@ describe("crash resume", () => {
     expect(command).toContain("019f-codex-thread");
     expect(command).toContain("model_reasoning_effort=high");
     expect(command).toContain("read-only");
+    expect(command).toContain(bootstrap.developerPath);
+    expect(command).not.toContain(bootstrap.userPath!);
+    expect(command).not.toContain("original task must not replay");
+    expect(command.indexOf(bootstrap.developerPath)).toBeLessThan(
+      command.indexOf("019f-codex-thread"),
+    );
+  });
+
+  test("a legacy Codex session without an artifact resumes without replay and names the visible-bootstrap fallback", async () => {
+    const warning = spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const h = harness({
+        resolveCodexSessionId: async () => "019f-legacy-thread",
+        readCodexActivity: async () =>
+          new Date(Date.now() + 60_000).toISOString(),
+      });
+      h.db.insertAgent(agent({
+        tool: "codex",
+        model: "gpt-5-codex",
+        status: "working",
+        readOnly: true,
+        toolSessionId: "019f-legacy-thread",
+        executionIdentity: {
+          tool: "codex",
+          model: "gpt-5-codex",
+          effort: "high",
+        },
+      }));
+
+      expect(await h.recovery.sweep()).toMatchObject([
+        { agent: "maya", action: "resumed" },
+      ]);
+      expect(h.tmux.created[0]!.command).toContain(
+        "'codex' 'resume'",
+      );
+      expect(h.tmux.created[0]!.command).not.toContain(".developer.toml");
+      expect(warning).toHaveBeenCalledWith(
+        "Hive resumed legacy Codex session maya with its original visible bootstrap semantics",
+      );
+    } finally {
+      warning.mockRestore();
+    }
   });
 
   test("a replacement incarnation during prelaunch authorization prevents predecessor launch", async () => {
@@ -604,7 +657,9 @@ describe("crash resume", () => {
     expect(outcomes).toMatchObject([{ agent: "maya", action: "resumed" }]);
     const command = h.tmux.created[0]!.command;
     expect(command).toContain("GROK_CLAUDE_SKILLS_ENABLED=false");
-    expect(command).toContain("'grok' '-r' '019f-grok-session'");
+    expect(command).toContain(
+      "'grok' '-r' '019f-grok-session' '--cwd' '/repo/.hive/worktrees/maya' '--trust' '-m' 'catalog-model'",
+    );
     expect(command).toContain("'--reasoning-effort' 'high'");
     expect(command).toContain("'--always-approve'");
     expect(command).not.toContain("--session-id");

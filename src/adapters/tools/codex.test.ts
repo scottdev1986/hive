@@ -9,6 +9,7 @@ import {
   codexCapabilityTokenPath,
   codexSessionsDirectory,
   buildCodexResumeCommand,
+  buildCodexResumeOptions,
   buildCodexSpawnCommand,
   buildCodexTrustArgs,
   CODEX_CAPABILITY_TOKEN_ENV,
@@ -150,11 +151,12 @@ describe("Codex spawn-scoped MCP surface", () => {
   });
 
   test("a resumed session keeps the same scoped surface", () => {
-    const command = buildCodexResumeCommand(
-      { ...base, excludeMcpServers: ["idea"] },
-      "session-7",
-    );
+    const options = { ...base, excludeMcpServers: ["idea"] };
+    const resumeOptions = buildCodexResumeOptions(options);
+    const command = buildCodexResumeCommand(options, "session-7");
     expect(command).toContain("mcp_servers.idea.enabled=false");
+    expect(resumeOptions).toEqual(command.slice(0, -1));
+    expect(resumeOptions).not.toContain("session-7");
     expect(command.at(-1)).toBe("session-7");
   });
 });

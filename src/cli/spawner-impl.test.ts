@@ -2844,7 +2844,9 @@ describe("HiveSpawner wiring", () => {
     });
     const shell = tmux.sessions[0]?.[2] ?? "";
     expect(shell).toContain("GROK_CLAUDE_SKILLS_ENABLED=false");
-    expect(shell).toContain("'grok' '-m' 'catalog-model'");
+    expect(shell).toContain(
+      `'grok' '--cwd' '${spawned.worktreePath}' '--trust' '-m' 'catalog-model'`,
+    );
     expect(shell).toContain("'--reasoning-effort' 'high'");
     expect(shell).toContain("'--always-approve'");
     const config = await readFile(join(spawned.worktreePath!, ".grok", "config.toml"), "utf8");
@@ -4669,7 +4671,9 @@ describe("a refusal names the reason it actually refused for", () => {
     );
     expect(failure).toBe("");
     expect(store.listAgents()[0]).toMatchObject({ tool: "grok", model: "grok-4.5" });
-    expect(tmux.sessions[0]?.[2]).toContain("'grok' '-m' 'grok-4.5'");
+    expect(tmux.sessions[0]?.[2]).toContain(
+      `'grok' '--cwd' '${store.listAgents()[0]!.worktreePath}' '--trust' '-m' 'grok-4.5'`,
+    );
   });
 
   test("choice honors the authored order while the first link is launchable", async () => {

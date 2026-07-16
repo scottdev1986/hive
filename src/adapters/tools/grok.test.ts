@@ -32,10 +32,12 @@ describe("Grok adapter", () => {
 
   test("launches a writer with model and optional effort on argv", () => {
     expect(buildGrokSpawnCommand(writer)).toEqual([
-      "grok", "-m", "catalog-model", "--always-approve",
+      "grok", "--cwd", "/tmp/worktree", "--trust", "-m", "catalog-model",
+      "--always-approve",
     ]);
     expect(buildGrokSpawnCommand({ ...writer, effort: "high" })).toEqual([
-      "grok", "-m", "catalog-model", "--reasoning-effort", "high",
+      "grok", "--cwd", "/tmp/worktree", "--trust", "-m", "catalog-model",
+      "--reasoning-effort", "high",
       "--always-approve",
     ]);
   });
@@ -48,19 +50,21 @@ describe("Grok adapter", () => {
   test("names a new session on argv, and never on a resume", () => {
     const sessionId = "3f8b2c1a-9d4e-4f6b-8a2c-1e5d7b9c3a0f";
     expect(buildGrokSpawnCommand({ ...writer, sessionId })).toEqual([
-      "grok", "-m", "catalog-model", "--always-approve",
+      "grok", "--cwd", "/tmp/worktree", "--trust", "-m", "catalog-model",
+      "--always-approve",
       "--session-id", sessionId,
     ]);
     // The CLI rejects --session-id on resume (it names a NEW conversation), so
     // the resume path carries -r and nothing else.
     expect(buildGrokResumeCommand({ ...writer, sessionId }, sessionId)).toEqual([
-      "grok", "-r", sessionId, "-m", "catalog-model", "--always-approve",
+      "grok", "-r", sessionId, "--cwd", "/tmp/worktree", "--trust", "-m",
+      "catalog-model", "--always-approve",
     ]);
   });
 
   test("uses the cross-model reader barrier", () => {
     expect(buildGrokSpawnCommand({ ...writer, readOnly: true })).toEqual([
-      "grok", "-m", "catalog-model",
+      "grok", "--cwd", "/tmp/worktree", "--trust", "-m", "catalog-model",
       "--deny", "Bash",
       "--deny", "Write",
       "--deny", "Edit",
@@ -73,7 +77,8 @@ describe("Grok adapter", () => {
   test("resume uses -r and replays current process flags, never --session-id", () => {
     const command = buildGrokResumeCommand(writer, "019f-session");
     expect(command).toEqual([
-      "grok", "-r", "019f-session", "-m", "catalog-model",
+      "grok", "-r", "019f-session", "--cwd", "/tmp/worktree", "--trust",
+      "-m", "catalog-model",
       "--always-approve",
     ]);
     expect(command).not.toContain("--session-id");
