@@ -652,8 +652,13 @@ export class QuotaService {
     agentName: string,
     liveModel: string,
     at = iso(this.clock()),
+    expectedReservationId?: string | null,
   ): Promise<QuotaReservation[] | null> {
     const held = this.ledger.getActiveReservationForAgent(agentName);
+    if (
+      expectedReservationId === null ||
+      (expectedReservationId !== undefined && held?.id !== expectedReservationId)
+    ) return null;
     if (held === null || held.model === liveModel) return null;
     const now = new Date(at);
     const candidate = {
@@ -2059,6 +2064,9 @@ export class QuotaService {
        */
       model?: string;
       agent?: string;
+      /** Exact booking named by the statusline agent row before any await.
+       * Null means the row held no booking and therefore authorizes no rekey. */
+      reservationId?: string | null;
     },
   ): Promise<QuotaObservation | null> {
     if (report.model !== undefined && report.agent !== undefined) {
@@ -2066,6 +2074,7 @@ export class QuotaService {
         report.agent,
         report.model,
         report.observedAt,
+        report.reservationId,
       );
     }
     if (report.fiveHour === undefined && report.sevenDay === undefined) {

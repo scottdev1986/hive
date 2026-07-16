@@ -206,6 +206,7 @@ export type ConditionalAgentUpdate = Partial<Pick<AgentRecord,
   | "controlMessageId"
   | "controlQuotaReservationId"
   | "quotaReservationId"
+  | "executionIdentity"
   | "toolSessionId"
   | "processIncarnation"
   | "processStartedAt"
@@ -1191,6 +1192,14 @@ export class HiveDatabase {
       set("controlQuotaReservationId", updates.controlQuotaReservationId ?? null);
     }
     if ("quotaReservationId" in updates) set("quotaReservationId", updates.quotaReservationId ?? null);
+    if ("executionIdentity" in updates) {
+      set(
+        "executionIdentity",
+        updates.executionIdentity === undefined
+          ? null
+          : JSON.stringify(ExecutionIdentitySchema.parse(updates.executionIdentity)),
+      );
+    }
     if ("toolSessionId" in updates) set("toolSessionId", updates.toolSessionId ?? null);
     if ("processIncarnation" in updates) {
       set("processIncarnation", updates.processIncarnation ?? expected.processIncarnation);

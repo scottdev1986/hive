@@ -3642,6 +3642,160 @@ describe("the model an agent is actually running", () => {
     }
   });
 
+  test("an awaited old-session model read cannot update or route a replacement process", async () => {
+    const path = join(home, "statusline-old-session-race.db");
+    const db = new HiveDatabase(path);
+    const other = new HiveDatabase(path);
+    let releaseRead!: () => void;
+    let markReadStarted!: () => void;
+    const readStarted = new Promise<void>((resolve) => {
+      markReadStarted = resolve;
+    });
+    const mayReturn = new Promise<void>((resolve) => {
+      releaseRead = resolve;
+    });
+    const observed: string[] = [];
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new StubSpawner(),
+      telemetryReaders: {
+        liveModel: async () => {
+          markReadStarted();
+          await mayReturn;
+          return "claude-opus-old-session";
+        },
+      },
+      quota: {
+        setAlertSink: () => {},
+        ledger: new QuotaLedger(db),
+        observeStatusline: async (binding: { model: string }) => {
+          observed.push(binding.model);
+          return null;
+        },
+      } as unknown as QuotaService,
+    });
+    db.insertAgent(agent({
+      tool: "claude",
+      model: "sonnet",
+      worktreePath: "/tmp/hive-old-statusline",
+      toolSessionId: "old-session",
+      processIncarnation: 1,
+      quotaReservationId: "old-reservation",
+    }));
+    try {
+      const response = actingAs(daemon, "maya", "writer")(
+        "http://hive/statusline",
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            agent: "maya",
+            fiveHour: { usedPct: 25, resetsAt: null },
+          }),
+        },
+      );
+      await readStarted;
+      const old = other.getAgentById("agent-maya")!;
+      expect(other.updateAgentIfCurrent(agentStateCas(old), {
+        processIncarnation: 2,
+        processStartedAt: "2026-07-15T20:04:00.000Z",
+        toolSessionId: "replacement-session",
+        capabilityEpoch: 1,
+        status: "control-paused",
+        writeRevoked: true,
+        controlMessageId: "replacement-control",
+        quotaReservationId: "replacement-reservation",
+      })).not.toBeNull();
+      releaseRead();
+
+      expect((await response).status).toBe(409);
+      expect(observed).toEqual([]);
+      expect(db.getAgentById("agent-maya")).toMatchObject({
+        processIncarnation: 2,
+        toolSessionId: "replacement-session",
+        capabilityEpoch: 1,
+        status: "control-paused",
+        writeRevoked: true,
+        controlMessageId: "replacement-control",
+        quotaReservationId: "replacement-reservation",
+      });
+      expect(db.getAgentById("agent-maya")?.liveModel).toBeUndefined();
+    } finally {
+      releaseRead();
+      await daemon.stop();
+      other.close();
+      db.close();
+    }
+  });
+
+  test("a multi-instance replacement during quota observation wins the reservation follow-up CAS", async () => {
+    const path = join(home, "statusline-rekey-multi-instance.db");
+    const db = new HiveDatabase(path);
+    const other = new HiveDatabase(path);
+    let replacementApplied = false;
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new StubSpawner(),
+      quota: {
+        setAlertSink: () => {},
+        ledger: {
+          getActiveReservationForAgent: () => ({
+            id: "rekeyed-old-reservation",
+            purpose: "agent",
+          }),
+        },
+        observeStatusline: async () => {
+          const old = other.getAgentById("agent-maya")!;
+          replacementApplied = other.updateAgentIfCurrent(agentStateCas(old), {
+            processIncarnation: 2,
+            processStartedAt: "2026-07-15T20:05:00.000Z",
+            toolSessionId: "successor-session",
+            capabilityEpoch: 1,
+            status: "control-paused",
+            writeRevoked: true,
+            quotaReservationId: "successor-reservation",
+          }) !== null;
+          return null;
+        },
+      } as unknown as QuotaService,
+    });
+    db.insertAgent(agent({
+      tool: "claude",
+      model: "sonnet",
+      worktreePath: null,
+      toolSessionId: "old-session",
+      processIncarnation: 1,
+      quotaReservationId: "old-reservation",
+    }));
+    try {
+      const response = await actingAs(daemon, "maya", "writer")(
+        "http://hive/statusline",
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            agent: "maya",
+            fiveHour: { usedPct: 25, resetsAt: null },
+          }),
+        },
+      );
+      expect(response.status).toBe(200);
+      expect(replacementApplied).toBe(true);
+      expect(db.getAgentById("agent-maya")).toMatchObject({
+        processIncarnation: 2,
+        toolSessionId: "successor-session",
+        capabilityEpoch: 1,
+        status: "control-paused",
+        writeRevoked: true,
+        quotaReservationId: "successor-reservation",
+      });
+    } finally {
+      await daemon.stop();
+      other.close();
+      db.close();
+    }
+  });
+
   test("a statusline report lands Claude's own occupancy figure on the agent row", async () => {
     const db = new HiveDatabase(join(home, "statusline-context-pct.db"));
     const daemon = new HiveDaemon({

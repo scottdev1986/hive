@@ -3145,7 +3145,7 @@ export class HiveDaemon {
       parsed.data.contextWindow !== undefined
     ) {
       this.reconcileContext(
-        agent.name,
+        agent,
         parsed.data.contextUsedPct,
         parsed.data.contextWindow,
       );
@@ -3155,6 +3155,12 @@ export class HiveDaemon {
     // inside the session silently invalidates, and quota charged to a model
     // nobody is running is quota charged to nobody.
     const model = await this.reconcileModel(agent);
+    if (model === null) {
+      return json(
+        { error: `Statusline agent/session changed while telemetry was being read for ${agent.name}.` },
+        { status: 409 },
+      );
+    }
     const observation = await this.quota?.observeStatusline(
       { tool: agent.tool, model },
       {
@@ -3174,9 +3180,10 @@ export class HiveDaemon {
         // disagree.
         agent: agent.name,
         model,
+        reservationId: agent.quotaReservationId ?? null,
       },
     ) ?? null;
-    this.followReservationRekey(agent.name);
+    this.followReservationRekey(agent);
     return json({ observation });
   }
 
@@ -3189,11 +3196,8 @@ export class HiveDaemon {
     agent: AgentRecord,
     observedEffort: string,
   ): Promise<void> {
-    const current = this.db.getAgentByName(agent.name);
-    if (
-      current === null ||
-      (current.tool !== "claude" && current.tool !== "grok")
-    ) return;
+    const current = agent;
+    if (current.tool !== "claude" && current.tool !== "grok") return;
     const identity = current.executionIdentity;
     if (identity === undefined) {
       if (current.tool === "grok") {
@@ -3203,8 +3207,7 @@ export class HiveDaemon {
         return;
       }
       if (current.model === "default") return;
-      this.db.upsertAgent({
-        ...current,
+      this.db.updateAgentIfCurrent(agentStateCas(current), {
         executionIdentity: {
           tool: "claude",
           model: current.model,
@@ -3215,8 +3218,7 @@ export class HiveDaemon {
     }
     if (identity.tool !== current.tool) return;
     if (identity.effort === undefined) {
-      this.db.upsertAgent({
-        ...current,
+      this.db.updateAgentIfCurrent(agentStateCas(current), {
         executionIdentity: { ...identity, effort: observedEffort },
       });
       return;
@@ -3265,42 +3267,47 @@ export class HiveDaemon {
    * Land Claude Code's own occupancy figure and its measured context window
    * onto the agent row.
    *
-   * Re-reads before writing for the same reason `followReservationRekey`
-   * does: the sweep and this handler both land on this row, and a stale
-   * `agent` captured earlier in the request would clobber a concurrent
-   * update instead of merging with it.
+   * Every write uses the exact process/authority tuple captured when the
+   * statusline request was authorized. A replacement process wins the CAS.
    */
   private reconcileContext(
-    name: string,
+    agent: AgentRecord,
     contextUsedPct: number | undefined,
     contextWindow: number | undefined,
   ): void {
-    const current = this.db.getAgentByName(name);
-    if (current === null) return;
-    const updates: Partial<AgentRecord> = {};
-    if (contextUsedPct !== undefined && current.contextPct !== contextUsedPct) {
+    const updates: {
+      contextPct?: number | null;
+      contextWindow?: number;
+    } = {};
+    if (contextUsedPct !== undefined && agent.contextPct !== contextUsedPct) {
       updates.contextPct = contextUsedPct;
     }
-    if (contextWindow !== undefined && current.contextWindow !== contextWindow) {
+    if (contextWindow !== undefined && agent.contextWindow !== contextWindow) {
       updates.contextWindow = contextWindow;
     }
     if (Object.keys(updates).length > 0) {
-      this.db.upsertAgent({ ...current, ...updates });
+      this.db.updateAgentIfCurrent(agentStateCas(agent), updates);
     }
   }
 
-  private followReservationRekey(name: string): void {
-    const held = this.quota?.ledger.getActiveReservationForAgent(name);
+  private followReservationRekey(agent: AgentRecord): void {
+    if (
+      agent.quotaReservationId === undefined &&
+      agent.controlQuotaReservationId === undefined
+    ) return;
+    const held = this.quota?.ledger.getActiveReservationForAgent(agent.name);
     if (held === undefined || held === null) return;
-    const agent = this.db.getAgentByName(name);
-    if (agent === null) return;
     if (held.purpose === "control") {
       if (agent.controlQuotaReservationId === held.id) return;
-      this.db.upsertAgent({ ...agent, controlQuotaReservationId: held.id });
+      this.db.updateAgentIfCurrent(agentStateCas(agent), {
+        controlQuotaReservationId: held.id,
+      });
       return;
     }
     if (agent.quotaReservationId === held.id) return;
-    this.db.upsertAgent({ ...agent, quotaReservationId: held.id });
+    this.db.updateAgentIfCurrent(agentStateCas(agent), {
+      quotaReservationId: held.id,
+    });
   }
 
   /**
@@ -3322,15 +3329,15 @@ export class HiveDaemon {
    *
    * For Claude and Grok, no observation — a session that has not answered yet —
    * leaves `liveModel` untouched and the launch model stands. An unknown model
-   * is unknown, never a guess. Codex is NOT unobservable: its rollout carries
-   * the running model+effort in each turn's `turn_context` (verified against
-   * real 0.144.4 rollouts), attested by the identity sweep in
-   * `refreshToolTelemetry`. This statusline path therefore defers Codex to that
-   * sweep and returns the known value unchanged.
+   * is unknown, never a guess. Codex statusline-shaped requests never infer a
+   * model; provider rollout identity is handled by the separate fail-closed
+   * attestation sweep.
    */
-  private async reconcileModel(agent: AgentRecord): Promise<string> {
+  private async reconcileModel(agent: AgentRecord): Promise<string | null> {
     const known = agent.liveModel ?? agent.model;
-    if (agent.worktreePath === null) return known;
+    const stillCurrent = (): boolean =>
+      this.db.updateAgentIfCurrent(agentStateCas(agent), {}) !== null;
+    if (agent.worktreePath === null) return stillCurrent() ? known : null;
 
     let live: string | null;
     switch (agent.tool) {
@@ -3347,18 +3354,18 @@ export class HiveDaemon {
       case "codex":
         // Attested by refreshToolTelemetry from the newest turn_context, not
         // from this statusline-shaped path.
-        return known;
+        return stillCurrent() ? known : null;
       default:
         return unknownVendor(agent.tool, "live model reconciliation");
     }
-    if (live === null) return known;
+    if (live === null) return stillCurrent() ? known : null;
     if (live !== agent.liveModel) {
-      // Re-read before writing: the sweep and this handler both land here, and a
-      // hook event may have advanced the row under us.
-      const current = this.db.getAgentById(agent.id);
-      if (current !== null) {
-        this.db.upsertAgent({ ...current, liveModel: live });
-      }
+      const updated = this.db.updateAgentIfCurrent(agentStateCas(agent), {
+        liveModel: live,
+      });
+      if (updated === null) return null;
+    } else if (!stillCurrent()) {
+      return null;
     }
     return live;
   }
