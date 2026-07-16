@@ -23,6 +23,7 @@ Closing an agent pane requests `hive kill` for that agent. The daemon preserves 
 - macOS on Apple Silicon or Intel
 - git and tmux, installed through their supported distribution for your system
 - At least one signed-in agent CLI: [Claude Code](https://code.claude.com/docs), [Codex](https://developers.openai.com/codex), or [Grok](https://docs.x.ai/build/overview)
+- Codex sessions require `codex-cli >= 0.144.4`; Hive refuses an older, prerelease, or unreadable Codex CLI before allocating or replacing a session
 
 The release includes the CLI and Workspace app. Bun, Swift, Python, and `uv` are not required to use an installed release.
 
@@ -51,6 +52,11 @@ hive
 `hive init` installs the agent skills used by the CLIs present on the machine, offers the optional local Graphify integration, seeds optional narrative memory, and performs repo-only setup: it does not start a daemon or open a Workspace. It is safe to run again. Use `hive init --no-graphify` to skip the Graphify prompt.
 
 Bare `hive` opens the Workspace with Claude as queen's default vendor. To choose another installed vendor for the orchestrator explicitly, run `hive codex` or `hive grok`; `hive claude` is the explicit Claude spelling.
+
+Codex receives Hive's role and protocol bootstrap as developer instructions, so
+a fresh root opens at an empty composer instead of showing the setup wall. A
+worker's assignment remains its visible initial user message. If Hive refuses an
+older or unreadable Codex CLI, update Codex to `>= 0.144.4`, then reopen Hive.
 
 ## Commands
 

@@ -1,14 +1,14 @@
 # Capability discovery
 
-Updated: 2026-07-14
-Sources: Hive source tree, 2026-07-14; [cross-vendor architecture review](../../raw/reviews/cross-vendor-architecture-review.md)
-Raw: [Cross-vendor architecture review](../../raw/reviews/cross-vendor-architecture-review.md)
+Updated: 2026-07-16
+Sources: Hive source tree, 2026-07-16; [cross-vendor architecture review](../../raw/reviews/cross-vendor-architecture-review.md)
+Raw: [Cross-vendor architecture review](../../raw/reviews/cross-vendor-architecture-review.md) · [Codex 0.144.4 hidden-bootstrap verification](../../raw/codex/codex-0.144.4-hidden-bootstrap-verification.txt)
 
 ## Summary
 
 Every vendor CLI Hive drives will tell you, for free and without buying an inference, which models the signed-in account can launch and which effort levels each accepts. None of them will tell you which model is *good*. This article records what the wire actually says, what it conspicuously does not, and the reading discipline that keeps an absent field from becoming a fabricated `false`.
 
-Wire behavior verified 2026-07-11 against claude 2.1.207 and codex-cli 0.144.1; the Grok surface was most recently verified 2026-07-14 against grok 0.2.101. Model ids below are **examples observed on those dates**, never a shipped catalog: exact ids come from discovery. A legacy name-shape helper can recognize Claude- and Codex-shaped names but carries no concrete catalog (`src/adapters/tools/models.ts:1-15`). Observed ids rot. The mechanisms do not.
+Catalog wire behavior was verified 2026-07-11 against claude 2.1.207 and codex-cli 0.144.1; the Codex compatibility/schema surface was verified 2026-07-16 against codex-cli 0.144.4; the Grok surface was most recently verified 2026-07-14 against grok 0.2.101. Model ids below are **examples observed on those dates**, never a shipped catalog: exact ids come from discovery. A legacy name-shape helper can recognize Claude- and Codex-shaped names but carries no concrete catalog (`src/adapters/tools/models.ts:1-15`). Observed ids rot. The mechanisms do not.
 
 ## The probe matrix
 
@@ -22,12 +22,34 @@ Wire behavior verified 2026-07-11 against claude 2.1.207 and codex-cli 0.144.1; 
 | Codex app-server `model/list` (`{}`, `includeHidden: true`) | **free**, documented | `id`, `model`, display name, `hidden`, `isDefault`, `defaultReasoningEffort`, `supportedReasoningEfforts`, modalities, service tiers |
 | Codex app-server `config/read` | **free** | the effective layered model + effort an *unflagged* launch on this machine will use |
 | Codex app-server `account/read` | **free** | auth mode, plan type (e.g. `chatgpt`/`prolite`). No per-model grants. Do not log the email it carries. |
-| Codex `generate-json-schema --experimental` | **free** | the exact types the installed binary implements — version-local, not account truth |
+| Codex `app-server generate-json-schema` without `--experimental` | **free** | the standard generated bundle for the installed binary — version-local, not account truth; the generator command itself is help-labeled experimental |
 | Grok `grok models` + `~/.grok/models_cache.json` | **free**, two-step | `id`, `name`, `hidden`, `supports_reasoning_effort`, `reasoning_efforts[]` |
-| `<cli> --version` | **free** | the CLI identity — **carried by no catalog**; it must be read separately |
+| `<cli> --version` | **free** | the CLI identity — **carried by no catalog**; it must be read separately. Codex launches require `>= 0.144.4` |
 | Trial launch / tiny prompt | **BILLABLE** | not a discovery primitive |
 
 **Probing by guessing a CLI subcommand is BILLABLE on both CLIs.** `claude models` is not a subcommand; Claude Code treats the unrecognized word as a *prompt*, runs a session, spends quota, and exits 0. Codex behaves the same way. Exit 0 is not evidence of anything. Confirm every argument against `--help`, and prefer the declared control/RPC surfaces over argv. This single fact is why the Grok probe uses only the real `grok models` subcommand and why it additionally demands a liveness signal (below) rather than trusting the exit code.
+
+## Codex compatibility is a launch gate, not catalog discovery
+
+Hive accepts only a strict stable `codex-cli MAJOR.MINOR.PATCH` identity at or
+above 0.144.4; malformed output, prereleases at the floor, and older versions fail
+closed. The floor is Hive's product decision for hidden session bootstrap, not an
+OpenAI support claim. It is checked before model resolution, quota reservation,
+worktree allocation, root teardown, capability issuance, or process launch.
+
+An explicit Codex request is never substituted after a compatibility refusal. An
+ordered routed request may continue to the next enabled provider, and its route
+audit retains the Codex refusal. One routing decision memoizes one version read
+across several Codex links; the final process adapter revalidates before launch so
+a downgrade during setup cannot slip through. Crash recovery and critical restart
+re-enter the same full gate and preserve the recorded provider rather than
+switching it. Claude-only and Grok-only decisions do not invoke `codex --version`.
+
+The locally generated non-`--experimental` 0.144.4 schema contains
+`developerInstructions` in both `ThreadStartParams` and `ThreadResumeParams`; this
+is empirical installed-binary evidence, not public-prose evidence. No thread or
+turn was created to obtain it. See the linked raw record for the command boundary,
+field excerpts, and hashes.
 
 ## `isDefault` is not the effective default
 

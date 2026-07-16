@@ -1,7 +1,7 @@
 # Grok
 
-Updated: 2026-07-14
-Sources: Hive source tree and linked raw measurements, 2026-07-14
+Updated: 2026-07-16
+Sources: Hive source tree, 2026-07-16, and linked raw measurements
 Raw: [Grok spend-sensitivity experiment](../../raw/grok/grok-spend-sensitivity-experiment.md) · [live quota verification](../../raw/grok/grok-quota-live-verification.txt) · [model-control snapshot](../../raw/grok/grok-model-control-verification.json) · [0.2.101 catalog verification](../../raw/grok/grok-0.2.101-catalog-verification.txt)
 
 ## Summary
@@ -17,7 +17,7 @@ The integration spec's §10 claimed Grok's weekly capacity is **unmeasurable** a
 - **Grok IS metered weekly.** `config.creditUsagePercent` on ACP `_x.ai/billing` is a real 0–100 gauge that moves with spend and is insensitive to the probe itself. See [quota-surfaces.md](quota-surfaces.md) and the [spend-sensitivity experiment](../../raw/grok/grok-spend-sensitivity-experiment.md).
 - **Grok is a peer, not a pressure valve.** No pressure-valve code exists.
 - Never built, despite appearing in the spec: `GROK_EXHAUSTION_BLOCK_RECORD`, the tagged graphify counter, `unclassifiedWrapperCount`, and its alerting.
-- The spec's argv section is **wrong**: `--prompt-file`, `--cwd`, `--rules`, and `--permission-mode` are **not** used by Hive.
+- The spec's argv section is **wrong**: `--prompt-file`, `--rules`, and `--permission-mode` are not used by Hive. `--cwd` is now load-bearing and pins every fresh or resumed process to its exact worktree; `--trust` prevents an unattended trust prompt.
 - The spec's "capture the session id from Grok's updates" is **inverted**. Hive names the session; Grok never reports one back. See below.
 
 A third document, the original Grok vendor-integration map, was retired outright: it was
@@ -29,14 +29,19 @@ fixed, so it described code that no longer exists.
 Built at `src/adapters/tools/grok.ts:104-138`:
 
 ```
-grok -m <model> [--reasoning-effort <e>]
+grok --cwd <exact-worktree> --trust -m <model> [--reasoning-effort <e>]
      ( --always-approve                                  # writer
      | --deny Bash --deny Write --deny Edit
        --allow MCPTool --allow Read --allow Grep )       # read-only
      [--session-id <uuid>]                               # NEW sessions only
 ```
 
-Resume swaps in the short flag: `grok -r <session-id> …` (`src/adapters/tools/grok.ts:130-138`), and **`--session-id` is forbidden on resume** — it *creates*. Every launch is wrapped in the compatibility env below (`src/daemon/spawner-impl.ts:2107-2112`).
+Resume inserts the short flag before the shared launch arguments:
+`grok -r <session-id> --cwd <exact-worktree> --trust -m <model> …`.
+`--session-id` is forbidden on resume — it *creates*. `--cwd` receives the
+resolved worktree path, and `--trust` is immediately before `-m` on fresh and
+resume argv. Every launch is wrapped in the compatibility env below. The prompt
+bytes are unchanged by this argv-only correction.
 
 ## Hive names the session up front
 

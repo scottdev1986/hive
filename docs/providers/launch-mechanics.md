@@ -1,12 +1,12 @@
 # Launch mechanics
 
 Updated: 2026-07-16
-Sources: Hive source tree, 2026-07-16; [cross-vendor architecture review](../../raw/reviews/cross-vendor-architecture-review.md)
-Raw: [Cross-vendor architecture review](../../raw/reviews/cross-vendor-architecture-review.md)
+Sources: Hive source tree, 2026-07-16; [current OpenAI Codex configuration manual](https://learn.chatgpt.com/docs/config-file/config-basic); [cross-vendor architecture review](../../raw/reviews/cross-vendor-architecture-review.md)
+Raw: [Cross-vendor architecture review](../../raw/reviews/cross-vendor-architecture-review.md) · [Codex 0.144.4 hidden-bootstrap verification](../../raw/codex/codex-0.144.4-hidden-bootstrap-verification.txt)
 
 ## Summary
 
-Once a model id has been *discovered*, actually launching it is a per-CLI argv problem with sharp, measured edges: which flag carries effort, which knob grants autonomy without raising a dialog nobody can answer, and how to detach the human's inherited MCP servers without producing a config the CLI refuses to load. Every mechanic below was established by driving the binaries — claude 2.1.206/2.1.207, codex-cli 0.144.0/0.144.1, grok 0.2.93/0.2.99.
+Once a model id has been *discovered*, actually launching it is a per-CLI argv problem with sharp, measured edges: which flag carries effort, which knob grants autonomy without raising a dialog nobody can answer, and how to detach the human's inherited MCP servers without producing a config the CLI refuses to load. Every mechanic below was established by driving the binaries — claude 2.1.206/2.1.207, codex-cli 0.144.0/0.144.1/0.144.4, grok 0.2.93/0.2.99.
 
 Model ids named anywhere here are **examples observed on a date**, not a concrete catalog shipped in Hive. Routes resolve from runtime discovery; the only built-in model knowledge is a legacy Claude/Codex name-shape classifier used when no catalog can identify a vendor (`src/adapters/tools/models.ts:1-15`). The *mechanisms* are the durable content.
 
@@ -42,6 +42,47 @@ So **a model pin cannot fail closed at spawn.** Argv validation buys nothing her
 It exists to **silently substitute a different model** when the requested one fails — which is exactly the quiet default the whole no-model-knowledge design exists to kill. A substituted model produces an execution identity nobody chose, a quota reservation booked against the wrong meter, and a critical restart that replays something other than what ran. Hive never passes it, and the flag appears nowhere in the source tree. A spawn that cannot get its model **fails, loudly, naming the model** — see the refusal path in [../routing/routing-policy.md](../routing/routing-policy.md).
 
 ## Codex
+
+Hive splits Codex bootstrap by message role. Durable identity, protocol, worktree,
+coding, scoped-document, graph, and memory guidance travels as developer
+instructions. A worker's actual assignment remains its first user prompt. A fresh
+Codex root has no positional prompt, so it opens at an empty composer and the
+operator's first request is the first user turn. Developer instructions are
+presentation-private, not secret: Codex may persist them in rollout metadata or
+surface them through diagnostics.
+
+For TUI launches, Hive stores one TOML `developer_instructions=...` override and,
+when needed, one raw user prompt in separate mode-0600 files below
+`HIVE_HOME/runtime/prompts`; the parent directory is mode 0700. The launch shell
+expands each file as one argument, keeping large briefs out of tmux's command-size
+ceiling. On resume the developer override precedes `SESSION_ID` and the original
+assignment is not replayed. A session created by an older Hive without the
+developer artifact keeps today's legacy resume command and logs that it retains
+visible-bootstrap history. Critical replacement reuses the developer artifact and
+sends only the new control message as user input; a missing or invalid critical
+artifact fails closed.
+
+Fresh app-server readers pass `developerInstructions` on `thread/start`, then send
+the assignment on the first `turn/start`. The same artifacts already exist before
+the handshake so a failed handshake can fall back to the identically partitioned
+TUI command. Crash recovery remains TUI-only: Hive's current app-server manager
+does not own a durable thread/resume path.
+
+The public Codex manual documents configuration layering, project trust, one-run
+`-c` overrides, and `developer_instructions` in agent-role configuration. It does
+not name the app-server field or establish `baseInstructions` replacement
+semantics. The exact `thread/start.developerInstructions` field is instead
+version-local empirical evidence: the installed 0.144.4 generator, run without
+its optional `--experimental` flag, includes `developerInstructions` in both
+`ThreadStartParams` and `ThreadResumeParams`, while initialize defaults
+`experimentalApi` to false. The generator command is itself help-labeled
+experimental; the distinction and hashes are preserved in the linked raw evidence.
+Hive does not use `baseInstructions`.
+
+Hive requires Codex CLI `>= 0.144.4` for every Codex process. This is Hive's
+compatibility floor for its hidden-bootstrap contract, not an OpenAI support-floor
+claim. Readers remain the only Codex workers Hive will launch; the version gate
+does not weaken writer containment or enable Codex-internal multi-agent work.
 
 Only Codex readers reach this adapter; writer argv and config construction are refused at the adapter boundary as well as by the spawner and recovery paths. **Model** is `-m/--model <MODEL>` at the CLI, or the config-override form `-c model="…"`; Hive passes the override form (`src/adapters/tools/codex.ts`). **Effort is config-only** — `-c model_reasoning_effort=<level>`. There is no `--effort` flag on Codex. That asymmetry with Claude is the single most common launch bug in this area.
 

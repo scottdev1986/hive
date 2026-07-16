@@ -1,5 +1,33 @@
 # Wiki Log
 
+## [2026-07-16] change | Hide Codex bootstrap and pin Grok launch context
+
+Codex bootstrap is now partitioned by message role: durable Hive setup travels as
+developer instructions, worker assignments remain user prompts, and a fresh root
+opens with no synthetic user turn. TUI launches use separate mode-0600 developer
+and user artifacts under a mode-0700 runtime directory. Fresh read-only app-server
+workers use `thread/start.developerInstructions`; handshake fallback and critical
+replacement preserve the same partition. Crash recovery remains TUI-only, reapplies
+the developer override before the session id, and does not replay the assignment;
+legacy sessions without an artifact retain their original visible-bootstrap history.
+
+Every Codex launch path now fails closed below Hive's 0.144.4 compatibility floor,
+including explicit, routed, root, critical, and recovery paths. The floor is a Hive
+product gate, not an OpenAI support statement. The installed 0.144.4 app-server
+schema was verified on Darwin 26.3.1 arm64, generated without the optional
+`--experimental` flag, and contains
+`developerInstructions` on both thread start and resume while initialize defaults
+`experimentalApi` to false. The generator command is itself help-labeled
+experimental, and official prose does not establish that app-server field or
+`baseInstructions` replacement semantics; the exact command, excerpts, and hashes
+are preserved in `raw/codex/codex-0.144.4-hidden-bootstrap-verification.txt`.
+
+Grok fresh and resumed argv now pin `--cwd` to the resolved worktree and place
+`--trust` immediately before `-m`; Claude and Grok prompt bytes remain unchanged.
+This entry records source, schema, and automated-test evidence only. No paid provider
+turn, live Workspace acceptance, installed-Hive mutation, or activation was performed;
+that remains for the final session-acceptance boundary.
+
 ## [2026-07-15] change | Root orchestrator named queen
 
 The root orchestrator's preferred address is queen. Prefer queen when addressing or
