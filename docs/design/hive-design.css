@@ -1977,3 +1977,6 @@ html.doc-communication .shell { width: 100%; max-width: none; }
 html.doc-communication section { break-inside: avoid; }
 html.doc-communication a { color: inherit; }
 }
+
+/* phase-tag pills used by the inserted Queen's Hive sections */
+html.doc-hierarchy .phase-tag { display: inline-block; margin-bottom: 22px; padding: 5px 9px; color: var(--green); background: var(--green-2); border-radius: 999px; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 10px; font-weight: 900; letter-spacing: 0.05em; }

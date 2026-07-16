@@ -169,15 +169,95 @@
       </div>
     </section>
 
+    <section id="run-shapes">
+      <div class="shell">
+        <div class="section-head">
+          <div>
+            <p class="section-label">02 · Adaptive topology</p>
+            <h2>The hierarchy is capacity, not mandate.</h2>
+          </div>
+          <p>The queen is the permanent root and never writes code. The lead-worker tier appears only when it reduces coordination load for a genuinely separable build. Every run chooses the smallest shape that can do the work, and the engineer can override that choice at G1.</p>
+        </div>
+
+        <div class="phase-grid">
+          <article class="phase-card">
+            <span class="phase-tag">DIRECT · QUEEN → 1</span>
+            <h3>One direct worker</h3>
+            <p>Use for one coherent change, tightly shared context, or work whose integration cost would exceed its parallel benefit. The queen specifies, monitors, and escalates; one worker authors and verifies.</p>
+          </article>
+          <article class="phase-card">
+            <span class="phase-tag">FLAT · QUEEN → N</span>
+            <h3>Direct worker team</h3>
+            <p>Use for a small set of independent tasks under one shared design. Today’s queen-to-workers system remains a first-class run shape, normally with 2–4 direct workers where the decomposition supports it.</p>
+          </article>
+          <article class="phase-card">
+            <span class="phase-tag">FULL HIVE · QUEEN → LEADS → CREWS</span>
+            <h3>Lead-worker crews</h3>
+            <p>Use when the run contains multiple coherent domains that can own separate interfaces and integration refs. A crew normally has 2–3 workers. Lead workers coordinate, integrate, and report; they do not become ambient-authority managers. Full hive may mix lead-worker subtrees with queen-owned direct workers for cross-cutting tasks or independent review; G1 approves the exact tree, not a uniform tier template.</p>
+          </article>
+        </div>
+
+        <div class="callout"><strong>Decision rule.</strong> Shared context and interdependent edits push the run flatter. Homogeneous, isolated fan-out and stable interfaces justify a lead tier. Nineteen concurrent agents is a forward load target, not a default team, a spawn grant, or evidence that every run needs hierarchy. All workers, reviewers, and lead workers still fit inside the daemon’s global 32-session admission cap and the run’s smaller budget. Any mid-run TopologyDecision change is engineer-approved, not merely revisioned.</div>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>TopologyDecision field</th><th>Required evidence at G1</th></tr></thead>
+            <tbody>
+              <tr><td>shape</td><td><code>direct</code>, <code>flat</code>, or <code>full-hive</code>; the engineer sees and may override it.</td></tr>
+              <tr><td>decomposition</td><td>Exact PlanRevision and task dependency graph used to justify the shape.</td></tr>
+              <tr><td>coupling</td><td>Shared files, shared invariants, interface maturity, dependency depth, and expected integration conflict.</td></tr>
+              <tr><td>parallel value</td><td>Independent work units, predicted critical path, and what wall-clock benefit another worker or lead is expected to create.</td></tr>
+              <tr><td>coordination cost</td><td>Projected lead, review, communication, CI, and promotion-queue load.</td></tr>
+              <tr><td>budget</td><td>Reserved sessions, tokens/cost, wall time, reviewer capacity, and per-lead crew limits.</td></tr>
+              <tr><td>decision provenance</td><td>Proposer, engineer approval or override, timestamp, run/spec revision, and rationale.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="split">
+          <article class="detail-panel">
+            <h3>The middle tier must earn its keep</h3>
+            <ul class="check-list">
+              <li>Record lead tokens, wall time, wakeups, queue wait, escalations, and rework separately from worker execution.</li>
+              <li>Measure accepted promotions, conflicts caught before promotion, interface violations, idle worker time, and critical-path change.</li>
+              <li>Compare the observed fan-out and coordination cost with the G1 prediction in a terminal TopologyReview.</li>
+              <li>Use the evidence to recommend a future shape; never rewrite the approved shape mid-run without a revisioned decision.</li>
+            </ul>
+          </article>
+          <article class="detail-panel">
+            <h3>No vendor-native nesting assumption</h3>
+            <p>Every lead worker and worker is an ordinary top-level provider session. Hive supplies the hierarchy through durable records, scoped credentials, isolated worktrees, routing policy, and daemon enforcement. A provider may offer a native subagent feature, but correctness and recovery never depend on it.</p>
+            <div class="callout">Lead pathologies are system failures: premature “done,” stale task state, doing worker code directly, or vague delegation. The daemon counters them with typed state, exact evidence, mandatory delegation records, independent review, and measured gates—not stronger role-play.</div>
+          </article>
+        </div>
+      </div>
+    </section>
+
     <section id="process">
       <div class="shell">
         <div class="section-head">
           <div>
-            <p class="section-label">02 · Operating process</p>
+            <p class="section-label">03 · Operating process</p>
             <h2>Seven phases, two human gates.</h2>
           </div>
           <p>Autonomy increases after the spec is approved, then narrows again at land. G1 prevents premature execution; G2 prevents an assembled feature from silently becoming production policy.</p>
         </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>DelegationSpec</th><th>Required at every hop</th></tr></thead>
+            <tbody>
+              <tr><td>objective and acceptance</td><td>Parent acceptance IDs, exact child outcome, and explicit termination condition.</td></tr>
+              <tr><td>inputs and dependencies</td><td>Spec/plan/task/interface revisions, base commit, prerequisites, and source-of-truth artifacts.</td></tr>
+              <tr><td>output contract</td><td>Required ArtifactRefs, commit/diff, summary format, tests, and evidence.</td></tr>
+              <tr><td>boundaries</td><td>Allowed and forbidden paths, outward effects, architectural decisions reserved above, and when to ask.</td></tr>
+              <tr><td>tools and authority</td><td>DelegationGrant, permitted operations, environment, branch/worktree binding, and explicit non-authority.</td></tr>
+              <tr><td>budget and escalation</td><td>Session/token/cost/time allowance, retry limit, blockers, uncertainty threshold, and owner/escalation route.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="callout"><strong>Three translations, one invariant.</strong> Engineer → queen, queen → lead worker or direct worker, and lead worker → worker each refine the same approved acceptance IDs. A child DelegationSpec may narrow scope and add detail; it may not change the goal, acceptance boundary, outward effects, or gate policy. Those changes require a new engineer-approved spec revision.</div>
+
 
         <figure class="diagram" aria-label="Seven-phase pipeline with engineer approval gates G1 and G2">
           <svg viewBox="0 0 1100 410" role="img" aria-labelledby="pipeline-title pipeline-desc">
@@ -308,7 +388,7 @@
       <div class="shell">
         <div class="section-head">
           <div>
-            <p class="section-label">03 · Git flow</p>
+            <p class="section-label">04 · Git flow</p>
             <h2>Branches mirror accountability.</h2>
           </div>
           <p>Each merge moves one level upward. Workers never land directly to main, and hive-next is a disposable integration sensor—not a release branch.</p>
@@ -445,7 +525,7 @@
       <div class="shell">
         <div class="section-head">
           <div>
-            <p class="section-label">04 · Communication</p>
+            <p class="section-label">05 · Communication</p>
             <h2>Local conversation, durable context.</h2>
           </div>
           <p>Status stays hub-and-spoke. Leads go peer-to-peer only to negotiate interfaces, and the outcome becomes a written contract. Workers speak only to their own lead.</p>
@@ -535,11 +615,196 @@
       </div>
     </section>
 
+    <section id="platform-contract">
+      <div class="shell">
+        <div class="section-head">
+          <div>
+            <p class="section-label">06 · Platform contract</p>
+            <h2>The hive is a durable state machine, not an org-chart prompt.</h2>
+          </div>
+          <p>Roles help models reason about ownership. Records make that ownership real. Every spawn, delegation, review, promotion, recovery, pause, and gate transition is a daemon-validated operation over revisioned state.</p>
+        </div>
+
+        <div class="callout"><strong>Sequencing boundary.</strong> Terminal transition T0–T7 lands first and leaves the current flat Assignment policy working on Ghostty/sessiond. Hierarchy records are introduced afterward for new runs only. Active flat runs drain under the policy that created them; no migration rewrites a live team in place. Split Horizon consumes the resulting WorkspaceSnapshot v2, TaskDetail, ArtifactRef, and event projections last.</div>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Durable record</th><th>Required fields and invariant</th></tr></thead>
+            <tbody>
+              <tr><td><strong>Run</strong></td><td>runId, repo/instance, immutable approved spec revision, current PlanRevision, TopologyDecision, P0–P6 phase, G1/G2 state and decider, base SHA, RunBudget, run epoch, lifecycle, revision. G2 binds one exact assembled candidate; it is not approval of a floating branch.</td></tr>
+              <tr><td><strong>PlanRevision</strong></td><td>runId, parent revision, task DAG, topology rationale, proposer, createdAt, digest, lifecycle. Queen and lead workers may revise decomposition by compare-and-swap inside approved acceptance boundaries. Goal, acceptance, scope, outward-effect, gate, or budget increases require engineer approval.</td></tr>
+              <tr><td><strong>HierarchyNode</strong></td><td>nodeId, runId, parentNodeId, ownerNodeId, organizational role = <code>lead-worker</code> or <code>worker</code>, assignment kind, task scope, capacity charge, lifecycle, revision. Reviewer is an assignment kind, never a hierarchy tier.</td></tr>
+              <tr><td><strong>AgentBinding</strong></td><td>nodeId, reserved agentId + generation, provider/model, immutable SessionLocator, worktree/branch/base, credential ID, capability epoch, boundAt/unboundAt. Provider session and display name are locators, not identity.</td></tr>
+              <tr><td><strong>Task / TaskDetail</strong></td><td>taskId/revision, parent/dependencies, DelegationSpec, acceptance IDs, owner and assignee, path leases, branch/base, state, blockers, evidence, ArtifactRefs, retry/recovery count, termination reason. Terminal tasks never restart; refinement creates a linked task/revision.</td></tr>
+              <tr><td><strong>DelegationGrant</strong></td><td>grantId, parent grant, issuer/subject bindings, run/task/descendant/path/branch scope, actions, budget, expiry, hierarchy revision, run epoch, capability epoch, status. Every child grant is a strict attenuation; no agent mints authority outside the daemon.</td></tr>
+              <tr><td><strong>SpawnBrief</strong></td><td>briefId/digest, exact spec/plan/task/contract revisions, DelegationSpec and grant, source/graph excerpt provenance, branch/worktree/base, context budget, recovery checkpoint if any, agentId + generation. The brief is immutable process-input provenance and binds to one generation.</td></tr>
+              <tr><td><strong>InterfaceContract</strong></td><td>contractId/revision, participant lead nodes, owning run/spec, schema/behavior/compatibility decisions, ArtifactRefs, acceptedBy, states = proposed/accepted/conflicted/superseded. Dependent tasks name an accepted revision. Conflict freezes only affected work until a RunDecision supersedes it.</td></tr>
+              <tr><td><strong>ArtifactRef</strong></td><td>artifactId, kind, owner/task, content or commit digest, content revision, storage locator, access capability, size, createdAt, retention. Agents exchange the reference, never an arbitrary path or unverifiable “latest” file.</td></tr>
+              <tr><td><strong>CommunicationChannel</strong></td><td>channelId/revision, owner, exact participant bindings, run/task/interface binding, purpose, allowed communication actions, byte/token budget, createdAt/expiresAt, hierarchy revision, lifecycle. It grants messaging only and is the hierarchy-owned authorization record consumed by Communication Fabric.</td></tr>
+              <tr><td><strong>Review</strong></td><td>reviewId, reviewer assignment/binding, all author bindings in merge-base..head, candidate commit, patch/diff digest, target base, spec/task/contract revisions, toolchain/environment, findings, verdict, evidence, invalidation state. Reviewer differs from every author, owns no commit in the candidate diff range, and has no overlapping authoring task.</td></tr>
+              <tr><td><strong>PromotionGrant</strong></td><td>source commit/branch and patch digest, exact predicted target base and integration ref, task/review/contract/path-lease/CI evidence, author/reviewer/lead action epochs plus invalidation status, hierarchy/run revisions, expiry. Target is bound into the grant; callers never supply an arbitrary landing ref.</td></tr>
+              <tr><td><strong>RunBudget</strong></td><td>hard and soft limits for active sessions, total spawns, per-lead crew, reviewer pool/vendor quota, tokens/cost, wall time, CI, wake/message budget, anomaly thresholds, and current reservations/usage. Enforcement belongs to the daemon, outside agent code.</td></tr>
+              <tr><td><strong>RunDecision</strong></td><td>decisionId/revision, issue, options/evidence, authority required, decider, affected tasks/contracts, outcome, superseded records, createdAt. Cross-lead disputes and engineer choices become append-only state, not hidden chat history.</td></tr>
+              <tr><td><strong>RunCheckpoint / QueenSuccession</strong></td><td>Approved spec, tree/plan/topology revisions, phases/gates/budgets, tasks/contracts/decisions, promotion-queue snapshot references and pending-message cursors/IDs/digests, artifacts, unresolved questions, measured agent snapshot/replies, prior/new root generation, reason, digest, and attestation. This formalizes the existing backup-root recovery flow.</td></tr>
+              <tr><td><strong>RecoveryCheckpoint / OwnershipTransfer</strong></td><td>Failed binding evidence, subtree tasks, dirty/stranded work, reviewed-but-unpromoted candidates, contracts, leases, reservations, teardown finalizers, old/new owner, revisions/epochs, revalidation outcome. Ownership transfer is explicit; a reused name is never recovery.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="split">
+          <article class="detail-panel">
+            <h3>The queen remains special</h3>
+            <p>The queen root has no agents-table row and no coding or landing right. A hierarchy snapshot projects the reserved root identity above run nodes; it does not manufacture a fake agent. Root provider generations may change while the queen’s run authority and audit trail remain durable.</p>
+          </article>
+          <article class="detail-panel">
+            <h3>Role, assignment, and capability differ</h3>
+            <p><strong>Role</strong> describes organizational position. <strong>Assignment kind</strong> describes current work such as author, reviewer, researcher, or lead coordination. <strong>Capability</strong> authorizes an operation. An engineer is outside the tree; a reviewer does not become a new tier; and a lead-worker label never grants spawn, write, message, review, or promotion authority by itself.</p>
+          </article>
+        </div>
+
+        <div class="split">
+          <article class="detail-panel">
+            <h3>Specification is stable; plans may move</h3>
+            <p>G1 approves an exact spec revision, acceptance IDs, topology, outward-effect policy, gates, and budget. PlanRevision may change task decomposition, ordering, or assignee within those boundaries by compare-and-swap. Any broader change returns to the engineer; agents cannot smuggle scope expansion through a child task or message.</p>
+          </article>
+          <article class="detail-panel">
+            <h3>Authority is monotonic attenuation</h3>
+            <p>A grant chain may only narrow actions, descendants, tasks, paths, branches, time, and budget. The daemon validates the complete chain at each sensitive operation. Revocation is append-only; new authority is a new grant under the current revisions and epochs.</p>
+          </article>
+        </div>
+
+        <h3>Three fences, three failure domains</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Counter</th><th>What it gates</th><th>Who advances it</th><th>Stale effect</th></tr></thead>
+            <tbody>
+              <tr><td><strong>hierarchyRevision</strong></td><td>Tree shape, ownership edges, task/channel policy, delegation ancestry, contract participants</td><td>Daemon after an authorized engineer/queen hierarchy mutation</td><td>Old edge- or policy-derived grants and queued routes fail revalidation.</td></tr>
+              <tr><td><strong>runEpoch</strong></td><td>Run-wide admission of spawn, delegation, write, review, promotion, work-bearing messages and channels, and resume. Daemon system control, recovery requests/replies, acknowledgements, engineer↔queen control, and evidence reads remain available while paused through the isolated control plane.</td><td>Daemon for run pause, abort, resume, or other engineer-authorized run fence</td><td>Every operation from the prior run epoch is rejected even if its local binding is live.</td></tr>
+              <tr><td><strong>capabilityEpoch</strong></td><td>One agent binding’s write, landing, acknowledgement, and control authority</td><td>Daemon for critical control, restriction, replacement, or re-attestation</td><td>The stale process may still exist, but protected operations reject its credential.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="callout"><strong>Composition rule.</strong> A promotion succeeds only when the delegation chain is valid at the current hierarchyRevision, the current runEpoch admits promotion, the submitting/invoking binding is current, each recorded author/reviewer/lead action was made under its bound epoch with no later revocation explicitly invalidating that pending candidate, verdict, or grant, and all task/contract/ref records pass their own expected-revision compare-and-swap. These counters are fencing tokens: the protected daemon and ref writer must reject older values. Advancing a counter without checking it at the write is not safety. Ordinary record revisions remain optimistic-concurrency controls; they are not a fourth authority epoch.</div>
+      </div>
+    </section>
+
+    <section id="execution-contract">
+      <div class="shell">
+        <div class="section-head">
+          <div>
+            <p class="section-label">07 · Execution contract</p>
+            <h2>Agents propose. The daemon admits, fences, and promotes.</h2>
+          </div>
+          <p>The hierarchy expands judgment without distributing ambient authority. Every state-changing operation names its durable record, expected revision, and evidence; the protected service checks all current fences before it acts.</p>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Operation</th><th>Authorized caller</th><th>Daemon rule</th></tr></thead>
+            <tbody>
+              <tr><td><strong>spawn</strong></td><td>Queen for direct/flat workers and lead workers; lead worker for its attenuated crew</td><td>Require approved Run/Plan/TopologyDecision, Task, DelegationSpec, parent grant, path/worktree scope, and budget reservation. Reserve agentId + generation before provider launch, create SpawnBrief, and reject all bindings/messages if launch fails.</td></tr>
+              <tr><td><strong>task update</strong></td><td>Exact assignee or owner binding</td><td>Compare-and-swap the typed Task state. An assignee may report progress, blocker, evidence, or completion; it cannot accept its own result, approve review, move a gate, or expand scope.</td></tr>
+              <tr><td><strong>message/channel</strong></td><td>Current owner edge or explicit channel participant</td><td>Apply <a href="hive-communication.html">Communication Fabric</a> admission and delivery-time authorization. Messaging grants no filesystem, task, review, or landing right.</td></tr>
+              <tr><td><strong>review</strong></td><td>Distinct reviewer assignment with review grant</td><td>Verify reviewer independence over merge-base..head, exact candidate/patch/base/environment, task/contract revisions, capacity charge, and evidence. Fresh-context and cross-vendor review are preferred when quota permits.</td></tr>
+              <tr><td><strong>promotion request</strong></td><td>Author to owner; owner/queen to its bound integration stage</td><td>Caller never supplies the target. Daemon constructs PromotionGrant from the Task and policy, enqueues validation, and alone mutates the integration ref by compare-and-swap.</td></tr>
+              <tr><td><strong>G1 / G2</strong></td><td>Engineer</td><td>G1 approves exact spec/topology/budget/gate policy. G2 approves one exact assembled candidate and evidence set. Any candidate movement invalidates G2.</td></tr>
+              <tr><td><strong>pause / resume / abort</strong></td><td>Engineer; queen may request a safety or budget pause</td><td>Daemon advances the run epoch, fences authority, records partial measured process state, and follows the run-control protocol below. No agent process is trusted to police its own hard limit.</td></tr>
+              <tr><td><strong>close / reap</strong></td><td>Owner requests normal closure; daemon executes and retains safety authority</td><td>Capture process tree and task/worktree state before terminal destruction. Complete durable teardown finalizers before cleanup; normal ownership does not disable the daemon’s orphan reaper.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Integration refs: serial mutation, speculative validation</h3>
+        <div class="split">
+          <article class="detail-panel">
+            <h3>Write ownership</h3>
+            <ul class="check-list">
+              <li>Each authoring task owns one isolated worktree and source branch.</li>
+              <li>Each full-hive lead stage has a dedicated integration ref logically owned by the lead worker but mutated only by the daemon.</li>
+              <li>The lead coordination session may inspect its integration ref; it never edits or commits on that ref.</li>
+              <li>If a lead worker must author code, it receives an ordinary scoped task branch, a different reviewer, and the same promotion path.</li>
+              <li>Lead → main promotion uses the exact final candidate approved at G2; no floating branch or caller-selected target lands.</li>
+            </ul>
+          </article>
+          <article class="detail-panel">
+            <h3>Validation train</h3>
+            <p>For ordered candidates C1…Cn against integration ref R, the daemon creates ephemeral synthetic states S1 = merge(R,C1), S2 = merge(S1,C2), and so on. Required CI may run speculatively on those exact SHAs. Ref movement remains strictly serial: after S1 passes and all records are current, the daemon compare-and-swaps R → S1, then advances the next already-valid state.</p>
+            <div class="callout">If a train fails, the daemon bisects the failing group, preserves and requeues innocent candidates against the last good state, and returns each culprit to its author with exact evidence. A stale base, source digest, patch digest, path lease, InterfaceContract, review, CI environment, hierarchy revision, or epoch invalidates the affected predicted states.</div>
+          </article>
+        </div>
+
+        <div class="split">
+          <article class="detail-panel">
+            <h3>Review is exact—and fallible</h3>
+            <p>The semantic verdict binds to the patch/diff digest and reviewed base. A parent-only rebase with an identical patch may preserve that verdict only after automated checks validate the exact new synthetic SHA. Any patch change requires a new review. Reviewers consume the assigning run and lead’s capacity and the selected provider’s quota. G2 remains the engineer’s backstop; a green review is evidence, not infallibility.</p>
+          </article>
+          <article class="detail-panel">
+            <h3>Interfaces are admission state</h3>
+            <p>Promotion rechecks the cross-crew InterfaceContract registry, not merely the source paths. A task depending on a conflicted, stale, or superseded contract cannot promote. Path leases constrain admission and landing, while contracts cover semantic coupling that paths cannot see. “Dangerous autonomy” may broaden exploration only by explicit engineer grant; it never broadens promotion scope.</p>
+          </article>
+        </div>
+
+        <h3>Recovery and supervision</h3>
+        <div class="split">
+          <article class="detail-panel">
+            <h3>One failure, one bounded repair</h3>
+            <p>Independent worker failure defaults to one-for-one recovery. A dependency or accepted-interface failure pauses only affected downstream tasks or subtree. Repeated same-cause restarts spend a daemon-owned RecoveryBudget; exhaustion escalates worker → lead worker → queen → engineer instead of looping. No provider restart proves task recovery until state and evidence are re-measured.</p>
+          </article>
+          <article class="detail-panel">
+            <h3>Lead-worker loss</h3>
+            <p>The daemon freezes subtree promotions, captures pending tasks, reservations, contracts, dirty/stranded work, reviewed candidates, and queue state in RecoveryCheckpoint, and returns logical ownership to queen. Queen may issue OwnershipTransfer to a replacement binding. Existing review survives only when candidate, patch, base, environment, leases, contracts, and policy remain current.</p>
+          </article>
+        </div>
+
+        <div class="callout"><strong>Teardown finalizers.</strong> Before cleanup, Hive must capture handoff, classify worktree state, preserve unmerged candidates and artifacts, settle quota reservations, revoke grants/channels, and record process reaping. Leads own prompt normal closure; the daemon still owns safe process teardown, the idle/orphan reaper, and crash recovery.</div>
+
+        <h3>Queen succession formalizes today’s backup-root protocol</h3>
+        <div class="split">
+          <article class="detail-panel">
+            <h3>Checkpoint before context becomes a cliff</h3>
+            <p>Near 60–65% of measured or estimated root context, Hive requests a RunCheckpoint sync; by roughly 80%, it requires a handoff before further delegation or promotion. Provider estimates are shown as estimates. The checkpoint records state by revision and digest, not a prose claim of remembered reasoning.</p>
+          </article>
+          <article class="detail-panel">
+            <h3>Fresh root, explicit attestation</h3>
+            <p>A replacement declares backup status, receives the prior exit reason plus bounded live-agent snapshot, loads the latest checkpoint, sends non-destructive recovery requests, then re-reads status and inbox. It attests the checkpoint digest before authority resumes. If no checkpoint exists, it explicitly attests “no checkpoint,” reconstructs from SQLite plus measured replies, writes the first checkpoint, and continues—bootstrap never deadlocks behind a file that was never created.</p>
+          </article>
+        </div>
+
+        <div class="callout"><strong>No memory fiction.</strong> The stable queen root identity survives; provider generation and conversational context do not. QueenSuccession records both generations, checkpoint or no-checkpoint proof, replies, discrepancies, and attestation. Contradictions remain visible until resolved.</div>
+
+        <h3>Run pause, rejection, and abort</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Command</th><th>Immediate fence</th><th>Process and work result</th></tr></thead>
+            <tbody>
+              <tr><td><strong>pause</strong></td><td>Advance runEpoch; reject new spawn, delegation, write, promotion, and ordinary work admission.</td><td>Request turn-boundary quiescence with a bounded deadline. Capture checkpoint and measured acknowledgements. Only after the deadline may the daemon use verified SIGSTOP fallback; each mid-turn suspension marks its worktree unverified for resume. Run state remains <code>pausing</code> until every binding has a measured disposition.</td></tr>
+              <tr><td><strong>resume</strong></td><td>Advance to a new runEpoch and issue/rebind current grants after checkpoint reconciliation.</td><td>Revalidate unverified worktrees, locks, candidates, messages, and external effects before SIGCONT or provider continuation. A stale pre-pause process cannot mutate protected state.</td></tr>
+              <tr><td><strong>G2 changes requested</strong></td><td>Final candidate remains unapproved; main does not move.</td><td>Engineer chooses a new spec/plan/task revision within stated scope. Affected work resumes under new grants and evidence; unchanged artifacts remain addressable.</td></tr>
+              <tr><td><strong>abort</strong></td><td>Advance runEpoch, revoke grants/channels, cancel queued promotions, and deny all future landing.</td><td>Stop and reap sessions with measured teardown, preserve refs/artifacts/worktrees under the run retention policy, and mark open tasks terminal. Cleanup is explicit; rejection never silently destroys evidence.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Budget is policy, not advice</h3>
+        <div class="split">
+          <article class="detail-panel">
+            <h3>Reserve before spawn</h3>
+            <p>Every worker, lead worker, and reviewer reserves session and provider quota against RunBudget before launch. Per-run and per-lead admission prevents one crew from consuming all 32 global slots. Cross-vendor review charges the reviewer provider pool as well as the assigning run/lead.</p>
+          </article>
+          <article class="detail-panel">
+            <h3>Circuit breakers outside the model</h3>
+            <p>Soft thresholds stop new spawns and ask queen to replan. Hard token/cost/wall-time/session/CI thresholds atomically fence the run and begin bounded quiescence. Rate anomalies—token or tool-call spikes, repeated identical failures, restart churn, or runaway spawning—trigger the same daemon-owned safety path. Queen may explain or request; only engineer-authorized budget revision resumes.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
     <section id="evidence">
       <div class="shell">
         <div class="section-head">
           <div>
-            <p class="section-label">05 · Evidence</p>
+            <p class="section-label">08 · Evidence</p>
             <h2>Parallelism pays—when coordination is designed.</h2>
           </div>
           <p>The evidence supports hierarchy, isolation, review, and human control. It also warns that multi-agent systems are expensive and brittle when decisions remain coupled.</p>
@@ -616,7 +881,7 @@
       <div class="shell">
         <div class="section-head">
           <div>
-            <p class="section-label">06 · Platform deltas</p>
+            <p class="section-label">09 · Platform deltas</p>
             <h2>What Hive must change.</h2>
           </div>
           <p>Five focused platform changes convert today’s flat orchestration primitives into lead-owned integration without weakening capability controls.</p>
@@ -663,7 +928,7 @@
       <div class="shell">
         <div class="section-head">
           <div>
-            <p class="section-label">07 · Failure controls</p>
+            <p class="section-label">10 · Failure controls</p>
             <h2>Design for the failure, not the demo.</h2>
           </div>
           <p>The hierarchy is justified only if it reduces coordination risk as deliberately as it adds parallel capacity.</p>
@@ -695,6 +960,42 @@
             <div class="metric-item"><span>07 · OUTCOME</span><strong>Revert rate by author model and reviewer</strong></div>
           </div>
         </div>
+        <article class="detail-panel" style="margin-top: 16px;">
+          <h3>Definition of done</h3>
+          <ul class="check-list">
+            <li>G1 displays direct, flat, or full-hive choice, evidence, budget, and engineer override; queen never codes in any shape.</li>
+            <li>A lead worker attempts to mutate its integration ref or code directly on it: both fail; the same agent can author only through a separate scoped task branch.</li>
+            <li>A speculative three-candidate train passes, fails in the middle, bisects, promotes the first, requeues the innocent third, and returns exact evidence for the culprit without concurrent ref mutation.</li>
+            <li>A source rebase preserves patch digest: semantic review survives only after exact-SHA automated revalidation. A changed patch invalidates review.</li>
+            <li>A stale hierarchyRevision, runEpoch, or capabilityEpoch reaches the protected ref writer: each is independently rejected.</li>
+            <li>Queen succession works with a valid checkpoint, a corrupt/stale checkpoint, and no checkpoint; measured replies and contradictions remain visible.</li>
+            <li>Budget hard-limit quiesces at turn boundaries; deadline fallback marks mid-turn worktrees unverified and cannot claim the whole run paused until every process is measured.</li>
+            <li>Lead loss preserves reviewed candidates and dirty work, freezes only the affected subtree, and transfers ownership through revisioned records.</li>
+            <li>Closing a node runs teardown finalizers and the daemon safety reaper remains effective; no role prompt can bypass capture-before-destroy.</li>
+          </ul>
+        </article>
+
+      </div>
+    </section>
+
+    <section id="hierarchy-migration">
+      <div class="shell">
+        <div class="section-head">
+          <div>
+            <p class="section-label">Transition · Terminal complete → hierarchy → UI</p>
+            <h2>Introduce authority before asking the UI to depend on it.</h2>
+          </div>
+          <p>Hierarchy is the second major transition. It begins only after Ghostty/sessiond reaches T7 under the flat policy and ends with stable daemon projections that Split Horizon can render.</p>
+        </div>
+        <div class="phase-grid">
+          <article class="phase-card"><span class="phase-tag">H0 · SCHEMA</span><h3>Shadow records</h3><p>Add Run, Plan, Task, node/binding, grant, budget, decision, checkpoint, review, contract, and promotion records; project current flat assignments without changing their authority.</p></article>
+          <article class="phase-card"><span class="phase-tag">H1 · DIRECT + FLAT</span><h3>New-run control plane</h3><p>Enable G1/G2, DelegationSpec, stable identity, scoped tasks, independent review, budget fencing, and daemon-only promotion for new direct and flat runs.</p></article>
+          <article class="phase-card"><span class="phase-tag">H2 · FULL HIVE</span><h3>Optional lead tier</h3><p>Enable lead-worker delegation, integration refs, interface contracts, pair channels, subtree rollups, recovery, and TopologyDecision under strict attenuation.</p></article>
+          <article class="phase-card"><span class="phase-tag">H3 · THROUGHPUT</span><h3>Promotion trains</h3><p>Add synthetic predicted states, speculative exact-SHA validation, failure bisect/requeue, and promotion-time contract/policy revalidation.</p></article>
+          <article class="phase-card"><span class="phase-tag">H4 · RECOVERY</span><h3>Succession and run control</h3><p>Exercise lead loss, queen checkpoint/no-checkpoint succession, bounded quiesce, SIGSTOP fallback, abort retention, teardown finalizers, and anomaly circuit breakers.</p></article>
+          <article class="phase-card"><span class="phase-tag">H5 · HANDOFF</span><h3>Stable projections</h3><p>Freeze WorkspaceSnapshot v2, TaskDetail, ArtifactRef, queue/receipt, gate, budget, and incident schemas. Only then begin Split Horizon’s hierarchy rail and workbench UI.</p></article>
+        </div>
+        <div class="callout"><strong>Migration rule.</strong> New runs opt into one versioned hierarchy contract. Active legacy runs drain flat. No live tree is reparented, no queued message is rebound by name, and no UI feature becomes an authority source.</div>
       </div>
     </section>
 
@@ -746,6 +1047,15 @@
           <li><time datetime="2026-07">Accessed 2026-07</time><a href="https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/configuring-pull-request-merges/managing-a-merge-queue">docs.github.com · managing a merge queue</a></li>
           <li><time datetime="2026-07">Accessed 2026-07</time><a href="https://docs.gitlab.com/ci/pipelines/merge_trains/">docs.gitlab.com · merge trains</a></li>
           <li><time datetime="2026-07">Accessed 2026-07</time><a href="https://graphite.com/docs/merge-queue-optimizations">graphite.com/docs/merge-queue-optimizations</a></li>
+                  <li><time datetime="2025-03">2025-03</time><a href="https://arxiv.org/abs/2503.13657">Why Do Multi-Agent LLM Systems Fail? · MAST</a></li>
+          <li><time datetime="2026-01">2026-01</time><a href="https://arxiv.org/abs/2601.13295">CooperBench</a></li>
+          <li><time datetime="2025-12">2025-12</time><a href="https://arxiv.org/abs/2512.23631">BOAD</a></li>
+          <li><time datetime="2026-02">2026-02</time><a href="https://arxiv.org/abs/2602.16873">AdaptOrch</a></li>
+          <li><time datetime="2025-12">2025-12</time><a href="https://arxiv.org/abs/2512.08296">Multi-agent scaling-law study</a></li>
+          <li><time datetime="2025-06">2025-06</time><a href="https://arxiv.org/abs/2506.12508">AgentOrchestra / TEA protocol</a></li>
+          <li><time datetime="2016-02">2016-02</time><a href="https://martin.kleppmann.com/2016/02/08/how-to-do-distributed-locking.html">Fencing tokens</a></li>
+          <li><time datetime="2026-07">Accessed 2026-07</time><a href="https://www.erlang.org/docs/20/man/supervisor.html">Erlang supervision principles</a></li>
+          <li><time datetime="2026-07">Accessed 2026-07</time><a href="https://kubernetes.io/docs/concepts/architecture/garbage-collection/">Kubernetes owners and finalizers</a></li>
         </ul>
       </div>
       <div class="endnote">

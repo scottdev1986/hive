@@ -174,7 +174,8 @@
           <tr><td><strong>AdmissionDecision</strong></td><td>messageId, actor binding, allow/reject, reason code, evaluated hierarchy/run/capability revisions, decidedAt</td><td>Authorization failure is explicit and durable. A rejected envelope never enters a recipient queue.</td></tr>
           <tr><td><strong>DeliveryAttempt</strong></td><td>messageId, attempt, recipient generation, adapter, delivery mode, startedAt, completedAt, adapter result, downgrade reason</td><td>A successful transport call proves only what that adapter contract says it proves.</td></tr>
           <tr><td><strong>ReceiptEvent</strong></td><td>messageId, event kind, actor/system source, timestamp, envelope digest, disposition, optional evidence reference</td><td>Kinds include transport-written, provider-observed, read, agent-acknowledged, applied, rejected, expired, cancelled, and in-doubt. Events append; they do not overwrite one another.</td></tr>
-          <tr><td><strong>Channel</strong></td><td>channelId, owner, participant addresses, run/task/interface binding, purpose, allowed actions, byte/token budget, createdAt, expiresAt, hierarchy revision, lifecycle</td><td>Channels authorize routes; they do not create task, filesystem, or landing authority. Expiry or revocation closes future admission and delivery.</td></tr>
+          <tr><td><strong>CommunicationChannel (hierarchy-owned)</strong></td><td>channelId, owner, participant addresses, run/task/interface binding, purpose, allowed actions, byte/token budget, createdAt, expiresAt, hierarchy revision, lifecycle</td><td>Channels authorize routes; they do not create task, filesystem, or landing authority. The channel record’s lifecycle and policy are hierarchy truth — The Queen’s Hive owns it; this contract owns its admission, delivery, and receipts. Expiry or revocation closes future admission and delivery.</td></tr>
+          <tr><td><strong>SpawnBrief (hierarchy-owned)</strong></td><td>briefId, run/task/spec/plan revisions, recipient agentId + generation, delegation grant, branch/worktree/base binding, selected source excerpts and graph snapshot provenance, recovery checkpoint if any, byte/token budget, createdAt, digest</td><td>A spawn brief is immutable process-input provenance, not an ordinary message. The Queen’s Hive owns the selected task/spec/grant/provenance content; this contract and the terminal foundation own its bounded delivery and observation. The daemon constructs it only after identity reservation and policy admission, records exactly what context was selected, and binds it to one generation. A successor receives a new brief that cites the prior recovery checkpoint; a reused name receives nothing.</td></tr>
         </tbody>
       </table>
     </div>
@@ -271,6 +272,8 @@
         <p><code>hive_publish_artifact</code> verifies the caller’s task/worktree scope, hashes the content or commit object, and returns the hierarchy-owned ArtifactRef. <code>hive_read_artifact</code> opens a bounded range after authorization. Messages carry summaries and references, not megabyte payloads or arbitrary filesystem paths.</p>
       </article>
     </div>
+  
+    <div class="callout"><strong>Spawn is not send.</strong> <code>hive_spawn</code> accepts a typed task/delegation request. The daemon reserves identity, constructs and records the bounded SpawnBrief, launches the provider with that exact brief, and measures the first boundary. Failure terminates the reservation and brief binding. Chat messages may refine an active task; they never substitute for its initial contract.</div>
   </div>
 </section>
 
@@ -485,6 +488,7 @@
           <li>Expire a pair channel with pending traffic: no new delivery; owner and sender see one terminal reason.</li>
           <li>Attempt spoofed sender, cross-run read, stale generation acknowledgement, and artifact path escape: all fail closed.</li>
           <li>Address queen without creating an agents row; restart root generation without transferring stale queued control.</li>
+          <li>Reconstruct a worker or queen replacement from the recorded brief/checkpoint and measured replies; verify the exact context provenance and ensure no old generation or display-name successor can claim it.</li>
         </ul>
       </article>
       <article class="detail-panel">
