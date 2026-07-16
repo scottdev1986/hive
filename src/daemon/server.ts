@@ -28,7 +28,6 @@ import {
   readLandReadiness,
   type ReadLandReadiness,
 } from "./landing";
-import { checkBuildFreshness, type BuildFreshness } from "./build-freshness";
 import { readLiveClaudeModel } from "./live-model";
 import {
   reconcileCodexIdentity,
@@ -480,9 +479,6 @@ export interface HiveDaemonOptions {
    * lifecycle: up on start, down on stop, rebuilt-and-reloaded after each
    * landing — all fire-and-forget, never in a caller's latency. */
   graphify?: GraphifyService;
-  /** Is the binary this daemon runs older than main? Injectable so a test can
-   * exercise a stale release without building one (see build-freshness.ts). */
-  buildFreshness?: () => Promise<BuildFreshness>;
   repoRoot?: string;
   // Non-destructive process-tree suspend/resume for a critical pause; injectable
   // so tests can drive pause/resume without real SIGSTOP.
@@ -631,7 +627,6 @@ export class HiveDaemon {
     processStartedAt: string,
   ) => Promise<string | null>;
   private readonly handshake: () => ReturnType<typeof expectedDaemonHandshake>;
-  private readonly buildFreshness: () => Promise<BuildFreshness>;
   private readonly cleanupWorktree: typeof removeWorktree;
   private readonly assessStranded: NonNullable<
     HiveDaemonOptions["assessStrandedWork"]
@@ -922,8 +917,6 @@ export class HiveDaemon {
         (await findCodexRolloutForProcess(worktreePath, processStartedAt))
           ?.sessionId ?? null);
     this.handshake = () => expectedDaemonHandshake(this.repoRoot);
-    this.buildFreshness = options.buildFreshness ??
-      (() => checkBuildFreshness(this.repoRoot));
     this.cleanupWorktree = options.removeWorktree ?? removeWorktree;
     this.assessStranded = options.assessStrandedWork ?? assessStrandedWork;
     this.listUnmergedBranches = options.listUnmergedHiveBranches ??

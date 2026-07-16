@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
-  checkBuildFreshness,
+  checkHiveDevelopmentBuildFreshness,
   runningBuildProvenance,
   type GitRunner,
 } from "./build-freshness";
@@ -21,10 +21,10 @@ function fakeGit(answers: Record<string, { exitCode: number; stdout: string }>):
 const ok = (stdout: string) => ({ exitCode: 0, stdout });
 const fail = { exitCode: 1, stdout: "" };
 
-describe("build freshness", () => {
-  test("a release binary behind main is stale, and says how far behind", async () => {
-    const freshness = await checkBuildFreshness(
-      "/repo",
+describe("Hive development build freshness", () => {
+  test("an explicit renamed source checkout is a positive control", async () => {
+    const freshness = await checkHiveDevelopmentBuildFreshness(
+      "/mnt/clones/renamed-tool",
       fakeGit({
         "rev-parse main": ok("f00dcafef00dcafef00dcafef00dcafef00dcafe\n"),
         "cat-file -e abc1234^{commit}": ok(""),
@@ -41,7 +41,7 @@ describe("build freshness", () => {
   });
 
   test("a release binary at main's tip is current", async () => {
-    const freshness = await checkBuildFreshness(
+    const freshness = await checkHiveDevelopmentBuildFreshness(
       "/repo",
       fakeGit({
         "rev-parse main": ok("abc1234\n"),
@@ -55,7 +55,7 @@ describe("build freshness", () => {
   });
 
   test("a build with no commit provenance is unknown, never current", async () => {
-    const freshness = await checkBuildFreshness(
+    const freshness = await checkHiveDevelopmentBuildFreshness(
       "/repo",
       fakeGit({}),
       { isRelease: false, commit: "unknown", version: "0.0.0-dev" },
@@ -67,7 +67,7 @@ describe("build freshness", () => {
   });
 
   test("a build commit this repository does not have is unknown, never current", async () => {
-    const freshness = await checkBuildFreshness(
+    const freshness = await checkHiveDevelopmentBuildFreshness(
       "/repo",
       fakeGit({
         "rev-parse main": ok("f00dcafe\n"),
@@ -81,7 +81,7 @@ describe("build freshness", () => {
   });
 
   test("git failing is unknown, not a throw and not a clean bill of health", async () => {
-    const freshness = await checkBuildFreshness(
+    const freshness = await checkHiveDevelopmentBuildFreshness(
       "/repo",
       async () => {
         throw new Error("git: command not found");
@@ -93,7 +93,7 @@ describe("build freshness", () => {
   });
 
   test("a repository with no main branch is unknown", async () => {
-    const freshness = await checkBuildFreshness(
+    const freshness = await checkHiveDevelopmentBuildFreshness(
       "/repo",
       fakeGit({ "rev-parse main": fail }),
       RELEASE,

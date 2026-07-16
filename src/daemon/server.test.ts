@@ -33,7 +33,6 @@ import {
   submitPaste,
 } from "./testing";
 import { readCredential } from "./credentials";
-import type { BuildFreshness } from "./build-freshness";
 import type { SpawnRequest, Spawner } from "./spawner";
 import { agentTmuxSession, orchestratorTmuxSession } from "./tmux-sessions";
 import {
@@ -5285,12 +5284,11 @@ describe("a grok agent's turn is observed from its session artifacts", () => {
 });
 
 describe("landed is not live", () => {
-  // The generic status surface must not leak build-freshness diagnostics into
-  // unrelated repos. These assert that `hive_status` and `hive_spawn` still
-  // return their ordinary payloads even when the daemon is given a stale or
-  // unverifiable build-freshness reading.
+  // Generic project status has no Hive-source probe. These roots deliberately
+  // cover an arbitrary project, a renamed Hive checkout, and another developer's
+  // machine; none is evidence that the selected project is Hive's source.
   async function withClient(
-    freshness: BuildFreshness,
+    repoRoot: string,
     dbName: string,
     body: (client: Client) => Promise<void>,
   ): Promise<void> {
@@ -5300,9 +5298,9 @@ describe("landed is not live", () => {
       spawner: new StubSpawner(),
       tmuxSender: new RootUnavailableTmuxSender(db),
       tmux: new FakeDaemonTmux(),
-      repoRoot: "/tmp/repo",
-      buildFreshness: async () => freshness,
+      repoRoot,
     });
+    db.insertAgent(agent());
     const client = new Client({ name: "hive-test", version: "1.0.0" });
     try {
       await client.connect(new StreamableHTTPClientTransport(
@@ -5322,21 +5320,16 @@ describe("landed is not live", () => {
       .slice(1)
       .map((block) => block.text ?? "");
 
-  const stale: BuildFreshness = {
-    state: "stale",
-    version: "0.0.7",
-    buildCommit: "abc1234",
-    mainCommit: "f00dcafe",
-    commitsBehind: 3,
-    message: "STALE BINARY: this daemon runs 0.0.7, built from abc1234, which is 3 commits behind main (f00dcaf).",
-  };
-
-  test("a stale binary stays out of hive_status and hive_spawn", async () => {
-    await withClient(stale, "stale-binary.db", async (client) => {
+  test.each([
+    ["arbitrary repo", join(tmpdir(), "unrelated-project"), "status-arbitrary.db"],
+    ["renamed or cloned path", join(tmpdir(), "renamed-tool-clone"), "status-renamed.db"],
+    ["machine without Hive source", join(tmpdir(), "other-machine-project"), "status-other-user.db"],
+  ])("generic status for %s stays project-neutral", async (_case, repoRoot, dbName) => {
+    await withClient(repoRoot, dbName, async (client) => {
       const status = await client.callTool({ name: "hive_status", arguments: {} });
       expect(notes(status)).toEqual([]);
-      // The payload the parsers read is unchanged: still the bare agent array.
-      expect(textValue(status)).toEqual([]);
+      // Removing the diagnostic must not remove the active-agent status payload.
+      expect(textValue(status)).toMatchObject([{ name: "maya", status: "working" }]);
 
       const spawned = await client.callTool({
         name: "hive_spawn",
@@ -5345,46 +5338,6 @@ describe("landed is not live", () => {
       expect(spawned.isError).toBeUndefined();
       expect(notes(spawned)).toEqual([]);
       expect(textValue(spawned)).toMatchObject({ name: "sam", status: "working" });
-    });
-  });
-
-  test("an unverifiable binary still stays out of hive_status and hive_spawn", async () => {
-    const unknown: BuildFreshness = {
-      state: "unknown",
-      version: "0.0.0-dev",
-      buildCommit: null,
-      mainCommit: null,
-      commitsBehind: null,
-      message: "Hive cannot tell whether the running binary is up to date with main: this build carries no commit provenance (a dev build or a source checkout).",
-    };
-    await withClient(unknown, "unknown-binary.db", async (client) => {
-      const status = await client.callTool({ name: "hive_status", arguments: {} });
-      expect(notes(status)).toEqual([]);
-      const spawned = await client.callTool({
-        name: "hive_spawn",
-        arguments: { task: "Anything", category: "code_review", name: "sam", tool: "claude" },
-      });
-      expect(notes(spawned)).toEqual([]);
-    });
-  });
-
-  test("a current binary also stays silent on both surfaces", async () => {
-    const current: BuildFreshness = {
-      state: "current",
-      version: "0.0.7",
-      buildCommit: "abc1234",
-      mainCommit: "abc1234",
-      commitsBehind: 0,
-      message: "Running binary 0.0.7 was built from abc1234 and contains everything on main.",
-    };
-    await withClient(current, "current-binary.db", async (client) => {
-      expect(notes(await client.callTool({ name: "hive_status", arguments: {} })))
-        .toEqual([]);
-      const spawned = await client.callTool({
-        name: "hive_spawn",
-        arguments: { task: "Anything", category: "code_review", name: "sam", tool: "claude" },
-      });
-      expect(notes(spawned)).toEqual([]);
     });
   });
 });
