@@ -13,6 +13,8 @@ import {
   lastCodexTurnCompleted,
   lastGrokTurnCompleted,
   newestTurnContextIdentity,
+  readCodexAppServerTurnIdentity,
+  turnContextIdentityForTurn,
   readClaudeTelemetry,
   readCodexObservedIdentity,
   readCodexTelemetry,
@@ -316,6 +318,99 @@ describe("codex rollout telemetry", () => {
   });
 
 
+
+  // The app-server reader. Its fixture is deliberately built from the payload
+  // keys observed on a real codex-cli 0.144.4 app-server turn — which carries
+  // NO `source` field at all (its session_meta.source is the editor client, not
+  // "cli"). A fixture that invented a `source` here would only be asserting
+  // against its own typing, and would hide the fact that the TUI reader reads
+  // every app-server turn as unknown.
+  function appServerTurnContext(options: {
+    model?: string;
+    effort?: string;
+    cwd: string;
+    turnId: string;
+    timestamp?: string;
+  }): string {
+    return JSON.stringify({
+      timestamp: options.timestamp ?? "2026-07-16T08:58:49.081Z",
+      type: "turn_context",
+      payload: {
+        turn_id: options.turnId,
+        cwd: options.cwd,
+        workspace_roots: [options.cwd],
+        approval_policy: "on-request",
+        approvals_reviewer: "user",
+        sandbox_policy: { type: "read-only" },
+        ...(options.model === undefined ? {} : { model: options.model }),
+        ...(options.effort === undefined ? {} : { effort: options.effort }),
+        personality: "pragmatic",
+        multi_agent_mode: "explicitRequestOnly",
+      },
+    });
+  }
+
+  describe("turnContextIdentityForTurn (app-server driver)", () => {
+    const cwd = resolve(WORKTREE);
+
+    test("reads applied model+effort for the exact turn, with no source field", () => {
+      const tail = appServerTurnContext({
+        model: "gpt-5.6-sol",
+        effort: "xhigh",
+        cwd,
+        turnId: "turn-9",
+      }) + "\n";
+      expect(turnContextIdentityForTurn(tail, cwd, "turn-9")).toEqual({
+        model: "gpt-5.6-sol",
+        effort: "xhigh",
+        turnId: "turn-9",
+        observedAt: "2026-07-16T08:58:49.081Z",
+      });
+      // The TUI reader cannot see this record at all — it demands source="cli".
+      // That is exactly why the app-server needs its own reader rather than a
+      // relaxed shared one.
+      expect(newestTurnContextIdentity(tail, cwd)).toBeNull();
+    });
+
+    test("another turn's identity never answers for the turn being asked about", () => {
+      const tail = [
+        appServerTurnContext({ model: "gpt-5.6-sol", effort: "xhigh", cwd, turnId: "turn-1" }),
+        appServerTurnContext({ model: "gpt-5.6-sol", effort: "xhigh", cwd, turnId: "turn-2" }),
+      ].join("\n") + "\n";
+      expect(turnContextIdentityForTurn(tail, cwd, "turn-2")).toMatchObject({
+        turnId: "turn-2",
+      });
+      // The turn we are gating has no record yet: unknown, never the newest
+      // one that happens to be lying around.
+      expect(turnContextIdentityForTurn(tail, cwd, "turn-3")).toBeNull();
+    });
+
+    test("missing effort, missing model, and a foreign cwd are all unknown", () => {
+      const noEffort = appServerTurnContext({ model: "gpt-5.6-sol", cwd, turnId: "t" }) + "\n";
+      expect(turnContextIdentityForTurn(noEffort, cwd, "t")).toBeNull();
+      const noModel = appServerTurnContext({ effort: "xhigh", cwd, turnId: "t" }) + "\n";
+      expect(turnContextIdentityForTurn(noModel, cwd, "t")).toBeNull();
+      // A Codex-internal subagent runs at its own cwd; it must never answer
+      // for the parent even when its turn id somehow matches.
+      const foreign = appServerTurnContext({
+        model: "gpt-5.6-sol",
+        effort: "xhigh",
+        cwd: "/some/other/tree",
+        turnId: "t",
+      }) + "\n";
+      expect(turnContextIdentityForTurn(foreign, cwd, "t")).toBeNull();
+    });
+
+    test("readCodexAppServerTurnIdentity: no path is absent, unreadable is unknown", async () => {
+      // The app-server reported no rollout path -> nothing observed at all.
+      expect(await readCodexAppServerTurnIdentity(null, WORKTREE, "turn-9"))
+        .toEqual({ status: "absent" });
+      // A path that does not exist -> live-but-unreadable -> unknown.
+      expect(
+        await readCodexAppServerTurnIdentity("/nonexistent/rollout.jsonl", WORKTREE, "turn-9"),
+      ).toEqual({ status: "unknown" });
+    });
+  });
 
   test("actually malformed newest JSONL after valid context yields unknown", () => {
     const cwd = "/repo/.hive/worktrees/maya";

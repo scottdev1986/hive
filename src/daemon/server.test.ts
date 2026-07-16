@@ -1838,8 +1838,10 @@ describe("HiveDaemon HTTP server", () => {
       identityState: "matching",
     }));
     try {
+      // A migrated/legacy Codex writer has no live brokered app-server turn, so
+      // there is no identity to attest and nothing that could authorize it.
       await expect(daemon.landAgent("maya", 0)).rejects.toThrow(
-        /mechanically forbids every Codex writer landing before attestation or Git/,
+        /no live brokered Codex app-server turn to attest against/,
       );
       expect(identityReads).toBe(0);
       expect(mergeSpawned).toBe(false);

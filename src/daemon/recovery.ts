@@ -397,7 +397,14 @@ export class CrashRecovery {
     // relaunched (defense-in-depth for legacy writers). Mark it dead with the
     // actionable diagnostic; recovery never deletes the worktree, so the work
     // survives for a read-only respawn or a different provider.
-    const writerContainment = codexWriterContainment(agent.tool, agent.readOnly);
+    // Driver `null`: recovery re-launches from a durable record, and 0.144.4
+    // has no durable app-server resume — there is no brokered session to
+    // reattach to, so a recovered Codex writer could only run unbrokered.
+    const writerContainment = codexWriterContainment(
+      agent.tool,
+      agent.readOnly,
+      null,
+    );
     if (writerContainment !== null) {
       return this.markDead(agent, writerContainment);
     }
@@ -654,10 +661,14 @@ export class CrashRecovery {
           break;
         }
         case "codex": {
+          // Recovery relaunches the TUI: there is no durable app-server resume,
+          // and a Codex writer was already refused above, so only a reader ever
+          // reaches here.
           await this.writeCodexConfig(worktreePath, {
             daemonPort: this.daemonPort(),
             name: record.name,
             readOnly: record.readOnly,
+            driver: "tui",
             hiveCommand: hiveCliSpawnArgv(IS_RELEASE_BUILD, process.execPath),
           });
           const codexOptions = {

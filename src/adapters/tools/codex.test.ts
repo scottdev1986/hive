@@ -256,6 +256,7 @@ describe("Codex adapter", () => {
       CODEX_WRITER_CONTAINMENT_REASON,
     );
     await expect(writeCodexAgentConfig(worktreePath, {
+      driver: "tui",
       name: writer.name,
       daemonPort: writer.daemonPort,
       readOnly: false,
@@ -544,6 +545,7 @@ describe("Codex adapter", () => {
 
   test("writes the notify script and MCP config, but no hook tables", async () => {
     await writeCodexAgentConfig(worktreePath, {
+      driver: "tui",
       name: "agent-4",
       daemonPort: 4317,
       readOnly: true,
@@ -586,6 +588,7 @@ describe("Codex adapter", () => {
 
   test("pins lifecycle hooks to the exact release binary", async () => {
     await writeCodexAgentConfig(worktreePath, {
+      driver: "tui",
       name: "agent-4",
       daemonPort: 4317,
       readOnly: true,
@@ -605,6 +608,7 @@ describe("Codex adapter", () => {
   test("writes and removes the worktree-local graphify hook with server health", async () => {
     const hookPath = join(worktreePath, ".codex", GRAPHIFY_HOOK_SCRIPT);
     await writeCodexAgentConfig(worktreePath, {
+      driver: "tui",
       name: "agent-4",
       daemonPort: 4317,
       readOnly: true,
@@ -613,6 +617,7 @@ describe("Codex adapter", () => {
     expect(await readFile(hookPath, "utf8")).toContain("127.0.0.1:7799/mcp");
 
     await writeCodexAgentConfig(worktreePath, {
+      driver: "tui",
       name: "agent-4",
       daemonPort: 4317,
       readOnly: true,
@@ -625,6 +630,7 @@ describe("Codex adapter", () => {
     // 0600 file; the launch shell exports it for bearer_token_env_var. It
     // must never land in the config file or any argv.
     await writeCodexAgentConfig(worktreePath, {
+      driver: "tui",
       daemonPort: 4317,
       name: "maya",
       readOnly: true,
@@ -642,12 +648,14 @@ describe("Codex adapter", () => {
 
   test("removes a stale token file when no capability was issued", async () => {
     await writeCodexAgentConfig(worktreePath, {
+      driver: "tui",
       daemonPort: 4317,
       name: "maya",
       readOnly: true,
       capabilityToken: "hv1.abc.stale-token",
     });
     await writeCodexAgentConfig(worktreePath, {
+      driver: "tui",
       daemonPort: 4317,
       name: "maya",
       readOnly: true,

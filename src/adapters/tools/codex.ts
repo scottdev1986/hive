@@ -17,7 +17,10 @@ import {
   type GraphifyHookKind,
 } from "./graphify-hook";
 import { hiveInstanceSuffix } from "../../daemon/tmux-sessions";
-import { assertCodexWriterContained } from "../../daemon/codex-containment";
+import {
+  assertCodexWriterContained,
+  type CodexDriver,
+} from "../../daemon/codex-containment";
 
 export const MINIMUM_CODEX_CLI_VERSION = "0.144.4";
 
@@ -143,6 +146,11 @@ export type CodexAgentConfigOptions = Pick<
   /** Stored only in Hive's 0600 token file and exported by the launch shell;
    * never written to argv or project config. */
   capabilityToken?: string;
+  /** The driver this config is being written for. This file is a TUI writer's
+   * own tamperable `.codex/` directory, so a writer is refused here — but an
+   * app-server session is brokered by the daemon and does not draw any
+   * authority from these bytes, so it is admissible. */
+  driver: CodexDriver;
 };
 
 export const CODEX_NOTIFY_SCRIPT = "hive-notify.sh";
@@ -196,7 +204,8 @@ function buildCodexConfigArgs(
   options: CodexSpawnOptions,
   sandbox: { asConfigOverride: boolean },
 ): string[] {
-  assertCodexWriterContained("codex", options.readOnly);
+  // These argv/config paths build a TUI launch, which can never host a writer.
+  assertCodexWriterContained("codex", options.readOnly, "tui");
   // Apps/connectors do not appear in mcp_servers, so inherited-server
   // exclusions cannot detach them. Hive agents have a deliberately scoped
   // tool surface; disable Apps for this process without changing user config.
@@ -522,7 +531,7 @@ export async function writeCodexAgentConfig(
   worktreePath: string,
   options: CodexAgentConfigOptions,
 ): Promise<void> {
-  assertCodexWriterContained("codex", options.readOnly);
+  assertCodexWriterContained("codex", options.readOnly, options.driver);
   const codexDirectory = join(worktreePath, ".codex");
   const notifyPath = join(codexDirectory, CODEX_NOTIFY_SCRIPT);
   const graphifyPath = graphifyHookPath(worktreePath, ".codex");

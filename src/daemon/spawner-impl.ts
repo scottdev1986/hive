@@ -94,7 +94,11 @@ import {
   type RawLaunchCandidate,
   requireAuthorizedLaunch,
 } from "./authorized-launch";
-import { assertCodexWriterContained } from "./codex-containment";
+import {
+  assertCodexWriterContained,
+  CodexWriterContainedError,
+  type CodexDriver,
+} from "./codex-containment";
 import { agentTmuxSession } from "./tmux-sessions";
 import { resolveAutoEffort, validateEffort } from "./effort";
 import type { CapabilityDiscoveryResult } from "./capability-discovery";
@@ -786,6 +790,18 @@ export class HiveSpawner implements Spawner {
     return port;
   }
 
+  /** The driver a Codex launch will actually use, resolved once so the gate
+   * that admits a writer and the launch that runs it cannot disagree. Null for
+   * every other tool. */
+  private async resolveCodexDriver(
+    tool: CapabilityProvider,
+  ): Promise<CodexDriver | null> {
+    if (tool !== "codex") return null;
+    const appServer = this.dependencies.config.codex?.driver === "app-server" &&
+      (await this.dependencies.codexAppServer?.isAvailable() ?? false);
+    return appServer ? "app-server" : "tui";
+  }
+
   /** Servers a Codex spawn would inherit from the user's global config. Read
    * once per spawn, never written. A read failure means "inherit nothing to
    * exclude" — the agent keeps today's surface rather than failing to launch. */
@@ -1097,16 +1113,16 @@ export class HiveSpawner implements Spawner {
           break;
         }
         case "codex": {
+          const driver = await this.resolveCodexDriver(identity.tool);
+          const useAppServer = driver === "app-server";
           await writeCodexAgentConfig(agent.worktreePath, {
             daemonPort: this.daemonPort(),
             name: agent.name,
             readOnly,
+            driver: driver ?? "tui",
             hiveCommand: hiveCliSpawnArgv(IS_RELEASE_BUILD, process.execPath),
             ...(capabilityToken === undefined ? {} : { capabilityToken }),
           });
-          const useAppServer =
-            this.dependencies.config.codex?.driver === "app-server" &&
-            (await this.dependencies.codexAppServer?.isAvailable() ?? false);
           if (useAppServer) {
             argv = this.dependencies.codexAppServer!.buildHostCommand(
               prepared.record,
@@ -1212,7 +1228,6 @@ export class HiveSpawner implements Spawner {
               developerInstructions: codexDeveloperInstructions!,
               initialUserPrompt: controlPrompt,
             },
-            readOnly,
             identity.tool === "codex"
               ? identity.effort
               : (() => { throw new Error("Codex app-server requires Codex identity"); })(),
@@ -1270,6 +1285,8 @@ export class HiveSpawner implements Spawner {
             daemonPort: this.daemonPort(),
             name: agent.name,
             readOnly,
+            // This is the fallback to the TUI, which cannot host a writer.
+            driver: "tui",
             hiveCommand: hiveCliSpawnArgv(IS_RELEASE_BUILD, process.execPath),
             ...(capabilityToken === undefined ? {} : { capabilityToken }),
           });
@@ -1720,6 +1737,9 @@ export class HiveSpawner implements Spawner {
     let effort: string | undefined;
     let authorized!: AuthorizedLaunch;
     let pendingSuccessAudit: AuditFields | null = null;
+    // Null for every non-Codex tool; for Codex it is the driver the containment
+    // gate admitted, and the driver the launch below must therefore use.
+    let codexDriver: CodexDriver | null = null;
 
     // Begin before the first route dependency. Once a decision is finalized,
     // the catch at the method boundary becomes a pure rethrow for launch errors.
@@ -2272,10 +2292,14 @@ export class HiveSpawner implements Spawner {
       };
     }
     tool = authorized.tool;
-    // Codex writer authoring is contained: refuse before any worktree or launch.
+    // Codex writer admission is a question about the driver, so resolve the
+    // driver here and refuse before any worktree or launch. The same resolution
+    // decides the launch below, and `isAvailable()` is cached, so the driver
+    // this gate admitted is the driver that actually runs.
+    codexDriver = await this.resolveCodexDriver(tool);
     // Audit only after this gate so containment is never recorded as success.
     try {
-      assertCodexWriterContained(tool, readOnly);
+      assertCodexWriterContained(tool, readOnly, codexDriver);
     } catch (error) {
       finalizeRouteAudit({
         attempts: [
@@ -2495,17 +2519,16 @@ export class HiveSpawner implements Spawner {
         break;
         }
         case "codex": {
+        const useAppServer = codexDriver === "app-server";
         await writeCodexAgentConfig(worktree.path, {
           daemonPort: this.daemonPort(),
           name,
           readOnly,
+          driver: codexDriver ?? "tui",
           hiveCommand: hiveCliSpawnArgv(IS_RELEASE_BUILD, process.execPath),
           ...(capabilityToken === undefined ? {} : { capabilityToken }),
           ...(graphifyUrl === null ? {} : { graphifyUrl }),
         });
-        const useAppServer =
-          this.dependencies.config.codex?.driver === "app-server" &&
-          (await this.dependencies.codexAppServer?.isAvailable() ?? false);
         argv = useAppServer
           ? this.dependencies.codexAppServer!.buildHostCommand(
               record,
@@ -2624,10 +2647,25 @@ export class HiveSpawner implements Spawner {
               developerInstructions: promptParts.developerInstructions,
               initialUserPrompt: promptParts.userPrompt,
             },
-            readOnly,
             effort ?? "medium",
           );
         } catch (error) {
+          // A writer was admitted ONLY because the app-server would broker its
+          // mutations. If that handshake fails there is no broker, and the TUI
+          // fallback below would silently produce the one thing containment
+          // forbids: an ungated Codex writer. Fail the spawn instead.
+          if (!readOnly) {
+            this.dependencies.codexAppServer!.disconnect(name);
+            await this.stopVerifiedSession(
+              record,
+              `Codex app-server handshake failed for ${record.name}`,
+            );
+            throw new CodexWriterContainedError(
+              `Codex writer ${name} could not start on the app-server driver: ${
+                error instanceof Error ? error.message : "unknown error"
+              }.\nHive refuses to fall back to the Codex TUI for a writer, because the TUI cannot broker mutations.\nFix: retry, launch this agent read-only, or use a Claude or Grok writer.`,
+            );
+          }
           // The binary advertised app-server support but the control process
           // could not complete its handshake. Replace it immediately with the
           // maintained TUI path; tmux paste remains the automatic fallback.
@@ -2679,6 +2717,8 @@ export class HiveSpawner implements Spawner {
             daemonPort: this.daemonPort(),
             name,
             readOnly,
+            // This is the fallback to the TUI, which cannot host a writer.
+            driver: "tui",
             hiveCommand: hiveCliSpawnArgv(IS_RELEASE_BUILD, process.execPath),
             ...(capabilityToken === undefined ? {} : { capabilityToken }),
             ...(graphifyUrl === null ? {} : { graphifyUrl }),

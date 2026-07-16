@@ -822,8 +822,8 @@ describe("HiveSpawner name pool", () => {
       codexAppServer: {
         isAvailable: async () => true,
         buildHostCommand: () => ["hive", "codex-app-server-host"],
-        startAgent: async (_record, bootstrap, readOnly) => {
-          starts.push({ bootstrap, readOnly });
+        startAgent: async (record, bootstrap) => {
+          starts.push({ bootstrap, readOnly: record.readOnly });
         },
         disconnect: () => undefined,
       },
@@ -2022,7 +2022,7 @@ describe("HiveSpawner wiring", () => {
           "--agent",
           value.name,
         ],
-        startAgent: async (value, bootstrap, _readOnly, effort) => {
+        startAgent: async (value, bootstrap, effort) => {
           starts.push({ name: value.name, bootstrap, effort });
           store.insertAgent({ ...value, status: "working" });
         },
@@ -5114,10 +5114,45 @@ describe("Codex writer containment", () => {
     expect(tmux.sessions[0]?.[2]).toContain("'--sandbox' 'read-only'");
   });
 
-  test("refuses a Codex app-server writer before host launch", async () => {
-    const root = await mkdtemp(join(tmpdir(), "hive-codex-app-writer-refuse-"));
+  // Launch regression for writer admission. Admission turns on the DRIVER and
+  // nothing else — no version, no build, no schema hash. What keeps the
+  // admitted writer safe is the read-only sandbox plus the per-mutation gate,
+  // not a check performed here.
+  test("refuses a Codex TUI writer before any worktree or launch", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-codex-tui-writer-refuse-"));
     tempRoots.push(root);
-    let hostStarts = 0;
+    let worktrees = 0;
+    const spawner = newTestSpawner({
+      isModelEnabled: async () => true,
+      db: new FakeStore(),
+      repoRoot: root,
+      port: 4317,
+      // The TUI driver: PreToolUse fails open and the writer owns its own hook
+      // scripts, so this can never be a writer surface.
+      config: { codex: { driver: "tui" } },
+      readRoutingPolicy: () => policyFromRoute({
+        ...CODEX_ROUTE,
+        tool: "codex",
+        codex: { model: "gpt-test", effort: "high" },
+      }),
+      tmux: new FakeTmux(),
+      createWorktree: async () => {
+        worktrees += 1;
+        throw new Error("must not create");
+      },
+      sleep: async () => {},
+    });
+
+    await expect(spawner.spawn({
+      task: "TUI writer",
+      category: "simple_coding",
+    })).rejects.toThrow(CODEX_WRITER_CONTAINMENT_REASON);
+    expect(worktrees).toEqual(0);
+  });
+
+  test("refuses a Codex writer when the app-server is unavailable, rather than using the TUI", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-codex-noappserver-"));
+    tempRoots.push(root);
     let worktrees = 0;
     const spawner = newTestSpawner({
       isModelEnabled: async () => true,
@@ -5137,20 +5172,72 @@ describe("Codex writer containment", () => {
       },
       sleep: async () => {},
       codexAppServer: {
-        isAvailable: async () => true,
+        // Configured for the app-server, but the binary cannot host one. The
+        // driver resolves to the TUI, so the writer is refused — it must never
+        // quietly become a TUI writer just because the config asked nicely.
+        isAvailable: async () => false,
         buildHostCommand: () => ["hive", "codex-app-server-host"],
-        startAgent: async () => {
-          hostStarts += 1;
-        },
+        startAgent: async () => undefined,
         disconnect: () => undefined,
       },
     });
 
     await expect(spawner.spawn({
-      task: "App-server writer",
+      task: "Writer without an app-server",
       category: "simple_coding",
     })).rejects.toThrow(CODEX_WRITER_CONTAINMENT_REASON);
     expect(worktrees).toEqual(0);
-    expect(hostStarts).toEqual(0);
+  });
+
+  test("admits a Codex app-server writer, and never falls back to the TUI when its handshake fails", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-codex-app-writer-admit-"));
+    tempRoots.push(root);
+    const tmux = new FakeTmux();
+    let hostStarts = 0;
+    const spawner = newTestSpawner({
+      isModelEnabled: async () => true,
+      db: new FakeStore(),
+      repoRoot: root,
+      port: 4317,
+      config: { codex: { driver: "app-server" } },
+      readRoutingPolicy: () => policyFromRoute({
+        ...CODEX_ROUTE,
+        tool: "codex",
+        codex: { model: "gpt-test", effort: "high" },
+      }),
+      tmux,
+      sleep: async () => {},
+      createWorktree: async () => ({
+        path: root,
+        branch: "hive/maya-task",
+      }),
+      codexAppServer: {
+        isAvailable: async () => true,
+        buildHostCommand: () => ["hive", "codex-app-server-host"],
+        startAgent: async () => {
+          hostStarts += 1;
+          // The broker never came up. There is now no gate for this writer's
+          // mutations, so the spawn must fail rather than silently degrade.
+          throw new Error("handshake failed");
+        },
+        disconnect: () => undefined,
+      },
+    });
+
+    // The writer was admitted (the driver was the app-server), so the launch
+    // proceeds far enough to attempt the handshake...
+    const record = await spawner.spawn({
+      task: "App-server writer",
+      category: "simple_coding",
+    });
+    expect(hostStarts).toEqual(1);
+    // ...and when that handshake fails the agent ends up failed, not running.
+    expect(record.status).toEqual("failed");
+    // The decisive assertion: exactly one session was ever launched, and it is
+    // the app-server host — no second, TUI session was started to replace it.
+    // A fallback here would be an ungated Codex writer, the one outcome
+    // containment exists to prevent.
+    expect(tmux.sessions).toHaveLength(1);
+    expect(tmux.sessions[0]?.[2] ?? "").toContain("codex-app-server-host");
   });
 });

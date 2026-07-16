@@ -333,6 +333,95 @@ export async function readCodexObservedIdentity(
   };
 }
 
+/**
+ * The `turn_context` identity for one exact `turnId` in `tail`.
+ *
+ * This is the app-server driver's reader, and it binds differently from
+ * `newestTurnContextIdentity`: that one is the TUI's, and it proves main-thread
+ * provenance with `payload.source === "cli"`. An app-server `turn_context`
+ * carries no `source` field at all (verified against codex-cli 0.144.4: the
+ * payload keys are turn_id/cwd/model/effort/sandbox_policy/... and its
+ * `session_meta.source` is the editor client, not "cli"), so the TUI reader
+ * reads every app-server turn as unknown. Requiring an exact `turn_id` match is
+ * a tighter binding than `source`, not a weaker one: the caller supplies the
+ * turnId the provider itself put on the mutation approval request, so a
+ * Codex-internal subagent's turn (a different turn_id, at its own cwd) can
+ * never answer for the parent's. `cwd` must still match this worktree.
+ *
+ * Both model and effort must be present: an incomplete record is not an
+ * identity. Pure; exported for tests.
+ */
+export function turnContextIdentityForTurn(
+  tail: string,
+  expectedCwd: string,
+  turnId: string,
+): { model: string; effort: string; turnId: string; observedAt: string | null } | null {
+  const wanted = resolve(expectedCwd);
+  const lines = tail.split("\n");
+  for (let index = lines.length - 1; index >= 0; index--) {
+    const line = lines[index]!;
+    if (line.length === 0) continue;
+    let entry: unknown;
+    try {
+      entry = JSON.parse(line);
+    } catch {
+      // A tail may begin mid-record; only that first physical line may be
+      // skipped. Any other malformed line is unknown, never a fall-through to
+      // an older matching record.
+      if (index === 0) continue;
+      return null;
+    }
+    if (!isRecord(entry) || entry.type !== "turn_context") continue;
+    if (!isRecord(entry.payload)) continue;
+    const payload = entry.payload;
+    if (payload.turn_id !== turnId) continue;
+    if (typeof payload.cwd !== "string" || resolve(payload.cwd) !== wanted) {
+      return null;
+    }
+    const model = payload.model;
+    const effort = payload.effort;
+    if (typeof model !== "string" || model.length === 0) return null;
+    if (typeof effort !== "string" || effort.length === 0) return null;
+    return {
+      model,
+      effort,
+      turnId,
+      observedAt: typeof entry.timestamp === "string" ? entry.timestamp : null,
+    };
+  }
+  return null;
+}
+
+/**
+ * Observe the applied identity of one exact app-server turn from the rollout
+ * the app-server itself named for that thread (`thread/read` -> `thread.path`,
+ * over the same authenticated connection). The path is never discovered by
+ * scanning the worktree, so a dead predecessor's rollout cannot be aliased in.
+ *
+ * `absent` when there is no path to read (the app-server reported none) and
+ * `unknown` when the file yields no complete identity for that turn — both of
+ * which the mutation gate treats as fail-closed.
+ */
+export async function readCodexAppServerTurnIdentity(
+  rolloutPath: string | null,
+  worktreePath: string,
+  turnId: string,
+): Promise<CodexIdentityObservation> {
+  if (rolloutPath === null) return { status: "absent" };
+  const tail = await readFileTail(rolloutPath);
+  if (tail === null) return { status: "unknown" };
+  const identity = turnContextIdentityForTurn(tail, worktreePath, turnId);
+  if (identity === null) return { status: "unknown" };
+  return {
+    status: "observed",
+    model: identity.model,
+    effort: identity.effort,
+    turnId: identity.turnId,
+    sessionId: turnId,
+    observedAt: identity.observedAt ?? new Date().toISOString(),
+  };
+}
+
 /** Codex's rollout records exact task boundaries. Read newest first so an
  * active task wins over every completed predecessor in the same session. */
 export function lastCodexTurnCompleted(tail: string): boolean | null {

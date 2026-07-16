@@ -1,57 +1,70 @@
 import type { CapabilityProvider } from "../schemas";
 
-// Codex writer authoring is contained until Hive has an enforceable per-mutation
-// broker/sandbox boundary. Per-mutation execution-identity CANNOT be enforced on
-// Codex 0.144.4: TUI PreToolUse hooks fail open (command failure/timeout/invalid
-// JSON is `should_block=false`) and are writer-tamperable (the agent owns its
-// `.codex/` hook scripts), and the app-server driver has no hooks and no identity
-// attestation at any mutation approval/execution boundary. A writer we cannot
-// gate per-mutation could reach a mutating tool while unknown or drifted, which
-// the user's invariant forbids. So Hive refuses to launch or reauthorize a Codex
-// *writer* on every path — fresh spawn, recovery, resume/write reauthorization,
-// app-server, explicit model, route selection, and fallback — with no silent
-// fallback to another Codex driver or provider. Read-only Codex (review, query,
-// the root/orchestrator) is unaffected: a reader cannot mutate.
+// Codex writer authoring is admissible on exactly one surface: the app-server
+// driver, where every mutation is brokered through a daemon-owned gate.
 //
-// The daemon-side defenses (the 30s identity sweep, the fresh landing
-// reattestation, and the terminal/capability gates) remain, but as
-// defense-in-depth for pre-activation and legacy/running processes — never as
-// authorization to write.
+// Admission is a question about the DRIVER, never about the CLI version or
+// build. A version floor is bootstrap compatibility, not writer safety: a
+// newer build can regress the broker, and a `>=` comparison would silently
+// read as permission. Safety instead comes structurally from the runtime
+// boundary — the writer's sandbox stays read-only, so the only way a mutation
+// can reach the filesystem is a synchronous approval request that Hive answers,
+// and Hive answers `allow` only for an exact live holder whose provider-applied
+// identity is freshly attested for that same app-server thread and turn. On a
+// build whose app-server cannot supply that evidence the gate denies every
+// mutation: the writer is useless, never ungated.
 //
-// Residual: real-provider Codex hook session-id acceptance was never
-// proven end-to-end; the PreToolUse guard subsystem that would have
-// relied on it has been removed, so that gap is closed by refusal
-// rather than by an unproven hook path.
+// The Codex TUI can NEVER be a safe writer surface: PreToolUse hooks fail open
+// (command failure/timeout/invalid JSON is `should_block=false`) and the writer
+// owns its own `.codex/` hook scripts, so the agent can edit away its own
+// guard. An unknown driver is refused for the same reason a missing field is
+// refused — unknown is not permission. Read-only Codex (review, query, the
+// root/orchestrator) is unaffected on either driver: a reader cannot mutate.
+//
+// Recovery and resume of a Codex writer stay refused: they pass no live
+// brokered driver, and 0.144.4 has no durable app-server resume, so a
+// reauthorized writer could run outside the boundary that makes it safe.
+
+/** The driver that will actually run the session. Only `app-server` brokers
+ * every mutation through Hive; `tui` cannot, and `null` is an unknown driver. */
+export type CodexDriver = "app-server" | "tui";
 
 export const CODEX_WRITER_CONTAINMENT_REASON =
-  "Codex writer authoring is contained: Hive cannot enforce per-mutation " +
-  "execution-identity on Codex 0.144.4 (TUI PreToolUse hooks fail open and are " +
-  "writer-tamperable; the app-server has no mutation-approval identity gate), so " +
-  "an unknown or drifted Codex writer could reach a mutating tool. Codex " +
-  "read-only review/query/root remain available. Fix: launch this agent " +
-  "read-only, or use a Claude or Grok writer.";
+  "Codex writer authoring is contained on this launch: a Codex writer is only " +
+  "admissible on the app-server driver, where Hive brokers every mutation " +
+  "through a daemon-owned identity gate. The Codex TUI cannot host a writer " +
+  "(PreToolUse hooks fail open and the writer can edit its own hook scripts), " +
+  "and an unknown driver is not permission, so an unknown or drifted Codex " +
+  "writer could reach a mutating tool. Codex read-only review/query/root " +
+  "remain available. Fix: launch this agent read-only, or use a Claude or " +
+  "Grok writer.";
 
 /**
  * The containment refusal for a launch that would be a Codex *writer*, or null
- * when the launch is allowed (any read-only launch, or any non-Codex tool).
- * This is the single authorization rule every launch/reauthorization path
- * shares, so the refusal cannot be reached inconsistently.
+ * when the launch is allowed (any read-only launch, any non-Codex tool, or a
+ * Codex writer on the brokered app-server driver). This is the single
+ * authorization rule every launch/reauthorization path shares, so the refusal
+ * cannot be reached inconsistently.
+ *
+ * `driver` is null wherever no live brokered session is being established
+ * (recovery, resume, the TUI config/argv writers) — unknown is a refusal.
  */
 export function codexWriterContainment(
   tool: CapabilityProvider,
   readOnly: boolean,
+  driver: CodexDriver | null,
 ): string | null {
-  return tool === "codex" && !readOnly
-    ? CODEX_WRITER_CONTAINMENT_REASON
-    : null;
+  if (tool !== "codex" || readOnly) return null;
+  return driver === "app-server" ? null : CODEX_WRITER_CONTAINMENT_REASON;
 }
 
 /** Throwing form for the launch chokepoints that abort by exception. */
 export function assertCodexWriterContained(
   tool: CapabilityProvider,
   readOnly: boolean,
+  driver: CodexDriver | null,
 ): void {
-  const refusal = codexWriterContainment(tool, readOnly);
+  const refusal = codexWriterContainment(tool, readOnly, driver);
   if (refusal !== null) throw new CodexWriterContainedError(refusal);
 }
 

@@ -209,6 +209,31 @@ export interface CodexApprovalRequest {
   description: string;
 }
 
+/** One mutation a Codex writer is asking Hive to allow.
+ *
+ * `agentId` plus the `processIncarnation`/`capabilityEpoch` this session was
+ * started with are the holder snapshot: the daemon re-fetches the row by id and
+ * refuses if any of them moved, so a stale predecessor, a same-name
+ * replacement, or a re-armed epoch cannot inherit this session's authority.
+ * `rolloutPath` is the rollout the app-server itself named for this thread, so
+ * the identity read is bound to this connection rather than discovered by
+ * scanning the worktree. */
+export interface CodexMutationAuthorizationRequest {
+  agentId: string;
+  agentName: string;
+  processIncarnation: number;
+  capabilityEpoch: number;
+  threadId: string;
+  turnId: string;
+  method: string;
+  rolloutPath: string | null;
+}
+
+/** Deny-by-default: only an explicit `allowed: true` is permission. */
+export type CodexMutationDecision =
+  | { allowed: true }
+  | { allowed: false; reason: string };
+
 export interface CodexAppServerManagerOptions {
   socketPath?: (agent: AgentRecord) => string;
   transport?: (path: string) => Promise<CodexAppServerTransport>;
@@ -216,6 +241,13 @@ export interface CodexAppServerManagerOptions {
   sleep?: (milliseconds: number) => Promise<void>;
   onEvent: (event: HookEvent, holder: AgentRecord) => Promise<void>;
   queueApproval: (request: CodexApprovalRequest) => Promise<string>;
+  /** The daemon-owned authorization for one writer mutation. It re-fetches the
+   * exact holder row and re-attests the provider-applied identity for this
+   * exact thread/turn. Called once before the approval is queued and again
+   * immediately before the allow response is sent (TOCTOU). */
+  authorizeMutation: (
+    request: CodexMutationAuthorizationRequest,
+  ) => Promise<CodexMutationDecision>;
   observeRateLimits: (
     model: string,
     response: CodexRateLimitsResponse,
@@ -297,13 +329,37 @@ const stringField = (value: JsonObject, key: string): string => {
 
 const timestamp = (): string => new Date().toISOString();
 const AVAILABILITY_PROBE_TIMEOUT_MS = 5_000;
-const CODEX_APP_SERVER_WRITER_REFUSAL =
-  "Codex app-server writer/workspace-write threads are refused: Hive " +
-  "cannot enforce per-mutation execution-identity on Codex app-server. " +
-  "Launch read-only, or use a Claude or Grok writer.";
+/** The daemon's authorization must never be able to hang a mutation open: a
+ * gate that never answers is a denial, not a pending allow. */
+const AUTHORIZE_MUTATION_TIMEOUT_MS = 10_000;
+
+/** The only families that can ever be allowed, and only one request at a time.
+ * Two exclusions, both forced by the protocol rather than chosen:
+ *
+ * - `item/permissions/requestApproval`: its narrowest scope is a whole turn
+ *   (PermissionGrantScope is exactly ["turn","session"] on codex-cli 0.144.4),
+ *   and a grant that outlives one identity check is forbidden. Always refused,
+ *   never gated.
+ * - `execCommandApproval` / `applyPatchApproval` (the legacy v1 families):
+ *   their params carry `conversationId`/`callId` but no `turnId`, so a decision
+ *   on them cannot be bound to the exact turn whose applied identity we
+ *   attested. Unbindable is unknown, and unknown is refused.
+ *
+ * Both keep answering on the mechanical denial path below. */
+const ONE_SHOT_MUTATION_METHODS = new Set([
+  "item/fileChange/requestApproval",
+  "item/commandExecution/requestApproval",
+]);
 
 export class CodexAppServerManager {
   private readonly sessions = new Map<string, CodexSession>();
+  /** Mutation approvals awaiting a decision, keyed by the durable approval id.
+   * Every path that ends one — a decision, a disconnect, a dropped transport —
+   * must settle these, or a Codex turn waits forever on a promise nobody owns. */
+  private readonly pendingApprovals = new Map<string, {
+    agentName: string;
+    resolve: (approved: boolean) => void;
+  }>();
   private availability: Promise<boolean> | null = null;
   private readonly socketPath: (agent: AgentRecord) => string;
   private readonly transport: (path: string) => Promise<CodexAppServerTransport>;
@@ -336,9 +392,6 @@ export class CodexAppServerManager {
     daemonPort: number,
     graphifyUrl?: string,
   ): string[] {
-    if (!agent.readOnly) {
-      throw new Error(CODEX_APP_SERVER_WRITER_REFUSAL);
-    }
     if (agent.worktreePath === null) {
       throw new Error(`Cannot host Codex app-server without a worktree: ${agent.name}`);
     }
@@ -365,22 +418,48 @@ export class CodexAppServerManager {
     return this.sessions.has(agentName);
   }
 
+  /**
+   * The live thread/turn binding for an agent's brokered session, or null when
+   * it has none. Landing is itself a mutation, so the daemon re-uses the very
+   * same authority for it: this hands back the exact thread, the turn that is
+   * running right now (the one whose tool call is asking to land), and the
+   * rollout the app-server names for that thread. Null when there is no live
+   * session, no running turn, or no path — each of which is a refusal to land,
+   * because an unbrokered Codex writer is exactly what containment forbids.
+   */
+  async activeTurnBinding(agentName: string): Promise<
+    { threadId: string; turnId: string; rolloutPath: string | null } | null
+  > {
+    const session = this.sessions.get(agentName);
+    if (session === undefined || session.activeTurnId === null) return null;
+    const turnId = session.activeTurnId;
+    try {
+      return {
+        threadId: session.threadId,
+        turnId,
+        rolloutPath: await this.threadRolloutPath(session),
+      };
+    } catch {
+      return null;
+    }
+  }
+
   isTurnActive(agentName: string): boolean {
     const session = this.sessions.get(agentName);
     return session !== undefined && session.activeTurnId !== null;
   }
 
+  /** Start a thread for `agent`. A writer is admissible here — the app-server
+   * is the brokered driver — but its sandbox is `read-only` exactly like a
+   * reader's: the sandbox is the structural containment, and the ONLY way a
+   * mutation reaches the filesystem is an approval request this manager
+   * answers. Whether the agent may write is never read from a launch argument;
+   * it is re-proved against the durable holder row on every mutation. */
   async startAgent(
     agent: AgentRecord,
     bootstrap: CodexSessionBootstrap,
-    readOnly: boolean,
     effort: string,
   ): Promise<void> {
-    // Fail closed at the manager itself: a workspace-write / writer thread is
-    // refused even if a caller bypasses the spawner containment gate.
-    if (!readOnly || !agent.readOnly) {
-      throw new Error(CODEX_APP_SERVER_WRITER_REFUSAL);
-    }
     if (bootstrap.initialUserPrompt === undefined) {
       throw new Error("Codex worker bootstrap requires an initial user prompt");
     }
@@ -498,14 +577,24 @@ export class CodexAppServerManager {
     await this.startTurn(agent, text);
   }
 
+  /** Hand one queued mutation decision back to the waiting request. Returns
+   * false when nothing was waiting on that id — an unknown id is never an
+   * allow. An `approved` decision still has to survive the TOCTOU recheck in
+   * `brokerWriterMutation` before it becomes an allow response. */
   async resolveApproval(id: string, approved: boolean): Promise<boolean> {
-    void id;
-    void approved;
-    return false;
+    const pending = this.pendingApprovals.get(id);
+    if (pending === undefined) return false;
+    this.pendingApprovals.delete(id);
+    pending.resolve(approved);
+    return true;
   }
 
   async denyAgentApprovals(agentName: string): Promise<void> {
-    void agentName;
+    for (const [id, pending] of [...this.pendingApprovals]) {
+      if (pending.agentName !== agentName) continue;
+      this.pendingApprovals.delete(id);
+      pending.resolve(false);
+    }
   }
 
   disconnect(agentName: string): void {
@@ -625,8 +714,140 @@ export class CodexAppServerManager {
       }
       throw new Error(`Unsupported Codex app-server request: ${method}`);
     }
-    return approvalDenialResponse(method, params);
+    const session = this.sessions.get(agentName);
+    // Readers — and any request we cannot bind to a live session — keep the
+    // mechanical denial: no gate, no queue, nothing to get wrong. A reader
+    // cannot mutate, so there is nothing here to authorize.
+    if (session === undefined || session.agent.readOnly) {
+      return approvalDenialResponse(method, params);
+    }
+    return await this.brokerWriterMutation(session, method, params, description);
   }
+
+  /**
+   * The writer mutation gate. Deny-by-default at every step: the request must
+   * be a one-shot family, bound to this session's exact live thread and turn,
+   * authorized by the daemon against the exact holder row and a freshly
+   * attested provider-applied identity — then approved — and then authorized
+   * AGAIN, because the holder or the identity can change while an approval
+   * waits. Only that second pass reaches an allow response.
+   */
+  private async brokerWriterMutation(
+    session: CodexSession,
+    method: string,
+    params: JsonObject,
+    description: string,
+  ): Promise<unknown> {
+    const deny = () => approvalDenialResponse(method, params);
+    if (!ONE_SHOT_MUTATION_METHODS.has(method)) return deny();
+
+    const threadId = params.threadId;
+    const turnId = params.turnId;
+    if (typeof threadId !== "string" || typeof turnId !== "string") return deny();
+    // The provider must be asking about the thread we started and the turn we
+    // believe is running. A request for any other thread/turn is unbindable.
+    if (threadId !== session.threadId || turnId !== session.activeTurnId) {
+      return deny();
+    }
+
+    if (!await this.authorizeMutation(session, threadId, turnId, method)) {
+      return deny();
+    }
+
+    const approved = await this.awaitApproval(session, description);
+    if (!approved) return deny();
+
+    // TOCTOU: re-prove everything against the state that exists NOW, not the
+    // state that existed when the approval was queued.
+    if (!await this.authorizeMutation(session, threadId, turnId, method)) {
+      return deny();
+    }
+    return approvalAllowResponse();
+  }
+
+  /** One authorization pass. Any failure to get a clear `allowed: true` — a
+   * throw, a timeout, a closed transport, an unreadable rollout — is a denial. */
+  private async authorizeMutation(
+    session: CodexSession,
+    threadId: string,
+    turnId: string,
+    method: string,
+  ): Promise<boolean> {
+    try {
+      const rolloutPath = await this.threadRolloutPath(session);
+      const decision = await withTimeout(
+        this.options.authorizeMutation({
+          agentId: session.agent.id,
+          agentName: session.agent.name,
+          processIncarnation: session.agent.processIncarnation ?? 0,
+          capabilityEpoch: session.agent.capabilityEpoch,
+          threadId,
+          turnId,
+          method,
+          rolloutPath,
+        }),
+        AUTHORIZE_MUTATION_TIMEOUT_MS,
+      );
+      return decision.allowed === true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** The rollout the app-server itself names for this thread, over this same
+   * connection. Never scanned from the worktree, so a dead predecessor's
+   * rollout cannot answer for a live thread. Null when the app-server reports
+   * no path — unknown, which the caller denies. */
+  private async threadRolloutPath(session: CodexSession): Promise<string | null> {
+    const result = asObject(
+      await session.client.request("thread/read", { threadId: session.threadId }, 10_000),
+      "thread/read response",
+    );
+    const thread = asObject(result.thread, "thread");
+    return typeof thread.path === "string" && thread.path.length > 0
+      ? thread.path
+      : null;
+  }
+
+  /** Queue one approval and wait for its decision. A disconnect or a session
+   * teardown resolves it as denied rather than leaving Codex waiting. */
+  private async awaitApproval(
+    session: CodexSession,
+    description: string,
+  ): Promise<boolean> {
+    let id: string;
+    try {
+      id = await this.options.queueApproval({
+        agentName: session.agent.name,
+        description,
+      });
+    } catch {
+      return false;
+    }
+    return await new Promise<boolean>((resolve) => {
+      this.pendingApprovals.set(id, { agentName: session.agent.name, resolve });
+    });
+  }
+}
+
+function withTimeout<T>(promise: Promise<T>, milliseconds: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error("Codex mutation authorization timed out")),
+      milliseconds,
+    );
+    timer.unref?.();
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
 }
 
 function describeApproval(method: string, params: JsonObject): string | null {
@@ -653,6 +874,19 @@ function describeApproval(method: string, params: JsonObject): string | null {
     return `Codex wants to apply a file patch${reason}`;
   }
   return null;
+}
+
+/**
+ * The allow response for ONE mutation request.
+ *
+ * `accept` decides exactly this request and nothing else. The neighbouring
+ * `acceptForSession` on the same enum is a reusable permission — the thing this
+ * gate exists to prevent — so it is never sent, and neither is any
+ * `GrantedPermissionProfile`: the identity that was attested for this turn must
+ * not be able to authorize a second mutation.
+ */
+function approvalAllowResponse(): unknown {
+  return { decision: "accept" };
 }
 
 function approvalDenialResponse(

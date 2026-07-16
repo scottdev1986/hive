@@ -120,6 +120,7 @@ import {
   type GrokTelemetry,
   type GrokTelemetryReader,
   readClaudeTelemetry,
+  readCodexAppServerTurnIdentity,
   readCodexObservedIdentity,
   readCodexTelemetry,
   readGraphifyCalls,
@@ -151,6 +152,8 @@ import type { QuotaService } from "./quota";
 import {
   reapOrphanCodexHosts,
   type CodexAppServerManager,
+  type CodexMutationAuthorizationRequest,
+  type CodexMutationDecision,
   type ReapOrphanDependencies,
 } from "../adapters/tools/codex-app-server";
 import {
@@ -559,6 +562,7 @@ export interface HiveDaemonOptions {
     | "denyAgentApprovals"
     | "disconnect"
     | "resolveApproval"
+    | "activeTurnBinding"
     | "close"
   >;
   /** Memory watchdog limits; the sweep stays off when omitted so embedded
@@ -1744,10 +1748,11 @@ export class HiveDaemon {
         reason: `${name} is not paused (status ${agent.status})`,
       };
     }
-    // Codex writer authoring is contained: a paused Codex writer must not have
-    // its write authority reissued (defense-in-depth for legacy paused writers;
-    // Codex writers can no longer be launched at all).
-    const containment = codexWriterContainment(agent.tool, agent.readOnly);
+    // Codex writer authoring is contained on resume: reissuing write authority
+    // to a paused Codex writer would reattach it to no brokered session —
+    // 0.144.4 has no durable app-server resume — so the driver is unknown and
+    // the reissue is refused. The work is preserved, not discarded.
+    const containment = codexWriterContainment(agent.tool, agent.readOnly, null);
     if (containment !== null) {
       return {
         resumed: false,
@@ -2940,11 +2945,19 @@ export class HiveDaemon {
         `Cannot land ${name}: it was launched read-only and has no landing authority.`,
       );
     }
+    // A Codex writer may land only from the brokered app-server driver, and
+    // only while its own identity still attests for the exact turn that is
+    // asking. A Codex writer with no live brokered session — a TUI writer, a
+    // recovered or resumed one, a finished session — has no landing authority:
+    // there is nothing to attest against, and unknown is not permission.
     if (agent.tool === "codex") {
-      throw new Error(
-        `Cannot land ${name}: Codex 0.144.4 does not expose an independent process binding for rollout/session identity, so reader-only containment mechanically forbids every Codex writer landing before attestation or Git.\n` +
-          `Fix: have a non-Codex integrator revalidate and land this preserved branch.`,
-      );
+      const decision = await this.authorizeCodexLanding(agent);
+      if (!decision.allowed) {
+        throw new Error(
+          `Cannot land ${name}: ${decision.reason}\n` +
+            `Fix: have a non-Codex integrator revalidate and land this preserved branch.`,
+        );
+      }
     }
     if (isTerminalAgentStatus(agent.status)) {
       throw new Error(
@@ -3000,6 +3013,17 @@ export class HiveDaemon {
     };
     try {
       assertLandAuthority();
+      // Reattest the Codex writer's identity here, against the row that just
+      // passed the final CAS: the checks above ran before the lease and the
+      // authority snapshot, and an identity can drift in between.
+      if (finalRow.tool === "codex") {
+        const reattested = await this.authorizeCodexLanding(finalRow);
+        if (!reattested.allowed) {
+          throw new Error(
+            `Cannot land ${name}: pre-Git Codex reattestation failed — ${reattested.reason}`,
+          );
+        }
+      }
       const landed = await this.land(this.repoRoot, branch, {
         preMergeCheck: assertLandAuthority,
       });
@@ -3031,6 +3055,96 @@ export class HiveDaemon {
       await this.quota?.cancel(record.controlQuotaReservationId);
     }
     return message;
+  }
+
+  /**
+   * Authorize ONE Codex writer mutation. This is the authority the whole Codex
+   * writer feature rests on, so every answer that is not a proven yes is no.
+   *
+   * It re-reads the durable holder row by id (never by name — a same-name
+   * replacement is a different holder), requires the session's snapshot to
+   * still be the current one, requires live write authority, and requires the
+   * provider's own APPLIED identity for this exact thread and turn to match the
+   * immutable launch identity. `unattested`/`unknown`/`drift` are all denials:
+   * an identity we could not read is not an identity that matched.
+   *
+   * Called once before the approval is queued and again immediately before the
+   * allow response — the second call is what closes the TOCTOU window.
+   */
+  async authorizeCodexMutation(
+    request: CodexMutationAuthorizationRequest,
+  ): Promise<CodexMutationDecision> {
+    const deny = (reason: string): CodexMutationDecision => ({
+      allowed: false,
+      reason: `Codex mutation denied for ${request.agentName} (${request.method}): ${reason}`,
+    });
+    const agent = this.db.getAgentById(request.agentId);
+    if (agent === null) return deny("no holder row for that agent id");
+    if (agent.name !== request.agentName) {
+      return deny("the holder for that id no longer answers to this name");
+    }
+    if ((agent.processIncarnation ?? 0) !== request.processIncarnation) {
+      return deny("process incarnation changed since this session started");
+    }
+    if (agent.capabilityEpoch !== request.capabilityEpoch) {
+      return deny("capability epoch changed since this session started");
+    }
+    if (agent.tool !== "codex") return deny("holder is not a Codex agent");
+    if (agent.readOnly) return deny("holder is read-only");
+    if (agent.writeRevoked) return deny("holder's write authority is revoked");
+    if (isTerminalAgentStatus(agent.status)) {
+      return deny(`holder status is ${agent.status} (terminal)`);
+    }
+    if (agent.worktreePath === null) return deny("holder has no worktree");
+    const launch = agent.executionIdentity;
+    if (launch === undefined) {
+      return deny("holder has no immutable launch identity to compare against");
+    }
+    // The provider's applied identity for THIS thread's turn, read from the
+    // rollout the app-server itself named. Absent/unknown never becomes a pass.
+    const observation = await readCodexAppServerTurnIdentity(
+      request.rolloutPath,
+      agent.worktreePath,
+      request.turnId,
+    );
+    const attestation = reconcileCodexIdentity(
+      launch,
+      observation,
+      "codex-app-server",
+    );
+    if (attestation.identityState !== "matching") {
+      return deny(
+        `applied identity for turn ${request.turnId} is ${attestation.identityState}, not a match for the launch identity`,
+      );
+    }
+    return { allowed: true };
+  }
+
+  /** Landing authority for a Codex writer: the same gate its mutations pass,
+   * bound to the live turn that is asking to land. Re-run immediately before
+   * Git so a drift that appears while the merge is being set up still stops it. */
+  private async authorizeCodexLanding(
+    agent: AgentRecord,
+  ): Promise<CodexMutationDecision> {
+    const binding = await this.codexControl?.activeTurnBinding(agent.name) ??
+      null;
+    if (binding === null) {
+      return {
+        allowed: false,
+        reason:
+          "it has no live brokered Codex app-server turn to attest against, so Hive cannot prove which identity is asking to land.",
+      };
+    }
+    return await this.authorizeCodexMutation({
+      agentId: agent.id,
+      agentName: agent.name,
+      processIncarnation: agent.processIncarnation ?? 0,
+      capabilityEpoch: agent.capabilityEpoch,
+      threadId: binding.threadId,
+      turnId: binding.turnId,
+      method: "branch:land",
+      rolloutPath: binding.rolloutPath,
+    });
   }
 
   async queueCodexApproval(

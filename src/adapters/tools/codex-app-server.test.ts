@@ -22,6 +22,10 @@ class FakeTransport implements CodexAppServerTransport {
   private messageHandler: (message: any) => void = () => undefined;
   private closeHandler: (error?: Error) => void = () => undefined;
   rateRead = 0;
+  /** The rollout the app-server names for this thread. Null models a build
+   * that reports no path — unknown, which the gate must deny. */
+  rolloutPath: string | null = "/tmp/maya/rollout.jsonl";
+  threadReadFails = false;
 
   send(message: any): void {
     this.sent.push(message);
@@ -31,6 +35,17 @@ class FakeTransport implements CodexAppServerTransport {
       result = { userAgent: "codex", codexHome: "/tmp/codex" };
     } else if (message.method === "thread/start") {
       result = { thread: { id: "thread-1" } };
+    } else if (message.method === "thread/read") {
+      if (this.threadReadFails) {
+        queueMicrotask(() =>
+          this.messageHandler({
+            id: message.id,
+            error: { code: -32000, message: "thread/read failed" },
+          })
+        );
+        return;
+      }
+      result = { thread: { id: "thread-1", path: this.rolloutPath } };
     } else if (message.method === "turn/start") {
       result = { turn: { id: `turn-${this.sent.length}` } };
     } else if (message.method === "turn/steer") {
@@ -124,6 +139,7 @@ describe("Codex app-server adapter", () => {
       commandRunner: async () => 0,
       onEvent: async () => undefined,
       queueApproval: async () => "approval-1",
+      authorizeMutation: async () => ({ allowed: false, reason: "test default deny" }),
       observeRateLimits: async () => null,
     });
     expect(manager.buildHostCommand(agent(), 4317, "http://127.0.0.1:7799/mcp"))
@@ -180,17 +196,20 @@ describe("Codex app-server adapter", () => {
     }
   });
 
-  test("the public host boundary refuses a writer before building its command", () => {
+  test("the host boundary builds a writer's command: the app-server is the brokered driver", () => {
+    // Writer admission is decided by the containment gate on the driver, not
+    // here. This boundary refusing a writer would only mean Hive could never
+    // host the one Codex writer surface that IS safe; what keeps the writer
+    // contained is the read-only sandbox plus the per-mutation gate.
     const manager = new CodexAppServerManager({
       commandRunner: async () => 0,
       onEvent: async () => undefined,
       queueApproval: async () => "approval-1",
+      authorizeMutation: async () => ({ allowed: false, reason: "test default deny" }),
       observeRateLimits: async () => null,
     });
-    expect(() => manager.buildHostCommand(
-      agent({ readOnly: false }),
-      4317,
-    )).toThrow(/writer\/workspace-write threads are refused/);
+    expect(manager.buildHostCommand(agent({ readOnly: false }), 4317))
+      .toContain("codex-app-server-host");
   });
 
   test("initializes, starts a thread and turn, steers with the active turn precondition, and interrupts", async () => {
@@ -206,6 +225,7 @@ describe("Codex app-server adapter", () => {
         events.push(event);
       },
       queueApproval: async () => "approval-1",
+      authorizeMutation: async () => ({ allowed: false, reason: "test default deny" }),
       observeRateLimits: async (_model, response) => {
         observations.push(response);
         return observations.length === 1
@@ -218,7 +238,7 @@ describe("Codex app-server adapter", () => {
     await manager.startAgent(agent({ readOnly: true }), {
       developerInstructions: "You are maya. Follow Hive rules.",
       initialUserPrompt: "Build the feature",
-    }, true, "high");
+    }, "high");
     expect(transport.sent.map((message) => message.method)).toEqual([
       "initialize",
       "initialized",
@@ -296,12 +316,13 @@ describe("Codex app-server adapter", () => {
       sleep: async () => undefined,
       onEvent: async () => undefined,
       queueApproval: async () => "approval-1",
+      authorizeMutation: async () => ({ allowed: false, reason: "test default deny" }),
       observeRateLimits: async () => null,
     });
     await manager.startAgent(agent({ readOnly: true }), {
       developerInstructions: "You are maya. Follow Hive rules.",
       initialUserPrompt: "Build",
-    }, true, "high");
+    }, "high");
     // The initial turn completes; the session goes idle.
     transport.emit({
       method: "turn/completed",
@@ -335,12 +356,13 @@ describe("Codex app-server adapter", () => {
         queued.push(description);
         return "approval-1";
       },
+      authorizeMutation: async () => ({ allowed: false, reason: "test default deny" }),
       observeRateLimits: async () => null,
     });
     await manager.startAgent(agent({ readOnly: true }), {
       developerInstructions: "You are maya. Follow Hive rules.",
       initialUserPrompt: "Run checks",
-    }, true, "medium");
+    }, "medium");
 
     const attempts = [
       {
@@ -391,6 +413,270 @@ describe("Codex app-server adapter", () => {
     }
     expect(queued).toEqual([]);
     expect(await manager.resolveApproval("approval-1", true)).toEqual(false);
+  });
+
+  // The writer mutation gate. Every case here is a worst case: the question is
+  // never "does an allow work" but "can anything that is not a proven, live,
+  // freshly-attested holder reach the allow response".
+  describe("writer mutation gate", () => {
+    const FILE_CHANGE = "item/fileChange/requestApproval";
+    const COMMAND = "item/commandExecution/requestApproval";
+
+    /** A started writer session with a live turn, plus the gate's call log. */
+    async function writerSession(options: {
+      authorize?: (request: any) => Promise<any>;
+      queueApproval?: () => Promise<string>;
+    } = {}) {
+      const transport = new FakeTransport();
+      const gateCalls: any[] = [];
+      const queued: string[] = [];
+      const manager = new CodexAppServerManager({
+        transport: async () => transport,
+        commandRunner: async () => 0,
+        sleep: async () => undefined,
+        onEvent: async () => undefined,
+        queueApproval: options.queueApproval ?? (async ({ description }) => {
+          queued.push(description);
+          return "approval-1";
+        }),
+        authorizeMutation: async (request) => {
+          gateCalls.push(request);
+          return options.authorize === undefined
+            ? { allowed: false, reason: "test default deny" }
+            : await options.authorize(request);
+        },
+        observeRateLimits: async () => null,
+      });
+      await manager.startAgent(agent({ readOnly: false, id: "agent-maya" }), {
+        developerInstructions: "writer rules",
+        initialUserPrompt: "write code",
+      }, "high");
+      // A live turn: the provider only asks for approval inside one.
+      transport.emit({
+        method: "turn/started",
+        params: { threadId: "thread-1", turn: { id: "turn-9" } },
+      });
+      await Bun.sleep(0);
+      return { manager, transport, gateCalls, queued };
+    }
+
+    /** Emit one approval request and resolve with the response Codex received.
+     * Polls, because a gated request is answered only once its approval
+     * settles — which may be several awaits later. */
+    async function ask(
+      transport: FakeTransport,
+      method: string,
+      params: Record<string, unknown>,
+      id = 501,
+    ): Promise<any> {
+      transport.emit({ id, method, params });
+      for (let attempt = 0; attempt < 200; attempt += 1) {
+        const response = transport.sent.find((message) => message.id === id);
+        if (response !== undefined) return response;
+        await Bun.sleep(1);
+      }
+      return undefined;
+    }
+
+    const bound = { threadId: "thread-1", turnId: "turn-9" };
+
+    test("a denied gate never reaches an allow, and never queues", async () => {
+      const { transport, gateCalls, queued } = await writerSession();
+      const response = await ask(transport, COMMAND, {
+        ...bound,
+        command: "rm -rf /",
+      });
+      expect(response.result).toEqual({ decision: "decline" });
+      expect(gateCalls).toHaveLength(1);
+      // The approval is queued only AFTER the identity gate passes: a denied
+      // holder must never even reach a human with a decision to make.
+      expect(queued).toEqual([]);
+    });
+
+    test("an allowed gate plus an approval sends a one-shot accept, gated twice", async () => {
+      const { manager, transport, gateCalls, queued } = await writerSession({
+        authorize: async () => ({ allowed: true }),
+      });
+      const asked = ask(transport, FILE_CHANGE, {
+        ...bound,
+        grantRoot: "/tmp/maya",
+      });
+      await Bun.sleep(1);
+      // Nothing is decided while the approval waits.
+      expect(transport.sent.find((m) => m.id === 501)).toBeUndefined();
+      expect(queued).toHaveLength(1);
+      expect(await manager.resolveApproval("approval-1", true)).toBe(true);
+
+      const response = await asked;
+      // `accept` decides exactly this request. `acceptForSession` — the other
+      // arm of the same enum — would be a reusable permission, so it is never
+      // what we send.
+      expect(response.result).toEqual({ decision: "accept" });
+      expect(response.result.decision).not.toBe("acceptForSession");
+      // Gated once before the queue and once more before the allow.
+      expect(gateCalls).toHaveLength(2);
+      expect(gateCalls[0]).toMatchObject({
+        agentId: "agent-maya",
+        agentName: "maya",
+        threadId: "thread-1",
+        turnId: "turn-9",
+        rolloutPath: "/tmp/maya/rollout.jsonl",
+      });
+    });
+
+    test("TOCTOU: identity that drifts while the approval waits is denied", async () => {
+      let pass = 0;
+      const { manager, transport, gateCalls } = await writerSession({
+        // Matches on the first pass, drifts on the second — exactly the window
+        // a human approval holds open.
+        authorize: async () => {
+          pass += 1;
+          return pass === 1
+            ? { allowed: true }
+            : { allowed: false, reason: "applied identity drifted mid-approval" };
+        },
+      });
+      const asked = ask(transport, FILE_CHANGE, {
+        ...bound,
+        grantRoot: "/tmp/maya",
+      });
+      await Bun.sleep(1);
+      expect(await manager.resolveApproval("approval-1", true)).toBe(true);
+      const response = await asked;
+      // Approved by a human, and still denied: the recheck is the authority.
+      expect(response.result).toEqual({ decision: "decline" });
+      expect(gateCalls).toHaveLength(2);
+    });
+
+    test("a denied approval stops at one gate call and never rechecks", async () => {
+      const { manager, transport, gateCalls } = await writerSession({
+        authorize: async () => ({ allowed: true }),
+      });
+      const asked = ask(transport, COMMAND, { ...bound, command: "touch x" });
+      await Bun.sleep(1);
+      expect(await manager.resolveApproval("approval-1", false)).toBe(true);
+      expect((await asked).result).toEqual({ decision: "decline" });
+      expect(gateCalls).toHaveLength(1);
+    });
+
+    test("wrong thread and wrong turn are denied without consulting the gate", async () => {
+      const { transport, gateCalls } = await writerSession({
+        authorize: async () => ({ allowed: true }),
+      });
+      const wrongThread = await ask(transport, COMMAND, {
+        threadId: "thread-OTHER",
+        turnId: "turn-9",
+        command: "touch x",
+      }, 511);
+      const wrongTurn = await ask(transport, COMMAND, {
+        threadId: "thread-1",
+        turnId: "turn-STALE",
+        command: "touch x",
+      }, 512);
+      const noIds = await ask(transport, COMMAND, { command: "touch x" }, 513);
+      expect(wrongThread.result).toEqual({ decision: "decline" });
+      expect(wrongTurn.result).toEqual({ decision: "decline" });
+      expect(noIds.result).toEqual({ decision: "decline" });
+      // Unbindable never even asks: there is no identity to attest.
+      expect(gateCalls).toEqual([]);
+    });
+
+    test("a permissions escalation is refused outright, never gated, never granted", async () => {
+      const { transport, gateCalls } = await writerSession({
+        authorize: async () => ({ allowed: true }),
+      });
+      const response = await ask(transport, "item/permissions/requestApproval", {
+        ...bound,
+        cwd: "/tmp/maya",
+        permissions: { fileSystem: { write: ["/tmp/maya"] } },
+      }, 521);
+      // Empty profile: the narrowest scope this family can express is a whole
+      // turn, which would outlive the one identity check that authorized it.
+      expect(response.result).toEqual({ permissions: {}, scope: "turn" });
+      expect(response.result.permissions).toEqual({});
+      expect(gateCalls).toEqual([]);
+    });
+
+    test("the legacy turn-less families are refused: they cannot be bound to a turn", async () => {
+      const { transport, gateCalls } = await writerSession({
+        authorize: async () => ({ allowed: true }),
+      });
+      const exec = await ask(transport, "execCommandApproval", {
+        conversationId: "conv-1",
+        callId: "call-1",
+        command: ["rm", "-rf", "/"],
+      }, 531);
+      const patch = await ask(transport, "applyPatchApproval", {
+        conversationId: "conv-1",
+        callId: "call-2",
+        fileChanges: {},
+      }, 532);
+      expect(exec.result).toEqual({ decision: "denied" });
+      expect(patch.result).toEqual({ decision: "denied" });
+      expect(gateCalls).toEqual([]);
+    });
+
+    test("a throwing gate, an unreadable thread, and a pathless build all deny", async () => {
+      const throwing = await writerSession({
+        authorize: async () => {
+          throw new Error("daemon unreachable");
+        },
+      });
+      expect((await ask(throwing.transport, COMMAND, { ...bound, command: "x" }))
+        .result).toEqual({ decision: "decline" });
+
+      // thread/read fails -> we cannot bind identity to this thread -> deny.
+      const unreadable = await writerSession({
+        authorize: async () => ({ allowed: true }),
+      });
+      unreadable.transport.threadReadFails = true;
+      expect((await ask(unreadable.transport, COMMAND, { ...bound, command: "x" }))
+        .result).toEqual({ decision: "decline" });
+      expect(unreadable.gateCalls).toEqual([]);
+
+      // A build that reports no rollout path still reaches the gate, which is
+      // where "no path" becomes "unattested" and therefore a denial.
+      const pathless = await writerSession({
+        authorize: async (request) => ({
+          allowed: request.rolloutPath !== null,
+          reason: "no path",
+        }),
+      });
+      pathless.transport.rolloutPath = null;
+      expect((await ask(pathless.transport, COMMAND, { ...bound, command: "x" }))
+        .result).toEqual({ decision: "decline" });
+      expect(pathless.gateCalls[0].rolloutPath).toBeNull();
+    });
+
+    test("an unknown/malformed request is refused and never allowed", async () => {
+      const { transport } = await writerSession({
+        authorize: async () => ({ allowed: true }),
+      });
+      // Not an approval family at all: the client throws rather than answering,
+      // which the protocol layer turns into an error response, never an allow.
+      transport.emit({ id: 541, method: "totally/unknown", params: {} });
+      await Bun.sleep(1);
+      const response = transport.sent.find((m) => m.id === 541);
+      expect(response?.result).toBeUndefined();
+    });
+
+    test("a disconnect settles a waiting approval as denied", async () => {
+      const { manager, transport } = await writerSession({
+        authorize: async () => ({ allowed: true }),
+      });
+      const asked = ask(transport, COMMAND, { ...bound, command: "slow" }, 551);
+      await Bun.sleep(1);
+      // The turn is still waiting on a human. Tearing the session down must
+      // resolve it as denied, not leave Codex hanging on a promise nobody owns.
+      manager.disconnect("maya");
+      const response = await asked;
+      expect(response.result).toEqual({ decision: "decline" });
+    });
+
+    test("resolveApproval on an unknown id is never an allow", async () => {
+      const { manager } = await writerSession();
+      expect(await manager.resolveApproval("never-queued", true)).toBe(false);
+    });
   });
 
   test("renders a readable host feed instead of raw protocol JSON", () => {
@@ -851,19 +1137,29 @@ describe("reapOrphanCodexHosts", () => {
   });
 });
 
-test("CodexAppServerManager refuses writer/workspace-write starts", async () => {
+test("a writer thread still starts in the read-only sandbox", async () => {
+  // The app-server is the brokered driver, so a writer is admissible here —
+  // but its sandbox is identical to a reader's. The sandbox is the structural
+  // containment: it is what makes an unasked mutation impossible, leaving the
+  // approval request as the only way to the filesystem.
+  const transport = new FakeTransport();
   const manager = new CodexAppServerManager({
-    socketDir: await mkdtemp(join(tmpdir(), "hive-app-server-refuse-")),
-    queueApproval: async () => "x",
+    transport: async () => transport,
+    commandRunner: async () => 0,
+    sleep: async () => undefined,
+    onEvent: async () => undefined,
+    queueApproval: async () => "approval-1",
+    authorizeMutation: async () => ({ allowed: false, reason: "not under test" }),
     observeRateLimits: async () => null,
-    onEvent: async () => {},
-  } as never);
-  await expect(
-    manager.startAgent(agent({ readOnly: false }), {
-      developerInstructions: "writer rules",
-      initialUserPrompt: "write code",
-    }, false, "high"),
-  ).rejects.toThrow(/writer\/workspace-write threads are refused/);
+  });
+  await manager.startAgent(agent({ readOnly: false }), {
+    developerInstructions: "writer rules",
+    initialUserPrompt: "write code",
+  }, "high");
+
+  const threadStart = transport.sent.find((m) => m.method === "thread/start");
+  expect(threadStart?.params).toMatchObject({ sandbox: "read-only" });
+  expect(threadStart?.params?.approvalPolicy).toBe("on-request");
 });
 
 test("CodexAppServerManager refuses a worker without an initial user prompt", async () => {
@@ -874,13 +1170,13 @@ test("CodexAppServerManager refuses a worker without an initial user prompt", as
       return new FakeTransport();
     },
     queueApproval: async () => "x",
+    authorizeMutation: async () => ({ allowed: false, reason: "test default deny" }),
     observeRateLimits: async () => null,
     onEvent: async () => {},
   });
   await expect(manager.startAgent(
     agent({ readOnly: true }),
     { developerInstructions: "reader rules" },
-    true,
     "high",
   )).rejects.toThrow("requires an initial user prompt");
   expect(connected).toBeFalse();

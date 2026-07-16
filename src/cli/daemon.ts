@@ -134,6 +134,11 @@ export async function runDaemon(): Promise<void> {
     }).then(() => undefined),
     queueApproval: ({ agentName, description }) =>
       daemon.queueCodexApproval(agentName, description),
+    // The writer mutation gate. It is deliberately keyed on the exact agent id
+    // and holder snapshot rather than the agent name: a name is reusable, and a
+    // replacement answering to the same name must never inherit the authority
+    // of the session that asked.
+    authorizeMutation: (request) => daemon.authorizeCodexMutation(request),
     observeRateLimits: (model, response, observedAt) =>
       quota.observeCodexRateLimits(model, response, observedAt),
   });
