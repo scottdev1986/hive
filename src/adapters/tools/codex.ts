@@ -445,18 +445,40 @@ export async function findCodexRolloutBySessionId(
   return findCodexRollout(worktreePath, home, sessionId);
 }
 
-/** Codex 0.144.4 rollout metadata has no PID, launch nonce, process handle, or
- * other datum Hive can bind to a process incarnation. Cwd/source/timestamps
- * are shared by independent and child sessions, so chronology is not proof. */
-export function findCodexRolloutForProcess(
+/** The rollout this agent's process wrote, found by cwd plus creation time:
+ * only rollouts created in this worktree AT OR AFTER this process started
+ * qualify, so a reused worktree's dead-predecessor rollout (created before
+ * this process existed) is never selected; the earliest qualifying rollout is
+ * the launch conversation. Codex 0.144.4 rollout metadata has no PID or launch
+ * nonce, so this binding is OBSERVATION for status/telemetry display — never
+ * proof of execution identity, and never mutation or landing authority (the
+ * app-server driver's thread-named rollout is the only attestation surface). */
+export async function findCodexRolloutForProcess(
   worktreePath: string,
   processStartedAt: string,
   home = homedir(),
 ): Promise<CodexRolloutLocation | null> {
-  void worktreePath;
-  void processStartedAt;
-  void home;
-  return Promise.resolve(null);
+  const launchedAt = Date.parse(processStartedAt);
+  if (!Number.isFinite(launchedAt)) return null;
+  const target = resolve(worktreePath);
+  const candidates: CodexRolloutLocation[] = [];
+  for (const rollout of await listCodexRollouts(home)) {
+    const meta = await readRolloutSessionMeta(rollout.path);
+    if (meta === null || meta.cwd !== target) continue;
+    const createdAt = Date.parse(meta.createdAt);
+    if (!Number.isFinite(createdAt) || createdAt < launchedAt) continue;
+    candidates.push({
+      path: rollout.path,
+      sessionId: meta.sessionId,
+      createdAt: meta.createdAt,
+      mtimeMs: rollout.mtimeMs,
+    });
+  }
+  candidates.sort((left, right) =>
+    Date.parse(left.createdAt) - Date.parse(right.createdAt) ||
+    left.mtimeMs - right.mtimeMs
+  );
+  return candidates[0] ?? null;
 }
 
 export async function findLatestCodexSessionId(
@@ -511,11 +533,15 @@ async function readRolloutSessionMeta(
     parsed.payload === null
   ) throw new Error(`Invalid Codex session_meta in ${path}`);
   const payload = parsed.payload as Record<string, unknown>;
+  // A well-formed session_meta from another client (vscode, exec, app-server)
+  // is not a candidate, not an error: the user's editor sessions share
+  // ~/.codex/sessions with Hive's, and one of them must never poison a scan.
+  if (payload.source !== "cli") return null;
   const sessionId = payload.id ?? payload.session_id;
   const createdAt = (parsed as Record<string, unknown>).timestamp;
   if (
     typeof sessionId !== "string" || typeof payload.cwd !== "string" ||
-    payload.source !== "cli" || typeof createdAt !== "string" ||
+    typeof createdAt !== "string" ||
     !Number.isFinite(Date.parse(createdAt))
   ) {
     throw new Error(`Invalid Codex session_meta in ${path}`);

@@ -13,10 +13,16 @@ public struct LaunchIdentitySnapshot: Equatable, Decodable {
 public struct ObservedIdentitySnapshot: Equatable, Decodable {
     public let model: String
     public let effort: String?
+    /// Where the observation came from ("codex-rollout" is a process-time
+    /// scan, display grade; "codex-app-server" is the process-bound
+    /// attestation surface). Rendered so an observed claim carries its
+    /// confidence, never displayed as more than it is.
+    public let source: String?
 
-    public init(model: String, effort: String? = nil) {
+    public init(model: String, effort: String? = nil, source: String? = nil) {
         self.model = model
         self.effort = effort
+        self.source = source
     }
 }
 

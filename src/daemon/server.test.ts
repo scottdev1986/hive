@@ -4557,12 +4557,54 @@ describe("Codex execution-identity attestation sweep", () => {
     }
   });
 
-  test("matching when the observed identity equals the launch identity", async () => {
+  test("a reader born without a session binds the discovered one and observes matching identity", async () => {
     const db = new HiveDatabase(join(home, "attest-match.db"));
     const daemon = new HiveDaemon({
       db,
       spawner: new StubSpawner(),
       tmux: new FakeDaemonTmux(),
+      telemetryReaders: {
+        codexSession: async () => "session-1",
+        codex: async () => ({ contextPct: 37, lastActivityAt: null }),
+        codexIdentity: async () => ({
+          status: "observed",
+          model: "gpt-5.6-sol",
+          effort: "xhigh",
+          turnId: "turn-1",
+          sessionId: "session-1",
+          observedAt: "2026-07-15T18:00:00.000Z",
+        }),
+      },
+    });
+    // The Codex TUI path never hook-binds a session id: identity and telemetry
+    // must still land from the process-time rollout discovery.
+    db.insertAgent(codexAgent({ readOnly: true, toolSessionId: undefined }));
+    try {
+      await daemon.refreshToolTelemetry();
+      const row = db.getAgentByName("maya")!;
+      expect(row.toolSessionId).toBe("session-1");
+      expect(row.identityState).toBe("matching");
+      expect(row.liveModel).toBe("gpt-5.6-sol");
+      expect(row.liveEffort).toBe("xhigh");
+      expect(row.contextPct).toBe(37);
+      expect(row.status).toBe("working");
+      expect(row.writeRevoked).toBe(false);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("a writer never acquires a scan-discovered session, and rollout-matching cannot hold write authority", async () => {
+    const db = new HiveDatabase(join(home, "attest-writer-scan.db"));
+    const suspended: string[] = [];
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new StubSpawner(),
+      tmux: new FakeDaemonTmux(),
+      suspendProcesses: async (session) => {
+        suspended.push(session);
+        return { suspended: [{ pid: 100, command: "codex" }], unstopped: [] };
+      },
       telemetryReaders: {
         codexSession: async () => "session-1",
         codex: async () => ({ contextPct: null, lastActivityAt: null }),
@@ -4576,10 +4618,17 @@ describe("Codex execution-identity attestation sweep", () => {
         }),
       },
     });
-    db.insertAgent(codexAgent());
+    db.insertAgent(codexAgent({ toolSessionId: undefined }));
     try {
       await daemon.refreshToolTelemetry();
-      expect(db.getAgentByName("maya")?.identityState).toBe("matching");
+      const row = db.getAgentByName("maya")!;
+      // The scan is observation, never identity evidence for a writer.
+      expect(row.toolSessionId).toBeUndefined();
+      // A rollout-sourced "matching" is not the app-server attestation writers
+      // are contained on: the backstop pauses exactly as it would on unknown.
+      expect(row.status).toBe("control-paused");
+      expect(row.writeRevoked).toBe(true);
+      expect(suspended).toEqual(["hive-maya"]);
     } finally {
       db.close();
     }

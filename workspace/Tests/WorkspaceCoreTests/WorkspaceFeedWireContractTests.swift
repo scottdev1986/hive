@@ -45,6 +45,7 @@ final class WorkspaceFeedWireContractTests: XCTestCase {
         XCTAssertEqual(agent.launchEffort, "high")
         XCTAssertEqual(agent.observedModel, "gpt-observed")
         XCTAssertEqual(agent.observedEffort, "medium")
+        XCTAssertEqual(agent.observedIdentity?.source, "codex-rollout")
         XCTAssertEqual(agent.identityState, "drift")
         XCTAssertEqual(agent.toolSessionID, "tool-session-1")
         XCTAssertEqual(agent.processIncarnation, 7)

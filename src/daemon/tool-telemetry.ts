@@ -250,16 +250,30 @@ export type CodexIdentityObservation =
  * never be read as this agent's identity. Both `model` and `effort` must be
  * present — an incomplete record is not an identity. Pure; exported for tests.
  */
-export function newestTurnContextIdentity(
-  tail: string,
-  expectedCwd: string,
-): { model: string; effort: string; turnId: string | null; observedAt: string | null } | null {
-  const wanted = resolve(expectedCwd);
-  // Scan raw lines from newest to oldest so a truncated/malformed full line
-  // after a valid older turn_context cannot be discarded and promote stale
-  // matching. Only the first physical line of a mid-file tail may be skipped
-  // when unparseable (TAIL_BYTES can start mid-record).
-  const lines = tail.split("\n");
+export interface TurnContextIdentity {
+  model: string;
+  effort: string;
+  turnId: string | null;
+  observedAt: string | null;
+}
+
+type TurnContextScan =
+  | { outcome: "found"; identity: TurnContextIdentity }
+  // An in-cwd turn_context was reached but is incomplete, foreign-sourced, or
+  // malformed: unknown — never fall through to an older complete record.
+  | { outcome: "refused" }
+  | { outcome: "none" };
+
+/** Scan lines newest-to-oldest for the newest in-cwd turn_context so a
+ * truncated/malformed full line after a valid older turn_context cannot be
+ * discarded and promote stale matching. `forgive` marks the line indexes that
+ * may legitimately be partial (a chunk boundary or a live mid-write file end)
+ * and are skipped instead of refusing the whole scan. */
+function scanTurnContextLines(
+  lines: string[],
+  wanted: string,
+  forgive: (index: number) => boolean,
+): TurnContextScan {
   for (let index = lines.length - 1; index >= 0; index--) {
     const line = lines[index]!;
     if (line.length === 0) continue;
@@ -267,37 +281,139 @@ export function newestTurnContextIdentity(
     try {
       entry = JSON.parse(line);
     } catch {
-      if (index === 0) continue;
-      return null;
+      if (forgive(index)) continue;
+      return { outcome: "refused" };
     }
     if (!isRecord(entry) || entry.type !== "turn_context") continue;
     // Newest in-cwd turn_context wins. Incomplete or unparseable payload is
     // unknown — never fall through to an older complete matching record.
-    if (!isRecord(entry.payload)) return null;
+    if (!isRecord(entry.payload)) return { outcome: "refused" };
     const payload = entry.payload;
     if (typeof payload.cwd !== "string" || resolve(payload.cwd) !== wanted) {
       continue;
     }
-    // Main-thread provenance must be exact: payload.source === "cli".
-    // Missing/empty/non-string/non-cli is not parent identity (unknown).
-    if (payload.source !== "cli") {
-      // Same-cwd non-cli or source-less evidence is not a complete parent
-      // observation — treat as incomplete for this record and keep scanning
-      // only if it is NOT an in-cwd turn_context. An in-cwd turn without
-      // source=cli means unknown (do not fall through to older matching).
-      return null;
+    // Provenance is proven at the SESSION level: every rollout this reader is
+    // pointed at was selected by session_meta.source === "cli" (the finder
+    // filters), and a real 0.144.4 TUI turn_context carries NO source field at
+    // all — measured live on a running TUI agent's rollout; the earlier claim
+    // that it carries source="cli" came from a fixture, not the disk. A
+    // PRESENT non-cli source is still refused as unknown, never skipped.
+    if (payload.source !== undefined && payload.source !== "cli") {
+      return { outcome: "refused" };
     }
     const model = payload.model;
     const effort = payload.effort;
-    if (typeof model !== "string" || model.length === 0) return null;
-    if (typeof effort !== "string" || effort.length === 0) return null;
+    if (typeof model !== "string" || model.length === 0) {
+      return { outcome: "refused" };
+    }
+    if (typeof effort !== "string" || effort.length === 0) {
+      return { outcome: "refused" };
+    }
     const turnId = typeof payload.turn_id === "string" ? payload.turn_id : null;
     const observedAt = typeof entry.timestamp === "string"
       ? entry.timestamp
       : null;
-    return { model, effort, turnId, observedAt };
+    return { outcome: "found", identity: { model, effort, turnId, observedAt } };
   }
-  return null;
+  return { outcome: "none" };
+}
+
+export function newestTurnContextIdentity(
+  tail: string,
+  expectedCwd: string,
+): TurnContextIdentity | null {
+  // Only the first physical line of a mid-file tail may be skipped when
+  // unparseable (a tail can start mid-record).
+  const scan = scanTurnContextLines(
+    tail.split("\n"),
+    resolve(expectedCwd),
+    (index) => index === 0,
+  );
+  return scan.outcome === "found" ? scan.identity : null;
+}
+
+// A turn_context is written at turn START; a single working turn can stream
+// megabytes of records after it, so no fixed tail is guaranteed to contain
+// one. Identity therefore scans the file BACKWARDS in chunks until the newest
+// turn_context is reached, bounded so a pathological transcript cannot stall
+// the sweep. Measured live: a 7.5MB rollout whose newest turn_context sat
+// ~6.5MB before EOF read as permanently unknown under the old 256KB tail.
+const IDENTITY_SCAN_CHUNK_BYTES = 256 * 1024;
+const IDENTITY_SCAN_MAX_BYTES = 64 * 1024 * 1024;
+
+/** The newest in-cwd `turn_context` identity anywhere in the rollout, found
+ * by a bounded backwards scan. Same per-record rules as
+ * `newestTurnContextIdentity`; only genuinely partial lines (a chunk
+ * boundary's first line, or the live file's still-being-written last line)
+ * are forgiven. Null is unknown. */
+export async function newestTurnContextIdentityInFile(
+  path: string,
+  expectedCwd: string,
+): Promise<TurnContextIdentity | null> {
+  const wanted = resolve(expectedCwd);
+  let handle;
+  try {
+    handle = await open(path, "r");
+  } catch {
+    return null;
+  }
+  try {
+    const { size } = await handle.stat();
+    let end = size;
+    // The newer chunk's partial first line: its beginning lives in the next
+    // older chunk, so it is joined there. Kept as bytes — a chunk boundary
+    // can split a multi-byte character, not just a line.
+    let carry = Buffer.alloc(0);
+    // The file's last physical line may be a live mid-write partial. It is
+    // the LAST line of the first window that yields scannable lines (a
+    // partial longer than a whole chunk rides the carry until then), and only
+    // that one line is ever forgiven as unparseable.
+    let mayForgiveFileEnd = true;
+    let scanned = 0;
+    while (end > 0 && scanned < IDENTITY_SCAN_MAX_BYTES) {
+      const start = Math.max(0, end - IDENTITY_SCAN_CHUNK_BYTES);
+      const length = end - start;
+      const { buffer, bytesRead } = await handle.read(
+        Buffer.alloc(length),
+        0,
+        length,
+        start,
+      );
+      scanned += length;
+      const combined = Buffer.concat([buffer.subarray(0, bytesRead), carry]);
+      let textStart = 0;
+      if (start > 0) {
+        const firstNewline = combined.indexOf(0x0a);
+        if (firstNewline === -1) {
+          // No complete line in this window: everything joins the carry.
+          carry = combined;
+          end = start;
+          continue;
+        }
+        carry = combined.subarray(0, firstNewline);
+        textStart = firstNewline + 1;
+      } else {
+        carry = Buffer.alloc(0);
+      }
+      const lines = combined.subarray(textStart).toString("utf8").split("\n");
+      const lastIndex = lines.length - 1;
+      const forgiveFileEnd = mayForgiveFileEnd;
+      const scan = scanTurnContextLines(
+        lines,
+        wanted,
+        (index) => forgiveFileEnd && index === lastIndex,
+      );
+      if (scan.outcome === "found") return scan.identity;
+      if (scan.outcome === "refused") return null;
+      if (lines.some((line) => line.length > 0)) mayForgiveFileEnd = false;
+      end = start;
+    }
+    return null;
+  } catch {
+    return null;
+  } finally {
+    await handle.close().catch(() => {});
+  }
 }
 
 /**
@@ -318,9 +434,12 @@ export async function readCodexObservedIdentity(
     ? await findCodexRolloutBySessionId(worktreePath, toolSessionId)
     : await findCodexRolloutBySessionId(worktreePath, toolSessionId, home);
   if (rollout === null) return { status: "absent" };
-  const tail = await readFileTail(rollout.path);
-  if (tail === null) return { status: "unknown" };
-  const identity = newestTurnContextIdentity(tail, worktreePath);
+  // A turn_context is written at turn start and can sit megabytes before EOF
+  // mid-turn, so identity scans the whole file backwards rather than a tail.
+  const identity = await newestTurnContextIdentityInFile(
+    rollout.path,
+    worktreePath,
+  );
   if (identity === null) return { status: "unknown" };
   return {
     status: "observed",

@@ -189,10 +189,15 @@ export function compactActiveTeam(
       liveModel: agent.liveModel ?? null,
       // Attestation is a Codex concern; surfacing it only there keeps a truthful
       // "unattested" for Claude/Grok from reading as a problem where none exists.
+      // `identitySource` carries the observation's provenance — "codex-rollout"
+      // is a process-time scan (display grade), "codex-app-server" is the
+      // process-bound attestation surface — so a reader of this row can tell
+      // which claim it is looking at.
       ...(agent.tool === "codex"
         ? {
           liveEffort: agent.liveEffort ?? null,
           identityState: attestationStateOf(agent),
+          identitySource: agent.observedIdentity?.source ?? null,
         }
         : {}),
       status: agent.status,

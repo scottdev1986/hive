@@ -2104,9 +2104,13 @@ export class HiveDaemon {
           break;
         }
         case "codex": {
+          // Bind the discovered session for READERS only: a writer must never
+          // acquire a scan-discovered toolSessionId, because downstream
+          // reattestation paths treat a bound session as identity evidence and
+          // the scan is observation, not proof (see findCodexRolloutForProcess).
           if (
             codexSessionTrusted && current.toolSessionId === undefined &&
-            codexSession !== null
+            codexSession !== null && current.readOnly
           ) {
             updates.toolSessionId = codexSession;
           }
@@ -2233,10 +2237,16 @@ export class HiveDaemon {
       }
       // Fail-closed enforcement (maintenance backstop): every Codex writer
       // without a process-bound, matching provider identity is paused without
-      // waiting for a turn. This includes migrated/unattested rows.
+      // waiting for a turn. This includes migrated/unattested rows. A matching
+      // verdict only counts for a writer when it came from the app-server
+      // surface: the rollout scan is observation for status display, and a
+      // scan-observed "matching" must never stand in for the process-bound
+      // attestation writers are contained on.
       if (
         current.tool === "codex" && !current.readOnly && !current.writeRevoked &&
-        attestationStateOf(persisted) !== "matching"
+        (attestationStateOf(persisted) !== "matching" ||
+          (updates.observedIdentity ?? persisted.observedIdentity)?.source !==
+            "codex-app-server")
       ) {
         const observed = updates.observedIdentity ?? persisted.observedIdentity;
         const launch = persisted.executionIdentity;

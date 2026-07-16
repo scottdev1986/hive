@@ -86,6 +86,7 @@ final class ProjectStateTests: XCTestCase {
                        toolSessionID: String? = nil, processIncarnation: Int = 1,
                        launchEffort: String? = nil,
                        observedModel: String? = nil, observedEffort: String? = "medium",
+                       observedSource: String? = nil,
                        identityState: String = "matching", writeRevoked: Bool? = false,
                        hasObservedIdentity: Bool = true,
                        completeAttachment: Bool = true,
@@ -100,7 +101,8 @@ final class ProjectStateTests: XCTestCase {
                         model: model, effort: requestedEffort),
                       observedIdentity: hasObservedIdentity
                         ? ObservedIdentitySnapshot(
-                            model: observedModel ?? model, effort: observedEffort)
+                            model: observedModel ?? model, effort: observedEffort,
+                            source: observedSource)
                         : nil,
                       identityState: identityState, status: status,
                       taskDescription: task, tmuxSession: session ?? "hive-\(name)",
@@ -305,12 +307,15 @@ final class ProjectStateTests: XCTestCase {
             "worker", tool: "codex", model: "gpt-requested",
             launchEffort: "high",
             observedModel: "gpt-observed", observedEffort: "low",
+            observedSource: "codex-rollout",
             identityState: "drift")])
 
         let pane = try XCTUnwrap(state.panes[paneID])
         XCTAssertTrue(pane.headerDescription.contains("launch gpt-requested @ high"))
         XCTAssertTrue(pane.headerDescription.contains("observed gpt-observed @ low"))
-        XCTAssertTrue(pane.headerDescription.contains("identity drift"))
+        // The observation's provenance is part of the claim: a scan-derived
+        // identity must not display with attestation-grade confidence.
+        XCTAssertTrue(pane.headerDescription.contains("identity drift (rollout scan)"))
         XCTAssertFalse(pane.headerDescription.contains("authoring disabled"))
     }
 

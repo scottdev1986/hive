@@ -13,6 +13,7 @@ import {
   lastCodexTurnCompleted,
   lastGrokTurnCompleted,
   newestTurnContextIdentity,
+  newestTurnContextIdentityInFile,
   readCodexAppServerTurnIdentity,
   turnContextIdentityForTurn,
   readClaudeTelemetry,
@@ -210,14 +211,16 @@ describe("codex rollout telemetry", () => {
   });
 
   // A real Codex CLI 0.144.4 turn_context record (fields trimmed to the ones
-  // the reader depends on), matching the shape observed on disk.
+  // the reader depends on), matching the shape observed on disk: a live TUI
+  // rollout's turn_context carries NO source field — provenance lives on the
+  // session_meta line the finder already filters on.
   function turnContext(
     model: string,
     effort: string,
     cwd: string,
     turnId: string,
     timestamp: string,
-    source: string = "cli",
+    source?: string,
   ): string {
     return JSON.stringify({
       timestamp,
@@ -228,7 +231,7 @@ describe("codex rollout telemetry", () => {
         workspace_roots: [cwd],
         model,
         effort,
-        source,
+        ...(source === undefined ? {} : { source }),
         multi_agent_mode: "explicitRequestOnly",
         collaboration_mode: {
           mode: "default",
@@ -305,6 +308,16 @@ describe("codex rollout telemetry", () => {
       turnId: "t1",
       observedAt: "2026-07-10T10:00:00.000Z",
     });
+    // A legacy record that does carry source="cli" still reads.
+    const legacy = turnContext(
+      "gpt-5.6-sol", "xhigh", cwd, "t1", "2026-07-10T10:00:00.000Z", "cli",
+    );
+    expect(newestTurnContextIdentity(legacy + "\n", cwd)).not.toBeNull();
+    // A PRESENT non-cli source is refused as unknown, never skipped.
+    const foreign = turnContext(
+      "gpt-5.6-sol", "xhigh", cwd, "t1", "2026-07-10T10:00:00.000Z", "vscode",
+    );
+    expect(newestTurnContextIdentity(foreign + "\n", cwd)).toEqual(null);
     // A turn_context missing effort is not a complete identity.
     const noEffort = JSON.stringify({
       type: "turn_context",
@@ -366,10 +379,11 @@ describe("codex rollout telemetry", () => {
         turnId: "turn-9",
         observedAt: "2026-07-16T08:58:49.081Z",
       });
-      // The TUI reader cannot see this record at all — it demands source="cli".
-      // That is exactly why the app-server needs its own reader rather than a
-      // relaxed shared one.
-      expect(newestTurnContextIdentity(tail, cwd)).toBeNull();
+      // The TUI reader also parses a source-less record — real TUI
+      // turn_contexts carry no source either, so provenance is enforced where
+      // it actually exists: the session_meta filter in the rollout finders.
+      // The app-server keeps its own reader for the tighter exact-turn bind.
+      expect(newestTurnContextIdentity(tail, cwd)).not.toBeNull();
     });
 
     test("another turn's identity never answers for the turn being asked about", () => {
@@ -447,15 +461,54 @@ test("newest incomplete in-cwd turn_context is unknown, never older complete", (
       .toEqual(null);
   });
 
-  test("missing or non-cli source on newest in-cwd turn_context is unknown", () => {
+  test("identity is found even when the newest turn_context sits megabytes before EOF", async () => {
+    const home = makeHome();
+    const cwd = resolve(WORKTREE);
+    // A turn_context is written at turn START; a working turn then streams
+    // records after it. Under a fixed 256KB tail this file read as unknown
+    // forever (measured live on a 7.5MB rollout).
+    const filler = JSON.stringify({
+      type: "event_msg",
+      payload: { type: "agent_message", message: "x".repeat(1024) },
+    });
+    const lines = [
+      turnContext("gpt-5.6-sol", "xhigh", cwd, "turn-1", "2026-07-10T10:01:00.000Z"),
+      ...Array(900).fill(filler),
+    ];
+    const path = join(home, "big-rollout.jsonl");
+    // The final line is a live mid-write partial: forgiven, never fatal.
+    writeFileSync(
+      path,
+      lines.join("\n") + "\n" + '{"type":"event_msg","payload":{"type":"agent_',
+    );
+    expect(await newestTurnContextIdentityInFile(path, cwd)).toMatchObject({
+      model: "gpt-5.6-sol",
+      effort: "xhigh",
+      turnId: "turn-1",
+    });
+    // The same rules still refuse a newest in-cwd record that is incomplete.
+    const incomplete = JSON.stringify({
+      type: "turn_context",
+      payload: { cwd, model: "gpt-5.6-luna", turn_id: "t2" },
+      timestamp: "2026-07-10T11:00:00.000Z",
+    });
+    writeFileSync(path, lines.join("\n") + "\n" + incomplete + "\n");
+    expect(await newestTurnContextIdentityInFile(path, cwd)).toBeNull();
+  });
+
+  test("a source-less turn_context reads (the live TUI shape); a present non-cli source is unknown", () => {
     const cwd = resolve(WORKTREE);
     const older = turnContext("gpt-5.6-sol", "xhigh", cwd, "old", "2026-07-10T10:00:00.000Z");
+    // Measured live: a real TUI rollout's turn_context has no source field.
+    // Session provenance is the finder's session_meta.source === "cli" filter.
     const noSource = JSON.stringify({
       type: "turn_context",
       payload: { cwd, model: "gpt-5.6-luna", effort: "low", turn_id: "new" },
       timestamp: "2026-07-10T11:00:00.000Z",
     });
-    expect(newestTurnContextIdentity(older + "\n" + noSource + "\n", cwd)).toEqual(null);
+    expect(newestTurnContextIdentity(older + "\n" + noSource + "\n", cwd))
+      .toMatchObject({ model: "gpt-5.6-luna", effort: "low", turnId: "new" });
+    // A source that IS present but not "cli" is refused, never skipped.
     const emptySource = turnContext("gpt-5.6-luna", "low", cwd, "new", "2026-07-10T11:00:00.000Z", "");
     expect(newestTurnContextIdentity(older + "\n" + emptySource + "\n", cwd)).toEqual(null);
   });

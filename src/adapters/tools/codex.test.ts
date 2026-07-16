@@ -442,7 +442,7 @@ describe("Codex adapter", () => {
       .toEqual("large-meta-session");
   });
 
-  test("process binding stays unknown when a same-name same-cwd child starts first", async () => {
+  test("process binding excludes predecessor rollouts and picks the earliest created after process start", async () => {
     const fakeHome = join(tempRoot, "process-bound-codex-home");
     const dayDir = join(codexSessionsDirectory(fakeHome), "2026", "07", "15");
     await mkdir(dayDir, { recursive: true });
@@ -456,22 +456,32 @@ describe("Codex adapter", () => {
         agent_nickname: "maya",
       },
     })}\n`;
+    // A dead predecessor in the reused worktree: created BEFORE this process
+    // started, so it can never be observed as this process's session.
     await writeFile(
       join(dayDir, "rollout-predecessor.jsonl"),
       meta("predecessor", "2026-07-15T17:59:59.000Z"),
     );
     await writeFile(
-      join(dayDir, "rollout-child.jsonl"),
-      meta("child", "2026-07-15T18:00:00.100Z"),
+      join(dayDir, "rollout-launch.jsonl"),
+      meta("launch", "2026-07-15T18:00:00.100Z"),
     );
     await writeFile(
-      join(dayDir, "rollout-parent.jsonl"),
-      meta("parent", "2026-07-15T18:00:00.200Z"),
+      join(dayDir, "rollout-later.jsonl"),
+      meta("later", "2026-07-15T18:00:00.200Z"),
     );
 
-    expect(await findCodexRolloutForProcess(
+    expect((await findCodexRolloutForProcess(
       worktreePath,
       "2026-07-15T18:00:00.000Z",
+      fakeHome,
+    ))?.sessionId).toBe("launch");
+
+    // A process started after every rollout observes nothing rather than
+    // inheriting a predecessor.
+    expect(await findCodexRolloutForProcess(
+      worktreePath,
+      "2026-07-15T19:00:00.000Z",
       fakeHome,
     )).toBeNull();
   });

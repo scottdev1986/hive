@@ -15,6 +15,10 @@ public struct PaneState: Equatable {
     public var observedModel: String?
     public var observedEffort: String?
     public var identityState: String?
+    /// Provenance of the observed identity ("codex-rollout" scan vs
+    /// "codex-app-server" attestation) so the header claim carries its
+    /// confidence grade.
+    public var identitySource: String?
     /// Raw daemon status word ("working", "awaiting-approval", …) for headers.
     /// `status` below is the semantic mapping that drives color and attention.
     public var feedStatus: String
@@ -30,7 +34,7 @@ public struct PaneState: Equatable {
     public init(id: PaneID, kind: PaneKind, title: String, tool: String? = nil,
                 model: String? = nil, effort: String? = nil,
                 observedModel: String? = nil, observedEffort: String? = nil,
-                identityState: String? = nil,
+                identityState: String? = nil, identitySource: String? = nil,
                 feedStatus: String, status: PaneStatus,
                 taskDescription: String? = nil, tmuxSession: String? = nil,
                 attachmentIdentity: PaneAttachmentIdentity? = nil,
@@ -44,6 +48,7 @@ public struct PaneState: Equatable {
         self.observedModel = observedModel
         self.observedEffort = observedEffort
         self.identityState = identityState
+        self.identitySource = identitySource
         self.feedStatus = feedStatus
         self.status = status
         self.taskDescription = taskDescription
@@ -63,7 +68,7 @@ public struct PaneState: Equatable {
         if kind == .agent {
             parts.append("launch \(Self.describe(model: model, effort: effort))")
             parts.append("observed \(Self.describe(model: observedModel, effort: observedEffort))")
-            parts.append("identity \(identityState ?? "unknown")")
+            parts.append("identity \(identityState ?? "unknown")\(Self.describe(source: identitySource))")
         } else if let model {
             parts.append(model)
         }
@@ -77,6 +82,17 @@ public struct PaneState: Equatable {
     private static func describe(model: String?, effort: String?) -> String {
         guard let model else { return "unknown" }
         return effort.map { "\(model) @ \($0)" } ?? model
+    }
+
+    /// A scan-derived observation must not display with the same confidence as
+    /// a process-bound attestation, so the identity word carries its source.
+    private static func describe(source: String?) -> String {
+        switch source {
+        case "codex-rollout": return " (rollout scan)"
+        case "codex-app-server": return " (app-server)"
+        case .some(let other): return " (\(other))"
+        case nil: return ""
+        }
     }
 
     /// Human status line for accessibility values and fallback attention text.
@@ -303,6 +319,7 @@ public final class ProjectState {
             pane.observedModel = nil
             pane.observedEffort = nil
             pane.identityState = "unknown"
+            pane.identitySource = nil
             pane.feedStatus = "unknown"
             pane.status = .disconnected(
                 reason: "ambiguous same-name agents", lastConfirmed: "unknown")
@@ -403,6 +420,7 @@ public final class ProjectState {
             tool: agent.tool, model: agent.launchModel, effort: agent.launchEffort,
             observedModel: agent.observedModel, observedEffort: agent.observedEffort,
             identityState: agent.identityState,
+            identitySource: agent.observedIdentity?.source,
             feedStatus: agent.status,
             status: attachment == nil
                 ? .disconnected(reason: "attachment identity incomplete",
@@ -441,6 +459,7 @@ public final class ProjectState {
             || pane.observedModel != agent.observedModel
             || pane.observedEffort != agent.observedEffort
             || pane.identityState != agent.identityState
+            || pane.identitySource != agent.observedIdentity?.source
             || pane.taskDescription != agent.taskDescription
             || pane.tmuxSession != agent.tmuxSession
             || pane.attachmentIdentity != attachment
@@ -453,6 +472,7 @@ public final class ProjectState {
         pane.observedModel = agent.observedModel
         pane.observedEffort = agent.observedEffort
         pane.identityState = agent.identityState
+        pane.identitySource = agent.observedIdentity?.source
         pane.taskDescription = agent.taskDescription
         pane.tmuxSession = agent.tmuxSession
         pane.attachmentIdentity = attachment
