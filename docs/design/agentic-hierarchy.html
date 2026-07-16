@@ -19,12 +19,12 @@
         <div>
           <p class="eyebrow">Agentic hierarchy redesign</p>
           <h1>The Queen’s <span>Hive</span></h1>
-          <p class="hero-copy">Hive grows from a flat queen-to-workers fan-out into a governed hierarchy the queen scales to the work: the engineer decides, the queen orchestrates, lead workers integrate, and workers execute.</p>
+          <p class="hero-copy">Hive grows from a flat queen-to-workers fan-out into a governed hierarchy the queen scales to the work: the engineer decides, the queen orchestrates and owns direct work, leads integrate crews when a run earns them, and workers execute.</p>
         </div>
         <aside class="hero-aside" aria-label="Core operating principle">
           <p class="kicker">Core operating principle</p>
-          <h2>Delegate execution.<br>Never delegate authority.</h2>
-          <p>Parallelism is earned by file-disjoint work and explicit interfaces. Tightly coupled decisions stay with one agent.</p>
+          <h2>Delegate execution.<br>Bound every authority.</h2>
+          <p>Operational capabilities attenuate at every hop; the engineer keeps accountability and the G1/G2 gates. Parallelism is earned by file-disjoint work and explicit interfaces.</p>
           <div class="authority-line">The human engineer remains in charge.</div>
         </aside>
       </div>
@@ -37,13 +37,13 @@
         </article>
         <article class="principle">
           <span class="num">02 / CONTAIN</span>
-          <strong>Integrate one level at a time</strong>
-          <p>Workers merge to leads. Leads assemble parts. The protected queue alone lands to main.</p>
+          <strong>Promote through the current owner</strong>
+          <p>Candidates promote through their current owner — lead crews only when approved — and the daemon’s serialized queue alone moves integration refs and main.</p>
         </article>
         <article class="principle">
           <span class="num">03 / CONTROL</span>
-          <strong>Artifacts carry context</strong>
-          <p>Specs, task lists, and interface contracts live on disk—not in a telephone game of chat relays.</p>
+          <strong>Records carry context</strong>
+          <p>Specs, tasks, and interface contracts are durable records with ArtifactRefs—not chat relays or “latest” files on disk.</p>
         </article>
       </div>
     </div>
@@ -53,15 +53,15 @@
         <div class="section-head">
           <div>
             <p class="section-label">01 · The hierarchy</p>
-            <h2>Four levels, one clear chain of ownership.</h2>
+            <h2>Four responsibilities, one revisioned ownership chain.</h2>
           </div>
-          <p>The queen remains the single task input, but execution fans out through accountable leads. Every worker branch crosses a review gate before it joins a lead’s integration branch.</p>
+          <p>The queen is the permanent task root. The run’s TopologyDecision attaches each worker directly to the queen or inserts a lead owner above a crew; either way, every candidate crosses an independent review and a daemon-serialized promotion before it joins its next integration stage.</p>
         </div>
 
-        <figure class="diagram" aria-label="Organization chart: Engineer to Queen to Leads to Workers, with reviewers on worker-to-lead merge edges">
+        <figure class="diagram" aria-label="Illustrative full-hive organization chart: Engineer to Queen to Leads to Workers, with independent review gates on promotion edges">
           <svg viewBox="0 0 1100 610" role="img" aria-labelledby="org-title org-desc">
-            <title id="org-title">The Queen’s Hive hierarchy</title>
-            <desc id="org-desc">The engineer directs the queen. The queen directs three leads. Each lead directs workers. Reviewers gate worker branch merges into lead branches.</desc>
+            <title id="org-title">The Queen’s Hive — illustrative full-hive shape</title>
+            <desc id="org-desc">One illustrative full-hive run: the engineer directs the queen; the queen owns three lead crews in this example. Direct and flat runs attach workers straight to the queen and are equally first-class. Independent reviewers gate every promotion.</desc>
             <defs>
               <marker id="org-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
                 <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--line-strong)"/>
@@ -71,7 +71,7 @@
             <text x="550" y="37" text-anchor="middle" class="svg-label svg-muted">Final authority</text>
             <rect x="430" y="55" width="240" height="82" rx="16" class="node node-engineer"/>
             <text x="550" y="88" text-anchor="middle" class="svg-title">Engineer</text>
-            <text x="550" y="112" text-anchor="middle" class="svg-copy svg-muted">approves · decides · lands</text>
+            <text x="550" y="112" text-anchor="middle" class="svg-copy svg-muted">approves · decides · authorizes land</text>
 
             <path d="M550 137 V175" class="connector" marker-end="url(#org-arrow)"/>
             <rect x="400" y="177" width="300" height="96" rx="18" class="node node-queen"/>
@@ -132,7 +132,7 @@
             </g>
 
             <circle cx="350" cy="588" r="5" fill="var(--purple)"/>
-            <text x="365" y="592" class="svg-small" fill="var(--purple)">REVIEW = mandatory worker→lead merge gate · different vendor when available</text>
+            <text x="365" y="592" class="svg-small" fill="var(--purple)">ILLUSTRATIVE FULL-HIVE SHAPE · REVIEW = mandatory independent promotion gate · temporary assignment · cross-vendor preferred</text>
           </svg>
         </figure>
 
@@ -145,7 +145,7 @@
           <article class="role-card queen">
             <span class="role-num">Orchestration · No code</span>
             <h3>Queen</h3>
-            <p>Runs the grill-me interview, sends read-only scouts into the code, maintains the spec, decomposes the work, spawns leads, and handles policy and escalation. <strong>The queen never writes code.</strong></p>
+            <p>Runs the grill-me interview, sends read-only scouts into the code, maintains the spec, decomposes the work, spawns direct workers and/or leads as the approved topology requires, and handles policy and escalation. <strong>The queen never writes code.</strong></p>
             <div class="living-spec" aria-label="Living spec stages">
               <span>Constitution</span><i>→</i><span>Specify</span><i>→</i><span>Plan</span><i>→</i><span>Tasks</span>
             </div>
@@ -153,17 +153,17 @@
           <article class="role-card lead">
             <span class="role-num">Integration · Lead worker</span>
             <h3>Lead Worker</h3>
-            <p>Owns one <strong>ephemeral integration branch</strong> whose ref only the daemon’s serialized promotion queue mutates — the lead coordinates and inspects, never authors on it. Plans worker-sized tasks; spawns, monitors, and closes its own crew; runs the review gate. A lead worker who must code takes an ordinary scoped task branch with independent review, like any worker.</p>
+            <p>Owns one <strong>daemon-mutated IntegrationStage</strong> whose ref only the serialized promotion queue moves — the lead coordinates and inspects, never authors on it. Plans worker-sized tasks; spawns, monitors, and closes its own crew; requests independent review and promotion for each candidate. A lead worker who must code takes an ordinary scoped task branch with independent review, like any worker.</p>
           </article>
           <article class="role-card worker">
             <span class="role-num">Execution · Scoped</span>
             <h3>Worker</h3>
-            <p>Takes one small task in a worktree branched from its lead. Holds a file-disjoint path lease and returns <strong>a 1–2k-token summary plus artifacts on disk</strong>—never a full transcript.</p>
+            <p>Takes one small Task in a worktree branched from its <strong>grant-bound base</strong> — its assigned integration stage, whichever owner holds it. Holds a file-disjoint path lease where eligible, honors InterfaceContract semantics, and returns <strong>a bounded summary plus ArtifactRefs</strong>—never a full transcript.</p>
           </article>
           <article class="role-card reviewer">
             <span class="role-num">Quality · Temporary duty</span>
             <h3>Reviewer</h3>
-            <p>A <strong>temporary assignment, not a hierarchy tier</strong>: reviews every worker branch before worker→lead promotion, with fresh context and no authored commit in the candidate’s diff range (merge-base..head). When more than one model provider is available, the reviewer is from a <strong>different vendor than the author</strong>. Any diff change dismisses the stale approval; reviewer sessions are transient capacity charged to the assigning run.</p>
+            <p>A <strong>temporary assignment, not a hierarchy tier</strong>: reviews every author candidate before its next integration stage, with fresh context, no authored commit in the candidate’s diff range (merge-base..head), no overlapping author task, and a different identity from every author. The verdict binds the exact patch digest and reviewed base; a parent-only identical-patch rebase preserves the semantic verdict only after automated validation at the exact new synthetic SHA — any patch change requires a new review. Cross-vendor review is <strong>preferred, not proof</strong>; reviewer sessions are transient capacity charged to the assigning run.</p>
           </article>
         </div>
       </div>
@@ -262,7 +262,7 @@
         <figure class="diagram" aria-label="Seven-phase pipeline with engineer approval gates G1 and G2">
           <svg viewBox="0 0 1100 410" role="img" aria-labelledby="pipeline-title pipeline-desc">
             <title id="pipeline-title">The seven-phase Queen’s Hive pipeline</title>
-            <desc id="pipeline-desc">P0 Intake and Grill passes engineer gate G1, followed by P1 Decompose and Route, P2 Build, P3 Review and Merge-up, P4 Cross-lead Integration, engineer gate G2, P5 Land, and P6 Close-out.</desc>
+            <desc id="pipeline-desc">P0 Intake and Grill produces the proposal package for engineer gate G1, followed by P1 Decompose and Route, P2 Build, P3 Independent Review and Promotion, P4 Assemble and Validate, engineer gate G2 on the exact run-stage SHA, P5 daemon-only Land, and P6 Close-out.</desc>
             <defs>
               <marker id="pipe-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
                 <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--green)"/>
@@ -273,7 +273,7 @@
             <rect x="36" y="59" width="210" height="106" rx="16" class="node node-queen"/>
             <text x="56" y="88" class="svg-label" fill="var(--green)">P0</text>
             <text x="56" y="116" class="svg-title">Intake &amp; Grill</text>
-            <text x="56" y="141" class="svg-copy svg-muted">interview + scouts → spec</text>
+            <text x="56" y="141" class="svg-copy svg-muted">interview + scouts → proposal</text>
 
             <path d="M246 112 H290" class="connector-strong" marker-end="url(#pipe-arrow)"/>
             <circle cx="329" cy="112" r="37" class="node-gate"/>
@@ -284,7 +284,7 @@
             <rect x="412" y="59" width="222" height="106" rx="16" class="node"/>
             <text x="432" y="88" class="svg-label" fill="var(--green)">P1</text>
             <text x="432" y="116" class="svg-title">Decompose &amp; Route</text>
-            <text x="432" y="141" class="svg-copy svg-muted">DAG + leases + hierarchy</text>
+            <text x="432" y="141" class="svg-copy svg-muted">tasks + grants + stages</text>
 
             <path d="M634 112 H678" class="connector-strong" marker-end="url(#pipe-arrow)"/>
             <rect x="680" y="59" width="180" height="106" rx="16" class="node"/>
@@ -298,14 +298,14 @@
             <text x="36" y="224" class="svg-label svg-muted">Verify → compose → approve → land → learn</text>
             <rect x="36" y="252" width="224" height="106" rx="16" class="node node-review"/>
             <text x="56" y="281" class="svg-label" fill="var(--purple)">P3</text>
-            <text x="56" y="309" class="svg-title">Review &amp; Merge-up</text>
-            <text x="56" y="334" class="svg-copy svg-muted">review + synthetic-merge CI</text>
+            <text x="56" y="309" class="svg-title">Review &amp; Promotion</text>
+            <text x="56" y="334" class="svg-copy svg-muted">independent review + serial CAS</text>
 
             <path d="M260 305 H298" class="connector-strong" marker-end="url(#pipe-arrow)"/>
             <rect x="300" y="252" width="224" height="106" rx="16" class="node node-lead"/>
             <text x="320" y="281" class="svg-label" fill="var(--blue)">P4</text>
-            <text x="320" y="309" class="svg-title">Cross-lead Integrate</text>
-            <text x="320" y="334" class="svg-copy svg-muted">contracts + hive-next</text>
+            <text x="320" y="309" class="svg-title">Assemble &amp; Validate</text>
+            <text x="320" y="334" class="svg-copy svg-muted">run stage + validation train</text>
 
             <path d="M524 305 H562" class="connector-strong" marker-end="url(#pipe-arrow)"/>
             <circle cx="601" cy="305" r="37" class="node-gate"/>
@@ -316,7 +316,7 @@
             <rect x="678" y="252" width="166" height="106" rx="16" class="node node-engineer"/>
             <text x="698" y="281" class="svg-label" fill="var(--amber)">P5</text>
             <text x="698" y="309" class="svg-title">Land</text>
-            <text x="698" y="334" class="svg-copy svg-muted">exact SHA · batch 1</text>
+            <text x="698" y="334" class="svg-copy svg-muted">daemon-only · exact SHA</text>
 
             <path d="M844 305 H882" class="connector-strong" marker-end="url(#pipe-arrow)"/>
             <rect x="884" y="252" width="180" height="106" rx="16" class="node"/>
@@ -330,48 +330,48 @@
           <article class="phase-card">
             <span class="phase-id">P0</span>
             <h3>Intake &amp; Grill</h3>
-            <p>The queen interviews until scope, acceptance criteria, and non-goals are pinned. Read-only scouts ground the task in real code. Output: the living spec.</p>
+            <p>The queen interviews until scope, acceptance criteria, and non-goals are pinned. Read-only scouts ground the task in real code. Output: a proposed SpecRevision plus preliminary PlanRevision/dependency DAG, TopologyDecision, and RunBudget/gate policy — the exact package G1 approves.</p>
           </article>
           <article class="phase-card">
             <span class="phase-id">P1</span>
             <h3>Decompose &amp; Route</h3>
-            <p>Build the dependency DAG and path-ownership leases. Parallelize only file-disjoint, independent parts; use one agent for tightly coupled decisions. Cap crews at 3–5 workers per lead.</p>
+            <p>Materialize Tasks, DelegationSpecs, nodes, grants, stages, and path leases within the G1-approved boundaries. Parallelize only file-disjoint, independent parts; use one agent for tightly coupled decisions. A broader plan, topology, or spec change returns to the engineer.</p>
           </article>
           <article class="phase-card">
             <span class="phase-id">P2</span>
             <h3>Build</h3>
-            <p>Workers implement small scoped tasks. Event-driven freshness requires a rebase onto the lead branch before review and whenever overlapping files change.</p>
+            <p>Workers implement small scoped tasks against their grant-bound target. Event-driven freshness requires a rebase onto the assigned stage before review and whenever overlapping files change.</p>
           </article>
           <article class="phase-card">
             <span class="phase-id">P3</span>
-            <h3>Review &amp; Merge-up</h3>
-            <p>Every worker branch gets cross-model review when possible and synthetic-merge CI. The lead’s internal serialized queue merges only reviewed branches.</p>
+            <h3>Independent Review &amp; Promotion</h3>
+            <p>Every candidate gets an independent digest-bound review and automated validation at the predicted target SHA. The daemon’s serial CAS promotion alone moves a candidate into its next integration stage.</p>
           </article>
           <article class="phase-card">
             <span class="phase-id">P4</span>
-            <h3>Cross-lead Integration</h3>
-            <p>Leads coordinate through written interface contracts and a shared task list. Daily hive-next composition exposes conflicts early; blockers escalate to the queen.</p>
+            <h3>Assemble &amp; Validate</h3>
+            <p>Direct and flat candidates promote into the queen-owned run integration stage; full hive assembles lead stages first, then the run stage. The speculative validation train runs the whole repo at exact SHAs; an interface conflict becomes a typed RunDecision, not a chat thread.</p>
           </article>
           <article class="phase-card">
             <span class="phase-id">P5</span>
             <h3>Land</h3>
-            <p>The protected main merge queue tests exact merge-result SHAs at batch size one. Public integrated history is never rebased.</p>
+            <p>After G2 the daemon revalidates epochs and moves the exact approved run-stage SHA to main — no other actor touches the ref. Public integrated history is never rebased.</p>
           </article>
           <article class="phase-card">
             <span class="phase-id">P6</span>
             <h3>Close-out</h3>
-            <p>Leads close workers as soon as work merges and report upward. Ephemeral branches are deleted; durable lessons are persisted to memory.</p>
+            <p>The current owner closes its workers as soon as work merges and reports upward; finalizers and retention run before teardown. Ephemeral branches are deleted; durable lessons are persisted to memory.</p>
           </article>
         </div>
 
         <div class="gate-band" aria-label="Engineer approval gates">
           <div class="gate-card">
             <span class="gate-id">G1</span>
-            <div><strong>Engineer approves the spec</strong><p>No decomposition or implementation before scope is agreed.</p></div>
+            <div><strong>Engineer CAS-approves the exact proposal package</strong><p>SpecRevision, preliminary PlanRevision, TopologyDecision, and RunBudget/gate policy together. No spawn or implementation before G1.</p></div>
           </div>
           <div class="gate-card">
             <span class="gate-id">G2</span>
-            <div><strong>Engineer approves the assembled feature</strong><p>No protected-main merge before the integrated result is accepted.</p></div>
+            <div><strong>Engineer approves the exact assembled run-stage SHA</strong><p>The approval binds SHA, digest, evidence, and target base. No main movement before the integrated result is accepted.</p></div>
           </div>
         </div>
 
