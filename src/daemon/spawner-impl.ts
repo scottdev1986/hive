@@ -2127,6 +2127,8 @@ export class HiveSpawner implements Spawner {
       // two agents apart.
       id: crypto.randomUUID(),
       ...(grokSessionId === undefined ? {} : { toolSessionId: grokSessionId }),
+      processIncarnation: 1,
+      processStartedAt: timestamp,
       name,
       tool,
       model,

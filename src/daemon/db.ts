@@ -136,6 +136,71 @@ export const RouteAuditSchema = z.object({
 
 export type RouteAudit = z.infer<typeof RouteAuditSchema>;
 
+/** Exact persisted process/authority tuple for post-await compare-and-swap.
+ * `toolSessionId` is deliberately only one member: sessions can survive a
+ * relaunch, while `processIncarnation` changes for every process. */
+export interface AgentStateCas {
+  id: string;
+  processIncarnation: number;
+  processStartedAt: string | null;
+  capabilityEpoch: number;
+  status: AgentRecord["status"];
+  writeRevoked: boolean;
+  readOnly: boolean;
+  branch: string | null;
+  toolSessionId: string | null;
+  lastEventAt: string;
+}
+
+export function agentStateCas(agent: AgentRecord): AgentStateCas {
+  return {
+    id: agent.id,
+    processIncarnation: agent.processIncarnation ?? 0,
+    processStartedAt: agent.processStartedAt ?? null,
+    capabilityEpoch: agent.capabilityEpoch,
+    status: agent.status,
+    writeRevoked: agent.writeRevoked,
+    readOnly: agent.readOnly,
+    branch: agent.branch,
+    toolSessionId: agent.toolSessionId ?? null,
+    lastEventAt: agent.lastEventAt,
+  };
+}
+
+export type ConditionalAgentUpdate = Partial<Pick<AgentRecord,
+  | "status"
+  | "writeRevoked"
+  | "readOnly"
+  | "capabilityEpoch"
+  | "lastEventAt"
+  | "failureReason"
+  | "failedAt"
+  | "closedAt"
+  | "controlMessageId"
+  | "controlQuotaReservationId"
+  | "quotaReservationId"
+  | "toolSessionId"
+  | "processIncarnation"
+  | "processStartedAt"
+  | "recoveryAttempts"
+  | "contextPct"
+  | "contextWindow"
+  | "liveModel"
+  | "liveEffort"
+  | "observedIdentity"
+  | "identityState"
+  | "pauseCapture"
+>>;
+
+export type TerminalAgentCleanup = Partial<Pick<AgentRecord,
+  | "worktreePath"
+  | "branch"
+  | "quotaReservationId"
+  | "controlQuotaReservationId"
+  | "failureReason"
+  | "lastEventAt"
+>>;
+
 /** Keep only the most recent decisions; a route audit is a bounded diagnostic,
  * not an unbounded log. */
 const ROUTE_AUDIT_LIMIT = 500;
@@ -159,6 +224,8 @@ const AgentDatabaseRowSchema = AgentRecordObjectSchema.extend({
   controlMessageId: z.string().nullable(),
   executionIdentity: z.string().nullable(),
   toolSessionId: z.string().nullable(),
+  processIncarnation: z.number().int().nonnegative(),
+  processStartedAt: z.string().nullable(),
   contextWindow: z.number().int().positive().nullable().default(null),
   recoveryAttempts: z.number().int().nonnegative().default(0),
   capabilityEpoch: z.number().int().nonnegative().default(0),
@@ -184,6 +251,10 @@ function parseAgentRow(row: unknown): AgentRecord {
     controlQuotaReservationId: value.controlQuotaReservationId ?? undefined,
     controlMessageId: value.controlMessageId ?? undefined,
     toolSessionId: value.toolSessionId ?? undefined,
+    processIncarnation: value.processIncarnation === 0
+      ? undefined
+      : value.processIncarnation,
+    processStartedAt: value.processStartedAt ?? undefined,
     contextWindow: value.contextWindow ?? undefined,
     executionIdentity: value.executionIdentity === null
       ? undefined
@@ -319,6 +390,8 @@ function agentsTableDdl(table: string, ifNotExists = false): string {
       controlMessageId TEXT,
       executionIdentity TEXT,
       toolSessionId TEXT,
+      processIncarnation INTEGER NOT NULL DEFAULT 0,
+      processStartedAt TEXT,
       recoveryAttempts INTEGER NOT NULL DEFAULT 0,
       capabilityEpoch INTEGER NOT NULL DEFAULT 0,
       readOnly INTEGER NOT NULL DEFAULT 0,
@@ -590,6 +663,14 @@ export class HiveDatabase {
     }
     if (!agentColumnNames.has("toolSessionId")) {
       this.database.exec("ALTER TABLE agents ADD COLUMN toolSessionId TEXT");
+    }
+    if (!agentColumnNames.has("processIncarnation")) {
+      this.database.exec(
+        "ALTER TABLE agents ADD COLUMN processIncarnation INTEGER NOT NULL DEFAULT 0",
+      );
+    }
+    if (!agentColumnNames.has("processStartedAt")) {
+      this.database.exec("ALTER TABLE agents ADD COLUMN processStartedAt TEXT");
     }
     if (!agentColumnNames.has("contextWindow")) {
       this.database.exec("ALTER TABLE agents ADD COLUMN contextWindow INTEGER");
@@ -944,9 +1025,10 @@ export class HiveDatabase {
         worktreePath, branch, tmuxSession, contextPct,
         createdAt, lastEventAt, failureReason, failedAt,
         quotaReservationId, controlQuotaReservationId, controlMessageId,
-        executionIdentity, toolSessionId, contextWindow, recoveryAttempts,
+        executionIdentity, toolSessionId, processIncarnation, processStartedAt,
+        contextWindow, recoveryAttempts,
         capabilityEpoch, readOnly, writeRevoked, closedAt, pauseCapture
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         name = excluded.name,
         tool = excluded.tool,
@@ -971,6 +1053,8 @@ export class HiveDatabase {
         controlMessageId = excluded.controlMessageId,
         executionIdentity = excluded.executionIdentity,
         toolSessionId = excluded.toolSessionId,
+        processIncarnation = excluded.processIncarnation,
+        processStartedAt = excluded.processStartedAt,
         contextWindow = excluded.contextWindow,
         recoveryAttempts = excluded.recoveryAttempts,
         capabilityEpoch = excluded.capabilityEpoch,
@@ -978,6 +1062,7 @@ export class HiveDatabase {
         writeRevoked = excluded.writeRevoked,
         closedAt = excluded.closedAt,
         pauseCapture = excluded.pauseCapture
+      WHERE agents.status NOT IN ('done', 'dead', 'failed')
     `).run(
       value.id,
       value.name,
@@ -1007,6 +1092,8 @@ export class HiveDatabase {
         ? null
         : JSON.stringify(value.executionIdentity),
       value.toolSessionId ?? null,
+      value.processIncarnation ?? 0,
+      value.processStartedAt ?? null,
       value.contextWindow ?? null,
       value.recoveryAttempts,
       value.capabilityEpoch,
@@ -1025,7 +1112,8 @@ export class HiveDatabase {
    * that can close an agent (kill, crash sweep, done event, failed spawn)
    * would otherwise have to remember. It is written once — a later write that
    * keeps the agent terminal must not slide the timestamp forward — and
-   * cleared when crash recovery returns this same id to a live status.
+   * Generic persistence never clears it: terminal revival, when explicitly
+   * authorized, must use a dedicated compare-and-swap transition.
    */
   private resolveClosedAt(value: AgentRecord): string | null {
     if (!isTerminalAgentStatus(value.status)) return null;
@@ -1038,6 +1126,213 @@ export class HiveDatabase {
 
   insertAgent(agent: AgentRecord): AgentRecord {
     return this.upsertAgent(agent);
+  }
+
+  /** Narrow state mutation guarded by the complete process/authority tuple.
+   * This is the only persistence primitive async telemetry, attestation,
+   * control, pause/resume, and recovery should use after yielding. It cannot
+   * revive or rewrite a terminal row, and terminal transitions remain the
+   * responsibility of `markAgentTerminal` so revocation stays atomic. */
+  updateAgentIfCurrent(
+    expected: AgentStateCas,
+    updates: ConditionalAgentUpdate,
+  ): AgentRecord | null {
+    if (
+      updates.status !== undefined && isTerminalAgentStatus(updates.status)
+    ) {
+      throw new Error("Terminal status requires markAgentTerminal");
+    }
+    const assignments: string[] = [];
+    const values: Array<string | number | null> = [];
+    const set = (column: string, value: string | number | null): void => {
+      assignments.push(`${column} = ?`);
+      values.push(value);
+    };
+    if ("status" in updates) set("status", updates.status ?? expected.status);
+    if ("writeRevoked" in updates) set("writeRevoked", updates.writeRevoked ? 1 : 0);
+    if ("readOnly" in updates) set("readOnly", updates.readOnly ? 1 : 0);
+    if ("capabilityEpoch" in updates) {
+      set("capabilityEpoch", updates.capabilityEpoch ?? expected.capabilityEpoch);
+    }
+    if ("lastEventAt" in updates) set("lastEventAt", updates.lastEventAt ?? expected.lastEventAt);
+    if ("failureReason" in updates) set("failureReason", updates.failureReason ?? null);
+    if ("failedAt" in updates) set("failedAt", updates.failedAt ?? null);
+    if ("closedAt" in updates) set("closedAt", updates.closedAt ?? null);
+    if ("controlMessageId" in updates) set("controlMessageId", updates.controlMessageId ?? null);
+    if ("controlQuotaReservationId" in updates) {
+      set("controlQuotaReservationId", updates.controlQuotaReservationId ?? null);
+    }
+    if ("quotaReservationId" in updates) set("quotaReservationId", updates.quotaReservationId ?? null);
+    if ("toolSessionId" in updates) set("toolSessionId", updates.toolSessionId ?? null);
+    if ("processIncarnation" in updates) {
+      set("processIncarnation", updates.processIncarnation ?? expected.processIncarnation);
+    }
+    if ("processStartedAt" in updates) set("processStartedAt", updates.processStartedAt ?? null);
+    if ("recoveryAttempts" in updates) set("recoveryAttempts", updates.recoveryAttempts ?? 0);
+    if ("contextPct" in updates) set("contextPct", updates.contextPct ?? null);
+    if ("contextWindow" in updates) set("contextWindow", updates.contextWindow ?? null);
+    if ("liveModel" in updates) set("liveModel", updates.liveModel ?? null);
+    if ("liveEffort" in updates) set("liveEffort", updates.liveEffort ?? null);
+    if ("observedIdentity" in updates) {
+      set(
+        "observedIdentity",
+        updates.observedIdentity === undefined
+          ? null
+          : JSON.stringify(updates.observedIdentity),
+      );
+    }
+    if ("identityState" in updates) set("identityState", updates.identityState ?? null);
+    if ("pauseCapture" in updates) {
+      set(
+        "pauseCapture",
+        updates.pauseCapture === undefined ? null : JSON.stringify(updates.pauseCapture),
+      );
+    }
+    if (assignments.length === 0) {
+      const current = this.getAgentById(expected.id);
+      return current !== null &&
+          JSON.stringify(agentStateCas(current)) === JSON.stringify(expected)
+        ? current
+        : null;
+    }
+    const changed = this.database.query(`
+      UPDATE agents SET ${assignments.join(", ")}
+      WHERE id = ?
+        AND processIncarnation = ?
+        AND processStartedAt IS ?
+        AND capabilityEpoch = ?
+        AND status = ?
+        AND writeRevoked = ?
+        AND readOnly = ?
+        AND branch IS ?
+        AND toolSessionId IS ?
+        AND lastEventAt = ?
+        AND status NOT IN ('done', 'dead', 'failed')
+    `).run(
+      ...values,
+      expected.id,
+      expected.processIncarnation,
+      expected.processStartedAt,
+      expected.capabilityEpoch,
+      expected.status,
+      expected.writeRevoked ? 1 : 0,
+      expected.readOnly ? 1 : 0,
+      expected.branch,
+      expected.toolSessionId,
+      expected.lastEventAt,
+    );
+    return changed.changes === 1 ? this.getAgentById(expected.id) : null;
+  }
+
+  /** Allocate a new process generation before any process adapter is called.
+   * Manual recovery may explicitly revive the exact terminal holder it began
+   * from; no generic write can do so. */
+  beginAgentProcess(
+    expected: AgentStateCas,
+    startedAt: string,
+    sessionId: string | null,
+    recoveryAttempts: number,
+    options: {
+      status: Exclude<AgentRecord["status"], "done" | "dead" | "failed">;
+      reviveTerminal?: boolean;
+    },
+  ): AgentRecord | null {
+    const updates: ConditionalAgentUpdate = {
+      status: options.status,
+      toolSessionId: sessionId ?? undefined,
+      processIncarnation: expected.processIncarnation + 1,
+      processStartedAt: startedAt,
+      recoveryAttempts,
+      lastEventAt: startedAt,
+      identityState: undefined,
+      observedIdentity: undefined,
+      liveModel: undefined,
+      liveEffort: undefined,
+    };
+    if (!isTerminalAgentStatus(expected.status)) {
+      return this.updateAgentIfCurrent(expected, updates);
+    }
+    if (options.reviveTerminal !== true) return null;
+    const changed = this.database.query(`
+      UPDATE agents SET
+        status = ?, closedAt = NULL, toolSessionId = ?,
+        processIncarnation = ?, processStartedAt = ?, recoveryAttempts = ?,
+        lastEventAt = ?, identityState = NULL, observedIdentity = NULL,
+        liveModel = NULL, liveEffort = NULL
+      WHERE id = ?
+        AND processIncarnation = ?
+        AND processStartedAt IS ?
+        AND capabilityEpoch = ?
+        AND status = ?
+        AND writeRevoked = ?
+        AND readOnly = ?
+        AND branch IS ?
+        AND toolSessionId IS ?
+        AND lastEventAt = ?
+    `).run(
+      options.status,
+      sessionId,
+      expected.processIncarnation + 1,
+      startedAt,
+      recoveryAttempts,
+      startedAt,
+      expected.id,
+      expected.processIncarnation,
+      expected.processStartedAt,
+      expected.capabilityEpoch,
+      expected.status,
+      expected.writeRevoked ? 1 : 0,
+      expected.readOnly ? 1 : 0,
+      expected.branch,
+      expected.toolSessionId,
+      expected.lastEventAt,
+    );
+    return changed.changes === 1 ? this.getAgentById(expected.id) : null;
+  }
+
+  /** Cleanup metadata on an already-terminal exact holder. Authority, status,
+   * epoch, session, and incarnation cannot be changed by this primitive. */
+  updateTerminalAgentIfCurrent(
+    expected: AgentStateCas,
+    updates: TerminalAgentCleanup,
+  ): AgentRecord | null {
+    if (!isTerminalAgentStatus(expected.status)) return null;
+    const assignments: string[] = [];
+    const values: Array<string | null> = [];
+    const set = (column: string, value: string | null): void => {
+      assignments.push(`${column} = ?`);
+      values.push(value);
+    };
+    if ("worktreePath" in updates) set("worktreePath", updates.worktreePath ?? null);
+    if ("branch" in updates) set("branch", updates.branch ?? null);
+    if ("quotaReservationId" in updates) set("quotaReservationId", updates.quotaReservationId ?? null);
+    if ("controlQuotaReservationId" in updates) {
+      set("controlQuotaReservationId", updates.controlQuotaReservationId ?? null);
+    }
+    if ("failureReason" in updates) set("failureReason", updates.failureReason ?? null);
+    if ("lastEventAt" in updates) set("lastEventAt", updates.lastEventAt ?? expected.lastEventAt);
+    if (assignments.length === 0) return this.getAgentById(expected.id);
+    const changed = this.database.query(`
+      UPDATE agents SET ${assignments.join(", ")}
+      WHERE id = ? AND processIncarnation = ? AND processStartedAt IS ?
+        AND capabilityEpoch = ? AND status = ? AND writeRevoked = ?
+        AND readOnly = ? AND branch IS ? AND toolSessionId IS ?
+        AND lastEventAt = ?
+        AND status IN ('done', 'dead', 'failed')
+    `).run(
+      ...values,
+      expected.id,
+      expected.processIncarnation,
+      expected.processStartedAt,
+      expected.capabilityEpoch,
+      expected.status,
+      expected.writeRevoked ? 1 : 0,
+      expected.readOnly ? 1 : 0,
+      expected.branch,
+      expected.toolSessionId,
+      expected.lastEventAt,
+    );
+    return changed.changes === 1 ? this.getAgentById(expected.id) : null;
   }
 
   /**
@@ -1056,9 +1351,31 @@ export class HiveDatabase {
       if (current === null) {
         return null;
       }
-      if (isTerminalAgentStatus(current.status) && current.status !== status) {
-        // Already terminal under another status — keep the first closure.
+      if (isTerminalAgentStatus(current.status)) {
+        // Idempotent for this exact holder. In particular, do not revoke by
+        // name again: that name may now belong to a newer AgentUUID.
         return current;
+      }
+      const failureReason = options.failureReason ?? current.failureReason;
+      const failedAt = options.failedAt ??
+        (status === "failed" ? timestamp : current.failedAt);
+      const changed = this.database.query(`
+        UPDATE agents SET
+          status = ?, writeRevoked = 1,
+          capabilityEpoch = capabilityEpoch + 1,
+          failureReason = ?, failedAt = ?, lastEventAt = ?, closedAt = ?,
+          pauseCapture = NULL, controlMessageId = NULL
+        WHERE id = ? AND status NOT IN ('done', 'dead', 'failed')
+      `).run(
+        status,
+        failureReason ?? null,
+        failedAt ?? null,
+        timestamp,
+        current.closedAt ?? timestamp,
+        current.id,
+      );
+      if (changed.changes !== 1) {
+        return this.getAgentById(agentId);
       }
       this.database.query(`
         UPDATE capabilities SET revokedAt = ?
@@ -1068,19 +1385,7 @@ export class HiveDatabase {
         UPDATE approvals SET status = 'denied', resolvedAt = ?
         WHERE agentName = ? AND status = 'pending'
       `).run(timestamp, current.name);
-      return this.upsertAgent({
-        ...current,
-        status,
-        writeRevoked: true,
-        capabilityEpoch: current.capabilityEpoch + 1,
-        failureReason: options.failureReason ?? current.failureReason,
-        failedAt: options.failedAt ??
-          (status === "failed" ? timestamp : current.failedAt),
-        lastEventAt: timestamp,
-        closedAt: current.closedAt ?? timestamp,
-        pauseCapture: undefined,
-        controlMessageId: undefined,
-      });
+      return this.getAgentById(agentId);
     });
   }
 

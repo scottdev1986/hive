@@ -412,6 +412,7 @@ export function buildPauseCapture(
     agentName: agent.name,
     tmuxSession: agent.tmuxSession,
     toolSessionId: agent.toolSessionId ?? null,
+    processIncarnation: agent.processIncarnation ?? 0,
     hostPid,
     tree,
     capturedAt,

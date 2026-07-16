@@ -270,7 +270,7 @@ describe("HiveDatabase", () => {
     }
   });
 
-  test("stamps closure once and clears it when recovery revives the agent", () => {
+  test("stamps closure once and generic persistence cannot revive it", () => {
     const db = new HiveDatabase(join(home, "closure.db"));
     try {
       db.insertAgent(agent());
@@ -293,10 +293,59 @@ describe("HiveDatabase", () => {
       });
       expect(rewritten.closedAt).toEqual("2026-07-09T12:02:00.000Z");
 
-      // Crash recovery brings this same agent back: it is live, not closed.
+      // Generic persistence is not an authority boundary for revival. An
+      // explicit recovery path must use a dedicated terminal CAS instead.
       const revived = db.upsertAgent({ ...rewritten, status: "working" });
-      expect(revived.closedAt).toBeUndefined();
-      expect(db.getLiveAgentByName("maya")?.id).toEqual("agent-maya");
+      expect(revived.status).toEqual("dead");
+      expect(revived.closedAt).toEqual("2026-07-09T12:02:00.000Z");
+      expect(db.getLiveAgentByName("maya")).toEqual(null);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("repeated terminalization of an old id cannot revoke a reused name", () => {
+    const db = new HiveDatabase(join(home, "terminal-name-reuse.db"));
+    try {
+      db.insertAgent(agent());
+      const first = db.markAgentDead(
+        "agent-maya",
+        "2026-07-09T12:02:00.000Z",
+      );
+      expect(first?.capabilityEpoch).toEqual(1);
+
+      db.insertAgent(agent({
+        id: "agent-maya-2",
+        createdAt: "2026-07-09T13:00:00.000Z",
+      }));
+      db.insertCapability({
+        id: "new-holder-capability",
+        subject: "maya",
+        role: "writer",
+        epoch: 0,
+        issuedAt: "2026-07-09T13:00:00.000Z",
+        expiresAt: "2026-07-10T13:00:00.000Z",
+        revokedAt: null,
+      }, "hash");
+      db.insertApproval({
+        id: "new-holder-approval",
+        agentName: "maya",
+        description: "new holder permission",
+        status: "pending",
+        createdAt: "2026-07-09T13:00:00.000Z",
+        resolvedAt: null,
+      });
+
+      const repeated = db.markAgentDead(
+        "agent-maya",
+        "2026-07-09T14:00:00.000Z",
+      );
+      expect(repeated?.capabilityEpoch).toEqual(1);
+      expect(repeated?.closedAt).toEqual("2026-07-09T12:02:00.000Z");
+      expect(db.getCapability("new-holder-capability")?.capability.revokedAt)
+        .toEqual(null);
+      expect(db.getApproval("new-holder-approval")?.status).toEqual("pending");
+      expect(db.getLiveAgentByName("maya")?.id).toEqual("agent-maya-2");
     } finally {
       db.close();
     }

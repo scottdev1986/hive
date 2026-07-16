@@ -82,7 +82,7 @@ import {
   type Role,
 } from "./capabilities";
 import { OPERATOR_SUBJECT, removeCredential, writeCredential } from "./credentials";
-import { HiveDatabase, type Approval } from "./db";
+import { agentStateCas, HiveDatabase, type Approval } from "./db";
 import {
   RoutingPolicyConflictError,
   RoutingPolicyStore,
@@ -1424,6 +1424,7 @@ export class HiveDaemon {
           agentName: agent.name,
           tmuxSession: agent.tmuxSession,
           toolSessionId: agent.toolSessionId ?? null,
+          processIncarnation: agent.processIncarnation ?? 0,
           hostPid: null,
           tree: outcome.suspended.map((entry) => ({
             pid: entry.pid,
@@ -1961,8 +1962,14 @@ export class HiveDaemon {
         default:
           unknownVendor(current.tool, "refreshToolTelemetry");
       }
+      let persisted = current;
       if (Object.keys(updates).length > 0) {
-        this.db.upsertAgent({ ...current, ...updates });
+        const updated = this.db.updateAgentIfCurrent(
+          agentStateCas(current),
+          updates,
+        );
+        if (updated === null) continue;
+        persisted = updated;
       }
       // Fail-closed enforcement (maintenance backstop): a Codex writer newly
       // observed to have drifted from its authorized identity is paused
@@ -1973,13 +1980,13 @@ export class HiveDaemon {
         current.tool === "codex" && !current.readOnly && !current.writeRevoked &&
         updates.identityState === "drift"
       ) {
-        const observed = updates.observedIdentity ?? current.observedIdentity;
-        const launch = current.executionIdentity;
+        const observed = updates.observedIdentity ?? persisted.observedIdentity;
+        const launch = persisted.executionIdentity;
         const detail = observed === undefined
           ? "observed identity differs from the authorized launch identity"
           : `authorized ${launch?.model ?? current.model}/${launch?.effort ?? "?"}` +
             `, observed ${observed.model}/${observed.effort ?? "?"}`;
-        await this.pauseWriterForIdentityDrift({ ...current, ...updates }, detail);
+        await this.pauseWriterForIdentityDrift(persisted, detail);
       }
     }
   }
@@ -2385,11 +2392,10 @@ export class HiveDaemon {
       }
       cleaned.worktreePath = agent.worktreePath;
       cleaned.branch = agent.branch;
-      updated = this.db.upsertAgent({
-        ...updated,
+      updated = this.db.updateTerminalAgentIfCurrent(agentStateCas(updated), {
         worktreePath: null,
         branch: null,
-      });
+      }) ?? updated;
     }
 
     // Reported last, so it reports what happened: a discard deletes the branch

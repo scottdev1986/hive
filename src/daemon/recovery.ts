@@ -33,7 +33,7 @@ import {
   type HiveConfig,
 } from "../schemas";
 import { codexWriterContainment } from "./codex-containment";
-import type { HiveDatabase } from "./db";
+import { agentStateCas, type HiveDatabase } from "./db";
 import type { StopAgentSession } from "./teardown";
 import { readCodexTelemetry } from "./tool-telemetry";
 import { hiveCliSpawnArgv } from "./lifecycle";
@@ -71,6 +71,7 @@ type RecoveryStore = Pick<
   | "getAgentByName"
   | "getAgentById"
   | "upsertAgent"
+  | "beginAgentProcess"
   | "markAgentDead"
   | "isAgentNameReserved"
   | "getUndeliveredMessages"
@@ -500,18 +501,23 @@ export class CrashRecovery {
     }
     // Persist the attempt before launching so a crash mid-launch still
     // counts against the cap.
-    let record = this.deps.db.upsertAgent({
-      ...live,
-      toolSessionId: sessionId,
-      recoveryAttempts: live.recoveryAttempts + 1,
-      lastEventAt: new Date().toISOString(),
-      // A new process must not inherit the predecessor's attestation. Matching
-      // would authorize without observing the relaunched process.
-      identityState: undefined,
-      observedIdentity: undefined,
-      liveModel: undefined,
-      liveEffort: undefined,
-    });
+    const processStartedAt = new Date().toISOString();
+    const begun = this.deps.db.beginAgentProcess(
+      agentStateCas(live),
+      processStartedAt,
+      sessionId,
+      live.recoveryAttempts + 1,
+      { status: "spawning", reviveTerminal: options.manual },
+    );
+    if (begun === null) {
+      return {
+        agent: agent.name,
+        action: "skipped",
+        reason:
+          "agent process incarnation changed before recovery launch; predecessor recovery was abandoned",
+      };
+    }
+    let record = begun;
     this.denyPendingApprovals(record.name);
 
     const identity = record.executionIdentity;

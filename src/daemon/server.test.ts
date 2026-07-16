@@ -69,6 +69,8 @@ function agent(overrides: Partial<AgentRecord> = {}): AgentRecord {
     worktreePath: "/tmp/hive-maya",
     branch: "hive/maya-server",
     tmuxSession: "hive-maya",
+    processIncarnation: 1,
+    processStartedAt: timestamp,
     contextPct: 14,
     createdAt: timestamp,
     lastEventAt: timestamp,
@@ -100,6 +102,7 @@ function testPauseCapture(
     agentName: agent.name,
     tmuxSession: agent.tmuxSession,
     toolSessionId: agent.toolSessionId ?? null,
+    processIncarnation: agent.processIncarnation ?? 0,
     hostPid: null,
     tree: [{
       pid: 100,
@@ -3793,6 +3796,62 @@ describe("Codex execution-identity attestation sweep", () => {
     try {
       await daemon.refreshToolTelemetry();
       expect(db.getAgentByName("maya")?.identityState).toBe("matching");
+    } finally {
+      db.close();
+    }
+  });
+
+  test("terminalization during an awaited telemetry read cannot revive the row", async () => {
+    const db = new HiveDatabase(join(home, "telemetry-terminal-race.db"));
+    let releaseModel!: () => void;
+    let enteredModel!: () => void;
+    const modelGate = new Promise<void>((resolve) => {
+      releaseModel = resolve;
+    });
+    const entered = new Promise<void>((resolve) => {
+      enteredModel = resolve;
+    });
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new StubSpawner(),
+      tmux: new FakeDaemonTmux(),
+      telemetryReaders: {
+        claude: async () => ({ contextTokens: 40_000, lastActivityAt: null }),
+        liveModel: async () => {
+          enteredModel();
+          await modelGate;
+          return "claude-sonnet-5";
+        },
+      },
+    });
+    db.insertAgent(agent({
+      tool: "claude",
+      model: "sonnet",
+      executionIdentity: {
+        tool: "claude",
+        model: "claude-sonnet-5",
+        effort: "high",
+      },
+      contextWindow: 200_000,
+    }));
+    try {
+      const sweep = daemon.refreshToolTelemetry();
+      await entered;
+      const killed = db.markAgentDead(
+        "agent-maya",
+        "2026-07-15T18:00:00.000Z",
+        "killed during telemetry",
+      );
+      releaseModel();
+      await sweep;
+
+      const row = db.getAgentById("agent-maya")!;
+      expect(killed).not.toBeNull();
+      expect(row.status).toBe("dead");
+      expect(row.capabilityEpoch).toBe(killed!.capabilityEpoch);
+      expect(row.writeRevoked).toBe(true);
+      expect(row.closedAt).toBe("2026-07-15T18:00:00.000Z");
+      expect(row.liveModel).toBeUndefined();
     } finally {
       db.close();
     }

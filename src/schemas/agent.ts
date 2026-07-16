@@ -106,6 +106,9 @@ export const PauseCaptureSchema = z.strictObject({
   agentName: z.string().min(1),
   tmuxSession: z.string().min(1),
   toolSessionId: z.string().min(1).nullable(),
+  // Dedicated process generation. A tool session may survive a relaunch, so
+  // it is not an incarnation identifier.
+  processIncarnation: z.number().int().nonnegative().optional(),
   hostPid: z.number().int().positive().nullable(),
   tree: z.array(CapturedProcessSchema).min(1),
   capturedAt: z.iso.datetime(),
@@ -247,6 +250,13 @@ const AgentRecordShape = {
   // captured from hook traffic, so a crashed process can be relaunched with
   // its native resume instead of respawned from a blank prompt.
   toolSessionId: z.string().min(1).optional(),
+  /** Monotonic generation of the process currently assigned to this row.
+   * Fresh launches start at 1 and every relaunch/replacement increments it.
+   * Zero is reserved for migrated rows whose process generation is unknown. */
+  processIncarnation: z.number().int().nonnegative().optional(),
+  /** Start of the current process generation. Used to reject predecessor
+   * provider artifacts when independently binding a native session. */
+  processStartedAt: z.iso.datetime().optional(),
   recoveryAttempts: z.number().int().nonnegative().default(0),
   /**
    * How full this agent's context is, or **null when Hive has not observed it**.

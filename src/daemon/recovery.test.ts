@@ -685,7 +685,7 @@ describe("crash resume", () => {
     }
   });
 
-  test("a failed resume stays nonterminal when teardown readback fails", async () => {
+  test("terminal death wins when failed-resume teardown readback fails", async () => {
     const h = harness({
       stopSession: async () => {
         throw new Error("ps verification failed");
@@ -705,9 +705,10 @@ describe("crash resume", () => {
       "teardown could not be verified: ps verification failed",
     );
     expect(h.db.getAgentByName("maya")).toMatchObject({
-      status: "stuck",
+      status: "dead",
       writeRevoked: true,
     });
+    expect(h.db.getAgentByName("maya")?.closedAt).toBeDefined();
     expect(h.settled).toEqual([]);
   });
 
