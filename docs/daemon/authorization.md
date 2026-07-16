@@ -66,6 +66,31 @@ Enumerated from `src/daemon/capabilities.ts:25-51`. `O` operator, `R` orchestrat
 
 `anySubject` (`src/daemon/capabilities.ts:62-67`): the operator for everything it holds; the orchestrator for exactly the four agent-directed actions. Writers and readers may only ever name themselves.
 
+### `codex:mutate` — the one action no capability can buy
+
+There is a 27th authorized action, and it is deliberately **not** a row in the table above, because the table is enumerated from `Action` in `src/daemon/capabilities.ts` and this one is not an `Action`. It is worth a row of its own precisely because the drift rule below would otherwise let it land unreviewed.
+
+| Action | Roles | Notes |
+|---|---|---|
+| `codex:mutate` | **nobody** | not capability-authorized; no token grants it; decided per-mutation by `HiveDaemon.authorizeCodexMutation` |
+
+Every other action is authorized by a bearer presenting a capability for a subject. A Codex writer's mutation cannot work that way: the request does not arrive over HTTP with a token, it arrives as a JSON-RPC request on the agent's own app-server socket, from the process being authorized. A credential proves *who is speaking*; here the question is *what is running right now*, which no credential can answer.
+
+So the decision is made by the daemon against state the caller cannot forge:
+
+- **The holder row, re-read by id** — not by name, because names are reusable and a replacement answering to `maya` is not `maya`. The session's `processIncarnation` and `capabilityEpoch` must still be the row's current ones, and the row must be a live, non-terminal, non-`writeRevoked` writer.
+- **The provider's own applied identity**, read from the rollout the app-server names for that thread, for the exact `turn_id` the provider itself put on the approval request, and compared to the immutable launch identity. `unattested`, `unknown`, and `drift` are each a denial. Absent is not "fine"; it is "we could not tell", which is the same answer.
+- **Twice.** Once before the approval is queued, and again immediately before the allow response is sent, because a human approval holds a window open and an identity can drift inside it.
+
+What a stolen credential buys here is nothing: there is no capability to steal, and `writeRevoked` on the row denies the next mutation regardless of what any token says. What tampering with the worktree's `.codex/` hooks or config buys is also nothing — no part of this decision reads them. That is the whole reason a Codex writer is admissible on the app-server driver and never on the TUI, whose guard *is* those tamperable bytes (see [launch-mechanics](../providers/launch-mechanics.md)).
+
+Two protocol facts constrain the shape of the grant, both verified against the installed codex-cli 0.144.4:
+
+- **The grant is one request, never a permission.** `PermissionGrantScope` is exactly `["turn","session"]`, so `item/permissions/requestApproval` can only ever grant something that outlives the identity check that authorized it. It is therefore never granted — always answered with an empty profile. One-shot lives on the `fileChange`/`commandExecution` decision enums instead, where `accept` decides exactly one request; `acceptForSession` is never sent.
+- **`execCommandApproval` and `applyPatchApproval` are refused.** Their params carry `conversationId` and `callId` but no `turnId`, so a decision on them cannot be bound to the turn whose identity was attested. Unbindable is unknown.
+
+`branch:land` for a Codex writer is gated by this same decision, bound to the live turn whose tool call is asking to land, and re-attested once more immediately before Git.
+
 ## The routes and tools
 
 Every HTTP route below `/handshake` in `src/daemon/server.ts:2349-2411` authenticates first. **Audit** is whether an *allow* is written to `audit_log`; denials are always audited (`src/daemon/capabilities.ts:426-449`).

@@ -145,8 +145,49 @@ The launch identity is an **intent**; what a Codex process is actually running i
 - **Codex 0.144.4 rollouts carry running identity but not process identity.** Every turn writes a top-level `turn_context` record whose `payload` carries `model`, `effort`, `turn_id`, and `cwd` (verified against real on-disk rollouts, not vendor docs). But `session_meta` carries no PID, launch nonce, process handle, or provider datum independently tied to Hive's process incarnation. Exact cwd, `source=cli`, agent nickname, and timestamps can all match a child-first session as well as the productive parent, so earliest-after-launch chronology is not proof. `findCodexRolloutForProcess` and `discoverCodexRecoverySessionId` therefore return null instead of guessing. `readCodexObservedIdentity` may read the newest `turn_context` only when an exact session id was established independently; a lifecycle hook never establishes it (`src/adapters/tools/codex.ts`, `src/daemon/tool-telemetry.ts`).
 - **The productive parent can drift without a human `/model`.** A provider-native `thread_settings_applied`/settings change can flip the parent to a different model+effort mid-session (the incident: launched `gpt-5.6-sol/xhigh`, every later turn ran `gpt-5.6-luna/low`). Drift is not only the human-switch case the statusline covers.
 - **Absence or ambiguous parent association is `unknown`, never the launch model.** A missing exact session binding or unparseable `turn_context` fails closed; the launch identity is never copied into the observation slot. Automatic and manual Codex recovery likewise refuse to resume a rollout selected only by same-cwd chronology (`src/daemon/identity-attestation.ts`, `src/daemon/recovery.ts`).
-- **Codex-internal subagents are distinct execution identities.** `codex features list` reports `multi_agent` as a stable feature on by default; a worker that spawns internal children gives them identities Hive never authorized, reserved quota for, or attested (the incident's `/root/review` and `/root/review_grok` rollouts, which run at their own cwd). Hive disables them with `-c features.multi_agent=false` on every TUI spawn/resume (`src/adapters/tools/codex.ts`) and on the app-server host argv (`src/adapters/tools/codex-app-server.ts`). There is no SubagentStart/SubagentStop backstop in Hive. All Codex **writers** are refused at launch until an enforceable per-mutation boundary exists; only Codex readers launch. There is no fallback from observed identity to the launch intention for authority.
-- **Fail-closed is non-destructive for legacy processes.** New Codex *writers* are refused at launch until an enforceable per-mutation boundary exists. A still-running legacy Codex writer observed to have drifted (or unknown at turn-start) is paused, not killed: capability is revoked first, then SIGSTOP freezes the exact captured tree. `hive_resume` reattests readers (and any residual paused process) and only SIGCONTs after exact pause-capture validation; Codex writers remain contained and cannot reacquire write authority. A suspended process cannot acknowledge, so the pause is measured by process/daemon state, never an ACK.
+- **Codex-internal subagents are distinct execution identities.** `codex features list` reports `multi_agent` as a stable feature on by default; a worker that spawns internal children gives them identities Hive never authorized, reserved quota for, or attested (the incident's `/root/review` and `/root/review_grok` rollouts, which run at their own cwd). Hive disables them with `-c features.multi_agent=false` on every TUI spawn/resume (`src/adapters/tools/codex.ts`) and on the app-server host argv (`src/adapters/tools/codex-app-server.ts`). There is no SubagentStart/SubagentStop backstop in Hive. There is no fallback from observed identity to the launch intention for authority.
+- **Fail-closed is non-destructive for legacy processes.** A still-running legacy Codex writer observed to have drifted (or unknown at turn-start) is paused, not killed: capability is revoked first, then SIGSTOP freezes the exact captured tree. `hive_resume` reattests readers (and any residual paused process) and only SIGCONTs after exact pause-capture validation; Codex writers remain contained and cannot reacquire write authority. A suspended process cannot acknowledge, so the pause is measured by process/daemon state, never an ACK.
+
+### A Codex writer is admissible only on the app-server driver
+
+Codex writers are no longer refused outright. Admission asks exactly one
+question — **which driver will run this session** — and never asks the version
+(see [capability-discovery](./capability-discovery.md); a `>=` floor is
+bootstrap compatibility, not writer permission).
+
+- **app-server → admissible.** Every mutation is brokered through Hive.
+- **TUI → refused, always.** PreToolUse hooks fail open (command failure,
+  timeout, or invalid JSON is `should_block=false`) and the writer owns its own
+  worktree `.codex/` hook scripts, so its guard is editable by the thing it
+  guards.
+- **Unknown driver → refused.** Including recovery and resume: 0.144.4 has no
+  durable app-server resume, so there is no broker to reattach to and the work
+  is preserved rather than relaunched.
+- **No fallback.** A writer admitted for the app-server whose handshake fails
+  **fails the spawn**; it never degrades into a TUI writer. That fallback still
+  exists for readers, who cannot mutate.
+
+What makes the admitted writer safe is not the admission, it is the runtime
+boundary (`docs/daemon/authorization.md`):
+
+- **The writer's sandbox stays read-only**, exactly like a reader's. That is the
+  structural containment: an unasked mutation is impossible, so the only route
+  to the filesystem is an approval request Hive answers.
+- **Applied identity is not on the wire.** Verified against real codex-cli
+  0.144.4: the `Turn` object (`turn/started`, `turn/completed`) and
+  `thread/read`'s `Thread` carry **no** model or effort. `thread/start` echoes
+  the applied `model`/`reasoningEffort` once, at creation. The only *fresh*,
+  per-turn applied identity is the rollout's `turn_context`, which the gate
+  reaches through `thread/read` → `thread.path` — the app-server naming its own
+  thread's rollout over the same connection, which is what keeps a dead
+  predecessor's rollout from aliasing in.
+- **An app-server `turn_context` has no `source` field** (its `session_meta.source`
+  is the editor client, not `cli`), so the TUI reader — which requires
+  `source === "cli"` — reads every app-server turn as unknown. The app-server
+  has its own reader keyed on an exact `turn_id`: a tighter binding than
+  `source`, since the provider itself put that turn id on the approval request.
+- **`turn_context` is written at turn start**, before any mid-turn approval, so
+  the identity for the turn being gated is already on disk when it is needed.
 
 ## What the version probes are for
 

@@ -51,6 +51,28 @@ is empirical installed-binary evidence, not public-prose evidence. No thread or
 turn was created to obtain it. See the linked raw record for the command boundary,
 field excerpts, and hashes.
 
+### Reader compatibility is not writer permission
+
+The `>= 0.144.4` floor above answers exactly one question: can this build be
+bootstrapped with hidden developer instructions instead of a visible user
+prompt. It says nothing about whether a Codex writer is safe, and it must never
+be read that way. A `>=` comparison is a claim about the past — a newer build
+can regress the mutation broker, drop a field the gate reads, or change an
+approval's scope, and the comparison would keep saying yes.
+
+So writer admission takes **no version input at all**: no `codex --version`, no
+build hash, no schema hash, no allowlist. It gates on the *driver* only (see
+[launch-mechanics](./launch-mechanics.md)), and writer safety comes structurally
+from the runtime boundary — a read-only sandbox plus a per-mutation identity
+gate. On a build whose app-server cannot supply fresh applied identity or
+one-shot approvals, the writer is not refused at launch; its mutations are
+simply all denied at runtime. A useless writer is an acceptable outcome. An
+ungated one is not.
+
+That split is why the two compatibility questions live in different places: the
+version floor is a *bootstrap* gate checked before launch, and writer safety is
+a *runtime* gate checked before every single mutation.
+
 ## `isDefault` is not the effective default
 
 Codex's `model/list` flags exactly one catalog entry `isDefault`. On 2026-07-11 that flag sat on `gpt-5.5` — while `config/read` reported that an unflagged launch on this very machine would run `gpt-5.6-sol` at `xhigh`. Both readings were correct. They answer different questions: `isDefault` is the *vendor's catalog recommendation*; the effective default is what the *layered local config* actually resolves to.

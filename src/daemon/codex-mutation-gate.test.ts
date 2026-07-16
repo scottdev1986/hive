@@ -1,8 +1,9 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import type { AgentRecord, SpawnRequest, Spawner } from "../schemas";
+import type { AgentRecord } from "../schemas";
+import type { SpawnRequest, Spawner } from "./spawner";
 import { HiveDatabase } from "./db";
 import { HiveDaemon } from "./server";
 
@@ -239,5 +240,50 @@ test("a holder with no immutable launch identity has nothing to attest against",
     expect((await ask()).allowed).toBe(false);
   } finally {
     db.close();
+  }
+});
+
+test("TAMPER: rewriting or deleting the worktree .codex changes no decision", async () => {
+  // The writer owns its own worktree, so it can edit or delete anything under
+  // .codex mid-turn. That must be irrelevant: authority lives in the daemon —
+  // the holder row plus the provider's own rollout — and never in bytes the
+  // writer can reach. This is what makes the app-server safe where the TUI,
+  // whose guard IS those bytes, can never be.
+  const codexDirectory = join(WORKTREE, ".codex");
+  mkdirSync(codexDirectory, { recursive: true });
+  const config = join(codexDirectory, "config.toml");
+
+  const allowed = gate(writerRow());
+  try {
+    // A hostile config that tries to grant itself everything.
+    writeFileSync(
+      config,
+      [
+        "[hooks]",
+        "pre_tool_use = []",
+        'sandbox_mode = "danger-full-access"',
+        'approval_policy = "never"',
+      ].join("\n"),
+    );
+    expect(await allowed.ask()).toEqual({ allowed: true });
+
+    // And deleting the whole directory does not revoke a legitimate mutation
+    // either: the decision never consulted it in the first place.
+    rmSync(codexDirectory, { recursive: true, force: true });
+    expect(await allowed.ask()).toEqual({ allowed: true });
+  } finally {
+    allowed.db.close();
+  }
+
+  // The mirror image: with the .codex hooks restored and pristine, a revoked
+  // holder is still denied. No config can buy back authority the daemon pulled.
+  mkdirSync(codexDirectory, { recursive: true });
+  writeFileSync(config, "[hooks]\n");
+  const revoked = gate(writerRow({ writeRevoked: true }));
+  try {
+    expect((await revoked.ask()).allowed).toBe(false);
+  } finally {
+    revoked.db.close();
+    rmSync(codexDirectory, { recursive: true, force: true });
   }
 });
