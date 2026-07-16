@@ -20,6 +20,10 @@ import { readFile } from "node:fs/promises";
 import { codexAgentHostPidfile } from "../adapters/tools/codex-app-server";
 import type { AgentRecord } from "../schemas";
 import {
+  bindAgentSession,
+  TmuxSessionHost,
+} from "./session-host/tmux-host";
+import {
   descendantsOf,
   parseProcessTable,
   parseStateTable,
@@ -64,7 +68,8 @@ export interface SessionStopAdapter {
 }
 
 export interface VerifiedStopDependencies {
-  tmux: SessionStopAdapter;
+  tmux?: SessionStopAdapter;
+  sessions?: TmuxSessionHost;
   reap?: ReapDependencies;
   readHostPid?: (agent: AgentRecord) => Promise<number | null>;
   selfPid?: number;
@@ -211,6 +216,9 @@ export async function stopTmuxSession(
   extraRoots: readonly number[] = [],
   beforeKill?: () => void | Promise<void>,
 ): Promise<ReapOutcome> {
+  if (dependencies.tmux === undefined) {
+    throw new Error("Legacy tmux teardown requires a compatibility adapter");
+  }
   const reap = dependencies.reap ?? defaultReapDependencies();
   const selfPid = dependencies.selfPid ?? process.pid;
   const captured = await captureProcessTree(
@@ -263,6 +271,34 @@ export async function stopAgentSession(
   beforeKill?: () => void | Promise<void>,
 ): Promise<ReapOutcome> {
   const hostPid = await (dependencies.readHostPid ?? defaultHostPid)(agent);
+  if (dependencies.sessions !== undefined) {
+    const locator = bindAgentSession(dependencies.sessions, agent, {
+      extraRoots: async () => hostPid === null ? [] : [hostPid],
+      ...(beforeKill === undefined ? {} : { beforeTerminate: beforeKill }),
+    });
+    const result = await dependencies.sessions.terminate(locator, {
+      mode: "immediate",
+      reason: `stop agent ${agent.id}`,
+      requestId: crypto.randomUUID(),
+    });
+    if (result.state === "unknown") {
+      throw new Error(
+        `SessionHost could not verify termination for ${agent.name}: ${
+          result.errors.map((error) => error.diagnosticId).join(", ") || "unknown"
+        }`,
+      );
+    }
+    return {
+      killed: [],
+      survivors: result.survivors.map((survivor) => ({
+        pid: survivor.pid,
+        command: survivor.reason,
+      })),
+    };
+  }
+  if (dependencies.tmux === undefined) {
+    throw new Error("Agent teardown requires SessionHost or legacy tmux adapter");
+  }
   return await stopTmuxSession(
     agent.tmuxSession,
     dependencies,

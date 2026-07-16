@@ -90,10 +90,17 @@ describe("HiveDatabase", () => {
     const db = new HiveDatabase(join(home, "agents.db"));
     try {
       const inserted = db.insertAgent(agent());
-      expect(inserted).toEqual(agent());
-      expect(db.getAgentByName("maya")).toEqual(agent());
+      expect(inserted).toEqual(expect.objectContaining(agent()));
+      expect(inserted.sessionLocator).toEqual(expect.objectContaining({
+        schemaVersion: 1,
+        subject: { kind: "agent", agentId: "agent-maya" },
+        generation: 1,
+        hostKind: "tmux",
+        engineBuildId: null,
+      }));
+      expect(db.getAgentByName("maya")).toEqual(inserted);
 
-      const updated = agent({
+      const updated = { ...inserted, ...agent({
         status: "failed",
         contextPct: 28,
         failureReason: "Error: model not supported",
@@ -107,7 +114,7 @@ describe("HiveDatabase", () => {
         controlQuotaReservationId: "quota-control-1",
         toolSessionId: "0189-session",
         recoveryAttempts: 2,
-      });
+      }) };
       // Reaching a terminal status stamps closure durably, from failedAt.
       const closed = { ...updated, closedAt: "2026-07-09T12:01:00.000Z" };
       expect(db.upsertAgent(updated)).toEqual(closed);

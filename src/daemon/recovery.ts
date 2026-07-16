@@ -1,6 +1,4 @@
 import { existsSync } from "node:fs";
-import { shellJoin } from "../adapters/tmux";
-import type { TmuxAdapter } from "../adapters/tmux";
 import {
   type AuthorizedLaunch,
   requireAuthorizedLaunch,
@@ -36,6 +34,15 @@ import type { StopAgentSession } from "./teardown";
 import { readCodexTelemetry } from "./tool-telemetry";
 import { hiveCliSpawnArgv } from "./lifecycle";
 import { IS_RELEASE_BUILD } from "../version";
+import {
+  bindAgentSession,
+  mintAgentTmuxSessionLocator,
+  nextAgentSessionLocator,
+  shellJoin,
+  tmuxSessionSpec,
+  TmuxSessionHost,
+  type TmuxEngine,
+} from "./session-host/tmux-host";
 
 // Three auto-resumes for one agent means the process is dying on its own,
 // not being killed by crashes; after that the sweep stops retrying and
@@ -82,10 +89,7 @@ type Sleep = (milliseconds: number) => Promise<void>;
 
 export interface CrashRecoveryDependencies {
   db: RecoveryStore;
-  tmux: Pick<
-    TmuxAdapter,
-    "hasSession" | "newSession" | "killSession" | "capturePane"
-  >;
+  tmux: TmuxSessionHost | TmuxEngine;
   /** Resolved lazily because a daemon configured with port 0 learns its
    * ephemeral listening port only after Bun.serve() binds. */
   port: number | (() => number);
@@ -177,8 +181,12 @@ export class CrashRecovery {
   // "no session", both bump recoveryAttempts, and both launch a tmux session
   // for the same conversation.
   private readonly recovering = new Set<string>();
+  private readonly sessions: TmuxSessionHost;
 
   constructor(private readonly deps: CrashRecoveryDependencies) {
+    this.sessions = deps.tmux instanceof TmuxSessionHost
+      ? deps.tmux
+      : new TmuxSessionHost({ adapter: deps.tmux });
     this.resolveClaude = deps.resolveClaudeSessionId ??
       ((worktreePath, agentCreatedAt) =>
         discoverClaudeRecoverySessionId(worktreePath, agentCreatedAt));
@@ -209,13 +217,39 @@ export class CrashRecovery {
     return port;
   }
 
+  private migrateSessionLocator(agent: AgentRecord): AgentRecord {
+    if (agent.sessionLocator !== undefined) return agent;
+    return this.deps.db.upsertAgent({
+      ...agent,
+      sessionLocator: mintAgentTmuxSessionLocator(agent.id),
+    });
+  }
+
+  private async sessionPresent(agent: AgentRecord): Promise<boolean> {
+    const inspection = await this.sessions.inspect(
+      bindAgentSession(this.sessions, agent),
+    );
+    if (inspection.presence === "unknown") {
+      throw new Error(`Session presence is unknown for ${agent.name}`);
+    }
+    return inspection.presence === "present";
+  }
+
+  private async captureVisible(agent: AgentRecord): Promise<string> {
+    return (await this.sessions.capture(
+      bindAgentSession(this.sessions, agent),
+      { include: "visible-text", maxRows: 50_000 },
+    )).text ?? "";
+  }
+
   // The maintenance sweep: classify every agent whose tmux session is gone
   // and either resume its actual tool conversation or mark it dead with the
   // stranded state surfaced. Runs at daemon startup — the recovery moment
   // after a machine-wide crash — and on the periodic reconciliation tick.
   async sweep(): Promise<RecoveryOutcome[]> {
     const outcomes: RecoveryOutcome[] = [];
-    for (const agent of this.deps.db.listAgents()) {
+    for (const candidate of this.deps.db.listAgents()) {
+      const agent = this.migrateSessionLocator(candidate);
       const isSpawning = agent.status === "spawning";
       if (!isSpawning && !LIVE_STATUSES.includes(agent.status) &&
         agent.status !== "control-paused") {
@@ -228,7 +262,7 @@ export class CrashRecovery {
       if (isSpawning && this.deps.db.isAgentNameReserved(agent.name)) {
         continue;
       }
-      if (await this.deps.tmux.hasSession(agent.tmuxSession)) {
+      if (await this.sessionPresent(agent)) {
         continue;
       }
       if (
@@ -278,10 +312,11 @@ export class CrashRecovery {
   // after a sweep or an operator gave up — and bypasses the attempt cap,
   // because a human explicitly asked for one more try.
   async recoverAgent(name: string): Promise<RecoveryOutcome> {
-    const agent = this.deps.db.getAgentByName(name);
-    if (agent === null) {
+    const found = this.deps.db.getAgentByName(name);
+    if (found === null) {
       throw new Error(`Hive agent not found: ${name}`);
     }
+    const agent = this.migrateSessionLocator(found);
     if (agent.status === "done") {
       return { agent: name, action: "skipped", reason: "agent is done" };
     }
@@ -302,7 +337,7 @@ export class CrashRecovery {
         reason: "write authority is revoked; recovery requires explicit cleanup",
       };
     }
-    if (await this.deps.tmux.hasSession(agent.tmuxSession)) {
+    if (await this.sessionPresent(agent)) {
       return {
         agent: name,
         action: "skipped",
@@ -338,7 +373,7 @@ export class CrashRecovery {
     // Callers checked hasSession before entering, but that check is stale by
     // now if another recovery finished in between; resuming over a live
     // session would fail the tmux launch and mark a healthy agent dead.
-    if (await this.deps.tmux.hasSession(agent.tmuxSession)) {
+    if (await this.sessionPresent(agent)) {
       return {
         agent: agent.name,
         action: "skipped",
@@ -408,8 +443,10 @@ export class CrashRecovery {
   ): Promise<RecoveryOutcome> {
     // Persist the attempt before launching so a crash mid-launch still
     // counts against the cap.
+    const migrated = this.migrateSessionLocator(agent);
     let record = this.deps.db.upsertAgent({
-      ...agent,
+      ...migrated,
+      sessionLocator: nextAgentSessionLocator(migrated),
       toolSessionId: sessionId,
       recoveryAttempts: agent.recoveryAttempts + 1,
       lastEventAt: new Date().toISOString(),
@@ -536,10 +573,15 @@ export class CrashRecovery {
         throw new Error("resume authorization changed before the process adapter");
       }
       requireAuthorizedLaunch(revalidated);
-      await this.deps.tmux.newSession(
-        record.tmuxSession,
-        worktreePath,
-        command,
+      bindAgentSession(this.sessions, record);
+      await this.sessions.create(
+        tmuxSessionSpec(
+          record,
+          command,
+          argv[0] ?? record.tool,
+          `recovery:${record.id}:${record.recoveryAttempts}`,
+        ),
+        new Uint8Array(),
       );
       const failure = await this.monitorResume(record);
       if (failure !== null) {
@@ -623,18 +665,18 @@ export class CrashRecovery {
         return null;
       }
       if (await this.hasFreshCodexActivity(record, startedAt)) return null;
-      if (!(await this.deps.tmux.hasSession(record.tmuxSession))) {
+      if (!(await this.sessionPresent(record))) {
         return "tmux session exited";
       }
       try {
-        const pane = await this.deps.tmux.capturePane(record.tmuxSession);
+        const pane = await this.captureVisible(record);
         lastPaneTail = tailLines(pane, 15);
         const paneTail = tailLines(pane, 5);
         if (RESUME_FAILURE_PATTERNS.some((pattern) => pattern.test(paneTail))) {
           return lastPaneTail || "resume process launch error";
         }
       } catch {
-        if (!(await this.deps.tmux.hasSession(record.tmuxSession))) {
+        if (!(await this.sessionPresent(record))) {
           return "tmux session exited";
         }
       }

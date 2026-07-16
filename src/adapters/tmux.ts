@@ -25,6 +25,34 @@ export interface TmuxAdapterOptions {
   enterDelayMs?: number;
 }
 
+export interface TmuxPaneState {
+  columns: number;
+  rows: number;
+  cursorColumn: number;
+  cursorRow: number;
+  cursorVisible: boolean;
+}
+
+/** Internal engine seam consumed only by SessionHost and substrate tests. */
+export interface TmuxEngine {
+  hasSession(session: string): Promise<boolean>;
+  newSession(
+    name: string,
+    cwd: string,
+    command: string,
+    geometry?: { columns: number; rows: number },
+  ): Promise<void>;
+  capturePane(session: string): Promise<string>;
+  listPanePids?: TmuxAdapter["listPanePids"];
+  sendBytes?: TmuxAdapter["sendBytes"];
+  listClientTtys?: TmuxAdapter["listClientTtys"];
+  paneState?: TmuxAdapter["paneState"];
+  resizeSession?: TmuxAdapter["resizeSession"];
+  getSocketName?: TmuxAdapter["getSocketName"];
+  killSession?: TmuxAdapter["killSession"];
+  listSessions?: TmuxAdapter["listSessions"];
+}
+
 // TUIs treat input arriving in one burst as a paste; an Enter inside that
 // window becomes a literal newline in the composer instead of a submit.
 export const SEND_ENTER_DELAY_MS = 500;
@@ -156,6 +184,7 @@ export class TmuxAdapter {
     name: string,
     cwd: string,
     command: string,
+    geometry?: { columns: number; rows: number },
   ): Promise<void> {
     this.validateTarget(name);
     const result = await this.run(
@@ -166,6 +195,9 @@ export class TmuxAdapter {
         name,
         "-c",
         cwd,
+        ...(geometry === undefined
+          ? []
+          : ["-x", String(geometry.columns), "-y", String(geometry.rows)]),
         holdPaneOnFailure(command),
         ";",
         "set-option",
@@ -209,16 +241,30 @@ export class TmuxAdapter {
     text: string,
     options: { interrupt?: boolean } = {},
   ): Promise<void> {
+    await this.sendBytes(session, new TextEncoder().encode(text), {
+      interrupt: options.interrupt,
+      submit: "return",
+    });
+  }
+
+  async sendBytes(
+    session: string,
+    bytes: Uint8Array,
+    options: {
+      interrupt?: boolean;
+      submit?: "none" | "return" | "control-enter";
+    } = {},
+  ): Promise<void> {
     this.validateTarget(session);
     if (options.interrupt === true) {
       await this.interruptComposer(session);
     }
-    if (text.length > 0) {
+    if (bytes.byteLength > 0) {
       const buffer = `hive-message-${crypto.randomUUID()}`;
       const load = await this.run(
         ["load-buffer", "-b", buffer, "-"],
         this.socketName,
-        new TextEncoder().encode(text),
+        bytes,
       );
       assertSuccess(load, "load-buffer");
       try {
@@ -234,9 +280,15 @@ export class TmuxAdapter {
       }
     }
 
+    if ((options.submit ?? "return") === "none") return;
     await this.sleep(this.enterDelayMs);
     const enter = await this.run(
-      ["send-keys", "-t", `=${session}:`, "Enter"],
+      [
+        "send-keys",
+        "-t",
+        `=${session}:`,
+        (options.submit ?? "return") === "control-enter" ? "C-Enter" : "Enter",
+      ],
       this.socketName,
     );
     assertSuccess(enter, "send-keys Enter");
@@ -250,6 +302,60 @@ export class TmuxAdapter {
     );
     assertSuccess(result, "capture-pane");
     return result.stdout;
+  }
+
+  async paneState(session: string): Promise<TmuxPaneState> {
+    this.validateTarget(session);
+    const result = await this.run(
+      [
+        "display-message",
+        "-p",
+        "-t",
+        `=${session}:`,
+        "#{pane_width}\t#{pane_height}\t#{cursor_x}\t#{cursor_y}\t#{cursor_flag}",
+      ],
+      this.socketName,
+    );
+    assertSuccess(result, "display-message");
+    const fields = result.stdout.trim().split("\t");
+    if (fields.length !== 5 || fields.some((field) => !/^\d+$/.test(field))) {
+      throw new Error("tmux display-message returned invalid pane geometry");
+    }
+    const [columns, rows, cursorColumn, cursorRow, cursorVisible] = fields.map(Number);
+    if (columns! < 1 || rows! < 1) {
+      throw new Error("tmux display-message returned empty pane geometry");
+    }
+    return {
+      columns: columns!,
+      rows: rows!,
+      cursorColumn: cursorColumn!,
+      cursorRow: cursorRow!,
+      cursorVisible: cursorVisible === 1,
+    };
+  }
+
+  async resizeSession(
+    session: string,
+    geometry: { columns: number; rows: number },
+  ): Promise<void> {
+    this.validateTarget(session);
+    const result = await this.run(
+      [
+        "resize-window",
+        "-t",
+        `=${session}:`,
+        "-x",
+        String(geometry.columns),
+        "-y",
+        String(geometry.rows),
+      ],
+      this.socketName,
+    );
+    assertSuccess(result, "resize-window");
+  }
+
+  getSocketName(): string {
+    return this.socketName;
   }
 
   async listClientTtys(session: string): Promise<string[]> {

@@ -7,13 +7,17 @@ import {
 } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import type { Server } from "bun";
 import { z } from "zod";
-import { TmuxAdapter } from "../adapters/tmux";
 import {
   CrashRecovery,
   type CrashRecoveryDependencies,
   type RecoveryOutcome,
   type SessionResolver,
 } from "./recovery";
+import {
+  bindAgentSession,
+  TmuxSessionHost,
+  type TmuxEngine,
+} from "./session-host/tmux-host";
 import {
   deleteMemoryFact as deleteMemoryFactFile,
   readMemoryFact,
@@ -422,10 +426,7 @@ export interface HiveDaemonOptions {
   spawner: Spawner;
   db?: HiveDatabase;
   tmuxSender?: TmuxSender;
-  tmux?: Pick<
-    TmuxAdapter,
-    "hasSession" | "killSession" | "capturePane" | "newSession"
-  >;
+  tmux?: TmuxSessionHost | TmuxEngine;
   recovery?: {
     resolveClaudeSessionId?: SessionResolver;
     resolveCodexSessionId?: SessionResolver;
@@ -562,10 +563,7 @@ export class HiveDaemon {
     | Pick<MachineMutationCoordinator, "beginOperation">
     | null;
   private readonly ownedMachineMutations: MachineMutationCoordinator | null;
-  private readonly tmux: Pick<
-    TmuxAdapter,
-    "hasSession" | "killSession" | "capturePane" | "newSession"
-  >;
+  private readonly tmux: TmuxSessionHost;
   private readonly recovery: CrashRecovery;
   private readonly repoRoot: string;
   private readonly readClaudeTelemetry: ClaudeTelemetryReader;
@@ -658,7 +656,9 @@ export class HiveDaemon {
       this.machineMutations = null;
       this.ownedMachineMutations = null;
     }
-    this.tmux = options.tmux ?? new TmuxAdapter();
+    this.tmux = options.tmux instanceof TmuxSessionHost
+      ? options.tmux
+      : new TmuxSessionHost({ adapter: options.tmux });
     this.quota = options.quota;
     this.tokenUsage = options.tokenUsage ?? new TokenUsageStore(this.db);
     this.modelInventory = options.modelInventory;
@@ -666,7 +666,7 @@ export class HiveDaemon {
     this.autonomy = options.autonomy;
     this.selectionPreferences = options.selectionPreferences;
     this.graphify = options.graphify;
-    const tmuxSender = options.tmuxSender ?? new BunTmuxSender();
+    const tmuxSender = options.tmuxSender ?? new BunTmuxSender(this.tmux);
     this.delivery = new MessageDelivery(
       this.db,
       tmuxSender,
@@ -679,7 +679,8 @@ export class HiveDaemon {
                 ?.status === "active";
           if (
             sameControlAttempt &&
-            await this.tmux.hasSession(agent.tmuxSession)
+            (await this.tmux.inspect(bindAgentSession(this.tmux, agent))).presence ===
+              "present"
           ) {
             // The daemon may have crashed after launch but before advancing the
             // message. Reuse the surviving process and reservation exactly.
@@ -756,7 +757,11 @@ export class HiveDaemon {
         try {
           pids = await this.panePids(tmuxSession);
         } catch {
-          return (await this.tmux.hasSession(tmuxSession)) ? "running" : "gone";
+          const legacy = await this.tmux.inspectLegacyTmuxSession(tmuxSession);
+          if (legacy.presence === "unknown") {
+            throw new Error("SessionHost process presence is unknown");
+          }
+          return legacy.presence === "present" ? "running" : "gone";
         }
         if (pids.length === 0) return "gone";
         return paneProcessState(parseStateTable(await runPsState()), pids);
@@ -772,7 +777,8 @@ export class HiveDaemon {
     this.psSample = options.resourceRunners?.ps ?? runPs;
     this.vmStatSample = options.resourceRunners?.vmStat ?? runVmStat;
     this.panePids = options.resourceRunners?.panePids ??
-      ((session) => new TmuxAdapter().listPanePids(session));
+      (async (session) =>
+        [...(await this.tmux.inspectLegacyTmuxSession(session)).panePids]);
     this.killProcess = options.resourceRunners?.kill ??
       ((pid) => process.kill(pid, "SIGKILL"));
     this.orphanDependencies = options.resourceRunners?.orphans === undefined
@@ -781,15 +787,15 @@ export class HiveDaemon {
     this.reapDependencies = options.resourceRunners?.reap ??
       defaultReapDependencies();
     const teardownTmux: SessionStopAdapter = {
-      hasSession: (session) => this.tmux.hasSession(session),
+      hasSession: async (session) =>
+        (await this.tmux.inspectLegacyTmuxSession(session)).presence === "present",
       listPanePids: (session) => this.panePids(session),
-      killSession: (session, killOptions) =>
-        this.tmux.killSession(session, killOptions),
+      killSession: (session) => this.tmux.terminateLegacyTmuxSession(session),
     };
     this.stopAgentProcesses = (agent, beforeKill) =>
       stopAgentSession(
         agent,
-        { tmux: teardownTmux, reap: this.reapDependencies },
+        { sessions: this.tmux, reap: this.reapDependencies },
         beforeKill,
       );
     this.stopTmuxProcesses = (session) =>
@@ -3435,7 +3441,15 @@ export class HiveDaemon {
       if (agent === null) {
         throw new Error(`Hive agent not found: ${agentName}`);
       }
-      if (await this.tmux.hasSession(agent.tmuxSession)) {
+      const presence = (await this.tmux.inspect(
+        bindAgentSession(this.tmux, agent),
+      )).presence;
+      if (presence === "unknown") {
+        throw new Error(
+          `Cannot mark ${agentName} dead: session presence is unknown; inspect the host and retry.`,
+        );
+      }
+      if (presence === "present") {
         throw new Error(
           `Cannot mark ${agentName} dead: tmux session ${agent.tmuxSession} is still running. Use hive_kill to stop a live agent.`,
         );

@@ -43,10 +43,8 @@ import {
 import { renderStartNotice } from "../update/notice";
 import { IS_RELEASE_BUILD } from "../version";
 import { orchestratorTmuxSession } from "../daemon/tmux-sessions";
-import {
-  hiveInstanceSuffix,
-  hiveTmuxSocketName,
-} from "../daemon/tmux-sessions";
+import { hiveInstanceSuffix } from "../daemon/tmux-sessions";
+import { TmuxSessionHost } from "../daemon/session-host/tmux-host";
 import { getHiveHome } from "../daemon/db";
 import { isRepoInitialized, runInitCli } from "./init";
 import { startSession, type StartDeps, type StartedSession } from "./start";
@@ -73,6 +71,7 @@ const INSTALL_HINT =
 export interface LaunchDeps {
   readonly root?: string;
   readonly open?: (app: string, args: readonly string[]) => Promise<number>;
+  readonly sessions?: TmuxSessionHost;
   /** Present when a session is up: the app opens this project against this
    * daemon. Absent, the app launches standalone (placeholder window). */
   readonly session?: {
@@ -136,6 +135,8 @@ export async function launchWorkspace(deps: LaunchDeps): Promise<number> {
         : INSTALL_HINT,
     );
   }
+  const endpoint = (deps.sessions ?? new TmuxSessionHost())
+    .compatibilityEndpoint(orchestratorTmuxSession());
   const args = deps.session === undefined
     ? []
     : [
@@ -150,9 +151,9 @@ export async function launchWorkspace(deps: LaunchDeps): Promise<number> {
         "--hive",
         deps.session.hivePath ?? process.execPath,
         "--orchestrator-session",
-        orchestratorTmuxSession(),
+        endpoint.tmuxSession,
         "--tmux-socket",
-        hiveTmuxSocketName(),
+        endpoint.socketName,
         ...(deps.session.orchestrator === undefined
           ? []
           : ["--orchestrator", deps.session.orchestrator]),

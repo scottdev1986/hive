@@ -2,8 +2,6 @@ import { join } from "node:path";
 import { buildScopedBrief } from "../adapters/brief";
 import { buildMemoryIndex } from "../adapters/memory";
 import { discoverBriefableDocs } from "../adapters/briefing-docs";
-import { shellJoin } from "../adapters/tmux";
-import type { TmuxAdapter } from "../adapters/tmux";
 import {
   buildClaudeSpawnCommand,
   resolveWorkingClaudeExecutable,
@@ -26,6 +24,15 @@ import { listInheritedCodexMcpServers } from "../adapters/tools/mcp-scope";
 import type { CodexAppServerManager } from "../adapters/tools/codex-app-server";
 import { provisionSkills } from "../adapters/skills";
 import { readCodexTelemetry } from "./tool-telemetry";
+import {
+  bindAgentSession,
+  mintAgentTmuxSessionLocator,
+  nextAgentSessionLocator,
+  shellJoin,
+  tmuxSessionSpec,
+  TmuxSessionHost,
+  type TmuxEngine,
+} from "./session-host/tmux-host";
 import {
   modelVendor,
 } from "../adapters/tools/models";
@@ -222,16 +229,7 @@ type WorktreeCreator = (
   taskSlug: string,
 ) => Promise<CreatedWorktree>;
 type WorktreeRemover = typeof removeWorktree;
-type TmuxSessionManager = Pick<
-  TmuxAdapter,
-  | "newSession"
-  | "hasSession"
-  | "capturePane"
-  // Readiness asks the process tree whether the binary it launched is still
-  // running in the pane, because a redrawing screen alone cannot tell an agent
-  // from the wrapper shell hive launches it behind (see readiness.ts).
-  | "listPanePids"
->;
+type TmuxSessionManager = TmuxSessionHost | TmuxEngine;
 type Sleep = (milliseconds: number) => Promise<void>;
 type CapabilityDiscoverer = (
   provider: CapabilityProvider,
@@ -688,8 +686,12 @@ export class HiveSpawner implements Spawner {
     toolSessionId: string,
   ) => Promise<string | null>;
   private readonly repoUnavailableNames: typeof unavailableAgentNames;
+  private readonly sessions: TmuxSessionHost;
 
   constructor(private readonly dependencies: HiveSpawnerDependencies) {
+    this.sessions = dependencies.tmux instanceof TmuxSessionHost
+      ? dependencies.tmux
+      : new TmuxSessionHost({ adapter: dependencies.tmux });
     this.makeWorktree = dependencies.createWorktree ?? createWorktree;
     this.cleanupWorktree = dependencies.removeWorktree ?? removeWorktree;
     this.assessStranded = dependencies.assessStrandedWork ?? assessStrandedWork;
@@ -712,6 +714,36 @@ export class HiveSpawner implements Spawner {
       throw new Error(`Hive daemon has no listening port (resolved ${port})`);
     }
     return port;
+  }
+
+  private async createSession(
+    record: AgentRecord,
+    command: string,
+    expectedExecutable: string,
+    launchGrantId: string,
+  ): Promise<void> {
+    bindAgentSession(this.sessions, record);
+    await this.sessions.create(
+      tmuxSessionSpec(record, command, expectedExecutable, launchGrantId),
+      new Uint8Array(),
+    );
+  }
+
+  private async sessionPresent(record: AgentRecord): Promise<boolean> {
+    const inspection = await this.sessions.inspect(
+      bindAgentSession(this.sessions, record),
+    );
+    if (inspection.presence === "unknown") {
+      throw new Error(`Session presence is unknown for ${record.name}`);
+    }
+    return inspection.presence === "present";
+  }
+
+  private async captureVisible(record: AgentRecord): Promise<string> {
+    return (await this.sessions.capture(
+      bindAgentSession(this.sessions, record),
+      { include: "visible-text", maxRows: 50_000 },
+    )).text ?? "";
   }
 
   /** Servers a Codex spawn would inherit from the user's global config. Read
@@ -1056,10 +1088,11 @@ export class HiveSpawner implements Spawner {
       authorized = await this.authorizeLaunch(identity);
       requireAuthorizedLaunch(authorized);
       this.dependencies.quota.requireActiveReservation(reservationId);
-      await this.dependencies.tmux.newSession(
-        agent.tmuxSession,
-        agent.worktreePath,
+      await this.createSession(
+        prepared.record,
         withCapabilityEnv(shellJoin(argv) + (nativeCodex ? "" : promptSuffix)),
+        launchedCommand,
+        message.id,
       );
       if (nativeCodex) {
         try {
@@ -1085,6 +1118,13 @@ export class HiveSpawner implements Spawner {
             prepared.record,
             `Codex app-server fallback for ${agent.name}`,
           );
+          prepared = {
+            record: this.dependencies.db.insertAgent({
+              ...prepared.record,
+              sessionLocator: nextAgentSessionLocator(prepared.record),
+              lastEventAt: new Date().toISOString(),
+            }),
+          };
           const fallback = buildCodexSpawnCommand({
             daemonPort: this.daemonPort(),
             effort: identity.tool === "codex"
@@ -1108,10 +1148,11 @@ export class HiveSpawner implements Spawner {
           authorized = await this.authorizeLaunch(identity);
           requireAuthorizedLaunch(authorized);
           this.dependencies.quota.requireActiveReservation(reservationId);
-          await this.dependencies.tmux.newSession(
-            agent.tmuxSession,
-            agent.worktreePath,
+          await this.createSession(
+            prepared.record,
             fallbackShell,
+            launchedCommand,
+            message.id,
           );
         }
       }
@@ -1178,9 +1219,16 @@ export class HiveSpawner implements Spawner {
     reservationId?: string,
     failureReason?: string,
   ): Promise<{ record: AgentRecord }> {
-    const current = this.dependencies.db.getAgentById(agent.id) ?? agent;
+    let current = this.dependencies.db.getAgentById(agent.id) ?? agent;
+    if (current.sessionLocator === undefined) {
+      current = this.dependencies.db.insertAgent({
+        ...current,
+        sessionLocator: mintAgentTmuxSessionLocator(current.id),
+      });
+    }
     const record = this.dependencies.db.insertAgent({
       ...current,
+      sessionLocator: nextAgentSessionLocator(current),
       status: "control-paused",
       readOnly: true,
       writeRevoked: true,
@@ -1209,14 +1257,15 @@ export class HiveSpawner implements Spawner {
     record: AgentRecord,
     launchedCommand: string,
   ): Promise<string | null> {
-    const proof = await watchForProofOfLife(record.tmuxSession, record.lastEventAt, {
-      hasSession: (session) => this.dependencies.tmux.hasSession(session),
-      capturePane: (session) => this.dependencies.tmux.capturePane(session),
+    const locator = bindAgentSession(this.sessions, record);
+    const proof = await watchForProofOfLife(locator, record.lastEventAt, {
+      hasSession: () => this.sessionPresent(record),
+      capturePane: () => this.captureVisible(record),
       lastEventAt: () =>
         this.dependencies.db.getAgentById(record.id)?.lastEventAt ?? null,
       codexActivity: () => this.readCodexActivityFor(record),
       launchedProcessAlive: () =>
-        this.launchedProcessAlive(record.tmuxSession, launchedCommand),
+        this.launchedProcessAlive(record, launchedCommand),
       launchedCommand,
       wait: (ms) => this.wait(ms),
     });
@@ -1233,17 +1282,19 @@ export class HiveSpawner implements Spawner {
    * a process called "codex" would report every app-server agent as dead.
    */
   private async launchedProcessAlive(
-    session: string,
+    record: AgentRecord,
     command: string,
   ): Promise<boolean | null> {
     try {
-      const rootPids = await this.dependencies.tmux.listPanePids(session);
+      const rootPids = await this.sessions.sessionProcessRoots(
+        bindAgentSession(this.sessions, record),
+      );
       if (rootPids.length === 0) return null;
       const samples = parseProcessTable(
         await (this.dependencies.ps ?? runPs)(),
       );
       if (samples.length === 0) return null;
-      return treeRunsCommand(samples, rootPids, command);
+      return treeRunsCommand(samples, [...rootPids], command);
     } catch {
       return null;
     }
@@ -1919,11 +1970,13 @@ export class HiveSpawner implements Spawner {
     // the first moment. This is the same defect that already bit the liveModel
     // reader, fixed there the same way.
     const grokSessionId = tool === "grok" ? crypto.randomUUID() : undefined;
-    const record = this.dependencies.db.insertAgent({
+    const agentId = crypto.randomUUID();
+    let record = this.dependencies.db.insertAgent({
       // A fresh AgentUUID, always. Reusing a closed holder's id would overwrite
       // its row — erasing the very closure record that lets history tell the
       // two agents apart.
-      id: crypto.randomUUID(),
+      id: agentId,
+      sessionLocator: mintAgentTmuxSessionLocator(agentId),
       ...(grokSessionId === undefined ? {} : { toolSessionId: grokSessionId }),
       name,
       tool,
@@ -2084,12 +2137,14 @@ export class HiveSpawner implements Spawner {
       const launchTmux = async (
         candidate: AuthorizedLaunch,
         command: string,
+        expectedExecutable: string,
       ): Promise<void> => {
         requireAuthorizedLaunch(candidate);
-        await this.dependencies.tmux.newSession(
-          record.tmuxSession,
-          worktree.path,
+        await this.createSession(
+          record,
           command,
+          expectedExecutable,
+          record.quotaReservationId ?? record.id,
         );
       };
 
@@ -2099,6 +2154,7 @@ export class HiveSpawner implements Spawner {
       await launchTmux(
         await revalidateAtAdapter(),
         withCapabilityEnv(shellJoin(argv) + (nativeCodex ? "" : promptSuffix)),
+        launchedCommand,
       );
       if (nativeCodex) {
         try {
@@ -2119,8 +2175,9 @@ export class HiveSpawner implements Spawner {
             record,
             `Codex app-server fallback for ${record.name}`,
           );
-          this.dependencies.db.insertAgent({
+          record = this.dependencies.db.insertAgent({
             ...record,
+            sessionLocator: nextAgentSessionLocator(record),
             status: "spawning",
             lastEventAt: new Date().toISOString(),
           });
@@ -2146,6 +2203,7 @@ export class HiveSpawner implements Spawner {
           await launchTmux(
             await revalidateAtAdapter(),
             fallbackShell,
+            launchedCommand,
           );
         }
       }
@@ -2202,14 +2260,15 @@ export class HiveSpawner implements Spawner {
       this.dependencies.db.getAgentById(record.id)?.lastEventAt ??
         record.lastEventAt;
 
-    const proof = await watchForProofOfLife(record.tmuxSession, baselineEventAt, {
-      hasSession: (session) => this.dependencies.tmux.hasSession(session),
-      capturePane: (session) => this.dependencies.tmux.capturePane(session),
+    const locator = bindAgentSession(this.sessions, record);
+    const proof = await watchForProofOfLife(locator, baselineEventAt, {
+      hasSession: () => this.sessionPresent(record),
+      capturePane: () => this.captureVisible(record),
       lastEventAt: () =>
         this.dependencies.db.getAgentById(record.id)?.lastEventAt ?? null,
       codexActivity: () => this.readCodexActivityFor(record),
       launchedProcessAlive: () =>
-        this.launchedProcessAlive(record.tmuxSession, launchedCommand),
+        this.launchedProcessAlive(record, launchedCommand),
       launchedCommand,
       settled: () => !this.isStillSpawning(record.id),
       wait: (ms) => this.wait(ms),

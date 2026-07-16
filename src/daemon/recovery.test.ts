@@ -81,6 +81,22 @@ class FakeTmux {
     return this.panes.get(session) ?? "";
   }
 
+  async paneState(): Promise<{
+    columns: number;
+    rows: number;
+    cursorColumn: number;
+    cursorRow: number;
+    cursorVisible: boolean;
+  }> {
+    return {
+      columns: 80,
+      rows: 24,
+      cursorColumn: 0,
+      cursorRow: 0,
+      cursorVisible: false,
+    };
+  }
+
   async listPanePids(session: string): Promise<number[]> {
     return this.panePids.get(session) ?? [];
   }
@@ -590,7 +606,7 @@ describe("crash resume", () => {
     expect(outcomes).toEqual([{
       agent: "maya",
       action: "marked-dead",
-      reason: "resume launch failed: tmux session exited",
+      reason: "resume launch failed: tmux create readback did not prove the session present",
     }]);
     expect(h.db.getAgentByName("maya")).toMatchObject({
       status: "dead",

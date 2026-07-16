@@ -23,6 +23,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BunTmuxSender } from "../daemon/delivery";
 import { TmuxAdapter } from "../adapters/tmux";
+import { TmuxSessionHost } from "../daemon/session-host/tmux-host";
 import { hiveInstanceSuffix } from "../daemon/tmux-sessions";
 
 const enabled = process.env.HIVE_E2E === "1" && Bun.which("tmux") !== null;
@@ -312,7 +313,7 @@ e2e("real hive CLI against a real daemon and real tmux", () => {
     // keystroke — is the production code path.
     const session = "hive-e2e-delivery";
     await tmux.newSession(session, repo, "cat");
-    const sender = new BunTmuxSender(tmux);
+    const sender = new BunTmuxSender(new TmuxSessionHost({ adapter: tmux }));
     const probe = `hive e2e delivery probe ${Date.now()}`;
     await sender.sendMessage(session, probe);
     await until(

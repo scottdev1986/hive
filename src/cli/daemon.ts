@@ -1,6 +1,5 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { TmuxAdapter } from "../adapters/tmux";
 import { CodexAppServerManager } from "../adapters/tools/codex-app-server";
 import { loadHiveConfig, loadQuotaConfig } from "../config/load";
 import { HiveDatabase } from "../daemon/db";
@@ -10,6 +9,7 @@ import {
   RoutingPolicyStore,
 } from "../daemon/routing-policy-store";
 import { BunTmuxSender } from "../daemon/delivery";
+import { TmuxSessionHost } from "../daemon/session-host/tmux-host";
 import { buildGraphBrief } from "../adapters/graphify";
 import { GraphifyService } from "../daemon/graphify-service";
 import {
@@ -47,7 +47,7 @@ import {
 import { readBillingWithMemory } from "../daemon/usage-credits";
 import { persistAutonomy } from "../config/autonomy";
 import { readModelInventory } from "../daemon/model-inventory";
-import { verifiedAgentStop } from "../daemon/teardown";
+import { stopAgentSession } from "../daemon/teardown";
 import {
   inheritDefaultModelControlSettings,
   inheritOrdinaryWorkspaceSelection,
@@ -123,7 +123,7 @@ export async function runDaemon(): Promise<void> {
       new GrokQuotaProbe(new GrokStdioProbeTransport()),
     ],
   );
-  const tmux = new TmuxAdapter();
+  const sessions = new TmuxSessionHost();
   const port = readConfiguredPort();
   let daemon: HiveDaemon;
   const codexAppServer = new CodexAppServerManager({
@@ -177,27 +177,27 @@ export async function runDaemon(): Promise<void> {
     isModelEnabled: policyModelEnablement(routingPolicy),
     // The release valve reads the provider's own metering, not a model name.
     readBilling: (provider) => readBillingWithMemory(provider),
-    tmux,
-    stopSession: verifiedAgentStop(tmux),
+    tmux: sessions,
+    stopSession: (agent) => stopAgentSession(agent, { sessions }),
     // Even when quota-aware routing is disabled, critical read-only restarts
     // require a durable accounting lifecycle.
     quota,
     codexAppServer,
   });
   // Not a hand-rolled lambda. The previous one was `(session, text) =>
-  // tmux.sendKeys(session, text)`, which structurally cannot forward the
+  // the legacy sender could not forward the delivery options, so urgent input
   // `options` argument delivery passes it — and because `options` is optional
   // on TmuxSender, a two-parameter function satisfies the interface and
   // typechecks clean. So every message the real daemon ever sent went out with
   // interrupt dropped: "urgent interrupts at the next safe boundary" was a
   // label on a database row, never a behaviour, in production only. Tests
   // missed it because they use BunTmuxSender, which does forward.
-  const tmuxSender = new BunTmuxSender(tmux);
+  const tmuxSender = new BunTmuxSender(sessions);
   daemon = new HiveDaemon({
     db,
     spawner,
     tmuxSender,
-    tmux,
+    tmux: sessions,
     repoRoot,
     graphify,
     port,

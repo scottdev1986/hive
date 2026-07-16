@@ -1,6 +1,5 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { factVerificationFlag } from "../adapters/memory";
-import { TmuxAdapter } from "../adapters/tmux";
 import {
   cleanupLifecycleFiles,
   daemonInstanceLiveness,
@@ -8,7 +7,7 @@ import {
   readDaemonPort,
   type DaemonInstanceLiveness,
 } from "../daemon/lifecycle";
-import { getHiveHome } from "../daemon/db";
+import { getDatabasePath, getHiveHome, HiveDatabase } from "../daemon/db";
 import {
   captureProcessTree,
   defaultReapDependencies,
@@ -34,6 +33,10 @@ import {
 import { operatorFetch, operatorHeaders } from "./credential";
 import { isAutonomy, type Autonomy } from "../config/autonomy";
 import { formatQuotaStatus, formatStatusTable } from "./status";
+import {
+  bindAgentSession,
+  TmuxSessionHost,
+} from "../daemon/session-host/tmux-host";
 
 const isNoSuchProcessError = (error: unknown): boolean =>
   typeof error === "object" &&
@@ -41,13 +44,68 @@ const isNoSuchProcessError = (error: unknown): boolean =>
   "code" in error &&
   error.code === "ESRCH";
 
-type StopTmux = Pick<
-  TmuxAdapter,
-  "killSession" | "listPanePids" | "listSessions"
->;
+interface StopTmux {
+  listSessions(): Promise<string[]>;
+  listPanePids(session: string): Promise<number[]>;
+  killSession(
+    session: string,
+    options?: Readonly<{ ignoreMissing?: boolean }>,
+  ): Promise<void>;
+}
+
+function compatibilityStopAdapter(
+  sessions: TmuxSessionHost,
+  hiveHome?: string,
+): StopTmux {
+  const instanceId = hiveHome === undefined
+    ? hiveInstanceSuffix()
+    : hiveInstanceSuffix(hiveHome);
+  return {
+    async listSessions(): Promise<string[]> {
+      const result = await sessions.listDetailed(instanceId);
+      const unknown = result.inspections.find((entry) => entry.presence === "unknown");
+      if (unknown !== undefined) {
+        throw new Error("tmux session enumeration is unknown");
+      }
+      return [
+        ...result.inspections
+          .filter((entry) => entry.presence === "present")
+          .map((entry) => sessions.compatibilitySessionName(entry.locator)),
+        ...result.legacyUnbound.map((entry) => entry.tmuxSession),
+      ];
+    },
+    async listPanePids(tmuxSession: string): Promise<number[]> {
+      const locator = sessions.locatorForCompatibilitySession(tmuxSession);
+      if (locator !== null) {
+        return [...await sessions.sessionProcessRoots(locator)];
+      }
+      const inspection = await sessions.inspectLegacyTmuxSession(tmuxSession);
+      if (inspection.presence === "unknown") {
+        throw new Error(`tmux session ${tmuxSession} presence is unknown`);
+      }
+      return [...inspection.panePids];
+    },
+    async killSession(tmuxSession: string): Promise<void> {
+      const locator = sessions.locatorForCompatibilitySession(tmuxSession);
+      if (locator === null) {
+        await sessions.terminateLegacyTmuxSession(tmuxSession);
+        return;
+      }
+      const result = await sessions.terminate(locator, {
+        mode: "immediate",
+        reason: "hive stop",
+        requestId: crypto.randomUUID(),
+      });
+      if (result.state !== "terminated") {
+        throw new Error(`tmux session ${tmuxSession} termination is ${result.state}`);
+      }
+    },
+  };
+}
 
 export interface StopAgentSessionDependencies {
-  tmux: StopTmux;
+  tmux?: StopTmux;
+  sessions?: TmuxSessionHost;
   hiveHome?: string;
   reap?: ReapDependencies;
 }
@@ -55,7 +113,11 @@ export interface StopAgentSessionDependencies {
 export async function stopAgentSessions(
   dependencies: StopAgentSessionDependencies,
 ): Promise<number> {
-  const sessions = (await dependencies.tmux.listSessions()).filter(
+  const tmux = dependencies.tmux ?? await compatibilityStopAdapter(
+    dependencies.sessions ?? new TmuxSessionHost(),
+    dependencies.hiveHome,
+  );
+  const sessions = (await tmux.listSessions()).filter(
     (session) => isTmuxSessionForInstance(session, dependencies.hiveHome),
   );
   if (sessions.length === 0) return 0;
@@ -63,7 +125,7 @@ export async function stopAgentSessions(
   const reap = dependencies.reap ?? defaultReapDependencies();
   const captured = await Promise.all(sessions.map(async (session) => {
     try {
-      const roots = await dependencies.tmux.listPanePids(session);
+      const roots = await tmux.listPanePids(session);
       return await captureProcessTree(roots, reap);
     } catch (error) {
       throw new Error(
@@ -75,13 +137,13 @@ export async function stopAgentSessions(
   }));
 
   const sessionResults = await Promise.allSettled(sessions.map((session) =>
-    dependencies.tmux.killSession(session, { ignoreMissing: true })
+    tmux.killSession(session, { ignoreMissing: true })
   ));
   const outcomes = await Promise.all(
     captured.map((tree) => reapCapturedTree(tree, reap)),
   );
   const survivors = outcomes.flatMap((outcome) => outcome.survivors);
-  const remaining = new Set(await dependencies.tmux.listSessions());
+  const remaining = new Set(await tmux.listSessions());
   const remainingOwned = sessions.filter((session) => remaining.has(session));
   const sessionErrors = sessionResults.flatMap((result) =>
     result.status === "rejected"
@@ -357,6 +419,7 @@ export async function recoverAgentsCli(name?: string): Promise<void> {
 
 export interface StopHiveDependencies {
   readonly tmux?: StopTmux;
+  readonly sessions?: TmuxSessionHost;
   readonly readPid?: () => number | null;
   readonly kill?: (pid: number, signal: NodeJS.Signals) => void;
   readonly liveness?: () => Promise<DaemonInstanceLiveness>;
@@ -367,7 +430,19 @@ export interface StopHiveDependencies {
 }
 
 export async function stopHive(deps: StopHiveDependencies = {}): Promise<void> {
-  const tmux = deps.tmux ?? new TmuxAdapter();
+  const sessions = deps.sessions ?? (deps.tmux === undefined
+    ? new TmuxSessionHost()
+    : undefined);
+  if (sessions !== undefined && existsSync(getDatabasePath())) {
+    const db = HiveDatabase.openReadonly();
+    try {
+      for (const agent of db.listAgents()) {
+        if (agent.sessionLocator !== undefined) bindAgentSession(sessions, agent);
+      }
+    } finally {
+      db.close();
+    }
+  }
   const pid = (deps.readPid ?? readDaemonPid)();
   const liveness = deps.liveness ?? (() =>
     daemonInstanceLiveness(getHiveHome(), hiveInstanceSuffix())
@@ -410,7 +485,10 @@ export async function stopHive(deps: StopHiveDependencies = {}): Promise<void> {
     }
   }
 
-  const stoppedSessions = await stopAgentSessions({ tmux });
+  const stoppedSessions = await stopAgentSessions({
+    ...(deps.tmux === undefined ? {} : { tmux: deps.tmux }),
+    ...(sessions === undefined ? {} : { sessions }),
+  });
   cleanup(pid ?? undefined);
   const sessionLabel = stoppedSessions === 1 ? "session" : "sessions";
   const report = daemonWasLive

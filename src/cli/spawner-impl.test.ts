@@ -454,6 +454,22 @@ class FakeTmux {
     return this.pane;
   }
 
+  async paneState(): Promise<{
+    columns: number;
+    rows: number;
+    cursorColumn: number;
+    cursorRow: number;
+    cursorVisible: boolean;
+  }> {
+    return {
+      columns: 80,
+      rows: 24,
+      cursorColumn: 0,
+      cursorRow: 0,
+      cursorVisible: false,
+    };
+  }
+
   /** No fake session has real processes in it, and readiness is told exactly
    * that: unknown, which it never mistakes for life. */
   async listPanePids(_name: string): Promise<number[]> {
@@ -1214,6 +1230,7 @@ describe("HiveSpawner wiring", () => {
       tmux,
       stopSession: async (agent) => {
         stopped.push(agent.tmuxSession);
+        await tmux.killSession(agent.tmuxSession);
         return { killed: [], survivors: [] };
       },
       createWorktree: async (_repoRoot, name, slug) => {
@@ -2280,7 +2297,9 @@ describe("HiveSpawner wiring", () => {
 
     expect(spawned.status).toEqual("working");
     expect(polls).toEqual(1);
-    expect(tmux.hasSessionCalls).toEqual(0);
+    // SessionHost proves create with preflight and post-create readback before
+    // readiness gets a chance to short-circuit on the persisted hook event.
+    expect(tmux.hasSessionCalls).toEqual(2);
     expect(tmux.capturePaneCalls).toEqual(0);
     expect(tmux.killed).toEqual([]);
   });

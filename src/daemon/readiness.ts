@@ -112,9 +112,9 @@ export const LAUNCH_FAILURE_PATTERNS = [
   /not found\.?$/m,
 ];
 
-export interface ProofOfLifeDeps {
-  readonly hasSession: (session: string) => Promise<boolean>;
-  readonly capturePane: (session: string) => Promise<string>;
+export interface ProofOfLifeDeps<Target = string> {
+  readonly hasSession: (session: Target) => Promise<boolean>;
+  readonly capturePane: (session: Target) => Promise<string>;
   /** The agent row's `lastEventAt`, re-read live on every poll. */
   readonly lastEventAt: () => string | null;
   /**
@@ -219,10 +219,10 @@ export function orphanedPaneReason(command: string, paneTail: string): string {
  * for the length of a turn — a working agent starts redrawing within a second
  * or two, and that is all the proof required.
  */
-export async function watchForProofOfLife(
-  session: string,
+export async function watchForProofOfLife<Target = string>(
+  session: Target,
   baselineEventAt: string,
-  deps: ProofOfLifeDeps,
+  deps: ProofOfLifeDeps<Target>,
 ): Promise<ProofOfLife> {
   const pollMs = deps.pollMs ?? POLL_MS;
   const quietLimit = deps.quietLimit ?? QUIET_LIMIT;

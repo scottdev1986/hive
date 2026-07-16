@@ -1,6 +1,6 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { shellQuote } from "../adapters/tmux";
+import { shellQuote } from "./session-host/tmux-host";
 import { getHiveHome } from "./db";
 
 /**

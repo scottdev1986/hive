@@ -20,6 +20,10 @@ import {
   type AgentRecord,
   type HookEvent,
 } from "../schemas";
+import {
+  mintTmuxSessionLocator,
+  sessionInstanceId,
+} from "./session-host/locators";
 
 const StoredCapabilitySchema = z.object({
   id: z.string().min(1),
@@ -110,6 +114,7 @@ export const EscalationSchema = z.object({
 export type Escalation = z.infer<typeof EscalationSchema>;
 
 const AgentDatabaseRowSchema = AgentRecordObjectSchema.extend({
+  sessionLocator: z.string().nullable().default(null),
   failureReason: z.string().nullable(),
   failedAt: z.string().nullable(),
   closedAt: z.string().nullable(),
@@ -140,6 +145,9 @@ function parseAgentRow(row: unknown): AgentRecord {
     controlQuotaReservationId: value.controlQuotaReservationId ?? undefined,
     controlMessageId: value.controlMessageId ?? undefined,
     toolSessionId: value.toolSessionId ?? undefined,
+    sessionLocator: value.sessionLocator === null
+      ? undefined
+      : JSON.parse(value.sessionLocator),
     contextWindow: value.contextWindow ?? undefined,
     executionIdentity: value.executionIdentity === null
       ? undefined
@@ -255,6 +263,7 @@ function agentsTableDdl(table: string, ifNotExists = false): string {
       worktreePath TEXT,
       branch TEXT,
       tmuxSession TEXT NOT NULL,
+      sessionLocator TEXT,
       -- Nullable on purpose: null is "not observed", which is a different fact
       -- from 0%, and 0% is the one that gets an agent overloaded.
       contextPct REAL,
@@ -522,6 +531,32 @@ export class HiveDatabase {
     }
     if (!agentColumnNames.has("toolSessionId")) {
       this.database.exec("ALTER TABLE agents ADD COLUMN toolSessionId TEXT");
+    }
+    if (!agentColumnNames.has("sessionLocator")) {
+      this.database.exec("ALTER TABLE agents ADD COLUMN sessionLocator TEXT");
+    }
+    const legacySessionRows = z.array(z.object({ id: z.string().min(1) })).parse(
+      this.database.query(
+        "SELECT id FROM agents WHERE sessionLocator IS NULL",
+      ).all(),
+    );
+    if (legacySessionRows.length > 0) {
+      const instanceId = sessionInstanceId(getHiveHome());
+      this.database.transaction(() => {
+        const update = this.database.query(
+          "UPDATE agents SET sessionLocator = ? WHERE id = ? AND sessionLocator IS NULL",
+        );
+        for (const row of legacySessionRows) {
+          update.run(
+            JSON.stringify(mintTmuxSessionLocator(
+              instanceId,
+              { kind: "agent", agentId: row.id },
+              1,
+            )),
+            row.id,
+          );
+        }
+      })();
     }
     if (!agentColumnNames.has("contextWindow")) {
       this.database.exec("ALTER TABLE agents ADD COLUMN contextWindow INTEGER");
@@ -852,17 +887,32 @@ export class HiveDatabase {
   }
 
   upsertAgent(agent: AgentRecord): AgentRecord {
-    const value = AgentRecordSchema.parse(agent);
+    const parsed = AgentRecordSchema.parse(agent);
+    const stored = this.database.query(
+      "SELECT sessionLocator FROM agents WHERE id = ?",
+    ).get(parsed.id) as { sessionLocator: string | null } | null;
+    const value = parsed.sessionLocator === undefined
+      ? AgentRecordSchema.parse({
+          ...parsed,
+          sessionLocator: stored?.sessionLocator === null || stored === null
+            ? mintTmuxSessionLocator(
+                sessionInstanceId(getHiveHome()),
+                { kind: "agent", agentId: parsed.id },
+                1,
+              )
+            : JSON.parse(stored.sessionLocator),
+        })
+      : parsed;
     const closedAt = this.resolveClosedAt(value);
     this.database.query(`
       INSERT INTO agents (
         id, name, tool, model, liveModel, category, status, taskDescription,
-        worktreePath, branch, tmuxSession, contextPct,
+        worktreePath, branch, tmuxSession, sessionLocator, contextPct,
         createdAt, lastEventAt, failureReason, failedAt,
         quotaReservationId, controlQuotaReservationId, controlMessageId,
         executionIdentity, toolSessionId, contextWindow, recoveryAttempts,
         capabilityEpoch, readOnly, writeRevoked, closedAt
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         name = excluded.name,
         tool = excluded.tool,
@@ -874,6 +924,7 @@ export class HiveDatabase {
         worktreePath = excluded.worktreePath,
         branch = excluded.branch,
         tmuxSession = excluded.tmuxSession,
+        sessionLocator = excluded.sessionLocator,
         contextPct = excluded.contextPct,
         createdAt = excluded.createdAt,
         lastEventAt = excluded.lastEventAt,
@@ -902,6 +953,7 @@ export class HiveDatabase {
       value.worktreePath,
       value.branch,
       value.tmuxSession,
+      JSON.stringify(value.sessionLocator),
       value.contextPct,
       value.createdAt,
       value.lastEventAt,

@@ -11,12 +11,17 @@ import {
   type MessagePriority,
   type OrchestratorMessageEnvelope,
 } from "../schemas";
+import { createHash } from "node:crypto";
+import type { InputReceipt } from "./session-host/contract";
+import {
+  bindAgentSession,
+  TmuxSessionHost,
+} from "./session-host/tmux-host";
 
 /** Senders to probe for idempotency: root aliases during the rename window. */
 function idempotencySenders(from: string): readonly string[] {
   return isOrchestratorName(from) ? orchestratorRecipientNames() : [from];
 }
-import { TmuxAdapter } from "../adapters/tmux";
 import type { PaneProcessState } from "./resources";
 import { HiveDatabase } from "./db";
 import {
@@ -27,11 +32,20 @@ import {
 import { isComposerLeased } from "./composer-lease";
 
 export interface TmuxSender {
+  /** T2 compatibility path for legacy-unbound tmux records and root. */
   sendMessage(
-    session: string,
+    tmuxSession: string,
     text: string,
     options?: { interrupt?: boolean },
   ): Promise<void>;
+}
+
+export interface SessionSender {
+  sendSessionMessage(
+    recipient: AgentRecord,
+    text: string,
+    options: { messageId: string; interrupt?: boolean },
+  ): Promise<InputReceipt | void>;
 }
 
 export interface RootProtocolDeliverer {
@@ -194,25 +208,54 @@ export function reportsTurnEvents(tool: AgentRecord["tool"]): boolean {
 }
 
 
-export class BunTmuxSender implements TmuxSender {
-  constructor(private readonly tmux: Pick<TmuxAdapter, "sendKeys"> = new TmuxAdapter()) {}
+export class BunSessionSender implements SessionSender, TmuxSender {
+  constructor(private readonly sessions: TmuxSessionHost = new TmuxSessionHost()) {}
+
+  async sendSessionMessage(
+    recipient: AgentRecord,
+    text: string,
+    options: { messageId: string; interrupt?: boolean },
+  ): Promise<InputReceipt> {
+    const locator = bindAgentSession(this.sessions, recipient);
+    const bytes = new TextEncoder().encode(text);
+    const receipt = await this.sessions.writeAutomated(locator, {
+      transactionId: options.messageId,
+      idempotencyKey: options.messageId,
+      messageId: options.messageId,
+      recipientGeneration: locator.generation,
+      capabilityEpoch: recipient.capabilityEpoch,
+      bytes,
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+      providerStrategy: options.interrupt ? "tmux-interrupt" : "tmux-normal",
+      submit: "return",
+    });
+    if (receipt.state !== "written") {
+      throw new Error(`SessionHost input is ${receipt.state}`);
+    }
+    return receipt;
+  }
 
   async sendMessage(
-    session: string,
+    tmuxSession: string,
     text: string,
     options: { interrupt?: boolean } = {},
   ): Promise<void> {
-    await this.tmux.sendKeys(session, text, options);
+    await this.sessions.writeLegacyTmuxSession(
+      tmuxSession,
+      new TextEncoder().encode(text),
+      { interrupt: options.interrupt, submit: "return" },
+    );
   }
-
 }
+
+export { BunSessionSender as BunTmuxSender };
 
 export class MessageDelivery {
   private readonly sessionLocks = new Map<string, Promise<void>>();
 
   constructor(
     private readonly db: HiveDatabase,
-    private readonly tmux: TmuxSender,
+    private readonly sessions: SessionSender | TmuxSender,
     private readonly controls?: CriticalControlRuntime,
     private readonly nativeControl?: NativeAgentControl,
     private readonly rootProtocol?: RootProtocolDeliverer,
@@ -730,9 +773,18 @@ export class MessageDelivery {
     // boundary: routine coordination is not worth discarding a model's
     // reasoning, and the cost of an interrupt is that the in-flight turn is
     // cancelled and never resumed.
-    await this.tmux.sendMessage(recipient.tmuxSession, text, {
-      interrupt: message.priority === "urgent",
-    });
+    if ("sendSessionMessage" in this.sessions) {
+      await this.sessions.sendSessionMessage(recipient, text, {
+        messageId: message.id,
+        interrupt: message.priority === "urgent",
+      });
+    } else {
+      // Compatibility for injected legacy senders. The built-in production
+      // sender always takes the exact-locator branch above.
+      await this.sessions.sendMessage(recipient.tmuxSession, text, {
+        interrupt: message.priority === "urgent",
+      });
+    }
 
     // An idle TUI that accepts a paste submits it, and the model starts a turn
     // — 71ms, measured in the field. Nothing else makes an idle agent start

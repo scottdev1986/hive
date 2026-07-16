@@ -1,7 +1,6 @@
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildMemoryIndex } from "../adapters/memory";
-import { TmuxAdapter } from "../adapters/tmux";
 import {
   buildClaudeSpawnCommand,
   resolveWorkingClaudeExecutable,
@@ -14,8 +13,10 @@ import { operatorHeaders } from "./credential";
 import { orchestratorTmuxSession } from "../daemon/orchestrator-lifecycle";
 import {
   hiveInstanceSuffix,
-  hiveTmuxSocketName,
 } from "../daemon/tmux-sessions";
+import {
+  TmuxSessionHost,
+} from "../daemon/session-host/tmux-host";
 import { ORCHESTRATOR_NAME, unknownVendor } from "../schemas";
 import { ORCHESTRATOR_BRIEF, orchestratorDocGuidance } from "./orchestrator-brief";
 import { discoverBriefableDocs } from "../adapters/briefing-docs";
@@ -122,19 +123,46 @@ type OrchestratorSpawn = (
 const spawnOrchestrator: OrchestratorSpawn = (command, options) =>
   Bun.spawn(command, options);
 
-type OrchestratorTmux = Pick<
-  TmuxAdapter,
-  "hasSession" | "listClientTtys" | "killSession"
->;
+interface OrchestratorTmux {
+  hasSession(session: string): Promise<boolean>;
+  listClientTtys(session: string): Promise<string[]>;
+  killSession(
+    session: string,
+    options?: Readonly<{ ignoreMissing?: boolean }>,
+  ): Promise<void>;
+}
+
+function orchestratorSessionHost(
+  sessions: TmuxSessionHost | OrchestratorTmux,
+): TmuxSessionHost {
+  if (sessions instanceof TmuxSessionHost) return sessions;
+  return new TmuxSessionHost({
+    adapter: {
+      hasSession: (session) => sessions.hasSession(session),
+      listClientTtys: (session) => sessions.listClientTtys(session),
+      killSession: (session, options) => sessions.killSession(session, options),
+      newSession: async () => {
+        throw new Error("orchestrator compatibility adapter cannot create sessions");
+      },
+      capturePane: async () => {
+        throw new Error("orchestrator compatibility adapter cannot capture sessions");
+      },
+    },
+  });
+}
 
 export async function prepareFreshOrchestratorSession(
-  tmux: OrchestratorTmux = new TmuxAdapter(),
+  input: TmuxSessionHost | OrchestratorTmux = new TmuxSessionHost(),
 ): Promise<void> {
+  const sessions = orchestratorSessionHost(input);
   const session = orchestratorTmuxSession();
-  if (!(await tmux.hasSession(session))) return;
+  const inspection = await sessions.inspectLegacyTmuxSession(session);
+  if (inspection.presence === "lost") return;
+  if (inspection.presence === "unknown") {
+    throw new Error("the orchestrator tmux session presence is unknown");
+  }
 
-  const clients = await tmux.listClientTtys(session);
-  if (clients.length > 0) {
+  if (inspection.clientTtys.length > 0) {
     // A command the user has earned: Hive will not close a live orchestrator
     // out from under them in order to start another one.
     throw new Error(
@@ -142,7 +170,7 @@ export async function prepareFreshOrchestratorSession(
         "Fix: close it, or run `hive stop`, before starting another",
     );
   }
-  await tmux.killSession(session, { ignoreMissing: true });
+  await sessions.terminateLegacyTmuxSession(session);
 }
 
 export function orchestratorConfigRoot(): string {
@@ -324,6 +352,7 @@ export function buildOrchestratorLaunchCommand(
   codexTokenFile = "",
   recoveryBrief = "",
   codexMcpExclusionArgs: readonly string[] = [],
+  sessions = new TmuxSessionHost(),
 ): string[] {
   switch (tool) {
     case "codex": {
@@ -340,25 +369,21 @@ export function buildOrchestratorLaunchCommand(
         recoveryBrief,
         codexMcpExclusionArgs,
       );
-      return ["tmux", "-L", hiveTmuxSocketName(), "new-session", "-s", orchestratorTmuxSession(), "-c", cwd,
-        ...buildCodexRootAuthorityCommand(
+      return sessions.compatibilityLaunchCommand(
+        orchestratorTmuxSession(),
+        cwd,
+        buildCodexRootAuthorityCommand(
           undefined,
           codexCommand.slice(1),
           codexTokenFile,
         ),
-        ";", "set-option", "-g", "mouse", "on"];
+      );
     }
     case "claude":
-      return [
-        "tmux",
-        "-L",
-        hiveTmuxSocketName(),
-        "new-session",
-        "-s",
+      return sessions.compatibilityLaunchCommand(
         orchestratorTmuxSession(),
-        "-c",
         cwd,
-        ...buildOrchestratorCommand(
+        buildOrchestratorCommand(
           tool,
           port,
           memoryIndex,
@@ -367,42 +392,28 @@ export function buildOrchestratorLaunchCommand(
           "",
           recoveryBrief,
         ),
-        ";",
-        "set-option",
-        "-g",
-        "mouse",
-        "on",
-      ];
+      );
     case "grok":
-      return [
-        "tmux",
-        "-L",
-        hiveTmuxSocketName(),
-        "new-session",
-        "-s",
+      return sessions.compatibilityLaunchCommand(
         orchestratorTmuxSession(),
-        "-c",
         cwd,
-        "env",
-        `GROK_HOME=${join(orchestratorConfigRoot(), ".grok")}`,
-        ...Object.entries(GROK_COMPATIBILITY_ENV).map(([key, value]) =>
-          `${key}=${value}`
-        ),
-        ...buildOrchestratorCommand(
-          tool,
-          port,
-          memoryIndex,
-          docGuidance,
-          "claude",
-          "",
-          recoveryBrief,
-        ),
-        ";",
-        "set-option",
-        "-g",
-        "mouse",
-        "on",
-      ];
+        [
+          "env",
+          `GROK_HOME=${join(orchestratorConfigRoot(), ".grok")}`,
+          ...Object.entries(GROK_COMPATIBILITY_ENV).map(([key, value]) =>
+            `${key}=${value}`
+          ),
+          ...buildOrchestratorCommand(
+            tool,
+            port,
+            memoryIndex,
+            docGuidance,
+            "claude",
+            "",
+            recoveryBrief,
+          ),
+        ],
+      );
     default:
       unknownVendor(tool, "orchestrator launch command");
   }
@@ -415,12 +426,13 @@ export async function launchOrchestrator(
   spawn: OrchestratorSpawn = spawnOrchestrator,
   detectVersion?: () => Promise<string | null>,
   resolveExecutable: () => ResolvedClaudeExecutable = resolveWorkingClaudeExecutable,
-  tmux: OrchestratorTmux = new TmuxAdapter(),
+  input: TmuxSessionHost | OrchestratorTmux = new TmuxSessionHost(),
   recoveryBrief = "",
   listCodexMcpServers: () => Promise<string[]> = listInheritedCodexMcpServers,
   provisionCodexToken: (port: number) => Promise<string | null> =
     provisionCodexRootToken,
 ): Promise<number> {
+  const sessions = orchestratorSessionHost(input);
   // Resolve and gate Claude only for the Claude path. A Codex orchestrator
   // must not require an unrelated Claude installation.
   let claudePath = "claude";
@@ -450,7 +462,7 @@ export async function launchOrchestrator(
     default:
       unknownVendor(tool, "orchestrator launch");
   }
-  await prepareFreshOrchestratorSession(tmux);
+  await prepareFreshOrchestratorSession(sessions);
   await prepareOrchestratorConfig(tool, port, cwd);
   let codexTokenFile = "";
   let codexMcpExclusionArgs: string[] = [];
@@ -495,6 +507,7 @@ export async function launchOrchestrator(
       codexTokenFile,
       recoveryBrief,
       codexMcpExclusionArgs,
+      sessions,
     ),
     {
       cwd,

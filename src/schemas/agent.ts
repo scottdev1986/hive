@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { RoutingCategorySchema } from "./routing-policy";
 import { CapabilityProviderSchema, EffortLevelSchema } from "./capability";
+import { SessionLocatorSchema } from "./session-protocol";
 
 // Preferred user-facing name of the root orchestrator. It is not a spawned
 // agent and has no row in the agents table; delivery routes it through the
@@ -117,6 +118,9 @@ const AgentRecordShape = {
   worktreePath: z.string().nullable(),
   branch: z.string().nullable(),
   tmuxSession: z.string().min(1),
+  // T2 compatibility: legacy rows may omit this on read, but every database
+  // write mints/persists an exact locator before committing the row.
+  sessionLocator: SessionLocatorSchema.optional(),
   // The tool-level conversation identity (Claude session id, Codex thread id)
   // captured from hook traffic, so a crashed process can be relaunched with
   // its native resume instead of respawned from a blank prompt.
