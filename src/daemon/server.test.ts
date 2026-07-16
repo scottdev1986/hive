@@ -2665,6 +2665,72 @@ describe("HiveDaemon HTTP server", () => {
     }
   });
 
+  test("hive_mark_dead cannot terminalize a recovery launched during its session check", async () => {
+    const path = join(home, `mark-dead-recovery-race-${crypto.randomUUID()}.db`);
+    const db = new HiveDatabase(path);
+    const rival = new HiveDatabase(path);
+    let enterCheck!: () => void;
+    let releaseCheck!: () => void;
+    const checkEntered = new Promise<void>((resolve) => {
+      enterCheck = resolve;
+    });
+    const checkMayFinish = new Promise<void>((resolve) => {
+      releaseCheck = resolve;
+    });
+    const tmux = new class extends FakeDaemonTmux {
+      override async hasSession(): Promise<boolean> {
+        enterCheck();
+        await checkMayFinish;
+        return false;
+      }
+    }();
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new StubSpawner(),
+      tmux,
+      tmuxSender: new SilentTmuxSender(db),
+      assessStrandedWork: async () => ({ dirtyFiles: [], unmergedCommits: 0 }),
+    });
+    db.insertAgent(agent({ tool: "claude", model: "sonnet" }));
+    const transport = new StreamableHTTPClientTransport(
+      new URL("http://hive/mcp"),
+      { fetch: actingAs(daemon, "operator") },
+    );
+    const client = new Client({ name: "mark-dead-race", version: "1.0.0" });
+    await client.connect(transport);
+    try {
+      const marking = client.callTool({
+        name: "hive_mark_dead",
+        arguments: { agent: "maya" },
+      });
+      await checkEntered;
+      const current = rival.getAgentById("agent-maya")!;
+      expect(rival.updateAgentIfCurrent(agentStateCas(current), {
+        status: "spawning",
+        processIncarnation: (current.processIncarnation ?? 0) + 1,
+        processStartedAt: "2026-07-16T03:01:00.000Z",
+        lastEventAt: "2026-07-16T03:01:00.000Z",
+      })).not.toBeNull();
+      releaseCheck();
+
+      const result = await marking;
+      expect(result.isError).toBe(true);
+      expect(JSON.stringify(result.content)).toContain(
+        "Exact agent state changed before automatic terminalization",
+      );
+      expect(db.getAgentById("agent-maya")).toMatchObject({
+        status: "spawning",
+        processIncarnation: 2,
+      });
+      expect(tmux.killed).toEqual([]);
+    } finally {
+      releaseCheck();
+      await client.close();
+      rival.close();
+      db.close();
+    }
+  });
+
   test("the dead-agent kill path reaps residual owned processes only", async () => {
     const owned = Bun.spawn(["sleep", "60"], {
       stdout: "ignore",

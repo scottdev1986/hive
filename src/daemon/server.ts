@@ -90,6 +90,7 @@ import {
 import {
   agentStateCas,
   HiveDatabase,
+  type AgentStateCas,
   type Approval,
 } from "./db";
 import {
@@ -2371,6 +2372,7 @@ export class HiveDaemon {
       discardWork?: boolean;
       failureReason?: string;
       at?: string;
+      expected?: AgentStateCas;
     } = {},
   ): Promise<{
     agent: AgentRecord;
@@ -2396,13 +2398,20 @@ export class HiveDaemon {
     // as a crash recovery. The recovery sweep additionally re-proves this row
     // is not closed immediately before any relaunch.
     const timestamp = options.at ?? new Date().toISOString();
-    const killed = this.db.markAgentDead(
-      agent.id,
-      timestamp,
-      options.failureReason,
-    );
+    const killed = options.expected === undefined
+      ? this.db.markAgentDead(agent.id, timestamp, options.failureReason)
+      : this.db.markAgentTerminalIfCurrent(
+        options.expected,
+        timestamp,
+        "dead",
+        { failureReason: options.failureReason },
+      );
     if (killed === null) {
-      throw new Error(`Hive agent not found: ${agent.name}`);
+      throw new Error(
+        options.expected === undefined
+          ? `Hive agent not found: ${agent.name}`
+          : `Exact agent state changed before automatic terminalization of ${agent.name}; teardown refused`,
+      );
     }
     // Revoke in-memory capability and on-disk credential immediately after the
     // durable terminal mark (which already bumped epoch + writeRevoked). Do not
@@ -2744,7 +2753,10 @@ export class HiveDaemon {
         continue;
       }
       try {
-        await this.killAgentTeardown(record, { removeWorktree: true });
+        await this.killAgentTeardown(record, {
+          removeWorktree: true,
+          expected: agentStateCas(record),
+        });
         await this.delivery.send(
           "hive-lifecycle",
           ORCHESTRATOR_NAME,
@@ -4237,12 +4249,13 @@ export class HiveDaemon {
       if (agent === null) {
         throw new Error(`Hive agent not found: ${agentName}`);
       }
+      const expected = agentStateCas(agent);
       if (await this.tmux.hasSession(agent.tmuxSession)) {
         throw new Error(
           `Cannot mark ${agentName} dead: tmux session ${agent.tmuxSession} is still running. Use hive_kill to stop a live agent.`,
         );
       }
-      return toolResult((await this.killAgentTeardown(agent)).agent, "agent");
+      return toolResult((await this.killAgentTeardown(agent, { expected })).agent, "agent");
     });
 
     server.registerTool("hive_kill", {

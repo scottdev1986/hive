@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { createWorktree, listWorktrees } from "../adapters/worktrees";
 import { loadHiveConfig } from "../config/load";
 import type { AgentRecord } from "../schemas";
-import { HiveDatabase } from "./db";
+import { agentStateCas, HiveDatabase } from "./db";
 import type { TmuxSender } from "./delivery";
 import { HiveDaemon } from "./server";
 import type { Spawner } from "./spawner";
@@ -138,6 +138,71 @@ function reapDaemon(overrides: {
 }
 
 describe("idle-agent reap sweep", () => {
+  test("a turn-start during stranded-work assessment prevents stale automatic terminalization", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-idle-reap-race-"));
+    const path = join(root, "hive.db");
+    const db = new HiveDatabase(path);
+    const rival = new HiveDatabase(path);
+    const tmux = new FakeDaemonTmux();
+    let assessments = 0;
+    let enterAssessment!: () => void;
+    let releaseAssessment!: () => void;
+    const assessmentEntered = new Promise<void>((resolve) => {
+      enterAssessment = resolve;
+    });
+    const assessmentMayFinish = new Promise<void>((resolve) => {
+      releaseAssessment = resolve;
+    });
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new StubSpawner(),
+      tmuxSender: new SilentTmuxSender(db),
+      rootProtocol: offlineRootProtocol,
+      tmux,
+      repoRoot: "/tmp/repo",
+      lifecycle: { idleReap: true, idleReapMinutes: 10 },
+      removeWorktree: async () => {},
+      assessStrandedWork: async () => {
+        assessments += 1;
+        if (assessments === 2) {
+          enterAssessment();
+          await assessmentMayFinish;
+        }
+        return { dirtyFiles: [], unmergedCommits: 0 };
+      },
+    });
+    db.insertAgent(agent({ lastEventAt: OLD_ENOUGH }));
+    try {
+      await daemon.reapIdleAgents();
+      const warning = db.listMessages().find((message) => message.to === "maya")!;
+      db.transitionMessage(warning.id, "applied", new Date().toISOString());
+
+      const reaping = daemon.reapIdleAgents();
+      await assessmentEntered;
+      const current = rival.getAgentById("agent-maya")!;
+      expect(rival.updateAgentIfCurrent(agentStateCas(current), {
+        status: "working",
+        processIncarnation: (current.processIncarnation ?? 0) + 1,
+        processStartedAt: "2026-07-16T03:00:00.000Z",
+        lastEventAt: "2026-07-16T03:00:00.000Z",
+      })).not.toBeNull();
+      releaseAssessment();
+      await reaping;
+
+      expect(db.getAgentById("agent-maya")).toMatchObject({
+        status: "working",
+        processIncarnation: 1,
+      });
+      expect(tmux.killed).toEqual([]);
+    } finally {
+      releaseAssessment();
+      await daemon.stop();
+      rival.close();
+      db.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   test("reaps an agent that is idle, clean, and past the timeout", async () => {
     const { db, daemon, tmux, removedWorktrees } = reapDaemon();
     db.insertAgent(agent({ lastEventAt: OLD_ENOUGH }));
