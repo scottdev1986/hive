@@ -182,6 +182,35 @@ describe("HiveDatabase", () => {
     }
   });
 
+  test("route audit retention trims the 501st row to the newest 500", () => {
+    const db = new HiveDatabase(join(home, "route-audit-retention.db"));
+    try {
+      for (let index = 0; index <= 500; index += 1) {
+        db.insertRouteAudit({
+          id: `audit-${index}`,
+          agentName: "maya",
+          category: "simple_coding",
+          decidedAt: "2026-07-09T12:00:00.000Z",
+          policyRevision: 7,
+          reviewOfTool: null,
+          attempts: [`attempt-${index}`],
+          selectedTool: "claude",
+          selectedModel: "claude-model",
+          selectedEffort: null,
+          reservationId: null,
+        });
+      }
+
+      const retained = db.listRouteAudits();
+      expect(retained).toHaveLength(500);
+      expect(retained[0]?.id).toEqual("audit-500");
+      expect(retained.at(-1)?.id).toEqual("audit-1");
+      expect(retained.some((audit) => audit.id === "audit-0")).toBeFalse();
+    } finally {
+      db.close();
+    }
+  });
+
   test("migrates legacy readers without clearing genuine control revocation", () => {
     const path = join(home, "legacy-reader-authority.db");
     const initial = new HiveDatabase(path);

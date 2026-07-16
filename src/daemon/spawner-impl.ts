@@ -773,7 +773,15 @@ export class HiveSpawner implements Spawner {
     const cached = this.capabilityCache.get(provider);
     const now = Date.now();
     if (cached !== undefined && now - cached.at < 60_000) return cached.result;
-    const result = await discover(provider);
+    let result: CapabilityDiscoveryResult;
+    try {
+      result = await discover(provider);
+    } catch (error) {
+      result = {
+        status: "unavailable",
+        reason: error instanceof Error ? error.message : String(error),
+      };
+    }
     this.capabilityCache.set(provider, { at: now, result });
     if (result.status === "ok") {
       this.dependencies.quota?.replaceCapabilityCatalog?.(
@@ -1469,11 +1477,82 @@ export class HiveSpawner implements Spawner {
     name: string,
   ): Promise<AgentRecord> {
     const readOnly = request.readOnly ?? false;
-    if (readOnly && this.dependencies.issueCredential === undefined) {
-      throw new Error(
-        `Cannot spawn ${name} read-only: reader capability issuance is unavailable`,
-      );
-    }
+    type AuditFields = {
+      attempts: string[];
+      selectedTool: string | null;
+      selectedModel: string | null;
+      selectedEffort: string | null;
+      reservationId: string | null;
+      category?: string;
+      policyRevision?: number;
+    };
+    let routeAuditFields: AuditFields = {
+      attempts: [],
+      selectedTool: null,
+      selectedModel: null,
+      selectedEffort: null,
+      reservationId: null,
+    };
+    let routeAuditFinalized = false;
+    let loadedPolicyRevision: number | undefined;
+    const accumulateRouteAudit = (fields: AuditFields): void => {
+      routeAuditFields = fields;
+    };
+    const finalizeRouteAudit = (fields?: AuditFields): void => {
+      if (fields !== undefined) accumulateRouteAudit(fields);
+      if (routeAuditFinalized) return;
+      routeAuditFinalized = true;
+
+      let policyRevision = routeAuditFields.policyRevision ?? loadedPolicyRevision;
+      if (policyRevision === undefined) {
+        try {
+          policyRevision = this.dependencies.readRoutingPolicy?.().revision ?? 0;
+        } catch (error) {
+          policyRevision = 0;
+          routeAuditFields = {
+            ...routeAuditFields,
+            attempts: [
+              ...routeAuditFields.attempts,
+              `audit metadata: policy revision unavailable — ${
+                error instanceof Error ? error.message : String(error)
+              }`,
+            ],
+          };
+        }
+      }
+      try {
+        this.dependencies.db.insertRouteAudit({
+          id: crypto.randomUUID(),
+          agentName: name,
+          category: routeAuditFields.category ?? request.category,
+          decidedAt: new Date().toISOString(),
+          policyRevision,
+          reviewOfTool: request.reviewOfTool ?? null,
+          attempts: routeAuditFields.attempts,
+          selectedTool: routeAuditFields.selectedTool,
+          selectedModel: routeAuditFields.selectedModel,
+          selectedEffort: routeAuditFields.selectedEffort,
+          reservationId: routeAuditFields.reservationId,
+        });
+      } catch (error) {
+        console.error(
+          `Hive could not persist the route audit for ${name}: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+    };
+    const refuseRoute = (error: Error): never => {
+      finalizeRouteAudit({
+        ...routeAuditFields,
+        attempts: [...routeAuditFields.attempts, `refused: ${error.message}`],
+        selectedTool: null,
+        selectedModel: null,
+        selectedEffort: null,
+        reservationId: null,
+      });
+      throw error;
+    };
     // What governs this spawn: the user's routing policy — the ordered
     // fallback chain the user authored for this task category — and nothing
     // else. No tier ladder, no preferred-vendor table, no vendor default to
@@ -1485,14 +1564,34 @@ export class HiveSpawner implements Spawner {
     // never answered as "you have no policy" (unknown-read-as-permission).
     const readPolicy = (): RoutingPolicy => {
       if (this.dependencies.readRoutingPolicy === undefined) {
-        throw new Error(
+        return refuseRoute(new Error(
           `Cannot spawn ${name}: no routing policy source is configured`,
+        ));
+      }
+      let policy: RoutingPolicy;
+      try {
+        policy = this.dependencies.readRoutingPolicy();
+      } catch (error) {
+        return refuseRoute(
+          error instanceof Error ? error : new Error(String(error)),
         );
       }
-      return this.dependencies.readRoutingPolicy();
+      loadedPolicyRevision = policy.revision;
+      return policy;
     };
-    let tool: CapabilityProvider;
+    let tool!: CapabilityProvider;
     let explicitModel: string | undefined = request.model;
+    let executionIdentity: ExecutionIdentity | undefined;
+    let quotaReservationId: string | undefined;
+    let effort: string | undefined;
+    let authorized!: AuthorizedLaunch;
+    let pendingSuccessAudit: AuditFields | null = null;
+
+    if (readOnly && this.dependencies.issueCredential === undefined) {
+      refuseRoute(new Error(
+        `Cannot spawn ${name} read-only: reader capability issuance is unavailable`,
+      ));
+    }
     if (request.model !== undefined) {
       // An explicit model is bound to its vendor before anything launches.
       // The vendor is read from the DISCOVERED CATALOG — the vendor's own
@@ -1503,12 +1602,12 @@ export class HiveSpawner implements Spawner {
         await forEachProvider((provider) => this.discoverOnce(provider)),
       );
       if (identified.state === "unclaimed") {
-        throw new Error(
+        refuseRoute(new Error(
           `Cannot spawn ${name}: no vendor's catalog lists model ` +
             `${JSON.stringify(request.model)}. Every vendor Hive knows was asked ` +
             "and none of them can run it, so there is no tool to launch it on. " +
             "Name a model one of them publishes.",
-        );
+        ));
       }
       // Unreadable is not permission, and with no routed tool left to fall
       // back on it is not a route either: an explicit model whose vendor
@@ -1518,11 +1617,11 @@ export class HiveSpawner implements Spawner {
         : modelVendor(request.model);
       if (vendor !== null) {
         if (request.tool !== undefined && request.tool !== vendor) {
-          throw new Error(
+          refuseRoute(new Error(
             `Cannot spawn ${name}: model ${JSON.stringify(request.model)} is a ${vendor} model, ` +
               `but tool=${JSON.stringify(request.tool)} was explicitly requested. ` +
               `Drop the tool to run it on ${vendor}, or name a ${request.tool} model.`,
-          );
+          ));
         }
         tool = vendor;
       } else if (request.tool !== undefined) {
@@ -1533,20 +1632,17 @@ export class HiveSpawner implements Spawner {
         );
         tool = request.tool;
       } else {
-        throw new Error(
+        refuseRoute(new Error(
           `Cannot spawn ${name}: no vendor's catalog could be read to identify ` +
             `${JSON.stringify(request.model)}, and no tool= was given. Pass the ` +
             "vendor explicitly to launch it.",
-        );
+        ));
       }
     } else {
       // Routed spawns get their tool from the chain walk below; this value is
       // never read before the walk assigns the authorized launch.
       tool = request.tool ?? "claude";
     }
-    let executionIdentity: ExecutionIdentity | undefined;
-    let quotaReservationId: string | undefined;
-    let effort: string | undefined;
     /**
      * Per-link effort, three-valued like the store: an exact level rides the
      * candidate into the gate for validation; "none" and provider-controlled
@@ -1720,34 +1816,8 @@ export class HiveSpawner implements Spawner {
       }
       return result.authorized;
     };
-    let authorized: AuthorizedLaunch;
-    type AuditFields = {
-      attempts: string[];
-      selectedTool: string | null;
-      selectedModel: string | null;
-      selectedEffort: string | null;
-      reservationId: string | null;
-      category?: string;
-      policyRevision?: number;
-    };
-    const writeRouteAudit = (fields: AuditFields) => {
-      this.dependencies.db.insertRouteAudit({
-        id: crypto.randomUUID(),
-        agentName: name,
-        category: fields.category ?? request.category,
-        decidedAt: new Date().toISOString(),
-        policyRevision: fields.policyRevision ?? readPolicy().revision,
-        reviewOfTool: request.reviewOfTool ?? null,
-        attempts: fields.attempts,
-        selectedTool: fields.selectedTool,
-        selectedModel: fields.selectedModel,
-        selectedEffort: fields.selectedEffort,
-        reservationId: fields.reservationId,
-      });
-    };
     // Success audits are deferred until after Codex writer containment so a
     // later refusal is not recorded as selected/success.
-    let pendingSuccessAudit: AuditFields | null = null;
     if (explicitModel !== undefined) {
       // A user-named model is the only candidate and is never substituted.
       // Every explicit decision records exactly one prompt-free route audit —
@@ -1759,7 +1829,7 @@ export class HiveSpawner implements Spawner {
       };
       const result = await authorizeCandidate(raw);
       if (result.refusal !== undefined) {
-        writeRouteAudit({
+        finalizeRouteAudit({
           attempts: [
             `explicit: refused ${raw.tool}/${raw.model} — ${result.refusal.reason}: ${result.refusal.detail}`,
           ],
@@ -1779,7 +1849,7 @@ export class HiveSpawner implements Spawner {
         request.category === "code_review" &&
         gated.tool === request.reviewOfTool
       ) {
-        writeRouteAudit({
+        finalizeRouteAudit({
           attempts: [
             `explicit: eligible ${gated.tool}/${gated.model}`,
             `explicit: excluded same-provider for reviewOfTool=${request.reviewOfTool}`,
@@ -1811,7 +1881,7 @@ export class HiveSpawner implements Spawner {
           authorized = decision.authorized;
           quotaReservationId = decision.reservation.id;
         } catch (error) {
-          writeRouteAudit({
+          finalizeRouteAudit({
             attempts: [
               `explicit: eligible ${gated.tool}/${gated.model}`,
               `explicit: quota refused — ${
@@ -1857,13 +1927,9 @@ export class HiveSpawner implements Spawner {
       const category = request.category;
       const selection = selectionModeFor(policy, category);
       if (selection === "never-configured") {
-        this.dependencies.db.insertRouteAudit({
-          id: crypto.randomUUID(),
-          agentName: name,
+        finalizeRouteAudit({
           category,
-          decidedAt: new Date().toISOString(),
           policyRevision: policy.revision,
-          reviewOfTool: request.reviewOfTool ?? null,
           attempts: [`refused: preference for ${category} is never-configured`],
           selectedTool: null,
           selectedModel: null,
@@ -1987,13 +2053,9 @@ export class HiveSpawner implements Spawner {
         ? policy.chains.default ?? []
         : [];
       if (categoryChain.length === 0 && defaultChain.length === 0) {
-        this.dependencies.db.insertRouteAudit({
-          id: crypto.randomUUID(),
-          agentName: name,
+        finalizeRouteAudit({
           category,
-          decidedAt: new Date().toISOString(),
           policyRevision: policy.revision,
-          reviewOfTool: request.reviewOfTool ?? null,
           attempts: [
             `refused: category ${category} has no chain and global default is empty`,
           ],
@@ -2024,7 +2086,7 @@ export class HiveSpawner implements Spawner {
       // selection, and the reservation — no prompt or account data. Written for
       // both a selection and a total refusal.
       if (chosen === null) {
-        writeRouteAudit({
+        finalizeRouteAudit({
           attempts: [...attempts, "refused: total chain exhaustion"],
           selectedTool: null,
           selectedModel: null,
@@ -2059,7 +2121,7 @@ export class HiveSpawner implements Spawner {
     try {
       assertCodexWriterContained(tool, readOnly);
     } catch (error) {
-      writeRouteAudit({
+      finalizeRouteAudit({
         attempts: [
           ...(pendingSuccessAudit?.attempts ?? []),
           `containment: refused ${tool} writer — ${
@@ -2074,7 +2136,7 @@ export class HiveSpawner implements Spawner {
       throw error;
     }
     if (pendingSuccessAudit !== null) {
-      writeRouteAudit(pendingSuccessAudit);
+      finalizeRouteAudit(pendingSuccessAudit);
     }
     const model: string = authorized.model;
     effort = authorized.effort;

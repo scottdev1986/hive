@@ -219,6 +219,56 @@ const discovery = (record: CapabilityRecord): CapabilityDiscoveryResult => ({
   },
 });
 
+const routeAuditCatalog = async (
+  provider: "claude" | "codex" | "grok",
+): Promise<CapabilityDiscoveryResult> =>
+  discovery(
+    provider === "claude"
+      ? capabilityRecord("claude", "claude-opus-4-8", ["low", "high"])
+      : provider === "codex"
+        ? capabilityRecord("codex", "gpt-5.6-sol", ["medium", "high"])
+        : capabilityRecord("grok", "grok-4.5", ["high"]),
+  );
+
+function routeAuditTestSpawner(
+  store: FakeStore,
+  overrides: Partial<HiveSpawnerDependencies> = {},
+): HiveSpawner {
+  return newTestSpawner({
+    isModelEnabled: async () => true,
+    repoRoot: "/tmp/hive-route-audit-matrix",
+    port: 4317,
+    config: {},
+    readRoutingPolicy: () => policyFromRoute(CLAUDE_ROUTE),
+    discoverCapabilities: routeAuditCatalog,
+    tmux: new FakeTmux(),
+    createWorktree: async () => {
+      throw new Error("stop after routing");
+    },
+    sleep: async () => {},
+    ...overrides,
+    db: store,
+  });
+}
+
+async function captureRouteAudit(
+  request: Parameters<HiveSpawner["spawn"]>[0],
+  overrides: Partial<HiveSpawnerDependencies> = {},
+): Promise<{ audit: RouteAudit; error: Error }> {
+  const store = new FakeStore();
+  let caught: unknown;
+  try {
+    await routeAuditTestSpawner(store, overrides).spawn(request);
+  } catch (error) {
+    caught = error;
+  }
+  expect(caught).toBeInstanceOf(Error);
+  expect(store.routeAudits).toHaveLength(1);
+  const audit = store.routeAudits[0]!;
+  expect(JSON.stringify(audit)).not.toContain(request.task);
+  return { audit, error: caught as Error };
+}
+
 /** A holder that has closed, and whose name is therefore legal to reissue. */
 function closedAgent(name: string, closedAt: string): AgentRecord {
   return { ...agent(name, "done"), closedAt, lastEventAt: closedAt };
@@ -1037,6 +1087,245 @@ describe("HiveSpawner name pool", () => {
     expect(audit.selectedEffort).toEqual("medium");
     expect(typeof audit.policyRevision).toEqual("number");
     expect(Array.isArray(audit.attempts)).toBe(true);
+  });
+
+  test("vendor resolution refusals each write one prompt-free audit", async () => {
+    const unclaimed = await captureRouteAudit({
+      task: "SECRET unclaimed prompt",
+      category: "simple_coding",
+      model: "model-no-provider-publishes",
+    });
+    expect(unclaimed.error.message).toContain("no vendor's catalog lists model");
+    expect(unclaimed.audit.attempts.join("\n")).toContain("no vendor's catalog lists model");
+    expect(unclaimed.audit.selectedTool).toBeNull();
+
+    const unreadable = await captureRouteAudit({
+      task: "SECRET unreadable prompt",
+      category: "simple_coding",
+      model: "model-with-unknown-vendor",
+    }, {
+      discoverCapabilities: async () => {
+        throw new Error("catalog offline");
+      },
+    });
+    expect(unreadable.error.message).toContain("no vendor's catalog could be read");
+    expect(unreadable.audit.attempts.join("\n")).toContain("no vendor's catalog could be read");
+    expect(unreadable.audit.selectedTool).toBeNull();
+
+    const mismatch = await captureRouteAudit({
+      task: "SECRET mismatch prompt",
+      category: "simple_coding",
+      tool: "codex",
+      model: "claude-opus-4-8",
+    });
+    expect(mismatch.error.message).toMatch(/claude model.*tool="codex"/s);
+    expect(mismatch.audit.attempts.join("\n")).toContain("tool=\"codex\"");
+    expect(mismatch.audit.selectedTool).toBeNull();
+  });
+
+  test("gate, independence, and quota refusals each write one truthful audit", async () => {
+    const gate = await captureRouteAudit({
+      task: "SECRET gate prompt",
+      category: "simple_coding",
+      model: "claude-opus-4-8",
+    }, {
+      isModelEnabled: async () => false,
+    });
+    expect(gate.error.message).toContain("not enabled");
+    expect(gate.audit.attempts).toEqual([
+      expect.stringContaining("refused claude/claude-opus-4-8 — enablement"),
+    ]);
+
+    const sameProvider = await captureRouteAudit({
+      task: "SECRET same-provider prompt",
+      category: "code_review",
+      model: "claude-opus-4-8",
+      reviewOfTool: "claude",
+    });
+    expect(sameProvider.error.message).toContain("refuses same-provider candidate");
+    expect(sameProvider.audit.reviewOfTool).toEqual("claude");
+    expect(sameProvider.audit.attempts).toEqual([
+      expect.stringContaining("eligible claude/claude-opus-4-8"),
+      expect.stringContaining("excluded same-provider"),
+      expect.stringContaining("no independent route"),
+    ]);
+
+    const root = await mkdtemp(join(tmpdir(), "hive-route-audit-quota-"));
+    tempRoots.push(root);
+    const quotaDb = new HiveDatabase(join(root, "quota.db"));
+    const quota = new QuotaService(
+      new QuotaLedger(quotaDb),
+      QuotaConfigSchema.parse({
+        reserveFiveHourPct: 0,
+        reserveWeeklyPct: 0,
+        limits: [{
+          provider: "claude",
+          account: "default",
+          pool: "claude-opus",
+          models: ["claude-opus-4-8"],
+          fiveHourAllowance: 1,
+          weeklyAllowance: 1,
+        }],
+      }),
+      () => new Date(timestamp),
+    );
+    const quotaRefusal = await captureRouteAudit({
+      task: "SECRET quota prompt",
+      category: "complex_coding",
+      model: "claude-opus-4-8",
+    }, { quota });
+    expect(quotaRefusal.audit.attempts).toEqual([
+      expect.stringContaining("eligible claude/claude-opus-4-8"),
+      expect.stringContaining("quota refused"),
+    ]);
+    expect(quotaRefusal.audit.selectedTool).toBeNull();
+    quotaDb.close();
+  });
+
+  test("never-configured, empty, and total exhaustion each write one refusal audit", async () => {
+    const base = policyFromRoute(CLAUDE_ROUTE);
+    const never = await captureRouteAudit({
+      task: "SECRET never prompt",
+      category: "simple_coding",
+    }, {
+      readRoutingPolicy: () => ({
+        ...base,
+        selection: { global: "never-configured", categories: {} },
+      }),
+    });
+    expect(never.audit.attempts).toEqual([
+      "refused: preference for simple_coding is never-configured",
+    ]);
+
+    const empty = await captureRouteAudit({
+      task: "SECRET empty prompt",
+      category: "simple_coding",
+    }, {
+      readRoutingPolicy: () => ({
+        ...base,
+        models: [],
+        chains: { default: [] },
+        selection: { global: "choice", categories: {} },
+      }),
+    });
+    expect(empty.audit.attempts).toEqual([
+      "refused: category simple_coding has no chain and global default is empty",
+    ]);
+
+    const total = await captureRouteAudit({
+      task: "SECRET total prompt",
+      category: "simple_coding",
+    }, {
+      readRoutingPolicy: () => policyWithChain([{
+        provider: "claude",
+        model: "claude-opus-4-8",
+        effort: { mode: "provider-controlled" },
+      }]),
+      isModelEnabled: async () => false,
+    });
+    expect(total.audit.attempts).toEqual([
+      expect.stringContaining("default: claude/claude-opus-4-8 — enablement"),
+      "refused: total chain exhaustion",
+    ]);
+    expect(total.audit.selectedTool).toBeNull();
+  });
+
+  test("audits every link and selects only after containment", async () => {
+    const first = capabilityRecord("claude", "claude-first", ["high"]);
+    const second = capabilityRecord("claude", "claude-second", ["high"]);
+    const entries: ChainEntry[] = [
+      { provider: "claude", model: first.canonicalId, effort: { mode: "provider-controlled" } },
+      { provider: "claude", model: second.canonicalId, effort: { mode: "provider-controlled" } },
+    ];
+    const perLink = await captureRouteAudit({
+      task: "SECRET per-link prompt",
+      category: "simple_coding",
+    }, {
+      readRoutingPolicy: () => policyWithChain(entries),
+      discoverCapabilities: async (provider) => ({
+        ...await routeAuditCatalog(provider),
+        ...(provider === "claude" ? { records: [first, second] } : {}),
+      }),
+      isModelEnabled: async (_provider, model) => model === second.canonicalId,
+    });
+    expect(perLink.error.message).toEqual("stop after routing");
+    expect(perLink.audit.attempts).toEqual([
+      expect.stringContaining("default: claude/claude-first — enablement"),
+      "default: claude/claude-second — eligible",
+      "selected claude/claude-second (quota disabled/absent)",
+    ]);
+    expect(perLink.audit.selectedTool).toEqual("claude");
+    expect(perLink.audit.selectedModel).toEqual("claude-second");
+
+    const containment = await captureRouteAudit({
+      task: "SECRET containment prompt",
+      category: "simple_coding",
+      tool: "codex",
+      model: "gpt-5.6-sol",
+    });
+    expect(containment.error.message).toContain(CODEX_WRITER_CONTAINMENT_REASON);
+    expect(containment.audit.attempts.at(-1)).toContain("containment: refused codex writer");
+    expect(containment.audit.selectedTool).toBeNull();
+    expect(containment.audit.selectedModel).toBeNull();
+  });
+
+  test("absent and disabled quota both audit the rank-order selection", async () => {
+    const absent = await captureRouteAudit({
+      task: "SECRET absent-quota prompt",
+      category: "simple_coding",
+    }, {
+      readRoutingPolicy: () => policyWithChain([{
+        provider: "claude",
+        model: "claude-opus-4-8",
+        effort: { mode: "provider-controlled" },
+      }]),
+    });
+    expect(absent.error.message).toEqual("stop after routing");
+    expect(absent.audit.attempts.at(-1)).toContain("quota disabled/absent");
+    expect(absent.audit.selectedTool).toEqual("claude");
+
+    const root = await mkdtemp(join(tmpdir(), "hive-route-audit-disabled-quota-"));
+    tempRoots.push(root);
+    const quotaDb = new HiveDatabase(join(root, "quota.db"));
+    const disabledQuota = new QuotaService(
+      new QuotaLedger(quotaDb),
+      QuotaConfigSchema.parse({ enabled: false }),
+      () => new Date(timestamp),
+    );
+    const disabled = await captureRouteAudit({
+      task: "SECRET disabled-quota prompt",
+      category: "simple_coding",
+    }, {
+      readRoutingPolicy: () => policyWithChain([{
+        provider: "claude",
+        model: "claude-opus-4-8",
+        effort: { mode: "provider-controlled" },
+      }]),
+      quota: disabledQuota,
+    });
+    expect(disabled.error.message).toEqual("stop after routing");
+    expect(disabled.audit.attempts.at(-1)).toContain("quota disabled/absent");
+    expect(disabled.audit.selectedTool).toEqual("claude");
+    quotaDb.close();
+  });
+
+  test("unreadable audit metadata never masks an explicit routing result", async () => {
+    const selected = await captureRouteAudit({
+      task: "SECRET metadata prompt",
+      category: "simple_coding",
+      model: "claude-opus-4-8",
+    }, {
+      readRoutingPolicy: () => {
+        throw new Error("policy revision store unavailable");
+      },
+    });
+    expect(selected.error.message).toEqual("stop after routing");
+    expect(selected.audit.policyRevision).toEqual(0);
+    expect(selected.audit.attempts).toContain(
+      "audit metadata: policy revision unavailable — policy revision store unavailable",
+    );
+    expect(selected.audit.selectedTool).toEqual("claude");
+    expect(selected.audit.selectedModel).toEqual("claude-opus-4-8");
   });
 
   test("concurrent spawns never receive the same name", async () => {
