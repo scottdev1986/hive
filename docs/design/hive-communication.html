@@ -105,7 +105,7 @@
         <thead><tr><th>Today</th><th>Decision</th><th>Why</th></tr></thead>
         <tbody>
           <tr><td>SQLite message rows and monotonic recipient sequence</td><td>Keep; migrate behind an append-only v2 event ledger.</td><td>Durability and stable ordering are correct foundations.</td></tr>
-          <tr><td>Queued → injected → agent-acknowledged → applied</td><td>Replace the overloaded projection with immutable AdmissionDecision, DeliveryAttempt, and ReceiptEvent records.</td><td>Transport acceptance, provider observation, agent acknowledgement, and verified effect fail independently.</td></tr>
+          <tr><td>Queued → injected → agent-acknowledged → applied</td><td>Replace the overloaded projection with immutable AdmissionDecision, DeliveryAttempt, and ReceiptEvent records.</td><td>Transport acceptance, provider observation, recipient acknowledgement, and verified effect fail independently.</td></tr>
           <tr><td>Claimed <code>from</code> checked against a credential</td><td>Delete <code>from</code> from the MCP input.</td><td>The daemon already knows the authenticated actor; accepting identity as data creates avoidable confused-deputy risk.</td></tr>
           <tr><td>Recipient stored primarily by name</td><td>Resolve once to a stable Address: logical root, or agent ID + generation; friendly name display-only.</td><td>A queued message must never follow a reused name to a successor.</td></tr>
           <tr><td>Full agent paste; root receives a bounded head-and-tail envelope</td><td>Use bounded wake envelopes for every recipient and fetch full content explicitly.</td><td>Wake traffic should consume predictable context regardless of sender behavior.</td></tr>
