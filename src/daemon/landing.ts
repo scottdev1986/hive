@@ -363,6 +363,7 @@ const blocked = (reason: string, fix?: string): LandBlocker =>
 export async function diagnoseLand(
   repoRoot: string,
   branch: string,
+  resolvedCommit?: string,
 ): Promise<LandBlocker | null> {
   // A lock is the one thing that would genuinely make git *wait*, so it is the
   // one worth catching before we start a 30-second deadline running.
@@ -377,17 +378,21 @@ export async function diagnoseLand(
   const target = await runGit(repoRoot, ["symbolic-ref", "--short", "HEAD"]);
   const targetBranch = target.exitCode === 0 ? trimmed(target) : "HEAD";
 
-  const exists = await runGit(repoRoot, [
-    "rev-parse",
-    "--verify",
-    "--quiet",
-    `${branch}^{commit}`,
-  ]);
-  if (exists.exitCode !== 0) {
-    return blocked(
-      `the branch ${branch} does not exist in ${repoRoot}`,
-      `Fix: push or create ${branch}, then land again.`,
-    );
+  let revision = resolvedCommit;
+  if (revision === undefined) {
+    const exists = await runGit(repoRoot, [
+      "rev-parse",
+      "--verify",
+      "--quiet",
+      `${branch}^{commit}`,
+    ]);
+    if (exists.exitCode !== 0) {
+      return blocked(
+        `the branch ${branch} does not exist in ${repoRoot}`,
+        `Fix: push or create ${branch}, then land again.`,
+      );
+    }
+    revision = trimmed(exists);
   }
 
   // Is this actually a fast-forward? Two distinct non-ff cases, and an agent
@@ -396,7 +401,7 @@ export async function diagnoseLand(
     "merge-base",
     "--is-ancestor",
     "HEAD",
-    branch,
+    revision,
   ]);
   if (canFastForward.exitCode !== 0) {
     // Every commit on the branch is already on the target: the work landed, and
@@ -408,7 +413,7 @@ export async function diagnoseLand(
     const alreadyIn = await runGit(repoRoot, [
       "merge-base",
       "--is-ancestor",
-      branch,
+      revision,
       "HEAD",
     ]);
     if (alreadyIn.exitCode === 0) return null;
@@ -416,7 +421,7 @@ export async function diagnoseLand(
     const behind = await runGit(repoRoot, [
       "rev-list",
       "--count",
-      `${branch}..HEAD`,
+      `${revision}..HEAD`,
     ]);
     const count = Number(trimmed(behind));
     const moved = Number.isSafeInteger(count) && count > 0
@@ -437,7 +442,7 @@ export async function diagnoseLand(
       "diff",
       "--name-only",
       "HEAD",
-      branch,
+      revision,
     ]);
     if (touched.exitCode === 0) {
       const dirty = dirtyPaths(status.stdout);
@@ -463,7 +468,7 @@ export async function diagnoseLand(
   // blockers — landBranch removes them under the hash proof above — so only a
   // content mismatch is reported: the user's copy and the agent's committed
   // copy genuinely differ, and choosing between them is not Hive's call.
-  const differing = (await untrackedCollisions(repoRoot, branch))
+  const differing = (await untrackedCollisions(repoRoot, revision))
     .filter((collision) => !collision.identical);
   if (differing.length > 0) {
     const list = differing.map((collision) => collision.path).join(", ");
@@ -491,8 +496,31 @@ export function landError(branch: string, blocker: LandBlocker): Error {
 }
 
 const landBranchUnlocked: LandBranch = async (repoRoot, branch, options) => {
-  const blocker = await diagnoseLand(repoRoot, branch);
+  // Resolve the mutable branch name exactly once. Every tree read, collision
+  // proof, and merge below is bound to this immutable object even if another
+  // process advances the ref while landing is in flight.
+  const resolved = await runGit(repoRoot, [
+    "rev-parse",
+    "--verify",
+    "--quiet",
+    `${branch}^{commit}`,
+  ]);
+  if (resolved.exitCode !== 0 || trimmed(resolved) === "") {
+    throw landError(branch, blocked(
+      `the branch ${branch} does not exist in ${repoRoot}`,
+      `Fix: push or create ${branch}, then land again.`,
+    ));
+  }
+  const sourceCommit = trimmed(resolved);
+  const blocker = await diagnoseLand(repoRoot, branch, sourceCommit);
   if (blocker !== null) throw landError(branch, blocker);
+  const alreadyContained = await runGit(repoRoot, [
+    "merge-base",
+    "--is-ancestor",
+    sourceCommit,
+    "HEAD",
+  ]);
+  const sourceWasAlreadyContained = alreadyContained.exitCode === 0;
 
   // The one provably lossless resolution (module doc): atomically move the
   // exact pathname aside first, then hash THAT quarantined object against the
@@ -533,7 +561,7 @@ const landBranchUnlocked: LandBranch = async (repoRoot, branch, options) => {
       { cause: error },
     );
   };
-  for (const collision of await untrackedCollisions(repoRoot, branch)) {
+  for (const collision of await untrackedCollisions(repoRoot, sourceCommit)) {
     if (collision.identical) {
       const absolutePath = join(repoRoot, collision.path);
       const quarantinedPath = `${absolutePath}.hive-landing-quarantine-${crypto.randomUUID()}`;
@@ -551,7 +579,7 @@ const landBranchUnlocked: LandBranch = async (repoRoot, branch, options) => {
 
         const [quarantined, branchBlob] = await Promise.all([
           runGit(repoRoot, ["hash-object", "--no-filters", "--", quarantinedPath]),
-          runGit(repoRoot, ["rev-parse", `${branch}:${collision.path}`]),
+          runGit(repoRoot, ["rev-parse", `${sourceCommit}:${collision.path}`]),
         ]);
         if (
           quarantined.exitCode !== 0 || branchBlob.exitCode !== 0 ||
@@ -572,8 +600,8 @@ const landBranchUnlocked: LandBranch = async (repoRoot, branch, options) => {
   let mergePromise!: Promise<GitResult>;
   try {
     options?.preMergeCheck?.();
-    mergePromise = options?.spawnMerge?.(repoRoot, branch) ??
-      runGit(repoRoot, ["merge", "--ff-only", branch]);
+    mergePromise = options?.spawnMerge?.(repoRoot, sourceCommit) ??
+      runGit(repoRoot, ["merge", "--ff-only", sourceCommit]);
   } catch (error) {
     rethrowAfterRestore(error);
   }
@@ -602,7 +630,7 @@ const landBranchUnlocked: LandBranch = async (repoRoot, branch, options) => {
     // re-diagnose rather than paraphrase, so the agent is told the *current*
     // reason and not a guess — and if we still cannot explain it, git's own
     // stderr goes through verbatim. It is never discarded.
-    const blockerNow = await diagnoseLand(repoRoot, branch);
+    const blockerNow = await diagnoseLand(repoRoot, branch, sourceCommit);
     if (blockerNow !== null) {
       const error = landError(branch, blockerNow);
       if (restoreFailures.length === 0) throw error;
@@ -620,18 +648,33 @@ const landBranchUnlocked: LandBranch = async (repoRoot, branch, options) => {
           : `\nCollision cleanup restoration failed: ${restoreFailures.join("; ")}`),
     );
   }
-  for (const entry of removed) rmSync(entry.quarantinedPath, { force: true });
-  removed.length = 0;
-
   const revision = await runGit(repoRoot, ["rev-parse", "HEAD"]);
   if (revision.exitCode !== 0) {
-    throw new Error(
+    rethrowAfterRestore(new Error(
       `Landed ${branch}, but could not read the resulting commit: ${
         revision.stderr.trim() || `git rev-parse exited ${revision.exitCode}`
       }`,
-    );
+    ));
   }
-  return { commit: trimmed(revision) };
+  const landedCommit = trimmed(revision);
+  let sourceStillContained = landedCommit === sourceCommit;
+  if (!sourceStillContained && sourceWasAlreadyContained) {
+    const contains = await runGit(repoRoot, [
+      "merge-base",
+      "--is-ancestor",
+      sourceCommit,
+      landedCommit,
+    ]);
+    sourceStillContained = contains.exitCode === 0;
+  }
+  if (!sourceStillContained) {
+    rethrowAfterRestore(new Error(
+      `Cannot land ${branch}: Git reported success but HEAD ${landedCommit} does not contain the resolved source commit ${sourceCommit}; collision cleanup was preserved.`,
+    ));
+  }
+  for (const entry of removed) rmSync(entry.quarantinedPath, { force: true });
+  removed.length = 0;
+  return { commit: landedCommit };
 };
 
 export const landBranch: LandBranch = async (repoRoot, branch, options) => {

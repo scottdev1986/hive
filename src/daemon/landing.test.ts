@@ -325,6 +325,42 @@ describe("untracked files the branch also adds — the drop-a-file-in incident",
     }
   });
 
+  test("a branch ref advancing after collision proof cannot change the object merged", async () => {
+    const root = await repo();
+    try {
+      const pinned = git(root, ["rev-parse", "hive/writer"]);
+      git(root, ["checkout", "hive/writer"]);
+      await writeFile(join(root, "feature.ts"), "replacement branch bytes\n");
+      git(root, ["add", "feature.ts"]);
+      git(root, ["commit", "-m", "writer advances", "--no-gpg-sign"]);
+      const replacement = git(root, ["rev-parse", "HEAD"]);
+      git(root, ["checkout", "main"]);
+      git(root, ["update-ref", "refs/heads/hive/writer", pinned, replacement]);
+      await writeFile(join(root, "feature.ts"), "export const f = 1;\n");
+
+      const { commit } = await landBranch(root, "hive/writer", {
+        preMergeCheck: () => {
+          git(root, [
+            "update-ref",
+            "refs/heads/hive/writer",
+            replacement,
+            pinned,
+          ]);
+        },
+      });
+
+      expect(commit).toBe(pinned);
+      expect(git(root, ["rev-parse", "HEAD"])).toBe(pinned);
+      expect(git(root, ["rev-parse", "hive/writer"])).toBe(replacement);
+      expect(await Bun.file(join(root, "feature.ts")).text()).toBe(
+        "export const f = 1;\n",
+      );
+      expect(git(root, ["status", "--porcelain"])).toBe("");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   test("an untracked directory is seen file-by-file, not skipped as one `dir/` line", async () => {
     const root = await repo();
     try {
