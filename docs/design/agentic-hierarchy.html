@@ -388,16 +388,16 @@
       <div class="shell">
         <div class="section-head">
           <div>
-            <p class="section-label">04 · Git flow</p>
-            <h2>Branches mirror accountability.</h2>
+            <p class="section-label">04 · Promotion flow</p>
+            <h2>Refs mirror grants, not the org chart.</h2>
           </div>
-          <p>Each merge moves one level upward. Workers never land directly to main, and hive-next is a disposable integration sensor—not a release branch.</p>
+          <p>Every authoring Task owns one isolated source branch. Its candidate passes independent review before the daemon promotes it into the assigned IntegrationStage — direct and flat candidates into the queen-owned run stage; full-hive worker candidates into a lead stage. Validated lead stages then compose into the run stage. Only the exact run-stage SHA approved at G2 can reach main, and the daemon alone moves any stage or main ref by serialized compare-and-swap.</p>
         </div>
 
-        <figure class="diagram" aria-label="Git topology for main, lead integration branches, worker branches, and hive-next">
+        <figure class="diagram" aria-label="Promotion topology: task source branches, optional lead stages, the queen-owned run integration stage, and main">
           <svg viewBox="0 0 1100 620" role="img" aria-labelledby="git-title git-desc">
-            <title id="git-title">The Queen’s Hive Git branch topology</title>
-            <desc id="git-desc">Worker branches merge into ephemeral lead integration branches. Lead branches enter the protected main merge queue. Lead tips also continuously compose into the throwaway hive-next branch for CI only.</desc>
+            <title id="git-title">The Queen’s Hive promotion topology</title>
+            <desc id="git-desc">Task source branches promote through independent review into their assigned integration stage. Full-hive crews promote into lead stages; accepted lead tips and direct or flat candidates promote into the one queen-owned run integration stage. Only the exact G2-approved run-stage SHA reaches main, and only the daemon moves any ref.</desc>
             <defs>
               <marker id="git-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
                 <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--green)"/>
@@ -407,62 +407,61 @@
               </marker>
             </defs>
 
-            <rect x="40" y="36" width="1020" height="96" rx="18" class="node node-engineer"/>
-            <text x="70" y="67" class="svg-label" fill="var(--amber)">Protected release lane</text>
-            <path d="M210 94 H1005" class="connector-strong" marker-end="url(#git-arrow)"/>
-            <circle cx="210" cy="94" r="8" fill="var(--green)"/>
-            <circle cx="704" cy="94" r="8" fill="var(--green)"/>
-            <circle cx="1005" cy="94" r="8" fill="var(--green)"/>
-            <text x="70" y="103" class="svg-title">main</text>
-            <text x="720" y="83" class="svg-copy">merge queue · exact merge-result SHA · batch 1</text>
-            <text x="720" y="112" class="svg-small svg-muted">public integrated history is never rebased</text>
+            <rect x="40" y="36" width="1020" height="84" rx="18" class="node node-engineer"/>
+            <text x="70" y="66" class="svg-label" fill="var(--amber)">Protected release lane</text>
+            <path d="M210 92 H1005" class="connector-strong" marker-end="url(#git-arrow)"/>
+            <circle cx="210" cy="92" r="8" fill="var(--green)"/>
+            <circle cx="1005" cy="92" r="8" fill="var(--green)"/>
+            <text x="70" y="101" class="svg-title">main</text>
+            <text x="620" y="81" class="svg-copy">daemon CAS · exact G2-approved run-stage SHA only</text>
+            <text x="620" y="110" class="svg-small svg-muted">public integrated history is never rebased · main advancement invalidates a pending G2</text>
 
-            <rect x="40" y="168" width="500" height="122" rx="18" class="node node-lead"/>
-            <text x="68" y="199" class="svg-label" fill="var(--blue)">Ephemeral · Part A</text>
-            <path d="M110 244 H500" class="connector"/>
-            <circle cx="110" cy="244" r="7" fill="var(--blue)"/>
-            <circle cx="500" cy="244" r="7" fill="var(--blue)"/>
-            <text x="68" y="231" class="svg-title">lead/a integration</text>
-            <text x="68" y="272" class="svg-small svg-muted">internal serialized merge queue</text>
+            <rect x="40" y="150" width="1020" height="90" rx="18" class="node node-queen"/>
+            <text x="70" y="180" class="svg-label" fill="var(--green)">Queen-owned · exactly one per run · every topology</text>
+            <text x="70" y="212" class="svg-title">run integration stage</text>
+            <text x="620" y="200" class="svg-copy svg-muted">daemon is the sole ref writer · queen inspects and requests, never authors</text>
+            <path d="M550 150 V122" class="connector-strong" marker-end="url(#git-arrow)"/>
 
-            <rect x="560" y="168" width="500" height="122" rx="18" class="node node-lead"/>
-            <text x="588" y="199" class="svg-label" fill="var(--blue)">Ephemeral · Part B</text>
-            <path d="M630 244 H1020" class="connector"/>
-            <circle cx="630" cy="244" r="7" fill="var(--blue)"/>
-            <circle cx="1020" cy="244" r="7" fill="var(--blue)"/>
-            <text x="588" y="231" class="svg-title">lead/b integration</text>
-            <text x="588" y="272" class="svg-small svg-muted">internal serialized merge queue</text>
+            <rect x="40" y="284" width="330" height="92" rx="16" class="node node-lead"/>
+            <text x="66" y="314" class="svg-label" fill="var(--blue)">Full hive only · kind=lead</text>
+            <text x="66" y="344" class="svg-title">lead/a stage</text>
+            <text x="66" y="366" class="svg-small svg-muted">daemon-mutated · lead inspects only</text>
 
-            <path d="M500 244 C570 244 600 150 704 102" class="connector-strong" marker-end="url(#git-arrow)"/>
-            <path d="M1020 244 C1050 192 1038 140 1005 102" class="connector-strong" marker-end="url(#git-arrow)"/>
-            <text x="539" y="177" class="svg-small" fill="var(--green)">reviewed lead tip → queue</text>
+            <rect x="400" y="284" width="330" height="92" rx="16" class="node node-lead"/>
+            <text x="426" y="314" class="svg-label" fill="var(--blue)">Full hive only · kind=lead</text>
+            <text x="426" y="344" class="svg-title">lead/b stage</text>
+            <text x="426" y="366" class="svg-small svg-muted">daemon-mutated · lead inspects only</text>
 
-            <rect x="40" y="330" width="225" height="82" rx="14" class="node node-worker"/>
-            <rect x="280" y="330" width="225" height="82" rx="14" class="node node-worker"/>
-            <rect x="560" y="330" width="225" height="82" rx="14" class="node node-worker"/>
-            <rect x="800" y="330" width="225" height="82" rx="14" class="node node-worker"/>
-            <text x="60" y="362" class="svg-copy" font-weight="750">worker/a1</text>
-            <text x="60" y="386" class="svg-small svg-muted">from lead/a · own worktree</text>
-            <text x="300" y="362" class="svg-copy" font-weight="750">worker/a2</text>
-            <text x="300" y="386" class="svg-small svg-muted">from lead/a · own worktree</text>
-            <text x="580" y="362" class="svg-copy" font-weight="750">worker/b1</text>
-            <text x="580" y="386" class="svg-small svg-muted">from lead/b · own worktree</text>
-            <text x="820" y="362" class="svg-copy" font-weight="750">worker/b2</text>
-            <text x="820" y="386" class="svg-small svg-muted">from lead/b · own worktree</text>
+            <text x="770" y="320" class="svg-copy" font-weight="750">direct and flat candidates</text>
+            <text x="770" y="344" class="svg-small svg-muted">skip lead stages entirely —</text>
+            <text x="770" y="364" class="svg-small svg-muted">one reviewed promotion into the run stage</text>
 
-            <path d="M153 330 C153 302 160 275 194 251" class="connector-strong" marker-end="url(#git-arrow)"/>
-            <path d="M393 330 C393 290 370 264 342 251" class="connector-strong" marker-end="url(#git-arrow)"/>
-            <path d="M673 330 C673 296 685 270 714 251" class="connector-strong" marker-end="url(#git-arrow)"/>
-            <path d="M913 330 C913 292 895 266 867 251" class="connector-strong" marker-end="url(#git-arrow)"/>
-            <text x="54" y="433" class="svg-small" fill="var(--purple)">mandatory review + synthetic-merge CI before each worker→lead merge</text>
+            <path d="M205 284 C205 268 300 250 380 242" class="connector-strong" marker-end="url(#git-arrow)"/>
+            <path d="M565 284 C565 268 570 256 575 242" class="connector-strong" marker-end="url(#git-arrow)"/>
+            <text x="230" y="262" class="svg-small" fill="var(--green)">accepted lead tip → run stage</text>
 
-            <rect x="40" y="474" width="1020" height="106" rx="18" fill="var(--surface-2)" stroke="var(--purple)" stroke-width="1.4" stroke-dasharray="8 7"/>
-            <text x="70" y="507" class="svg-label" fill="var(--purple)">Continuous composition · CI only · never shipped</text>
-            <path d="M260 548 H1004" class="connector-dashed" marker-end="url(#git-blue-arrow)"/>
-            <text x="70" y="556" class="svg-title">hive-next</text>
-            <text x="700" y="542" class="svg-copy svg-muted">all lead tips · rebuilt daily · throwaway</text>
-            <path d="M500 252 C520 375 480 430 450 474" class="connector-dashed" marker-end="url(#git-blue-arrow)"/>
-            <path d="M1020 252 C990 375 970 430 930 474" class="connector-dashed" marker-end="url(#git-blue-arrow)"/>
+            <rect x="40" y="420" width="215" height="78" rx="14" class="node node-worker"/>
+            <rect x="270" y="420" width="215" height="78" rx="14" class="node node-worker"/>
+            <rect x="500" y="420" width="215" height="78" rx="14" class="node node-worker"/>
+            <rect x="780" y="420" width="245" height="78" rx="14" class="node node-worker"/>
+            <text x="60" y="450" class="svg-copy" font-weight="750">worker/a1</text>
+            <text x="60" y="474" class="svg-small svg-muted">source branch · from lead/a stage</text>
+            <text x="290" y="450" class="svg-copy" font-weight="750">worker/a2</text>
+            <text x="290" y="474" class="svg-small svg-muted">source branch · from lead/a stage</text>
+            <text x="520" y="450" class="svg-copy" font-weight="750">worker/b1</text>
+            <text x="520" y="474" class="svg-small svg-muted">source branch · from lead/b stage</text>
+            <text x="800" y="450" class="svg-copy" font-weight="750">worker/d1 · direct</text>
+            <text x="800" y="474" class="svg-small svg-muted">source branch · from run-stage base</text>
+
+            <path d="M147 420 C147 404 170 392 190 378" class="connector-strong" marker-end="url(#git-arrow)"/>
+            <path d="M377 420 C377 404 340 392 320 378" class="connector-strong" marker-end="url(#git-arrow)"/>
+            <path d="M607 420 C607 404 590 392 575 378" class="connector-strong" marker-end="url(#git-arrow)"/>
+            <path d="M902 420 C980 380 1010 300 950 242" class="connector-strong" marker-end="url(#git-arrow)"/>
+            <text x="54" y="522" class="svg-small" fill="var(--purple)">independent digest/base-bound review + validation at the predicted result SHA before every authored candidate's first promotion</text>
+
+            <rect x="40" y="540" width="1020" height="64" rx="16" fill="var(--surface-2)" stroke="var(--purple)" stroke-width="1.4" stroke-dasharray="8 7"/>
+            <text x="70" y="566" class="svg-label" fill="var(--purple)">Speculative validation train · every stage ref</text>
+            <text x="70" y="590" class="svg-small svg-muted">S1 = merge(R,C1), S2 = merge(S1,C2) … CI runs on exact synthetic SHAs · ref movement stays serial · failures bisect, innocents requeue</text>
           </svg>
         </figure>
 
@@ -477,12 +476,12 @@
                 <tr><th>Layer</th><th>Trigger</th><th>Required checks</th></tr>
               </thead>
               <tbody>
-                <tr><td><span class="stage-tag">Worker</span></td><td>Every worker change</td><td><strong>Focused feedback</strong><span>Lint, type, and unit checks for the owned scope.</span></td></tr>
-                <tr><td><span class="stage-tag">Worker → Lead</span></td><td>Before worker admission</td><td><strong>Integration preview</strong><span>Synthetic merge plus changed-package and API checks.</span></td></tr>
-                <tr><td><span class="stage-tag">Lead branch</span></td><td>After each worker admission</td><td><strong>Subsystem confidence</strong><span>Run the full subsystem suite on the lead’s updated branch.</span></td></tr>
-                <tr><td><span class="stage-tag">hive-next</span></td><td>Continuously and daily</td><td><strong>Cross-subsystem composition</strong><span>Run the whole-repo suite against all current lead tips.</span></td></tr>
-                <tr><td><span class="stage-tag">Main queue</span></td><td>Exact merge-result SHA</td><td><strong>Release confidence</strong><span>Full end-to-end, security, and migration checks.</span></td></tr>
-                <tr><td><span class="stage-tag">Post-main</span></td><td>Immediately after land</td><td><strong>Runtime confidence</strong><span>Smoke and canary checks with automatic revert.</span></td></tr>
+                <tr><td><span class="stage-tag">Author</span></td><td>Every source-branch change</td><td><strong>Focused feedback</strong><span>Lint, type, and unit checks for the owned scope.</span></td></tr>
+                <tr><td><span class="stage-tag">Candidate</span></td><td>Before first promotion</td><td><strong>Assigned-stage preview</strong><span>Independent review plus synthetic validation at the predicted result SHA against the assigned IntegrationStage.</span></td></tr>
+                <tr><td><span class="stage-tag">Lead stage</span></td><td>After each admission (full hive only)</td><td><strong>Subsystem confidence</strong><span>Run the owner-scope suite on the updated lead stage.</span></td></tr>
+                <tr><td><span class="stage-tag">Run stage</span></td><td>Every accepted candidate or contract-dependency change</td><td><strong>Whole-repo validation</strong><span>The speculative validation train runs the whole-repo suite at exact synthetic SHAs.</span></td></tr>
+                <tr><td><span class="stage-tag">Main</span></td><td>Exact G2-approved run-stage SHA</td><td><strong>Release confidence</strong><span>Full end-to-end, security, and migration checks on the exact candidate.</span></td></tr>
+                <tr><td><span class="stage-tag">Post-main</span></td><td>Immediately after land</td><td><strong>Runtime confidence</strong><span>Measured smoke and canary checks with a rehearsed rollback.</span></td></tr>
               </tbody>
             </table>
           </div>
@@ -503,10 +502,10 @@
             <h3>Freshness is event-driven</h3>
             <p>A timer cannot tell whether review assumptions are still valid.</p>
             <ul class="check-list">
-              <li>Workers rebase before review and whenever the lead changes an overlapping path, API, or dependency.</li>
+              <li>Authors rebase before review and whenever the upstream stage, an overlapping path/API/dependency, an InterfaceContract, the toolchain, or the main base changes.</li>
               <li>Work running longer than two hours gets a checkpoint warning—not a blind timed rebase.</li>
-              <li>New pushes dismiss stale approvals.</li>
-              <li>Lead branches target promotion to main in under 24 hours.</li>
+              <li>A patch-semantic change dismisses the stale verdict; a parent-only identical patch revalidates at the exact new synthetic SHA.</li>
+              <li>An old stage tip is integration risk to surface and drain—never a timed permission or a forced rebase.</li>
             </ul>
           </article>
           <article class="detail-panel wide">
@@ -642,7 +641,8 @@
               <tr><td><strong>ArtifactRef</strong></td><td>artifactId, kind, owner/task, content or commit digest, content revision, storage locator, access capability, size, createdAt, retention. Agents exchange the reference, never an arbitrary path or unverifiable “latest” file.</td></tr>
               <tr><td><strong>CommunicationChannel</strong></td><td>channelId/revision, owner, exact participant bindings, run/task/interface binding, purpose, allowed communication actions, byte/token budget, createdAt/expiresAt, hierarchy revision, lifecycle. It grants messaging only and is the hierarchy-owned authorization record consumed by Communication Fabric.</td></tr>
               <tr><td><strong>Review</strong></td><td>reviewId, reviewer assignment/binding, all author bindings in merge-base..head, candidate commit, patch/diff digest, target base, spec/task/contract revisions, toolchain/environment, findings, verdict, evidence, invalidation state. Reviewer differs from every author, owns no commit in the candidate diff range, and has no overlapping authoring task.</td></tr>
-              <tr><td><strong>PromotionGrant</strong></td><td>source commit/branch and patch digest, exact predicted target base and integration ref, task/review/contract/path-lease/CI evidence, author/reviewer/lead action epochs plus invalidation status, hierarchy/run revisions, expiry. Target is bound into the grant; callers never supply an arbitrary landing ref.</td></tr>
+              <tr><td><strong>IntegrationStage</strong></td><td>stageId/revision, kind = <code>lead</code> or <code>run</code>, run and owner node, daemon-owned ref, base/head SHA, accepted PromotionGrant IDs and order, validation environment/evidence, queue high-water, lifecycle. Every run has exactly one queen-owned <code>run</code> stage; full-hive lead subtrees add one <code>lead</code> stage each; direct/flat runs never fabricate lead stages.</td></tr>
+              <tr><td><strong>PromotionGrant</strong></td><td>source commit/branch and patch digest, exact target stage plus expected revision/base/head, predicted result SHA, task/review/contract/path-lease/CI evidence, author/reviewer/lead action epochs plus invalidation status, hierarchy/run revisions, expiry. Target is bound into the grant; callers never supply an arbitrary landing ref.</td></tr>
               <tr><td><strong>RunBudget</strong></td><td>hard and soft limits for active sessions, total spawns, per-lead crew, reviewer pool/vendor quota, tokens/cost, wall time, CI, wake/message budget, anomaly thresholds, and current reservations/usage. Enforcement belongs to the daemon, outside agent code.</td></tr>
               <tr><td><strong>RunDecision</strong></td><td>decisionId/revision, issue, options/evidence, authority required, decider, affected tasks/contracts, outcome, superseded records, createdAt. Cross-lead disputes and engineer choices become append-only state, not hidden chat history.</td></tr>
               <tr><td><strong>RunCheckpoint / QueenSuccession</strong></td><td>Approved spec, tree/plan/topology revisions, phases/gates/budgets, tasks/contracts/decisions, promotion-queue snapshot references and pending-message cursors/IDs/digests, artifacts, unresolved questions, measured agent snapshot/replies, prior/new root generation, reason, digest, and attestation. This formalizes the existing backup-root recovery flow.</td></tr>
@@ -720,11 +720,11 @@
           <article class="detail-panel">
             <h3>Write ownership</h3>
             <ul class="check-list">
-              <li>Each authoring task owns one isolated worktree and source branch.</li>
-              <li>Each full-hive lead stage has a dedicated integration ref logically owned by the lead worker but mutated only by the daemon.</li>
-              <li>The lead coordination session may inspect its integration ref; it never edits or commits on that ref.</li>
+              <li>Each authoring task owns one isolated worktree and source branch; agents may commit only on their grant-bound source branches.</li>
+              <li>Every run has exactly one queen-owned run IntegrationStage; full-hive lead subtrees add one lead stage each. The daemon is the sole writer of every stage ref and main.</li>
+              <li>The lead or queen coordination session may inspect its integration ref and request promotion; it never edits or commits on that ref.</li>
               <li>If a lead worker must author code, it receives an ordinary scoped task branch, a different reviewer, and the same promotion path.</li>
-              <li>Lead → main promotion uses the exact final candidate approved at G2; no floating branch or caller-selected target lands.</li>
+              <li>Run-stage → main promotion uses the exact final candidate approved at G2 — SHA, digest, evidence, and target main base; no floating branch or caller-selected target lands, leads never promote to main directly, and main advancement invalidates a pending G2.</li>
             </ul>
           </article>
           <article class="detail-panel">
