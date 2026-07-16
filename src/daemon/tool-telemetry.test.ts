@@ -149,8 +149,9 @@ describe("codex rollout telemetry", () => {
     mkdirSync(directory, { recursive: true });
     const path = join(directory, "rollout-2026-07-10T10-00-00-abc.jsonl");
     const meta = JSON.stringify({
+      timestamp: "2026-07-10T10:00:00.000Z",
       type: "session_meta",
-      payload: { id: "thread-1", cwd: resolve(WORKTREE) },
+      payload: { id: "thread-1", cwd: resolve(WORKTREE), source: "cli" },
     });
     writeFileSync(path, [meta, ...lines].join("\n") + "\n");
     return path;

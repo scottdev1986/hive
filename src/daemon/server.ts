@@ -98,6 +98,7 @@ import {
 } from "./delivery";
 import { OrchestratorRootDelivery } from "./orchestrator-root-delivery";
 import { readLiveGrokModel } from "../adapters/tools/grok";
+import { findCodexRolloutForProcess } from "../adapters/tools/codex";
 import {
   clampPct,
   type ClaudeTelemetryReader,
@@ -524,6 +525,10 @@ export interface HiveDaemonOptions {
       worktreePath: string,
       toolSessionId: string | undefined,
     ) => Promise<CodexIdentityObservation>;
+    codexSession?: (
+      worktreePath: string,
+      processStartedAt: string,
+    ) => Promise<string | null>;
   };
   codexControl?: Pick<
     CodexAppServerManager,
@@ -611,6 +616,10 @@ export class HiveDaemon {
     worktreePath: string,
     toolSessionId: string | undefined,
   ) => Promise<CodexIdentityObservation>;
+  private readonly readCodexProcessSession: (
+    worktreePath: string,
+    processStartedAt: string,
+  ) => Promise<string | null>;
   private readonly handshake: () => ReturnType<typeof expectedDaemonHandshake>;
   private readonly buildFreshness: () => Promise<BuildFreshness>;
   private readonly cleanupWorktree: typeof removeWorktree;
@@ -896,6 +905,10 @@ export class HiveDaemon {
     this.readCodexIdentity = options.telemetryReaders?.codexIdentity ??
       ((worktreePath, toolSessionId) =>
         readCodexObservedIdentity(worktreePath, toolSessionId));
+    this.readCodexProcessSession = options.telemetryReaders?.codexSession ??
+      (async (worktreePath, processStartedAt) =>
+        (await findCodexRolloutForProcess(worktreePath, processStartedAt))
+          ?.sessionId ?? null);
     this.handshake = () => expectedDaemonHandshake(this.repoRoot);
     this.buildFreshness = options.buildFreshness ??
       (() => checkBuildFreshness(this.repoRoot));
@@ -1782,6 +1795,8 @@ export class HiveDaemon {
       let claudeContext: number | null = null;
       let grokTelemetry: GrokTelemetry | null = null;
       let codexIdentity: CodexIdentityObservation | null = null;
+      let codexSession: string | null = null;
+      let codexSessionTrusted = false;
       // The vendor switch sits outside the read's catch: a failed read is
       // routine and skips the agent, but a vendor with no reader is a bug that
       // must be heard — swallowing it would report this agent's context off
@@ -1797,19 +1812,28 @@ export class HiveDaemon {
           break;
         case "codex":
           try {
-            telemetry = await this.readCodexTelemetry(
-              worktree,
-              agent.toolSessionId,
-            );
-            // The running identity is a different fact from occupancy: the
-            // rollout's mtime proves liveness, its newest turn_context proves
-            // which model+effort is actually executing. Read both here.
-            codexIdentity = await this.readCodexIdentity(
-              worktree,
-              agent.toolSessionId,
-            );
+            codexSession = agent.processStartedAt === undefined
+              ? null
+              : await this.readCodexProcessSession(
+                worktree,
+                agent.processStartedAt,
+              );
+            codexSessionTrusted = codexSession !== null &&
+              (agent.toolSessionId === undefined ||
+                agent.toolSessionId === codexSession);
+            if (codexSessionTrusted) {
+              telemetry = await this.readCodexTelemetry(worktree, codexSession!);
+              // The running identity is a different fact from occupancy: the
+              // exact process-bound rollout proves which model+effort is
+              // actually executing. Hook payloads never choose this session.
+              codexIdentity = await this.readCodexIdentity(
+                worktree,
+                codexSession!,
+              );
+            }
           } catch {
-            continue;
+            codexSession = null;
+            codexSessionTrusted = false;
           }
           break;
         case "grok":
@@ -1888,6 +1912,12 @@ export class HiveDaemon {
           break;
         }
         case "codex": {
+          if (
+            codexSessionTrusted && current.toolSessionId === undefined &&
+            codexSession !== null
+          ) {
+            updates.toolSessionId = codexSession;
+          }
           // The sweep writes what it *observed*, including "nothing" — a null
           // used to be skipped as "no new information", which quietly meant the
           // last number stood forever, and for an agent whose telemetry can
@@ -1914,7 +1944,14 @@ export class HiveDaemon {
           // only marks the verdict, which fails closed for a writer.
           {
             const launch = current.executionIdentity;
-            const attestation = launch === undefined
+            const attestation = !codexSessionTrusted
+              ? {
+                identityState: "unknown" as const,
+                observedIdentity: null,
+                liveModel: null,
+                liveEffort: null,
+              }
+              : launch === undefined
               ? {
                 identityState: (codexIdentity?.status === "absent"
                   ? "unattested"
@@ -2002,19 +2039,18 @@ export class HiveDaemon {
         if (updated === null) continue;
         persisted = updated;
       }
-      // Fail-closed enforcement (maintenance backstop): a Codex writer newly
-      // observed to have drifted from its authorized identity is paused
-      // non-destructively — capability revoked, process frozen, queen woken.
-      // `updates.identityState` is set only on the transition to drift, so this
-      // fires once; the writeRevoked it sets keeps every later sweep off it.
+      // Fail-closed enforcement (maintenance backstop): every Codex writer
+      // without a process-bound, matching provider identity is paused without
+      // waiting for a turn. This includes migrated/unattested rows.
       if (
         current.tool === "codex" && !current.readOnly && !current.writeRevoked &&
-        updates.identityState === "drift"
+        attestationStateOf(persisted) !== "matching"
       ) {
         const observed = updates.observedIdentity ?? persisted.observedIdentity;
         const launch = persisted.executionIdentity;
+        const state = attestationStateOf(persisted);
         const detail = observed === undefined
-          ? "observed identity differs from the authorized launch identity"
+          ? `process-bound provider session/identity is ${state}`
           : `authorized ${launch?.model ?? current.model}/${launch?.effort ?? "?"}` +
             `, observed ${observed.model}/${observed.effort ?? "?"}`;
         await this.pauseWriterForIdentityDrift(persisted, detail);
@@ -3751,8 +3787,6 @@ export class HiveDaemon {
             ? {}
             : agent.tool !== "codex"
             ? { toolSessionId: value.toolSessionId }
-            : agent.toolSessionId === value.toolSessionId
-            ? { toolSessionId: value.toolSessionId }
             : {}),
         });
         this.delivery.confirmSteerAtToolBoundary(value.agentName, value.timestamp);
@@ -3803,18 +3837,13 @@ export class HiveDaemon {
             ? value.contextPct
             : agent.contextPct,
           lastEventAt: new Date(value.timestamp).toISOString(),
-          // Codex: never first-bind from an arbitrary turn event (child can
-          // arrive first with the inherited credential). Only session-start /
-          // session-launch may set the initial parent binding; later same-id
-          // is ok; different id is refused. Claude/Grok may rebind on resume.
+          // Codex hook traffic is authenticated to the agent name, not to a
+          // provider process/session, so it never binds toolSessionId. The
+          // telemetry sweep binds only validated rollout session_meta.
+          // Claude/Grok may rebind on resume through their native contracts.
           ...(value.toolSessionId === undefined
             ? {}
             : agent.tool !== "codex"
-            ? { toolSessionId: value.toolSessionId }
-            : agent.toolSessionId === value.toolSessionId
-            ? { toolSessionId: value.toolSessionId }
-            : agent.toolSessionId === undefined &&
-                (value.kind === "session-start" || value.kind === "session-launch")
             ? { toolSessionId: value.toolSessionId }
             : {}),
           // A completed turn proves the process is genuinely healthy, so the
@@ -3876,7 +3905,10 @@ export class HiveDaemon {
     ) {
       const epochAtStart = agent.capabilityEpoch;
       const toolSessionAtStart = agent.toolSessionId ?? null;
-      if (agent.executionIdentity === undefined || agent.worktreePath === null) {
+      if (
+        agent.executionIdentity === undefined || agent.worktreePath === null ||
+        agent.toolSessionId === undefined || agent.processStartedAt === undefined
+      ) {
         await this.pauseWriterForIdentityDrift({
           ...agent,
           identityState: "unknown",

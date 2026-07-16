@@ -408,12 +408,31 @@ export class CrashRecovery {
     }
     let sessionId: string | null;
     try {
-      sessionId = agent.toolSessionId ??
-        await this.resolveSession(
+      if (agent.tool === "codex") {
+        const observed = await this.resolveSession(
           agent.tool,
           agent.worktreePath,
-          agent.createdAt,
+          agent.processStartedAt ?? agent.createdAt,
         );
+        if (
+          agent.toolSessionId !== undefined &&
+          observed !== agent.toolSessionId
+        ) {
+          return this.preserveUnverifiedRecovery(
+            agent,
+            `stored Codex session ${agent.toolSessionId} could not be revalidated ` +
+              `against this process incarnation's provider rollout`,
+          );
+        }
+        sessionId = observed;
+      } else {
+        sessionId = agent.toolSessionId ??
+          await this.resolveSession(
+            agent.tool,
+            agent.worktreePath,
+            agent.createdAt,
+          );
+      }
     } catch (error) {
       return this.preserveUnverifiedRecovery(
         agent,

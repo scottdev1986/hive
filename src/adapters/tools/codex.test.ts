@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   discoverCodexRecoverySessionId,
+  findCodexRolloutForProcess,
   findLatestCodexSessionId,
   codexCapabilityTokenPath,
   codexSessionsDirectory,
@@ -380,7 +381,7 @@ describe("Codex adapter", () => {
       `${JSON.stringify({
         timestamp: "2026-07-10T09:00:00.000Z",
         type: "session_meta",
-        payload: { session_id: sessionId, id: sessionId, cwd },
+        payload: { session_id: sessionId, id: sessionId, cwd, source: "cli" },
       })}\n`;
     await writeFile(
       join(dayDir, "rollout-2026-07-10T08-00-00-other.jsonl"),
@@ -415,6 +416,7 @@ describe("Codex adapter", () => {
       payload: {
         id: "large-meta-session",
         cwd: worktreePath,
+        source: "cli",
         base_instructions: "x".repeat(17_000),
       },
     });
@@ -428,6 +430,35 @@ describe("Codex adapter", () => {
       .toEqual("large-meta-session");
   });
 
+  test("process binding excludes predecessors and chooses the parent before a same-cwd child", async () => {
+    const fakeHome = join(tempRoot, "process-bound-codex-home");
+    const dayDir = join(codexSessionsDirectory(fakeHome), "2026", "07", "15");
+    await mkdir(dayDir, { recursive: true });
+    const meta = (id: string, timestamp: string) => `${JSON.stringify({
+      timestamp,
+      type: "session_meta",
+      payload: { id, cwd: worktreePath, source: "cli" },
+    })}\n`;
+    await writeFile(
+      join(dayDir, "rollout-predecessor.jsonl"),
+      meta("predecessor", "2026-07-15T17:59:59.000Z"),
+    );
+    await writeFile(
+      join(dayDir, "rollout-parent.jsonl"),
+      meta("parent", "2026-07-15T18:00:00.100Z"),
+    );
+    await writeFile(
+      join(dayDir, "rollout-child.jsonl"),
+      meta("child", "2026-07-15T18:00:00.200Z"),
+    );
+
+    expect(await findCodexRolloutForProcess(
+      worktreePath,
+      "2026-07-15T18:00:00.000Z",
+      fakeHome,
+    )).toMatchObject({ sessionId: "parent" });
+  });
+
   test("refuses a session_meta record whose session id key is unknown", async () => {
     const fakeHome = join(tempRoot, "drifted-meta-codex-home");
     const dayDir = join(codexSessionsDirectory(fakeHome), "2026", "07", "11");
@@ -435,8 +466,9 @@ describe("Codex adapter", () => {
     await writeFile(
       join(dayDir, "rollout-2026-07-11T10-00-00-drifted.jsonl"),
       `${JSON.stringify({
+        timestamp: "2026-07-11T10:00:00.000Z",
         type: "session_meta",
-        payload: { sessionID: "drifted-session", cwd: worktreePath },
+        payload: { sessionID: "drifted-session", cwd: worktreePath, source: "cli" },
       })}\n`,
     );
 
@@ -453,7 +485,7 @@ describe("Codex adapter", () => {
       `${JSON.stringify({
         type: "session_meta",
         [timestampKey]: timestamp,
-        payload: { id: sessionId, cwd: worktreePath },
+        payload: { id: sessionId, cwd: worktreePath, source: "cli" },
       })}\n`;
     await writeFile(
       join(dayDir, "rollout-predecessor.jsonl"),

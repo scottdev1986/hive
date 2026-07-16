@@ -286,6 +286,7 @@ const ROLLOUT_SCAN_LIMIT = 100;
 export interface CodexRolloutLocation {
   path: string;
   sessionId: string;
+  createdAt: string;
   mtimeMs: number;
 }
 
@@ -306,6 +307,7 @@ async function findCodexRollout(
       return {
         path: rollout.path,
         sessionId: meta.sessionId,
+        createdAt: meta.createdAt,
         mtimeMs: rollout.mtimeMs,
       };
     }
@@ -374,6 +376,38 @@ export async function findCodexRolloutBySessionId(
   return findCodexRollout(worktreePath, home, sessionId);
 }
 
+/** The provider session created by this exact process launch. The durable
+ * process timestamp excludes a surviving predecessor; choosing the earliest
+ * validated CLI session at/after it excludes child sessions created later in
+ * the same cwd. */
+export async function findCodexRolloutForProcess(
+  worktreePath: string,
+  processStartedAt: string,
+  home = homedir(),
+): Promise<CodexRolloutLocation | null> {
+  const launchedAt = Date.parse(processStartedAt);
+  if (!Number.isFinite(launchedAt)) return null;
+  const target = resolve(worktreePath);
+  const candidates: CodexRolloutLocation[] = [];
+  for (const rollout of await listCodexRollouts(home)) {
+    const meta = await readRolloutSessionMeta(rollout.path);
+    if (meta === null || meta.cwd !== target) continue;
+    const createdAt = Date.parse(meta.createdAt);
+    if (!Number.isFinite(createdAt) || createdAt < launchedAt) continue;
+    candidates.push({
+      path: rollout.path,
+      sessionId: meta.sessionId,
+      createdAt: meta.createdAt,
+      mtimeMs: rollout.mtimeMs,
+    });
+  }
+  candidates.sort((left, right) =>
+    Date.parse(left.createdAt) - Date.parse(right.createdAt) ||
+    left.mtimeMs - right.mtimeMs
+  );
+  return candidates[0] ?? null;
+}
+
 export async function findLatestCodexSessionId(
   worktreePath: string,
   home = homedir(),
@@ -407,7 +441,7 @@ export async function discoverCodexRecoverySessionId(
 async function readRolloutSessionMeta(
   path: string,
   strictEvidence = false,
-): Promise<{ sessionId: string; cwd: string; createdAt: unknown } | null> {
+): Promise<{ sessionId: string; cwd: string; createdAt: string } | null> {
   let firstLine: string;
   try {
     const input = createReadStream(path);
@@ -453,13 +487,25 @@ async function readRolloutSessionMeta(
   ) throw new Error(`Invalid Codex session_meta in ${path}`);
   const payload = parsed.payload as Record<string, unknown>;
   const sessionId = payload.id ?? payload.session_id;
-  if (typeof sessionId !== "string" || typeof payload.cwd !== "string") {
+  const createdAt = (parsed as Record<string, unknown>).timestamp;
+  if (
+    typeof sessionId !== "string" || typeof payload.cwd !== "string" ||
+    payload.source !== "cli" || typeof createdAt !== "string" ||
+    !Number.isFinite(Date.parse(createdAt))
+  ) {
+    if (strictEvidence) {
+      invalidRecoveryArtifactEvidence(
+        "Codex",
+        path,
+        "has invalid session_meta identity/source/timestamp",
+      );
+    }
     throw new Error(`Invalid Codex session_meta in ${path}`);
   }
   return {
     sessionId,
     cwd: payload.cwd,
-    createdAt: (parsed as Record<string, unknown>).timestamp,
+    createdAt,
   };
 }
 

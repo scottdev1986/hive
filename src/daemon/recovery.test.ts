@@ -421,6 +421,7 @@ describe("crash resume", () => {
     // The resumed codex TUI emits no hook event before its first turn-end;
     // fresh rollout-file activity is its proof of life, injected here.
     const h = harness({
+      resolveCodexSessionId: async () => "019f-codex-thread",
       readCodexActivity: async () =>
         new Date(Date.now() + 60_000).toISOString(),
     });
@@ -534,6 +535,7 @@ describe("crash resume", () => {
     let configuredPort: number | undefined;
     const h = harness({
       port: () => daemonPort,
+      resolveCodexSessionId: async () => "019f-dynamic-port",
       writeCodexConfig: async (_worktreePath, options) => {
         configuredPort = options.daemonPort;
       },
@@ -1069,6 +1071,7 @@ describe("Codex writer containment in recovery", () => {
 
   test("still recovers a Codex reader", async () => {
     const h = harness({
+      resolveCodexSessionId: async () => "reader-thread",
       readCodexActivity: async () =>
         new Date(Date.now() + 60_000).toISOString(),
     });
@@ -1089,5 +1092,37 @@ describe("Codex writer containment in recovery", () => {
     expect(outcomes).toMatchObject([{ agent: "maya", action: "resumed" }]);
     expect(h.tmux.created[0]!.command).toContain("codex");
     expect(h.tmux.created[0]!.command).toContain("resume");
+  });
+
+  test("recovery revalidates the stored Codex parent binding", async () => {
+    const h = harness({
+      resolveCodexSessionId: async () => "same-cwd-child",
+    });
+    h.db.insertAgent(agent({
+      tool: "codex",
+      model: "gpt-5-codex",
+      status: "working",
+      readOnly: true,
+      toolSessionId: "stored-parent",
+      executionIdentity: {
+        tool: "codex",
+        model: "gpt-5-codex",
+        effort: "high",
+      },
+    }));
+
+    const outcomes = await h.recovery.sweep();
+
+    expect(outcomes).toMatchObject([{
+      agent: "maya",
+      action: "skipped",
+      reason: expect.stringContaining("could not be revalidated"),
+    }]);
+    expect(h.tmux.created).toEqual([]);
+    expect(h.db.getAgentById("agent-maya")).toMatchObject({
+      status: "stuck",
+      writeRevoked: true,
+      toolSessionId: "stored-parent",
+    });
   });
 });

@@ -877,6 +877,7 @@ describe("HiveDaemon HTTP server", () => {
         resumed.push(session);
       },
       telemetryReaders: {
+        codexSession: async () => "session-1",
         codex: async () => ({ contextPct: null, lastActivityAt: null }),
         // The paused agent did not drift; reattestation matches its launch.
         codexIdentity: async () => ({
@@ -2762,29 +2763,55 @@ describe("HiveDaemon HTTP server", () => {
     }
   });
 
-  test("hook events capture the tool session id and a completed turn rearms the resume budget", async () => {
+  test("child-first Codex hooks cannot bind session; provider rollout binds the parent", async () => {
     const db = new HiveDatabase(join(home, "session-capture.db"));
     const daemon = new HiveDaemon({
       db,
       spawner: new StubSpawner(),
       tmuxSender: new SilentTmuxSender(db),
       tmux: new FakeDaemonTmux(),
+      telemetryReaders: {
+        codexSession: async () => "provider-parent",
+        codex: async () => ({ contextPct: null, lastActivityAt: null }),
+        codexIdentity: async () => ({
+          status: "observed",
+          model: "gpt-5.6-sol",
+          effort: "xhigh",
+          turnId: "parent-turn",
+          sessionId: "provider-parent",
+          observedAt: "2026-07-10T10:00:00.000Z",
+        }),
+      },
     });
-    db.insertAgent(agent({ status: "working", recoveryAttempts: 2 }));
+    db.insertAgent(agent({
+      status: "working",
+      recoveryAttempts: 2,
+      readOnly: true,
+      model: "gpt-5.6-sol",
+      executionIdentity: {
+        tool: "codex",
+        model: "gpt-5.6-sol",
+        effort: "xhigh",
+      },
+    }));
     try {
+      // A child in the same named agent/cwd can inherit the hook credential
+      // and arrive first. Its claimed id is never a session binding.
       await daemon.processEvent({
         kind: "session-start",
         agentName: "maya",
         timestamp: "2026-07-10T10:00:00.000Z",
-        toolSessionId: "0189-first",
+        toolSessionId: "child-first",
       });
       expect(db.getAgentByName("maya")).toMatchObject({
-        toolSessionId: "0189-first",
         recoveryAttempts: 2,
       });
+      expect(db.getAgentByName("maya")?.toolSessionId).toBeUndefined();
 
-      // Codex parent binding: a different authenticated session id (child/fork)
-      // must not overwrite the authorized parent toolSessionId.
+      await daemon.refreshToolTelemetry();
+      expect(db.getAgentByName("maya")?.toolSessionId).toBe("provider-parent");
+
+      // A later child/fork hook cannot overwrite the provider-bound parent.
       await daemon.processEvent({
         kind: "turn-end",
         agentName: "maya",
@@ -2792,7 +2819,7 @@ describe("HiveDaemon HTTP server", () => {
         toolSessionId: "0189-forked",
       });
       expect(db.getAgentByName("maya")).toMatchObject({
-        toolSessionId: "0189-first",
+        toolSessionId: "provider-parent",
         recoveryAttempts: 0,
       });
 
@@ -2802,7 +2829,7 @@ describe("HiveDaemon HTTP server", () => {
         agentName: "maya",
         timestamp: "2026-07-10T10:06:00.000Z",
       });
-      expect(db.getAgentByName("maya")?.toolSessionId).toEqual("0189-first");
+      expect(db.getAgentByName("maya")?.toolSessionId).toEqual("provider-parent");
     } finally {
       await daemon.stop();
       db.close();
@@ -2822,7 +2849,8 @@ describe("HiveDaemon HTTP server", () => {
       writeRevoked: false,
     }));
     try {
-      // Parent session bind only from session-start for Codex.
+      // Hooks drive lifecycle visibility, but their claimed session is not a
+      // provider identity and remains unbound until the rollout sweep.
       await daemon.processEvent({
         kind: "session-start",
         agentName: "maya",
@@ -2840,8 +2868,8 @@ describe("HiveDaemon HTTP server", () => {
         status: "working",
         readOnly: true,
         writeRevoked: false,
-        toolSessionId: "reader-session",
       });
+      expect(db.getAgentByName("maya")?.toolSessionId).toBeUndefined();
     } finally {
       await daemon.stop();
       db.close();
@@ -2901,6 +2929,7 @@ describe("HiveDaemon HTTP server", () => {
       tmuxSender: new SilentTmuxSender(db),
       tmux,
       recovery: {
+        resolveCodexSessionId: async () => "0189-session",
         worktreeExists: () => true,
         sleep: async () => {},
         seedClaudeTrust: async () => {},
@@ -3067,6 +3096,7 @@ describe("HiveDaemon HTTP server", () => {
           contextTokens: 420_000,
           lastActivityAt: "2026-07-09T12:05:00.000Z",
         }),
+        codexSession: async () => "session-1",
         codex: async () => ({
           contextPct: 17,
           lastActivityAt: "2026-07-09T12:06:00.000Z",
@@ -3078,6 +3108,7 @@ describe("HiveDaemon HTTP server", () => {
       id: "agent-priya",
       name: "priya",
       tool: "codex",
+      readOnly: true,
       // The field failure: notify never landed a single event, so the row
       // froze at "spawning" while the agent worked, landed, and reported.
       status: "spawning",
@@ -3803,6 +3834,7 @@ describe("Codex execution-identity attestation sweep", () => {
       spawner: new StubSpawner(),
       tmux: new FakeDaemonTmux(),
       telemetryReaders: {
+        codexSession: async () => "session-1",
         codex: async () => ({ contextPct: null, lastActivityAt: null }),
         // The productive parent drifted to Luna/low after launching Sol/xhigh.
         codexIdentity: async () => ({
@@ -3841,6 +3873,7 @@ describe("Codex execution-identity attestation sweep", () => {
       spawner: new StubSpawner(),
       tmux: new FakeDaemonTmux(),
       telemetryReaders: {
+        codexSession: async () => "session-1",
         codex: async () => ({ contextPct: null, lastActivityAt: null }),
         codexIdentity: async () => ({
           status: "observed",
@@ -3930,6 +3963,7 @@ describe("Codex execution-identity attestation sweep", () => {
         return { suspended: [{ pid: 100, command: "codex" }], unstopped: [] };
       },
       telemetryReaders: {
+        codexSession: async () => "session-1",
         codex: async () => ({ contextPct: null, lastActivityAt: null }),
         codexIdentity: async () => ({
           status: "observed",
@@ -3977,6 +4011,7 @@ describe("Codex execution-identity attestation sweep", () => {
         resumed.push(session);
       },
       telemetryReaders: {
+        codexSession: async () => "session-1",
         codex: async () => ({ contextPct: null, lastActivityAt: null }),
         codexIdentity: async () => ({
           status: "observed",
@@ -4039,6 +4074,7 @@ describe("Codex execution-identity attestation sweep", () => {
         return { suspended: [], unstopped: [] };
       },
       telemetryReaders: {
+        codexSession: async () => "session-1",
         codex: async () => ({ contextPct: null, lastActivityAt: null }),
         codexIdentity: async () => ({
           status: "observed",
@@ -4075,6 +4111,7 @@ describe("Codex execution-identity attestation sweep", () => {
       spawner: new StubSpawner(),
       tmux: new FakeDaemonTmux(),
       telemetryReaders: {
+        codexSession: async () => "session-1",
         codex: async () => ({ contextPct: null, lastActivityAt: null }),
         codexIdentity: async () => ({ status: "unknown" }),
       },
@@ -4087,6 +4124,47 @@ describe("Codex execution-identity attestation sweep", () => {
       // Never guessed from the launch model.
       expect(row.liveModel).toBeUndefined();
       expect(row.observedIdentity).toBeUndefined();
+    } finally {
+      db.close();
+    }
+  });
+
+  test("a migrated Codex writer with no execution identity is revoked during sweep without a turn", async () => {
+    const db = new HiveDatabase(join(home, "attest-migrated-no-turn.db"));
+    const suspended: string[] = [];
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new StubSpawner(),
+      tmux: new FakeDaemonTmux(),
+      suspendProcesses: async (session) => {
+        suspended.push(session);
+        return { suspended: [{ pid: 100, command: "codex" }], unstopped: [] };
+      },
+      telemetryReaders: {
+        codexSession: async () => null,
+        codex: async () => {
+          throw new Error("unbound session must not be read");
+        },
+        codexIdentity: async () => {
+          throw new Error("unbound identity must not be read");
+        },
+      },
+    });
+    db.insertAgent(codexAgent({
+      executionIdentity: undefined,
+      toolSessionId: undefined,
+      processStartedAt: undefined,
+      identityState: undefined,
+    }));
+    try {
+      await daemon.refreshToolTelemetry();
+      expect(db.getAgentById("agent-maya")).toMatchObject({
+        identityState: "unknown",
+        status: "control-paused",
+        writeRevoked: true,
+        capabilityEpoch: 1,
+      });
+      expect(suspended).toEqual(["hive-maya"]);
     } finally {
       db.close();
     }
@@ -4108,6 +4186,7 @@ describe("an unobservable agent reads unknown, never 0", () => {
         claude: async () => ({ contextTokens: 44_000, lastActivityAt: null }),
         // lucas, live: a Codex agent whose rollout carries no usable token count.
         // This is the real one — he did real work and Hive reported 0%.
+        codexSession: async () => "session-1",
         codex: async () => ({ contextPct: null, lastActivityAt: null }),
         liveModel: async () => null,
       },
@@ -4168,6 +4247,7 @@ describe("an unobservable agent reads unknown, never 0", () => {
           contextTokens: residentTokens,
           lastActivityAt: null,
         }),
+        codexSession: async () => "session-1",
         codex: async () => ({ contextPct: null, lastActivityAt: null }),
         liveModel: async () => null,
       },
@@ -4434,6 +4514,7 @@ describe("a grok agent's turn is observed from its session artifacts", () => {
       tmux: new FakeDaemonTmux(),
       telemetryReaders: {
         claude: async () => ({ contextTokens: null, lastActivityAt: null }),
+        codexSession: async () => "session-1",
         codex: async () => ({ contextPct: null, lastActivityAt: null }),
         grok: async () => ({
           contextPct: 6,
@@ -4476,6 +4557,7 @@ describe("a grok agent's turn is observed from its session artifacts", () => {
       tmux: new FakeDaemonTmux(),
       telemetryReaders: {
         claude: async () => ({ contextTokens: null, lastActivityAt: null }),
+        codexSession: async () => "session-1",
         codex: async () => ({ contextPct: null, lastActivityAt: null }),
         grok: async (worktreePath) =>
           worktreePath === "/tmp/hive-bridget"
@@ -4640,6 +4722,7 @@ describe("Codex writer containment on resume", () => {
         resumed.push(session);
       },
       telemetryReaders: {
+        codexSession: async () => "session-1",
         codex: async () => ({ contextPct: null, lastActivityAt: null }),
         codexIdentity: async () => ({
           status: "observed",
