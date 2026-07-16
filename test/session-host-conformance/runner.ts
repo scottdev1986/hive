@@ -20,6 +20,8 @@ type ConformanceReport = Readonly<{
   invalidHeaders: Readonly<Record<string, string>>;
   reducerPrefixes: Readonly<Record<string, readonly string[]>>;
 }>;
+type WireCorpus = ReturnType<typeof buildWireCorpus>;
+type ReducerCorpus = ReturnType<typeof buildReducerCorpus>;
 
 const fromHex = (value: string): Uint8Array =>
   Uint8Array.from(value.match(/../g)?.map((byte) => Number.parseInt(byte, 16)) ?? []);
@@ -27,8 +29,10 @@ const fromHex = (value: string): Uint8Array =>
 const toHex = (bytes: Uint8Array): string =>
   [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 
-export function runTypeScriptConformance(): ConformanceReport {
-  const corpus = buildWireCorpus();
+export function runTypeScriptConformance(
+  corpus: WireCorpus = buildWireCorpus(),
+  reducerCorpus: ReducerCorpus = buildReducerCorpus(),
+): ConformanceReport {
   const validEncodings: Record<string, string> = {};
   const invalidRejected: string[] = [];
   for (const item of corpus.valid) {
@@ -73,7 +77,7 @@ export function runTypeScriptConformance(): ConformanceReport {
   }
 
   const reducerPrefixes: Record<string, string[]> = {};
-  for (const scenario of buildReducerCorpus().scenarios) {
+  for (const scenario of reducerCorpus.scenarios) {
     let state = emptyReducerProjection();
     const prefixes: string[] = [];
     scenario.events.forEach((event, index) => {
@@ -112,7 +116,14 @@ export async function runSwiftConformance(): Promise<ConformanceReport> {
 }
 
 export async function runConformance() {
-  const typescript = runTypeScriptConformance();
+  const [wireBytes, reducerBytes] = await Promise.all([
+    readFile(GENERATED_FILES.corpus, "utf8"),
+    readFile(GENERATED_FILES.reducer, "utf8"),
+  ]);
+  const typescript = runTypeScriptConformance(
+    JSON.parse(wireBytes) as unknown as WireCorpus,
+    JSON.parse(reducerBytes) as unknown as ReducerCorpus,
+  );
   const swift = await runSwiftConformance();
   const typescriptJson = canonicalJson(typescript);
   const swiftJson = canonicalJson(swift);
@@ -135,7 +146,5 @@ export async function runConformance() {
 }
 
 if (import.meta.main) {
-  // Ensure the runner consumes the checked-in fixtures, not only in-memory data.
-  await Promise.all(Object.values(GENERATED_FILES).map((path) => readFile(path)));
   console.log(JSON.stringify(await runConformance(), null, 2));
 }

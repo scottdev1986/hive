@@ -83,7 +83,7 @@ export const WorkspaceEventV2Schema = z.strictObject({
 export type WorkspaceEventV2 = z.infer<typeof WorkspaceEventV2Schema>;
 
 const StatusUpdateCommonShape = {
-  assignmentId: z.string().startsWith("asg_").min(5),
+  assignmentId: domainUuidV7Schema("asg"),
   assignmentGeneration: DecimalUint64Schema,
   progress: z.number().int().min(0).max(100).optional(),
   summary: z.string().min(1).max(STATUS_LIMITS.summaryCharactersMax),

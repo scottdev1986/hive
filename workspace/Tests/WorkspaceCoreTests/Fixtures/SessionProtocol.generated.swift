@@ -304,6 +304,7 @@ func reduceEvent(_ state: [String: Any], _ event: [String: Any]) throws -> [Stri
     if sequence != highWater + 1 {
         var paused = state
         paused["paused"] = true
+        paused["recovery"] = "SNAPSHOT_REQUIRED"
         return paused
     }
     seen[eventId] = encoded
@@ -396,7 +397,7 @@ for scenario in reducerCorpus["scenarios"] as! [[String: Any]] {
     let events = scenario["events"] as! [[String: Any]]
     let expected = scenario["prefixes"] as! [[String: Any]]
     var state: [String: Any] = [
-        "highWaterSeq": "0", "paused": false, "corruption": NSNull(),
+        "highWaterSeq": "0", "paused": false, "recovery": NSNull(), "corruption": NSNull(),
         "entities": [String: Any](), "seen": [String: String](),
     ]
     var prefixes: [String] = []

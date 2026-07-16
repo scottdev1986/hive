@@ -470,7 +470,7 @@
       "name": "status update",
       "schema": "hiveUpdateStatusInput",
       "value": {
-        "assignmentId": "asg_fixture",
+        "assignmentId": "asg_018f1e90-7b5a-7cc0-8000-000000000000",
         "assignmentGeneration": "42",
         "phase": "testing",
         "progress": 80,
@@ -1033,7 +1033,7 @@
       "name": "blocked status requires blocker",
       "schema": "hiveUpdateStatusInput",
       "value": {
-        "assignmentId": "asg_fixture",
+        "assignmentId": "asg_018f1e90-7b5a-7cc0-8000-000000000000",
         "assignmentGeneration": "42",
         "phase": "blocked",
         "summary": "Blocked",

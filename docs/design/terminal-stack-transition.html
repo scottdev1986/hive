@@ -881,7 +881,7 @@ test/terminal-corpus/                   # VT traces + provider workflows</pre>
             <h3>Common data rules</h3>
             <ul class="clean">
               <li>Wire strings are valid UTF-8. Raw PTY and input payloads are byte strings and are never decoded by the transport.</li>
-              <li>IDs are lowercase UUIDv7 text with domain prefixes: <code>run_</code>, <code>agt_</code>, <code>ses_</code>, <code>tsk_</code>, <code>evt_</code>, <code>clm_</code>, <code>txn_</code>, <code>msg_</code>, <code>req_</code>. Legacy IDs are read only during migration.</li>
+              <li>IDs are lowercase UUIDv7 text with domain prefixes: <code>run_</code>, <code>agt_</code>, <code>asg_</code>, <code>ses_</code>, <code>tsk_</code>, <code>evt_</code>, <code>clm_</code>, <code>txn_</code>, <code>msg_</code>, <code>req_</code>. Legacy IDs are read only during migration.</li>
               <li>Wall-clock fields are RFC 3339 UTC with millisecond precision. Ordering and deadlines use a monotonic clock; wall time never orders PTY bytes.</li>
               <li>Revisions and sequence values are unsigned 64-bit integers on the wire. TypeScript rejects values above <code>Number.MAX_SAFE_INTEGER</code> and uses decimal strings in JSON for larger values.</li>
               <li><code>outputSeq</code>, <code>checkpointSeq</code>, <code>throughSeq</code>, and renderer high-waters are exclusive byte offsets: every output byte below the value has been applied, and the next frame begins at that value.</li>

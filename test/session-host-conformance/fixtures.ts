@@ -11,6 +11,7 @@ import type { WorkspaceEventV2 } from "../../src/schemas/status-envelope";
 
 export const FIXTURE_TIME = "2026-07-16T12:00:00.000Z";
 export const FIXTURE_IDS = {
+  assignment: "asg_018f1e90-7b5a-7cc0-8000-000000000000",
   session: "ses_018f1e90-7b5a-7cc0-8000-000000000001",
   transaction: "txn_018f1e90-7b5a-7cc0-8000-000000000002",
   message: "msg_018f1e90-7b5a-7cc0-8000-000000000003",
@@ -243,7 +244,7 @@ const validCases: readonly WireCorpusCase[] = [
     name: "status update",
     schema: "hiveUpdateStatusInput",
     value: {
-      assignmentId: "asg_fixture",
+      assignmentId: FIXTURE_IDS.assignment,
       assignmentGeneration: "42",
       phase: "testing",
       progress: 80,
@@ -306,7 +307,7 @@ const invalidCases: readonly WireCorpusCase[] = [
     name: "blocked status requires blocker",
     schema: "hiveUpdateStatusInput",
     value: {
-      assignmentId: "asg_fixture",
+      assignmentId: FIXTURE_IDS.assignment,
       assignmentGeneration: "42",
       phase: "blocked",
       summary: "Blocked",
@@ -441,6 +442,7 @@ export function buildWireCorpus() {
 export type ReducerProjection = Readonly<{
   highWaterSeq: string;
   paused: boolean;
+  recovery: "SNAPSHOT_REQUIRED" | null;
   corruption: string | null;
   entities: Readonly<Record<string, unknown>>;
   seen: Readonly<Record<string, string>>;
@@ -449,6 +451,7 @@ export type ReducerProjection = Readonly<{
 export const emptyReducerProjection = (): ReducerProjection => ({
   highWaterSeq: "0",
   paused: false,
+  recovery: null,
   corruption: null,
   entities: {},
   seen: {},
@@ -458,7 +461,7 @@ export function canonicalJson(value: unknown): string {
   if (value === null || typeof value !== "object") return JSON.stringify(value);
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
   const entries = Object.entries(value as Record<string, unknown>)
-    .sort(([left], [right]) => left.localeCompare(right))
+    .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
     .map(([key, item]) => `${JSON.stringify(key)}:${canonicalJson(item)}`);
   return `{${entries.join(",")}}`;
 }
@@ -475,7 +478,7 @@ export function reduceWorkspaceEvent(
     return { ...state, corruption: `conflicting duplicate ${event.eventId}` };
   }
   if (BigInt(event.seq) !== BigInt(state.highWaterSeq) + 1n) {
-    return { ...state, paused: true };
+    return { ...state, paused: true, recovery: "SNAPSHOT_REQUIRED" };
   }
   const seen = { ...state.seen, [event.eventId]: encoded };
   const entityKey = `${event.entity.kind}:${event.entity.id}:${event.entity.generation ?? "-"}`;
@@ -550,6 +553,119 @@ const prefixesFor = (events: readonly WorkspaceEventV2[]) => {
   });
 };
 
+// These four edge-scenario goldens are deliberately independent literals.
+// Do not derive them with reduceWorkspaceEvent: that would make parity tautological.
+const HAND_AUTHORED_PLANNING_EVENT =
+  '{"data":{"phase":"planning","summary":"Reading contracts"},"entity":{"generation":3,"id":"agent-fixture","kind":"agent"},"entityRevision":"1","eventId":"evt_018f1e90-7b5a-7cc0-8000-000000000005","kind":"agent.status-reported","occurredAt":"2026-07-16T12:00:00.000Z","schemaVersion":2,"seq":"1","source":{"confidence":"authoritative","id":"agent-fixture:3","kind":"agent-report","observedAt":"2026-07-16T12:00:00.000Z"}}';
+const HAND_AUTHORED_LOWER_FIRST_EVENT =
+  '{"data":{"phase":"testing","summary":"Checking parity"},"entity":{"generation":3,"id":"agent-fixture","kind":"agent"},"entityRevision":"2","eventId":"evt_018f1e90-7b5a-7cc0-8000-000000000005","kind":"agent.status-reported","occurredAt":"2026-07-16T12:00:01.000Z","schemaVersion":2,"seq":"1","source":{"confidence":"authoritative","id":"agent-fixture:3","kind":"agent-report","observedAt":"2026-07-16T12:00:01.000Z"}}';
+const HAND_AUTHORED_LOWER_SECOND_EVENT =
+  '{"data":{"phase":"planning","summary":"Reading contracts"},"entity":{"generation":3,"id":"agent-fixture","kind":"agent"},"entityRevision":"1","eventId":"evt_018f1e90-7b5a-7cc0-8000-000000000006","kind":"agent.status-reported","occurredAt":"2026-07-16T12:00:00.000Z","schemaVersion":2,"seq":"2","source":{"confidence":"authoritative","id":"agent-fixture:3","kind":"agent-report","observedAt":"2026-07-16T12:00:00.000Z"}}';
+
+const HAND_AUTHORED_PLANNING_PREFIX: ReducerProjection = {
+  highWaterSeq: "1",
+  paused: false,
+  recovery: null,
+  corruption: null,
+  entities: {
+    "agent:agent-fixture:3": {
+      entityRevision: "1",
+      eventId: FIXTURE_IDS.events[0],
+      kind: "agent.status-reported",
+      occurredAt: FIXTURE_TIME,
+      source: {
+        kind: "agent-report",
+        id: "agent-fixture:3",
+        observedAt: FIXTURE_TIME,
+        confidence: "authoritative",
+      },
+      data: { phase: "planning", summary: "Reading contracts" },
+    },
+  },
+  seen: { [FIXTURE_IDS.events[0]]: HAND_AUTHORED_PLANNING_EVENT },
+};
+
+const HAND_AUTHORED_LOWER_FIRST_PREFIX: ReducerProjection = {
+  highWaterSeq: "1",
+  paused: false,
+  recovery: null,
+  corruption: null,
+  entities: {
+    "agent:agent-fixture:3": {
+      entityRevision: "2",
+      eventId: FIXTURE_IDS.events[0],
+      kind: "agent.status-reported",
+      occurredAt: "2026-07-16T12:00:01.000Z",
+      source: {
+        kind: "agent-report",
+        id: "agent-fixture:3",
+        observedAt: "2026-07-16T12:00:01.000Z",
+        confidence: "authoritative",
+      },
+      data: { phase: "testing", summary: "Checking parity" },
+    },
+  },
+  seen: { [FIXTURE_IDS.events[0]]: HAND_AUTHORED_LOWER_FIRST_EVENT },
+};
+
+const HAND_AUTHORED_LOWER_SECOND_PREFIX: ReducerProjection = {
+  highWaterSeq: "2",
+  paused: false,
+  recovery: null,
+  corruption: null,
+  entities: {
+    "agent:agent-fixture:3": {
+      entityRevision: "2",
+      eventId: FIXTURE_IDS.events[0],
+      kind: "agent.status-reported",
+      occurredAt: "2026-07-16T12:00:01.000Z",
+      source: {
+        kind: "agent-report",
+        id: "agent-fixture:3",
+        observedAt: "2026-07-16T12:00:01.000Z",
+        confidence: "authoritative",
+      },
+      data: { phase: "testing", summary: "Checking parity" },
+    },
+  },
+  seen: {
+    [FIXTURE_IDS.events[0]]: HAND_AUTHORED_LOWER_FIRST_EVENT,
+    [FIXTURE_IDS.events[1]]: HAND_AUTHORED_LOWER_SECOND_EVENT,
+  },
+};
+
+const HAND_AUTHORED_CONFLICT_PREFIX: ReducerProjection = {
+  highWaterSeq: "1",
+  paused: false,
+  recovery: null,
+  corruption: `conflicting duplicate ${FIXTURE_IDS.events[0]}`,
+  entities: {
+    "agent:agent-fixture:3": {
+      entityRevision: "1",
+      eventId: FIXTURE_IDS.events[0],
+      kind: "agent.status-reported",
+      occurredAt: FIXTURE_TIME,
+      source: {
+        kind: "agent-report",
+        id: "agent-fixture:3",
+        observedAt: FIXTURE_TIME,
+        confidence: "authoritative",
+      },
+      data: { phase: "planning", summary: "Reading contracts" },
+    },
+  },
+  seen: { [FIXTURE_IDS.events[0]]: HAND_AUTHORED_PLANNING_EVENT },
+};
+
+const HAND_AUTHORED_GAP_PREFIX: ReducerProjection = {
+  highWaterSeq: "0",
+  paused: true,
+  recovery: "SNAPSHOT_REQUIRED",
+  corruption: null,
+  entities: {},
+  seen: {},
+};
+
 export function buildReducerCorpus() {
   const permutationScenarios = permutations.map((order, scenarioIndex) => {
     const events = order.map((sourceIndex, sequenceIndex) => ({
@@ -570,10 +686,26 @@ export function buildReducerCorpus() {
   ];
   const gap = [{ ...baseReducerEvents[0]!, seq: "2" }];
   const edgeScenarios = [
-    { name: "identical-duplicate", events: duplicateEvents, prefixes: prefixesFor(duplicateEvents) },
-    { name: "lower-entity-revision", events: lowerRevision, prefixes: prefixesFor(lowerRevision) },
-    { name: "conflicting-duplicate", events: conflictingDuplicate, prefixes: prefixesFor(conflictingDuplicate) },
-    { name: "sequence-gap", events: gap, prefixes: prefixesFor(gap) },
+    {
+      name: "identical-duplicate",
+      events: duplicateEvents,
+      prefixes: [HAND_AUTHORED_PLANNING_PREFIX, HAND_AUTHORED_PLANNING_PREFIX],
+    },
+    {
+      name: "lower-entity-revision",
+      events: lowerRevision,
+      prefixes: [HAND_AUTHORED_LOWER_FIRST_PREFIX, HAND_AUTHORED_LOWER_SECOND_PREFIX],
+    },
+    {
+      name: "conflicting-duplicate",
+      events: conflictingDuplicate,
+      prefixes: [HAND_AUTHORED_PLANNING_PREFIX, HAND_AUTHORED_CONFLICT_PREFIX],
+    },
+    {
+      name: "sequence-gap",
+      events: gap,
+      prefixes: [HAND_AUTHORED_GAP_PREFIX],
+    },
   ];
   return { schemaVersion: 1, scenarios: [...permutationScenarios, ...edgeScenarios] };
 }

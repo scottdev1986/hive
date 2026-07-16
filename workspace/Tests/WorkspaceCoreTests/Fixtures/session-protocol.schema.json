@@ -8,6 +8,7 @@
   "schemas": {
     "sessionLocator": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "readOnly": true,
       "type": "object",
       "properties": {
         "schemaVersion": {
@@ -19,6 +20,7 @@
           "minLength": 1
         },
         "subject": {
+          "readOnly": true,
           "oneOf": [
             {
               "type": "object",
@@ -94,6 +96,7 @@
     },
     "terminalGeometry": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "readOnly": true,
       "type": "object",
       "properties": {
         "columns": {
@@ -138,6 +141,7 @@
     },
     "sessionSpec": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "readOnly": true,
       "type": "object",
       "properties": {
         "schemaVersion": {
@@ -145,6 +149,7 @@
           "const": 1
         },
         "locator": {
+          "readOnly": true,
           "type": "object",
           "properties": {
             "schemaVersion": {
@@ -156,6 +161,7 @@
               "minLength": 1
             },
             "subject": {
+              "readOnly": true,
               "oneOf": [
                 {
                   "type": "object",
@@ -253,6 +259,7 @@
           "pattern": "^\\/.*"
         },
         "argv": {
+          "readOnly": true,
           "type": "array",
           "prefixItems": [
             {
@@ -265,6 +272,7 @@
           }
         },
         "environment": {
+          "readOnly": true,
           "type": "object",
           "propertyNames": {
             "type": "string"
@@ -286,6 +294,7 @@
           "maximum": 9007199254740991
         },
         "geometry": {
+          "readOnly": true,
           "type": "object",
           "properties": {
             "columns": {
@@ -357,6 +366,7 @@
     },
     "sessionInspection": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "readOnly": true,
       "type": "object",
       "properties": {
         "schemaVersion": {
@@ -364,6 +374,7 @@
           "const": 1
         },
         "locator": {
+          "readOnly": true,
           "type": "object",
           "properties": {
             "schemaVersion": {
@@ -375,6 +386,7 @@
               "minLength": 1
             },
             "subject": {
+              "readOnly": true,
               "oneOf": [
                 {
                   "type": "object",
@@ -539,17 +551,7 @@
           "type": "object",
           "properties": {
             "state": {
-              "type": "string",
-              "enum": [
-                "FREE",
-                "HUMAN_GESTURE",
-                "HUMAN_OWNED",
-                "HUMAN_ORPHANED",
-                "AUTOMATION_BUFFERING",
-                "AUTOMATION_COMMITTED",
-                "TERMINATING",
-                "CLOSED"
-              ]
+              "type": "string"
             },
             "ownerViewerId": {
               "anyOf": [
@@ -587,6 +589,7 @@
           "maximum": 4
         },
         "geometry": {
+          "readOnly": true,
           "type": "object",
           "properties": {
             "columns": {
@@ -630,6 +633,7 @@
           "x-hive-max-active-cells": 250000
         },
         "resources": {
+          "readOnly": true,
           "type": "object",
           "propertyNames": {
             "type": "string"
@@ -721,6 +725,7 @@
           ]
         },
         "survivors": {
+          "readOnly": true,
           "type": "array",
           "items": {
             "type": "object",
@@ -753,6 +758,7 @@
           "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
         },
         "diagnosticIds": {
+          "readOnly": true,
           "type": "array",
           "items": {
             "type": "string",
@@ -787,9 +793,11 @@
     },
     "createResult": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "readOnly": true,
       "type": "object",
       "properties": {
         "locator": {
+          "readOnly": true,
           "type": "object",
           "properties": {
             "schemaVersion": {
@@ -801,6 +809,7 @@
               "minLength": 1
             },
             "subject": {
+              "readOnly": true,
               "oneOf": [
                 {
                   "type": "object",
@@ -875,6 +884,7 @@
           "additionalProperties": false
         },
         "inspection": {
+          "readOnly": true,
           "type": "object",
           "properties": {
             "schemaVersion": {
@@ -882,6 +892,7 @@
               "const": 1
             },
             "locator": {
+              "readOnly": true,
               "type": "object",
               "properties": {
                 "schemaVersion": {
@@ -893,6 +904,7 @@
                   "minLength": 1
                 },
                 "subject": {
+                  "readOnly": true,
                   "oneOf": [
                     {
                       "type": "object",
@@ -1057,17 +1069,7 @@
               "type": "object",
               "properties": {
                 "state": {
-                  "type": "string",
-                  "enum": [
-                    "FREE",
-                    "HUMAN_GESTURE",
-                    "HUMAN_OWNED",
-                    "HUMAN_ORPHANED",
-                    "AUTOMATION_BUFFERING",
-                    "AUTOMATION_COMMITTED",
-                    "TERMINATING",
-                    "CLOSED"
-                  ]
+                  "type": "string"
                 },
                 "ownerViewerId": {
                   "anyOf": [
@@ -1105,6 +1107,7 @@
               "maximum": 4
             },
             "geometry": {
+              "readOnly": true,
               "type": "object",
               "properties": {
                 "columns": {
@@ -1148,6 +1151,7 @@
               "x-hive-max-active-cells": 250000
             },
             "resources": {
+              "readOnly": true,
               "type": "object",
               "propertyNames": {
                 "type": "string"
@@ -1239,6 +1243,7 @@
               ]
             },
             "survivors": {
+              "readOnly": true,
               "type": "array",
               "items": {
                 "type": "object",
@@ -1271,6 +1276,7 @@
               "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
             },
             "diagnosticIds": {
+              "readOnly": true,
               "type": "array",
               "items": {
                 "type": "string",
@@ -1317,6 +1323,7 @@
     },
     "captureRequest": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "readOnly": true,
       "type": "object",
       "properties": {
         "include": {
@@ -1345,9 +1352,11 @@
     },
     "captureResult": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "readOnly": true,
       "type": "object",
       "properties": {
         "locator": {
+          "readOnly": true,
           "type": "object",
           "properties": {
             "schemaVersion": {
@@ -1359,6 +1368,7 @@
               "minLength": 1
             },
             "subject": {
+              "readOnly": true,
               "oneOf": [
                 {
                   "type": "object",
@@ -1511,6 +1521,7 @@
     },
     "attachRequest": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "readOnly": true,
       "type": "object",
       "properties": {
         "viewerId": {
@@ -1518,6 +1529,7 @@
           "minLength": 1
         },
         "geometry": {
+          "readOnly": true,
           "type": "object",
           "properties": {
             "columns": {
@@ -1561,6 +1573,7 @@
           "x-hive-max-active-cells": 250000
         },
         "operations": {
+          "readOnly": true,
           "type": "array",
           "items": {
             "type": "string",
@@ -1581,9 +1594,11 @@
     },
     "attachGrant": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "readOnly": true,
       "type": "object",
       "properties": {
         "locator": {
+          "readOnly": true,
           "type": "object",
           "properties": {
             "schemaVersion": {
@@ -1595,6 +1610,7 @@
               "minLength": 1
             },
             "subject": {
+              "readOnly": true,
               "oneOf": [
                 {
                   "type": "object",
@@ -1696,6 +1712,7 @@
           "format": "hive-uint64-decimal"
         },
         "operations": {
+          "readOnly": true,
           "type": "array",
           "items": {
             "type": "string",
@@ -1721,6 +1738,7 @@
     },
     "visibilityRequest": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "readOnly": true,
       "type": "object",
       "properties": {
         "workspaceSessionId": {
@@ -1752,9 +1770,11 @@
     },
     "visibilityLease": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "readOnly": true,
       "type": "object",
       "properties": {
         "locator": {
+          "readOnly": true,
           "type": "object",
           "properties": {
             "schemaVersion": {
@@ -1766,6 +1786,7 @@
               "minLength": 1
             },
             "subject": {
+              "readOnly": true,
               "oneOf": [
                 {
                   "type": "object",
@@ -1864,9 +1885,11 @@
     },
     "resizeResult": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "readOnly": true,
       "type": "object",
       "properties": {
         "locator": {
+          "readOnly": true,
           "type": "object",
           "properties": {
             "schemaVersion": {
@@ -1878,6 +1901,7 @@
               "minLength": 1
             },
             "subject": {
+              "readOnly": true,
               "oneOf": [
                 {
                   "type": "object",
@@ -1952,6 +1976,7 @@
           "additionalProperties": false
         },
         "geometry": {
+          "readOnly": true,
           "type": "object",
           "properties": {
             "columns": {
@@ -2009,6 +2034,7 @@
     },
     "automatedInputMetadata": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "readOnly": true,
       "type": "object",
       "properties": {
         "transactionId": {
@@ -2064,6 +2090,7 @@
     },
     "inputReceipt": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "readOnly": true,
       "type": "object",
       "properties": {
         "transactionId": {
@@ -2149,6 +2176,7 @@
     },
     "terminationRequest": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "readOnly": true,
       "type": "object",
       "properties": {
         "mode": {
@@ -2176,9 +2204,11 @@
     },
     "terminationResult": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "readOnly": true,
       "type": "object",
       "properties": {
         "locator": {
+          "readOnly": true,
           "type": "object",
           "properties": {
             "schemaVersion": {
@@ -2190,6 +2220,7 @@
               "minLength": 1
             },
             "subject": {
+              "readOnly": true,
               "oneOf": [
                 {
                   "type": "object",
@@ -2319,6 +2350,7 @@
           ]
         },
         "survivors": {
+          "readOnly": true,
           "type": "array",
           "items": {
             "type": "object",
@@ -2346,6 +2378,7 @@
           }
         },
         "errors": {
+          "readOnly": true,
           "type": "array",
           "items": {
             "type": "object",
@@ -2383,6 +2416,7 @@
     },
     "sessionEvent": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "readOnly": true,
       "type": "object",
       "properties": {
         "schemaVersion": {
@@ -2399,6 +2433,7 @@
           "format": "hive-uint64-decimal"
         },
         "locator": {
+          "readOnly": true,
           "type": "object",
           "properties": {
             "schemaVersion": {
@@ -2410,6 +2445,7 @@
               "minLength": 1
             },
             "subject": {
+              "readOnly": true,
               "oneOf": [
                 {
                   "type": "object",
@@ -2498,6 +2534,7 @@
           "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
         },
         "data": {
+          "readOnly": true,
           "type": "object",
           "propertyNames": {
             "type": "string"
@@ -2641,8 +2678,7 @@
           "properties": {
             "assignmentId": {
               "type": "string",
-              "minLength": 5,
-              "pattern": "^asg_.*"
+              "pattern": "^asg_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
             },
             "assignmentGeneration": {
               "type": "string",
@@ -2703,8 +2739,7 @@
           "properties": {
             "assignmentId": {
               "type": "string",
-              "minLength": 5,
-              "pattern": "^asg_.*"
+              "pattern": "^asg_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
             },
             "assignmentGeneration": {
               "type": "string",
@@ -2765,8 +2800,7 @@
           "properties": {
             "assignmentId": {
               "type": "string",
-              "minLength": 5,
-              "pattern": "^asg_.*"
+              "pattern": "^asg_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
             },
             "assignmentGeneration": {
               "type": "string",
@@ -2827,8 +2861,7 @@
           "properties": {
             "assignmentId": {
               "type": "string",
-              "minLength": 5,
-              "pattern": "^asg_.*"
+              "pattern": "^asg_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
             },
             "assignmentGeneration": {
               "type": "string",
@@ -2889,8 +2922,7 @@
           "properties": {
             "assignmentId": {
               "type": "string",
-              "minLength": 5,
-              "pattern": "^asg_.*"
+              "pattern": "^asg_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
             },
             "assignmentGeneration": {
               "type": "string",
@@ -2953,8 +2985,7 @@
           "properties": {
             "assignmentId": {
               "type": "string",
-              "minLength": 5,
-              "pattern": "^asg_.*"
+              "pattern": "^asg_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
             },
             "assignmentGeneration": {
               "type": "string",
@@ -3063,6 +3094,7 @@
           "pattern": "^msg_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
         },
         "locator": {
+          "readOnly": true,
           "type": "object",
           "properties": {
             "schemaVersion": {
@@ -3074,6 +3106,7 @@
               "minLength": 1
             },
             "subject": {
+              "readOnly": true,
               "oneOf": [
                 {
                   "type": "object",
@@ -3303,7 +3336,7 @@
         "workspaceCore": "workspace/Sources/WorkspaceCore/",
         "statusReducer": "workspace/Sources/WorkspaceCore/StatusReducer.swift",
         "hierarchyReducer": "workspace/Sources/WorkspaceCore/HierarchyReducer.swift",
-        "fixtures": "workspace/Tests/Fixtures/",
+        "fixtures": "workspace/Tests/WorkspaceCoreTests/Fixtures/",
         "conformance": "test/session-host-conformance/",
         "terminalCorpus": "test/terminal-corpus/",
         "ghosttyBuildScript": "scripts/build-ghosttykit.sh"

@@ -78,6 +78,7 @@
         {
           "highWaterSeq": "1",
           "paused": false,
+          "recovery": null,
           "corruption": null,
           "entities": {
             "agent:agent-fixture:3": {
@@ -104,6 +105,7 @@
         {
           "highWaterSeq": "2",
           "paused": false,
+          "recovery": null,
           "corruption": null,
           "entities": {
             "agent:agent-fixture:3": {
@@ -131,6 +133,7 @@
         {
           "highWaterSeq": "3",
           "paused": false,
+          "recovery": null,
           "corruption": null,
           "entities": {
             "agent:agent-fixture:3": {
@@ -251,6 +254,7 @@
         {
           "highWaterSeq": "1",
           "paused": false,
+          "recovery": null,
           "corruption": null,
           "entities": {
             "agent:agent-fixture:3": {
@@ -277,6 +281,7 @@
         {
           "highWaterSeq": "2",
           "paused": false,
+          "recovery": null,
           "corruption": null,
           "entities": {
             "agent:agent-fixture:3": {
@@ -320,6 +325,7 @@
         {
           "highWaterSeq": "3",
           "paused": false,
+          "recovery": null,
           "corruption": null,
           "entities": {
             "agent:agent-fixture:3": {
@@ -440,6 +446,7 @@
         {
           "highWaterSeq": "1",
           "paused": false,
+          "recovery": null,
           "corruption": null,
           "entities": {
             "agent:agent-fixture:3": {
@@ -466,6 +473,7 @@
         {
           "highWaterSeq": "2",
           "paused": false,
+          "recovery": null,
           "corruption": null,
           "entities": {
             "agent:agent-fixture:3": {
@@ -493,6 +501,7 @@
         {
           "highWaterSeq": "3",
           "paused": false,
+          "recovery": null,
           "corruption": null,
           "entities": {
             "agent:agent-fixture:3": {
@@ -613,6 +622,7 @@
         {
           "highWaterSeq": "1",
           "paused": false,
+          "recovery": null,
           "corruption": null,
           "entities": {
             "agent:agent-fixture:3": {
@@ -639,6 +649,7 @@
         {
           "highWaterSeq": "2",
           "paused": false,
+          "recovery": null,
           "corruption": null,
           "entities": {
             "agent:agent-fixture:3": {
@@ -682,6 +693,7 @@
         {
           "highWaterSeq": "3",
           "paused": false,
+          "recovery": null,
           "corruption": null,
           "entities": {
             "agent:agent-fixture:3": {
@@ -802,6 +814,7 @@
         {
           "highWaterSeq": "1",
           "paused": false,
+          "recovery": null,
           "corruption": null,
           "entities": {
             "session:ses_018f1e90-7b5a-7cc0-8000-000000000001:3": {
@@ -828,6 +841,7 @@
         {
           "highWaterSeq": "2",
           "paused": false,
+          "recovery": null,
           "corruption": null,
           "entities": {
             "session:ses_018f1e90-7b5a-7cc0-8000-000000000001:3": {
@@ -871,6 +885,7 @@
         {
           "highWaterSeq": "3",
           "paused": false,
+          "recovery": null,
           "corruption": null,
           "entities": {
             "session:ses_018f1e90-7b5a-7cc0-8000-000000000001:3": {
@@ -991,6 +1006,7 @@
         {
           "highWaterSeq": "1",
           "paused": false,
+          "recovery": null,
           "corruption": null,
           "entities": {
             "session:ses_018f1e90-7b5a-7cc0-8000-000000000001:3": {
@@ -1017,6 +1033,7 @@
         {
           "highWaterSeq": "2",
           "paused": false,
+          "recovery": null,
           "corruption": null,
           "entities": {
             "session:ses_018f1e90-7b5a-7cc0-8000-000000000001:3": {
@@ -1060,6 +1077,7 @@
         {
           "highWaterSeq": "3",
           "paused": false,
+          "recovery": null,
           "corruption": null,
           "entities": {
             "session:ses_018f1e90-7b5a-7cc0-8000-000000000001:3": {
@@ -1157,6 +1175,7 @@
         {
           "highWaterSeq": "1",
           "paused": false,
+          "recovery": null,
           "corruption": null,
           "entities": {
             "agent:agent-fixture:3": {
@@ -1183,6 +1202,7 @@
         {
           "highWaterSeq": "1",
           "paused": false,
+          "recovery": null,
           "corruption": null,
           "entities": {
             "agent:agent-fixture:3": {
@@ -1262,6 +1282,7 @@
         {
           "highWaterSeq": "1",
           "paused": false,
+          "recovery": null,
           "corruption": null,
           "entities": {
             "agent:agent-fixture:3": {
@@ -1288,6 +1309,7 @@
         {
           "highWaterSeq": "2",
           "paused": false,
+          "recovery": null,
           "corruption": null,
           "entities": {
             "agent:agent-fixture:3": {
@@ -1367,6 +1389,7 @@
         {
           "highWaterSeq": "1",
           "paused": false,
+          "recovery": null,
           "corruption": null,
           "entities": {
             "agent:agent-fixture:3": {
@@ -1393,6 +1416,7 @@
         {
           "highWaterSeq": "1",
           "paused": false,
+          "recovery": null,
           "corruption": "conflicting duplicate evt_018f1e90-7b5a-7cc0-8000-000000000005",
           "entities": {
             "agent:agent-fixture:3": {
@@ -1449,6 +1473,7 @@
         {
           "highWaterSeq": "0",
           "paused": true,
+          "recovery": "SNAPSHOT_REQUIRED",
           "corruption": null,
           "entities": {},
           "seen": {}

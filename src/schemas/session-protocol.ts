@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { CapabilityProviderSchema } from "./capability";
+import type * as SessionHostContract from "../daemon/session-host/contract";
 
 export const SESSION_PROTOCOL_VERSION = { major: 1, minor: 0 } as const;
 
@@ -26,7 +26,7 @@ export const SESSION_PROTOCOL_PATHS = {
   workspaceCore: "workspace/Sources/WorkspaceCore/",
   statusReducer: "workspace/Sources/WorkspaceCore/StatusReducer.swift",
   hierarchyReducer: "workspace/Sources/WorkspaceCore/HierarchyReducer.swift",
-  fixtures: "workspace/Tests/Fixtures/",
+  fixtures: "workspace/Tests/WorkspaceCoreTests/Fixtures/",
   conformance: "test/session-host-conformance/",
   terminalCorpus: "test/terminal-corpus/",
   ghosttyBuildScript: "scripts/build-ghosttykit.sh",
@@ -333,10 +333,17 @@ export function domainUuidV7Schema(prefix: string) {
   return z.string().regex(new RegExp(`^${prefix}_${UUID_V7_BODY}$`));
 }
 
+export const SESSION_PROTOCOL_PROVIDERS = [
+  "claude",
+  "codex",
+  "grok",
+] as const;
+export const SessionProtocolProviderSchema = z.enum(SESSION_PROTOCOL_PROVIDERS);
+
 export const SessionSubjectSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("root") }),
   z.strictObject({ kind: z.literal("agent"), agentId: z.string().min(1) }),
-]);
+]).readonly();
 export type SessionSubject = z.infer<typeof SessionSubjectSchema>;
 
 export const SessionLocatorSchema = z.strictObject({
@@ -347,7 +354,7 @@ export const SessionLocatorSchema = z.strictObject({
   sessionId: domainUuidV7Schema("ses"),
   hostKind: z.enum(["tmux", "sessiond"]),
   engineBuildId: z.string().min(1).nullable(),
-});
+}).readonly();
 export type SessionLocator = z.infer<typeof SessionLocatorSchema>;
 
 export const TerminalGeometrySchema = z.strictObject({
@@ -362,25 +369,36 @@ export const TerminalGeometrySchema = z.strictObject({
 }).refine(
   ({ columns, rows }) => columns * rows <= TERMINAL_LIMITS.terminalActiveCellsMax,
   "active terminal cells exceed the v1 limit",
-).meta({ "x-hive-max-active-cells": TERMINAL_LIMITS.terminalActiveCellsMax });
+).meta({ "x-hive-max-active-cells": TERMINAL_LIMITS.terminalActiveCellsMax }).readonly();
 export type TerminalGeometry = z.infer<typeof TerminalGeometrySchema>;
 
 export const SessionSpecSchema = z.strictObject({
   schemaVersion: z.literal(1),
   locator: SessionLocatorSchema,
-  provider: CapabilityProviderSchema,
+  provider: SessionProtocolProviderSchema,
   toolSessionId: z.string().min(1).nullable(),
   cwd: z.string().startsWith("/"),
-  argv: z.tuple([z.string().min(1)], z.string()),
-  environment: z.record(z.string(), z.string()),
+  argv: z.tuple([z.string().min(1)], z.string()).readonly(),
+  environment: z.record(z.string(), z.string()).readonly(),
   expectedExecutable: z.string().min(1),
   readOnly: z.boolean(),
   capabilityEpoch: SafeUintSchema,
   geometry: TerminalGeometrySchema,
   launchGrantId: z.string().min(1),
   launchGrantRevision: SafeUintSchema,
-});
+}).readonly();
 export type SessionSpec = z.infer<typeof SessionSpecSchema>;
+
+const SessionExitSchema = z.strictObject({
+  code: z.number().int().nullable(),
+  signal: z.number().int().nullable(),
+  observedAt: Rfc3339UtcMillisecondsSchema,
+}).nullable();
+const SessionSurvivorsSchema = z.array(z.strictObject({
+  pid: z.number().int().positive(),
+  startToken: z.string().min(1),
+  reason: z.string().min(1),
+})).readonly();
 
 export const SessionInspectionSchema = z.strictObject({
   schemaVersion: z.literal(1),
@@ -400,44 +418,36 @@ export const SessionInspectionSchema = z.strictObject({
   checkpointSeq: DecimalUint64Schema,
   checkpointAvailable: z.boolean(),
   input: z.strictObject({
-    state: InputArbiterStateSchema,
+    state: z.string(),
     ownerViewerId: z.string().min(1).nullable(),
     claimId: z.string().min(1).nullable(),
   }),
   viewerCount: z.number().int().min(0).max(TERMINAL_LIMITS.authenticatedViewersPerGeneration),
   geometry: TerminalGeometrySchema,
-  resources: z.record(z.string(), z.number()),
+  resources: z.record(z.string(), z.number()).readonly(),
   visibility: z.strictObject({
     state: z.enum(["attaching", "visible", "reconnecting", "expired"]),
     workspaceSessionId: z.string().min(1),
     openTerminalRevision: DecimalUint64Schema,
     expiresAt: Rfc3339UtcMillisecondsSchema,
   }),
-  exit: z.strictObject({
-    code: z.number().int().nullable(),
-    signal: z.number().int().nullable(),
-    observedAt: Rfc3339UtcMillisecondsSchema,
-  }).nullable(),
-  survivors: z.array(z.strictObject({
-    pid: z.number().int().positive(),
-    startToken: z.string().min(1),
-    reason: z.string().min(1),
-  })),
+  exit: SessionExitSchema,
+  survivors: SessionSurvivorsSchema,
   evidenceAt: Rfc3339UtcMillisecondsSchema,
-  diagnosticIds: z.array(z.string().min(1)),
-});
+  diagnosticIds: z.array(z.string().min(1)).readonly(),
+}).readonly();
 export type SessionInspection = z.infer<typeof SessionInspectionSchema>;
 
 export const CreateResultSchema = z.strictObject({
   locator: SessionLocatorSchema,
   inspection: SessionInspectionSchema,
   created: z.literal(true),
-});
+}).readonly();
 export const CaptureRequestSchema = z.strictObject({
   include: z.enum(["metadata", "visible-text"]),
   maxRows: z.number().int().min(1).max(200),
   expectedOutputSeq: DecimalUint64Schema.optional(),
-});
+}).readonly();
 export const CaptureResultSchema = z.strictObject({
   locator: SessionLocatorSchema,
   outputSeq: DecimalUint64Schema,
@@ -452,12 +462,12 @@ export const CaptureResultSchema = z.strictObject({
   text: z.string().nullable(),
   truncated: z.boolean(),
   sha256: Sha256HexSchema,
-});
+}).readonly();
 export const AttachRequestSchema = z.strictObject({
   viewerId: z.string().min(1),
   geometry: TerminalGeometrySchema,
-  operations: z.array(z.enum(["view", "human-input", "resize"])),
-});
+  operations: z.array(z.enum(["view", "human-input", "resize"])).readonly(),
+}).readonly();
 export const AttachGrantSchema = z.strictObject({
   locator: SessionLocatorSchema,
   endpoint: z.string().min(1),
@@ -466,37 +476,38 @@ export const AttachGrantSchema = z.strictObject({
   engineBuildId: z.string().min(1),
   checkpointSeq: DecimalUint64Schema,
   outputSeq: DecimalUint64Schema,
-  operations: z.array(z.enum(["view", "human-input", "resize"])),
-});
+  operations: z.array(z.enum(["view", "human-input", "resize"])).readonly(),
+}).readonly();
 export const VisibilityRequestSchema = z.strictObject({
   workspaceSessionId: z.string().min(1),
   workspacePid: z.number().int().positive(),
   workspaceStartToken: z.string().min(1),
   openTerminalRevision: DecimalUint64Schema,
-});
+}).readonly();
 export const VisibilityLeaseSchema = z.strictObject({
   locator: SessionLocatorSchema,
   state: z.literal("active"),
   expiresAt: Rfc3339UtcMillisecondsSchema,
   openTerminalRevision: DecimalUint64Schema,
-});
+}).readonly();
 export const ResizeResultSchema = z.strictObject({
   locator: SessionLocatorSchema,
   geometry: TerminalGeometrySchema,
   revision: DecimalUint64Schema,
-});
-export const AutomatedInputSchema = z.strictObject({
+}).readonly();
+const AutomatedInputObjectSchema = z.strictObject({
   transactionId: domainUuidV7Schema("txn"),
   idempotencyKey: z.string().min(1),
   messageId: domainUuidV7Schema("msg"),
   recipientGeneration: PositiveGenerationSchema,
   capabilityEpoch: SafeUintSchema,
-  bytes: z.instanceof(Uint8Array),
+  bytes: z.custom<Uint8Array>((value) => value instanceof Uint8Array),
   sha256: Sha256HexSchema,
   providerStrategy: z.string().min(1),
   submit: z.enum(["none", "return", "control-enter"]),
 });
-export const AutomatedInputMetadataSchema = AutomatedInputSchema.omit({ bytes: true });
+export const AutomatedInputSchema = AutomatedInputObjectSchema.readonly();
+export const AutomatedInputMetadataSchema = AutomatedInputObjectSchema.omit({ bytes: true }).readonly();
 export const InputReceiptSchema = z.strictObject({
   transactionId: domainUuidV7Schema("txn"),
   messageId: domainUuidV7Schema("msg"),
@@ -508,23 +519,23 @@ export const InputReceiptSchema = z.strictObject({
   providerObservation: z.enum(["unavailable", "pending", "observed"]),
   evidenceAt: Rfc3339UtcMillisecondsSchema,
   diagnosticId: z.string().min(1).nullable(),
-});
+}).readonly();
 export const TerminationRequestSchema = z.strictObject({
   mode: z.enum(["graceful", "immediate"]),
   reason: z.string().min(1),
   requestId: domainUuidV7Schema("req"),
-});
+}).readonly();
 export const TerminationResultSchema = z.strictObject({
   locator: SessionLocatorSchema,
   state: z.enum(["terminated", "survivors", "unknown"]),
-  exit: SessionInspectionSchema.shape.exit,
-  survivors: SessionInspectionSchema.shape.survivors,
+  exit: SessionExitSchema,
+  survivors: SessionSurvivorsSchema,
   errors: z.array(z.strictObject({
     phase: z.string().min(1),
     code: z.string().min(1),
     diagnosticId: z.string().min(1),
-  })),
-});
+  })).readonly(),
+}).readonly();
 export const SessionEventSchema = z.strictObject({
   schemaVersion: z.literal(1),
   eventId: domainUuidV7Schema("evt"),
@@ -533,8 +544,8 @@ export const SessionEventSchema = z.strictObject({
   kind: z.string().min(1),
   revision: DecimalUint64Schema,
   occurredAt: Rfc3339UtcMillisecondsSchema,
-  data: z.record(z.string(), z.unknown()),
-});
+  data: z.record(z.string(), z.unknown()).readonly(),
+}).readonly();
 
 export const SESSION_WIRE_SCHEMAS = {
   sessionLocator: SessionLocatorSchema,
@@ -555,6 +566,46 @@ export const SESSION_WIRE_SCHEMAS = {
   terminationResult: TerminationResultSchema,
   sessionEvent: SessionEventSchema,
 } as const;
+
+type Assert<T extends true> = T;
+type Assignable<From, To> = [From] extends [To] ? true : false;
+
+type SessionSubjectSchemaToContract = Assert<Assignable<z.infer<typeof SessionSubjectSchema>, SessionHostContract.SessionSubject>>;
+type SessionSubjectContractToSchema = Assert<Assignable<SessionHostContract.SessionSubject, z.infer<typeof SessionSubjectSchema>>>;
+type SessionLocatorSchemaToContract = Assert<Assignable<z.infer<typeof SessionLocatorSchema>, SessionHostContract.SessionLocator>>;
+type SessionLocatorContractToSchema = Assert<Assignable<SessionHostContract.SessionLocator, z.infer<typeof SessionLocatorSchema>>>;
+type SessionSpecSchemaToContract = Assert<Assignable<z.infer<typeof SessionSpecSchema>, SessionHostContract.SessionSpec>>;
+type SessionSpecContractToSchema = Assert<Assignable<SessionHostContract.SessionSpec, z.infer<typeof SessionSpecSchema>>>;
+type TerminalGeometrySchemaToContract = Assert<Assignable<z.infer<typeof TerminalGeometrySchema>, SessionHostContract.TerminalGeometry>>;
+type TerminalGeometryContractToSchema = Assert<Assignable<SessionHostContract.TerminalGeometry, z.infer<typeof TerminalGeometrySchema>>>;
+type SessionInspectionSchemaToContract = Assert<Assignable<z.infer<typeof SessionInspectionSchema>, SessionHostContract.SessionInspection>>;
+type SessionInspectionContractToSchema = Assert<Assignable<SessionHostContract.SessionInspection, z.infer<typeof SessionInspectionSchema>>>;
+type CreateResultSchemaToContract = Assert<Assignable<z.infer<typeof CreateResultSchema>, SessionHostContract.CreateResult>>;
+type CreateResultContractToSchema = Assert<Assignable<SessionHostContract.CreateResult, z.infer<typeof CreateResultSchema>>>;
+type CaptureRequestSchemaToContract = Assert<Assignable<z.infer<typeof CaptureRequestSchema>, SessionHostContract.CaptureRequest>>;
+type CaptureRequestContractToSchema = Assert<Assignable<SessionHostContract.CaptureRequest, z.infer<typeof CaptureRequestSchema>>>;
+type CaptureResultSchemaToContract = Assert<Assignable<z.infer<typeof CaptureResultSchema>, SessionHostContract.CaptureResult>>;
+type CaptureResultContractToSchema = Assert<Assignable<SessionHostContract.CaptureResult, z.infer<typeof CaptureResultSchema>>>;
+type AttachRequestSchemaToContract = Assert<Assignable<z.infer<typeof AttachRequestSchema>, SessionHostContract.AttachRequest>>;
+type AttachRequestContractToSchema = Assert<Assignable<SessionHostContract.AttachRequest, z.infer<typeof AttachRequestSchema>>>;
+type AttachGrantSchemaToContract = Assert<Assignable<z.infer<typeof AttachGrantSchema>, SessionHostContract.AttachGrant>>;
+type AttachGrantContractToSchema = Assert<Assignable<SessionHostContract.AttachGrant, z.infer<typeof AttachGrantSchema>>>;
+type VisibilityRequestSchemaToContract = Assert<Assignable<z.infer<typeof VisibilityRequestSchema>, SessionHostContract.VisibilityRequest>>;
+type VisibilityRequestContractToSchema = Assert<Assignable<SessionHostContract.VisibilityRequest, z.infer<typeof VisibilityRequestSchema>>>;
+type VisibilityLeaseSchemaToContract = Assert<Assignable<z.infer<typeof VisibilityLeaseSchema>, SessionHostContract.VisibilityLease>>;
+type VisibilityLeaseContractToSchema = Assert<Assignable<SessionHostContract.VisibilityLease, z.infer<typeof VisibilityLeaseSchema>>>;
+type ResizeResultSchemaToContract = Assert<Assignable<z.infer<typeof ResizeResultSchema>, SessionHostContract.ResizeResult>>;
+type ResizeResultContractToSchema = Assert<Assignable<SessionHostContract.ResizeResult, z.infer<typeof ResizeResultSchema>>>;
+type AutomatedInputSchemaToContract = Assert<Assignable<z.infer<typeof AutomatedInputSchema>, SessionHostContract.AutomatedInput>>;
+type AutomatedInputContractToSchema = Assert<Assignable<SessionHostContract.AutomatedInput, z.infer<typeof AutomatedInputSchema>>>;
+type InputReceiptSchemaToContract = Assert<Assignable<z.infer<typeof InputReceiptSchema>, SessionHostContract.InputReceipt>>;
+type InputReceiptContractToSchema = Assert<Assignable<SessionHostContract.InputReceipt, z.infer<typeof InputReceiptSchema>>>;
+type TerminationRequestSchemaToContract = Assert<Assignable<z.infer<typeof TerminationRequestSchema>, SessionHostContract.TerminationRequest>>;
+type TerminationRequestContractToSchema = Assert<Assignable<SessionHostContract.TerminationRequest, z.infer<typeof TerminationRequestSchema>>>;
+type TerminationResultSchemaToContract = Assert<Assignable<z.infer<typeof TerminationResultSchema>, SessionHostContract.TerminationResult>>;
+type TerminationResultContractToSchema = Assert<Assignable<SessionHostContract.TerminationResult, z.infer<typeof TerminationResultSchema>>>;
+type SessionEventSchemaToContract = Assert<Assignable<z.infer<typeof SessionEventSchema>, SessionHostContract.SessionEvent>>;
+type SessionEventContractToSchema = Assert<Assignable<SessionHostContract.SessionEvent, z.infer<typeof SessionEventSchema>>>;
 
 export const SESSION_HOST_PERMISSIONS = {
   inspect: ["authorized-instance"],
