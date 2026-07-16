@@ -7,7 +7,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { createReadStream } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { buildCodexMcpExclusionArgs, HIVE_MCP_SERVERS } from "./mcp-scope";
@@ -18,6 +18,91 @@ import {
 } from "./graphify-hook";
 import { hiveInstanceSuffix } from "../../daemon/tmux-sessions";
 import { assertCodexWriterContained } from "../../daemon/codex-containment";
+
+export const MINIMUM_CODEX_CLI_VERSION = "0.144.4";
+
+export interface ParsedCodexVersion {
+  major: number;
+  minor: number;
+  patch: number;
+  prerelease: string | null;
+  version: string;
+}
+
+const CODEX_VERSION_OUTPUT =
+  /^\s*codex-cli (\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+([0-9A-Za-z.-]+))?\s*$/;
+const BARE_CODEX_VERSION =
+  /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+([0-9A-Za-z.-]+))?$/;
+
+function parsedCodexVersion(match: RegExpExecArray): ParsedCodexVersion | null {
+  const major = Number(match[1]);
+  const minor = Number(match[2]);
+  const patch = Number(match[3]);
+  if (![major, minor, patch].every(Number.isSafeInteger)) return null;
+  const prerelease = match[4] ?? null;
+  return {
+    major,
+    minor,
+    patch,
+    prerelease,
+    version: `${major}.${minor}.${patch}${
+      prerelease === null ? "" : `-${prerelease}`
+    }${match[5] === undefined ? "" : `+${match[5]}`}`,
+  };
+}
+
+/** Parse only the installed `codex --version` shape. Unknown is not permission. */
+export function parseCodexCliVersion(output: string): ParsedCodexVersion | null {
+  const match = CODEX_VERSION_OUTPUT.exec(output);
+  return match === null ? null : parsedCodexVersion(match);
+}
+
+function parseBareCodexVersion(version: string): ParsedCodexVersion | null {
+  const match = BARE_CODEX_VERSION.exec(version);
+  return match === null ? null : parsedCodexVersion(match);
+}
+
+export function codexCompatibilityRefusal(version: string | null): string | null {
+  const parsed = version === null ? null : parseBareCodexVersion(version);
+  if (parsed === null) {
+    return "Hive could not determine the Codex CLI version from `codex --version` and " +
+      "refuses to start an under-instructed Codex session.\n" +
+      "Fix: repair or update Codex, then reopen Hive.";
+  }
+  const minimum = parseBareCodexVersion(MINIMUM_CODEX_CLI_VERSION)!;
+  const coreComparison = parsed.major !== minimum.major
+    ? parsed.major - minimum.major
+    : parsed.minor !== minimum.minor
+    ? parsed.minor - minimum.minor
+    : parsed.patch - minimum.patch;
+  if (
+    coreComparison > 0 ||
+    (coreComparison === 0 && parsed.prerelease === null)
+  ) {
+    return null;
+  }
+  return `Codex CLI ${parsed.version} is unsupported. Hive requires Codex CLI >= ${MINIMUM_CODEX_CLI_VERSION} because\n` +
+    "Codex session bootstrap uses developer instructions instead of a visible user prompt.\n" +
+    "Fix: update Codex, then reopen Hive.";
+}
+
+/** Free provider identity probe: opens no session and starts no model turn. */
+export async function probeCodexCliVersion(
+  argv: readonly string[] = ["codex"],
+): Promise<string | null> {
+  try {
+    const child = Bun.spawn([...argv, "--version"], {
+      cwd: tmpdir(),
+      stdout: "pipe",
+      stderr: "ignore",
+    });
+    const output = await new Response(child.stdout).text();
+    if (await child.exited !== 0) return null;
+    return parseCodexCliVersion(output)?.version ?? null;
+  } catch {
+    return null;
+  }
+}
 
 /** Typed, not a bare string in a template: the token the generated hook
  * dispatches on. A kind the script has no arm for silently never nudges. */

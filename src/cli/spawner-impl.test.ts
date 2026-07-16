@@ -84,6 +84,7 @@ function newTestSpawner(
     // surface after the Codex-writer containment) work without every test
     // wiring one; the two tests that assert credential behavior pass their own.
     issueCredential: () => ({ token: "test-capability", rollback: () => {} }),
+    codexVersion: dependencies.codexVersion ?? (async () => "0.144.4"),
     ...dependencies,
     stopSession: dependencies.stopSession ?? positivelyVerifiedStop,
   });
@@ -1387,6 +1388,130 @@ describe("HiveSpawner name pool", () => {
     ]);
     expect(quotaRefusal.audit.selectedTool).toBeNull();
     quotaDb.close();
+  });
+
+  test("an explicit Codex request fails closed on compatibility without substitution", async () => {
+    const failure = await captureRouteAudit({
+      task: "SECRET incompatible explicit Codex prompt",
+      category: "simple_coding",
+      tool: "codex",
+      model: "gpt-5.6-sol",
+      readOnly: true,
+    }, {
+      codexVersion: async () => "0.144.3",
+    });
+
+    expect(failure.error.message).toContain("compatibility refused");
+    expect(failure.error.message).toContain("Codex CLI 0.144.3 is unsupported");
+    expect(failure.audit.attempts).toEqual([
+      expect.stringContaining("explicit: refused codex/gpt-5.6-sol — compatibility"),
+    ]);
+    expect(failure.audit.selectedTool).toBeNull();
+  });
+
+  test("a routed incompatible Codex link leaves the next provider eligible", async () => {
+    const entries = [
+      {
+        provider: "codex",
+        model: "gpt-5.6-sol",
+        effort: { mode: "provider-controlled" },
+      },
+      {
+        provider: "claude",
+        model: "claude-opus-4-8",
+        effort: { mode: "provider-controlled" },
+      },
+    ] satisfies ChainEntry[];
+    const selected = await captureRouteAudit({
+      task: "SECRET routed compatibility prompt",
+      category: "simple_coding",
+      readOnly: true,
+    }, {
+      readRoutingPolicy: () => policyWithChain(entries),
+      codexVersion: async () => "0.144.3",
+    });
+
+    expect(selected.error.message).toEqual("stop after routing");
+    expect(selected.audit.attempts).toEqual([
+      expect.stringContaining("default: codex/gpt-5.6-sol — compatibility"),
+      "default: claude/claude-opus-4-8 — eligible",
+      "selected claude/claude-opus-4-8 (quota disabled/absent)",
+    ]);
+    expect(selected.audit.selectedTool).toEqual("claude");
+  });
+
+  test("one route decision probes Codex once across several Codex links", async () => {
+    let probes = 0;
+    const entries = [
+      {
+        provider: "codex",
+        model: "gpt-first",
+        effort: { mode: "provider-controlled" },
+      },
+      {
+        provider: "codex",
+        model: "gpt-second",
+        effort: { mode: "provider-controlled" },
+      },
+      {
+        provider: "claude",
+        model: "claude-opus-4-8",
+        effort: { mode: "provider-controlled" },
+      },
+    ] satisfies ChainEntry[];
+    const selected = await captureRouteAudit({
+      task: "SECRET memoized compatibility prompt",
+      category: "simple_coding",
+      readOnly: true,
+    }, {
+      readRoutingPolicy: () => policyWithChain(entries),
+      codexVersion: async () => (probes += 1, "0.144.3"),
+    });
+
+    expect(selected.error.message).toEqual("stop after routing");
+    expect(probes).toEqual(1);
+    expect(selected.audit.attempts.filter((attempt) =>
+      attempt.includes("— compatibility")
+    )).toHaveLength(2);
+  });
+
+  test("Claude-only authorization never probes Codex", async () => {
+    const selected = await captureRouteAudit({
+      task: "SECRET Claude-only compatibility prompt",
+      category: "simple_coding",
+      readOnly: true,
+    }, {
+      readRoutingPolicy: () => policyWithChain([{
+        provider: "claude",
+        model: "claude-opus-4-8",
+        effort: { mode: "provider-controlled" },
+      }]),
+      codexVersion: async () => { throw new Error("must not probe Codex"); },
+    });
+
+    expect(selected.error.message).toEqual("stop after routing");
+    expect(selected.audit.selectedTool).toEqual("claude");
+  });
+
+  test("adapter revalidation includes the Codex compatibility guard", async () => {
+    const spawner = newTestSpawner({
+      db: new FakeStore(),
+      repoRoot: "/tmp/hive-compatibility-revalidation",
+      port: 4317,
+      config: {},
+      tmux: new FakeTmux(),
+      isModelEnabled: async () => true,
+      codexVersion: async () => "0.144.3",
+      discoverCapabilities: async () => {
+        throw new Error("resolution must not run before compatibility");
+      },
+    });
+
+    await expect(spawner.authorizeLaunch({
+      tool: "codex",
+      model: "gpt-5.6-sol",
+      effort: "medium",
+    })).rejects.toThrow("compatibility refused");
   });
 
   test("never-configured, empty, and total exhaustion each write one refusal audit", async () => {

@@ -7,6 +7,7 @@ import { QuotaLedger } from "./quota-ledger";
 
 const pass = (): null => null;
 const checks: LaunchGateChecks = {
+  compatibility: pass,
   resolution: pass,
   enablement: pass,
   availability: pass,

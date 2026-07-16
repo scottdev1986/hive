@@ -13,6 +13,8 @@ import {
   buildCodexTrustArgs,
   CODEX_CAPABILITY_TOKEN_ENV,
   CODEX_NOTIFY_SCRIPT,
+  codexCompatibilityRefusal,
+  parseCodexCliVersion,
   wrapCodexSpawnWithCapabilityEnv,
   writeCodexAgentConfig,
 } from "./codex";
@@ -178,6 +180,32 @@ const expectedHookOverrides = (
   // writer-tamperable, so writers are refused at launch instead.
 
 describe("Codex adapter", () => {
+  test.each([
+    ["codex-cli 0.144.4", true],
+    ["codex-cli 0.144.5", true],
+    ["codex-cli 0.145.0", true],
+    ["codex-cli 1.0.0", true],
+    ["codex-cli 0.144.10", true],
+    ["codex-cli 0.144.3", false],
+    ["codex-cli 0.143.99", false],
+    ["codex-cli 0.144.4-alpha.1", false],
+    ["codex-cli 0.144.4+build.7", true],
+  ])("gates installed version output %s", (output, accepted) => {
+    const parsed = parseCodexCliVersion(output);
+    expect(parsed).not.toBeNull();
+    expect(codexCompatibilityRefusal(parsed!.version) === null).toBe(accepted);
+  });
+
+  test.each(["unknown", "", "codex-cli nope", "0.144.4"])(
+    "fails closed on unreadable version output %j",
+    (output) => {
+      expect(parseCodexCliVersion(output)).toBeNull();
+      expect(codexCompatibilityRefusal(null)).toContain(
+        "could not determine the Codex CLI version",
+      );
+    },
+  );
+
   test("builds only read-only spawn argv", () => {
     const base = {
       name: "agent-4",

@@ -12,6 +12,8 @@ import {
 } from "../adapters/tools/claude";
 import {
   buildCodexSpawnCommand,
+  codexCompatibilityRefusal,
+  probeCodexCliVersion,
   wrapCodexSpawnWithCapabilityEnv,
   writeCodexAgentConfig,
 } from "../adapters/tools/codex";
@@ -328,6 +330,8 @@ export interface HiveSpawnerDependencies {
   /** Free `grok --version` identity probe; injectable so tests bind the
    * undocumented session contract without requiring a machine installation. */
   grokIdentity?: typeof probeGrokCliVersion;
+  /** Free `codex --version` launch-compatibility probe. Unknown fails closed. */
+  codexVersion?: () => Promise<string | null>;
   /**
    * The account's live pool readings. The release valve is derived from these —
    * from the pools the provider actually meters — rather than from a model name.
@@ -823,7 +827,15 @@ export class HiveSpawner implements Spawner {
     identity: ExecutionIdentity,
   ): Promise<AuthorizedLaunch> {
     let record: CapabilityRecord | undefined;
+    let codexVersion: Promise<string | null> | undefined;
     const result = await AuthorizedLaunch.gate(identity, {
+      compatibility: async (candidate) => {
+        if (candidate.tool !== "codex") return null;
+        codexVersion ??= (
+          this.dependencies.codexVersion?.() ?? probeCodexCliVersion()
+        ).catch(() => null);
+        return codexCompatibilityRefusal(await codexVersion);
+      },
       resolution: async (candidate) => {
         if (this.dependencies.discoverCapabilities === undefined) return null;
         const discovery = await this.discoverOnce(candidate.tool);
@@ -1729,11 +1741,21 @@ export class HiveSpawner implements Spawner {
       }
       return undefined;
     };
+    // One initial routing decision can contain several Codex links. They all
+    // share one free version observation; adapter revalidation probes afresh.
+    let codexVersion: Promise<string | null> | undefined;
     const authorizeCandidate = async (
       raw: RawLaunchCandidate,
     ): Promise<LaunchGateResult> => {
       let record: CapabilityRecord | undefined;
       const checks: LaunchGateChecks = {
+        compatibility: async (candidate) => {
+          if (candidate.tool !== "codex") return null;
+          codexVersion ??= (
+            this.dependencies.codexVersion?.() ?? probeCodexCliVersion()
+          ).catch(() => null);
+          return codexCompatibilityRefusal(await codexVersion);
+        },
         resolution: async (candidate) => {
           if (candidate.model.trim().length === 0) return "model is empty";
           if (this.dependencies.discoverCapabilities === undefined) return null;

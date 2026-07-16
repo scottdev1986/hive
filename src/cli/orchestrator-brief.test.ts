@@ -233,7 +233,7 @@ describe("orchestrator brief", () => {
     expect(shellCommand).toContain("'mcp_servers.hive.url=");
   });
 
-  test("Codex launch does not resolve or version-gate Claude", async () => {
+  test("Codex launch gates Codex without resolving Claude", async () => {
     let command: string[] = [];
     const exitCode = await launchOrchestrator(
       "codex",
@@ -243,7 +243,7 @@ describe("orchestrator brief", () => {
         command = spawned;
         return { exited: Promise.resolve(0) };
       },
-      async () => { throw new Error("must not inspect Claude"); },
+      async () => "0.144.4",
       () => { throw new Error("must not resolve Claude"); },
       noExistingRoot,
       "",
@@ -261,6 +261,36 @@ describe("orchestrator brief", () => {
       "mcp_servers.hive.enabled=false",
     );
   });
+
+  test.each([
+    ["0.144.3", "Codex CLI 0.144.3 is unsupported"],
+    [null, "could not determine the Codex CLI version"],
+  ] as const)(
+    "refuses Codex version %j before root teardown, config, token, or spawn",
+    async (version, expected) => {
+      const touched: string[] = [];
+      await expect(launchOrchestrator(
+        "codex",
+        4317,
+        process.cwd(),
+        () => {
+          touched.push("spawn");
+          return { exited: Promise.resolve(0) };
+        },
+        async () => version,
+        () => { throw new Error("must not resolve Claude"); },
+        {
+          hasSession: async () => (touched.push("tmux"), false),
+          listClientTtys: async () => [],
+          killSession: async () => {},
+        },
+        "",
+        async () => (touched.push("mcp"), []),
+        async () => (touched.push("token"), "/tmp/token"),
+      )).rejects.toThrow(expected);
+      expect(touched).toEqual([]);
+    },
+  );
 
   test("kills an unattached stale root before launch", async () => {
     const killed: string[] = [];

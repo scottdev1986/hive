@@ -7,6 +7,7 @@ import {
 
 const pass = async (): Promise<string | null> => null;
 const passingChecks = (): LaunchGateChecks => ({
+  compatibility: pass,
   resolution: pass,
   enablement: pass,
   availability: pass,
@@ -24,6 +25,7 @@ describe("AuthorizedLaunch", () => {
     const order: string[] = [];
     const checks = passingChecks();
     for (const key of [
+      "compatibility",
       "resolution",
       "enablement",
       "availability",
@@ -39,6 +41,7 @@ describe("AuthorizedLaunch", () => {
     );
     expect(result.authorized).toBeInstanceOf(AuthorizedLaunch);
     expect(order).toEqual([
+      "compatibility",
       "resolution",
       "enablement",
       "availability",
@@ -48,6 +51,7 @@ describe("AuthorizedLaunch", () => {
   });
 
   test.each([
+    ["compatibility", "compatibility"],
     ["resolution", "resolution"],
     ["enablement", "enablement"],
     ["availability", "availability"],

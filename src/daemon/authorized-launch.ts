@@ -7,6 +7,7 @@ export interface RawLaunchCandidate {
 }
 
 export type LaunchRefusalReason =
+  | "compatibility"
   | "resolution"
   | "enablement"
   | "availability"
@@ -26,6 +27,7 @@ type Guard = (candidate: Readonly<RawLaunchCandidate>) =>
   Promise<string | null> | string | null;
 
 export interface LaunchGateChecks {
+  compatibility: Guard;
   resolution: Guard;
   enablement: Guard;
   availability: Guard;
@@ -60,6 +62,7 @@ export class AuthorizedLaunch {
   ): Promise<LaunchGateResult> {
     const candidate: RawLaunchCandidate = { ...raw };
     const ordered: readonly [LaunchRefusalReason, Guard][] = [
+      ["compatibility", checks.compatibility],
       ["resolution", checks.resolution],
       ["enablement", checks.enablement],
       ["availability", checks.availability],

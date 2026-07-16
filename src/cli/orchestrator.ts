@@ -31,7 +31,11 @@ import {
   buildCodexMcpExclusionArgs,
   listInheritedCodexMcpServers,
 } from "../adapters/tools/mcp-scope";
-import { CODEX_CAPABILITY_TOKEN_ENV } from "../adapters/tools/codex";
+import {
+  CODEX_CAPABILITY_TOKEN_ENV,
+  codexCompatibilityRefusal,
+  probeCodexCliVersion,
+} from "../adapters/tools/codex";
 import { hiveCliSpawnArgv } from "../daemon/lifecycle";
 import { IS_RELEASE_BUILD } from "../version";
 
@@ -442,11 +446,12 @@ export async function launchOrchestrator(
       }
       break;
     }
-    case "codex":
-      // No version gate today: a future vendor must state its own minimum here
-      // rather than inherit Codex's silence — an ungated launch of a CLI too
-      // old for the Hive MCP server stalls instead of failing.
+    case "codex": {
+      const version = await (detectVersion ?? probeCodexCliVersion)();
+      const refusal = codexCompatibilityRefusal(version);
+      if (refusal !== null) throw new Error(refusal);
       break;
+    }
     case "grok":
       if (probeGrokCliVersion() === null) {
         throw new Error("the Grok orchestrator needs a working grok CLI");

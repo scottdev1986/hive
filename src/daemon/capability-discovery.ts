@@ -16,6 +16,7 @@ import {
 } from "../schemas/capability";
 import { pendingControlResponses, pendingResponses } from "./quota-sources";
 import { HIVE_VERSION } from "../version";
+import { probeCodexCliVersion } from "../adapters/tools/codex";
 import { parseGrokCliVersion } from "../adapters/tools/grok";
 
 /**
@@ -499,7 +500,10 @@ export class CodexStdioCapabilityTransport implements CodexCapabilityTransport {
   ) {}
 
   async readCatalog(timeoutMs: number): Promise<CodexCapabilityPayload> {
-    const cliVersion = await readCliVersion(this.versionArgv, UNKNOWN_VERSION);
+    // Inventory and launch compatibility share the provider-owned exact parser.
+    // Inventory preserves unknown as evidence; launch authorization refuses it.
+    const cliVersion = await probeCodexCliVersion(this.versionArgv) ??
+      UNKNOWN_VERSION;
     const child = Bun.spawn([...this.argv], {
       stdin: "pipe",
       stdout: "pipe",
