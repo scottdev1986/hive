@@ -340,8 +340,8 @@ to detached hosts; a host crash can lose only its own generation.</pre>
               <tr><td>turnState</td><td><strong>unknown · ready · working · idle · awaiting_approval · paused · stuck · done · failed</strong></td><td>Provider hooks/app server first; process/session evidence second. Never terminal text.</td><td>Agent activity badge and attention priority.</td></tr>
               <tr><td>workflowState</td><td><strong>Reserved dimension — defined by The Queen's Hive</strong></td><td>Authoritative task/review/gate/land records belong to the hierarchy transition (<a href="agentic-hierarchy.html">agentic-hierarchy.html</a>); the terminal foundation reserves the discriminator and never requires those records to exit T0–T7.</td><td>Populated after the hierarchy transition ships its records.</td></tr>
               <tr><td>inputState</td><td><strong>free · human_owned · human_orphaned · automation</strong></td><td>Sessiond arbiter transaction.</td><td>Composer lock, owner label, queued-delivery count.</td></tr>
-              <tr><td>healthState</td><td><strong>healthy · delayed · stale · disconnected · unknown</strong></td><td>Event heartbeat, provider adapter, attach lag, process liveness, queue/backpressure metrics.</td><td>Freshness ring and diagnostic inspector.</td></tr>
-              <tr><td>attention</td><td><strong>none · info · action · approval · failure</strong></td><td>Derived by control daemon from typed events and policy.</td><td>Rail decoration and ordered inbox; never focus.</td></tr>
+              <tr><td>healthState</td><td><strong>healthy · delayed · stale · disconnected · unknown</strong></td><td>Event heartbeat, provider adapter, attach lag, process liveness, queue/backpressure metrics.</td><td>Freshness indicator and source detail.</td></tr>
+              <tr><td>attention</td><td><strong>none · info · action · approval · failure</strong></td><td>Derived by control daemon from typed events and policy.</td><td>Attention decoration and ordered inbox; never focus.</td></tr>
             </tbody>
           </table>
         </div>
@@ -1038,7 +1038,7 @@ export type InputReceipt = Readonly&lt;{
   transactionId: string; messageId: string;
   state: "queued" | "buffered" | "committed" | "written" | "in-doubt";
   byteRange: { start: string; endExclusive: string } | null;
-  providerReceipt: "unavailable" | "pending" | "acknowledged";
+  providerObservation: "unavailable" | "pending" | "observed";
   evidenceAt: string; diagnosticId: string | null;
 }&gt;;
 export type TerminationRequest = Readonly&lt;{
