@@ -1,0 +1,3905 @@
+{
+  "schemaVersion": 1,
+  "generatedFrom": [
+    "src/schemas/session-protocol.ts",
+    "src/schemas/status-envelope.ts",
+    "src/schemas/message-envelope.ts"
+  ],
+  "schemas": {
+    "sessionLocator": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "number",
+          "const": 1
+        },
+        "instanceId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "subject": {
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "root"
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "agent"
+                },
+                "agentId": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "kind",
+                "agentId"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "sessionId": {
+          "type": "string",
+          "pattern": "^ses_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        },
+        "hostKind": {
+          "type": "string",
+          "enum": [
+            "tmux",
+            "sessiond"
+          ]
+        },
+        "engineBuildId": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "instanceId",
+        "subject",
+        "generation",
+        "sessionId",
+        "hostKind",
+        "engineBuildId"
+      ],
+      "additionalProperties": false
+    },
+    "terminalGeometry": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "columns": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000
+        },
+        "rows": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000
+        },
+        "widthPx": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "heightPx": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "cellWidthPx": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "cellHeightPx": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
+      },
+      "required": [
+        "columns",
+        "rows",
+        "widthPx",
+        "heightPx",
+        "cellWidthPx",
+        "cellHeightPx"
+      ],
+      "additionalProperties": false,
+      "x-hive-max-active-cells": 250000
+    },
+    "sessionSpec": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "number",
+          "const": 1
+        },
+        "locator": {
+          "type": "object",
+          "properties": {
+            "schemaVersion": {
+              "type": "number",
+              "const": 1
+            },
+            "instanceId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "subject": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "root"
+                    }
+                  },
+                  "required": [
+                    "kind"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "agent"
+                    },
+                    "agentId": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "agentId"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            },
+            "generation": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "sessionId": {
+              "type": "string",
+              "pattern": "^ses_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+            },
+            "hostKind": {
+              "type": "string",
+              "enum": [
+                "tmux",
+                "sessiond"
+              ]
+            },
+            "engineBuildId": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "schemaVersion",
+            "instanceId",
+            "subject",
+            "generation",
+            "sessionId",
+            "hostKind",
+            "engineBuildId"
+          ],
+          "additionalProperties": false
+        },
+        "provider": {
+          "type": "string",
+          "enum": [
+            "claude",
+            "codex",
+            "grok"
+          ]
+        },
+        "toolSessionId": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "cwd": {
+          "type": "string",
+          "pattern": "^\\/.*"
+        },
+        "argv": {
+          "type": "array",
+          "prefixItems": [
+            {
+              "type": "string",
+              "minLength": 1
+            }
+          ],
+          "items": {
+            "type": "string"
+          }
+        },
+        "environment": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "expectedExecutable": {
+          "type": "string",
+          "minLength": 1
+        },
+        "readOnly": {
+          "type": "boolean"
+        },
+        "capabilityEpoch": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "geometry": {
+          "type": "object",
+          "properties": {
+            "columns": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000
+            },
+            "rows": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000
+            },
+            "widthPx": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            "heightPx": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            "cellWidthPx": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "cellHeightPx": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
+          },
+          "required": [
+            "columns",
+            "rows",
+            "widthPx",
+            "heightPx",
+            "cellWidthPx",
+            "cellHeightPx"
+          ],
+          "additionalProperties": false,
+          "x-hive-max-active-cells": 250000
+        },
+        "launchGrantId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "launchGrantRevision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "locator",
+        "provider",
+        "toolSessionId",
+        "cwd",
+        "argv",
+        "environment",
+        "expectedExecutable",
+        "readOnly",
+        "capabilityEpoch",
+        "geometry",
+        "launchGrantId",
+        "launchGrantRevision"
+      ],
+      "additionalProperties": false
+    },
+    "sessionInspection": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "number",
+          "const": 1
+        },
+        "locator": {
+          "type": "object",
+          "properties": {
+            "schemaVersion": {
+              "type": "number",
+              "const": 1
+            },
+            "instanceId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "subject": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "root"
+                    }
+                  },
+                  "required": [
+                    "kind"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "agent"
+                    },
+                    "agentId": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "agentId"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            },
+            "generation": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "sessionId": {
+              "type": "string",
+              "pattern": "^ses_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+            },
+            "hostKind": {
+              "type": "string",
+              "enum": [
+                "tmux",
+                "sessiond"
+              ]
+            },
+            "engineBuildId": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "schemaVersion",
+            "instanceId",
+            "subject",
+            "generation",
+            "sessionId",
+            "hostKind",
+            "engineBuildId"
+          ],
+          "additionalProperties": false
+        },
+        "presence": {
+          "type": "string",
+          "enum": [
+            "present",
+            "exited",
+            "lost",
+            "unknown"
+          ]
+        },
+        "complete": {
+          "type": "boolean"
+        },
+        "hostPid": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "hostStartToken": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "providerRoot": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "pid": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "startToken": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "processGroupId": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                }
+              },
+              "required": [
+                "pid",
+                "startToken",
+                "processGroupId"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "expectedExecutable": {
+          "type": "string",
+          "minLength": 1
+        },
+        "executableVerified": {
+          "type": "boolean"
+        },
+        "outputSeq": {
+          "type": "string",
+          "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+          "format": "hive-uint64-decimal"
+        },
+        "checkpointSeq": {
+          "type": "string",
+          "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+          "format": "hive-uint64-decimal"
+        },
+        "checkpointAvailable": {
+          "type": "boolean"
+        },
+        "input": {
+          "type": "object",
+          "properties": {
+            "state": {
+              "type": "string",
+              "enum": [
+                "FREE",
+                "HUMAN_GESTURE",
+                "HUMAN_OWNED",
+                "HUMAN_ORPHANED",
+                "AUTOMATION_BUFFERING",
+                "AUTOMATION_COMMITTED",
+                "TERMINATING",
+                "CLOSED"
+              ]
+            },
+            "ownerViewerId": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "claimId": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "state",
+            "ownerViewerId",
+            "claimId"
+          ],
+          "additionalProperties": false
+        },
+        "viewerCount": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4
+        },
+        "geometry": {
+          "type": "object",
+          "properties": {
+            "columns": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000
+            },
+            "rows": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000
+            },
+            "widthPx": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            "heightPx": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            "cellWidthPx": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "cellHeightPx": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
+          },
+          "required": [
+            "columns",
+            "rows",
+            "widthPx",
+            "heightPx",
+            "cellWidthPx",
+            "cellHeightPx"
+          ],
+          "additionalProperties": false,
+          "x-hive-max-active-cells": 250000
+        },
+        "resources": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "type": "number"
+          }
+        },
+        "visibility": {
+          "type": "object",
+          "properties": {
+            "state": {
+              "type": "string",
+              "enum": [
+                "attaching",
+                "visible",
+                "reconnecting",
+                "expired"
+              ]
+            },
+            "workspaceSessionId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "openTerminalRevision": {
+              "type": "string",
+              "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+              "format": "hive-uint64-decimal"
+            },
+            "expiresAt": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+            }
+          },
+          "required": [
+            "state",
+            "workspaceSessionId",
+            "openTerminalRevision",
+            "expiresAt"
+          ],
+          "additionalProperties": false
+        },
+        "exit": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "code": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "signal": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "observedAt": {
+                  "type": "string",
+                  "format": "date-time",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+                }
+              },
+              "required": [
+                "code",
+                "signal",
+                "observedAt"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "survivors": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "pid": {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              "startToken": {
+                "type": "string",
+                "minLength": 1
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "pid",
+              "startToken",
+              "reason"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "evidenceAt": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+        },
+        "diagnosticIds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "locator",
+        "presence",
+        "complete",
+        "hostPid",
+        "hostStartToken",
+        "providerRoot",
+        "expectedExecutable",
+        "executableVerified",
+        "outputSeq",
+        "checkpointSeq",
+        "checkpointAvailable",
+        "input",
+        "viewerCount",
+        "geometry",
+        "resources",
+        "visibility",
+        "exit",
+        "survivors",
+        "evidenceAt",
+        "diagnosticIds"
+      ],
+      "additionalProperties": false
+    },
+    "createResult": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "locator": {
+          "type": "object",
+          "properties": {
+            "schemaVersion": {
+              "type": "number",
+              "const": 1
+            },
+            "instanceId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "subject": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "root"
+                    }
+                  },
+                  "required": [
+                    "kind"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "agent"
+                    },
+                    "agentId": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "agentId"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            },
+            "generation": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "sessionId": {
+              "type": "string",
+              "pattern": "^ses_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+            },
+            "hostKind": {
+              "type": "string",
+              "enum": [
+                "tmux",
+                "sessiond"
+              ]
+            },
+            "engineBuildId": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "schemaVersion",
+            "instanceId",
+            "subject",
+            "generation",
+            "sessionId",
+            "hostKind",
+            "engineBuildId"
+          ],
+          "additionalProperties": false
+        },
+        "inspection": {
+          "type": "object",
+          "properties": {
+            "schemaVersion": {
+              "type": "number",
+              "const": 1
+            },
+            "locator": {
+              "type": "object",
+              "properties": {
+                "schemaVersion": {
+                  "type": "number",
+                  "const": 1
+                },
+                "instanceId": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "subject": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "const": "root"
+                        }
+                      },
+                      "required": [
+                        "kind"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "const": "agent"
+                        },
+                        "agentId": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "agentId"
+                      ],
+                      "additionalProperties": false
+                    }
+                  ]
+                },
+                "generation": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 9007199254740991
+                },
+                "sessionId": {
+                  "type": "string",
+                  "pattern": "^ses_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+                },
+                "hostKind": {
+                  "type": "string",
+                  "enum": [
+                    "tmux",
+                    "sessiond"
+                  ]
+                },
+                "engineBuildId": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "schemaVersion",
+                "instanceId",
+                "subject",
+                "generation",
+                "sessionId",
+                "hostKind",
+                "engineBuildId"
+              ],
+              "additionalProperties": false
+            },
+            "presence": {
+              "type": "string",
+              "enum": [
+                "present",
+                "exited",
+                "lost",
+                "unknown"
+              ]
+            },
+            "complete": {
+              "type": "boolean"
+            },
+            "hostPid": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "hostStartToken": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "providerRoot": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "pid": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "startToken": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "processGroupId": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": [
+                    "pid",
+                    "startToken",
+                    "processGroupId"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "expectedExecutable": {
+              "type": "string",
+              "minLength": 1
+            },
+            "executableVerified": {
+              "type": "boolean"
+            },
+            "outputSeq": {
+              "type": "string",
+              "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+              "format": "hive-uint64-decimal"
+            },
+            "checkpointSeq": {
+              "type": "string",
+              "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+              "format": "hive-uint64-decimal"
+            },
+            "checkpointAvailable": {
+              "type": "boolean"
+            },
+            "input": {
+              "type": "object",
+              "properties": {
+                "state": {
+                  "type": "string",
+                  "enum": [
+                    "FREE",
+                    "HUMAN_GESTURE",
+                    "HUMAN_OWNED",
+                    "HUMAN_ORPHANED",
+                    "AUTOMATION_BUFFERING",
+                    "AUTOMATION_COMMITTED",
+                    "TERMINATING",
+                    "CLOSED"
+                  ]
+                },
+                "ownerViewerId": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "claimId": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "state",
+                "ownerViewerId",
+                "claimId"
+              ],
+              "additionalProperties": false
+            },
+            "viewerCount": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4
+            },
+            "geometry": {
+              "type": "object",
+              "properties": {
+                "columns": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 1000
+                },
+                "rows": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 1000
+                },
+                "widthPx": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "heightPx": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "cellWidthPx": {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                },
+                "cellHeightPx": {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                }
+              },
+              "required": [
+                "columns",
+                "rows",
+                "widthPx",
+                "heightPx",
+                "cellWidthPx",
+                "cellHeightPx"
+              ],
+              "additionalProperties": false,
+              "x-hive-max-active-cells": 250000
+            },
+            "resources": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {
+                "type": "number"
+              }
+            },
+            "visibility": {
+              "type": "object",
+              "properties": {
+                "state": {
+                  "type": "string",
+                  "enum": [
+                    "attaching",
+                    "visible",
+                    "reconnecting",
+                    "expired"
+                  ]
+                },
+                "workspaceSessionId": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "openTerminalRevision": {
+                  "type": "string",
+                  "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                  "format": "hive-uint64-decimal"
+                },
+                "expiresAt": {
+                  "type": "string",
+                  "format": "date-time",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+                }
+              },
+              "required": [
+                "state",
+                "workspaceSessionId",
+                "openTerminalRevision",
+                "expiresAt"
+              ],
+              "additionalProperties": false
+            },
+            "exit": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "signal": {
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "observedAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "signal",
+                    "observedAt"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "survivors": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "pid": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "startToken": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "reason": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "pid",
+                  "startToken",
+                  "reason"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "evidenceAt": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+            },
+            "diagnosticIds": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          "required": [
+            "schemaVersion",
+            "locator",
+            "presence",
+            "complete",
+            "hostPid",
+            "hostStartToken",
+            "providerRoot",
+            "expectedExecutable",
+            "executableVerified",
+            "outputSeq",
+            "checkpointSeq",
+            "checkpointAvailable",
+            "input",
+            "viewerCount",
+            "geometry",
+            "resources",
+            "visibility",
+            "exit",
+            "survivors",
+            "evidenceAt",
+            "diagnosticIds"
+          ],
+          "additionalProperties": false
+        },
+        "created": {
+          "type": "boolean",
+          "const": true
+        }
+      },
+      "required": [
+        "locator",
+        "inspection",
+        "created"
+      ],
+      "additionalProperties": false
+    },
+    "captureRequest": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "include": {
+          "type": "string",
+          "enum": [
+            "metadata",
+            "visible-text"
+          ]
+        },
+        "maxRows": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 200
+        },
+        "expectedOutputSeq": {
+          "type": "string",
+          "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+          "format": "hive-uint64-decimal"
+        }
+      },
+      "required": [
+        "include",
+        "maxRows"
+      ],
+      "additionalProperties": false
+    },
+    "captureResult": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "locator": {
+          "type": "object",
+          "properties": {
+            "schemaVersion": {
+              "type": "number",
+              "const": 1
+            },
+            "instanceId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "subject": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "root"
+                    }
+                  },
+                  "required": [
+                    "kind"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "agent"
+                    },
+                    "agentId": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "agentId"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            },
+            "generation": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "sessionId": {
+              "type": "string",
+              "pattern": "^ses_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+            },
+            "hostKind": {
+              "type": "string",
+              "enum": [
+                "tmux",
+                "sessiond"
+              ]
+            },
+            "engineBuildId": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "schemaVersion",
+            "instanceId",
+            "subject",
+            "generation",
+            "sessionId",
+            "hostKind",
+            "engineBuildId"
+          ],
+          "additionalProperties": false
+        },
+        "outputSeq": {
+          "type": "string",
+          "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+          "format": "hive-uint64-decimal"
+        },
+        "columns": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "rows": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "screen": {
+          "type": "string",
+          "enum": [
+            "primary",
+            "alternate"
+          ]
+        },
+        "cursor": {
+          "type": "object",
+          "properties": {
+            "row": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "column": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "visible": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "row",
+            "column",
+            "visible"
+          ],
+          "additionalProperties": false
+        },
+        "text": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "truncated": {
+          "type": "boolean"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "locator",
+        "outputSeq",
+        "columns",
+        "rows",
+        "screen",
+        "cursor",
+        "text",
+        "truncated",
+        "sha256"
+      ],
+      "additionalProperties": false
+    },
+    "attachRequest": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "viewerId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "geometry": {
+          "type": "object",
+          "properties": {
+            "columns": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000
+            },
+            "rows": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000
+            },
+            "widthPx": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            "heightPx": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            "cellWidthPx": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "cellHeightPx": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
+          },
+          "required": [
+            "columns",
+            "rows",
+            "widthPx",
+            "heightPx",
+            "cellWidthPx",
+            "cellHeightPx"
+          ],
+          "additionalProperties": false,
+          "x-hive-max-active-cells": 250000
+        },
+        "operations": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "view",
+              "human-input",
+              "resize"
+            ]
+          }
+        }
+      },
+      "required": [
+        "viewerId",
+        "geometry",
+        "operations"
+      ],
+      "additionalProperties": false
+    },
+    "attachGrant": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "locator": {
+          "type": "object",
+          "properties": {
+            "schemaVersion": {
+              "type": "number",
+              "const": 1
+            },
+            "instanceId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "subject": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "root"
+                    }
+                  },
+                  "required": [
+                    "kind"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "agent"
+                    },
+                    "agentId": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "agentId"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            },
+            "generation": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "sessionId": {
+              "type": "string",
+              "pattern": "^ses_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+            },
+            "hostKind": {
+              "type": "string",
+              "enum": [
+                "tmux",
+                "sessiond"
+              ]
+            },
+            "engineBuildId": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "schemaVersion",
+            "instanceId",
+            "subject",
+            "generation",
+            "sessionId",
+            "hostKind",
+            "engineBuildId"
+          ],
+          "additionalProperties": false
+        },
+        "endpoint": {
+          "type": "string",
+          "minLength": 1
+        },
+        "token": {
+          "type": "string",
+          "minLength": 1
+        },
+        "expiresAt": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+        },
+        "engineBuildId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "checkpointSeq": {
+          "type": "string",
+          "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+          "format": "hive-uint64-decimal"
+        },
+        "outputSeq": {
+          "type": "string",
+          "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+          "format": "hive-uint64-decimal"
+        },
+        "operations": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "view",
+              "human-input",
+              "resize"
+            ]
+          }
+        }
+      },
+      "required": [
+        "locator",
+        "endpoint",
+        "token",
+        "expiresAt",
+        "engineBuildId",
+        "checkpointSeq",
+        "outputSeq",
+        "operations"
+      ],
+      "additionalProperties": false
+    },
+    "visibilityRequest": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "workspaceSessionId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "workspacePid": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "workspaceStartToken": {
+          "type": "string",
+          "minLength": 1
+        },
+        "openTerminalRevision": {
+          "type": "string",
+          "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+          "format": "hive-uint64-decimal"
+        }
+      },
+      "required": [
+        "workspaceSessionId",
+        "workspacePid",
+        "workspaceStartToken",
+        "openTerminalRevision"
+      ],
+      "additionalProperties": false
+    },
+    "visibilityLease": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "locator": {
+          "type": "object",
+          "properties": {
+            "schemaVersion": {
+              "type": "number",
+              "const": 1
+            },
+            "instanceId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "subject": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "root"
+                    }
+                  },
+                  "required": [
+                    "kind"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "agent"
+                    },
+                    "agentId": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "agentId"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            },
+            "generation": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "sessionId": {
+              "type": "string",
+              "pattern": "^ses_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+            },
+            "hostKind": {
+              "type": "string",
+              "enum": [
+                "tmux",
+                "sessiond"
+              ]
+            },
+            "engineBuildId": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "schemaVersion",
+            "instanceId",
+            "subject",
+            "generation",
+            "sessionId",
+            "hostKind",
+            "engineBuildId"
+          ],
+          "additionalProperties": false
+        },
+        "state": {
+          "type": "string",
+          "const": "active"
+        },
+        "expiresAt": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+        },
+        "openTerminalRevision": {
+          "type": "string",
+          "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+          "format": "hive-uint64-decimal"
+        }
+      },
+      "required": [
+        "locator",
+        "state",
+        "expiresAt",
+        "openTerminalRevision"
+      ],
+      "additionalProperties": false
+    },
+    "resizeResult": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "locator": {
+          "type": "object",
+          "properties": {
+            "schemaVersion": {
+              "type": "number",
+              "const": 1
+            },
+            "instanceId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "subject": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "root"
+                    }
+                  },
+                  "required": [
+                    "kind"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "agent"
+                    },
+                    "agentId": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "agentId"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            },
+            "generation": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "sessionId": {
+              "type": "string",
+              "pattern": "^ses_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+            },
+            "hostKind": {
+              "type": "string",
+              "enum": [
+                "tmux",
+                "sessiond"
+              ]
+            },
+            "engineBuildId": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "schemaVersion",
+            "instanceId",
+            "subject",
+            "generation",
+            "sessionId",
+            "hostKind",
+            "engineBuildId"
+          ],
+          "additionalProperties": false
+        },
+        "geometry": {
+          "type": "object",
+          "properties": {
+            "columns": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000
+            },
+            "rows": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000
+            },
+            "widthPx": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            "heightPx": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            "cellWidthPx": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "cellHeightPx": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
+          },
+          "required": [
+            "columns",
+            "rows",
+            "widthPx",
+            "heightPx",
+            "cellWidthPx",
+            "cellHeightPx"
+          ],
+          "additionalProperties": false,
+          "x-hive-max-active-cells": 250000
+        },
+        "revision": {
+          "type": "string",
+          "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+          "format": "hive-uint64-decimal"
+        }
+      },
+      "required": [
+        "locator",
+        "geometry",
+        "revision"
+      ],
+      "additionalProperties": false
+    },
+    "automatedInputMetadata": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "transactionId": {
+          "type": "string",
+          "pattern": "^txn_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        },
+        "idempotencyKey": {
+          "type": "string",
+          "minLength": 1
+        },
+        "messageId": {
+          "type": "string",
+          "pattern": "^msg_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        },
+        "recipientGeneration": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "capabilityEpoch": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "providerStrategy": {
+          "type": "string",
+          "minLength": 1
+        },
+        "submit": {
+          "type": "string",
+          "enum": [
+            "none",
+            "return",
+            "control-enter"
+          ]
+        }
+      },
+      "required": [
+        "transactionId",
+        "idempotencyKey",
+        "messageId",
+        "recipientGeneration",
+        "capabilityEpoch",
+        "sha256",
+        "providerStrategy",
+        "submit"
+      ],
+      "additionalProperties": false
+    },
+    "inputReceipt": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "transactionId": {
+          "type": "string",
+          "pattern": "^txn_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        },
+        "messageId": {
+          "type": "string",
+          "pattern": "^msg_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "queued",
+            "buffered",
+            "committed",
+            "written",
+            "in-doubt"
+          ]
+        },
+        "byteRange": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "start": {
+                  "type": "string",
+                  "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                  "format": "hive-uint64-decimal"
+                },
+                "endExclusive": {
+                  "type": "string",
+                  "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                  "format": "hive-uint64-decimal"
+                }
+              },
+              "required": [
+                "start",
+                "endExclusive"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "providerObservation": {
+          "type": "string",
+          "enum": [
+            "unavailable",
+            "pending",
+            "observed"
+          ]
+        },
+        "evidenceAt": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+        },
+        "diagnosticId": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "transactionId",
+        "messageId",
+        "state",
+        "byteRange",
+        "providerObservation",
+        "evidenceAt",
+        "diagnosticId"
+      ],
+      "additionalProperties": false
+    },
+    "terminationRequest": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": [
+            "graceful",
+            "immediate"
+          ]
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "requestId": {
+          "type": "string",
+          "pattern": "^req_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        }
+      },
+      "required": [
+        "mode",
+        "reason",
+        "requestId"
+      ],
+      "additionalProperties": false
+    },
+    "terminationResult": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "locator": {
+          "type": "object",
+          "properties": {
+            "schemaVersion": {
+              "type": "number",
+              "const": 1
+            },
+            "instanceId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "subject": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "root"
+                    }
+                  },
+                  "required": [
+                    "kind"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "agent"
+                    },
+                    "agentId": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "agentId"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            },
+            "generation": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "sessionId": {
+              "type": "string",
+              "pattern": "^ses_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+            },
+            "hostKind": {
+              "type": "string",
+              "enum": [
+                "tmux",
+                "sessiond"
+              ]
+            },
+            "engineBuildId": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "schemaVersion",
+            "instanceId",
+            "subject",
+            "generation",
+            "sessionId",
+            "hostKind",
+            "engineBuildId"
+          ],
+          "additionalProperties": false
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "terminated",
+            "survivors",
+            "unknown"
+          ]
+        },
+        "exit": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "code": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "signal": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "observedAt": {
+                  "type": "string",
+                  "format": "date-time",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+                }
+              },
+              "required": [
+                "code",
+                "signal",
+                "observedAt"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "survivors": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "pid": {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              "startToken": {
+                "type": "string",
+                "minLength": 1
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "pid",
+              "startToken",
+              "reason"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "errors": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "phase": {
+                "type": "string",
+                "minLength": 1
+              },
+              "code": {
+                "type": "string",
+                "minLength": 1
+              },
+              "diagnosticId": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "phase",
+              "code",
+              "diagnosticId"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "locator",
+        "state",
+        "exit",
+        "survivors",
+        "errors"
+      ],
+      "additionalProperties": false
+    },
+    "sessionEvent": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "number",
+          "const": 1
+        },
+        "eventId": {
+          "type": "string",
+          "pattern": "^evt_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        },
+        "eventSeq": {
+          "type": "string",
+          "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+          "format": "hive-uint64-decimal"
+        },
+        "locator": {
+          "type": "object",
+          "properties": {
+            "schemaVersion": {
+              "type": "number",
+              "const": 1
+            },
+            "instanceId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "subject": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "root"
+                    }
+                  },
+                  "required": [
+                    "kind"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "agent"
+                    },
+                    "agentId": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "agentId"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            },
+            "generation": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "sessionId": {
+              "type": "string",
+              "pattern": "^ses_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+            },
+            "hostKind": {
+              "type": "string",
+              "enum": [
+                "tmux",
+                "sessiond"
+              ]
+            },
+            "engineBuildId": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "schemaVersion",
+            "instanceId",
+            "subject",
+            "generation",
+            "sessionId",
+            "hostKind",
+            "engineBuildId"
+          ],
+          "additionalProperties": false
+        },
+        "kind": {
+          "type": "string",
+          "minLength": 1
+        },
+        "revision": {
+          "type": "string",
+          "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+          "format": "hive-uint64-decimal"
+        },
+        "occurredAt": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+        },
+        "data": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "eventId",
+        "eventSeq",
+        "locator",
+        "kind",
+        "revision",
+        "occurredAt",
+        "data"
+      ],
+      "additionalProperties": false
+    },
+    "workspaceEventV2": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "number",
+          "const": 2
+        },
+        "eventId": {
+          "type": "string",
+          "pattern": "^evt_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        },
+        "seq": {
+          "type": "string",
+          "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+          "format": "hive-uint64-decimal"
+        },
+        "entity": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "minLength": 1
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "generation": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "kind",
+            "id"
+          ],
+          "additionalProperties": false
+        },
+        "entityRevision": {
+          "type": "string",
+          "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+          "format": "hive-uint64-decimal"
+        },
+        "occurredAt": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+        },
+        "kind": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "sessiond",
+                "provider-hook",
+                "provider-app-server",
+                "provider-telemetry",
+                "agent-report",
+                "task",
+                "operator"
+              ]
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "observedAt": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+            },
+            "confidence": {
+              "type": "string",
+              "enum": [
+                "authoritative",
+                "high",
+                "low"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "id",
+            "observedAt",
+            "confidence"
+          ],
+          "additionalProperties": false
+        },
+        "data": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "eventId",
+        "seq",
+        "entity",
+        "entityRevision",
+        "occurredAt",
+        "kind",
+        "source",
+        "data"
+      ],
+      "additionalProperties": false
+    },
+    "hiveUpdateStatusInput": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "assignmentId": {
+              "type": "string",
+              "minLength": 5,
+              "pattern": "^asg_.*"
+            },
+            "assignmentGeneration": {
+              "type": "string",
+              "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+              "format": "hive-uint64-decimal"
+            },
+            "progress": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100
+            },
+            "summary": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 280
+            },
+            "evidenceRefs": {
+              "maxItems": 16,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 512
+              }
+            },
+            "nextCheckpoint": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 280
+            },
+            "freshForSeconds": {
+              "default": 120,
+              "type": "integer",
+              "minimum": 30,
+              "maximum": 600
+            },
+            "phase": {
+              "type": "string",
+              "const": "planning"
+            },
+            "blocker": {
+              "type": "null"
+            }
+          },
+          "required": [
+            "assignmentId",
+            "assignmentGeneration",
+            "summary",
+            "evidenceRefs",
+            "freshForSeconds",
+            "phase",
+            "blocker"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "assignmentId": {
+              "type": "string",
+              "minLength": 5,
+              "pattern": "^asg_.*"
+            },
+            "assignmentGeneration": {
+              "type": "string",
+              "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+              "format": "hive-uint64-decimal"
+            },
+            "progress": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100
+            },
+            "summary": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 280
+            },
+            "evidenceRefs": {
+              "maxItems": 16,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 512
+              }
+            },
+            "nextCheckpoint": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 280
+            },
+            "freshForSeconds": {
+              "default": 120,
+              "type": "integer",
+              "minimum": 30,
+              "maximum": 600
+            },
+            "phase": {
+              "type": "string",
+              "const": "implementing"
+            },
+            "blocker": {
+              "type": "null"
+            }
+          },
+          "required": [
+            "assignmentId",
+            "assignmentGeneration",
+            "summary",
+            "evidenceRefs",
+            "freshForSeconds",
+            "phase",
+            "blocker"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "assignmentId": {
+              "type": "string",
+              "minLength": 5,
+              "pattern": "^asg_.*"
+            },
+            "assignmentGeneration": {
+              "type": "string",
+              "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+              "format": "hive-uint64-decimal"
+            },
+            "progress": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100
+            },
+            "summary": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 280
+            },
+            "evidenceRefs": {
+              "maxItems": 16,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 512
+              }
+            },
+            "nextCheckpoint": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 280
+            },
+            "freshForSeconds": {
+              "default": 120,
+              "type": "integer",
+              "minimum": 30,
+              "maximum": 600
+            },
+            "phase": {
+              "type": "string",
+              "const": "testing"
+            },
+            "blocker": {
+              "type": "null"
+            }
+          },
+          "required": [
+            "assignmentId",
+            "assignmentGeneration",
+            "summary",
+            "evidenceRefs",
+            "freshForSeconds",
+            "phase",
+            "blocker"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "assignmentId": {
+              "type": "string",
+              "minLength": 5,
+              "pattern": "^asg_.*"
+            },
+            "assignmentGeneration": {
+              "type": "string",
+              "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+              "format": "hive-uint64-decimal"
+            },
+            "progress": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100
+            },
+            "summary": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 280
+            },
+            "evidenceRefs": {
+              "maxItems": 16,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 512
+              }
+            },
+            "nextCheckpoint": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 280
+            },
+            "freshForSeconds": {
+              "default": 120,
+              "type": "integer",
+              "minimum": 30,
+              "maximum": 600
+            },
+            "phase": {
+              "type": "string",
+              "const": "reviewing"
+            },
+            "blocker": {
+              "type": "null"
+            }
+          },
+          "required": [
+            "assignmentId",
+            "assignmentGeneration",
+            "summary",
+            "evidenceRefs",
+            "freshForSeconds",
+            "phase",
+            "blocker"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "assignmentId": {
+              "type": "string",
+              "minLength": 5,
+              "pattern": "^asg_.*"
+            },
+            "assignmentGeneration": {
+              "type": "string",
+              "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+              "format": "hive-uint64-decimal"
+            },
+            "progress": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100
+            },
+            "summary": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 280
+            },
+            "evidenceRefs": {
+              "maxItems": 16,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 512
+              }
+            },
+            "nextCheckpoint": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 280
+            },
+            "freshForSeconds": {
+              "default": 120,
+              "type": "integer",
+              "minimum": 30,
+              "maximum": 600
+            },
+            "phase": {
+              "type": "string",
+              "const": "blocked"
+            },
+            "blocker": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1000
+            }
+          },
+          "required": [
+            "assignmentId",
+            "assignmentGeneration",
+            "summary",
+            "evidenceRefs",
+            "freshForSeconds",
+            "phase",
+            "blocker"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "assignmentId": {
+              "type": "string",
+              "minLength": 5,
+              "pattern": "^asg_.*"
+            },
+            "assignmentGeneration": {
+              "type": "string",
+              "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+              "format": "hive-uint64-decimal"
+            },
+            "progress": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100
+            },
+            "summary": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 280
+            },
+            "evidenceRefs": {
+              "maxItems": 16,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 512
+              }
+            },
+            "nextCheckpoint": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 280
+            },
+            "freshForSeconds": {
+              "default": 120,
+              "type": "integer",
+              "minimum": 30,
+              "maximum": 600
+            },
+            "phase": {
+              "type": "string",
+              "const": "complete"
+            },
+            "blocker": {
+              "type": "null"
+            }
+          },
+          "required": [
+            "assignmentId",
+            "assignmentGeneration",
+            "summary",
+            "evidenceRefs",
+            "freshForSeconds",
+            "phase",
+            "blocker"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "hiveTerminalObserveInput": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string",
+          "pattern": "^ses_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "include": {
+          "type": "string",
+          "enum": [
+            "metadata",
+            "visible-text"
+          ]
+        },
+        "maxRows": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 200
+        }
+      },
+      "required": [
+        "sessionId",
+        "generation",
+        "include",
+        "maxRows"
+      ],
+      "additionalProperties": false
+    },
+    "terminalDeliveryAttempt": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "number",
+          "const": 1
+        },
+        "transactionId": {
+          "type": "string",
+          "pattern": "^txn_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        },
+        "messageId": {
+          "type": "string",
+          "pattern": "^msg_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        },
+        "locator": {
+          "type": "object",
+          "properties": {
+            "schemaVersion": {
+              "type": "number",
+              "const": 1
+            },
+            "instanceId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "subject": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "root"
+                    }
+                  },
+                  "required": [
+                    "kind"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "agent"
+                    },
+                    "agentId": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "agentId"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            },
+            "generation": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "sessionId": {
+              "type": "string",
+              "pattern": "^ses_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+            },
+            "hostKind": {
+              "type": "string",
+              "enum": [
+                "tmux",
+                "sessiond"
+              ]
+            },
+            "engineBuildId": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "schemaVersion",
+            "instanceId",
+            "subject",
+            "generation",
+            "sessionId",
+            "hostKind",
+            "engineBuildId"
+          ],
+          "additionalProperties": false
+        },
+        "recipientGeneration": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "adapter": {
+          "type": "string",
+          "enum": [
+            "claude-tui",
+            "codex-tui",
+            "codex-app-server",
+            "grok-tui"
+          ]
+        },
+        "priority": {
+          "type": "string",
+          "enum": [
+            "normal",
+            "steer",
+            "urgent",
+            "critical"
+          ]
+        },
+        "intent": {
+          "type": "string",
+          "enum": [
+            "instruction",
+            "pause",
+            "stop",
+            "cancel",
+            "restrict-writes"
+          ]
+        },
+        "evidence": {
+          "type": "string",
+          "enum": [
+            "transport-written",
+            "provider-observed",
+            "attempt-in-doubt"
+          ]
+        },
+        "byteRange": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "start": {
+                  "type": "string",
+                  "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                  "format": "hive-uint64-decimal"
+                },
+                "endExclusive": {
+                  "type": "string",
+                  "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                  "format": "hive-uint64-decimal"
+                }
+              },
+              "required": [
+                "start",
+                "endExclusive"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "nativeEndpointReceipt": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "startedAt": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+        },
+        "completedAt": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "evidenceRefs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "transactionId",
+        "messageId",
+        "locator",
+        "recipientGeneration",
+        "adapter",
+        "priority",
+        "intent",
+        "evidence",
+        "byteRange",
+        "nativeEndpointReceipt",
+        "startedAt",
+        "completedAt",
+        "evidenceRefs"
+      ],
+      "additionalProperties": false,
+      "x-hive-exactly-one-of": [
+        "byteRange",
+        "nativeEndpointReceipt"
+      ]
+    }
+  },
+  "contract": {
+    "session": {
+      "version": {
+        "major": 1,
+        "minor": 0
+      },
+      "paths": {
+        "ghosttyVendor": "vendor/ghostty/",
+        "sessiond": "native/sessiond/",
+        "sessiondProtocol": "native/sessiond/src/protocol.zig",
+        "sessiondBroker": "native/sessiond/src/broker.zig",
+        "sessiondHost": "native/sessiond/src/session_host.zig",
+        "sessiondPtyHost": "native/sessiond/src/pty_host.zig",
+        "sessiondTerminalState": "native/sessiond/src/terminal_state.zig",
+        "sessiondInputArbiter": "native/sessiond/src/input_arbiter.zig",
+        "sessiondProcessInspector": "native/sessiond/src/process_inspector.zig",
+        "daemonSessionHost": "src/daemon/session-host/",
+        "daemonSessionHostContract": "src/daemon/session-host/contract.ts",
+        "daemonTmuxHost": "src/daemon/session-host/tmux-host.ts",
+        "daemonSessiondHost": "src/daemon/session-host/sessiond-host.ts",
+        "daemonHierarchyRouter": "src/daemon/session-host/hierarchy-router.ts",
+        "schemas": "src/schemas/",
+        "sessionProtocolSchema": "src/schemas/session-protocol.ts",
+        "statusEnvelopeSchema": "src/schemas/status-envelope.ts",
+        "messageEnvelopeSchema": "src/schemas/message-envelope.ts",
+        "terminalKit": "workspace/Sources/HiveTerminalKit/",
+        "workspaceCore": "workspace/Sources/WorkspaceCore/",
+        "statusReducer": "workspace/Sources/WorkspaceCore/StatusReducer.swift",
+        "hierarchyReducer": "workspace/Sources/WorkspaceCore/HierarchyReducer.swift",
+        "fixtures": "workspace/Tests/Fixtures/",
+        "conformance": "test/session-host-conformance/",
+        "terminalCorpus": "test/terminal-corpus/",
+        "ghosttyBuildScript": "scripts/build-ghosttykit.sh"
+      },
+      "limits": {
+        "liveSessionsPerHiveHome": 32,
+        "authenticatedViewersPerGeneration": 4,
+        "controlJsonBytesPerFrame": 262144,
+        "streamChunkBytes": 65536,
+        "automatedMessageBytes": 1048576,
+        "viewerUnacknowledgedOutputBytes": 8388608,
+        "viewerReattachAfterRebaseMilliseconds": 5000,
+        "replayJournalBytesPerGeneration": 67108864,
+        "retainedCheckpoints": 2,
+        "checkpointBytes": 67108864,
+        "terminalDiskBytesPerHiveHome": 2147483648,
+        "scrollbackLogicalLines": 50000,
+        "nonImageCheckpointBytes": 50331648,
+        "terminalCellsPerDimensionMin": 1,
+        "terminalCellsPerDimensionMax": 1000,
+        "terminalActiveCellsMax": 250000,
+        "kittyImageDecodedBytesPerGeneration": 16777216,
+        "controlRpcTimeoutMilliseconds": 10000,
+        "attachGrantTimeoutMilliseconds": 30000,
+        "visibilityRenewalMilliseconds": 5000,
+        "visibilityExpiryMilliseconds": 15000,
+        "connectionPingIntervalMilliseconds": 5000,
+        "missedPongIntervalsBeforeDetach": 3,
+        "checkpointOutputIntervalBytes": 2097152,
+        "checkpointIntervalMilliseconds": 30000
+      },
+      "frameHeader": {
+        "bytes": 32,
+        "magic": "HVT1",
+        "magicBytes": [
+          72,
+          86,
+          84,
+          49
+        ],
+        "byteOrder": "network",
+        "widths": {
+          "magic": 4,
+          "major": 1,
+          "minor": 1,
+          "type": 2,
+          "flags": 2,
+          "reserved": 2,
+          "payloadLength": 4,
+          "requestId": 8,
+          "streamSeq": 8
+        },
+        "offsets": {
+          "magic": 0,
+          "major": 4,
+          "minor": 5,
+          "type": 6,
+          "flags": 8,
+          "reserved": 10,
+          "payloadLength": 12,
+          "requestId": 16,
+          "streamSeq": 24
+        },
+        "optionalTypeBit": 32768,
+        "unknownOptionalType": "ignore",
+        "unknownRequiredType": "UNSUPPORTED_FRAME"
+      },
+      "frameFlags": {
+        "response": 1,
+        "final": 2,
+        "error": 4,
+        "contentSensitive": 8,
+        "allowedMask": 15
+      },
+      "frameTypes": {
+        "HELLO": 1,
+        "WELCOME": 2,
+        "ERROR": 3,
+        "PING": 4,
+        "PONG": 5,
+        "CREATE_BEGIN": 256,
+        "CREATE_INPUT": 257,
+        "CREATE_COMMIT": 258,
+        "CREATED": 259,
+        "LIST": 272,
+        "LISTED": 273,
+        "INSPECT": 274,
+        "INSPECTED": 275,
+        "TERMINATE": 276,
+        "TERMINATED": 277,
+        "VISIBILITY_RENEW": 278,
+        "RENEWED": 279,
+        "ATTACH_REQUEST": 512,
+        "ATTACH_GRANT": 513,
+        "HOST_ATTACH": 514,
+        "SNAPSHOT_BEGIN": 515,
+        "SNAPSHOT_BYTES": 516,
+        "OUTPUT": 517,
+        "APPLIED": 518,
+        "RESIZE": 519,
+        "DETACH": 520,
+        "EVENT": 521,
+        "CLAIM_ACQUIRE": 768,
+        "CLAIM_RESULT": 769,
+        "HUMAN_INPUT": 770,
+        "CLAIM_RELEASE": 771,
+        "GESTURE_INPUT": 772,
+        "AUTOMATION_BEGIN": 784,
+        "AUTOMATION_CHUNK": 785,
+        "AUTOMATION_COMMIT": 786,
+        "AUTOMATION_RESULT": 787,
+        "AUTOMATION_CANCEL": 788,
+        "HOST_REGISTER": 1024,
+        "HOST_ADOPT": 1025,
+        "GRANT_REGISTER": 1026
+      },
+      "frameTypeGroups": [
+        {
+          "names": [
+            "HELLO",
+            "WELCOME",
+            "ERROR"
+          ],
+          "direction": "bidirectional",
+          "purpose": "handshake-identity-limits-error"
+        },
+        {
+          "names": [
+            "PING",
+            "PONG"
+          ],
+          "direction": "bidirectional",
+          "purpose": "connection-liveness"
+        },
+        {
+          "names": [
+            "CREATE_BEGIN",
+            "CREATE_INPUT",
+            "CREATE_COMMIT",
+            "CREATED"
+          ],
+          "direction": "daemon-broker-bidirectional",
+          "purpose": "transactional-create"
+        },
+        {
+          "names": [
+            "LIST",
+            "LISTED"
+          ],
+          "direction": "daemon-broker-bidirectional",
+          "purpose": "instance-inventory"
+        },
+        {
+          "names": [
+            "INSPECT",
+            "INSPECTED"
+          ],
+          "direction": "client-endpoint-bidirectional",
+          "purpose": "exact-locator-inspection"
+        },
+        {
+          "names": [
+            "TERMINATE",
+            "TERMINATED"
+          ],
+          "direction": "daemon-broker-host-bidirectional",
+          "purpose": "termination-positive-readback"
+        },
+        {
+          "names": [
+            "VISIBILITY_RENEW",
+            "RENEWED"
+          ],
+          "direction": "daemon-broker-host-bidirectional",
+          "purpose": "visibility-lease-renewal"
+        },
+        {
+          "names": [
+            "ATTACH_REQUEST",
+            "ATTACH_GRANT",
+            "HOST_ATTACH"
+          ],
+          "direction": "workspace-broker-host-bidirectional",
+          "purpose": "one-use-viewer-attach"
+        },
+        {
+          "names": [
+            "SNAPSHOT_BEGIN",
+            "SNAPSHOT_BYTES"
+          ],
+          "direction": "host-to-viewer",
+          "purpose": "checkpoint-stream"
+        },
+        {
+          "names": [
+            "OUTPUT",
+            "APPLIED"
+          ],
+          "direction": "host-viewer-bidirectional",
+          "purpose": "ordered-output-and-high-water"
+        },
+        {
+          "names": [
+            "RESIZE",
+            "DETACH",
+            "EVENT"
+          ],
+          "direction": "bidirectional",
+          "purpose": "geometry-transport-detach-session-event"
+        },
+        {
+          "names": [
+            "CLAIM_ACQUIRE",
+            "CLAIM_RESULT"
+          ],
+          "direction": "viewer-host-bidirectional",
+          "purpose": "authoring-claim"
+        },
+        {
+          "names": [
+            "HUMAN_INPUT",
+            "CLAIM_RELEASE",
+            "GESTURE_INPUT"
+          ],
+          "direction": "viewer-to-host",
+          "purpose": "ordered-human-input"
+        },
+        {
+          "names": [
+            "AUTOMATION_BEGIN",
+            "AUTOMATION_CHUNK",
+            "AUTOMATION_COMMIT",
+            "AUTOMATION_RESULT",
+            "AUTOMATION_CANCEL"
+          ],
+          "direction": "daemon-host-bidirectional",
+          "purpose": "idempotent-buffered-automation"
+        },
+        {
+          "names": [
+            "HOST_REGISTER",
+            "HOST_ADOPT",
+            "GRANT_REGISTER"
+          ],
+          "direction": "broker-host-bidirectional",
+          "purpose": "authenticated-internal-lifecycle"
+        }
+      ],
+      "rawByteFrameTypes": [
+        "CREATE_INPUT",
+        "SNAPSHOT_BYTES",
+        "OUTPUT",
+        "HUMAN_INPUT",
+        "AUTOMATION_CHUNK"
+      ],
+      "errorCodes": [
+        "PROTOCOL_MISMATCH",
+        "UNSUPPORTED_FRAME",
+        "UNAUTHENTICATED",
+        "FORBIDDEN",
+        "INSTANCE_MISMATCH",
+        "GENERATION_MISMATCH",
+        "NOT_FOUND",
+        "NOT_READY",
+        "ALREADY_EXISTS",
+        "HUMAN_OWNED",
+        "HUMAN_ORPHANED",
+        "INPUT_BUSY",
+        "REBASE_REQUIRED",
+        "SNAPSHOT_REQUIRED",
+        "CHECKPOINT_UNAVAILABLE",
+        "ENGINE_MISMATCH",
+        "PAYLOAD_TOO_LARGE",
+        "FRAME_TOO_LARGE",
+        "MALFORMED_FRAME",
+        "IN_DOUBT",
+        "VERIFICATION_UNKNOWN",
+        "CAPACITY_EXCEEDED",
+        "RESOURCE_EXHAUSTED",
+        "INTERNAL"
+      ],
+      "inputArbiterStates": [
+        "FREE",
+        "HUMAN_GESTURE",
+        "HUMAN_OWNED",
+        "HUMAN_ORPHANED",
+        "AUTOMATION_BUFFERING",
+        "AUTOMATION_COMMITTED",
+        "TERMINATING",
+        "CLOSED"
+      ],
+      "inputArbiterTransitions": [
+        {
+          "from": "FREE",
+          "event": "CLAIM_ACQUIRE",
+          "through": [],
+          "to": "HUMAN_OWNED"
+        },
+        {
+          "from": "FREE",
+          "event": "GESTURE_INPUT",
+          "through": [
+            "HUMAN_GESTURE"
+          ],
+          "to": "FREE"
+        },
+        {
+          "from": "FREE",
+          "event": "AUTOMATION_BEGIN",
+          "through": [],
+          "to": "AUTOMATION_BUFFERING"
+        },
+        {
+          "from": "HUMAN_OWNED",
+          "event": "HUMAN_INPUT",
+          "through": [],
+          "to": "HUMAN_OWNED"
+        },
+        {
+          "from": "HUMAN_OWNED",
+          "event": "CLAIM_RELEASE",
+          "through": [],
+          "to": "FREE"
+        },
+        {
+          "from": "HUMAN_OWNED",
+          "event": "VIEWER_DISCONNECT",
+          "through": [],
+          "to": "HUMAN_ORPHANED"
+        },
+        {
+          "from": "HUMAN_ORPHANED",
+          "event": "OPERATOR_RESUME",
+          "through": [],
+          "to": "HUMAN_OWNED"
+        },
+        {
+          "from": "HUMAN_ORPHANED",
+          "event": "OPERATOR_DISCARD",
+          "through": [],
+          "to": "FREE"
+        },
+        {
+          "from": "AUTOMATION_BUFFERING",
+          "event": "AUTOMATION_COMMIT",
+          "through": [
+            "AUTOMATION_COMMITTED"
+          ],
+          "to": "FREE"
+        },
+        {
+          "from": "*",
+          "event": "TERMINATE",
+          "through": [
+            "TERMINATING"
+          ],
+          "to": "CLOSED"
+        }
+      ],
+      "inputEvidenceLevels": [
+        "buffered",
+        "committed",
+        "written",
+        "provider-observed"
+      ],
+      "inputEvidenceContracts": {
+        "buffered": {
+          "means": "length-and-digest-verified",
+          "excludes": [
+            "authorized",
+            "ready",
+            "injected",
+            "read"
+          ]
+        },
+        "committed": {
+          "means": "host-write-queue-owns-contiguous-range",
+          "excludes": [
+            "kernel-consumed",
+            "provider-consumed"
+          ]
+        },
+        "written": {
+          "means": "pty-master-accepted-complete-range-in-order",
+          "excludes": [
+            "provider-ui-accepted",
+            "agent-read"
+          ]
+        },
+        "provider-observed": {
+          "means": "matching-provider-boundary-after-attempt",
+          "excludes": [
+            "understood",
+            "acknowledged",
+            "applied"
+          ]
+        }
+      },
+      "ghosttyBridgeEvents": {
+        "INVALIDATE": 1,
+        "TITLE": 2,
+        "PWD": 3,
+        "BELL": 4,
+        "CLIPBOARD_DENIED": 5,
+        "CLOSE_REQUEST": 6
+      },
+      "checkpointHeader": {
+        "bytes": 116,
+        "magic": "HVTCP001",
+        "version": 1,
+        "flags": 0,
+        "byteOrder": "network",
+        "cellPixelEncoding": "unsigned-fixed-16.16",
+        "payloadMaxBytes": 67108864,
+        "engineBuildIdBytes": 32,
+        "payloadSha256Bytes": 32,
+        "widths": {
+          "magic": 8,
+          "version": 2,
+          "headerBytes": 2,
+          "flags": 4,
+          "throughSeq": 8,
+          "createdMonoNanos": 8,
+          "columns": 4,
+          "rows": 4,
+          "cellWidthPx": 4,
+          "cellHeightPx": 4,
+          "engineBuildId": 32,
+          "payloadLength": 4,
+          "payloadSha256": 32
+        },
+        "offsets": {
+          "magic": 0,
+          "version": 8,
+          "headerBytes": 10,
+          "flags": 12,
+          "throughSeq": 16,
+          "createdMonoNanos": 24,
+          "columns": 32,
+          "rows": 36,
+          "cellWidthPx": 40,
+          "cellHeightPx": 44,
+          "engineBuildId": 48,
+          "payloadLength": 80,
+          "payloadSha256": 84
+        }
+      },
+      "permissions": {
+        "inspect": [
+          "authorized-instance"
+        ],
+        "list": [
+          "authorized-instance"
+        ],
+        "captureMetadata": [
+          "self",
+          "operator"
+        ],
+        "captureVisibleText": [
+          "terminal:observe",
+          "content-audit"
+        ],
+        "attach": [
+          "authorized-viewer",
+          "exact-generation"
+        ],
+        "resize": [
+          "selected-viewer",
+          "control-daemon"
+        ],
+        "automatedInput": [
+          "communication-authorized-message",
+          "exact-generation",
+          "capability-epoch"
+        ],
+        "terminate": [
+          "authorized-lifecycle-intent",
+          "terminal-close",
+          "terminal-quit",
+          "visibility-expiry"
+        ],
+        "subscribe": [
+          "authorized-instance",
+          "retained-event-cursor"
+        ]
+      }
+    },
+    "status": {
+      "eventSourceKinds": [
+        "sessiond",
+        "provider-hook",
+        "provider-app-server",
+        "provider-telemetry",
+        "agent-report",
+        "task",
+        "operator"
+      ],
+      "confidence": [
+        "authoritative",
+        "high",
+        "low"
+      ],
+      "phases": [
+        "planning",
+        "implementing",
+        "testing",
+        "reviewing",
+        "blocked",
+        "complete"
+      ],
+      "limits": {
+        "processHeartbeatMilliseconds": 5000,
+        "processDelayedAfterMilliseconds": 10000,
+        "processUnknownAfterMilliseconds": 15000,
+        "providerFreshnessMilliseconds": 30000,
+        "reportFreshForSecondsMin": 30,
+        "reportFreshForSecondsDefault": 120,
+        "reportFreshForSecondsMax": 600,
+        "summaryCharactersMax": 280,
+        "blockerCharactersMax": 1000,
+        "evidenceRefsMax": 16,
+        "evidenceRefCharactersMax": 512,
+        "nextCheckpointCharactersMax": 280,
+        "terminalObservationRowsMin": 1,
+        "terminalObservationRowsMax": 200
+      },
+      "permissions": {
+        "updateStatus": "status:write",
+        "terminalObserve": "terminal:observe",
+        "visibleTextConstraint": "content=true",
+        "roleGrants": [
+          "reader",
+          "writer"
+        ]
+      },
+      "reducer": {
+        "delivery": "at-least-once",
+        "deduplicateBy": "eventId",
+        "lowerEntityRevision": "reject",
+        "identicalDuplicate": "accept",
+        "conflictingDuplicateId": "corruption",
+        "sequencePurpose": "stream-continuity",
+        "sequenceGap": "snapshot-required",
+        "comparison": "canonical-json-after-every-prefix-and-permutation"
+      }
+    },
+    "messageTerminalBinding": {
+      "owner": "docs/design/hive-communication.html#data-model",
+      "adapters": {
+        "claude-tui": {
+          "readiness": [
+            "SessionStart",
+            "UserPromptSubmit",
+            "Stop",
+            "PostToolUse"
+          ],
+          "unknownModalBlocksDelivery": true,
+          "strongestAutomaticReceipt": "provider-observed"
+        },
+        "codex-tui": {
+          "readiness": [
+            "SessionStart",
+            "UserPromptSubmit",
+            "Stop",
+            "PostToolUse"
+          ],
+          "unknownModalBlocksDelivery": true,
+          "strongestAutomaticReceipt": "provider-observed"
+        },
+        "codex-app-server": {
+          "readiness": [
+            "native-session-state",
+            "native-turn-state"
+          ],
+          "unknownModalBlocksDelivery": true,
+          "strongestAutomaticReceipt": "provider-observed"
+        },
+        "grok-tui": {
+          "readiness": [
+            "process-health",
+            "transcript-activity"
+          ],
+          "unknownModalBlocksDelivery": true,
+          "strongestAutomaticReceipt": "provider-observed"
+        }
+      },
+      "evidence": [
+        "transport-written",
+        "provider-observed",
+        "attempt-in-doubt"
+      ],
+      "limits": {
+        "providerObservationWaitMilliseconds": 5000,
+        "automatedPayloadBytes": 1048576
+      },
+      "blindRetryAfterCommittedOrInDoubt": false
+    }
+  }
+}

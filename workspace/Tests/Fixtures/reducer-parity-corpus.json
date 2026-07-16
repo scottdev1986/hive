@@ -1,0 +1,1459 @@
+{
+  "schemaVersion": 1,
+  "scenarios": [
+    {
+      "name": "permutation-012",
+      "events": [
+        {
+          "schemaVersion": 2,
+          "eventId": "evt_018f1e90-7b5a-7cc0-8000-000000000020",
+          "seq": "1",
+          "entity": {
+            "kind": "agent",
+            "id": "agent-fixture",
+            "generation": 3
+          },
+          "entityRevision": "1",
+          "occurredAt": "2026-07-16T12:00:00.000Z",
+          "kind": "agent.status-reported",
+          "source": {
+            "kind": "agent-report",
+            "id": "agent-fixture:3",
+            "observedAt": "2026-07-16T12:00:00.000Z",
+            "confidence": "authoritative"
+          },
+          "data": {
+            "phase": "planning",
+            "summary": "Reading contracts"
+          }
+        },
+        {
+          "schemaVersion": 2,
+          "eventId": "evt_018f1e90-7b5a-7cc0-8000-000000000021",
+          "seq": "2",
+          "entity": {
+            "kind": "agent",
+            "id": "agent-fixture",
+            "generation": 3
+          },
+          "entityRevision": "2",
+          "occurredAt": "2026-07-16T12:00:01.000Z",
+          "kind": "agent.status-reported",
+          "source": {
+            "kind": "agent-report",
+            "id": "agent-fixture:3",
+            "observedAt": "2026-07-16T12:00:01.000Z",
+            "confidence": "authoritative"
+          },
+          "data": {
+            "phase": "testing",
+            "summary": "Checking parity"
+          }
+        },
+        {
+          "schemaVersion": 2,
+          "eventId": "evt_018f1e90-7b5a-7cc0-8000-000000000022",
+          "seq": "3",
+          "entity": {
+            "kind": "session",
+            "id": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+            "generation": 3
+          },
+          "entityRevision": "1",
+          "occurredAt": "2026-07-16T12:00:02.000Z",
+          "kind": "session.health",
+          "source": {
+            "kind": "sessiond",
+            "id": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+            "observedAt": "2026-07-16T12:00:02.000Z",
+            "confidence": "authoritative"
+          },
+          "data": {
+            "presence": "present",
+            "outputSeq": "4096"
+          }
+        }
+      ],
+      "prefixes": [
+        {
+          "highWaterSeq": "1",
+          "paused": false,
+          "corruption": null,
+          "entities": {
+            "agent:agent-fixture:3": {
+              "entityRevision": "1",
+              "eventId": "evt_018f1e90-7b5a-7cc0-8000-000000000020",
+              "kind": "agent.status-reported",
+              "occurredAt": "2026-07-16T12:00:00.000Z",
+              "source": {
+                "kind": "agent-report",
+                "id": "agent-fixture:3",
+                "observedAt": "2026-07-16T12:00:00.000Z",
+                "confidence": "authoritative"
+              },
+              "data": {
+                "phase": "planning",
+                "summary": "Reading contracts"
+              }
+            }
+          },
+          "seen": {
+            "evt_018f1e90-7b5a-7cc0-8000-000000000020": "{\"data\":{\"phase\":\"planning\",\"summary\":\"Reading contracts\"},\"entity\":{\"generation\":3,\"id\":\"agent-fixture\",\"kind\":\"agent\"},\"entityRevision\":\"1\",\"eventId\":\"evt_018f1e90-7b5a-7cc0-8000-000000000020\",\"kind\":\"agent.status-reported\",\"occurredAt\":\"2026-07-16T12:00:00.000Z\",\"schemaVersion\":2,\"seq\":\"1\",\"source\":{\"confidence\":\"authoritative\",\"id\":\"agent-fixture:3\",\"kind\":\"agent-report\",\"observedAt\":\"2026-07-16T12:00:00.000Z\"}}"
+          }
+        },
+        {
+          "highWaterSeq": "2",
+          "paused": false,
+          "corruption": null,
+          "entities": {
+            "agent:agent-fixture:3": {
+              "entityRevision": "2",
+              "eventId": "evt_018f1e90-7b5a-7cc0-8000-000000000021",
+              "kind": "agent.status-reported",
+              "occurredAt": "2026-07-16T12:00:01.000Z",
+              "source": {
+                "kind": "agent-report",
+                "id": "agent-fixture:3",
+                "observedAt": "2026-07-16T12:00:01.000Z",
+                "confidence": "authoritative"
+              },
+              "data": {
+                "phase": "testing",
+                "summary": "Checking parity"
+              }
+            }
+          },
+          "seen": {
+            "evt_018f1e90-7b5a-7cc0-8000-000000000020": "{\"data\":{\"phase\":\"planning\",\"summary\":\"Reading contracts\"},\"entity\":{\"generation\":3,\"id\":\"agent-fixture\",\"kind\":\"agent\"},\"entityRevision\":\"1\",\"eventId\":\"evt_018f1e90-7b5a-7cc0-8000-000000000020\",\"kind\":\"agent.status-reported\",\"occurredAt\":\"2026-07-16T12:00:00.000Z\",\"schemaVersion\":2,\"seq\":\"1\",\"source\":{\"confidence\":\"authoritative\",\"id\":\"agent-fixture:3\",\"kind\":\"agent-report\",\"observedAt\":\"2026-07-16T12:00:00.000Z\"}}",
+            "evt_018f1e90-7b5a-7cc0-8000-000000000021": "{\"data\":{\"phase\":\"testing\",\"summary\":\"Checking parity\"},\"entity\":{\"generation\":3,\"id\":\"agent-fixture\",\"kind\":\"agent\"},\"entityRevision\":\"2\",\"eventId\":\"evt_018f1e90-7b5a-7cc0-8000-000000000021\",\"kind\":\"agent.status-reported\",\"occurredAt\":\"2026-07-16T12:00:01.000Z\",\"schemaVersion\":2,\"seq\":\"2\",\"source\":{\"confidence\":\"authoritative\",\"id\":\"agent-fixture:3\",\"kind\":\"agent-report\",\"observedAt\":\"2026-07-16T12:00:01.000Z\"}}"
+          }
+        },
+        {
+          "highWaterSeq": "3",
+          "paused": false,
+          "corruption": null,
+          "entities": {
+            "agent:agent-fixture:3": {
+              "entityRevision": "2",
+              "eventId": "evt_018f1e90-7b5a-7cc0-8000-000000000021",
+              "kind": "agent.status-reported",
+              "occurredAt": "2026-07-16T12:00:01.000Z",
+              "source": {
+                "kind": "agent-report",
+                "id": "agent-fixture:3",
+                "observedAt": "2026-07-16T12:00:01.000Z",
+                "confidence": "authoritative"
+              },
+              "data": {
+                "phase": "testing",
+                "summary": "Checking parity"
+              }
+            },
+            "session:ses_018f1e90-7b5a-7cc0-8000-000000000001:3": {
+              "entityRevision": "1",
+              "eventId": "evt_018f1e90-7b5a-7cc0-8000-000000000022",
+              "kind": "session.health",
+              "occurredAt": "2026-07-16T12:00:02.000Z",
+              "source": {
+                "kind": "sessiond",
+                "id": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+                "observedAt": "2026-07-16T12:00:02.000Z",
+                "confidence": "authoritative"
+              },
+              "data": {
+                "presence": "present",
+                "outputSeq": "4096"
+              }
+            }
+          },
+          "seen": {
+            "evt_018f1e90-7b5a-7cc0-8000-000000000020": "{\"data\":{\"phase\":\"planning\",\"summary\":\"Reading contracts\"},\"entity\":{\"generation\":3,\"id\":\"agent-fixture\",\"kind\":\"agent\"},\"entityRevision\":\"1\",\"eventId\":\"evt_018f1e90-7b5a-7cc0-8000-000000000020\",\"kind\":\"agent.status-reported\",\"occurredAt\":\"2026-07-16T12:00:00.000Z\",\"schemaVersion\":2,\"seq\":\"1\",\"source\":{\"confidence\":\"authoritative\",\"id\":\"agent-fixture:3\",\"kind\":\"agent-report\",\"observedAt\":\"2026-07-16T12:00:00.000Z\"}}",
+            "evt_018f1e90-7b5a-7cc0-8000-000000000021": "{\"data\":{\"phase\":\"testing\",\"summary\":\"Checking parity\"},\"entity\":{\"generation\":3,\"id\":\"agent-fixture\",\"kind\":\"agent\"},\"entityRevision\":\"2\",\"eventId\":\"evt_018f1e90-7b5a-7cc0-8000-000000000021\",\"kind\":\"agent.status-reported\",\"occurredAt\":\"2026-07-16T12:00:01.000Z\",\"schemaVersion\":2,\"seq\":\"2\",\"source\":{\"confidence\":\"authoritative\",\"id\":\"agent-fixture:3\",\"kind\":\"agent-report\",\"observedAt\":\"2026-07-16T12:00:01.000Z\"}}",
+            "evt_018f1e90-7b5a-7cc0-8000-000000000022": "{\"data\":{\"outputSeq\":\"4096\",\"presence\":\"present\"},\"entity\":{\"generation\":3,\"id\":\"ses_018f1e90-7b5a-7cc0-8000-000000000001\",\"kind\":\"session\"},\"entityRevision\":\"1\",\"eventId\":\"evt_018f1e90-7b5a-7cc0-8000-000000000022\",\"kind\":\"session.health\",\"occurredAt\":\"2026-07-16T12:00:02.000Z\",\"schemaVersion\":2,\"seq\":\"3\",\"source\":{\"confidence\":\"authoritative\",\"id\":\"ses_018f1e90-7b5a-7cc0-8000-000000000001\",\"kind\":\"sessiond\",\"observedAt\":\"2026-07-16T12:00:02.000Z\"}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "permutation-021",
+      "events": [
+        {
+          "schemaVersion": 2,
+          "eventId": "evt_018f1e90-7b5a-7cc0-8001-000000000020",
+          "seq": "1",
+          "entity": {
+            "kind": "agent",
+            "id": "agent-fixture",
+            "generation": 3
+          },
+          "entityRevision": "1",
+          "occurredAt": "2026-07-16T12:00:00.000Z",
+          "kind": "agent.status-reported",
+          "source": {
+            "kind": "agent-report",
+            "id": "agent-fixture:3",
+            "observedAt": "2026-07-16T12:00:00.000Z",
+            "confidence": "authoritative"
+          },
+          "data": {
+            "phase": "planning",
+            "summary": "Reading contracts"
+          }
+        },
+        {
+          "schemaVersion": 2,
+          "eventId": "evt_018f1e90-7b5a-7cc0-8001-000000000021",
+          "seq": "2",
+          "entity": {
+            "kind": "session",
+            "id": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+            "generation": 3
+          },
+          "entityRevision": "1",
+          "occurredAt": "2026-07-16T12:00:02.000Z",
+          "kind": "session.health",
+          "source": {
+            "kind": "sessiond",
+            "id": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+            "observedAt": "2026-07-16T12:00:02.000Z",
+            "confidence": "authoritative"
+          },
+          "data": {
+            "presence": "present",
+            "outputSeq": "4096"
+          }
+        },
+        {
+          "schemaVersion": 2,
+          "eventId": "evt_018f1e90-7b5a-7cc0-8001-000000000022",
+          "seq": "3",
+          "entity": {
+            "kind": "agent",
+            "id": "agent-fixture",
+            "generation": 3
+          },
+          "entityRevision": "2",
+          "occurredAt": "2026-07-16T12:00:01.000Z",
+          "kind": "agent.status-reported",
+          "source": {
+            "kind": "agent-report",
+            "id": "agent-fixture:3",
+            "observedAt": "2026-07-16T12:00:01.000Z",
+            "confidence": "authoritative"
+          },
+          "data": {
+            "phase": "testing",
+            "summary": "Checking parity"
+          }
+        }
+      ],
+      "prefixes": [
+        {
+          "highWaterSeq": "1",
+          "paused": false,
+          "corruption": null,
+          "entities": {
+            "agent:agent-fixture:3": {
+              "entityRevision": "1",
+              "eventId": "evt_018f1e90-7b5a-7cc0-8001-000000000020",
+              "kind": "agent.status-reported",
+              "occurredAt": "2026-07-16T12:00:00.000Z",
+              "source": {
+                "kind": "agent-report",
+                "id": "agent-fixture:3",
+                "observedAt": "2026-07-16T12:00:00.000Z",
+                "confidence": "authoritative"
+              },
+              "data": {
+                "phase": "planning",
+                "summary": "Reading contracts"
+              }
+            }
+          },
+          "seen": {
+            "evt_018f1e90-7b5a-7cc0-8001-000000000020": "{\"data\":{\"phase\":\"planning\",\"summary\":\"Reading contracts\"},\"entity\":{\"generation\":3,\"id\":\"agent-fixture\",\"kind\":\"agent\"},\"entityRevision\":\"1\",\"eventId\":\"evt_018f1e90-7b5a-7cc0-8001-000000000020\",\"kind\":\"agent.status-reported\",\"occurredAt\":\"2026-07-16T12:00:00.000Z\",\"schemaVersion\":2,\"seq\":\"1\",\"source\":{\"confidence\":\"authoritative\",\"id\":\"agent-fixture:3\",\"kind\":\"agent-report\",\"observedAt\":\"2026-07-16T12:00:00.000Z\"}}"
+          }
+        },
+        {
+          "highWaterSeq": "2",
+          "paused": false,
+          "corruption": null,
+          "entities": {
+            "agent:agent-fixture:3": {
+              "entityRevision": "1",
+              "eventId": "evt_018f1e90-7b5a-7cc0-8001-000000000020",
+              "kind": "agent.status-reported",
+              "occurredAt": "2026-07-16T12:00:00.000Z",
+              "source": {
+                "kind": "agent-report",
+                "id": "agent-fixture:3",
+                "observedAt": "2026-07-16T12:00:00.000Z",
+                "confidence": "authoritative"
+              },
+              "data": {
+                "phase": "planning",
+                "summary": "Reading contracts"
+              }
+            },
+            "session:ses_018f1e90-7b5a-7cc0-8000-000000000001:3": {
+              "entityRevision": "1",
+              "eventId": "evt_018f1e90-7b5a-7cc0-8001-000000000021",
+              "kind": "session.health",
+              "occurredAt": "2026-07-16T12:00:02.000Z",
+              "source": {
+                "kind": "sessiond",
+                "id": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+                "observedAt": "2026-07-16T12:00:02.000Z",
+                "confidence": "authoritative"
+              },
+              "data": {
+                "presence": "present",
+                "outputSeq": "4096"
+              }
+            }
+          },
+          "seen": {
+            "evt_018f1e90-7b5a-7cc0-8001-000000000020": "{\"data\":{\"phase\":\"planning\",\"summary\":\"Reading contracts\"},\"entity\":{\"generation\":3,\"id\":\"agent-fixture\",\"kind\":\"agent\"},\"entityRevision\":\"1\",\"eventId\":\"evt_018f1e90-7b5a-7cc0-8001-000000000020\",\"kind\":\"agent.status-reported\",\"occurredAt\":\"2026-07-16T12:00:00.000Z\",\"schemaVersion\":2,\"seq\":\"1\",\"source\":{\"confidence\":\"authoritative\",\"id\":\"agent-fixture:3\",\"kind\":\"agent-report\",\"observedAt\":\"2026-07-16T12:00:00.000Z\"}}",
+            "evt_018f1e90-7b5a-7cc0-8001-000000000021": "{\"data\":{\"outputSeq\":\"4096\",\"presence\":\"present\"},\"entity\":{\"generation\":3,\"id\":\"ses_018f1e90-7b5a-7cc0-8000-000000000001\",\"kind\":\"session\"},\"entityRevision\":\"1\",\"eventId\":\"evt_018f1e90-7b5a-7cc0-8001-000000000021\",\"kind\":\"session.health\",\"occurredAt\":\"2026-07-16T12:00:02.000Z\",\"schemaVersion\":2,\"seq\":\"2\",\"source\":{\"confidence\":\"authoritative\",\"id\":\"ses_018f1e90-7b5a-7cc0-8000-000000000001\",\"kind\":\"sessiond\",\"observedAt\":\"2026-07-16T12:00:02.000Z\"}}"
+          }
+        },
+        {
+          "highWaterSeq": "3",
+          "paused": false,
+          "corruption": null,
+          "entities": {
+            "agent:agent-fixture:3": {
+              "entityRevision": "2",
+              "eventId": "evt_018f1e90-7b5a-7cc0-8001-000000000022",
+              "kind": "agent.status-reported",
+              "occurredAt": "2026-07-16T12:00:01.000Z",
+              "source": {
+                "kind": "agent-report",
+                "id": "agent-fixture:3",
+                "observedAt": "2026-07-16T12:00:01.000Z",
+                "confidence": "authoritative"
+              },
+              "data": {
+                "phase": "testing",
+                "summary": "Checking parity"
+              }
+            },
+            "session:ses_018f1e90-7b5a-7cc0-8000-000000000001:3": {
+              "entityRevision": "1",
+              "eventId": "evt_018f1e90-7b5a-7cc0-8001-000000000021",
+              "kind": "session.health",
+              "occurredAt": "2026-07-16T12:00:02.000Z",
+              "source": {
+                "kind": "sessiond",
+                "id": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+                "observedAt": "2026-07-16T12:00:02.000Z",
+                "confidence": "authoritative"
+              },
+              "data": {
+                "presence": "present",
+                "outputSeq": "4096"
+              }
+            }
+          },
+          "seen": {
+            "evt_018f1e90-7b5a-7cc0-8001-000000000020": "{\"data\":{\"phase\":\"planning\",\"summary\":\"Reading contracts\"},\"entity\":{\"generation\":3,\"id\":\"agent-fixture\",\"kind\":\"agent\"},\"entityRevision\":\"1\",\"eventId\":\"evt_018f1e90-7b5a-7cc0-8001-000000000020\",\"kind\":\"agent.status-reported\",\"occurredAt\":\"2026-07-16T12:00:00.000Z\",\"schemaVersion\":2,\"seq\":\"1\",\"source\":{\"confidence\":\"authoritative\",\"id\":\"agent-fixture:3\",\"kind\":\"agent-report\",\"observedAt\":\"2026-07-16T12:00:00.000Z\"}}",
+            "evt_018f1e90-7b5a-7cc0-8001-000000000021": "{\"data\":{\"outputSeq\":\"4096\",\"presence\":\"present\"},\"entity\":{\"generation\":3,\"id\":\"ses_018f1e90-7b5a-7cc0-8000-000000000001\",\"kind\":\"session\"},\"entityRevision\":\"1\",\"eventId\":\"evt_018f1e90-7b5a-7cc0-8001-000000000021\",\"kind\":\"session.health\",\"occurredAt\":\"2026-07-16T12:00:02.000Z\",\"schemaVersion\":2,\"seq\":\"2\",\"source\":{\"confidence\":\"authoritative\",\"id\":\"ses_018f1e90-7b5a-7cc0-8000-000000000001\",\"kind\":\"sessiond\",\"observedAt\":\"2026-07-16T12:00:02.000Z\"}}",
+            "evt_018f1e90-7b5a-7cc0-8001-000000000022": "{\"data\":{\"phase\":\"testing\",\"summary\":\"Checking parity\"},\"entity\":{\"generation\":3,\"id\":\"agent-fixture\",\"kind\":\"agent\"},\"entityRevision\":\"2\",\"eventId\":\"evt_018f1e90-7b5a-7cc0-8001-000000000022\",\"kind\":\"agent.status-reported\",\"occurredAt\":\"2026-07-16T12:00:01.000Z\",\"schemaVersion\":2,\"seq\":\"3\",\"source\":{\"confidence\":\"authoritative\",\"id\":\"agent-fixture:3\",\"kind\":\"agent-report\",\"observedAt\":\"2026-07-16T12:00:01.000Z\"}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "permutation-102",
+      "events": [
+        {
+          "schemaVersion": 2,
+          "eventId": "evt_018f1e90-7b5a-7cc0-8002-000000000020",
+          "seq": "1",
+          "entity": {
+            "kind": "agent",
+            "id": "agent-fixture",
+            "generation": 3
+          },
+          "entityRevision": "2",
+          "occurredAt": "2026-07-16T12:00:01.000Z",
+          "kind": "agent.status-reported",
+          "source": {
+            "kind": "agent-report",
+            "id": "agent-fixture:3",
+            "observedAt": "2026-07-16T12:00:01.000Z",
+            "confidence": "authoritative"
+          },
+          "data": {
+            "phase": "testing",
+            "summary": "Checking parity"
+          }
+        },
+        {
+          "schemaVersion": 2,
+          "eventId": "evt_018f1e90-7b5a-7cc0-8002-000000000021",
+          "seq": "2",
+          "entity": {
+            "kind": "agent",
+            "id": "agent-fixture",
+            "generation": 3
+          },
+          "entityRevision": "1",
+          "occurredAt": "2026-07-16T12:00:00.000Z",
+          "kind": "agent.status-reported",
+          "source": {
+            "kind": "agent-report",
+            "id": "agent-fixture:3",
+            "observedAt": "2026-07-16T12:00:00.000Z",
+            "confidence": "authoritative"
+          },
+          "data": {
+            "phase": "planning",
+            "summary": "Reading contracts"
+          }
+        },
+        {
+          "schemaVersion": 2,
+          "eventId": "evt_018f1e90-7b5a-7cc0-8002-000000000022",
+          "seq": "3",
+          "entity": {
+            "kind": "session",
+            "id": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+            "generation": 3
+          },
+          "entityRevision": "1",
+          "occurredAt": "2026-07-16T12:00:02.000Z",
+          "kind": "session.health",
+          "source": {
+            "kind": "sessiond",
+            "id": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+            "observedAt": "2026-07-16T12:00:02.000Z",
+            "confidence": "authoritative"
+          },
+          "data": {
+            "presence": "present",
+            "outputSeq": "4096"
+          }
+        }
+      ],
+      "prefixes": [
+        {
+          "highWaterSeq": "1",
+          "paused": false,
+          "corruption": null,
+          "entities": {
+            "agent:agent-fixture:3": {
+              "entityRevision": "2",
+              "eventId": "evt_018f1e90-7b5a-7cc0-8002-000000000020",
+              "kind": "agent.status-reported",
+              "occurredAt": "2026-07-16T12:00:01.000Z",
+              "source": {
+                "kind": "agent-report",
+                "id": "agent-fixture:3",
+                "observedAt": "2026-07-16T12:00:01.000Z",
+                "confidence": "authoritative"
+              },
+              "data": {
+                "phase": "testing",
+                "summary": "Checking parity"
+              }
+            }
+          },
+          "seen": {
+            "evt_018f1e90-7b5a-7cc0-8002-000000000020": "{\"data\":{\"phase\":\"testing\",\"summary\":\"Checking parity\"},\"entity\":{\"generation\":3,\"id\":\"agent-fixture\",\"kind\":\"agent\"},\"entityRevision\":\"2\",\"eventId\":\"evt_018f1e90-7b5a-7cc0-8002-000000000020\",\"kind\":\"agent.status-reported\",\"occurredAt\":\"2026-07-16T12:00:01.000Z\",\"schemaVersion\":2,\"seq\":\"1\",\"source\":{\"confidence\":\"authoritative\",\"id\":\"agent-fixture:3\",\"kind\":\"agent-report\",\"observedAt\":\"2026-07-16T12:00:01.000Z\"}}"
+          }
+        },
+        {
+          "highWaterSeq": "2",
+          "paused": false,
+          "corruption": null,
+          "entities": {
+            "agent:agent-fixture:3": {
+              "entityRevision": "2",
+              "eventId": "evt_018f1e90-7b5a-7cc0-8002-000000000020",
+              "kind": "agent.status-reported",
+              "occurredAt": "2026-07-16T12:00:01.000Z",
+              "source": {
+                "kind": "agent-report",
+                "id": "agent-fixture:3",
+                "observedAt": "2026-07-16T12:00:01.000Z",
+                "confidence": "authoritative"
+              },
+              "data": {
+                "phase": "testing",
+                "summary": "Checking parity"
+              }
+            }
+          },
+          "seen": {
+            "evt_018f1e90-7b5a-7cc0-8002-000000000020": "{\"data\":{\"phase\":\"testing\",\"summary\":\"Checking parity\"},\"entity\":{\"generation\":3,\"id\":\"agent-fixture\",\"kind\":\"agent\"},\"entityRevision\":\"2\",\"eventId\":\"evt_018f1e90-7b5a-7cc0-8002-000000000020\",\"kind\":\"agent.status-reported\",\"occurredAt\":\"2026-07-16T12:00:01.000Z\",\"schemaVersion\":2,\"seq\":\"1\",\"source\":{\"confidence\":\"authoritative\",\"id\":\"agent-fixture:3\",\"kind\":\"agent-report\",\"observedAt\":\"2026-07-16T12:00:01.000Z\"}}",
+            "evt_018f1e90-7b5a-7cc0-8002-000000000021": "{\"data\":{\"phase\":\"planning\",\"summary\":\"Reading contracts\"},\"entity\":{\"generation\":3,\"id\":\"agent-fixture\",\"kind\":\"agent\"},\"entityRevision\":\"1\",\"eventId\":\"evt_018f1e90-7b5a-7cc0-8002-000000000021\",\"kind\":\"agent.status-reported\",\"occurredAt\":\"2026-07-16T12:00:00.000Z\",\"schemaVersion\":2,\"seq\":\"2\",\"source\":{\"confidence\":\"authoritative\",\"id\":\"agent-fixture:3\",\"kind\":\"agent-report\",\"observedAt\":\"2026-07-16T12:00:00.000Z\"}}"
+          }
+        },
+        {
+          "highWaterSeq": "3",
+          "paused": false,
+          "corruption": null,
+          "entities": {
+            "agent:agent-fixture:3": {
+              "entityRevision": "2",
+              "eventId": "evt_018f1e90-7b5a-7cc0-8002-000000000020",
+              "kind": "agent.status-reported",
+              "occurredAt": "2026-07-16T12:00:01.000Z",
+              "source": {
+                "kind": "agent-report",
+                "id": "agent-fixture:3",
+                "observedAt": "2026-07-16T12:00:01.000Z",
+                "confidence": "authoritative"
+              },
+              "data": {
+                "phase": "testing",
+                "summary": "Checking parity"
+              }
+            },
+            "session:ses_018f1e90-7b5a-7cc0-8000-000000000001:3": {
+              "entityRevision": "1",
+              "eventId": "evt_018f1e90-7b5a-7cc0-8002-000000000022",
+              "kind": "session.health",
+              "occurredAt": "2026-07-16T12:00:02.000Z",
+              "source": {
+                "kind": "sessiond",
+                "id": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+                "observedAt": "2026-07-16T12:00:02.000Z",
+                "confidence": "authoritative"
+              },
+              "data": {
+                "presence": "present",
+                "outputSeq": "4096"
+              }
+            }
+          },
+          "seen": {
+            "evt_018f1e90-7b5a-7cc0-8002-000000000020": "{\"data\":{\"phase\":\"testing\",\"summary\":\"Checking parity\"},\"entity\":{\"generation\":3,\"id\":\"agent-fixture\",\"kind\":\"agent\"},\"entityRevision\":\"2\",\"eventId\":\"evt_018f1e90-7b5a-7cc0-8002-000000000020\",\"kind\":\"agent.status-reported\",\"occurredAt\":\"2026-07-16T12:00:01.000Z\",\"schemaVersion\":2,\"seq\":\"1\",\"source\":{\"confidence\":\"authoritative\",\"id\":\"agent-fixture:3\",\"kind\":\"agent-report\",\"observedAt\":\"2026-07-16T12:00:01.000Z\"}}",
+            "evt_018f1e90-7b5a-7cc0-8002-000000000021": "{\"data\":{\"phase\":\"planning\",\"summary\":\"Reading contracts\"},\"entity\":{\"generation\":3,\"id\":\"agent-fixture\",\"kind\":\"agent\"},\"entityRevision\":\"1\",\"eventId\":\"evt_018f1e90-7b5a-7cc0-8002-000000000021\",\"kind\":\"agent.status-reported\",\"occurredAt\":\"2026-07-16T12:00:00.000Z\",\"schemaVersion\":2,\"seq\":\"2\",\"source\":{\"confidence\":\"authoritative\",\"id\":\"agent-fixture:3\",\"kind\":\"agent-report\",\"observedAt\":\"2026-07-16T12:00:00.000Z\"}}",
+            "evt_018f1e90-7b5a-7cc0-8002-000000000022": "{\"data\":{\"outputSeq\":\"4096\",\"presence\":\"present\"},\"entity\":{\"generation\":3,\"id\":\"ses_018f1e90-7b5a-7cc0-8000-000000000001\",\"kind\":\"session\"},\"entityRevision\":\"1\",\"eventId\":\"evt_018f1e90-7b5a-7cc0-8002-000000000022\",\"kind\":\"session.health\",\"occurredAt\":\"2026-07-16T12:00:02.000Z\",\"schemaVersion\":2,\"seq\":\"3\",\"source\":{\"confidence\":\"authoritative\",\"id\":\"ses_018f1e90-7b5a-7cc0-8000-000000000001\",\"kind\":\"sessiond\",\"observedAt\":\"2026-07-16T12:00:02.000Z\"}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "permutation-120",
+      "events": [
+        {
+          "schemaVersion": 2,
+          "eventId": "evt_018f1e90-7b5a-7cc0-8003-000000000020",
+          "seq": "1",
+          "entity": {
+            "kind": "agent",
+            "id": "agent-fixture",
+            "generation": 3
+          },
+          "entityRevision": "2",
+          "occurredAt": "2026-07-16T12:00:01.000Z",
+          "kind": "agent.status-reported",
+          "source": {
+            "kind": "agent-report",
+            "id": "agent-fixture:3",
+            "observedAt": "2026-07-16T12:00:01.000Z",
+            "confidence": "authoritative"
+          },
+          "data": {
+            "phase": "testing",
+            "summary": "Checking parity"
+          }
+        },
+        {
+          "schemaVersion": 2,
+          "eventId": "evt_018f1e90-7b5a-7cc0-8003-000000000021",
+          "seq": "2",
+          "entity": {
+            "kind": "session",
+            "id": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+            "generation": 3
+          },
+          "entityRevision": "1",
+          "occurredAt": "2026-07-16T12:00:02.000Z",
+          "kind": "session.health",
+          "source": {
+            "kind": "sessiond",
+            "id": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+            "observedAt": "2026-07-16T12:00:02.000Z",
+            "confidence": "authoritative"
+          },
+          "data": {
+            "presence": "present",
+            "outputSeq": "4096"
+          }
+        },
+        {
+          "schemaVersion": 2,
+          "eventId": "evt_018f1e90-7b5a-7cc0-8003-000000000022",
+          "seq": "3",
+          "entity": {
+            "kind": "agent",
+            "id": "agent-fixture",
+            "generation": 3
+          },
+          "entityRevision": "1",
+          "occurredAt": "2026-07-16T12:00:00.000Z",
+          "kind": "agent.status-reported",
+          "source": {
+            "kind": "agent-report",
+            "id": "agent-fixture:3",
+            "observedAt": "2026-07-16T12:00:00.000Z",
+            "confidence": "authoritative"
+          },
+          "data": {
+            "phase": "planning",
+            "summary": "Reading contracts"
+          }
+        }
+      ],
+      "prefixes": [
+        {
+          "highWaterSeq": "1",
+          "paused": false,
+          "corruption": null,
+          "entities": {
+            "agent:agent-fixture:3": {
+              "entityRevision": "2",
+              "eventId": "evt_018f1e90-7b5a-7cc0-8003-000000000020",
+              "kind": "agent.status-reported",
+              "occurredAt": "2026-07-16T12:00:01.000Z",
+              "source": {
+                "kind": "agent-report",
+                "id": "agent-fixture:3",
+                "observedAt": "2026-07-16T12:00:01.000Z",
+                "confidence": "authoritative"
+              },
+              "data": {
+                "phase": "testing",
+                "summary": "Checking parity"
+              }
+            }
+          },
+          "seen": {
+            "evt_018f1e90-7b5a-7cc0-8003-000000000020": "{\"data\":{\"phase\":\"testing\",\"summary\":\"Checking parity\"},\"entity\":{\"generation\":3,\"id\":\"agent-fixture\",\"kind\":\"agent\"},\"entityRevision\":\"2\",\"eventId\":\"evt_018f1e90-7b5a-7cc0-8003-000000000020\",\"kind\":\"agent.status-reported\",\"occurredAt\":\"2026-07-16T12:00:01.000Z\",\"schemaVersion\":2,\"seq\":\"1\",\"source\":{\"confidence\":\"authoritative\",\"id\":\"agent-fixture:3\",\"kind\":\"agent-report\",\"observedAt\":\"2026-07-16T12:00:01.000Z\"}}"
+          }
+        },
+        {
+          "highWaterSeq": "2",
+          "paused": false,
+          "corruption": null,
+          "entities": {
+            "agent:agent-fixture:3": {
+              "entityRevision": "2",
+              "eventId": "evt_018f1e90-7b5a-7cc0-8003-000000000020",
+              "kind": "agent.status-reported",
+              "occurredAt": "2026-07-16T12:00:01.000Z",
+              "source": {
+                "kind": "agent-report",
+                "id": "agent-fixture:3",
+                "observedAt": "2026-07-16T12:00:01.000Z",
+                "confidence": "authoritative"
+              },
+              "data": {
+                "phase": "testing",
+                "summary": "Checking parity"
+              }
+            },
+            "session:ses_018f1e90-7b5a-7cc0-8000-000000000001:3": {
+              "entityRevision": "1",
+              "eventId": "evt_018f1e90-7b5a-7cc0-8003-000000000021",
+              "kind": "session.health",
+              "occurredAt": "2026-07-16T12:00:02.000Z",
+              "source": {
+                "kind": "sessiond",
+                "id": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+                "observedAt": "2026-07-16T12:00:02.000Z",
+                "confidence": "authoritative"
+              },
+              "data": {
+                "presence": "present",
+                "outputSeq": "4096"
+              }
+            }
+          },
+          "seen": {
+            "evt_018f1e90-7b5a-7cc0-8003-000000000020": "{\"data\":{\"phase\":\"testing\",\"summary\":\"Checking parity\"},\"entity\":{\"generation\":3,\"id\":\"agent-fixture\",\"kind\":\"agent\"},\"entityRevision\":\"2\",\"eventId\":\"evt_018f1e90-7b5a-7cc0-8003-000000000020\",\"kind\":\"agent.status-reported\",\"occurredAt\":\"2026-07-16T12:00:01.000Z\",\"schemaVersion\":2,\"seq\":\"1\",\"source\":{\"confidence\":\"authoritative\",\"id\":\"agent-fixture:3\",\"kind\":\"agent-report\",\"observedAt\":\"2026-07-16T12:00:01.000Z\"}}",
+            "evt_018f1e90-7b5a-7cc0-8003-000000000021": "{\"data\":{\"outputSeq\":\"4096\",\"presence\":\"present\"},\"entity\":{\"generation\":3,\"id\":\"ses_018f1e90-7b5a-7cc0-8000-000000000001\",\"kind\":\"session\"},\"entityRevision\":\"1\",\"eventId\":\"evt_018f1e90-7b5a-7cc0-8003-000000000021\",\"kind\":\"session.health\",\"occurredAt\":\"2026-07-16T12:00:02.000Z\",\"schemaVersion\":2,\"seq\":\"2\",\"source\":{\"confidence\":\"authoritative\",\"id\":\"ses_018f1e90-7b5a-7cc0-8000-000000000001\",\"kind\":\"sessiond\",\"observedAt\":\"2026-07-16T12:00:02.000Z\"}}"
+          }
+        },
+        {
+          "highWaterSeq": "3",
+          "paused": false,
+          "corruption": null,
+          "entities": {
+            "agent:agent-fixture:3": {
+              "entityRevision": "2",
+              "eventId": "evt_018f1e90-7b5a-7cc0-8003-000000000020",
+              "kind": "agent.status-reported",
+              "occurredAt": "2026-07-16T12:00:01.000Z",
+              "source": {
+                "kind": "agent-report",
+                "id": "agent-fixture:3",
+                "observedAt": "2026-07-16T12:00:01.000Z",
+                "confidence": "authoritative"
+              },
+              "data": {
+                "phase": "testing",
+                "summary": "Checking parity"
+              }
+            },
+            "session:ses_018f1e90-7b5a-7cc0-8000-000000000001:3": {
+              "entityRevision": "1",
+              "eventId": "evt_018f1e90-7b5a-7cc0-8003-000000000021",
+              "kind": "session.health",
+              "occurredAt": "2026-07-16T12:00:02.000Z",
+              "source": {
+                "kind": "sessiond",
+                "id": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+                "observedAt": "2026-07-16T12:00:02.000Z",
+                "confidence": "authoritative"
+              },
+              "data": {
+                "presence": "present",
+                "outputSeq": "4096"
+              }
+            }
+          },
+          "seen": {
+            "evt_018f1e90-7b5a-7cc0-8003-000000000020": "{\"data\":{\"phase\":\"testing\",\"summary\":\"Checking parity\"},\"entity\":{\"generation\":3,\"id\":\"agent-fixture\",\"kind\":\"agent\"},\"entityRevision\":\"2\",\"eventId\":\"evt_018f1e90-7b5a-7cc0-8003-000000000020\",\"kind\":\"agent.status-reported\",\"occurredAt\":\"2026-07-16T12:00:01.000Z\",\"schemaVersion\":2,\"seq\":\"1\",\"source\":{\"confidence\":\"authoritative\",\"id\":\"agent-fixture:3\",\"kind\":\"agent-report\",\"observedAt\":\"2026-07-16T12:00:01.000Z\"}}",
+            "evt_018f1e90-7b5a-7cc0-8003-000000000021": "{\"data\":{\"outputSeq\":\"4096\",\"presence\":\"present\"},\"entity\":{\"generation\":3,\"id\":\"ses_018f1e90-7b5a-7cc0-8000-000000000001\",\"kind\":\"session\"},\"entityRevision\":\"1\",\"eventId\":\"evt_018f1e90-7b5a-7cc0-8003-000000000021\",\"kind\":\"session.health\",\"occurredAt\":\"2026-07-16T12:00:02.000Z\",\"schemaVersion\":2,\"seq\":\"2\",\"source\":{\"confidence\":\"authoritative\",\"id\":\"ses_018f1e90-7b5a-7cc0-8000-000000000001\",\"kind\":\"sessiond\",\"observedAt\":\"2026-07-16T12:00:02.000Z\"}}",
+            "evt_018f1e90-7b5a-7cc0-8003-000000000022": "{\"data\":{\"phase\":\"planning\",\"summary\":\"Reading contracts\"},\"entity\":{\"generation\":3,\"id\":\"agent-fixture\",\"kind\":\"agent\"},\"entityRevision\":\"1\",\"eventId\":\"evt_018f1e90-7b5a-7cc0-8003-000000000022\",\"kind\":\"agent.status-reported\",\"occurredAt\":\"2026-07-16T12:00:00.000Z\",\"schemaVersion\":2,\"seq\":\"3\",\"source\":{\"confidence\":\"authoritative\",\"id\":\"agent-fixture:3\",\"kind\":\"agent-report\",\"observedAt\":\"2026-07-16T12:00:00.000Z\"}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "permutation-201",
+      "events": [
+        {
+          "schemaVersion": 2,
+          "eventId": "evt_018f1e90-7b5a-7cc0-8004-000000000020",
+          "seq": "1",
+          "entity": {
+            "kind": "session",
+            "id": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+            "generation": 3
+          },
+          "entityRevision": "1",
+          "occurredAt": "2026-07-16T12:00:02.000Z",
+          "kind": "session.health",
+          "source": {
+            "kind": "sessiond",
+            "id": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+            "observedAt": "2026-07-16T12:00:02.000Z",
+            "confidence": "authoritative"
+          },
+          "data": {
+            "presence": "present",
+            "outputSeq": "4096"
+          }
+        },
+        {
+          "schemaVersion": 2,
+          "eventId": "evt_018f1e90-7b5a-7cc0-8004-000000000021",
+          "seq": "2",
+          "entity": {
+            "kind": "agent",
+            "id": "agent-fixture",
+            "generation": 3
+          },
+          "entityRevision": "1",
+          "occurredAt": "2026-07-16T12:00:00.000Z",
+          "kind": "agent.status-reported",
+          "source": {
+            "kind": "agent-report",
+            "id": "agent-fixture:3",
+            "observedAt": "2026-07-16T12:00:00.000Z",
+            "confidence": "authoritative"
+          },
+          "data": {
+            "phase": "planning",
+            "summary": "Reading contracts"
+          }
+        },
+        {
+          "schemaVersion": 2,
+          "eventId": "evt_018f1e90-7b5a-7cc0-8004-000000000022",
+          "seq": "3",
+          "entity": {
+            "kind": "agent",
+            "id": "agent-fixture",
+            "generation": 3
+          },
+          "entityRevision": "2",
+          "occurredAt": "2026-07-16T12:00:01.000Z",
+          "kind": "agent.status-reported",
+          "source": {
+            "kind": "agent-report",
+            "id": "agent-fixture:3",
+            "observedAt": "2026-07-16T12:00:01.000Z",
+            "confidence": "authoritative"
+          },
+          "data": {
+            "phase": "testing",
+            "summary": "Checking parity"
+          }
+        }
+      ],
+      "prefixes": [
+        {
+          "highWaterSeq": "1",
+          "paused": false,
+          "corruption": null,
+          "entities": {
+            "session:ses_018f1e90-7b5a-7cc0-8000-000000000001:3": {
+              "entityRevision": "1",
+              "eventId": "evt_018f1e90-7b5a-7cc0-8004-000000000020",
+              "kind": "session.health",
+              "occurredAt": "2026-07-16T12:00:02.000Z",
+              "source": {
+                "kind": "sessiond",
+                "id": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+                "observedAt": "2026-07-16T12:00:02.000Z",
+                "confidence": "authoritative"
+              },
+              "data": {
+                "presence": "present",
+                "outputSeq": "4096"
+              }
+            }
+          },
+          "seen": {
+            "evt_018f1e90-7b5a-7cc0-8004-000000000020": "{\"data\":{\"outputSeq\":\"4096\",\"presence\":\"present\"},\"entity\":{\"generation\":3,\"id\":\"ses_018f1e90-7b5a-7cc0-8000-000000000001\",\"kind\":\"session\"},\"entityRevision\":\"1\",\"eventId\":\"evt_018f1e90-7b5a-7cc0-8004-000000000020\",\"kind\":\"session.health\",\"occurredAt\":\"2026-07-16T12:00:02.000Z\",\"schemaVersion\":2,\"seq\":\"1\",\"source\":{\"confidence\":\"authoritative\",\"id\":\"ses_018f1e90-7b5a-7cc0-8000-000000000001\",\"kind\":\"sessiond\",\"observedAt\":\"2026-07-16T12:00:02.000Z\"}}"
+          }
+        },
+        {
+          "highWaterSeq": "2",
+          "paused": false,
+          "corruption": null,
+          "entities": {
+            "session:ses_018f1e90-7b5a-7cc0-8000-000000000001:3": {
+              "entityRevision": "1",
+              "eventId": "evt_018f1e90-7b5a-7cc0-8004-000000000020",
+              "kind": "session.health",
+              "occurredAt": "2026-07-16T12:00:02.000Z",
+              "source": {
+                "kind": "sessiond",
+                "id": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+                "observedAt": "2026-07-16T12:00:02.000Z",
+                "confidence": "authoritative"
+              },
+              "data": {
+                "presence": "present",
+                "outputSeq": "4096"
+              }
+            },
+            "agent:agent-fixture:3": {
+              "entityRevision": "1",
+              "eventId": "evt_018f1e90-7b5a-7cc0-8004-000000000021",
+              "kind": "agent.status-reported",
+              "occurredAt": "2026-07-16T12:00:00.000Z",
+              "source": {
+                "kind": "agent-report",
+                "id": "agent-fixture:3",
+                "observedAt": "2026-07-16T12:00:00.000Z",
+                "confidence": "authoritative"
+              },
+              "data": {
+                "phase": "planning",
+                "summary": "Reading contracts"
+              }
+            }
+          },
+          "seen": {
+            "evt_018f1e90-7b5a-7cc0-8004-000000000020": "{\"data\":{\"outputSeq\":\"4096\",\"presence\":\"present\"},\"entity\":{\"generation\":3,\"id\":\"ses_018f1e90-7b5a-7cc0-8000-000000000001\",\"kind\":\"session\"},\"entityRevision\":\"1\",\"eventId\":\"evt_018f1e90-7b5a-7cc0-8004-000000000020\",\"kind\":\"session.health\",\"occurredAt\":\"2026-07-16T12:00:02.000Z\",\"schemaVersion\":2,\"seq\":\"1\",\"source\":{\"confidence\":\"authoritative\",\"id\":\"ses_018f1e90-7b5a-7cc0-8000-000000000001\",\"kind\":\"sessiond\",\"observedAt\":\"2026-07-16T12:00:02.000Z\"}}",
+            "evt_018f1e90-7b5a-7cc0-8004-000000000021": "{\"data\":{\"phase\":\"planning\",\"summary\":\"Reading contracts\"},\"entity\":{\"generation\":3,\"id\":\"agent-fixture\",\"kind\":\"agent\"},\"entityRevision\":\"1\",\"eventId\":\"evt_018f1e90-7b5a-7cc0-8004-000000000021\",\"kind\":\"agent.status-reported\",\"occurredAt\":\"2026-07-16T12:00:00.000Z\",\"schemaVersion\":2,\"seq\":\"2\",\"source\":{\"confidence\":\"authoritative\",\"id\":\"agent-fixture:3\",\"kind\":\"agent-report\",\"observedAt\":\"2026-07-16T12:00:00.000Z\"}}"
+          }
+        },
+        {
+          "highWaterSeq": "3",
+          "paused": false,
+          "corruption": null,
+          "entities": {
+            "session:ses_018f1e90-7b5a-7cc0-8000-000000000001:3": {
+              "entityRevision": "1",
+              "eventId": "evt_018f1e90-7b5a-7cc0-8004-000000000020",
+              "kind": "session.health",
+              "occurredAt": "2026-07-16T12:00:02.000Z",
+              "source": {
+                "kind": "sessiond",
+                "id": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+                "observedAt": "2026-07-16T12:00:02.000Z",
+                "confidence": "authoritative"
+              },
+              "data": {
+                "presence": "present",
+                "outputSeq": "4096"
+              }
+            },
+            "agent:agent-fixture:3": {
+              "entityRevision": "2",
+              "eventId": "evt_018f1e90-7b5a-7cc0-8004-000000000022",
+              "kind": "agent.status-reported",
+              "occurredAt": "2026-07-16T12:00:01.000Z",
+              "source": {
+                "kind": "agent-report",
+                "id": "agent-fixture:3",
+                "observedAt": "2026-07-16T12:00:01.000Z",
+                "confidence": "authoritative"
+              },
+              "data": {
+                "phase": "testing",
+                "summary": "Checking parity"
+              }
+            }
+          },
+          "seen": {
+            "evt_018f1e90-7b5a-7cc0-8004-000000000020": "{\"data\":{\"outputSeq\":\"4096\",\"presence\":\"present\"},\"entity\":{\"generation\":3,\"id\":\"ses_018f1e90-7b5a-7cc0-8000-000000000001\",\"kind\":\"session\"},\"entityRevision\":\"1\",\"eventId\":\"evt_018f1e90-7b5a-7cc0-8004-000000000020\",\"kind\":\"session.health\",\"occurredAt\":\"2026-07-16T12:00:02.000Z\",\"schemaVersion\":2,\"seq\":\"1\",\"source\":{\"confidence\":\"authoritative\",\"id\":\"ses_018f1e90-7b5a-7cc0-8000-000000000001\",\"kind\":\"sessiond\",\"observedAt\":\"2026-07-16T12:00:02.000Z\"}}",
+            "evt_018f1e90-7b5a-7cc0-8004-000000000021": "{\"data\":{\"phase\":\"planning\",\"summary\":\"Reading contracts\"},\"entity\":{\"generation\":3,\"id\":\"agent-fixture\",\"kind\":\"agent\"},\"entityRevision\":\"1\",\"eventId\":\"evt_018f1e90-7b5a-7cc0-8004-000000000021\",\"kind\":\"agent.status-reported\",\"occurredAt\":\"2026-07-16T12:00:00.000Z\",\"schemaVersion\":2,\"seq\":\"2\",\"source\":{\"confidence\":\"authoritative\",\"id\":\"agent-fixture:3\",\"kind\":\"agent-report\",\"observedAt\":\"2026-07-16T12:00:00.000Z\"}}",
+            "evt_018f1e90-7b5a-7cc0-8004-000000000022": "{\"data\":{\"phase\":\"testing\",\"summary\":\"Checking parity\"},\"entity\":{\"generation\":3,\"id\":\"agent-fixture\",\"kind\":\"agent\"},\"entityRevision\":\"2\",\"eventId\":\"evt_018f1e90-7b5a-7cc0-8004-000000000022\",\"kind\":\"agent.status-reported\",\"occurredAt\":\"2026-07-16T12:00:01.000Z\",\"schemaVersion\":2,\"seq\":\"3\",\"source\":{\"confidence\":\"authoritative\",\"id\":\"agent-fixture:3\",\"kind\":\"agent-report\",\"observedAt\":\"2026-07-16T12:00:01.000Z\"}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "permutation-210",
+      "events": [
+        {
+          "schemaVersion": 2,
+          "eventId": "evt_018f1e90-7b5a-7cc0-8005-000000000020",
+          "seq": "1",
+          "entity": {
+            "kind": "session",
+            "id": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+            "generation": 3
+          },
+          "entityRevision": "1",
+          "occurredAt": "2026-07-16T12:00:02.000Z",
+          "kind": "session.health",
+          "source": {
+            "kind": "sessiond",
+            "id": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+            "observedAt": "2026-07-16T12:00:02.000Z",
+            "confidence": "authoritative"
+          },
+          "data": {
+            "presence": "present",
+            "outputSeq": "4096"
+          }
+        },
+        {
+          "schemaVersion": 2,
+          "eventId": "evt_018f1e90-7b5a-7cc0-8005-000000000021",
+          "seq": "2",
+          "entity": {
+            "kind": "agent",
+            "id": "agent-fixture",
+            "generation": 3
+          },
+          "entityRevision": "2",
+          "occurredAt": "2026-07-16T12:00:01.000Z",
+          "kind": "agent.status-reported",
+          "source": {
+            "kind": "agent-report",
+            "id": "agent-fixture:3",
+            "observedAt": "2026-07-16T12:00:01.000Z",
+            "confidence": "authoritative"
+          },
+          "data": {
+            "phase": "testing",
+            "summary": "Checking parity"
+          }
+        },
+        {
+          "schemaVersion": 2,
+          "eventId": "evt_018f1e90-7b5a-7cc0-8005-000000000022",
+          "seq": "3",
+          "entity": {
+            "kind": "agent",
+            "id": "agent-fixture",
+            "generation": 3
+          },
+          "entityRevision": "1",
+          "occurredAt": "2026-07-16T12:00:00.000Z",
+          "kind": "agent.status-reported",
+          "source": {
+            "kind": "agent-report",
+            "id": "agent-fixture:3",
+            "observedAt": "2026-07-16T12:00:00.000Z",
+            "confidence": "authoritative"
+          },
+          "data": {
+            "phase": "planning",
+            "summary": "Reading contracts"
+          }
+        }
+      ],
+      "prefixes": [
+        {
+          "highWaterSeq": "1",
+          "paused": false,
+          "corruption": null,
+          "entities": {
+            "session:ses_018f1e90-7b5a-7cc0-8000-000000000001:3": {
+              "entityRevision": "1",
+              "eventId": "evt_018f1e90-7b5a-7cc0-8005-000000000020",
+              "kind": "session.health",
+              "occurredAt": "2026-07-16T12:00:02.000Z",
+              "source": {
+                "kind": "sessiond",
+                "id": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+                "observedAt": "2026-07-16T12:00:02.000Z",
+                "confidence": "authoritative"
+              },
+              "data": {
+                "presence": "present",
+                "outputSeq": "4096"
+              }
+            }
+          },
+          "seen": {
+            "evt_018f1e90-7b5a-7cc0-8005-000000000020": "{\"data\":{\"outputSeq\":\"4096\",\"presence\":\"present\"},\"entity\":{\"generation\":3,\"id\":\"ses_018f1e90-7b5a-7cc0-8000-000000000001\",\"kind\":\"session\"},\"entityRevision\":\"1\",\"eventId\":\"evt_018f1e90-7b5a-7cc0-8005-000000000020\",\"kind\":\"session.health\",\"occurredAt\":\"2026-07-16T12:00:02.000Z\",\"schemaVersion\":2,\"seq\":\"1\",\"source\":{\"confidence\":\"authoritative\",\"id\":\"ses_018f1e90-7b5a-7cc0-8000-000000000001\",\"kind\":\"sessiond\",\"observedAt\":\"2026-07-16T12:00:02.000Z\"}}"
+          }
+        },
+        {
+          "highWaterSeq": "2",
+          "paused": false,
+          "corruption": null,
+          "entities": {
+            "session:ses_018f1e90-7b5a-7cc0-8000-000000000001:3": {
+              "entityRevision": "1",
+              "eventId": "evt_018f1e90-7b5a-7cc0-8005-000000000020",
+              "kind": "session.health",
+              "occurredAt": "2026-07-16T12:00:02.000Z",
+              "source": {
+                "kind": "sessiond",
+                "id": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+                "observedAt": "2026-07-16T12:00:02.000Z",
+                "confidence": "authoritative"
+              },
+              "data": {
+                "presence": "present",
+                "outputSeq": "4096"
+              }
+            },
+            "agent:agent-fixture:3": {
+              "entityRevision": "2",
+              "eventId": "evt_018f1e90-7b5a-7cc0-8005-000000000021",
+              "kind": "agent.status-reported",
+              "occurredAt": "2026-07-16T12:00:01.000Z",
+              "source": {
+                "kind": "agent-report",
+                "id": "agent-fixture:3",
+                "observedAt": "2026-07-16T12:00:01.000Z",
+                "confidence": "authoritative"
+              },
+              "data": {
+                "phase": "testing",
+                "summary": "Checking parity"
+              }
+            }
+          },
+          "seen": {
+            "evt_018f1e90-7b5a-7cc0-8005-000000000020": "{\"data\":{\"outputSeq\":\"4096\",\"presence\":\"present\"},\"entity\":{\"generation\":3,\"id\":\"ses_018f1e90-7b5a-7cc0-8000-000000000001\",\"kind\":\"session\"},\"entityRevision\":\"1\",\"eventId\":\"evt_018f1e90-7b5a-7cc0-8005-000000000020\",\"kind\":\"session.health\",\"occurredAt\":\"2026-07-16T12:00:02.000Z\",\"schemaVersion\":2,\"seq\":\"1\",\"source\":{\"confidence\":\"authoritative\",\"id\":\"ses_018f1e90-7b5a-7cc0-8000-000000000001\",\"kind\":\"sessiond\",\"observedAt\":\"2026-07-16T12:00:02.000Z\"}}",
+            "evt_018f1e90-7b5a-7cc0-8005-000000000021": "{\"data\":{\"phase\":\"testing\",\"summary\":\"Checking parity\"},\"entity\":{\"generation\":3,\"id\":\"agent-fixture\",\"kind\":\"agent\"},\"entityRevision\":\"2\",\"eventId\":\"evt_018f1e90-7b5a-7cc0-8005-000000000021\",\"kind\":\"agent.status-reported\",\"occurredAt\":\"2026-07-16T12:00:01.000Z\",\"schemaVersion\":2,\"seq\":\"2\",\"source\":{\"confidence\":\"authoritative\",\"id\":\"agent-fixture:3\",\"kind\":\"agent-report\",\"observedAt\":\"2026-07-16T12:00:01.000Z\"}}"
+          }
+        },
+        {
+          "highWaterSeq": "3",
+          "paused": false,
+          "corruption": null,
+          "entities": {
+            "session:ses_018f1e90-7b5a-7cc0-8000-000000000001:3": {
+              "entityRevision": "1",
+              "eventId": "evt_018f1e90-7b5a-7cc0-8005-000000000020",
+              "kind": "session.health",
+              "occurredAt": "2026-07-16T12:00:02.000Z",
+              "source": {
+                "kind": "sessiond",
+                "id": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+                "observedAt": "2026-07-16T12:00:02.000Z",
+                "confidence": "authoritative"
+              },
+              "data": {
+                "presence": "present",
+                "outputSeq": "4096"
+              }
+            },
+            "agent:agent-fixture:3": {
+              "entityRevision": "2",
+              "eventId": "evt_018f1e90-7b5a-7cc0-8005-000000000021",
+              "kind": "agent.status-reported",
+              "occurredAt": "2026-07-16T12:00:01.000Z",
+              "source": {
+                "kind": "agent-report",
+                "id": "agent-fixture:3",
+                "observedAt": "2026-07-16T12:00:01.000Z",
+                "confidence": "authoritative"
+              },
+              "data": {
+                "phase": "testing",
+                "summary": "Checking parity"
+              }
+            }
+          },
+          "seen": {
+            "evt_018f1e90-7b5a-7cc0-8005-000000000020": "{\"data\":{\"outputSeq\":\"4096\",\"presence\":\"present\"},\"entity\":{\"generation\":3,\"id\":\"ses_018f1e90-7b5a-7cc0-8000-000000000001\",\"kind\":\"session\"},\"entityRevision\":\"1\",\"eventId\":\"evt_018f1e90-7b5a-7cc0-8005-000000000020\",\"kind\":\"session.health\",\"occurredAt\":\"2026-07-16T12:00:02.000Z\",\"schemaVersion\":2,\"seq\":\"1\",\"source\":{\"confidence\":\"authoritative\",\"id\":\"ses_018f1e90-7b5a-7cc0-8000-000000000001\",\"kind\":\"sessiond\",\"observedAt\":\"2026-07-16T12:00:02.000Z\"}}",
+            "evt_018f1e90-7b5a-7cc0-8005-000000000021": "{\"data\":{\"phase\":\"testing\",\"summary\":\"Checking parity\"},\"entity\":{\"generation\":3,\"id\":\"agent-fixture\",\"kind\":\"agent\"},\"entityRevision\":\"2\",\"eventId\":\"evt_018f1e90-7b5a-7cc0-8005-000000000021\",\"kind\":\"agent.status-reported\",\"occurredAt\":\"2026-07-16T12:00:01.000Z\",\"schemaVersion\":2,\"seq\":\"2\",\"source\":{\"confidence\":\"authoritative\",\"id\":\"agent-fixture:3\",\"kind\":\"agent-report\",\"observedAt\":\"2026-07-16T12:00:01.000Z\"}}",
+            "evt_018f1e90-7b5a-7cc0-8005-000000000022": "{\"data\":{\"phase\":\"planning\",\"summary\":\"Reading contracts\"},\"entity\":{\"generation\":3,\"id\":\"agent-fixture\",\"kind\":\"agent\"},\"entityRevision\":\"1\",\"eventId\":\"evt_018f1e90-7b5a-7cc0-8005-000000000022\",\"kind\":\"agent.status-reported\",\"occurredAt\":\"2026-07-16T12:00:00.000Z\",\"schemaVersion\":2,\"seq\":\"3\",\"source\":{\"confidence\":\"authoritative\",\"id\":\"agent-fixture:3\",\"kind\":\"agent-report\",\"observedAt\":\"2026-07-16T12:00:00.000Z\"}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "identical-duplicate",
+      "events": [
+        {
+          "schemaVersion": 2,
+          "eventId": "evt_018f1e90-7b5a-7cc0-8000-000000000005",
+          "seq": "1",
+          "entity": {
+            "kind": "agent",
+            "id": "agent-fixture",
+            "generation": 3
+          },
+          "entityRevision": "1",
+          "occurredAt": "2026-07-16T12:00:00.000Z",
+          "kind": "agent.status-reported",
+          "source": {
+            "kind": "agent-report",
+            "id": "agent-fixture:3",
+            "observedAt": "2026-07-16T12:00:00.000Z",
+            "confidence": "authoritative"
+          },
+          "data": {
+            "phase": "planning",
+            "summary": "Reading contracts"
+          }
+        },
+        {
+          "schemaVersion": 2,
+          "eventId": "evt_018f1e90-7b5a-7cc0-8000-000000000005",
+          "seq": "1",
+          "entity": {
+            "kind": "agent",
+            "id": "agent-fixture",
+            "generation": 3
+          },
+          "entityRevision": "1",
+          "occurredAt": "2026-07-16T12:00:00.000Z",
+          "kind": "agent.status-reported",
+          "source": {
+            "kind": "agent-report",
+            "id": "agent-fixture:3",
+            "observedAt": "2026-07-16T12:00:00.000Z",
+            "confidence": "authoritative"
+          },
+          "data": {
+            "phase": "planning",
+            "summary": "Reading contracts"
+          }
+        }
+      ],
+      "prefixes": [
+        {
+          "highWaterSeq": "1",
+          "paused": false,
+          "corruption": null,
+          "entities": {
+            "agent:agent-fixture:3": {
+              "entityRevision": "1",
+              "eventId": "evt_018f1e90-7b5a-7cc0-8000-000000000005",
+              "kind": "agent.status-reported",
+              "occurredAt": "2026-07-16T12:00:00.000Z",
+              "source": {
+                "kind": "agent-report",
+                "id": "agent-fixture:3",
+                "observedAt": "2026-07-16T12:00:00.000Z",
+                "confidence": "authoritative"
+              },
+              "data": {
+                "phase": "planning",
+                "summary": "Reading contracts"
+              }
+            }
+          },
+          "seen": {
+            "evt_018f1e90-7b5a-7cc0-8000-000000000005": "{\"data\":{\"phase\":\"planning\",\"summary\":\"Reading contracts\"},\"entity\":{\"generation\":3,\"id\":\"agent-fixture\",\"kind\":\"agent\"},\"entityRevision\":\"1\",\"eventId\":\"evt_018f1e90-7b5a-7cc0-8000-000000000005\",\"kind\":\"agent.status-reported\",\"occurredAt\":\"2026-07-16T12:00:00.000Z\",\"schemaVersion\":2,\"seq\":\"1\",\"source\":{\"confidence\":\"authoritative\",\"id\":\"agent-fixture:3\",\"kind\":\"agent-report\",\"observedAt\":\"2026-07-16T12:00:00.000Z\"}}"
+          }
+        },
+        {
+          "highWaterSeq": "1",
+          "paused": false,
+          "corruption": null,
+          "entities": {
+            "agent:agent-fixture:3": {
+              "entityRevision": "1",
+              "eventId": "evt_018f1e90-7b5a-7cc0-8000-000000000005",
+              "kind": "agent.status-reported",
+              "occurredAt": "2026-07-16T12:00:00.000Z",
+              "source": {
+                "kind": "agent-report",
+                "id": "agent-fixture:3",
+                "observedAt": "2026-07-16T12:00:00.000Z",
+                "confidence": "authoritative"
+              },
+              "data": {
+                "phase": "planning",
+                "summary": "Reading contracts"
+              }
+            }
+          },
+          "seen": {
+            "evt_018f1e90-7b5a-7cc0-8000-000000000005": "{\"data\":{\"phase\":\"planning\",\"summary\":\"Reading contracts\"},\"entity\":{\"generation\":3,\"id\":\"agent-fixture\",\"kind\":\"agent\"},\"entityRevision\":\"1\",\"eventId\":\"evt_018f1e90-7b5a-7cc0-8000-000000000005\",\"kind\":\"agent.status-reported\",\"occurredAt\":\"2026-07-16T12:00:00.000Z\",\"schemaVersion\":2,\"seq\":\"1\",\"source\":{\"confidence\":\"authoritative\",\"id\":\"agent-fixture:3\",\"kind\":\"agent-report\",\"observedAt\":\"2026-07-16T12:00:00.000Z\"}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "lower-entity-revision",
+      "events": [
+        {
+          "schemaVersion": 2,
+          "eventId": "evt_018f1e90-7b5a-7cc0-8000-000000000005",
+          "seq": "1",
+          "entity": {
+            "kind": "agent",
+            "id": "agent-fixture",
+            "generation": 3
+          },
+          "entityRevision": "2",
+          "occurredAt": "2026-07-16T12:00:01.000Z",
+          "kind": "agent.status-reported",
+          "source": {
+            "kind": "agent-report",
+            "id": "agent-fixture:3",
+            "observedAt": "2026-07-16T12:00:01.000Z",
+            "confidence": "authoritative"
+          },
+          "data": {
+            "phase": "testing",
+            "summary": "Checking parity"
+          }
+        },
+        {
+          "schemaVersion": 2,
+          "eventId": "evt_018f1e90-7b5a-7cc0-8000-000000000006",
+          "seq": "2",
+          "entity": {
+            "kind": "agent",
+            "id": "agent-fixture",
+            "generation": 3
+          },
+          "entityRevision": "1",
+          "occurredAt": "2026-07-16T12:00:00.000Z",
+          "kind": "agent.status-reported",
+          "source": {
+            "kind": "agent-report",
+            "id": "agent-fixture:3",
+            "observedAt": "2026-07-16T12:00:00.000Z",
+            "confidence": "authoritative"
+          },
+          "data": {
+            "phase": "planning",
+            "summary": "Reading contracts"
+          }
+        }
+      ],
+      "prefixes": [
+        {
+          "highWaterSeq": "1",
+          "paused": false,
+          "corruption": null,
+          "entities": {
+            "agent:agent-fixture:3": {
+              "entityRevision": "2",
+              "eventId": "evt_018f1e90-7b5a-7cc0-8000-000000000005",
+              "kind": "agent.status-reported",
+              "occurredAt": "2026-07-16T12:00:01.000Z",
+              "source": {
+                "kind": "agent-report",
+                "id": "agent-fixture:3",
+                "observedAt": "2026-07-16T12:00:01.000Z",
+                "confidence": "authoritative"
+              },
+              "data": {
+                "phase": "testing",
+                "summary": "Checking parity"
+              }
+            }
+          },
+          "seen": {
+            "evt_018f1e90-7b5a-7cc0-8000-000000000005": "{\"data\":{\"phase\":\"testing\",\"summary\":\"Checking parity\"},\"entity\":{\"generation\":3,\"id\":\"agent-fixture\",\"kind\":\"agent\"},\"entityRevision\":\"2\",\"eventId\":\"evt_018f1e90-7b5a-7cc0-8000-000000000005\",\"kind\":\"agent.status-reported\",\"occurredAt\":\"2026-07-16T12:00:01.000Z\",\"schemaVersion\":2,\"seq\":\"1\",\"source\":{\"confidence\":\"authoritative\",\"id\":\"agent-fixture:3\",\"kind\":\"agent-report\",\"observedAt\":\"2026-07-16T12:00:01.000Z\"}}"
+          }
+        },
+        {
+          "highWaterSeq": "2",
+          "paused": false,
+          "corruption": null,
+          "entities": {
+            "agent:agent-fixture:3": {
+              "entityRevision": "2",
+              "eventId": "evt_018f1e90-7b5a-7cc0-8000-000000000005",
+              "kind": "agent.status-reported",
+              "occurredAt": "2026-07-16T12:00:01.000Z",
+              "source": {
+                "kind": "agent-report",
+                "id": "agent-fixture:3",
+                "observedAt": "2026-07-16T12:00:01.000Z",
+                "confidence": "authoritative"
+              },
+              "data": {
+                "phase": "testing",
+                "summary": "Checking parity"
+              }
+            }
+          },
+          "seen": {
+            "evt_018f1e90-7b5a-7cc0-8000-000000000005": "{\"data\":{\"phase\":\"testing\",\"summary\":\"Checking parity\"},\"entity\":{\"generation\":3,\"id\":\"agent-fixture\",\"kind\":\"agent\"},\"entityRevision\":\"2\",\"eventId\":\"evt_018f1e90-7b5a-7cc0-8000-000000000005\",\"kind\":\"agent.status-reported\",\"occurredAt\":\"2026-07-16T12:00:01.000Z\",\"schemaVersion\":2,\"seq\":\"1\",\"source\":{\"confidence\":\"authoritative\",\"id\":\"agent-fixture:3\",\"kind\":\"agent-report\",\"observedAt\":\"2026-07-16T12:00:01.000Z\"}}",
+            "evt_018f1e90-7b5a-7cc0-8000-000000000006": "{\"data\":{\"phase\":\"planning\",\"summary\":\"Reading contracts\"},\"entity\":{\"generation\":3,\"id\":\"agent-fixture\",\"kind\":\"agent\"},\"entityRevision\":\"1\",\"eventId\":\"evt_018f1e90-7b5a-7cc0-8000-000000000006\",\"kind\":\"agent.status-reported\",\"occurredAt\":\"2026-07-16T12:00:00.000Z\",\"schemaVersion\":2,\"seq\":\"2\",\"source\":{\"confidence\":\"authoritative\",\"id\":\"agent-fixture:3\",\"kind\":\"agent-report\",\"observedAt\":\"2026-07-16T12:00:00.000Z\"}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "conflicting-duplicate",
+      "events": [
+        {
+          "schemaVersion": 2,
+          "eventId": "evt_018f1e90-7b5a-7cc0-8000-000000000005",
+          "seq": "1",
+          "entity": {
+            "kind": "agent",
+            "id": "agent-fixture",
+            "generation": 3
+          },
+          "entityRevision": "1",
+          "occurredAt": "2026-07-16T12:00:00.000Z",
+          "kind": "agent.status-reported",
+          "source": {
+            "kind": "agent-report",
+            "id": "agent-fixture:3",
+            "observedAt": "2026-07-16T12:00:00.000Z",
+            "confidence": "authoritative"
+          },
+          "data": {
+            "phase": "planning",
+            "summary": "Reading contracts"
+          }
+        },
+        {
+          "schemaVersion": 2,
+          "eventId": "evt_018f1e90-7b5a-7cc0-8000-000000000005",
+          "seq": "1",
+          "entity": {
+            "kind": "agent",
+            "id": "agent-fixture",
+            "generation": 3
+          },
+          "entityRevision": "1",
+          "occurredAt": "2026-07-16T12:00:00.000Z",
+          "kind": "agent.status-reported",
+          "source": {
+            "kind": "agent-report",
+            "id": "agent-fixture:3",
+            "observedAt": "2026-07-16T12:00:00.000Z",
+            "confidence": "authoritative"
+          },
+          "data": {
+            "phase": "complete"
+          }
+        }
+      ],
+      "prefixes": [
+        {
+          "highWaterSeq": "1",
+          "paused": false,
+          "corruption": null,
+          "entities": {
+            "agent:agent-fixture:3": {
+              "entityRevision": "1",
+              "eventId": "evt_018f1e90-7b5a-7cc0-8000-000000000005",
+              "kind": "agent.status-reported",
+              "occurredAt": "2026-07-16T12:00:00.000Z",
+              "source": {
+                "kind": "agent-report",
+                "id": "agent-fixture:3",
+                "observedAt": "2026-07-16T12:00:00.000Z",
+                "confidence": "authoritative"
+              },
+              "data": {
+                "phase": "planning",
+                "summary": "Reading contracts"
+              }
+            }
+          },
+          "seen": {
+            "evt_018f1e90-7b5a-7cc0-8000-000000000005": "{\"data\":{\"phase\":\"planning\",\"summary\":\"Reading contracts\"},\"entity\":{\"generation\":3,\"id\":\"agent-fixture\",\"kind\":\"agent\"},\"entityRevision\":\"1\",\"eventId\":\"evt_018f1e90-7b5a-7cc0-8000-000000000005\",\"kind\":\"agent.status-reported\",\"occurredAt\":\"2026-07-16T12:00:00.000Z\",\"schemaVersion\":2,\"seq\":\"1\",\"source\":{\"confidence\":\"authoritative\",\"id\":\"agent-fixture:3\",\"kind\":\"agent-report\",\"observedAt\":\"2026-07-16T12:00:00.000Z\"}}"
+          }
+        },
+        {
+          "highWaterSeq": "1",
+          "paused": false,
+          "corruption": "conflicting duplicate evt_018f1e90-7b5a-7cc0-8000-000000000005",
+          "entities": {
+            "agent:agent-fixture:3": {
+              "entityRevision": "1",
+              "eventId": "evt_018f1e90-7b5a-7cc0-8000-000000000005",
+              "kind": "agent.status-reported",
+              "occurredAt": "2026-07-16T12:00:00.000Z",
+              "source": {
+                "kind": "agent-report",
+                "id": "agent-fixture:3",
+                "observedAt": "2026-07-16T12:00:00.000Z",
+                "confidence": "authoritative"
+              },
+              "data": {
+                "phase": "planning",
+                "summary": "Reading contracts"
+              }
+            }
+          },
+          "seen": {
+            "evt_018f1e90-7b5a-7cc0-8000-000000000005": "{\"data\":{\"phase\":\"planning\",\"summary\":\"Reading contracts\"},\"entity\":{\"generation\":3,\"id\":\"agent-fixture\",\"kind\":\"agent\"},\"entityRevision\":\"1\",\"eventId\":\"evt_018f1e90-7b5a-7cc0-8000-000000000005\",\"kind\":\"agent.status-reported\",\"occurredAt\":\"2026-07-16T12:00:00.000Z\",\"schemaVersion\":2,\"seq\":\"1\",\"source\":{\"confidence\":\"authoritative\",\"id\":\"agent-fixture:3\",\"kind\":\"agent-report\",\"observedAt\":\"2026-07-16T12:00:00.000Z\"}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "sequence-gap",
+      "events": [
+        {
+          "schemaVersion": 2,
+          "eventId": "evt_018f1e90-7b5a-7cc0-8000-000000000005",
+          "seq": "2",
+          "entity": {
+            "kind": "agent",
+            "id": "agent-fixture",
+            "generation": 3
+          },
+          "entityRevision": "1",
+          "occurredAt": "2026-07-16T12:00:00.000Z",
+          "kind": "agent.status-reported",
+          "source": {
+            "kind": "agent-report",
+            "id": "agent-fixture:3",
+            "observedAt": "2026-07-16T12:00:00.000Z",
+            "confidence": "authoritative"
+          },
+          "data": {
+            "phase": "planning",
+            "summary": "Reading contracts"
+          }
+        }
+      ],
+      "prefixes": [
+        {
+          "highWaterSeq": "0",
+          "paused": true,
+          "corruption": null,
+          "entities": {},
+          "seen": {}
+        }
+      ]
+    }
+  ]
+}

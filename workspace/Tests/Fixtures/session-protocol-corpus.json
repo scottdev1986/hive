@@ -1,0 +1,1189 @@
+{
+  "schemaVersion": 1,
+  "valid": [
+    {
+      "name": "session locator",
+      "schema": "sessionLocator",
+      "value": {
+        "schemaVersion": 1,
+        "instanceId": "hive-fixture",
+        "subject": {
+          "kind": "agent",
+          "agentId": "agent-fixture"
+        },
+        "generation": 3,
+        "sessionId": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+        "hostKind": "sessiond",
+        "engineBuildId": "engine-fixture"
+      }
+    },
+    {
+      "name": "terminal geometry",
+      "schema": "terminalGeometry",
+      "value": {
+        "columns": 120,
+        "rows": 40,
+        "widthPx": 1200,
+        "heightPx": 800,
+        "cellWidthPx": 10,
+        "cellHeightPx": 20
+      }
+    },
+    {
+      "name": "session specification",
+      "schema": "sessionSpec",
+      "value": {
+        "schemaVersion": 1,
+        "locator": {
+          "schemaVersion": 1,
+          "instanceId": "hive-fixture",
+          "subject": {
+            "kind": "agent",
+            "agentId": "agent-fixture"
+          },
+          "generation": 3,
+          "sessionId": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+          "hostKind": "sessiond",
+          "engineBuildId": "engine-fixture"
+        },
+        "provider": "codex",
+        "toolSessionId": "tool-session-fixture",
+        "cwd": "/tmp/hive-fixture",
+        "argv": [
+          "/usr/local/bin/codex",
+          "--quiet"
+        ],
+        "environment": {
+          "TERM": "xterm-ghostty"
+        },
+        "expectedExecutable": "/usr/local/bin/codex",
+        "readOnly": false,
+        "capabilityEpoch": 9,
+        "geometry": {
+          "columns": 120,
+          "rows": 40,
+          "widthPx": 1200,
+          "heightPx": 800,
+          "cellWidthPx": 10,
+          "cellHeightPx": 20
+        },
+        "launchGrantId": "grant-fixture",
+        "launchGrantRevision": 2
+      }
+    },
+    {
+      "name": "session inspection",
+      "schema": "sessionInspection",
+      "value": {
+        "schemaVersion": 1,
+        "locator": {
+          "schemaVersion": 1,
+          "instanceId": "hive-fixture",
+          "subject": {
+            "kind": "agent",
+            "agentId": "agent-fixture"
+          },
+          "generation": 3,
+          "sessionId": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+          "hostKind": "sessiond",
+          "engineBuildId": "engine-fixture"
+        },
+        "presence": "present",
+        "complete": true,
+        "hostPid": 4100,
+        "hostStartToken": "4100:123456",
+        "providerRoot": {
+          "pid": 4101,
+          "startToken": "4101:123457",
+          "processGroupId": 4101
+        },
+        "expectedExecutable": "/usr/local/bin/codex",
+        "executableVerified": true,
+        "outputSeq": "4096",
+        "checkpointSeq": "2048",
+        "checkpointAvailable": true,
+        "input": {
+          "state": "FREE",
+          "ownerViewerId": null,
+          "claimId": null
+        },
+        "viewerCount": 1,
+        "geometry": {
+          "columns": 120,
+          "rows": 40,
+          "widthPx": 1200,
+          "heightPx": 800,
+          "cellWidthPx": 10,
+          "cellHeightPx": 20
+        },
+        "resources": {
+          "rssBytes": 16777216
+        },
+        "visibility": {
+          "state": "visible",
+          "workspaceSessionId": "workspace-fixture",
+          "openTerminalRevision": "7",
+          "expiresAt": "2026-07-16T12:00:15.000Z"
+        },
+        "exit": null,
+        "survivors": [],
+        "evidenceAt": "2026-07-16T12:00:00.000Z",
+        "diagnosticIds": []
+      }
+    },
+    {
+      "name": "create result",
+      "schema": "createResult",
+      "value": {
+        "locator": {
+          "schemaVersion": 1,
+          "instanceId": "hive-fixture",
+          "subject": {
+            "kind": "agent",
+            "agentId": "agent-fixture"
+          },
+          "generation": 3,
+          "sessionId": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+          "hostKind": "sessiond",
+          "engineBuildId": "engine-fixture"
+        },
+        "inspection": {
+          "schemaVersion": 1,
+          "locator": {
+            "schemaVersion": 1,
+            "instanceId": "hive-fixture",
+            "subject": {
+              "kind": "agent",
+              "agentId": "agent-fixture"
+            },
+            "generation": 3,
+            "sessionId": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+            "hostKind": "sessiond",
+            "engineBuildId": "engine-fixture"
+          },
+          "presence": "present",
+          "complete": true,
+          "hostPid": 4100,
+          "hostStartToken": "4100:123456",
+          "providerRoot": {
+            "pid": 4101,
+            "startToken": "4101:123457",
+            "processGroupId": 4101
+          },
+          "expectedExecutable": "/usr/local/bin/codex",
+          "executableVerified": true,
+          "outputSeq": "4096",
+          "checkpointSeq": "2048",
+          "checkpointAvailable": true,
+          "input": {
+            "state": "FREE",
+            "ownerViewerId": null,
+            "claimId": null
+          },
+          "viewerCount": 1,
+          "geometry": {
+            "columns": 120,
+            "rows": 40,
+            "widthPx": 1200,
+            "heightPx": 800,
+            "cellWidthPx": 10,
+            "cellHeightPx": 20
+          },
+          "resources": {
+            "rssBytes": 16777216
+          },
+          "visibility": {
+            "state": "visible",
+            "workspaceSessionId": "workspace-fixture",
+            "openTerminalRevision": "7",
+            "expiresAt": "2026-07-16T12:00:15.000Z"
+          },
+          "exit": null,
+          "survivors": [],
+          "evidenceAt": "2026-07-16T12:00:00.000Z",
+          "diagnosticIds": []
+        },
+        "created": true
+      }
+    },
+    {
+      "name": "capture request",
+      "schema": "captureRequest",
+      "value": {
+        "include": "visible-text",
+        "maxRows": 50,
+        "expectedOutputSeq": "4096"
+      }
+    },
+    {
+      "name": "capture result",
+      "schema": "captureResult",
+      "value": {
+        "locator": {
+          "schemaVersion": 1,
+          "instanceId": "hive-fixture",
+          "subject": {
+            "kind": "agent",
+            "agentId": "agent-fixture"
+          },
+          "generation": 3,
+          "sessionId": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+          "hostKind": "sessiond",
+          "engineBuildId": "engine-fixture"
+        },
+        "outputSeq": "4096",
+        "columns": 120,
+        "rows": 40,
+        "screen": "primary",
+        "cursor": {
+          "row": 4,
+          "column": 12,
+          "visible": true
+        },
+        "text": "fixture output",
+        "truncated": false,
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    },
+    {
+      "name": "attach request",
+      "schema": "attachRequest",
+      "value": {
+        "viewerId": "viewer-fixture",
+        "geometry": {
+          "columns": 120,
+          "rows": 40,
+          "widthPx": 1200,
+          "heightPx": 800,
+          "cellWidthPx": 10,
+          "cellHeightPx": 20
+        },
+        "operations": [
+          "view",
+          "human-input",
+          "resize"
+        ]
+      }
+    },
+    {
+      "name": "attach grant",
+      "schema": "attachGrant",
+      "value": {
+        "locator": {
+          "schemaVersion": 1,
+          "instanceId": "hive-fixture",
+          "subject": {
+            "kind": "agent",
+            "agentId": "agent-fixture"
+          },
+          "generation": 3,
+          "sessionId": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+          "hostKind": "sessiond",
+          "engineBuildId": "engine-fixture"
+        },
+        "endpoint": "/tmp/hive-fixture/session.sock",
+        "token": "opaque-token",
+        "expiresAt": "2026-07-16T12:00:30.000Z",
+        "engineBuildId": "engine-fixture",
+        "checkpointSeq": "2048",
+        "outputSeq": "4096",
+        "operations": [
+          "view",
+          "human-input",
+          "resize"
+        ]
+      }
+    },
+    {
+      "name": "visibility request",
+      "schema": "visibilityRequest",
+      "value": {
+        "workspaceSessionId": "workspace-fixture",
+        "workspacePid": 4000,
+        "workspaceStartToken": "4000:123455",
+        "openTerminalRevision": "7"
+      }
+    },
+    {
+      "name": "visibility lease",
+      "schema": "visibilityLease",
+      "value": {
+        "locator": {
+          "schemaVersion": 1,
+          "instanceId": "hive-fixture",
+          "subject": {
+            "kind": "agent",
+            "agentId": "agent-fixture"
+          },
+          "generation": 3,
+          "sessionId": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+          "hostKind": "sessiond",
+          "engineBuildId": "engine-fixture"
+        },
+        "state": "active",
+        "expiresAt": "2026-07-16T12:00:15.000Z",
+        "openTerminalRevision": "7"
+      }
+    },
+    {
+      "name": "resize result",
+      "schema": "resizeResult",
+      "value": {
+        "locator": {
+          "schemaVersion": 1,
+          "instanceId": "hive-fixture",
+          "subject": {
+            "kind": "agent",
+            "agentId": "agent-fixture"
+          },
+          "generation": 3,
+          "sessionId": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+          "hostKind": "sessiond",
+          "engineBuildId": "engine-fixture"
+        },
+        "geometry": {
+          "columns": 120,
+          "rows": 40,
+          "widthPx": 1200,
+          "heightPx": 800,
+          "cellWidthPx": 10,
+          "cellHeightPx": 20
+        },
+        "revision": "8"
+      }
+    },
+    {
+      "name": "automated input metadata",
+      "schema": "automatedInputMetadata",
+      "value": {
+        "transactionId": "txn_018f1e90-7b5a-7cc0-8000-000000000002",
+        "idempotencyKey": "fixture-key",
+        "messageId": "msg_018f1e90-7b5a-7cc0-8000-000000000003",
+        "recipientGeneration": 3,
+        "capabilityEpoch": 9,
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "providerStrategy": "codex-hooks-v1",
+        "submit": "return"
+      }
+    },
+    {
+      "name": "input receipt",
+      "schema": "inputReceipt",
+      "value": {
+        "transactionId": "txn_018f1e90-7b5a-7cc0-8000-000000000002",
+        "messageId": "msg_018f1e90-7b5a-7cc0-8000-000000000003",
+        "state": "written",
+        "byteRange": {
+          "start": "5000",
+          "endExclusive": "5012"
+        },
+        "providerObservation": "pending",
+        "evidenceAt": "2026-07-16T12:00:00.000Z",
+        "diagnosticId": null
+      }
+    },
+    {
+      "name": "termination request",
+      "schema": "terminationRequest",
+      "value": {
+        "mode": "graceful",
+        "reason": "terminal closed",
+        "requestId": "req_018f1e90-7b5a-7cc0-8000-000000000004"
+      }
+    },
+    {
+      "name": "termination result",
+      "schema": "terminationResult",
+      "value": {
+        "locator": {
+          "schemaVersion": 1,
+          "instanceId": "hive-fixture",
+          "subject": {
+            "kind": "agent",
+            "agentId": "agent-fixture"
+          },
+          "generation": 3,
+          "sessionId": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+          "hostKind": "sessiond",
+          "engineBuildId": "engine-fixture"
+        },
+        "state": "terminated",
+        "exit": null,
+        "survivors": [],
+        "errors": []
+      }
+    },
+    {
+      "name": "session event",
+      "schema": "sessionEvent",
+      "value": {
+        "schemaVersion": 1,
+        "eventId": "evt_018f1e90-7b5a-7cc0-8000-000000000005",
+        "eventSeq": "1",
+        "locator": {
+          "schemaVersion": 1,
+          "instanceId": "hive-fixture",
+          "subject": {
+            "kind": "agent",
+            "agentId": "agent-fixture"
+          },
+          "generation": 3,
+          "sessionId": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+          "hostKind": "sessiond",
+          "engineBuildId": "engine-fixture"
+        },
+        "kind": "session.output",
+        "revision": "1",
+        "occurredAt": "2026-07-16T12:00:00.000Z",
+        "data": {
+          "outputSeq": "4096"
+        }
+      }
+    },
+    {
+      "name": "workspace event v2",
+      "schema": "workspaceEventV2",
+      "value": {
+        "schemaVersion": 2,
+        "eventId": "evt_018f1e90-7b5a-7cc0-8000-000000000006",
+        "seq": "2",
+        "entity": {
+          "kind": "agent",
+          "id": "agent-fixture",
+          "generation": 3
+        },
+        "entityRevision": "2",
+        "occurredAt": "2026-07-16T12:00:00.000Z",
+        "kind": "agent.status-reported",
+        "source": {
+          "kind": "agent-report",
+          "id": "agent-fixture:3",
+          "observedAt": "2026-07-16T12:00:00.000Z",
+          "confidence": "authoritative"
+        },
+        "data": {
+          "phase": "testing"
+        }
+      }
+    },
+    {
+      "name": "status update",
+      "schema": "hiveUpdateStatusInput",
+      "value": {
+        "assignmentId": "asg_fixture",
+        "assignmentGeneration": "42",
+        "phase": "testing",
+        "progress": 80,
+        "summary": "Running the shared contract corpus",
+        "blocker": null,
+        "evidenceRefs": [
+          "event:fixture"
+        ],
+        "nextCheckpoint": "Cross-language parity",
+        "freshForSeconds": 120
+      }
+    },
+    {
+      "name": "terminal observation request",
+      "schema": "hiveTerminalObserveInput",
+      "value": {
+        "sessionId": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+        "generation": 3,
+        "include": "visible-text",
+        "maxRows": 50
+      }
+    },
+    {
+      "name": "terminal delivery attempt",
+      "schema": "terminalDeliveryAttempt",
+      "value": {
+        "schemaVersion": 1,
+        "transactionId": "txn_018f1e90-7b5a-7cc0-8000-000000000002",
+        "messageId": "msg_018f1e90-7b5a-7cc0-8000-000000000003",
+        "locator": {
+          "schemaVersion": 1,
+          "instanceId": "hive-fixture",
+          "subject": {
+            "kind": "agent",
+            "agentId": "agent-fixture"
+          },
+          "generation": 3,
+          "sessionId": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+          "hostKind": "sessiond",
+          "engineBuildId": "engine-fixture"
+        },
+        "recipientGeneration": 3,
+        "adapter": "codex-tui",
+        "priority": "normal",
+        "intent": "instruction",
+        "evidence": "transport-written",
+        "byteRange": {
+          "start": "5000",
+          "endExclusive": "5012"
+        },
+        "nativeEndpointReceipt": null,
+        "startedAt": "2026-07-16T12:00:00.000Z",
+        "completedAt": "2026-07-16T12:00:00.010Z",
+        "evidenceRefs": [
+          "session-event:1"
+        ]
+      }
+    }
+  ],
+  "invalid": [
+    {
+      "name": "locator rejects display-name fallback",
+      "schema": "sessionLocator",
+      "value": {
+        "schemaVersion": 1,
+        "instanceId": "hive-fixture",
+        "subject": {
+          "kind": "agent",
+          "agentId": "agent-fixture"
+        },
+        "generation": 3,
+        "sessionId": "codex",
+        "hostKind": "sessiond",
+        "engineBuildId": "engine-fixture"
+      }
+    },
+    {
+      "name": "geometry rejects zero",
+      "schema": "terminalGeometry",
+      "value": {
+        "columns": 0,
+        "rows": 40,
+        "widthPx": 1200,
+        "heightPx": 800,
+        "cellWidthPx": 10,
+        "cellHeightPx": 20
+      }
+    },
+    {
+      "name": "geometry enforces active-cell cap",
+      "schema": "terminalGeometry",
+      "value": {
+        "columns": 501,
+        "rows": 500,
+        "widthPx": 1200,
+        "heightPx": 800,
+        "cellWidthPx": 10,
+        "cellHeightPx": 20
+      }
+    },
+    {
+      "name": "spec rejects empty argv",
+      "schema": "sessionSpec",
+      "value": {
+        "schemaVersion": 1,
+        "locator": {
+          "schemaVersion": 1,
+          "instanceId": "hive-fixture",
+          "subject": {
+            "kind": "agent",
+            "agentId": "agent-fixture"
+          },
+          "generation": 3,
+          "sessionId": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+          "hostKind": "sessiond",
+          "engineBuildId": "engine-fixture"
+        },
+        "provider": "codex",
+        "toolSessionId": "tool-session-fixture",
+        "cwd": "/tmp/hive-fixture",
+        "argv": [],
+        "environment": {
+          "TERM": "xterm-ghostty"
+        },
+        "expectedExecutable": "/usr/local/bin/codex",
+        "readOnly": false,
+        "capabilityEpoch": 9,
+        "geometry": {
+          "columns": 120,
+          "rows": 40,
+          "widthPx": 1200,
+          "heightPx": 800,
+          "cellWidthPx": 10,
+          "cellHeightPx": 20
+        },
+        "launchGrantId": "grant-fixture",
+        "launchGrantRevision": 2
+      }
+    },
+    {
+      "name": "inspection rejects invented state",
+      "schema": "sessionInspection",
+      "value": {
+        "schemaVersion": 1,
+        "locator": {
+          "schemaVersion": 1,
+          "instanceId": "hive-fixture",
+          "subject": {
+            "kind": "agent",
+            "agentId": "agent-fixture"
+          },
+          "generation": 3,
+          "sessionId": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+          "hostKind": "sessiond",
+          "engineBuildId": "engine-fixture"
+        },
+        "presence": "absent",
+        "complete": true,
+        "hostPid": 4100,
+        "hostStartToken": "4100:123456",
+        "providerRoot": {
+          "pid": 4101,
+          "startToken": "4101:123457",
+          "processGroupId": 4101
+        },
+        "expectedExecutable": "/usr/local/bin/codex",
+        "executableVerified": true,
+        "outputSeq": "4096",
+        "checkpointSeq": "2048",
+        "checkpointAvailable": true,
+        "input": {
+          "state": "FREE",
+          "ownerViewerId": null,
+          "claimId": null
+        },
+        "viewerCount": 1,
+        "geometry": {
+          "columns": 120,
+          "rows": 40,
+          "widthPx": 1200,
+          "heightPx": 800,
+          "cellWidthPx": 10,
+          "cellHeightPx": 20
+        },
+        "resources": {
+          "rssBytes": 16777216
+        },
+        "visibility": {
+          "state": "visible",
+          "workspaceSessionId": "workspace-fixture",
+          "openTerminalRevision": "7",
+          "expiresAt": "2026-07-16T12:00:15.000Z"
+        },
+        "exit": null,
+        "survivors": [],
+        "evidenceAt": "2026-07-16T12:00:00.000Z",
+        "diagnosticIds": []
+      }
+    },
+    {
+      "name": "create rejects false success",
+      "schema": "createResult",
+      "value": {
+        "locator": {
+          "schemaVersion": 1,
+          "instanceId": "hive-fixture",
+          "subject": {
+            "kind": "agent",
+            "agentId": "agent-fixture"
+          },
+          "generation": 3,
+          "sessionId": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+          "hostKind": "sessiond",
+          "engineBuildId": "engine-fixture"
+        },
+        "inspection": {
+          "schemaVersion": 1,
+          "locator": {
+            "schemaVersion": 1,
+            "instanceId": "hive-fixture",
+            "subject": {
+              "kind": "agent",
+              "agentId": "agent-fixture"
+            },
+            "generation": 3,
+            "sessionId": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+            "hostKind": "sessiond",
+            "engineBuildId": "engine-fixture"
+          },
+          "presence": "present",
+          "complete": true,
+          "hostPid": 4100,
+          "hostStartToken": "4100:123456",
+          "providerRoot": {
+            "pid": 4101,
+            "startToken": "4101:123457",
+            "processGroupId": 4101
+          },
+          "expectedExecutable": "/usr/local/bin/codex",
+          "executableVerified": true,
+          "outputSeq": "4096",
+          "checkpointSeq": "2048",
+          "checkpointAvailable": true,
+          "input": {
+            "state": "FREE",
+            "ownerViewerId": null,
+            "claimId": null
+          },
+          "viewerCount": 1,
+          "geometry": {
+            "columns": 120,
+            "rows": 40,
+            "widthPx": 1200,
+            "heightPx": 800,
+            "cellWidthPx": 10,
+            "cellHeightPx": 20
+          },
+          "resources": {
+            "rssBytes": 16777216
+          },
+          "visibility": {
+            "state": "visible",
+            "workspaceSessionId": "workspace-fixture",
+            "openTerminalRevision": "7",
+            "expiresAt": "2026-07-16T12:00:15.000Z"
+          },
+          "exit": null,
+          "survivors": [],
+          "evidenceAt": "2026-07-16T12:00:00.000Z",
+          "diagnosticIds": []
+        },
+        "created": false
+      }
+    },
+    {
+      "name": "capture request enforces row cap",
+      "schema": "captureRequest",
+      "value": {
+        "include": "metadata",
+        "maxRows": 201
+      }
+    },
+    {
+      "name": "capture rejects malformed digest",
+      "schema": "captureResult",
+      "value": {
+        "locator": {
+          "schemaVersion": 1,
+          "instanceId": "hive-fixture",
+          "subject": {
+            "kind": "agent",
+            "agentId": "agent-fixture"
+          },
+          "generation": 3,
+          "sessionId": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+          "hostKind": "sessiond",
+          "engineBuildId": "engine-fixture"
+        },
+        "outputSeq": "4096",
+        "columns": 120,
+        "rows": 40,
+        "screen": "primary",
+        "cursor": {
+          "row": 4,
+          "column": 12,
+          "visible": true
+        },
+        "text": "fixture output",
+        "truncated": false,
+        "sha256": "bad"
+      }
+    },
+    {
+      "name": "attach rejects unknown operation",
+      "schema": "attachRequest",
+      "value": {
+        "viewerId": "v",
+        "geometry": {
+          "columns": 120,
+          "rows": 40,
+          "widthPx": 1200,
+          "heightPx": 800,
+          "cellWidthPx": 10,
+          "cellHeightPx": 20
+        },
+        "operations": [
+          "focus"
+        ]
+      }
+    },
+    {
+      "name": "grant requires endpoint",
+      "schema": "attachGrant",
+      "value": {
+        "locator": {
+          "schemaVersion": 1,
+          "instanceId": "hive-fixture",
+          "subject": {
+            "kind": "agent",
+            "agentId": "agent-fixture"
+          },
+          "generation": 3,
+          "sessionId": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+          "hostKind": "sessiond",
+          "engineBuildId": "engine-fixture"
+        },
+        "endpoint": "",
+        "token": "opaque-token",
+        "expiresAt": "2026-07-16T12:00:30.000Z",
+        "engineBuildId": "engine-fixture",
+        "checkpointSeq": "2048",
+        "outputSeq": "4096",
+        "operations": [
+          "view",
+          "human-input",
+          "resize"
+        ]
+      }
+    },
+    {
+      "name": "visibility rejects invalid pid",
+      "schema": "visibilityRequest",
+      "value": {
+        "workspaceSessionId": "workspace-fixture",
+        "workspacePid": 0,
+        "workspaceStartToken": "4000:123455",
+        "openTerminalRevision": "7"
+      }
+    },
+    {
+      "name": "lease rejects inactive state",
+      "schema": "visibilityLease",
+      "value": {
+        "locator": {
+          "schemaVersion": 1,
+          "instanceId": "hive-fixture",
+          "subject": {
+            "kind": "agent",
+            "agentId": "agent-fixture"
+          },
+          "generation": 3,
+          "sessionId": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+          "hostKind": "sessiond",
+          "engineBuildId": "engine-fixture"
+        },
+        "state": "expired",
+        "expiresAt": "2026-07-16T12:00:15.000Z",
+        "openTerminalRevision": "7"
+      }
+    },
+    {
+      "name": "resize rejects negative revision",
+      "schema": "resizeResult",
+      "value": {
+        "locator": {
+          "schemaVersion": 1,
+          "instanceId": "hive-fixture",
+          "subject": {
+            "kind": "agent",
+            "agentId": "agent-fixture"
+          },
+          "generation": 3,
+          "sessionId": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+          "hostKind": "sessiond",
+          "engineBuildId": "engine-fixture"
+        },
+        "geometry": {
+          "columns": 120,
+          "rows": 40,
+          "widthPx": 1200,
+          "heightPx": 800,
+          "cellWidthPx": 10,
+          "cellHeightPx": 20
+        },
+        "revision": "-1"
+      }
+    },
+    {
+      "name": "resize rejects uint64 overflow",
+      "schema": "resizeResult",
+      "value": {
+        "locator": {
+          "schemaVersion": 1,
+          "instanceId": "hive-fixture",
+          "subject": {
+            "kind": "agent",
+            "agentId": "agent-fixture"
+          },
+          "generation": 3,
+          "sessionId": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+          "hostKind": "sessiond",
+          "engineBuildId": "engine-fixture"
+        },
+        "geometry": {
+          "columns": 120,
+          "rows": 40,
+          "widthPx": 1200,
+          "heightPx": 800,
+          "cellWidthPx": 10,
+          "cellHeightPx": 20
+        },
+        "revision": "18446744073709551616"
+      }
+    },
+    {
+      "name": "automation rejects unknown submit",
+      "schema": "automatedInputMetadata",
+      "value": {
+        "transactionId": "txn_018f1e90-7b5a-7cc0-8000-000000000002",
+        "idempotencyKey": "fixture-key",
+        "messageId": "msg_018f1e90-7b5a-7cc0-8000-000000000003",
+        "recipientGeneration": 3,
+        "capabilityEpoch": 9,
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "providerStrategy": "codex-hooks-v1",
+        "submit": "enter"
+      }
+    },
+    {
+      "name": "receipt rejects false read evidence",
+      "schema": "inputReceipt",
+      "value": {
+        "transactionId": "txn_018f1e90-7b5a-7cc0-8000-000000000002",
+        "messageId": "msg_018f1e90-7b5a-7cc0-8000-000000000003",
+        "state": "read",
+        "byteRange": {
+          "start": "5000",
+          "endExclusive": "5012"
+        },
+        "providerObservation": "pending",
+        "evidenceAt": "2026-07-16T12:00:00.000Z",
+        "diagnosticId": null
+      }
+    },
+    {
+      "name": "termination rejects detach",
+      "schema": "terminationRequest",
+      "value": {
+        "mode": "detach",
+        "reason": "close",
+        "requestId": "req_018f1e90-7b5a-7cc0-8000-000000000004"
+      }
+    },
+    {
+      "name": "termination result rejects absent",
+      "schema": "terminationResult",
+      "value": {
+        "locator": {
+          "schemaVersion": 1,
+          "instanceId": "hive-fixture",
+          "subject": {
+            "kind": "agent",
+            "agentId": "agent-fixture"
+          },
+          "generation": 3,
+          "sessionId": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+          "hostKind": "sessiond",
+          "engineBuildId": "engine-fixture"
+        },
+        "state": "absent",
+        "exit": null,
+        "survivors": [],
+        "errors": []
+      }
+    },
+    {
+      "name": "session event rejects wrong version",
+      "schema": "sessionEvent",
+      "value": {
+        "schemaVersion": 2,
+        "eventId": "evt_018f1e90-7b5a-7cc0-8000-000000000005",
+        "eventSeq": "1",
+        "locator": {
+          "schemaVersion": 1,
+          "instanceId": "hive-fixture",
+          "subject": {
+            "kind": "agent",
+            "agentId": "agent-fixture"
+          },
+          "generation": 3,
+          "sessionId": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+          "hostKind": "sessiond",
+          "engineBuildId": "engine-fixture"
+        },
+        "kind": "session.output",
+        "revision": "1",
+        "occurredAt": "2026-07-16T12:00:00.000Z",
+        "data": {
+          "outputSeq": "4096"
+        }
+      }
+    },
+    {
+      "name": "workspace event rejects screen source",
+      "schema": "workspaceEventV2",
+      "value": {
+        "schemaVersion": 2,
+        "eventId": "evt_018f1e90-7b5a-7cc0-8000-000000000006",
+        "seq": "2",
+        "entity": {
+          "kind": "agent",
+          "id": "agent-fixture",
+          "generation": 3
+        },
+        "entityRevision": "2",
+        "occurredAt": "2026-07-16T12:00:00.000Z",
+        "kind": "agent.status-reported",
+        "source": {
+          "kind": "terminal-screen",
+          "id": "screen",
+          "observedAt": "2026-07-16T12:00:00.000Z",
+          "confidence": "low"
+        },
+        "data": {
+          "phase": "testing"
+        }
+      }
+    },
+    {
+      "name": "blocked status requires blocker",
+      "schema": "hiveUpdateStatusInput",
+      "value": {
+        "assignmentId": "asg_fixture",
+        "assignmentGeneration": "42",
+        "phase": "blocked",
+        "summary": "Blocked",
+        "blocker": null,
+        "evidenceRefs": [],
+        "freshForSeconds": 120
+      }
+    },
+    {
+      "name": "observation rejects scrollback-sized request",
+      "schema": "hiveTerminalObserveInput",
+      "value": {
+        "sessionId": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+        "generation": 3,
+        "include": "visible-text",
+        "maxRows": 201
+      }
+    },
+    {
+      "name": "terminal attempt rejects recipient acknowledgment",
+      "schema": "terminalDeliveryAttempt",
+      "value": {
+        "schemaVersion": 1,
+        "transactionId": "txn_018f1e90-7b5a-7cc0-8000-000000000002",
+        "messageId": "msg_018f1e90-7b5a-7cc0-8000-000000000003",
+        "locator": {
+          "schemaVersion": 1,
+          "instanceId": "hive-fixture",
+          "subject": {
+            "kind": "agent",
+            "agentId": "agent-fixture"
+          },
+          "generation": 3,
+          "sessionId": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+          "hostKind": "sessiond",
+          "engineBuildId": "engine-fixture"
+        },
+        "recipientGeneration": 3,
+        "adapter": "codex-tui",
+        "priority": "normal",
+        "intent": "instruction",
+        "evidence": "recipient-acknowledged",
+        "byteRange": {
+          "start": "5000",
+          "endExclusive": "5012"
+        },
+        "nativeEndpointReceipt": null,
+        "startedAt": "2026-07-16T12:00:00.000Z",
+        "completedAt": "2026-07-16T12:00:00.010Z",
+        "evidenceRefs": [
+          "session-event:1"
+        ]
+      }
+    },
+    {
+      "name": "terminal attempt requires one receipt form",
+      "schema": "terminalDeliveryAttempt",
+      "value": {
+        "schemaVersion": 1,
+        "transactionId": "txn_018f1e90-7b5a-7cc0-8000-000000000002",
+        "messageId": "msg_018f1e90-7b5a-7cc0-8000-000000000003",
+        "locator": {
+          "schemaVersion": 1,
+          "instanceId": "hive-fixture",
+          "subject": {
+            "kind": "agent",
+            "agentId": "agent-fixture"
+          },
+          "generation": 3,
+          "sessionId": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+          "hostKind": "sessiond",
+          "engineBuildId": "engine-fixture"
+        },
+        "recipientGeneration": 3,
+        "adapter": "codex-tui",
+        "priority": "normal",
+        "intent": "instruction",
+        "evidence": "transport-written",
+        "byteRange": null,
+        "nativeEndpointReceipt": null,
+        "startedAt": "2026-07-16T12:00:00.000Z",
+        "completedAt": "2026-07-16T12:00:00.010Z",
+        "evidenceRefs": [
+          "session-event:1"
+        ]
+      }
+    }
+  ],
+  "frameHeaders": {
+    "valid": [
+      {
+        "name": "hello",
+        "fields": {
+          "type": "HELLO",
+          "flags": 0,
+          "payloadLength": 128,
+          "requestId": "42",
+          "streamSeq": "0"
+        },
+        "hex": "48565431010000010000000000000080000000000000002a0000000000000000"
+      },
+      {
+        "name": "maximum output chunk",
+        "fields": {
+          "type": "OUTPUT",
+          "flags": 10,
+          "payloadLength": 65536,
+          "requestId": "0",
+          "streamSeq": "18446744073709550000"
+        },
+        "hex": "4856543101000205000a0000000100000000000000000000fffffffffffff9b0"
+      }
+    ],
+    "ignored": [
+      {
+        "name": "unknown optional frame",
+        "hex": "48565431010080010000000000000080000000000000002a0000000000000000"
+      }
+    ],
+    "invalid": [
+      {
+        "name": "bad magic",
+        "error": "MALFORMED_FRAME",
+        "hex": "00565431010000010000000000000080000000000000002a0000000000000000"
+      },
+      {
+        "name": "major mismatch",
+        "error": "PROTOCOL_MISMATCH",
+        "hex": "48565431020000010000000000000080000000000000002a0000000000000000"
+      },
+      {
+        "name": "reserved bits",
+        "error": "MALFORMED_FRAME",
+        "hex": "48565431010000010000000100000080000000000000002a0000000000000000"
+      },
+      {
+        "name": "unknown flags",
+        "error": "MALFORMED_FRAME",
+        "hex": "48565431010000010010000000000080000000000000002a0000000000000000"
+      },
+      {
+        "name": "oversized raw chunk",
+        "error": "FRAME_TOO_LARGE",
+        "hex": "4856543101000205000a0000000100010000000000000000fffffffffffff9b0"
+      },
+      {
+        "name": "unknown mandatory frame",
+        "error": "UNSUPPORTED_FRAME",
+        "hex": "48565431010070000000000000000080000000000000002a0000000000000000"
+      }
+    ]
+  }
+}
