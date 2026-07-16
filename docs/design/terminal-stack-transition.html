@@ -371,8 +371,8 @@ to detached hosts; a host crash can lose only its own generation.</pre>
   "progress": 65,
   "summary": "Short, user-facing present tense",
   "blocker": null,
-  "taskId": "task_...",
-  "taskRevision": 12,
+  "assignmentId": "asg_...",
+  "assignmentRevision": 12,
   "evidenceRefs": ["file:...", "test:..."],
   "nextCheckpoint": "Replay test passes"
 }</pre>
@@ -436,8 +436,8 @@ to detached hosts; a host crash can lose only its own generation.</pre>
   → provider delivery scheduler: turn/tool boundary policy
   → sessiond input arbiter: wait behind human claim
   → provider-specific encoder / TUI
-  → observed provider receipt
-  → agent acknowledgement / applied evidence</pre>
+  → provider-observed evidence
+  → communication-ledger acknowledgment / applied evidence</pre>
 
         <div class="state-flow" aria-label="Input ownership state machine">
           <article class="state"><strong>FREE</strong><p>Human claim or one queued automation transaction may begin.</p></article>
@@ -454,7 +454,7 @@ to detached hosts; a host crash can lose only its own generation.</pre>
               <tr><td>Hierarchy edges</td><td><strong>Edge policy is supplied by The Queen's Hive and evaluated by the daemon; transport treats the authorization decision as opaque.</strong> Today's flat queen↔workers policy is the shipping baseline; the transport carries an authorization event ID either way.</td><td>One policy hook is shared by MCP, CLI, daemon, and UI tests. UI visibility does not grant authority. Edge rules live in <a href="agentic-hierarchy.html">agentic-hierarchy.html</a> and the communication contract.</td></tr>
               <tr><td>Priority</td><td><strong>normal, steer, urgent, critical keep existing semantics.</strong></td><td>Provider matrix verifies normal/steer boundaries, urgent cancellation, critical write revocation/recovery.</td></tr>
               <tr><td>Human claim</td><td><strong>Acquired before first input byte; released only on submit, cancel, or explicit discard/recovery.</strong></td><td>Crash at every claim transition produces no interleave and no timed unlock.</td></tr>
-              <tr><td>Delivery lifecycle</td><td><strong>queued → authorized → injected → provider_acknowledged → agent_acknowledged → applied, with rejected and in_doubt terminals.</strong></td><td>No stage is inferred from elapsed time. UI distinguishes unheard from injected and applied.</td></tr>
+              <tr><td>Delivery evidence</td><td><strong>Terminal transport records immutable attempt events; the communication fabric owns the canonical receipt projection.</strong></td><td>No stage is inferred from elapsed time. See <a href="hive-communication.html">hive-communication.html</a>; the UI can distinguish unheard, transport-written, provider-observed, acknowledged, and applied without terminal code owning those transitions.</td></tr>
               <tr><td>Payload handling</td><td><strong>At least 1 MiB; streamed to the PTY; never placed in argv, environment, process listings, or ordinary logs.</strong></td><td>Exact digest under backpressure, bracketed paste, restart, and redaction tests.</td></tr>
             </tbody>
           </table>
@@ -1298,8 +1298,7 @@ export type SessionEvent = Readonly&lt;{
               <tr><td>buffered</td><td>Host has all bytes and verified length/digest; PTY received none.</td><td>Authorized, ready, injected, or read.</td></tr>
               <tr><td>committed</td><td>Host write queue owns one encoded contiguous byte range.</td><td>Kernel/provider consumed it.</td></tr>
               <tr><td>written</td><td>PTY master accepted the complete range in order.</td><td>Provider UI accepted or agent read it.</td></tr>
-              <tr><td>provider-acknowledged</td><td>A supported provider event/session transcript proves later activity under §25.</td><td>Agent understood or applied it.</td></tr>
-              <tr><td>agent-acknowledged / applied</td><td>Authenticated recipient report references the message and, for applied, the resulting artifact/state revision.</td><td>Authority to approve, land, or change lifecycle.</td></tr>
+              <tr><td>provider-observed</td><td>A supported provider marker or boundary occurred after the matching delivery attempt under §25.</td><td>Agent understood, acknowledged, or applied it.</td></tr>
             </tbody>
           </table>
         </div>
@@ -1437,7 +1436,7 @@ ghostty_result_e hive_ghostty_terminal_checkpoint_import_v1(
             <tbody>
               <tr><td>process / terminal health</td><td><strong>sessiond host evidence only</strong><span>Alive, PTY open, attach health, backpressure, output high-water, exit/survivor evidence.</span></td><td>Heartbeat every 5 s; show delayed after 10 s and disconnected/unknown after 15 s. Never infer dead from a missing viewer.</td></tr>
               <tr><td>provider lifecycle</td><td><strong>structured app-server, then provider hooks, then transcript telemetry</strong><span>Terminal hints are low-confidence diagnostics and cannot create a turn boundary.</span></td><td>Source freshness becomes stale after 30 s, but staleness does not rewrite the last proven state to idle or dead.</td></tr>
-              <tr><td>phase / progress / summary / blocker</td><td><strong>authenticated agent report, bounded by live task revision</strong><span>Provider lifecycle may contradict and visually annotate; it does not silently overwrite agent intent.</span></td><td>Agent chooses 30–600 s, default 120 s. After expiry, show stale and exclude from rollup counts that claim current work.</td></tr>
+              <tr><td>phase / progress / summary / blocker</td><td><strong>authenticated agent report, bounded by the caller’s live Assignment revision</strong><span>Provider lifecycle may contradict and visually annotate; it does not silently overwrite agent intent.</span></td><td>Agent chooses 30–600 s, default 120 s. After expiry, show stale and exclude from rollup counts that claim current work.</td></tr>
               <tr><td>task, gate, approval, land result</td><td><strong>daemon records only</strong><span>Today that means the flat assignment and landing records; The Queen's Hive defines the task/review/gate records that extend them. An agent can report evidence but cannot make these authoritative transitions, and no T0–T7 exit requires the future records to exist.</span></td><td>No timer. Superseded by a higher entity revision or explicit invalidation.</td></tr>
               <tr><td>message receipt</td><td><strong>delivery ledger under §25</strong><span>Transport, provider, agent acknowledgment, and applied evidence remain separate fields.</span></td><td>Durable until terminal message state; provider evidence must occur after injection.</td></tr>
               <tr><td>attention</td><td><strong>union of unhandled authoritative/provider/agent signals</strong><span>Higher severity wins; acknowledgment records viewer+revision and never deletes the cause.</span></td><td>Clears only when its cause revision resolves or an authorized actor acknowledges that exact revision.</td></tr>
@@ -1449,8 +1448,8 @@ ghostty_result_e hive_ghostty_terminal_checkpoint_import_v1(
           <article class="panel">
             <h3><code>hive_update_status</code></h3>
             <pre aria-label="MCP status update input">{
-  "taskId": "tsk_…",
-  "taskRevision": "42",
+  "assignmentId": "asg_…",
+  "assignmentRevision": "42",
   "phase": "planning|implementing|testing|reviewing|blocked|complete",
   "progress": 0,
   "summary": "1–280 UTF-8 characters",
@@ -1460,8 +1459,8 @@ ghostty_result_e hive_ghostty_terminal_checkpoint_import_v1(
   "freshForSeconds": 120
 }</pre>
             <ul class="clean">
-              <li>Add capability action <code>status:write</code> to the existing <code>hv1</code> capability system. Minimum role is <code>writer</code>; the subject must equal the capability’s bound agent and exact generation. Operator/orchestrator task actions cannot impersonate a worker report; hierarchy delegation is defined later as a separate source.</li>
-              <li>The server binds agent ID, generation, role, tenant, capability epoch, issuer, and session from the authenticated channel; none are accepted from arguments. Task ID/revision must be the current assignment.</li>
+              <li>Add capability action <code>status:write</code> to the existing <code>hv1</code> capability system and grant it to both reader and writer roles. The subject must equal the capability’s bound agent and exact generation; the daemon also requires that exact incarnation to hold the named open Assignment. Reporting status grants no branch, landing, approval, or lifecycle authority.</li>
+              <li>The server binds agent ID, generation, role, tenant, capability epoch, issuer, and session from the authenticated channel; none are accepted from arguments. Assignment ID/revision must match the caller’s current Assignment. The hierarchy transition later adds task-bound status as a distinct source rather than making T0–T7 depend on future Task records.</li>
               <li><code>progress</code> is optional integer 0–100. <code>blocker</code> is required and 1–1000 characters when phase is blocked, otherwise null. “complete” is a reported phase, not task completion or approval.</li>
               <li>Each accepted call appends an immutable event and returns event sequence, report revision, expiry, and current conflicts. Retries use request ID and identical digest.</li>
             </ul>
@@ -1495,7 +1494,7 @@ ghostty_result_e hive_ghostty_terminal_checkpoint_import_v1(
           </article>
           <article class="panel">
             <h3>Visible status composition</h3>
-            <p>The rail’s primary label is reported phase/summary when fresh, otherwise the last provider lifecycle with a stale marker, otherwise terminal/process health. Progress appears only from a fresh authenticated report. The inspector always exposes the source stack, last evidence time, conflicts, task revision, terminal health, message receipts, and why an action is disabled. Red/orange attention comes only from unresolved typed events, never from color or phrases inside the TUI.</p>
+            <p>The rail’s primary label is reported phase/summary when fresh, otherwise the last provider lifecycle with a stale marker, otherwise terminal/process health. Progress appears only from a fresh authenticated report. The inspector always exposes the source stack, last evidence time, conflicts, Assignment revision (and, after the hierarchy transition, Task revision), terminal health, message receipts, and why an action is disabled. Red/orange attention comes only from unresolved typed events, never from color or phrases inside the TUI.</p>
           </article>
         </div>
       </div>
@@ -1512,10 +1511,10 @@ ghostty_result_e hive_ghostty_terminal_checkpoint_import_v1(
           <table>
             <thead><tr><th>Adapter</th><th>Readiness / turn evidence</th><th>Approval / modal evidence</th><th>Strongest automatic receipt</th></tr></thead>
             <tbody>
-              <tr><td>Claude TUI</td><td><strong>SessionStart, UserPromptSubmit, Stop, PostToolUse</strong><span>Provider session ID plus host/process health. Idle injection is permitted only after a proven Stop/SessionStart-ready state and no unresolved modal event.</span></td><td>Notification and hook payloads; unknown notification types block automated delivery until classified.</td><td>Later UserPromptSubmit/turn-start tied to the same session after injection: provider-acknowledged.</td></tr>
-              <tr><td>Codex TUI</td><td><strong>SessionStart, UserPromptSubmit, Stop, PostToolUse</strong><span>Same exact-generation constraints. Unsupported/missing hooks degrade receipt, not safety.</span></td><td>Approval-request events when available; unclassified modal output blocks delivery.</td><td>Later matching turn-start after injection: provider-acknowledged.</td></tr>
-              <tr><td>Codex app-server</td><td><strong>Native session/turn state and IDs</strong><span>Use its structured input endpoint instead of terminal keystrokes when adapter conformance is green.</span></td><td>Structured approval and request state.</td><td>Accepted input/turn ID: provider-acknowledged; resulting agent/tool event may advance later receipts.</td></tr>
-              <tr><td>Grok TUI</td><td><strong>Preassigned exact session ID, process health, transcript activity</strong><span>No hook boundary is assumed. Idle/readiness remains conservative and provider-version specific.</span></td><td>No structured proof in v1; a possible modal blocks automatic delivery and requests attention.</td><td>Exact session transcript last-activity advancing after injection: provider-acknowledged. Otherwise remain injected/in-doubt.</td></tr>
+              <tr><td>Claude TUI</td><td><strong>SessionStart, UserPromptSubmit, Stop, PostToolUse</strong><span>Provider session ID plus host/process health. Idle injection is permitted only after a proven Stop/SessionStart-ready state and no unresolved modal event.</span></td><td>Notification and hook payloads; unknown notification types block automated delivery until classified.</td><td>Later UserPromptSubmit/turn-start tied to the same session after injection: provider-observed.</td></tr>
+              <tr><td>Codex TUI</td><td><strong>SessionStart, UserPromptSubmit, Stop, PostToolUse</strong><span>Same exact-generation constraints. Unsupported/missing hooks degrade receipt, not safety.</span></td><td>Approval-request events when available; unclassified modal output blocks delivery.</td><td>Later matching turn-start after injection: provider-observed.</td></tr>
+              <tr><td>Codex app-server</td><td><strong>Native session/turn state and IDs</strong><span>Use its structured input endpoint instead of terminal keystrokes when adapter conformance is green.</span></td><td>Structured approval and request state.</td><td>Accepted input/turn ID: provider-observed; resulting agent/tool event may advance later receipts.</td></tr>
+              <tr><td>Grok TUI</td><td><strong>Preassigned exact session ID, process health, transcript activity</strong><span>No hook boundary is assumed. Idle/readiness remains conservative and provider-version specific.</span></td><td>No structured proof in v1; a possible modal blocks automatic delivery and requests attention.</td><td>Exact session transcript last-activity advancing after injection: provider-observed. Otherwise remain injected/in-doubt.</td></tr>
             </tbody>
           </table>
         </div>
@@ -1523,27 +1522,23 @@ ghostty_result_e hive_ghostty_terminal_checkpoint_import_v1(
         <div class="callout"><strong>Envelope and MCP surface live in the communication contract.</strong> The canonical MessageEnvelope v2 schema, the <code>hive_send</code>/<code>hive_inbox</code>/<code>hive_read_message</code>/<code>hive_ack_message</code> surface, the record-per-stage delivery model, and the staged migration away from today's name-keyed v1 rows are owned by <a href="hive-communication.html">hive-communication.html</a> — one schema, one owner. This section binds only what the terminal foundation must prove: provider readiness evidence, injection transactions, and the receipt ladder below, implemented first against today's flat queen→workers policy and extended by hierarchy routing later.</div>
 
         <div class="table-wrap compact">
-          <table>
-            <thead><tr><th>Message state</th><th>Transition proof</th><th>Retry / operator rule</th></tr></thead>
-            <tbody>
-              <tr><td>queued</td><td>Durable immutable envelope, recipient locator/generation/epoch, sender capability proof, priority, body digest, created/expiry times.</td><td>May be re-evaluated; no PTY bytes exist.</td></tr>
-              <tr><td>authorized</td><td>Current hierarchy edge, capability epoch, recipient state, task policy, size, and priority revalidated for this attempt.</td><td>Authorization revocation returns to rejected, never injected.</td></tr>
-              <tr><td>injected</td><td>One §22 transaction is fully written to the exact provider PTY or accepted by the native provider endpoint.</td><td>Never auto-inject the same committed ID again. Reconcile using ledger/provider evidence.</td></tr>
-              <tr><td>provider-acknowledged</td><td>One adapter-specific proof from the table above occurred after injection under the same provider session.</td><td>May await explicit agent acknowledgment; it is not application.</td></tr>
-              <tr><td>agent-acknowledged</td><td>Authenticated recipient references message ID and digest using the current capability/session.</td><td>Sender may stop reminders; task state is unchanged.</td></tr>
-              <tr><td>applied</td><td>Recipient references message ID plus resulting task/artifact/event revision the daemon can resolve.</td><td>Does not approve/land unless the separate authority does so.</td></tr>
-              <tr><td>rejected</td><td>Permanent authority, generation, expiry, policy, or payload failure before injection.</td><td>New intent requires a new message ID.</td></tr>
-              <tr><td>in-doubt</td><td>Connection/process evidence was lost at or after commit and outcome cannot be proven.</td><td>Do not repeat automatically. Inspect exact transaction and ask operator if still unknowable.</td></tr>
-            </tbody>
-          </table>
-        </div>
+  <table>
+    <thead><tr><th>Terminal evidence</th><th>Exact meaning</th><th>Does not mean</th></tr></thead>
+    <tbody>
+      <tr><td>transport-written</td><td>The sessiond transaction was committed and fully written to the exact provider PTY, or the native provider endpoint accepted the matching attempt.</td><td>The provider observed it, the agent understood it, or the work was applied.</td></tr>
+      <tr><td>provider-observed</td><td>An adapter-specific provider marker or boundary occurred after the matching attempt under the same provider session.</td><td>The recipient acknowledged, understood, or applied the message.</td></tr>
+      <tr><td>attempt-in-doubt</td><td>The proof boundary was lost at or after commit and the attempt outcome cannot be established.</td><td>Permission to repeat the body automatically.</td></tr>
+    </tbody>
+  </table>
+</div>
+<div class="callout"><strong>One evidence stream, one projection owner.</strong> Sessiond emits an immutable <code>DeliveryAttempt</code> outcome with the transaction ID, message ID, exact locator/generation, byte range or native endpoint receipt, timestamps, and evidence references. The communication scheduler consumes those events, owns retry/idempotency decisions, and projects the canonical message lifecycle defined in <a href="hive-communication.html">hive-communication.html</a>.</div>
 
         <div class="split">
           <article class="panel">
             <h3>Busy, idle, and priority</h3>
             <ul class="clean">
               <li><strong>normal:</strong> ordinary guidance at the next proven ready turn boundary. <strong>steer:</strong> non-destructive guidance at the next supported tool boundary; Claude/Codex use hooks/app-server and Grok honestly degrades to next turn. <strong>urgent:</strong> cancel the in-flight provider turn, which is never resumed, then inject when input is free; it never deletes/interleaves a human draft or guesses through an unknown modal. <strong>critical:</strong> immediately and durably revoke write/landing authority; the message <em>intent</em> then decides the process action — <code>pause</code> is a non-destructive SIGSTOP of the same captured process tree, daemon-measured applied when the row is control-paused against this control message and resumed by SIGCONT as the exact same process, while <code>stop</code>/<code>cancel</code>/<code>restrict-writes</code> terminate the old provider generation under lifecycle policy, restart it read-only, and deliver to the new exact generation. Priority and intent are separate axes; these preserve Hive’s current measured semantics.</li>
-              <li>For Claude/Codex terminal delivery, wait up to 5 seconds after injection for a later turn-start proof. Absence does not cause reinjection; state remains injected and shows delayed provider acknowledgment.</li>
+              <li>For Claude/Codex terminal delivery, wait up to 5 seconds after injection for a later turn-start proof. Absence does not cause reinjection; state remains injected and shows delayed provider observation.</li>
               <li>Messages delivered while a provider turn is busy can be transport-injected only if the adapter version explicitly proves queued-input behavior. Otherwise they stay queued until the next safe boundary.</li>
               <li>Grok never gets a fabricated hook receipt. Transcript activity can reconcile later; stalled injected messages raise typed attention without duplicate writes.</li>
               <li>The acknowledgment budget begins at injection, not enqueue: urgent 180 seconds, critical 10 seconds. Missing acknowledgment raises typed attention and executes the existing escalation/recovery policy; it does not rewrite provider or agent receipt.</li>
