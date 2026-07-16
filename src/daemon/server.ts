@@ -2773,6 +2773,7 @@ export class HiveDaemon {
     // never trust a stored matching row alone. After the awaited read, only
     // attestation fields are written so a concurrent kill cannot be clobbered
     // by a full-row stale upsert. Claude/Grok skip the Codex identity gate.
+    let authorityRow = agent;
     if (agent.tool === "codex") {
       const launch = agent.executionIdentity;
       if (launch === undefined || agent.worktreePath === null) {
@@ -2784,21 +2785,9 @@ export class HiveDaemon {
         launch,
         await this.readCodexIdentity(agent.worktreePath, agent.toolSessionId),
       );
-      // Attestation-only update: re-read the row and refuse if terminal/revoked.
-      const mid = this.db.getAgentById(agent.id) ?? this.db.getAgentByName(name);
-      if (mid === null || isTerminalAgentStatus(mid.status) || mid.writeRevoked) {
-        throw new Error(
-          `Cannot land ${name}: agent became terminal or revoked during reattestation; landing refused.`,
-        );
-      }
-      if (mid.capabilityEpoch !== capabilityEpoch) {
-        throw new Error(
-          `Cannot land ${name}: capabilityEpoch changed during reattestation ` +
-            `(${capabilityEpoch} → ${mid.capabilityEpoch}).`,
-        );
-      }
-      this.db.upsertAgent({
-        ...mid,
+      // Narrow exact-holder update. A same-name successor or any process,
+      // session, epoch, branch, status, or revocation change wins this race.
+      const attested = this.db.updateAgentIfCurrent(agentStateCas(agent), {
         identityState: attestation.identityState,
         ...(attestation.observedIdentity === null
           ? {}
@@ -2808,6 +2797,12 @@ export class HiveDaemon {
           ? {}
           : { liveEffort: attestation.liveEffort }),
       });
+      if (attested === null) {
+        throw new Error(
+          `Cannot land ${name}: exact agent/session/incarnation changed during reattestation; landing refused.`,
+        );
+      }
+      authorityRow = attested;
       if (attestation.identityState !== "matching") {
         throw new Error(
           `Cannot land ${name}: fresh Codex reattestation is ${
@@ -2819,51 +2814,37 @@ export class HiveDaemon {
     }
     // Final CAS immediately before Git — every provider. Kill/control during
     // reattest or lease wait must not reach merge.
-    const finalRow = this.db.getAgentById(agent.id) ?? this.db.getAgentByName(name);
-    if (
-      finalRow === null ||
-      isTerminalAgentStatus(finalRow.status) ||
-      finalRow.writeRevoked ||
-      finalRow.capabilityEpoch !== capabilityEpoch ||
-      finalRow.readOnly ||
-      finalRow.branch === null
-    ) {
+    const finalRow = this.db.updateAgentIfCurrent(
+      agentStateCas(authorityRow),
+      {},
+    );
+    if (finalRow === null || finalRow.branch === null) {
+      const current = this.db.getAgentById(agent.id);
       throw new Error(
         `Cannot land ${name}: final pre-Git authority check failed ` +
-          `(status=${finalRow?.status ?? "missing"}, epoch=${finalRow?.capabilityEpoch ?? "?"}, ` +
-          `revoked=${finalRow?.writeRevoked ?? "?"}).`,
+          `(status=${current?.status ?? "missing"}, epoch=${current?.capabilityEpoch ?? "?"}, ` +
+          `revoked=${current?.writeRevoked ?? "?"}, ` +
+          `processIncarnation=${current?.processIncarnation ?? "?"}).`,
       );
     }
     const operation = await this.machineMutations?.beginOperation("landing");
-    const authoritySnapshot = {
-      id: agent.id,
-      epoch: capabilityEpoch,
-      recoveryAttempts: agent.recoveryAttempts,
-      toolSessionId: agent.toolSessionId ?? null,
-      branch: agent.branch!,
-    };
+    const authoritySnapshot = agentStateCas(finalRow);
+    const branch = finalRow.branch;
     const assertLandAuthority = () => {
-      const row = this.db.getAgentById(authoritySnapshot.id);
-      if (
-        row === null ||
-        isTerminalAgentStatus(row.status) ||
-        row.writeRevoked ||
-        row.capabilityEpoch !== authoritySnapshot.epoch ||
-        row.readOnly ||
-        row.branch !== authoritySnapshot.branch ||
-        row.recoveryAttempts !== authoritySnapshot.recoveryAttempts ||
-        (row.toolSessionId ?? null) !== authoritySnapshot.toolSessionId
-      ) {
+      const row = this.db.updateAgentIfCurrent(authoritySnapshot, {});
+      if (row === null) {
+        const current = this.db.getAgentById(authoritySnapshot.id);
         throw new Error(
           `Cannot land ${name}: authority/incarnation check failed at the Git boundary ` +
-            `(status=${row?.status ?? "missing"}, epoch=${row?.capabilityEpoch ?? "?"}, ` +
-            `recoveryAttempts=${row?.recoveryAttempts ?? "?"}).`,
+            `(status=${current?.status ?? "missing"}, epoch=${current?.capabilityEpoch ?? "?"}, ` +
+            `processIncarnation=${current?.processIncarnation ?? "?"}, ` +
+            `session=${current?.toolSessionId ?? "?"}).`,
         );
       }
     };
     try {
       assertLandAuthority();
-      const landed = await this.land(this.repoRoot, authoritySnapshot.branch, {
+      const landed = await this.land(this.repoRoot, branch, {
         preMergeCheck: assertLandAuthority,
       });
       this.graphify?.scheduleRebuild();

@@ -14,7 +14,7 @@ import {
   type HookEvent,
   type QuotaPoolStatus,
 } from "../schemas";
-import { HiveDatabase } from "./db";
+import { agentStateCas, HiveDatabase } from "./db";
 import { CODEX_WRITER_CONTAINMENT_REASON } from "./codex-containment";
 import { RoutingPolicyStore } from "./routing-policy-store";
 import type { TmuxSender } from "./delivery";
@@ -1486,6 +1486,66 @@ describe("HiveDaemon HTTP server", () => {
       );
       expect(landed).toHaveLength(1);
     } finally {
+      db.close();
+    }
+  });
+
+  test("landing boundary CAS rejects queued control and a recovered predecessor", async () => {
+    const db = new HiveDatabase(join(home, "land-boundary-cas.db"));
+    const mergeSpawns: string[] = [];
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new StubSpawner(),
+      repoRoot: "/repo",
+      landBranch: async (_root, branch, options) => {
+        const current = branch.includes("maya")
+          ? db.getAgentById("agent-maya")!
+          : db.getAgentById("agent-cara")!;
+        if (branch.includes("maya")) {
+          db.updateAgentIfCurrent(agentStateCas(current), {
+            status: "control-paused",
+            writeRevoked: true,
+            capabilityEpoch: current.capabilityEpoch + 1,
+            controlMessageId: "queued-control",
+          });
+        } else {
+          db.upsertAgent({
+            ...current,
+            processIncarnation: (current.processIncarnation ?? 0) + 1,
+            processStartedAt: "2026-07-15T20:02:00.000Z",
+          });
+        }
+        options?.preMergeCheck?.();
+        mergeSpawns.push(branch);
+        return { commit: "unreachable" };
+      },
+    });
+    db.insertAgent(agent({ tool: "claude", model: "sonnet" }));
+    db.insertAgent(agent({
+      id: "agent-cara",
+      name: "cara",
+      tool: "claude",
+      model: "sonnet",
+      branch: "hive/cara-server",
+      tmuxSession: "hive-cara",
+    }));
+    try {
+      await expect(daemon.landAgent("maya", 0)).rejects.toThrow(
+        /authority\/incarnation check failed/,
+      );
+      await expect(daemon.landAgent("cara", 0)).rejects.toThrow(
+        /authority\/incarnation check failed/,
+      );
+      expect(mergeSpawns).toEqual([]);
+      expect(db.getAgentById("agent-maya")).toMatchObject({
+        status: "control-paused",
+        writeRevoked: true,
+      });
+      expect(db.getAgentById("agent-cara")).toMatchObject({
+        processIncarnation: 2,
+      });
+    } finally {
+      await daemon.stop();
       db.close();
     }
   });

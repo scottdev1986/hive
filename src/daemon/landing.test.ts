@@ -192,6 +192,73 @@ describe("untracked files the branch also adds — the drop-a-file-in incident",
     }
   });
 
+  test("the real adapter runs the synchronous authority callback immediately before merge spawn", async () => {
+    const root = await repo();
+    const order: string[] = [];
+    let queuedControlRan = false;
+    try {
+      const { commit } = await landBranch(root, "hive/writer", {
+        preMergeCheck: () => {
+          order.push("authority");
+          queueMicrotask(() => {
+            queuedControlRan = true;
+          });
+        },
+        spawnMerge: (repoRoot, branch) => {
+          expect(queuedControlRan).toBe(false);
+          order.push("spawn");
+          return runGit(repoRoot, ["merge", "--ff-only", branch]);
+        },
+      });
+      expect(commit).toHaveLength(40);
+      expect(order).toEqual(["authority", "spawn"]);
+      expect(queuedControlRan).toBe(true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("authority refusal after identical cleanup restores the user's file", async () => {
+    const root = await repo();
+    try {
+      await writeFile(join(root, "feature.ts"), "export const f = 1;\n");
+      await expect(landBranch(root, "hive/writer", {
+        preMergeCheck: () => {
+          throw new Error("authority revoked at boundary");
+        },
+      })).rejects.toThrow("authority revoked at boundary");
+      expect(await Bun.file(join(root, "feature.ts")).text()).toBe(
+        "export const f = 1;\n",
+      );
+      expect(git(root, ["status", "--porcelain", "-uall"]))
+        .toContain("?? feature.ts");
+      expect(git(root, ["rev-parse", "--abbrev-ref", "HEAD"])).toBe("main");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("merge process spawn failure restores every cleaned collision", async () => {
+    const root = await repo();
+    try {
+      await writeFile(join(root, "feature.ts"), "export const f = 1;\n");
+      await expect(landBranch(root, "hive/writer", {
+        preMergeCheck: () => undefined,
+        spawnMerge: () => {
+          throw new Error("Bun.spawn failed");
+        },
+      })).rejects.toThrow("Bun.spawn failed");
+      expect(await Bun.file(join(root, "feature.ts")).text()).toBe(
+        "export const f = 1;\n",
+      );
+      expect(git(root, ["status", "--porcelain", "-uall"]))
+        .toContain("?? feature.ts");
+      expect(git(root, ["rev-parse", "--abbrev-ref", "HEAD"])).toBe("main");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   test("an untracked directory is seen file-by-file, not skipped as one `dir/` line", async () => {
     const root = await repo();
     try {

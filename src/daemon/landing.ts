@@ -32,13 +32,22 @@
  * over the user's original. When the bytes differ, that proof is gone and the
  * usual rule holds absolutely: name both versions and let the human choose.
  */
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { unlink } from "node:fs/promises";
+import {
+  chmodSync,
+  existsSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { join, resolve } from "node:path";
 
 export type LandBranchOptions = {
   /** Called immediately before `git merge --ff-only`. Must throw to abort. */
-  preMergeCheck?: () => void | Promise<void>;
+  preMergeCheck?: () => void;
+  /** Test seam around the process adapter. Production always uses runGit. */
+  spawnMerge?: (repoRoot: string, branch: string) => Promise<GitResult>;
 };
 
 export type LandBranch = (
@@ -490,36 +499,121 @@ const landBranchUnlocked: LandBranch = async (repoRoot, branch, options) => {
   // restores the same content, tracked. Diagnosis above already turned any
   // content MISMATCH into a refusal, so nothing differing is touched here; a
   // removal that fails falls through to the merge's own refusal and re-diagnosis.
+  const removed: Array<{
+    path: string;
+    absolutePath: string;
+    contents: Buffer;
+    mode: number;
+  }> = [];
+  const restoreRemoved = (): string[] => {
+    const errors: string[] = [];
+    for (const entry of removed) {
+      try {
+        if (existsSync(entry.absolutePath)) {
+          const current = readFileSync(entry.absolutePath);
+          if (current.equals(entry.contents)) continue;
+          const rescue = `${entry.absolutePath}.hive-landing-restore-${crypto.randomUUID()}`;
+          writeFileSync(rescue, entry.contents, {
+            flag: "wx",
+            mode: entry.mode,
+          });
+          errors.push(
+            `${entry.path} changed while landing; its original bytes were preserved at ${rescue}`,
+          );
+          continue;
+        }
+        writeFileSync(entry.absolutePath, entry.contents, {
+          flag: "wx",
+          mode: entry.mode,
+        });
+        chmodSync(entry.absolutePath, entry.mode);
+      } catch (error) {
+        errors.push(
+          `${entry.path}: ${error instanceof Error ? error.message : "restore failed"}`,
+        );
+      }
+    }
+    return errors;
+  };
+  const rethrowAfterRestore = (error: unknown): never => {
+    const failures = restoreRemoved();
+    if (failures.length === 0) throw error;
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `${detail}\nHive could not restore every collision cleanup: ${failures.join("; ")}`,
+      { cause: error },
+    );
+  };
   for (const collision of await untrackedCollisions(repoRoot, branch)) {
     if (collision.identical) {
-      await unlink(join(repoRoot, collision.path)).catch(() => {});
+      const absolutePath = join(repoRoot, collision.path);
+      try {
+        const contents = readFileSync(absolutePath);
+        const mode = statSync(absolutePath).mode & 0o777;
+        unlinkSync(absolutePath);
+        removed.push({ path: collision.path, absolutePath, contents, mode });
+      } catch {
+        // The merge will either find the path already absent or refuse and
+        // preserve whatever remains. Only successfully removed files need a
+        // restoration record.
+      }
     }
   }
 
   // Authority/incarnation check at the actual merge boundary — after diagnosis
   // and collision cleanup, immediately before git merge.
-  await options?.preMergeCheck?.();
+  let mergePromise!: Promise<GitResult>;
+  try {
+    options?.preMergeCheck?.();
+    mergePromise = options?.spawnMerge?.(repoRoot, branch) ??
+      runGit(repoRoot, ["merge", "--ff-only", branch]);
+  } catch (error) {
+    rethrowAfterRestore(error);
+  }
 
-  const merge = await runGit(repoRoot, ["merge", "--ff-only", branch]);
+  let merge!: GitResult;
+  try {
+    merge = await mergePromise;
+  } catch (error) {
+    rethrowAfterRestore(error);
+  }
   if (merge.timedOut) {
+    const restoreFailures = restoreRemoved();
     throw new Error(
       `Cannot land ${branch}: git merge did not finish within ${
         LAND_GIT_TIMEOUT_MS / 1_000
       }s in ${repoRoot} and was killed. A merge git refuses comes back instantly, so this is a stuck git — a stale lock or a stalled filesystem — not a rejected merge.\n` +
-        `Fix: check for a hung git process in ${repoRoot}, then land again.`,
+        `Fix: check for a hung git process in ${repoRoot}, then land again.` +
+        (restoreFailures.length === 0
+          ? ""
+          : `\nCollision cleanup restoration failed: ${restoreFailures.join("; ")}`),
     );
   }
   if (merge.exitCode !== 0) {
+    const restoreFailures = restoreRemoved();
     // Between the diagnosis and the merge, someone else's commit can land. We
     // re-diagnose rather than paraphrase, so the agent is told the *current*
     // reason and not a guess — and if we still cannot explain it, git's own
     // stderr goes through verbatim. It is never discarded.
     const blockerNow = await diagnoseLand(repoRoot, branch);
-    if (blockerNow !== null) throw landError(branch, blockerNow);
+    if (blockerNow !== null) {
+      const error = landError(branch, blockerNow);
+      if (restoreFailures.length === 0) throw error;
+      throw new Error(
+        `${error.message}\nCollision cleanup restoration failed: ${restoreFailures.join("; ")}`,
+        { cause: error },
+      );
+    }
     const detail = merge.stderr.trim() || merge.stdout.trim() ||
       `git merge exited ${merge.exitCode}`;
-    throw new Error(`Cannot land ${branch}: ${detail}`);
+    throw new Error(
+      `Cannot land ${branch}: ${detail}` +
+        (restoreFailures.length === 0
+          ? ""
+          : `\nCollision cleanup restoration failed: ${restoreFailures.join("; ")}`),
+    );
   }
+  removed.length = 0;
 
   const revision = await runGit(repoRoot, ["rev-parse", "HEAD"]);
   if (revision.exitCode !== 0) {
