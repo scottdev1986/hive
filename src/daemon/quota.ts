@@ -653,6 +653,7 @@ export class QuotaService {
     liveModel: string,
     at = iso(this.clock()),
     expectedReservationId?: string | null,
+    acceptReservations?: (reservations: readonly QuotaReservation[]) => boolean,
   ): Promise<QuotaReservation[] | null> {
     const held = this.ledger.getActiveReservationForAgent(agentName);
     if (
@@ -692,6 +693,15 @@ export class QuotaService {
     // and record zero spend for a session that is demonstrably burning quota.
     if (held.startedAt !== null && reservations[0] !== undefined) {
       this.ledger.markStarted(reservations[0].id, held.startedAt);
+    }
+    // The caller owns the durable pointer to this booking. Bind it before any
+    // awaited alert lets row state change; if the exact-row CAS loses, settle
+    // the whole replacement group immediately so no ownerless capacity remains.
+    if (acceptReservations !== undefined && !acceptReservations(reservations)) {
+      if (reservations[0] !== undefined) {
+        await this.cancel(reservations[0].id, at);
+      }
+      return null;
     }
     for (const entry of entries) await this.alertPool(entry.limit, now);
     return reservations;
@@ -2067,6 +2077,11 @@ export class QuotaService {
       /** Exact booking named by the statusline agent row before any await.
        * Null means the row held no booking and therefore authorizes no rekey. */
       reservationId?: string | null;
+      /** Synchronous exact-row handoff. A false result rolls back every
+       * replacement reservation before an alert can yield control. */
+      acceptReservationRekey?: (
+        reservations: readonly QuotaReservation[],
+      ) => boolean;
     },
   ): Promise<QuotaObservation | null> {
     if (report.model !== undefined && report.agent !== undefined) {
@@ -2075,6 +2090,7 @@ export class QuotaService {
         report.model,
         report.observedAt,
         report.reservationId,
+        report.acceptReservationRekey,
       );
     }
     if (report.fiveHour === undefined && report.sevenDay === undefined) {

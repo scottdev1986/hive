@@ -3925,6 +3925,95 @@ describe("the model an agent is actually running", () => {
   // left the row naming the released id, and every terminal path settles by
   // that id. So the assertion here is not "cancel was called": it is the number
   // `hive_quota_status` serves, read from the same surface, before and after.
+  test("a turn-end during the re-key alert cannot orphan the replacement reservation", async () => {
+    const db = new HiveDatabase(join(home, "rekey-turn-end-race.db"));
+    const worktreePath = mkdtempSync(join(tmpdir(), "hive-rekey-race-"));
+    const ledger = new QuotaLedger(db);
+    const quota = new QuotaService(
+      ledger,
+      QuotaConfigSchema.parse({
+        limits: [{
+          provider: "claude",
+          pool: "subscription",
+          models: ["*"],
+          fiveHourAllowance: 100,
+          weeklyAllowance: 100,
+        }],
+      }),
+    );
+    let enterAlert!: () => void;
+    let releaseAlert!: () => void;
+    const alertEntered = new Promise<void>((resolve) => {
+      enterAlert = resolve;
+    });
+    const alertMayFinish = new Promise<void>((resolve) => {
+      releaseAlert = resolve;
+    });
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new StubSpawner(),
+      quota,
+      telemetryReaders: {
+        liveModel: (path, toolSessionId) =>
+          readLiveClaudeModel(path, toolSessionId, home),
+      },
+    });
+    let alerts = 0;
+    quota.setAlertSink(async () => {
+      alerts += 1;
+      if (alerts !== 1) return;
+      enterAlert();
+      await alertMayFinish;
+    });
+    const decision = await quota.routeAndReserve({
+      agentName: "probe",
+      category: "simple_coding",
+      selection: "strict",
+      candidates: await authorizeForQuotaTest([{ tool: "claude", model: "sonnet" }]),
+    });
+    quota.markStarted(decision.reservation.id);
+    db.insertAgent(agent({
+      id: "agent-probe",
+      name: "probe",
+      tool: "claude",
+      model: "sonnet",
+      worktreePath,
+      toolSessionId: "session",
+      quotaReservationId: decision.reservation.id,
+    }));
+    try {
+      await transcript(worktreePath, ["claude-sonnet-5"]);
+      const response = actingAs(daemon, "probe", "writer")(
+        "http://hive/statusline",
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            agent: "probe",
+            fiveHour: { usedPct: 99, resetsAt: null },
+          }),
+        },
+      );
+      await alertEntered;
+      await daemon.processEvent({
+        kind: "turn-end",
+        agentName: "probe",
+        timestamp: "2026-07-16T02:00:00.000Z",
+        usageUnits: 3,
+        usageSource: "gateway",
+      });
+      releaseAlert();
+      expect((await response).status).toBe(200);
+      expect(ledger.activeReservations().filter((entry) =>
+        entry.agentName === "probe"
+      )).toEqual([]);
+    } finally {
+      releaseAlert();
+      await daemon.stop();
+      db.close();
+    }
+  });
+
   test("a re-keyed reservation is released on kill, and reserved returns to its prior value", async () => {
     const db = new HiveDatabase(join(home, "rekey-leak.db"));
     const worktreePath = mkdtempSync(join(tmpdir(), "hive-probe-"));

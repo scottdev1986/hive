@@ -3144,9 +3144,16 @@ export class HiveDaemon {
         agent: agent.name,
         model,
         reservationId: agent.quotaReservationId ?? null,
+        acceptReservationRekey: (reservations) => {
+          const replacement = reservations[0];
+          if (replacement === undefined) return false;
+          const updates = replacement.purpose === "control"
+            ? { controlQuotaReservationId: replacement.id }
+            : { quotaReservationId: replacement.id };
+          return this.db.updateAgentIfCurrent(agentStateCas(agent), updates) !== null;
+        },
       },
     ) ?? null;
-    this.followReservationRekey(agent);
     return json({ observation });
   }
 
@@ -3251,26 +3258,6 @@ export class HiveDaemon {
     if (Object.keys(updates).length > 0) {
       this.db.updateAgentIfCurrent(agentStateCas(agent), updates);
     }
-  }
-
-  private followReservationRekey(agent: AgentRecord): void {
-    if (
-      agent.quotaReservationId === undefined &&
-      agent.controlQuotaReservationId === undefined
-    ) return;
-    const held = this.quota?.ledger.getActiveReservationForAgent(agent.name);
-    if (held === undefined || held === null) return;
-    if (held.purpose === "control") {
-      if (agent.controlQuotaReservationId === held.id) return;
-      this.db.updateAgentIfCurrent(agentStateCas(agent), {
-        controlQuotaReservationId: held.id,
-      });
-      return;
-    }
-    if (agent.quotaReservationId === held.id) return;
-    this.db.updateAgentIfCurrent(agentStateCas(agent), {
-      quotaReservationId: held.id,
-    });
   }
 
   /**

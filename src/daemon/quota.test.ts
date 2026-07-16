@@ -1042,6 +1042,41 @@ describe("quota-aware routing", () => {
 });
 
 describe("quota telemetry and alerts", () => {
+  test("rolls back every replacement reservation when the exact-row handoff loses CAS", async () => {
+    const { db } = await fileDatabase("rekey-handoff-cas-loss");
+    const ledger = new QuotaLedger(db);
+    const service = new QuotaService(
+      ledger,
+      config([limit("claude", 100, { models: ["*"] })]),
+      () => new Date("2026-07-10T12:00:00.000Z"),
+    );
+    const decision = await service.routeAndReserve({
+      agentName: "maya",
+      category: "simple_coding",
+      selection: "strict",
+      explicitTool: "claude",
+      candidates: candidates(),
+    });
+    service.markStarted(decision.reservation.id);
+
+    const replacements = await service.reconcileAgentModel(
+      "maya",
+      "claude-sonnet-5",
+      "2026-07-10T12:01:00.000Z",
+      decision.reservation.id,
+      () => false,
+    );
+
+    expect(replacements).toBeNull();
+    expect(ledger.activeReservations().filter((entry) =>
+      entry.agentName === "maya"
+    )).toEqual([]);
+    expect(ledger.getReservation(decision.reservation.id)?.status).toBe(
+      "released",
+    );
+    db.close();
+  });
+
   test("records Codex app-server windows as authoritative configured-pool observations", async () => {
     const { db } = await fileDatabase("codex-app-server");
     const ledger = new QuotaLedger(db);
