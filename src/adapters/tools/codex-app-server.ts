@@ -212,7 +212,23 @@ export class SocketTransport implements CodexAppServerTransport {
 export interface CodexApprovalRequest {
   agentName: string;
   description: string;
+  /** The exact holder whose session is asking, so approval insertion can
+   * validate atomically against the durable row: a ghost "pending" row must
+   * never appear for a replaced, revoked, or read-only holder. */
+  agentId: string;
+  processIncarnation: number;
+  capabilityEpoch: number;
 }
+
+/** One piece of human pane input, exactly as the host submitted it. */
+export type CodexPaneInput =
+  | { kind: "text"; text: string }
+  | { kind: "interrupt" };
+
+/** What happened to one pane input: delivered into the live session, queued
+ * for the exact holder until its session starts, or — for an interrupt — there
+ * was no turn to interrupt. Never silent. */
+export type CodexPaneInputOutcome = "delivered" | "queued" | "no-turn";
 
 /**
  * What a live Codex session says about ITSELF: the holder it was started for,
@@ -268,6 +284,13 @@ export interface CodexAppServerManagerOptions {
   authorizeMutation: (
     request: CodexMutationAuthorizationRequest,
   ) => Promise<CodexMutationDecision>;
+  /** The live daemon-owned autonomy dial. Read when a mutation arrives to pick
+   * the approval path (sandboxed queues the human; dangerous auto-decides) and
+   * read AGAIN synchronously at the final allow boundary: a dial that dropped
+   * to sandboxed while checks were in flight must never auto-allow. Never an
+   * agent claim. Absent reads as sandboxed — fail-closed: no dial is never a
+   * license to auto-allow. */
+  autonomy?: () => "sandboxed" | "dangerous";
   observeRateLimits: (
     model: string,
     response: CodexRateLimitsResponse,
@@ -384,6 +407,11 @@ export class CodexAppServerManager {
     agentName: string;
     resolve: (approved: boolean) => void;
   }>();
+  /** Pane input that arrived before the holder's session existed, keyed by the
+   * EXACT holder (agentId + processIncarnation) — never by name, which is
+   * reusable. Flushed in order once the session's initial turn has started;
+   * a replacement or disconnect clears its own key and never inherits. */
+  private readonly pendingInput = new Map<string, string[]>();
   private availability: Promise<boolean> | null = null;
   private readonly socketPath: (agent: AgentRecord) => string;
   private readonly transport: (path: string) => Promise<CodexAppServerTransport>;
@@ -488,6 +516,98 @@ export class CodexAppServerManager {
     return session !== undefined && session.activeTurnId !== null;
   }
 
+  /** The live session's own turn facts, synchronously — no transport round
+   * trip — so an authorization that awaited can re-prove the binding it is
+   * about to allow without opening another await window. Null when no session
+   * answers to the name. */
+  sessionTurnSnapshot(agentName: string): {
+    agentId: string;
+    processIncarnation: number;
+    threadId: string;
+    turnId: string | null;
+    closed: boolean;
+  } | null {
+    const session = this.sessions.get(agentName);
+    if (session === undefined) return null;
+    return {
+      agentId: session.agent.id,
+      processIncarnation: session.agent.processIncarnation ?? 0,
+      threadId: session.threadId,
+      turnId: session.activeTurnId,
+      closed: session.closed,
+    };
+  }
+
+  /** The session answering to this agent's name, but only when it belongs to
+   * this EXACT holder — a same-name replacement must not receive a
+   * predecessor's pane input, nor the other way around. */
+  private holderSession(agent: AgentRecord): CodexSession | null {
+    const session = this.sessions.get(agent.name);
+    if (
+      session === undefined || session.closed ||
+      session.agent.id !== agent.id ||
+      (session.agent.processIncarnation ?? 0) !==
+        (agent.processIncarnation ?? 0)
+    ) {
+      return null;
+    }
+    return session;
+  }
+
+  private static holderKey(agent: AgentRecord): string {
+    return `${agent.id}#${agent.processIncarnation ?? 0}`;
+  }
+
+  /**
+   * Route one piece of human pane input. This is conversation, not authority:
+   * it deliberately never reads identityState, status, or writeRevoked — a
+   * revoked writer's human must still be able to type, steer, and interrupt.
+   *
+   * Text goes to the live session (idle starts a turn, an active turn is
+   * steered); before the session exists it queues under the exact holder and
+   * flushes in order once the initial turn has started. An interrupt stops the
+   * active turn, and also discards this holder's queued text — the human
+   * canceled what they had typed, and it must not submit later.
+   */
+  async paneInput(
+    agent: AgentRecord,
+    input: CodexPaneInput,
+  ): Promise<CodexPaneInputOutcome> {
+    const key = CodexAppServerManager.holderKey(agent);
+    const session = this.holderSession(agent);
+    if (input.kind === "interrupt") {
+      this.pendingInput.delete(key);
+      if (session === null || session.activeTurnId === null) return "no-turn";
+      await this.interrupt(agent);
+      return "delivered";
+    }
+    if (session === null) {
+      const queue = this.pendingInput.get(key) ?? [];
+      queue.push(input.text);
+      this.pendingInput.set(key, queue);
+      return "queued";
+    }
+    // Anything still queued for this holder goes first, so typing that spanned
+    // session startup keeps its order.
+    await this.flushPendingInput(agent);
+    await this.deliver(agent, input.text);
+    return "delivered";
+  }
+
+  /** Deliver this exact holder's queued pane input, in order, into its live
+   * session. Entries drain one at a time; a failure keeps the remainder queued
+   * for the next flush rather than dropping it. */
+  private async flushPendingInput(agent: AgentRecord): Promise<void> {
+    const key = CodexAppServerManager.holderKey(agent);
+    const queue = this.pendingInput.get(key);
+    if (queue === undefined) return;
+    while (queue.length > 0) {
+      await this.deliver(agent, queue[0]!);
+      queue.shift();
+    }
+    this.pendingInput.delete(key);
+  }
+
   /** Start a thread for `agent`. A writer is admissible here — the app-server
    * is the brokered driver — but its sandbox is `read-only` exactly like a
    * reader's: the sandbox is the structural containment, and the ONLY way a
@@ -554,6 +674,13 @@ export class CodexAppServerManager {
       this.sessions.delete(agent.name);
       throw error;
     }
+    // Pane input typed before the session existed flushes only now, AFTER the
+    // initial prompt's turn has started, so it lands as ordered follow-up
+    // steering rather than racing the bootstrap. A stale queue from another
+    // incarnation of this holder is refused, never inherited: only the exact
+    // key flushes. Failures keep the remainder queued; the human's next input
+    // retries the drain.
+    await this.flushPendingInput(agent).catch(() => undefined);
   }
 
   async startTurn(agent: AgentRecord, text: string, effort?: string): Promise<void> {
@@ -635,11 +762,14 @@ export class CodexAppServerManager {
     return true;
   }
 
-  async denyAgentApprovals(agentName: string): Promise<void> {
-    // Latch the session closed FIRST, so an approval being created concurrently
-    // sees the flag and denies itself instead of registering behind this sweep.
-    const session = this.sessions.get(agentName);
-    if (session !== undefined) session.closed = true;
+  /** Settle every pending mutation approval for `agentName` as denied — the
+   * durable rows included — WITHOUT closing the session. This is the
+   * revocation shape: brokered revocation removes authority, not the
+   * conversation, so the session stays open for typing, steer, and interrupt.
+   * The insert-after-revocation race is closed at insertion itself:
+   * `queueApproval` validates the exact holder and `writeRevoked` atomically
+   * with the insert. */
+  async denyPendingMutationApprovals(agentName: string): Promise<void> {
     for (const [id, pending] of [...this.pendingApprovals]) {
       if (pending.agentName !== agentName) continue;
       this.pendingApprovals.delete(id);
@@ -648,9 +778,24 @@ export class CodexAppServerManager {
     }
   }
 
-  disconnect(agentName: string): void {
+  async denyAgentApprovals(agentName: string): Promise<void> {
+    // Latch the session closed FIRST, so an approval being created concurrently
+    // sees the flag and denies itself instead of registering behind this sweep.
+    // Closing is for teardown/disconnect paths only — revocation must call
+    // denyPendingMutationApprovals instead, or it would kill the conversation.
     const session = this.sessions.get(agentName);
     if (session !== undefined) session.closed = true;
+    await this.denyPendingMutationApprovals(agentName);
+  }
+
+  disconnect(agentName: string): void {
+    const session = this.sessions.get(agentName);
+    if (session !== undefined) {
+      session.closed = true;
+      // The queue belongs to the exact holder whose session this was; a
+      // replacement must never receive it.
+      this.pendingInput.delete(CodexAppServerManager.holderKey(session.agent));
+    }
     session?.client.close();
     this.sessions.delete(agentName);
     void this.denyAgentApprovals(agentName);
@@ -815,12 +960,36 @@ export class CodexAppServerManager {
       return deny();
     }
 
-    const approved = await this.awaitApproval(session, description);
-    if (!approved) return deny();
+    // The daemon-owned dial picks the approval path. Sandboxed queues the
+    // human, one-shot, and a flip to dangerous while that row waits never
+    // converts it into an auto-approval — the human still decides. Dangerous
+    // auto-decides on the identity checks alone and must create no durable
+    // human approval row.
+    let humanApproved = false;
+    if ((this.options.autonomy?.() ?? "sandboxed") !== "dangerous") {
+      const approved = await this.awaitApproval(session, description);
+      if (!approved) return deny();
+      humanApproved = true;
+    }
 
     // TOCTOU: re-prove everything against the state that exists NOW, not the
     // state that existed when the approval was queued.
     if (!await this.authorizeMutation(session, threadId, turnId, method)) {
+      return deny();
+    }
+
+    // Final rechecks, synchronous — no await between here and the response.
+    // The authorization above awaited, so the session can have dropped or the
+    // turn completed/changed meanwhile; and in dangerous mode the dial itself
+    // is in the CAS: a dial that dropped to sandboxed while checks were in
+    // flight has no human approval to stand on, so it denies.
+    if (session.closed) return deny();
+    if (threadId !== session.threadId || turnId !== session.activeTurnId) {
+      return deny();
+    }
+    if (
+      !humanApproved && (this.options.autonomy?.() ?? "sandboxed") !== "dangerous"
+    ) {
       return deny();
     }
     return approvalAllowResponse();
@@ -885,7 +1054,7 @@ export class CodexAppServerManager {
     let id: string;
     try {
       id = await this.options.queueApproval({
-        agentName: session.agent.name,
+        ...this.holderSnapshot(session),
         description,
       });
     } catch {
@@ -1034,6 +1203,100 @@ export interface CodexAppServerHostOptions {
   executable?: string;
 }
 
+export interface PaneInputForwarderOptions {
+  agentName: string;
+  daemonPort: number;
+  /** Bearer for the daemon's exact-holder pane-input route, read from the
+   * host's own environment (the same 0600 capability file the launch shell
+   * loaded). Absent sends no authorization header and the daemon refuses. */
+  token: string | undefined;
+  write: (text: string) => void;
+  fetchImpl?: typeof fetch;
+}
+
+/**
+ * Turns pane keystrokes into daemon-brokered turn input. The child's stdin is
+ * the JSON-RPC stream — raw pane bytes must NEVER go there — so submitted
+ * lines and Ctrl-C travel out-of-band to the daemon's `/pane-input` route,
+ * which maps them onto start/steer/interrupt for this exact holder.
+ *
+ * Two properties are load-bearing:
+ * - Everything goes through ONE promise chain: Enter then Ctrl-C must arrive
+ *   as deliver then interrupt, and rapid lines must keep their order. No
+ *   handler ever launches an independent fetch.
+ * - A failed POST is never retried blindly: a POST accepted while its
+ *   response was lost would deliver the same human prompt twice. The failure
+ *   renders visibly with the undelivered line instead.
+ */
+export function createPaneInputForwarder(options: PaneInputForwarderOptions): {
+  onData: (chunk: Buffer | string) => void;
+  onInterrupt: () => void;
+  /** Settles when every input submitted so far has been posted and rendered. */
+  idle: () => Promise<void>;
+} {
+  const doFetch = options.fetchImpl ?? fetch;
+  let chain = Promise.resolve();
+  let lineBuffer = "";
+  const post = (input: CodexPaneInput): void => {
+    chain = chain.then(async () => {
+      try {
+        const response = await doFetch(
+          `http://127.0.0.1:${options.daemonPort}/pane-input`,
+          {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              ...(options.token === undefined
+                ? {}
+                : { authorization: `Bearer ${options.token}` }),
+            },
+            body: JSON.stringify({ agentName: options.agentName, ...input }),
+          },
+        );
+        if (!response.ok) throw new Error(`daemon answered ${response.status}`);
+        const outcome =
+          ((await response.json().catch(() => ({}))) as { outcome?: string })
+            .outcome;
+        if (input.kind === "interrupt") {
+          options.write(
+            outcome === "no-turn"
+              ? "\n· nothing to interrupt\n"
+              : "\n■ interrupt requested\n",
+          );
+        } else if (outcome === "queued") {
+          options.write("\n· queued — delivers when the session is up\n");
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "request failed";
+        options.write(
+          input.kind === "text"
+            ? `\n✗ input not delivered (${message}) — not retried; retype to resend:\n${input.text}\n`
+            : `\n✗ interrupt not delivered (${message})\n`,
+        );
+      }
+    });
+  };
+  return {
+    onData: (chunk) => {
+      lineBuffer += typeof chunk === "string" ? chunk : chunk.toString("utf8");
+      while (true) {
+        const newline = lineBuffer.indexOf("\n");
+        if (newline < 0) break;
+        const line = lineBuffer.slice(0, newline).replace(/\r$/, "");
+        lineBuffer = lineBuffer.slice(newline + 1);
+        if (line.trim().length > 0) post({ kind: "text", text: line });
+      }
+    },
+    onInterrupt: () => {
+      // Ctrl-C discards the partially typed line — it must not submit later —
+      // and interrupts the running turn only.
+      lineBuffer = "";
+      post({ kind: "interrupt" });
+    },
+    idle: () => chain,
+  };
+}
+
 /** Build the scoped Codex app-server authority. Apps/connectors and global MCP
  * servers belong to the user's general Codex sessions, not a Hive agent. The
  * overrides affect only this child process and keep Hive plus the optional
@@ -1107,10 +1370,21 @@ export async function runCodexAppServerHost(
       }
     }
   };
-  process.once("SIGINT", stopChild);
   process.once("SIGTERM", stopChild);
   process.once("SIGHUP", stopChild);
   process.once("exit", stopChild);
+  // Pane typing and Ctrl-C are conversation, not teardown. Ctrl-C used to run
+  // stopChild — a typed interrupt SIGKILLed the whole app-server — so SIGINT
+  // now travels to the daemon as a turn interrupt and the host stays up;
+  // SIGTERM/SIGHUP/exit keep the teardown semantics.
+  const paneInput = createPaneInputForwarder({
+    agentName: options.agentName,
+    daemonPort: options.daemonPort,
+    token: Bun.env[CODEX_CAPABILITY_TOKEN_ENV],
+    write: (text) => process.stdout.write(text),
+  });
+  process.on("SIGINT", paneInput.onInterrupt);
+  process.stdin.on("data", paneInput.onData);
   let client: Socket | null = null;
   let childBuffer = "";
   const server = createServer((socket) => {
@@ -1186,10 +1460,12 @@ export async function runCodexAppServerHost(
     relayStdout(),
     relayStderr(),
   ]).then(([code]) => code);
-  process.off("SIGINT", stopChild);
   process.off("SIGTERM", stopChild);
   process.off("SIGHUP", stopChild);
   process.off("exit", stopChild);
+  process.off("SIGINT", paneInput.onInterrupt);
+  process.stdin.off("data", paneInput.onData);
+  process.stdin.pause();
   server.close();
   (client as Socket | null)?.destroy();
   await unlink(options.socket).catch(() => undefined);

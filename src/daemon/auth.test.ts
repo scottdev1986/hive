@@ -740,8 +740,14 @@ describe("legitimate workflows keep working", () => {
     const { token } = daemon.capabilities.mint("orchestrator", "orchestrator");
 
     await expect(
-      daemon.queueCodexApproval("maya", "Run rm -rf build"),
-    ).rejects.toThrow(/read-only agent maya.*denied mechanically/);
+      daemon.queueCodexApproval({
+        agentName: "maya",
+        description: "Run rm -rf build",
+        agentId: "agent-maya",
+        processIncarnation: 0,
+        capabilityEpoch: 0,
+      }),
+    ).rejects.toThrow(/approval for maya.*denied mechanically/);
     expect(db.listApprovals()).toEqual([]);
     expect(db.getAgentByName("maya")?.status).toBe("working");
 
@@ -781,7 +787,13 @@ describe("legitimate workflows keep working", () => {
     expect((await callTool(daemon, token, "hive_spawn", { task: "do a thing", category: "simple_coding" })).ok).toBe(true);
     expect(spawner.requests).toHaveLength(1);
 
-    const approvalId = await daemon.queueCodexApproval("maya", "run a command");
+    const approvalId = await daemon.queueCodexApproval({
+      agentName: "maya",
+      description: "run a command",
+      agentId: "agent-maya",
+      processIncarnation: 0,
+      capabilityEpoch: 0,
+    });
     expect((await callTool(daemon, token, "hive_approvals")).ok).toBe(true);
     expect((await callTool(daemon, token, "hive_approve", { id: approvalId, decision: "approve" })).ok).toBe(true);
     expect(db.getApproval(approvalId)?.status).toBe("approved");

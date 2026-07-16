@@ -8,6 +8,7 @@ import { HiveDatabase } from "./db";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { actingAs } from "./testing";
+import { readCodexAppServerTurnIdentity } from "./tool-telemetry";
 import { HiveDaemon } from "./server";
 
 // The daemon half of the Codex writer mutation gate. Every test here asks the
@@ -77,6 +78,9 @@ function writerRow(overrides: Partial<AgentRecord> = {}): AgentRecord {
     processIncarnation: 2,
     readOnly: false,
     writeRevoked: false,
+    // The gate requires the durable row to say the CURRENT incarnation
+    // launched on the brokered driver — never inferred from a live session.
+    codexDriver: "app-server",
     executionIdentity: { tool: "codex", model: "gpt-5.6-sol", effort: "xhigh" },
     ...overrides,
   } as AgentRecord;
@@ -405,6 +409,16 @@ test("LANDING: identity that drifts during land preparation refuses the merge at
       }),
       hasAgent: () => true,
       isTurnActive: () => true,
+      // The live binding holds steady throughout — the drift below is in the
+      // provider's applied identity, and must be caught by the rollout
+      // re-read at the Git boundary, not by binding churn.
+      sessionTurnSnapshot: () => ({
+        agentId: "agent-maya",
+        processIncarnation: 2,
+        threadId: "thread-1",
+        turnId: "turn-land",
+        closed: false,
+      }),
     } as never,
     landBranch: async (_repoRoot, _branch, options) => {
       // Stand in for the lease wait + diagnosis + collision cleanup, during
@@ -472,5 +486,152 @@ test("TAMPER: rewriting or deleting the worktree .codex changes no decision", as
   } finally {
     revoked.db.close();
     rmSync(codexDirectory, { recursive: true, force: true });
+  }
+});
+
+// ————— await-to-allow CAS: the identity read is a window —————
+//
+// The gate's identity read awaits the filesystem. Revocation, replacement, a
+// driver flip, terminalization, or an epoch advance DURING that await must
+// not be authorized from the stale pre-await row. Full autonomy makes this
+// window P0: with no human approval wait, this is the only temporal boundary
+// the gate has. Each case suspends the read on a controllable promise,
+// mutates exactly one load-bearing holder fact while it is in flight,
+// resumes, and requires a denial.
+
+function suspendableGate(row: AgentRecord) {
+  const db = new HiveDatabase(":memory:");
+  db.insertAgent(row);
+  let release!: () => void;
+  const suspended = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const daemon = new HiveDaemon({
+    db,
+    spawner: new NoopSpawner(),
+    telemetryReaders: {
+      codexAppServerTurnIdentity: async (rolloutPath, worktree, turnId) => {
+        await suspended;
+        return readCodexAppServerTurnIdentity(rolloutPath, worktree, turnId);
+      },
+    },
+  });
+  const ask = () =>
+    daemon.authorizeCodexMutation({
+      agentId: "agent-maya",
+      agentName: "maya",
+      processIncarnation: 2,
+      capabilityEpoch: 3,
+      threadId: "thread-1",
+      turnId: "turn-9",
+      method: "item/fileChange/requestApproval",
+      rolloutPath: writeRollout({
+        turnId: "turn-9",
+        model: "gpt-5.6-sol",
+        effort: "xhigh",
+      }),
+    });
+  return { db, ask, release };
+}
+
+test("CAS POSITIVE CONTROL: a holder untouched across the suspended read is allowed", async () => {
+  const { db, ask, release } = suspendableGate(writerRow());
+  try {
+    const pending = ask();
+    await Bun.sleep(1);
+    release();
+    expect(await pending).toEqual({ allowed: true });
+  } finally {
+    db.close();
+  }
+});
+
+const CAS_MUTATIONS: Array<
+  [name: string, mutate: Partial<AgentRecord>, reason: RegExp]
+> = [
+  ["an epoch advance", { capabilityEpoch: 4 }, /capability epoch changed/],
+  ["write revocation", { writeRevoked: true }, /write authority is revoked/],
+  [
+    "an incarnation replacement",
+    { processIncarnation: 3 },
+    /incarnation changed/,
+  ],
+  [
+    "a driver flip",
+    { codexDriver: "tui" },
+    /not on the app-server driver/,
+  ],
+  ["terminalization", { status: "dead" }, /terminal/],
+];
+
+for (const [name, mutate, reason] of CAS_MUTATIONS) {
+  test(`CAS: ${name} during the suspended identity read is denied`, async () => {
+    const { db, ask, release } = suspendableGate(writerRow());
+    try {
+      const pending = ask();
+      await Bun.sleep(1);
+      db.upsertAgent({ ...db.getAgentByName("maya")!, ...mutate });
+      release();
+      const decision = await pending;
+      expect(decision.allowed).toBe(false);
+      expect((decision as { reason: string }).reason).toMatch(reason);
+      expect((decision as { reason: string }).reason).toContain(
+        "while the identity read was in flight",
+      );
+    } finally {
+      db.close();
+    }
+  });
+}
+
+test("LANDING: a live binding that no longer matches at answer time refuses the merge", async () => {
+  // authorizeCodexMutationForHolder awaited the gate; the turn can complete or
+  // the session change meanwhile. The final answer must re-prove the exact
+  // live binding synchronously — here the session reports a DIFFERENT active
+  // turn than the one the binding authorized, so the allow must not stand.
+  const db = new HiveDatabase(":memory:");
+  const rolloutPath = writeRollout({
+    turnId: "turn-land",
+    model: "gpt-5.6-sol",
+    effort: "xhigh",
+  });
+  let merged = false;
+  const daemon = new HiveDaemon({
+    db,
+    spawner: new NoopSpawner(),
+    repoRoot: "/repo",
+    codexControl: {
+      activeTurnBinding: async () => ({
+        agentId: "agent-maya",
+        agentName: "maya",
+        processIncarnation: 2,
+        capabilityEpoch: 3,
+        threadId: "thread-1",
+        turnId: "turn-land",
+        rolloutPath,
+      }),
+      hasAgent: () => true,
+      isTurnActive: () => true,
+      sessionTurnSnapshot: () => ({
+        agentId: "agent-maya",
+        processIncarnation: 2,
+        threadId: "thread-1",
+        turnId: null, // turn/completed cleared it while the gate awaited
+        closed: false,
+      }),
+    } as never,
+    landBranch: async () => {
+      merged = true;
+      return { commit: "must-not-be-reached" };
+    },
+  });
+  db.insertAgent(writerRow({ status: "working" }));
+  try {
+    await expect(daemon.landAgent("maya", 3)).rejects.toThrow(
+      /ended or changed while authorization was in flight/,
+    );
+    expect(merged).toBe(false);
+  } finally {
+    db.close();
   }
 });

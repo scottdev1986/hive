@@ -132,9 +132,11 @@ export async function runDaemon(): Promise<void> {
       processIncarnation: agentStateCas(holder).processIncarnation,
       capabilityEpoch: holder.capabilityEpoch,
     }).then(() => undefined),
-    queueApproval: ({ agentName, description }) =>
-      daemon.queueCodexApproval(agentName, description),
+    queueApproval: (request) => daemon.queueCodexApproval(request),
     denyApproval: async (id) => daemon.denyCodexApproval(id),
+    // The human's dial, read live from the daemon at both the queue decision
+    // and the final allow boundary — never sampled once, never an agent claim.
+    autonomy: () => daemon.autonomyMode(),
     // The writer mutation gate. It is deliberately keyed on the exact agent id
     // and holder snapshot rather than the agent name: a name is reusable, and a
     // replacement answering to the same name must never inherit the authority

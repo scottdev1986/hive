@@ -153,6 +153,7 @@ import type { QuotaService } from "./quota";
 import {
   reapOrphanCodexHosts,
   type CodexAppServerManager,
+  type CodexApprovalRequest,
   type CodexMutationAuthorizationRequest,
   type CodexMutationDecision,
   type ReapOrphanDependencies,
@@ -264,6 +265,20 @@ function defaultOrphanDependencies(): ReapOrphanDependencies {
     kill: (pid) => process.kill(pid, "SIGKILL"),
   };
 }
+
+/** The host's pane-input wire shape: one typed line or one Ctrl-C. Strict, so
+ * this route can never grow approval/attestation fields by accident. */
+const PaneInputRequestSchema = z.discriminatedUnion("kind", [
+  z.strictObject({
+    agentName: z.string().min(1),
+    kind: z.literal("text"),
+    text: z.string().min(1),
+  }),
+  z.strictObject({
+    agentName: z.string().min(1),
+    kind: z.literal("interrupt"),
+  }),
+]);
 
 const SendRequestSchema = z.object({
   from: z.string().min(1),
@@ -553,6 +568,10 @@ export interface HiveDaemonOptions {
       worktreePath: string,
       processStartedAt: string,
     ) => Promise<string | null>;
+    /** The app-server exact-turn identity read inside the mutation gate.
+     * Injectable so CAS tests can suspend the read and mutate the holder row
+     * while it is in flight — the exact window the gate must re-prove. */
+    codexAppServerTurnIdentity?: typeof readCodexAppServerTurnIdentity;
   };
   codexControl?: Pick<
     CodexAppServerManager,
@@ -561,9 +580,12 @@ export interface HiveDaemonOptions {
     | "deliver"
     | "interrupt"
     | "denyAgentApprovals"
+    | "denyPendingMutationApprovals"
     | "disconnect"
     | "resolveApproval"
     | "activeTurnBinding"
+    | "sessionTurnSnapshot"
+    | "paneInput"
     | "close"
   >;
   /** Memory watchdog limits; the sweep stays off when omitted so embedded
@@ -656,6 +678,7 @@ export class HiveDaemon {
     worktreePath: string,
     processStartedAt: string,
   ) => Promise<string | null>;
+  private readonly readAppServerTurnIdentity: typeof readCodexAppServerTurnIdentity;
   private readonly handshake: () => ReturnType<typeof expectedDaemonHandshake>;
   private readonly cleanupWorktree: typeof removeWorktree;
   private readonly assessStranded: NonNullable<
@@ -946,6 +969,9 @@ export class HiveDaemon {
       (async (worktreePath, processStartedAt) =>
         (await findCodexRolloutForProcess(worktreePath, processStartedAt))
           ?.sessionId ?? null);
+    this.readAppServerTurnIdentity =
+      options.telemetryReaders?.codexAppServerTurnIdentity ??
+        readCodexAppServerTurnIdentity;
     this.handshake = () => expectedDaemonHandshake(this.repoRoot);
     this.cleanupWorktree = options.removeWorktree ?? removeWorktree;
     this.assessStranded = options.assessStrandedWork ?? assessStrandedWork;
@@ -1800,6 +1826,44 @@ export class HiveDaemon {
   }
 
   /**
+   * Remove a BROKERED app-server writer's authority without touching its
+   * conversation. `writeRevoked` flips durably; the capability epoch and
+   * credential stay current — pane input, status, messages, and reads keep
+   * authenticating — and the process is never suspended: the human must still
+   * be able to type, steer, interrupt, inspect, and recover. Landing and
+   * `memory:write` are blocked by WRITE_ACTIONS on `writeRevoked`, and every
+   * broker/MCP mutation re-proves against the row and denies, so nothing this
+   * process can do mutates the repo. Pending sandbox approvals settle as
+   * denied WITHOUT closing the session; status is deliberately untouched —
+   * turn state stays truthful and independent of authority. Physical freeze
+   * (`pauseWriterForIdentityDrift`) remains only for legacy/unbrokered writer
+   * surfaces, where a running process could mutate outside the broker.
+   */
+  private async revokeBrokeredWriterAuthority(
+    agent: AgentRecord,
+    detail: string,
+  ): Promise<void> {
+    const revoked = this.db.updateAgentIfCurrent(agentStateCas(agent), {
+      writeRevoked: true,
+      identityState: agent.identityState,
+      observedIdentity: agent.observedIdentity,
+      liveModel: agent.liveModel,
+      liveEffort: agent.liveEffort,
+    });
+    if (revoked === null) {
+      return; // concurrent kill/terminal/incarnation change wins
+    }
+    await this.codexControl?.denyPendingMutationApprovals(agent.name);
+    await this.delivery.send(
+      "hive-identity-guard",
+      ORCHESTRATOR_NAME,
+      `Codex writer ${agent.name} write authority REVOKED for app-server identity drift: ${detail}. ` +
+        `The capability epoch is unchanged and the session was NOT paused — typing, steer, and interrupt stay live — ` +
+        `while every mutation and landing denies until an authorized reattestation.`,
+    );
+  }
+
+  /**
    * Authorized, reattesting resume of a non-destructively paused agent. It
    * reattests the running identity and only if it now MATCHES the launch
    * identity does it reissue a fresh capability epoch + credential, clear the
@@ -2256,14 +2320,17 @@ export class HiveDaemon {
         if (updated === null) continue;
         persisted = updated;
       }
-      // Fail-closed enforcement (maintenance backstop): EVERY Codex writer is
-      // paused, matching attestation included, until the writer wave lands
-      // the app-server pane-input bridge — a running writer whose pane
-      // silently discards human typing is the exact failure this task
-      // forbids, and a scan-observed "matching" could never stand in for the
-      // process-bound attestation writers are contained on anyway.
+      // Fail-closed enforcement (maintenance backstop) for UNBROKERED Codex
+      // writers only: a legacy/TUI writer process could mutate outside the
+      // broker, and a scan-observed "matching" could never stand in for the
+      // process-bound attestation writers are contained on, so it freezes.
+      // App-server writers are governed structurally instead — a read-only
+      // sandbox whose every mutation is brokered per-request against the
+      // exact holder, with drift revoking authority (never the conversation)
+      // at the turn boundary.
       if (
-        current.tool === "codex" && !current.readOnly && !current.writeRevoked
+        current.tool === "codex" && !current.readOnly &&
+        !current.writeRevoked && current.codexDriver !== "app-server"
       ) {
         const observed = updates.observedIdentity ?? persisted.observedIdentity;
         const launch = persisted.executionIdentity;
@@ -3183,37 +3250,57 @@ export class HiveDaemon {
       allowed: false,
       reason: `Codex mutation denied for ${request.agentName} (${request.method}): ${reason}`,
     });
+    const staleHolder = (agent: AgentRecord | null): string | null => {
+      if (agent === null) return "no holder row for that agent id";
+      if (agent.name !== request.agentName) {
+        return "the holder for that id no longer answers to this name";
+      }
+      if ((agent.processIncarnation ?? 0) !== request.processIncarnation) {
+        return "process incarnation changed since this session started";
+      }
+      if (agent.capabilityEpoch !== request.capabilityEpoch) {
+        return "capability epoch changed since this session started";
+      }
+      if (agent.tool !== "codex") return "holder is not a Codex agent";
+      // The durable row must say the CURRENT incarnation launched on the
+      // brokered driver — never inferred from a name-keyed session existing.
+      if (agent.codexDriver !== "app-server") {
+        return "holder's current incarnation is not on the app-server driver";
+      }
+      if (agent.readOnly) return "holder is read-only";
+      if (agent.writeRevoked) return "holder's write authority is revoked";
+      if (isTerminalAgentStatus(agent.status)) {
+        return `holder status is ${agent.status} (terminal)`;
+      }
+      if (agent.worktreePath === null) return "holder has no worktree";
+      if (agent.executionIdentity === undefined) {
+        return "holder has no immutable launch identity to compare against";
+      }
+      return null;
+    };
     const agent = this.db.getAgentById(request.agentId);
-    if (agent === null) return deny("no holder row for that agent id");
-    if (agent.name !== request.agentName) {
-      return deny("the holder for that id no longer answers to this name");
-    }
-    if ((agent.processIncarnation ?? 0) !== request.processIncarnation) {
-      return deny("process incarnation changed since this session started");
-    }
-    if (agent.capabilityEpoch !== request.capabilityEpoch) {
-      return deny("capability epoch changed since this session started");
-    }
-    if (agent.tool !== "codex") return deny("holder is not a Codex agent");
-    if (agent.readOnly) return deny("holder is read-only");
-    if (agent.writeRevoked) return deny("holder's write authority is revoked");
-    if (isTerminalAgentStatus(agent.status)) {
-      return deny(`holder status is ${agent.status} (terminal)`);
-    }
-    if (agent.worktreePath === null) return deny("holder has no worktree");
-    const launch = agent.executionIdentity;
-    if (launch === undefined) {
-      return deny("holder has no immutable launch identity to compare against");
-    }
+    const stale = staleHolder(agent);
+    if (stale !== null) return deny(stale);
     // The provider's applied identity for THIS thread's turn, read from the
     // rollout the app-server itself named. Absent/unknown never becomes a pass.
-    const observation = await readCodexAppServerTurnIdentity(
+    const observation = await this.readAppServerTurnIdentity(
       request.rolloutPath,
-      agent.worktreePath,
+      agent!.worktreePath!,
       request.turnId,
     );
+    // The identity read awaited: revocation, replacement, a driver flip,
+    // terminalization, or an epoch advance during that await must not be
+    // authorized from the stale pre-await row. Re-fetch the holder and
+    // re-prove the same facts synchronously before any allow.
+    const current = this.db.getAgentById(request.agentId);
+    const drifted = staleHolder(current);
+    if (drifted !== null) {
+      return deny(
+        `${drifted} — the holder changed while the identity read was in flight`,
+      );
+    }
     const attestation = reconcileCodexIdentity(
-      launch,
+      current!.executionIdentity!,
       observation,
       "codex-app-server",
     );
@@ -3257,7 +3344,24 @@ export class HiveDaemon {
           `the live Codex session answering to ${agentName} belongs to holder ${binding.agentId}, not ${holderId} — a replacement cannot inherit its predecessor's session.`,
       };
     }
-    return await this.authorizeCodexMutation({ ...binding, method });
+    const decision = await this.authorizeCodexMutation({ ...binding, method });
+    if (!decision.allowed) return decision;
+    // The authorization awaited; the turn can have completed or the session
+    // been replaced meanwhile. Re-prove the exact same live binding
+    // synchronously — no transport round trip — before this answer stands.
+    const now = this.codexControl?.sessionTurnSnapshot(agentName) ?? null;
+    if (
+      now === null || now.closed || now.agentId !== binding.agentId ||
+      now.processIncarnation !== binding.processIncarnation ||
+      now.threadId !== binding.threadId || now.turnId !== binding.turnId
+    ) {
+      return {
+        allowed: false,
+        reason:
+          `the live Codex turn for ${agentName} ended or changed while authorization was in flight — the decision no longer binds to the turn that asked.`,
+      };
+    }
+    return decision;
   }
 
   /** Landing authority for a Codex writer, bound to the live turn asking. */
@@ -3271,6 +3375,13 @@ export class HiveDaemon {
     );
   }
 
+  /** The live daemon-owned autonomy dial, for the mutation broker. Absent
+   * control (embedded daemons, tests) reads as sandboxed — fail-closed: no
+   * dial is never a license to auto-allow. */
+  autonomyMode(): "sandboxed" | "dangerous" {
+    return this.autonomy?.get() ?? "sandboxed";
+  }
+
   /** Mark a queued Codex approval denied because it can no longer be
    * delivered. Without this the row sits pending in `hive_approvals` and a
    * human can still "approve" it into a decision nobody receives. */
@@ -3278,42 +3389,44 @@ export class HiveDaemon {
     this.db.resolveApproval(id, "denied", new Date().toISOString());
   }
 
-  async queueCodexApproval(
-    agentName: string,
-    description: string,
-  ): Promise<string> {
-    const current = this.db.getAgentByName(agentName);
-    if (current?.readOnly) {
-      throw new Error(
-        `Cannot queue a mutation approval for read-only agent ${agentName}; the request is denied mechanically.`,
-      );
-    }
+  async queueCodexApproval(request: CodexApprovalRequest): Promise<string> {
     const id = crypto.randomUUID();
     const createdAt = new Date().toISOString();
     this.db.transaction(() => {
+      // Validated INSIDE the transaction, atomically with the insert: a
+      // pending human approval must never appear for a holder that is no
+      // longer exactly the one whose session asked, nor after write
+      // revocation — a ghost row would sit in `hive_approvals` waiting for a
+      // human to approve an authority that is already gone.
+      const agent = this.db.getAgentById(request.agentId);
+      if (
+        agent === null || agent.name !== request.agentName ||
+        (agent.processIncarnation ?? 0) !== request.processIncarnation ||
+        agent.capabilityEpoch !== request.capabilityEpoch ||
+        agent.readOnly || agent.writeRevoked ||
+        isTerminalAgentStatus(agent.status)
+      ) {
+        throw new Error(
+          `Cannot queue a mutation approval for ${request.agentName}: the exact holder is gone, changed, revoked, or read-only; the request is denied mechanically.`,
+        );
+      }
       this.db.insertApproval({
         id,
-        agentName,
+        agentName: request.agentName,
         // The description is the command Codex wants to run (`describeApproval`,
         // src/adapters/tools/codex-app-server.ts) — the thing being decided.
         // Never trimmed.
         kind: "tool-permission",
-        description,
+        description: request.description,
         status: "pending",
         createdAt,
         resolvedAt: null,
       });
-      const agent = this.db.getAgentByName(agentName);
-      if (
-        agent !== null && agent.status !== "dead" && agent.status !== "done" &&
-        agent.status !== "failed"
-      ) {
-        this.db.upsertAgent({
-          ...agent,
-          status: agent.writeRevoked ? "control-paused" : "awaiting-approval",
-          lastEventAt: createdAt,
-        });
-      }
+      this.db.upsertAgent({
+        ...agent,
+        status: "awaiting-approval",
+        lastEventAt: createdAt,
+      });
     });
     return id;
   }
@@ -3358,6 +3471,9 @@ export class HiveDaemon {
     // one of them authenticates first. See the capability rights matrix.
     if (url.pathname === "/event" && request.method === "POST") {
       return this.receiveEvent(request);
+    }
+    if (url.pathname === "/pane-input" && request.method === "POST") {
+      return this.receivePaneInput(request);
     }
     if (url.pathname === "/statusline" && request.method === "POST") {
       return this.receiveStatusline(request);
@@ -4439,17 +4555,16 @@ export class HiveDaemon {
       });
       if (
         mid !== null && !isTerminalAgentStatus(mid.status) &&
-        !agent.readOnly && !agent.writeRevoked
+        !agent.readOnly && !agent.writeRevoked &&
+        attestation.identityState !== "matching"
       ) {
-        // Writers pause even on a matching attestation until the writer wave
-        // lands the pane-input bridge: a running writer with a deaf pane is
-        // the failure this task forbids. The identity persisted above stays
-        // honest either way.
-        await this.pauseWriterForIdentityDrift(
+        // A brokered writer whose turn-boundary attestation is not a match
+        // loses authority, not its conversation: writeRevoked flips (epoch
+        // and credential stay current), every mutation/landing denies, and
+        // the session keeps running — never SIGSTOPped, never relabeled.
+        await this.revokeBrokeredWriterAuthority(
           mid,
-          attestation.identityState === "matching"
-            ? "turn-start: app-server identity matches, but Codex writers are held until the pane-input bridge lands"
-            : `turn-start app-server reattestation is ${attestation.identityState}, not matching`,
+          `turn-start app-server reattestation is ${attestation.identityState}, not matching`,
         );
       }
     } // Fail-closed at the turn boundary for legacy Codex writers: any non-matching
@@ -4613,6 +4728,82 @@ export class HiveDaemon {
     } catch (error) {
       return json(
         { error: error instanceof Error ? error.message : "Event failed" },
+        { status: 500 },
+      );
+    }
+  }
+
+  /**
+   * Human pane input for an app-server pane: the host forwards typed lines and
+   * Ctrl-C here, and the manager maps them onto start/steer/interrupt.
+   *
+   * This route is conversation, not authority. It binds to the EXACT self
+   * holder — agent id, process incarnation, unchanged capability epoch, and
+   * the current incarnation's persisted app-server driver for routing — and it
+   * deliberately ignores identityState, live status, and writeRevoked: a
+   * revoked or identity-drifted writer's human must still be able to type,
+   * steer, interrupt, and recover. Nothing on this path can approve, attest,
+   * or authorize; the ceiling of a forged POST is steering a conversation the
+   * same credential could already message.
+   */
+  private async receivePaneInput(request: Request): Promise<Response> {
+    const authenticated = this.authenticate(request, "/pane-input");
+    if (!authenticated.ok) return this.denied(authenticated);
+    let body: unknown;
+    try {
+      body = await request.json();
+    } catch {
+      return json({ error: "Invalid pane input" }, { status: 400 });
+    }
+    const parsed = PaneInputRequestSchema.safeParse(body);
+    if (!parsed.success) {
+      return json(
+        { error: "Invalid pane input", issues: parsed.error.issues },
+        { status: 400 },
+      );
+    }
+    const input = parsed.data;
+    const decision = this.authorize(
+      authenticated.capability,
+      "/pane-input",
+      "pane:input",
+      input.agentName,
+      false,
+    );
+    if (!decision.ok) return this.denied(decision);
+    const exact = this.exactAgentForCapability(
+      authenticated.capability,
+      input.agentName,
+    );
+    if (exact === null) {
+      return json(
+        {
+          error:
+            `Pane input holder changed or is not exactly bound: ${input.agentName}`,
+        },
+        { status: 409 },
+      );
+    }
+    if (
+      exact.tool !== "codex" || exact.codexDriver !== "app-server" ||
+      this.codexControl === undefined
+    ) {
+      return json(
+        { error: `${input.agentName} has no app-server pane to route input for` },
+        { status: 409 },
+      );
+    }
+    try {
+      const outcome = await this.codexControl.paneInput(
+        exact,
+        input.kind === "text"
+          ? { kind: "text", text: input.text }
+          : { kind: "interrupt" },
+      );
+      return json({ ok: true, outcome });
+    } catch (error) {
+      return json(
+        { error: error instanceof Error ? error.message : "Pane input failed" },
         { status: 500 },
       );
     }

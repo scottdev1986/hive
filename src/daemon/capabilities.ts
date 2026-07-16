@@ -46,6 +46,7 @@ export type Action =
   | "memory:write"
   | "event:report"
   | "telemetry:report"
+  | "pane:input"
   | "root-token:mint"
   | "autonomy:read"
   | "autonomy:write"
@@ -128,6 +129,11 @@ export const ROLE_GRANTS: Readonly<Record<Role, RoleGrant>> = {
       "assignment:report",
       "branch:land", "memory:read", "memory:write", "event:report",
       "telemetry:report",
+      // The agent's own app-server pane host forwards human typing with the
+      // same credential. Self-subject only, conversation-grade only — and
+      // deliberately NOT in WRITE_ACTIONS: revocation removes authority,
+      // never the human's ability to type, steer, and interrupt.
+      "pane:input",
     ],
     anySubject: [],
     oneShot: ["branch:land"],
@@ -137,6 +143,8 @@ export const ROLE_GRANTS: Readonly<Record<Role, RoleGrant>> = {
       "status:read", "quota:read", "message:send", "message:ack", "inbox:read",
       "assignment:report",
       "memory:read", "event:report", "telemetry:report",
+      // App-server reader panes need typing exactly like writers do.
+      "pane:input",
     ],
     anySubject: [],
     oneShot: [],

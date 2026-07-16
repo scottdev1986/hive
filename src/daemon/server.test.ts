@@ -2839,7 +2839,16 @@ describe("HiveDaemon HTTP server", () => {
         "-print0 | xargs -0 grep -ln \"insertApproval\" | sort -u | head -50 " +
         "&& rm -rf ./build/cache && npm publish --access public --tag latest'";
       expect(longCommand.length).toBeGreaterThan(200);
-      const permissionId = await daemon.queueCodexApproval("nia", longCommand);
+      // Approval insertion validates the exact holder atomically, so the row
+      // being decided on must exist.
+      db.upsertAgent(agent({ id: "agent-nia", name: "nia" }));
+      const permissionId = await daemon.queueCodexApproval({
+        agentName: "nia",
+        description: longCommand,
+        agentId: "agent-nia",
+        processIncarnation: 1,
+        capabilityEpoch: 0,
+      });
 
       const boilerplate =
         "SPEND REAL MONEY on some-model? Approve to let Hive run it and bill "
@@ -4746,7 +4755,7 @@ describe("Codex execution-identity attestation sweep", () => {
     }
   });
 
-  test("an app-server-attested matching writer keeps its identity but stays held until the writer wave", async () => {
+  test("an app-server-attested matching writer keeps identity AND authority: the sweep neither rescans nor pauses it", async () => {
     const db = new HiveDatabase(join(home, "attest-appserver-writer.db"));
     const suspendedSessions: string[] = [];
     const daemon = new HiveDaemon({
@@ -4787,15 +4796,17 @@ describe("Codex execution-identity attestation sweep", () => {
       await daemon.refreshToolTelemetry();
       const row = db.getAgentByName("maya")!;
       // The exact app-server observation stands — the sweep never rewrites it
-      // with a scan verdict — but the writer itself is held: no Codex writer
-      // runs until the pane-input bridge lands (a deaf pane must not host a
-      // live writer).
-      expect(row.status).toBe("control-paused");
-      expect(row.writeRevoked).toBe(true);
+      // with a scan verdict — and a brokered writer is governed structurally
+      // (read-only sandbox, per-mutation exact-holder attestation), so the
+      // maintenance backstop must not touch it: no pause, no revocation, no
+      // suspension. The fail-closed freeze belongs to UNBROKERED writers only.
+      expect(row.status).toBe("working");
+      expect(row.writeRevoked).toBe(false);
+      expect(row.capabilityEpoch).toBe(0);
       expect(row.identityState).toBe("matching");
       expect(row.observedIdentity).toMatchObject(observed);
       expect(row.liveModel).toBe("gpt-5.6-sol");
-      expect(suspendedSessions).toEqual(["hive-maya"]);
+      expect(suspendedSessions).toEqual([]);
     } finally {
       db.close();
     }
@@ -5076,7 +5087,7 @@ describe("Codex execution-identity attestation sweep", () => {
     }
   });
 
-  test("an app-server turn-start with MATCHING identity still holds the writer: identity persists, authority is revoked, tree suspended", async () => {
+  test("an app-server turn-start with MATCHING identity keeps the writer live: identity persists, authority intact, never suspended", async () => {
     const db = new HiveDatabase(join(home, "attest-appserver-matching-writer.db"));
     const suspended: string[] = [];
     const daemon = new HiveDaemon({
@@ -5121,21 +5132,24 @@ describe("Codex execution-identity attestation sweep", () => {
         effort: "xhigh",
         source: "codex-app-server",
       });
-      // ...but no Codex writer runs until the pane-input bridge lands.
-      expect(row.status).toBe("control-paused");
-      expect(row.writeRevoked).toBe(true);
-      expect(row.capabilityEpoch).toBe(1);
-      expect(suspended).toEqual(["hive-maya"]);
+      // ...and a matching brokered writer KEEPS its authority: no pause, no
+      // revocation, no epoch advance, no suspension, no guard alert. The
+      // pane-input bridge made a rendered app-server pane a typable pane, so
+      // the temporary hold is gone.
+      expect(row.status).toBe("working");
+      expect(row.writeRevoked).toBe(false);
+      expect(row.capabilityEpoch).toBe(0);
+      expect(suspended).toEqual([]);
       const toQueen = db.listMessages().filter((message) =>
         message.to === "queen" && message.from === "hive-identity-guard"
       );
-      expect(toQueen[0]?.body).toContain("pane-input bridge");
+      expect(toQueen).toEqual([]);
     } finally {
       db.close();
     }
   });
 
-  test("an app-server turn-start that reads drift pauses the writer with the exact evidence", async () => {
+  test("an app-server turn-start that reads drift revokes authority WITHOUT touching the conversation", async () => {
     const db = new HiveDatabase(join(home, "attest-appserver-drift.db"));
     const suspended: string[] = [];
     const daemon = new HiveDaemon({
@@ -5174,9 +5188,20 @@ describe("Codex execution-identity attestation sweep", () => {
       });
       const row = db.getAgentByName("maya")!;
       expect(row.identityState).toBe("drift");
-      expect(row.status).toBe("control-paused");
+      // Brokered revocation: writeRevoked flips, but the capability epoch and
+      // credential stay CURRENT (pane input keeps authenticating), the process
+      // is never SIGSTOPped, and status keeps describing the turn — never
+      // relabeled control-paused. Every mutation/landing still denies via
+      // WRITE_ACTIONS and the broker's writeRevoked check.
       expect(row.writeRevoked).toBe(true);
-      expect(suspended).toEqual(["hive-maya"]);
+      expect(row.capabilityEpoch).toBe(0);
+      expect(row.status).toBe("working");
+      expect(suspended).toEqual([]);
+      const guard = db.listMessages().filter((message) =>
+        message.to === "queen" && message.from === "hive-identity-guard"
+      );
+      expect(guard[0]?.body).toContain("REVOKED");
+      expect(guard[0]?.body).toContain("NOT paused");
     } finally {
       db.close();
     }
@@ -6133,6 +6158,224 @@ describe("exact pause capture resume (N5)", () => {
       expect(db.listMessages().filter((message) =>
         message.from === "hive-resume-guard"
       )).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
+});
+
+// ————— the pane-input route: conversation, not authority —————
+//
+// The host forwards typed lines and Ctrl-C here with the agent's own bearer.
+// The route binds to the EXACT self holder and the persisted app-server
+// driver for ROUTING — and deliberately ignores identityState, status, and
+// writeRevoked, because revocation removes authority, never the human's
+// conversation. Nothing on this path approves, attests, or authorizes.
+describe("POST /pane-input", () => {
+  function paneHarness(row: Partial<AgentRecord> = {}) {
+    const db = new HiveDatabase(join(home, `pane-input-${crypto.randomUUID()}.db`));
+    const paneCalls: Array<{ agentId: string; incarnation: number | undefined; input: unknown }> = [];
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new StubSpawner(),
+      tmux: new FakeDaemonTmux(),
+      codexControl: {
+        paneInput: async (holder: AgentRecord, input: unknown) => {
+          paneCalls.push({
+            agentId: holder.id,
+            incarnation: holder.processIncarnation,
+            input,
+          });
+          return "delivered";
+        },
+      } as never,
+    });
+    const record = agent({
+      tool: "codex",
+      codexDriver: "app-server",
+      readOnly: false,
+      ...row,
+    });
+    db.insertAgent(record);
+    const token = daemon.issueAgentCredential(record, "writer")!.token;
+    const post = (body: unknown, bearer: string | null = token) =>
+      daemon.fetch(
+        new Request("http://hive/pane-input", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            ...(bearer === null ? {} : { authorization: `Bearer ${bearer}` }),
+          },
+          body: JSON.stringify(body),
+        }),
+      );
+    return { db, daemon, record, token, post, paneCalls };
+  }
+
+  const LINE = { agentName: "maya", kind: "text", text: "hello agent" };
+
+  test("routes a typed line to the exact holder's manager session", async () => {
+    const { db, post, paneCalls, record } = paneHarness();
+    try {
+      const response = await post(LINE);
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({ ok: true, outcome: "delivered" });
+      expect(paneCalls).toEqual([{
+        agentId: record.id,
+        incarnation: record.processIncarnation,
+        input: { kind: "text", text: "hello agent" },
+      }]);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("REVOKED and identity-drifted writers still receive input: authority gates never touch conversation", async () => {
+    const { db, post, paneCalls } = paneHarness({
+      writeRevoked: true,
+      identityState: "drift",
+    });
+    try {
+      const interrupt = await post({ agentName: "maya", kind: "interrupt" });
+      expect(interrupt.status).toBe(200);
+      expect(paneCalls).toEqual([{
+        agentId: "agent-maya",
+        incarnation: 1,
+        input: { kind: "interrupt" },
+      }]);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("no bearer is refused; an operator credential has no pane:input grant", async () => {
+    const { db, daemon, post, paneCalls } = paneHarness();
+    try {
+      expect((await post(LINE, null)).status).toBeGreaterThanOrEqual(400);
+      const operator = daemon.capabilities.mint("operator", "operator").token;
+      expect((await post(LINE, operator)).status).toBeGreaterThanOrEqual(400);
+      expect(paneCalls).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("a stale holder is refused: epoch advance or replacement unbinds the credential", async () => {
+    // A real epoch advance (reissue — revocation deliberately keeps the epoch)
+    // invalidates the old bearer at the capability layer itself (403); a
+    // replacement incarnation that somehow kept its token stops at the exact
+    // holder check (409). Either way nothing reaches the manager.
+    const { db, post, paneCalls, record } = paneHarness();
+    try {
+      db.upsertAgent({ ...record, capabilityEpoch: record.capabilityEpoch + 1 });
+      expect((await post(LINE)).status).toBeGreaterThanOrEqual(400);
+      db.upsertAgent({ ...record, processIncarnation: 9 });
+      expect((await post(LINE)).status).toBeGreaterThanOrEqual(400);
+      expect(paneCalls).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("a non-app-server row is 409: there is no pane to route input for", async () => {
+    const { db, post, paneCalls } = paneHarness({ codexDriver: "tui" });
+    try {
+      const response = await post(LINE);
+      expect(response.status).toBe(409);
+      expect((await response.json() as { error: string }).error)
+        .toContain("no app-server pane");
+      expect(paneCalls).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("the wire shape is strict: unknown fields and empty text are 400, never smuggled through", async () => {
+    const { db, post, paneCalls } = paneHarness();
+    try {
+      expect((await post({ ...LINE, approve: true })).status).toBe(400);
+      expect((await post({ agentName: "maya", kind: "text", text: "" })).status)
+        .toBe(400);
+      expect((await post({ agentName: "maya", kind: "steer" })).status).toBe(400);
+      expect(paneCalls).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
+});
+
+// ————— approval insertion is atomic with holder validation —————
+describe("queueCodexApproval exact-holder validation", () => {
+  function approvalHarness(row: Partial<AgentRecord> = {}) {
+    const db = new HiveDatabase(join(home, `queue-approval-${crypto.randomUUID()}.db`));
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new StubSpawner(),
+      tmux: new FakeDaemonTmux(),
+    });
+    const record = agent({ tool: "codex", codexDriver: "app-server", ...row });
+    db.insertAgent(record);
+    const queue = () =>
+      daemon.queueCodexApproval({
+        agentName: record.name,
+        description: "Codex wants to run touch x",
+        agentId: record.id,
+        processIncarnation: record.processIncarnation ?? 0,
+        capabilityEpoch: record.capabilityEpoch,
+      });
+    return { db, record, queue };
+  }
+
+  test("a revoked holder can never grow a pending approval row — no ghost for a human to approve", async () => {
+    const { db, record, queue } = approvalHarness({ writeRevoked: true });
+    try {
+      await expect(queue()).rejects.toThrow(/denied mechanically/);
+      expect(db.listApprovals()).toEqual([]);
+      // The status was not rewritten either: no control-paused ghost.
+      expect(db.getAgentByName(record.name)?.status).toBe(record.status);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("revocation BETWEEN authorize and queue is caught at insertion: the row validates atomically", async () => {
+    const { db, record, queue } = approvalHarness();
+    try {
+      // The first authorization passed against a live holder; revocation lands
+      // just before the insert. The transaction re-reads and refuses.
+      db.upsertAgent({ ...record, writeRevoked: true });
+      await expect(queue()).rejects.toThrow(/denied mechanically/);
+      expect(db.listApprovals()).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("an epoch advance, replacement, or terminal holder refuses insertion", async () => {
+    for (const mutation of [
+      { capabilityEpoch: 7 },
+      { processIncarnation: 9 },
+      { status: "dead" as const },
+    ]) {
+      const { db, record, queue } = approvalHarness();
+      try {
+        // The session's snapshot no longer describes the durable row by the
+        // time the insert runs.
+        db.upsertAgent({ ...record, ...mutation });
+        await expect(queue()).rejects.toThrow(/denied mechanically/);
+        expect(db.listApprovals()).toEqual([]);
+      } finally {
+        db.close();
+      }
+    }
+  });
+
+  test("a live exact holder queues one pending row and parks awaiting-approval", async () => {
+    const { db, record, queue } = approvalHarness({ status: "working" });
+    try {
+      const id = await queue();
+      expect(db.getApproval(id)?.status).toBe("pending");
+      expect(db.getAgentByName(record.name)?.status).toBe("awaiting-approval");
     } finally {
       db.close();
     }

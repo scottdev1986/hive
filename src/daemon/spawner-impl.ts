@@ -794,16 +794,22 @@ export class HiveSpawner implements Spawner {
    * that admits a writer and the launch that runs it cannot disagree. Null for
    * every other tool.
    *
-   * App-server stays behind the explicit config opt-in — including for
-   * writers, deliberately: the app-server host does not yet route pane
-   * keystrokes anywhere, so auto-engaging it would replace an honest refusal
-   * with a live-looking pane that silently discards human typing. Until the
-   * pane-input bridge lands, a writer on the default config refuses with the
-   * true reason instead. */
+   * A WRITER engages the app-server whenever it is available, regardless of
+   * config: app-server is the only surface a Codex writer is admissible on
+   * (every mutation brokered, pane input bridged), so resolving TUI would
+   * just be resolving a containment refusal. Readers keep the explicit
+   * config opt-in — the TUI is their native, fully interactive surface. */
   private async resolveCodexDriver(
     tool: CapabilityProvider,
+    readOnly: boolean,
   ): Promise<CodexDriver | null> {
     if (tool !== "codex") return null;
+    if (!readOnly) {
+      return (await this.dependencies.codexAppServer?.isAvailable() ?? false)
+        ? "app-server"
+        : "tui";
+    }
+    // Readers on the default config never probe: the TUI is their surface.
     const appServer = this.dependencies.config.codex?.driver === "app-server" &&
       (await this.dependencies.codexAppServer?.isAvailable() ?? false);
     return appServer ? "app-server" : "tui";
@@ -1124,7 +1130,7 @@ export class HiveSpawner implements Spawner {
           break;
         }
         case "codex": {
-          const driver = await this.resolveCodexDriver(identity.tool);
+          const driver = await this.resolveCodexDriver(identity.tool, readOnly);
           // The driver is a per-incarnation launch fact: the restart row must
           // record what THIS process launches with — the config (and so the
           // resolved driver) may differ from the prior incarnation's.
@@ -2328,7 +2334,7 @@ export class HiveSpawner implements Spawner {
     // driver here and refuse before any worktree or launch. The same resolution
     // decides the launch below, and `isAvailable()` is cached, so the driver
     // this gate admitted is the driver that actually runs.
-    codexDriver = await this.resolveCodexDriver(tool);
+    codexDriver = await this.resolveCodexDriver(tool, readOnly);
     // Audit only after this gate so containment is never recorded as success.
     try {
       assertCodexWriterContained(tool, readOnly, codexDriver);
@@ -2338,10 +2344,6 @@ export class HiveSpawner implements Spawner {
       // visible or a broken probe masquerades as a design decision.
       const engage = this.dependencies.codexAppServer === undefined
         ? "no Codex app-server manager is configured in this daemon"
-        : this.dependencies.config.codex?.driver !== "app-server"
-        ? "config codex.driver is not \"app-server\" — deliberately not " +
-          "auto-engaged, because the app-server pane cannot yet accept " +
-          "human keyboard input; opt in explicitly or use a Claude/Grok writer"
         : "the `codex app-server --help` availability probe failed " +
           "(codex missing or broken on the daemon's PATH)";
       const message = `${

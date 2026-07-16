@@ -11,6 +11,7 @@ import {
   type CodexAppServerTransport,
   codexAgentHostPidfile,
   codexAgentSocketPath,
+  createPaneInputForwarder,
   hostPidfileAgentId,
   reapOrphanCodexHosts,
   renderCodexHostMessage,
@@ -431,6 +432,7 @@ describe("Codex app-server adapter", () => {
     async function writerSession(options: {
       authorize?: (request: any) => Promise<any>;
       queueApproval?: () => Promise<string>;
+      autonomy?: () => "sandboxed" | "dangerous";
     } = {}) {
       const transport = new FakeTransport();
       const gateCalls: any[] = [];
@@ -452,6 +454,7 @@ describe("Codex app-server adapter", () => {
             : await options.authorize(request);
         },
         observeRateLimits: async () => null,
+        ...(options.autonomy === undefined ? {} : { autonomy: options.autonomy }),
       });
       await manager.startAgent(agent({ readOnly: false, id: "agent-maya" }), {
         developerInstructions: "writer rules",
@@ -552,6 +555,103 @@ describe("Codex app-server adapter", () => {
       // Approved by a human, and still denied: the recheck is the authority.
       expect(response.result).toEqual({ decision: "decline" });
       expect(gateCalls).toHaveLength(2);
+    });
+
+    test("FULL AUTONOMY: dangerous auto-allows on the identity checks alone — no human row, gated twice", async () => {
+      const { transport, gateCalls, queued } = await writerSession({
+        authorize: async () => ({ allowed: true }),
+        autonomy: () => "dangerous",
+      });
+      const response = await ask(transport, FILE_CHANGE, {
+        ...bound,
+        grantRoot: "/tmp/maya",
+      });
+      expect(response.result).toEqual({ decision: "accept" });
+      // No durable human approval row was created, and the gate still ran
+      // twice: once on arrival and once immediately before the allow.
+      expect(queued).toEqual([]);
+      expect(gateCalls).toHaveLength(2);
+    });
+
+    test("FULL AUTONOMY: a failing identity check denies without ever touching the approval queue", async () => {
+      const { transport, gateCalls, queued } = await writerSession({
+        authorize: async () => ({ allowed: false, reason: "unattested" }),
+        autonomy: () => "dangerous",
+      });
+      const response = await ask(transport, COMMAND, {
+        ...bound,
+        command: "touch x",
+      });
+      expect(response.result).toEqual({ decision: "decline" });
+      expect(queued).toEqual([]);
+      expect(gateCalls).toHaveLength(1);
+    });
+
+    test("DIAL CAS: dangerous that drops to sandboxed while checks are in flight never auto-allows", async () => {
+      // The dial is live daemon state, not a boolean sampled at request start.
+      // It reads dangerous when the mutation arrives — skipping the human — so
+      // when it drops to sandboxed during the second gate pass there is no
+      // human approval to stand on, and the final synchronous dial recheck
+      // must turn the would-be allow into a denial.
+      let dial: "sandboxed" | "dangerous" = "dangerous";
+      let pass = 0;
+      const { transport, queued } = await writerSession({
+        authorize: async () => {
+          pass += 1;
+          if (pass === 2) dial = "sandboxed";
+          return { allowed: true };
+        },
+        autonomy: () => dial,
+      });
+      const response = await ask(transport, COMMAND, {
+        ...bound,
+        command: "touch x",
+      });
+      expect(response.result).toEqual({ decision: "decline" });
+      expect(queued).toEqual([]);
+    });
+
+    test("DIAL CAS: sandboxed flipping to dangerous never converts a queued human approval into an auto-allow", async () => {
+      let dial: "sandboxed" | "dangerous" = "sandboxed";
+      const { manager, transport, queued } = await writerSession({
+        authorize: async () => ({ allowed: true }),
+        autonomy: () => dial,
+      });
+      const asked = ask(transport, FILE_CHANGE, {
+        ...bound,
+        grantRoot: "/tmp/maya",
+      });
+      await Bun.sleep(1);
+      expect(queued).toHaveLength(1);
+      // The human's dial rises while the row waits. The row still belongs to
+      // the human: nothing answers until they decide.
+      dial = "dangerous";
+      await Bun.sleep(5);
+      expect(transport.sent.find((m) => m.id === 501)).toBeUndefined();
+      expect(await manager.resolveApproval("approval-1", false)).toBe(true);
+      expect((await asked).result).toEqual({ decision: "decline" });
+    });
+
+    test("a turn that completes while the gate is in flight is denied by the final synchronous recheck", async () => {
+      // Both gate passes allow, the dial is dangerous — and the answer must
+      // still be a denial, because by the time it would be written the exact
+      // turn it authorizes no longer exists.
+      const { transport } = await writerSession({
+        authorize: async () => {
+          transport.emit({
+            method: "turn/completed",
+            params: { turn: { id: "turn-9", status: "completed" } },
+          });
+          await Bun.sleep(1);
+          return { allowed: true };
+        },
+        autonomy: () => "dangerous",
+      });
+      const response = await ask(transport, COMMAND, {
+        ...bound,
+        command: "touch x",
+      });
+      expect(response.result).toEqual({ decision: "decline" });
     });
 
     test("a denied approval stops at one gate call and never rechecks", async () => {
@@ -1288,4 +1388,470 @@ test("CodexAppServerManager refuses a worker without an initial user prompt", as
     "high",
   )).rejects.toThrow("requires an initial user prompt");
   expect(connected).toBeFalse();
+});
+
+// ————— the pane-input bridge: manager routing —————
+//
+// Human typing is conversation, not authority. These tests pin the routing
+// contract: text reaches the live session (idle starts a turn, an active turn
+// is steered), pre-session input queues under the EXACT holder and flushes in
+// order after the initial prompt, interrupts stop the turn and discard queued
+// text, and none of it ever consults identityState/status/writeRevoked.
+describe("pane input", () => {
+  function paneManager() {
+    const transport = new FakeTransport();
+    const manager = new CodexAppServerManager({
+      transport: async () => transport,
+      commandRunner: async () => 0,
+      sleep: async () => undefined,
+      onEvent: async () => undefined,
+      queueApproval: async () => "approval-1",
+      denyApproval: async () => undefined,
+      authorizeMutation: async () => ({ allowed: false, reason: "not under test" }),
+      observeRateLimits: async () => null,
+    });
+    return { transport, manager };
+  }
+
+  const writer = (overrides: Partial<AgentRecord> = {}): AgentRecord =>
+    agent({ readOnly: false, processIncarnation: 2, ...overrides });
+
+  const bootstrap = {
+    developerInstructions: "writer rules",
+    initialUserPrompt: "boot prompt",
+  };
+
+  test("pre-session text queues and flushes IN ORDER after the initial prompt's turn", async () => {
+    const { transport, manager } = paneManager();
+    expect(await manager.paneInput(writer(), { kind: "text", text: "first" }))
+      .toBe("queued");
+    expect(await manager.paneInput(writer(), { kind: "text", text: "second" }))
+      .toBe("queued");
+    await manager.startAgent(writer(), bootstrap, "high");
+    const frames = transport.sent.filter((m) =>
+      m.method === "turn/start" || m.method === "turn/steer"
+    );
+    expect(frames[0]?.method).toBe("turn/start");
+    expect(frames[0]?.params?.input?.[0]?.text).toBe("boot prompt");
+    expect(frames[1]?.method).toBe("turn/steer");
+    expect(frames[1]?.params?.input?.[0]?.text).toBe("first");
+    expect(frames[2]?.method).toBe("turn/steer");
+    expect(frames[2]?.params?.input?.[0]?.text).toBe("second");
+    // The queued text steered the live thread with its exact turn binding.
+    expect(frames[1]?.params?.threadId).toBe("thread-1");
+    expect(frames[1]?.params?.expectedTurnId).toBeDefined();
+  });
+
+  test("input during startAgent itself neither throws nor drops: it queues and flushes", async () => {
+    // startAgent creates the client before sessions.set — input arriving in
+    // exactly that window must land in the queue, not throw or vanish.
+    const { transport, manager } = paneManager();
+    const starting = manager.startAgent(writer(), bootstrap, "high");
+    expect(await manager.paneInput(writer(), { kind: "text", text: "mid-start" }))
+      .toBe("queued");
+    await starting;
+    // The flush at the end of startAgent may still be draining; settle it.
+    await Bun.sleep(1);
+    const steer = transport.sent.find((m) =>
+      m.method === "turn/steer" && m.params?.input?.[0]?.text === "mid-start"
+    );
+    expect(steer).toBeDefined();
+  });
+
+  test("active text steers the exact live thread; after turn/completed a typed line starts a NEW turn", async () => {
+    const { transport, manager } = paneManager();
+    await manager.startAgent(writer(), bootstrap, "high");
+    // Active: a typed line steers the running turn.
+    expect(manager.isTurnActive("maya")).toBe(true);
+    expect(await manager.paneInput(writer(), { kind: "text", text: "steer me" }))
+      .toBe("delivered");
+    const steer = transport.sent.findLast((m) => m.method === "turn/steer");
+    expect(steer?.params?.input?.[0]?.text).toBe("steer me");
+    expect(steer?.params?.threadId).toBe("thread-1");
+    // Idle: the turn completes; the next typed line starts a fresh turn.
+    const live = manager.sessionTurnSnapshot("maya")!;
+    transport.emit({
+      method: "turn/completed",
+      params: { turn: { id: live.turnId, status: "completed" } },
+    });
+    await Bun.sleep(1);
+    expect(manager.isTurnActive("maya")).toBe(false);
+    expect(await manager.paneInput(writer(), { kind: "text", text: "next task" }))
+      .toBe("delivered");
+    const starts = transport.sent.filter((m) => m.method === "turn/start");
+    expect(starts).toHaveLength(2);
+    expect(starts[1]?.params?.input?.[0]?.text).toBe("next task");
+  });
+
+  test("interrupt stops the active turn; idle and pre-session interrupts are honest no-ops", async () => {
+    const { transport, manager } = paneManager();
+    // Pre-session: nothing to interrupt, and queued text is discarded — the
+    // human canceled what they had typed.
+    expect(await manager.paneInput(writer(), { kind: "text", text: "doomed" }))
+      .toBe("queued");
+    expect(await manager.paneInput(writer(), { kind: "interrupt" }))
+      .toBe("no-turn");
+    await manager.startAgent(writer(), bootstrap, "high");
+    expect(
+      transport.sent.find((m) =>
+        m.method === "turn/steer" && m.params?.input?.[0]?.text === "doomed"
+      ),
+    ).toBeUndefined();
+    // Active: the interrupt reaches the exact live turn.
+    const live = manager.sessionTurnSnapshot("maya")!;
+    expect(await manager.paneInput(writer(), { kind: "interrupt" }))
+      .toBe("delivered");
+    const interrupt = transport.sent.findLast((m) => m.method === "turn/interrupt");
+    expect(interrupt?.params).toMatchObject({
+      threadId: "thread-1",
+      turnId: live.turnId,
+    });
+    // Idle: completed turn, nothing to interrupt.
+    transport.emit({
+      method: "turn/completed",
+      params: { turn: { id: live.turnId, status: "completed" } },
+    });
+    await Bun.sleep(1);
+    expect(await manager.paneInput(writer(), { kind: "interrupt" }))
+      .toBe("no-turn");
+  });
+
+  test("input binds to the EXACT holder: another incarnation's session never receives it", async () => {
+    const { transport, manager } = paneManager();
+    await manager.startAgent(writer(), bootstrap, "high");
+    // The row respawned: same name, new incarnation. Its input must not land
+    // in the predecessor's live session.
+    expect(
+      await manager.paneInput(writer({ processIncarnation: 3 }), {
+        kind: "text",
+        text: "for the successor",
+      }),
+    ).toBe("queued");
+    expect(
+      transport.sent.find((m) =>
+        m.method === "turn/steer" &&
+        m.params?.input?.[0]?.text === "for the successor"
+      ),
+    ).toBeUndefined();
+  });
+
+  test("revoked authority and drifted identity do NOT gate input: conversation survives revocation", async () => {
+    const { transport, manager } = paneManager();
+    await manager.startAgent(writer(), bootstrap, "high");
+    expect(
+      await manager.paneInput(
+        writer({ writeRevoked: true, identityState: "drift", status: "working" }),
+        { kind: "text", text: "still typing" },
+      ),
+    ).toBe("delivered");
+    expect(
+      transport.sent.find((m) =>
+        m.method === "turn/steer" && m.params?.input?.[0]?.text === "still typing"
+      ),
+    ).toBeDefined();
+  });
+
+  test("a dropped transport queues later input, and disconnect refuses the old queue", async () => {
+    const { transport, manager } = paneManager();
+    await manager.startAgent(writer(), bootstrap, "high");
+    // The socket drops: the session latches closed but is not yet replaced.
+    transport.close();
+    await Bun.sleep(1);
+    expect(await manager.paneInput(writer(), { kind: "text", text: "into the gap" }))
+      .toBe("queued");
+    // Teardown clears the exact holder's queue — a replacement never inherits.
+    manager.disconnect("maya");
+    await manager.startAgent(writer(), bootstrap, "high");
+    await Bun.sleep(1);
+    expect(
+      transport.sent.find((m) =>
+        m.method === "turn/steer" && m.params?.input?.[0]?.text === "into the gap"
+      ),
+    ).toBeUndefined();
+  });
+});
+
+// ————— revocation settles approvals without closing the conversation —————
+describe("denyPendingMutationApprovals", () => {
+  test("settles pending rows as denied while the session stays open for approvals and input", async () => {
+    const denied: string[] = [];
+    const queued: string[] = [];
+    const transport = new FakeTransport();
+    const manager = new CodexAppServerManager({
+      transport: async () => transport,
+      commandRunner: async () => 0,
+      sleep: async () => undefined,
+      onEvent: async () => undefined,
+      queueApproval: async ({ description }) => {
+        queued.push(description);
+        return `approval-${queued.length}`;
+      },
+      denyApproval: async (id) => {
+        denied.push(id);
+      },
+      authorizeMutation: async () => ({ allowed: true }),
+      observeRateLimits: async () => null,
+    });
+    await manager.startAgent(agent({ readOnly: false }), {
+      developerInstructions: "writer rules",
+      initialUserPrompt: "write code",
+    }, "high");
+    transport.emit({
+      method: "turn/started",
+      params: { threadId: "thread-1", turn: { id: "turn-9" } },
+    });
+    await Bun.sleep(1);
+    const live = manager.sessionTurnSnapshot("maya")!;
+    // One mutation waits on a human.
+    transport.emit({
+      id: 601,
+      method: "item/commandExecution/requestApproval",
+      params: { threadId: "thread-1", turnId: live.turnId, command: "touch x" },
+    });
+    await Bun.sleep(5);
+    expect(queued).toHaveLength(1);
+
+    // Revocation settles it as denied...
+    await manager.denyPendingMutationApprovals("maya");
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      if (transport.sent.some((m) => m.id === 601)) break;
+      await Bun.sleep(1);
+    }
+    expect(transport.sent.find((m) => m.id === 601)?.result)
+      .toEqual({ decision: "decline" });
+    expect(denied).toEqual(["approval-1"]);
+
+    // ...but the session is NOT closed: pane input still delivers, and a new
+    // mutation still reaches the human queue instead of a mechanical denial.
+    expect(manager.sessionTurnSnapshot("maya")?.closed).toBe(false);
+    expect(
+      await manager.paneInput(agent({ readOnly: false }), {
+        kind: "text",
+        text: "still here",
+      }),
+    ).toBe("delivered");
+    transport.emit({
+      id: 602,
+      method: "item/commandExecution/requestApproval",
+      params: { threadId: "thread-1", turnId: live.turnId, command: "touch y" },
+    });
+    await Bun.sleep(5);
+    expect(queued).toHaveLength(2);
+
+    // Teardown-grade denial DOES close: after denyAgentApprovals a created
+    // approval denies itself instead of registering.
+    await manager.denyAgentApprovals("maya");
+    expect(manager.sessionTurnSnapshot("maya")?.closed).toBe(true);
+  });
+});
+
+// ————— the pane-input forwarder: host side —————
+describe("createPaneInputForwarder", () => {
+  interface Sent {
+    body: any;
+    auth: string | null;
+  }
+  function forwarder(options: {
+    respond?: (body: any) => Promise<Response> | Response;
+  } = {}) {
+    const sent: Sent[] = [];
+    const writes: string[] = [];
+    let inFlight = 0;
+    let overlapped = false;
+    const instance = createPaneInputForwarder({
+      agentName: "maya",
+      daemonPort: 4317,
+      token: "hv1.pane-secret",
+      write: (text) => {
+        writes.push(text);
+      },
+      fetchImpl: (async (_url: any, init: any) => {
+        inFlight += 1;
+        if (inFlight > 1) overlapped = true;
+        const body = JSON.parse(init.body as string);
+        sent.push({ body, auth: init.headers.authorization ?? null });
+        await Bun.sleep(2);
+        inFlight -= 1;
+        return options.respond === undefined
+          ? Response.json({ ok: true, outcome: "delivered" })
+          : await options.respond(body);
+      }) as typeof fetch,
+    });
+    return {
+      ...instance,
+      sent,
+      writes,
+      overlapped: () => overlapped,
+    };
+  }
+
+  test("lines and Ctrl-C are serialized in submission order, never overlapping fetches", async () => {
+    const f = forwarder();
+    f.onData("one\ntw");
+    f.onData("o\n");
+    f.onInterrupt();
+    f.onData("three\n");
+    await f.idle();
+    expect(f.sent.map((s) => s.body.kind === "text" ? s.body.text : "^C"))
+      .toEqual(["one", "two", "^C", "three"]);
+    expect(f.overlapped()).toBe(false);
+    expect(f.sent[0]?.auth).toBe("Bearer hv1.pane-secret");
+    expect(f.sent[0]?.body.agentName).toBe("maya");
+  });
+
+  test("Ctrl-C discards the partially typed line: it must not submit later", async () => {
+    const f = forwarder();
+    f.onData("half a thou");
+    f.onInterrupt();
+    f.onData("ght\n");
+    await f.idle();
+    expect(f.sent.map((s) => s.body.kind)).toEqual(["interrupt", "text"]);
+    expect(f.sent[1]?.body.text).toBe("ght");
+  });
+
+  test("a failed POST is never retried: the undelivered line renders visibly instead", async () => {
+    const f = forwarder({
+      respond: () => {
+        throw new Error("connection refused");
+      },
+    });
+    f.onData("precious prompt\n");
+    await f.idle();
+    // Exactly one attempt — an accepted-but-response-lost POST retried blindly
+    // would deliver the same human prompt twice.
+    expect(f.sent).toHaveLength(1);
+    const failure = f.writes.join("");
+    expect(failure).toContain("✗ input not delivered");
+    expect(failure).toContain("precious prompt");
+  });
+
+  test("a rejecting daemon (HTTP error) renders the failure with the line, one attempt only", async () => {
+    const f = forwarder({
+      respond: () => Response.json({ error: "no app-server pane" }, { status: 409 }),
+    });
+    f.onData("typed at the wrong pane\n");
+    await f.idle();
+    expect(f.sent).toHaveLength(1);
+    const failure = f.writes.join("");
+    expect(failure).toContain("✗ input not delivered");
+    expect(failure).toContain("409");
+    expect(failure).toContain("typed at the wrong pane");
+  });
+
+  test("queued and no-turn outcomes render honestly; CRLF and blank lines are handled", async () => {
+    const outcomes = ["queued", "no-turn"];
+    let call = 0;
+    const f = forwarder({
+      respond: () => Response.json({ ok: true, outcome: outcomes[call++] }),
+    });
+    f.onData("early bird\r\n");
+    f.onData("\n   \n");
+    f.onInterrupt();
+    await f.idle();
+    expect(f.sent).toHaveLength(2);
+    expect(f.sent[0]?.body).toMatchObject({ kind: "text", text: "early bird" });
+    const rendered = f.writes.join("");
+    expect(rendered).toContain("queued");
+    expect(rendered).toContain("nothing to interrupt");
+  });
+});
+
+// ————— the host boundary: pane Ctrl-C is a turn interrupt, not teardown —————
+test("host SIGINT interrupts via the daemon and keeps the app-server alive; typing posts, never touches child stdin; SIGTERM still tears down", async () => {
+  const root = await mkdtemp(join(tmpdir(), "hive-host-sigint-"));
+  const executable = join(root, "codex");
+  const childStdinCapture = join(root, "child-stdin");
+  const socket = join(root, "agent.sock");
+  const previousToken = Bun.env.HIVE_CAPABILITY_TOKEN;
+  const daemonCalls: Array<{ path: string; auth: string | null; body: any }> =
+    [];
+  const fakeDaemon = Bun.serve({
+    port: 0,
+    fetch: async (request) => {
+      daemonCalls.push({
+        path: new URL(request.url).pathname,
+        auth: request.headers.get("authorization"),
+        body: await request.json(),
+      });
+      return Response.json({ ok: true, outcome: "delivered" });
+    },
+  });
+  const beforeInt = process.listeners("SIGINT");
+  const beforeTerm = process.listeners("SIGTERM");
+  try {
+    // A child that lives until its stdin closes, recording every byte that
+    // reaches it — pane input must never appear there.
+    await writeFile(executable, [
+      "#!/bin/sh",
+      `exec cat > "${childStdinCapture}"`,
+      "",
+    ].join("\n"));
+    await chmod(executable, 0o755);
+    Bun.env.HIVE_CAPABILITY_TOKEN = "hv1.pane-secret";
+
+    const hostExit = runCodexAppServerHost({
+      socket,
+      worktree: root,
+      daemonPort: fakeDaemon.port!,
+      agentName: "maya",
+      executable,
+    });
+    // The host is up once its socket exists.
+    for (let attempt = 0; attempt < 200; attempt += 1) {
+      if (await Bun.file(socket).exists()) break;
+      await Bun.sleep(5);
+    }
+
+    // The REAL signal path: exactly one SIGINT handler was registered by the
+    // host — the one tmux/canonical-TTY Ctrl-C would fire — and dispatching
+    // it must interrupt through the daemon, not kill the child.
+    const sigintHandlers = process
+      .listeners("SIGINT")
+      .filter((listener) => !beforeInt.includes(listener));
+    expect(sigintHandlers).toHaveLength(1);
+    (sigintHandlers[0] as () => void)();
+    // Typed input travels the same daemon route.
+    process.stdin.emit("data", Buffer.from("hello agent\n"));
+    for (let attempt = 0; attempt < 200 && daemonCalls.length < 2; attempt += 1) {
+      await Bun.sleep(5);
+    }
+    expect(daemonCalls.map((call) => call.path)).toEqual([
+      "/pane-input",
+      "/pane-input",
+    ]);
+    expect(daemonCalls[0]?.body).toMatchObject({
+      agentName: "maya",
+      kind: "interrupt",
+    });
+    expect(daemonCalls[0]?.auth).toBe("Bearer hv1.pane-secret");
+    expect(daemonCalls[1]?.body).toMatchObject({
+      agentName: "maya",
+      kind: "text",
+      text: "hello agent",
+    });
+
+    // The host (and its child) survived the Ctrl-C.
+    expect(
+      await Promise.race([
+        hostExit.then(() => "exited"),
+        Bun.sleep(100).then(() => "alive"),
+      ]),
+    ).toBe("alive");
+
+    // SIGTERM keeps teardown semantics: the child dies and the host returns.
+    const sigtermHandlers = process
+      .listeners("SIGTERM")
+      .filter((listener) => !beforeTerm.includes(listener));
+    expect(sigtermHandlers).toHaveLength(1);
+    (sigtermHandlers[0] as () => void)();
+    await hostExit;
+
+    // Raw pane bytes never reached the JSON-RPC stream.
+    expect(await readFile(childStdinCapture, "utf8").catch(() => "")).toBe("");
+  } finally {
+    if (previousToken === undefined) delete Bun.env.HIVE_CAPABILITY_TOKEN;
+    else Bun.env.HIVE_CAPABILITY_TOKEN = previousToken;
+    fakeDaemon.stop(true);
+    await rm(root, { recursive: true, force: true });
+  }
 });
