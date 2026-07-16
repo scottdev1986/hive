@@ -1769,15 +1769,7 @@ describe("HiveDaemon HTTP server", () => {
         name: "hive_status",
         arguments: { detail: "full" },
       }));
-      expect(status).toEqual([agent({
-        id: "agent-sam",
-        name: "sam",
-        category: "code_review",
-        taskDescription: "Review auth",
-        tmuxSession: "hive-sam",
-        worktreePath: "/tmp/hive-sam",
-        branch: "hive/sam-task",
-      })]);
+      expect(status).toEqual([db.getAgentById("agent-sam")]);
 
       const inventory = textValue(await client.callTool({
         name: "hive_models",
@@ -1977,7 +1969,7 @@ describe("HiveDaemon HTTP server", () => {
         name: "hive_kill",
         arguments: { name: "sam" },
       });
-      expect(daemonTmux.killed).toEqual(["hive-sam", "hive-sam"]);
+      expect(daemonTmux.killed).toEqual(["hive-sam"]);
 
       const stopped = textValue(await client.callTool({
         name: "hive_mark_dead",
@@ -2816,10 +2808,9 @@ describe("HiveDaemon HTTP server", () => {
     try {
       await daemon.reconcileAgents();
 
-      // Checked once by the sweep and once again inside the recovery's
-      // exclusive section, which guards against a session appearing between
-      // the two.
-      expect(tmux.checked).toEqual(["hive-maya", "hive-maya"]);
+      // Exact-generation absence is retained by SessionHost. A later create
+      // still checks the compatibility name before reusing it.
+      expect(tmux.checked).toEqual(["hive-maya"]);
       expect(db.getAgentByName("maya")).toMatchObject({
         status: "dead",
         failureReason: "worktree is missing; session not resumable",

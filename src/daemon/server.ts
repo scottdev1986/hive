@@ -777,8 +777,13 @@ export class HiveDaemon {
     this.psSample = options.resourceRunners?.ps ?? runPs;
     this.vmStatSample = options.resourceRunners?.vmStat ?? runVmStat;
     this.panePids = options.resourceRunners?.panePids ??
-      (async (session) =>
-        [...(await this.tmux.inspectLegacyTmuxSession(session)).panePids]);
+      (async (session) => {
+        const inspection = await this.tmux.inspectLegacyTmuxSession(session);
+        if (inspection.presence === "unknown") {
+          throw new Error(`tmux session ${session} presence is unknown`);
+        }
+        return [...inspection.panePids];
+      });
     this.killProcess = options.resourceRunners?.kill ??
       ((pid) => process.kill(pid, "SIGKILL"));
     this.orphanDependencies = options.resourceRunners?.orphans === undefined
@@ -787,15 +792,24 @@ export class HiveDaemon {
     this.reapDependencies = options.resourceRunners?.reap ??
       defaultReapDependencies();
     const teardownTmux: SessionStopAdapter = {
-      hasSession: async (session) =>
-        (await this.tmux.inspectLegacyTmuxSession(session)).presence === "present",
+      hasSession: async (session) => {
+        const inspection = await this.tmux.inspectLegacyTmuxSession(session);
+        if (inspection.presence === "unknown") {
+          throw new Error(`tmux session ${session} presence is unknown`);
+        }
+        return inspection.presence === "present";
+      },
       listPanePids: (session) => this.panePids(session),
       killSession: (session) => this.tmux.terminateLegacyTmuxSession(session),
     };
     this.stopAgentProcesses = (agent, beforeKill) =>
       stopAgentSession(
         agent,
-        { sessions: this.tmux, reap: this.reapDependencies },
+        {
+          sessions: this.tmux,
+          reap: this.reapDependencies,
+          sessionRoots: (record) => this.panePids(record.tmuxSession),
+        },
         beforeKill,
       );
     this.stopTmuxProcesses = (session) =>

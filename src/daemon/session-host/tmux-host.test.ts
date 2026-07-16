@@ -187,6 +187,28 @@ describe("TmuxSessionHost", () => {
     );
   });
 
+  test("never lets a reused compatibility name retarget an older generation", async () => {
+    const { host, locator, spec } = fixture();
+    await host.create(spec, new Uint8Array());
+    expect((await host.terminate(locator, {
+      mode: "immediate",
+      reason: "replace generation",
+      requestId: "term-old",
+    })).state).toBe("terminated");
+
+    const successor = mintTmuxSessionLocator(
+      locator.instanceId,
+      locator.subject,
+      locator.generation + 1,
+    );
+    host.bind(successor, "hive-maya", { capabilityEpoch: 4 });
+    await host.create({ ...spec, locator: successor }, new Uint8Array());
+
+    expect((await host.inspect(locator)).presence).toBe("lost");
+    expect((await host.inspect(successor)).presence).toBe("present");
+    expect(host.locatorForCompatibilitySession("hive-maya")).toEqual(successor);
+  });
+
   test("mints schema-valid random UUIDv7 locators", () => {
     const first = mintTmuxSessionLocator(
       "instance-a",

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { ReapDependencies } from "../teardown";
+import type { ReapDependencies, ReapOutcome } from "../teardown";
 import {
   hiveInstanceSuffix,
   hiveTmuxSocketName,
@@ -62,6 +62,7 @@ type BindingOptions = Readonly<{
 type Binding = {
   locator: SessionLocator;
   tmuxSession: string;
+  retired: boolean;
   expectedExecutable: string;
   geometry: TerminalGeometry;
   capabilityEpoch: number;
@@ -101,6 +102,12 @@ export interface TmuxSessionHostOptions {
   reap?: ReapDependencies;
 }
 
+export type TmuxTerminationOutcome = Readonly<{
+  result: TerminationResult;
+  reaped: ReapOutcome;
+  failure: Error | null;
+}>;
+
 /**
  * tmux SessionHost conformance notes
  *
@@ -109,12 +116,16 @@ export interface TmuxSessionHostOptions {
  * renewVisibility records only an advisory deadline; neither is authority or
  * evidence that a viewer attached. tmux also has no durable output/checkpoint
  * sequence, retained exit record, host start token, input arbiter, or event
- * journal. Those fields stay at explicit unavailable values and inspections
- * remain incomplete. The in-process event stream is ordered but not durable
+ * journal. Input ownership is therefore the observation-only `UNKNOWN` value,
+ * never coerced to the arbiter's `FREE` state; other unavailable fields use
+ * their explicit sentinels and inspections remain incomplete. The in-process
+ * event stream is ordered but not durable
  * and emits no fabricated heartbeats. A transport failure becomes `unknown`,
  * never an absent/exited result. Live sessions without a persisted exact
  * binding are surfaced as typed `legacyUnbound` entries rather than assigned
- * invented locators.
+ * invented locators. tmux teardown must capture pane roots before removing the
+ * pane (detached descendants otherwise become unowned), so an unreadable root
+ * probe returns unknown without destructively killing the session.
  */
 export class TmuxSessionHost implements SessionHost {
   private readonly adapter: TmuxEngine;
@@ -149,6 +160,7 @@ export class TmuxSessionHost implements SessionHost {
     this.bindings.set(key, {
       locator,
       tmuxSession,
+      retired: existing?.retired ?? false,
       expectedExecutable: options.expectedExecutable ?? existing?.expectedExecutable ?? "unknown",
       geometry: options.geometry ?? existing?.geometry ?? DEFAULT_TMUX_GEOMETRY,
       capabilityEpoch: options.capabilityEpoch ?? existing?.capabilityEpoch ?? 0,
@@ -165,9 +177,20 @@ export class TmuxSessionHost implements SessionHost {
 
   async create(spec: SessionSpec, initialInput: Uint8Array): Promise<CreateResult> {
     const binding = this.binding(spec.locator);
-    if (await this.adapter.hasSession(binding.tmuxSession)) {
-      throw new Error("SessionLocator is already present");
+    if (binding.retired) {
+      throw new Error("Cannot recreate a retired SessionLocator generation");
     }
+    const present = await this.adapter.hasSession(binding.tmuxSession);
+    const priorBindings = [...this.bindings.values()].filter((candidate) =>
+      candidate !== binding && !candidate.retired &&
+      candidate.tmuxSession === binding.tmuxSession
+    );
+    if (present) {
+      throw new Error(priorBindings.length > 0
+        ? "tmux compatibility session still belongs to another generation"
+        : "SessionLocator is already present");
+    }
+    for (const prior of priorBindings) prior.retired = true;
     binding.expectedExecutable = spec.expectedExecutable;
     binding.geometry = spec.geometry;
     binding.capabilityEpoch = spec.capabilityEpoch;
@@ -196,6 +219,13 @@ export class TmuxSessionHost implements SessionHost {
   async inspect(locator: SessionLocator): Promise<SessionInspection> {
     const binding = this.binding(locator);
     const evidenceAt = this.now().toISOString();
+    if (binding.retired) {
+      return this.inspection(binding, {
+        presence: "lost",
+        evidenceAt,
+        diagnosticIds: ["TMUX_GENERATION_RETIRED"],
+      });
+    }
     let present: boolean;
     try {
       present = await this.adapter.hasSession(binding.tmuxSession);
@@ -207,6 +237,7 @@ export class TmuxSessionHost implements SessionHost {
       });
     }
     if (!present) {
+      binding.retired = true;
       return this.inspection(binding, {
         presence: "lost",
         evidenceAt,
@@ -281,7 +312,7 @@ export class TmuxSessionHost implements SessionHost {
     const inspections: SessionInspection[] = [];
     for (const binding of this.bindings.values()) {
       if (binding.locator.instanceId !== instanceId) continue;
-      boundNames.add(binding.tmuxSession);
+      if (!binding.retired) boundNames.add(binding.tmuxSession);
       inspections.push(await this.inspect(binding.locator));
     }
     const legacyUnbound = [...live]
@@ -306,6 +337,9 @@ export class TmuxSessionHost implements SessionHost {
     request: CaptureRequest,
   ): Promise<CaptureResult> {
     const binding = this.binding(locator);
+    if (binding.retired) {
+      throw new Error("Cannot capture a retired SessionLocator generation");
+    }
     if (this.adapter.paneState === undefined) {
       throw new Error("tmux engine cannot capture coherent pane metadata");
     }
@@ -362,6 +396,9 @@ export class TmuxSessionHost implements SessionHost {
     request: AttachRequest,
   ): Promise<Readonly<{ grant: AttachGrant; tmuxSession: string; socketName: string }>> {
     const binding = this.binding(locator);
+    if (binding.retired) {
+      throw new Error("Cannot attach to a retired SessionLocator generation");
+    }
     return {
       grant: await this.issueAttach(locator, request),
       tmuxSession: binding.tmuxSession,
@@ -375,7 +412,7 @@ export class TmuxSessionHost implements SessionHost {
 
   locatorForCompatibilitySession(tmuxSession: string): SessionLocator | null {
     const matches = [...this.bindings.values()]
-      .filter((binding) => binding.tmuxSession === tmuxSession);
+      .filter((binding) => !binding.retired && binding.tmuxSession === tmuxSession);
     if (matches.length !== 1) return null;
     return matches[0]!.locator;
   }
@@ -434,6 +471,9 @@ export class TmuxSessionHost implements SessionHost {
   ): Promise<ResizeResult> {
     validateGeometry(geometry);
     const binding = this.binding(locator);
+    if (binding.retired) {
+      throw new Error("Cannot resize a retired SessionLocator generation");
+    }
     if (this.adapter.resizeSession === undefined) {
       throw new Error("tmux engine cannot resize sessions");
     }
@@ -450,6 +490,9 @@ export class TmuxSessionHost implements SessionHost {
     const prior = this.receipts.get(input.idempotencyKey);
     if (prior !== undefined) return prior;
     const binding = this.binding(locator);
+    if (binding.retired) {
+      throw new Error("Cannot write to a retired SessionLocator generation");
+    }
     if (input.recipientGeneration !== locator.generation) {
       throw new Error("Automated input recipient generation is stale");
     }
@@ -499,14 +542,49 @@ export class TmuxSessionHost implements SessionHost {
 
   async terminate(
     locator: SessionLocator,
-    _request: TerminationRequest,
+    request: TerminationRequest,
   ): Promise<TerminationResult> {
+    return (await this.terminateWithProcessOutcome(locator, request)).result;
+  }
+
+  async terminateWithProcessOutcome(
+    locator: SessionLocator,
+    _request: TerminationRequest,
+  ): Promise<TmuxTerminationOutcome> {
     const binding = this.binding(locator);
+    const retiredAtStart = binding.retired;
     const errors: Array<{ phase: string; code: string; diagnosticId: string }> = [];
+    let sessionPresent: boolean;
+    if (retiredAtStart) {
+      sessionPresent = false;
+    } else {
+      try {
+        sessionPresent = await this.adapter.hasSession(binding.tmuxSession);
+      } catch (error) {
+        return {
+          result: {
+            locator,
+            state: "unknown",
+            exit: null,
+            survivors: [],
+            errors: [{
+              phase: "presence-readback",
+              code: "UNKNOWN",
+              diagnosticId: "TMUX_PRESENCE_UNKNOWN",
+            }],
+          },
+          reaped: { killed: [], survivors: [] },
+          failure: asError(error, "tmux presence readback failed"),
+        };
+      }
+    }
     let captured: Awaited<ReturnType<typeof import("../teardown")["captureProcessTree"]>> = [];
     try {
       const roots = [
-        ...await (this.adapter.listPanePids?.(binding.tmuxSession) ?? Promise.resolve([])),
+        ...(sessionPresent
+          ? await (this.adapter.listPanePids?.(binding.tmuxSession) ??
+            Promise.resolve([]))
+          : []),
         ...await (binding.extraRoots?.() ?? Promise.resolve([])),
       ];
       const teardown = await import("../teardown");
@@ -514,48 +592,61 @@ export class TmuxSessionHost implements SessionHost {
         roots,
         this.reap ?? teardown.defaultReapDependencies(),
       );
-    } catch {
-      errors.push({
-        phase: "capture-process-tree",
-        code: "UNKNOWN",
-        diagnosticId: "TMUX_PROCESS_CAPTURE_UNKNOWN",
-      });
+    } catch (error) {
+      const failure = asError(error, "tmux process-root capture failed");
+      const result: TerminationResult = {
+        locator,
+        state: "unknown",
+        exit: null,
+        survivors: [],
+        errors: [{
+          phase: "capture-process-tree",
+          code: "UNKNOWN",
+          diagnosticId: "TMUX_PROCESS_CAPTURE_UNKNOWN",
+        }],
+      };
+      return {
+        result,
+        reaped: { killed: [], survivors: [] },
+        failure,
+      };
     }
+    let failure: Error | null = null;
     try {
       await binding.beforeTerminate?.();
-    } catch {
+    } catch (error) {
+      failure = asError(error, "tmux pre-termination hook failed");
       errors.push({
         phase: "before-terminate",
         code: "FAILED",
         diagnosticId: "TMUX_BEFORE_TERMINATE_FAILED",
       });
     }
-    try {
-      if (this.adapter.killSession === undefined) {
-        throw new Error("tmux engine cannot terminate sessions");
+    if (!retiredAtStart) {
+      try {
+        if (this.adapter.killSession === undefined) {
+          throw new Error("tmux engine cannot terminate sessions");
+        }
+        await this.adapter.killSession(binding.tmuxSession, { ignoreMissing: true });
+      } catch (error) {
+        failure ??= asError(error, "tmux kill-session failed");
+        errors.push({
+          phase: "kill-session",
+          code: "FAILED",
+          diagnosticId: "TMUX_KILL_FAILED",
+        });
       }
-      await this.adapter.killSession(binding.tmuxSession, { ignoreMissing: true });
-    } catch {
-      errors.push({
-        phase: "kill-session",
-        code: "FAILED",
-        diagnosticId: "TMUX_KILL_FAILED",
-      });
     }
-    let survivors: TerminationResult["survivors"] = [];
+    let reaped: ReapOutcome = { killed: [], survivors: [] };
     if (captured.length > 0) {
       try {
         const teardown = await import("../teardown");
-        const outcome = await teardown.reapCapturedTree(
+        reaped = await teardown.reapCapturedTree(
           captured,
           this.reap ?? teardown.defaultReapDependencies(),
         );
-        survivors = outcome.survivors.map((process) => ({
-          pid: process.pid,
-          startToken: "unknown",
-          reason: process.command,
-        }));
-      } catch {
+      } catch (error) {
+        failure ??= asError(error, "tmux process readback failed");
         errors.push({
           phase: "reap-process-tree",
           code: "UNKNOWN",
@@ -563,21 +654,44 @@ export class TmuxSessionHost implements SessionHost {
         });
       }
     }
-    let absent = false;
-    try {
-      absent = !await this.adapter.hasSession(binding.tmuxSession);
-    } catch {
-      errors.push({
-        phase: "absence-readback",
-        code: "UNKNOWN",
-        diagnosticId: "TMUX_ABSENCE_UNKNOWN",
-      });
+    const survivors = reaped.survivors.map((process) => ({
+      pid: process.pid,
+      startToken: "unknown",
+      reason: process.command,
+    }));
+    let absent = retiredAtStart;
+    if (!retiredAtStart) {
+      try {
+        absent = !await this.adapter.hasSession(binding.tmuxSession);
+        if (!absent) {
+          failure ??= new Error(
+            `Tmux session ${binding.tmuxSession} survived kill-session`,
+          );
+          errors.push({
+            phase: "absence-readback",
+            code: "PRESENT",
+            diagnosticId: "TMUX_SESSION_SURVIVED_TERMINATE",
+          });
+        }
+      } catch (error) {
+        failure ??= asError(error, "tmux absence readback failed");
+        errors.push({
+          phase: "absence-readback",
+          code: "UNKNOWN",
+          diagnosticId: "TMUX_ABSENCE_UNKNOWN",
+        });
+      }
     }
     const state = survivors.length > 0
       ? "survivors"
       : absent && errors.length === 0 ? "terminated" : "unknown";
+    if (state === "terminated") binding.retired = true;
     this.emit(locator, "terminated", { state });
-    return { locator, state, exit: null, survivors, errors };
+    return {
+      result: { locator, state, exit: null, survivors, errors },
+      reaped,
+      failure,
+    };
   }
 
   async terminateLegacyTmuxSession(tmuxSession: string): Promise<void> {
@@ -622,7 +736,9 @@ export class TmuxSessionHost implements SessionHost {
   }
 
   async sessionProcessRoots(locator: SessionLocator): Promise<readonly number[]> {
-    return await (this.adapter.listPanePids?.(this.binding(locator).tmuxSession) ??
+    const binding = this.binding(locator);
+    if (binding.retired) return [];
+    return await (this.adapter.listPanePids?.(binding.tmuxSession) ??
       Promise.resolve([]));
   }
 
@@ -676,7 +792,7 @@ export class TmuxSessionHost implements SessionHost {
       outputSeq: "0",
       checkpointSeq: "0",
       checkpointAvailable: false,
-      input: { state: "unavailable", ownerViewerId: null, claimId: null },
+      input: { state: "UNKNOWN", ownerViewerId: null, claimId: null },
       viewerCount,
       geometry: fields.geometry ?? binding.geometry,
       resources: {},
@@ -905,6 +1021,10 @@ function parseSequence(value: string): bigint {
     throw new Error("Event sequence must be an unsigned decimal string");
   }
   return BigInt(value);
+}
+
+function asError(error: unknown, fallback: string): Error {
+  return error instanceof Error ? error : new Error(fallback);
 }
 
 async function processIdentity(

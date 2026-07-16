@@ -390,10 +390,24 @@ describe("HiveDatabase", () => {
 
     const db = new HiveDatabase(path);
     try {
-      expect(db.getAgentByName("maya")).toMatchObject({
+      const migrated = db.getAgentByName("maya")!;
+      expect(migrated).toMatchObject({
         ...value,
         contextPct: null,
       });
+      expect(migrated.sessionLocator).toMatchObject({
+        schemaVersion: 1,
+        subject: { kind: "agent", agentId: value.id },
+        generation: 1,
+        hostKind: "tmux",
+      });
+      expect(migrated.sessionLocator?.sessionId).toMatch(
+        /^ses_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+      );
+      const { sessionLocator: _omitted, ...legacyRewrite } = migrated;
+      expect(db.upsertAgent(legacyRewrite).sessionLocator).toEqual(
+        migrated.sessionLocator,
+      );
       const retiredViewerColumn = ["terminal", "Handle"].join("");
       expect(
         db.database.query("PRAGMA table_info(agents)").all().some(

@@ -15,12 +15,23 @@ import { createHash } from "node:crypto";
 import type { InputReceipt } from "./session-host/contract";
 import {
   bindAgentSession,
+  requireAgentSessionLocator,
   TmuxSessionHost,
 } from "./session-host/tmux-host";
 
 /** Senders to probe for idempotency: root aliases during the rename window. */
 function idempotencySenders(from: string): readonly string[] {
   return isOrchestratorName(from) ? orchestratorRecipientNames() : [from];
+}
+
+function agentSessionLockKey(agent: AgentRecord): string {
+  const locator = requireAgentSessionLocator(agent);
+  return [
+    locator.instanceId,
+    locator.subject.kind === "root" ? "root" : locator.subject.agentId,
+    locator.generation,
+    locator.sessionId,
+  ].join(":");
 }
 import type { PaneProcessState } from "./resources";
 import { HiveDatabase } from "./db";
@@ -374,7 +385,7 @@ export class MessageDelivery {
       if (currentRecipient === null || this.controls === undefined) {
         return this.getStoredMessage(message.id);
       }
-      return this.withSessionLock(currentRecipient.tmuxSession, async () => {
+      return this.withSessionLock(agentSessionLockKey(currentRecipient), async () => {
         if (this.composerActive(to)) return this.getStoredMessage(message.id);
         return this.deliverCritical(
           this.getStoredMessage(message.id),
@@ -388,7 +399,7 @@ export class MessageDelivery {
     }
 
     if (this.nativeControl?.hasAgent(recipient.name)) {
-      return this.withSessionLock(recipient.tmuxSession, async () => {
+      return this.withSessionLock(agentSessionLockKey(recipient), async () => {
         const current = this.getStoredMessage(message.id);
         if (current.deliveredAt !== null || this.composerActive(to)) return current;
         const currentRecipient = this.requireLiveRecipient(to);
@@ -408,7 +419,7 @@ export class MessageDelivery {
       return message;
     }
 
-    return this.withSessionLock(recipient.tmuxSession, async () => {
+    return this.withSessionLock(agentSessionLockKey(recipient), async () => {
       const current = this.getStoredMessage(message.id);
       if (current.deliveredAt !== null || this.composerActive(to)) {
         return current;
@@ -451,7 +462,7 @@ export class MessageDelivery {
       return [];
     }
 
-    return this.withSessionLock(recipient.tmuxSession, async () => {
+    return this.withSessionLock(agentSessionLockKey(recipient), async () => {
       const currentRecipient = this.db.getAgentByName(agentName);
       if (!this.isDeliverable(currentRecipient) || this.composerActive(agentName)) {
         return [];
@@ -527,7 +538,7 @@ export class MessageDelivery {
     const queuedUrgent = this.db.getUndeliveredMessages(agentName)
       .filter((message) => message.priority === "urgent");
     if (queuedUrgent.length === 0) return [];
-    return this.withSessionLock(recipient.tmuxSession, async () => {
+    return this.withSessionLock(agentSessionLockKey(recipient), async () => {
       const currentRecipient = this.db.getAgentByName(agentName);
       if (!this.isDeliverable(currentRecipient) || this.composerActive(agentName)) {
         return [];
@@ -565,7 +576,7 @@ export class MessageDelivery {
     const queued = this.db.getUndeliveredMessages(agentName)
       .filter((message) => message.priority === "steer");
     if (queued.length === 0) return [];
-    return this.withSessionLock(recipient.tmuxSession, async () => {
+    return this.withSessionLock(agentSessionLockKey(recipient), async () => {
       const currentRecipient = this.db.getAgentByName(agentName);
       if (!this.isDeliverable(currentRecipient) || this.composerActive(agentName)) {
         return [];
@@ -659,7 +670,7 @@ export class MessageDelivery {
       );
     };
     if (recipient === null) return claim();
-    return this.withSessionLock(recipient.tmuxSession, async () => claim());
+    return this.withSessionLock(agentSessionLockKey(recipient), async () => claim());
   }
 
   async orchestratorInbox(): Promise<OrchestratorMessageEnvelope[]> {
@@ -1005,7 +1016,7 @@ export class MessageDelivery {
         const recipient = this.db.getAgentByName(message.to);
         if (recipient !== null) {
           const settled = await this.withSessionLock(
-            recipient.tmuxSession,
+            agentSessionLockKey(recipient),
             async () => this.db.getMessage(message.id),
           );
           if (settled === null || settled.state !== "queued") continue;
@@ -1230,7 +1241,7 @@ export class MessageDelivery {
         )!;
       }
       try {
-        const acted = await this.withSessionLock(recipient.tmuxSession, async () => {
+        const acted = await this.withSessionLock(agentSessionLockKey(recipient), async () => {
           // Re-check under the lock: this method runs from both the
           // maintenance tick and the session-start hook, and the queued-state
           // check above happened outside the lock. Without this, two

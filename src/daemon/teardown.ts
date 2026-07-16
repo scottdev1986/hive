@@ -72,6 +72,7 @@ export interface VerifiedStopDependencies {
   sessions?: TmuxSessionHost;
   reap?: ReapDependencies;
   readHostPid?: (agent: AgentRecord) => Promise<number | null>;
+  sessionRoots?: (agent: AgentRecord) => Promise<readonly number[]>;
   selfPid?: number;
 }
 
@@ -273,28 +274,33 @@ export async function stopAgentSession(
   const hostPid = await (dependencies.readHostPid ?? defaultHostPid)(agent);
   if (dependencies.sessions !== undefined) {
     const locator = bindAgentSession(dependencies.sessions, agent, {
-      extraRoots: async () => hostPid === null ? [] : [hostPid],
+      extraRoots: async () => {
+        const inspection = await dependencies.sessions!.inspect(locator);
+        if (inspection.presence === "unknown") {
+          throw new Error(`Session presence is unknown for ${agent.name}`);
+        }
+        return [
+          ...(inspection.presence === "present"
+            ? await dependencies.sessionRoots?.(agent) ?? []
+            : []),
+          ...(hostPid === null ? [] : [hostPid]),
+        ];
+      },
       ...(beforeKill === undefined ? {} : { beforeTerminate: beforeKill }),
     });
-    const result = await dependencies.sessions.terminate(locator, {
+    const outcome = await dependencies.sessions.terminateWithProcessOutcome(locator, {
       mode: "immediate",
       reason: `stop agent ${agent.id}`,
       requestId: crypto.randomUUID(),
     });
-    if (result.state === "unknown") {
-      throw new Error(
+    if (outcome.result.state === "unknown") {
+      throw outcome.failure ?? new Error(
         `SessionHost could not verify termination for ${agent.name}: ${
-          result.errors.map((error) => error.diagnosticId).join(", ") || "unknown"
+          outcome.result.errors.map((error) => error.diagnosticId).join(", ") || "unknown"
         }`,
       );
     }
-    return {
-      killed: [],
-      survivors: result.survivors.map((survivor) => ({
-        pid: survivor.pid,
-        command: survivor.reason,
-      })),
-    };
+    return outcome.reaped;
   }
   if (dependencies.tmux === undefined) {
     throw new Error("Agent teardown requires SessionHost or legacy tmux adapter");

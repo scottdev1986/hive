@@ -19,6 +19,7 @@ import type {
   MemoryWriteInput,
   QuotaObservationInput,
 } from "../schemas";
+import { isLiveAgent } from "../schemas";
 import { hiveInstanceSuffix, isTmuxSessionForInstance } from "../daemon/tmux-sessions";
 import {
   deleteMemory,
@@ -437,7 +438,9 @@ export async function stopHive(deps: StopHiveDependencies = {}): Promise<void> {
     const db = HiveDatabase.openReadonly();
     try {
       for (const agent of db.listAgents()) {
-        if (agent.sessionLocator !== undefined) bindAgentSession(sessions, agent);
+        if (isLiveAgent(agent) && agent.sessionLocator !== undefined) {
+          bindAgentSession(sessions, agent);
+        }
       }
     } finally {
       db.close();
