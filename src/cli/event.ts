@@ -66,12 +66,19 @@ export async function postHookEvent(
   port: number,
   fetcher: EventFetcher = fetch,
 ): Promise<void> {
-  await fetcher(`http://127.0.0.1:${port}/event`, {
+  const response = await fetcher(`http://127.0.0.1:${port}/event`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(event),
     signal: AbortSignal.timeout(1_000),
   });
+  // An HTTP rejection is a lost boundary, not a delivered one: swallowing it
+  // here left agent status stale while every hook invocation exited 0.
+  if (!response.ok) {
+    throw new Error(
+      `hook event rejected: HTTP ${response.status} for ${event.kind}`,
+    );
+  }
 }
 
 // Claude Code pipes a JSON payload with the current session_id into every

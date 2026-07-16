@@ -2256,18 +2256,14 @@ export class HiveDaemon {
         if (updated === null) continue;
         persisted = updated;
       }
-      // Fail-closed enforcement (maintenance backstop): every Codex writer
-      // without a process-bound, matching provider identity is paused without
-      // waiting for a turn. This includes migrated/unattested rows. A matching
-      // verdict only counts for a writer when it came from the app-server
-      // surface: the rollout scan is observation for status display, and a
-      // scan-observed "matching" must never stand in for the process-bound
-      // attestation writers are contained on.
+      // Fail-closed enforcement (maintenance backstop): EVERY Codex writer is
+      // paused, matching attestation included, until the writer wave lands
+      // the app-server pane-input bridge — a running writer whose pane
+      // silently discards human typing is the exact failure this task
+      // forbids, and a scan-observed "matching" could never stand in for the
+      // process-bound attestation writers are contained on anyway.
       if (
-        current.tool === "codex" && !current.readOnly && !current.writeRevoked &&
-        (attestationStateOf(persisted) !== "matching" ||
-          (updates.observedIdentity ?? persisted.observedIdentity)?.source !==
-            "codex-app-server")
+        current.tool === "codex" && !current.readOnly && !current.writeRevoked
       ) {
         const observed = updates.observedIdentity ?? persisted.observedIdentity;
         const launch = persisted.executionIdentity;
@@ -4443,12 +4439,17 @@ export class HiveDaemon {
       });
       if (
         mid !== null && !isTerminalAgentStatus(mid.status) &&
-        !agent.readOnly && !agent.writeRevoked &&
-        attestation.identityState !== "matching"
+        !agent.readOnly && !agent.writeRevoked
       ) {
+        // Writers pause even on a matching attestation until the writer wave
+        // lands the pane-input bridge: a running writer with a deaf pane is
+        // the failure this task forbids. The identity persisted above stays
+        // honest either way.
         await this.pauseWriterForIdentityDrift(
           mid,
-          `turn-start app-server reattestation is ${attestation.identityState}, not matching`,
+          attestation.identityState === "matching"
+            ? "turn-start: app-server identity matches, but Codex writers are held until the pane-input bridge lands"
+            : `turn-start app-server reattestation is ${attestation.identityState}, not matching`,
         );
       }
     } // Fail-closed at the turn boundary for legacy Codex writers: any non-matching

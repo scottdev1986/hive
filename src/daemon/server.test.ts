@@ -4746,14 +4746,16 @@ describe("Codex execution-identity attestation sweep", () => {
     }
   });
 
-  test("an app-server-attested matching writer is neither rescanned nor paused by the sweep", async () => {
+  test("an app-server-attested matching writer keeps its identity but stays held until the writer wave", async () => {
     const db = new HiveDatabase(join(home, "attest-appserver-writer.db"));
+    const suspendedSessions: string[] = [];
     const daemon = new HiveDaemon({
       db,
       spawner: new StubSpawner(),
       tmux: new FakeDaemonTmux(),
-      suspendProcesses: async () => {
-        throw new Error("an attested writer must not be paused");
+      suspendProcesses: async (session) => {
+        suspendedSessions.push(session);
+        return { suspended: [{ pid: 100, command: "codex" }], unstopped: [] };
       },
       telemetryReaders: {
         // The TUI finder cannot even see an app-server rollout (its
@@ -4784,13 +4786,16 @@ describe("Codex execution-identity attestation sweep", () => {
     try {
       await daemon.refreshToolTelemetry();
       const row = db.getAgentByName("maya")!;
-      // The exact app-server observation stands; the sweep neither rewrites
-      // it with a scan verdict nor pauses the writer holding it.
-      expect(row.status).toBe("working");
-      expect(row.writeRevoked).toBe(false);
+      // The exact app-server observation stands — the sweep never rewrites it
+      // with a scan verdict — but the writer itself is held: no Codex writer
+      // runs until the pane-input bridge lands (a deaf pane must not host a
+      // live writer).
+      expect(row.status).toBe("control-paused");
+      expect(row.writeRevoked).toBe(true);
       expect(row.identityState).toBe("matching");
       expect(row.observedIdentity).toMatchObject(observed);
       expect(row.liveModel).toBe("gpt-5.6-sol");
+      expect(suspendedSessions).toEqual(["hive-maya"]);
     } finally {
       db.close();
     }
@@ -4951,14 +4956,14 @@ describe("Codex execution-identity attestation sweep", () => {
     }
   });
 
-  test("an app-server turn-start attests and persists the exact turn identity for readers and writers", async () => {
+  test("an app-server turn-start attests and persists the exact turn identity for a reader", async () => {
     const db = new HiveDatabase(join(home, "attest-appserver-turnstart.db"));
     const daemon = new HiveDaemon({
       db,
       spawner: new StubSpawner(),
       tmux: new FakeDaemonTmux(),
       suspendProcesses: async () => {
-        throw new Error("a matching app-server writer must not be paused");
+        throw new Error("a matching app-server reader must not be paused");
       },
     });
     const rolloutPath = join(home, "appserver-rollout.jsonl");
@@ -4976,6 +4981,7 @@ describe("Codex execution-identity attestation sweep", () => {
       }) + "\n",
     );
     db.insertAgent(codexAgent({
+      readOnly: true,
       codexDriver: "app-server",
       toolSessionId: undefined,
     }));
@@ -4994,7 +5000,7 @@ describe("Codex execution-identity attestation sweep", () => {
         source: "codex-app-server",
       });
       expect(row.liveModel).toBe("gpt-5.6-sol");
-      // The matching app-server attestation is writer-grade: not paused.
+      // A reader's matching attestation is recorded and it keeps running.
       expect(row.status).toBe("working");
       expect(row.writeRevoked).toBe(false);
     } finally {
