@@ -33,7 +33,11 @@ describe("TokenUsageStore", () => {
     mkdirSync(codexDirectory, { recursive: true });
     const codexPath = join(codexDirectory, "rollout-test.jsonl");
     writeFileSync(codexPath, [
-      JSON.stringify({ type: "session_meta", payload: { id: "codex-session", cwd: resolve(repo) } }),
+      JSON.stringify({
+        timestamp: at,
+        type: "session_meta",
+        payload: { id: "codex-session", cwd: resolve(repo), source: "cli" },
+      }),
       JSON.stringify({
         timestamp: at,
         payload: {

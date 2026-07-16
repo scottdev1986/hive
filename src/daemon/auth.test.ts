@@ -640,7 +640,16 @@ describe("legitimate workflows keep working", () => {
 
   test("a writer reports, talks, reads its own inbox, and lands its own branch", async () => {
     const { daemon, db, landed } = harness();
-    db.upsertAgent(agentRecord());
+    // This is the generic writer workflow. Codex writers are contained before
+    // launch, so use a launchable Claude writer rather than a legacy Codex row
+    // that the turn-boundary sweep must revoke.
+    db.upsertAgent(agentRecord({
+      tool: "claude",
+      model: "claude-sonnet",
+      toolSessionId: "claude-session",
+      executionIdentity: { tool: "claude", model: "claude-sonnet" },
+      identityState: undefined,
+    }));
     const { token } = daemon.capabilities.mint("maya", "writer", { epoch: 0 });
 
     const event = await authorized(daemon, token)("http://hive/event", {
