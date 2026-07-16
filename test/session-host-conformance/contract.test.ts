@@ -55,8 +55,8 @@ describe("terminal foundation WP0 contracts", () => {
   test("Swift and TypeScript agree after every valid, invalid, and reducer prefix", async () => {
     const evidence = await runConformance();
     expect(evidence).toEqual({
-      validCases: 21,
-      invalidCases: 25,
+      validCases: 50,
+      invalidCases: 55,
       validHeaders: 2,
       ignoredHeaders: 1,
       invalidHeaders: 6,
@@ -69,6 +69,10 @@ describe("terminal foundation WP0 contracts", () => {
   test("the Zig output stays schema-driven and payload-struct free", async () => {
     const zig = await readFile(GENERATED_FILES.zig, "utf8");
     expect(zig).toContain("Zig 0.15.2 compilation is provisioned by WP1");
+    expect(zig).toContain("pub const hello_payload = \"helloPayload\"");
+    expect(zig).toContain("pub const @\"error\": u16 = 0x0003");
+    expect(zig).toContain("pub const response: u16 = 0x0001");
+    expect(zig).toContain("pub const visibility_expiry_ms: u64 = 15000");
     expect(zig).toContain("@embedFile(\"session-protocol.schema.json\")");
     expect(zig).not.toContain("Payload = struct");
   });

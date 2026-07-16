@@ -5,12 +5,20 @@ pub const protocol_major: u8 = 1;
 pub const protocol_minor: u8 = 0;
 pub const frame_header_bytes: usize = 32;
 pub const frame_magic = "HVT1";
+pub const frame_optional_type_bit: u16 = 0x8000;
 pub const frame_allowed_flags: u16 = 0x000f;
+
+pub const frame_flag = struct {
+    pub const response: u16 = 0x0001;
+    pub const final: u16 = 0x0002;
+    pub const error_flag: u16 = 0x0004;
+    pub const content_sensitive: u16 = 0x0008;
+};
 
 pub const frame_type = struct {
     pub const hello: u16 = 0x0001;
     pub const welcome: u16 = 0x0002;
-    pub const error: u16 = 0x0003;
+    pub const @"error": u16 = 0x0003;
     pub const ping: u16 = 0x0004;
     pub const pong: u16 = 0x0005;
     pub const create_begin: u16 = 0x0100;
@@ -48,6 +56,48 @@ pub const frame_type = struct {
     pub const host_register: u16 = 0x0400;
     pub const host_adopt: u16 = 0x0401;
     pub const grant_register: u16 = 0x0402;
+};
+
+pub const wire_schema = struct {
+    pub const hello_payload = "helloPayload";
+    pub const welcome_payload = "welcomePayload";
+    pub const error_payload = "errorPayload";
+    pub const ping_pong_payload = "pingPongPayload";
+    pub const host_register_payload = "hostRegisterPayload";
+    pub const host_adopt_payload = "hostAdoptPayload";
+    pub const grant_register_payload = "grantRegisterPayload";
+    pub const host_record_v1 = "hostRecordV1";
+    pub const create_begin_payload = "createBeginPayload";
+    pub const create_commit_payload = "createCommitPayload";
+    pub const created_payload = "createdPayload";
+    pub const list_payload = "listPayload";
+    pub const listed_payload = "listedPayload";
+    pub const inspect_payload = "inspectPayload";
+    pub const inspected_payload = "inspectedPayload";
+    pub const terminate_payload = "terminatePayload";
+    pub const terminated_payload = "terminatedPayload";
+    pub const visibility_renew_payload = "visibilityRenewPayload";
+    pub const renewed_payload = "renewedPayload";
+    pub const attach_request_payload = "attachRequestPayload";
+    pub const attach_grant_payload = "attachGrantPayload";
+    pub const host_attach_payload = "hostAttachPayload";
+    pub const session_locator = "sessionLocator";
+    pub const terminal_geometry = "terminalGeometry";
+    pub const session_spec = "sessionSpec";
+    pub const session_inspection = "sessionInspection";
+    pub const create_result = "createResult";
+    pub const capture_request = "captureRequest";
+    pub const capture_result = "captureResult";
+    pub const attach_request = "attachRequest";
+    pub const attach_grant = "attachGrant";
+    pub const visibility_request = "visibilityRequest";
+    pub const visibility_lease = "visibilityLease";
+    pub const resize_result = "resizeResult";
+    pub const automated_input_metadata = "automatedInputMetadata";
+    pub const input_receipt = "inputReceipt";
+    pub const termination_request = "terminationRequest";
+    pub const termination_result = "terminationResult";
+    pub const session_event = "sessionEvent";
 };
 
 pub const wire_error = enum {
@@ -119,8 +169,15 @@ pub const limits = struct {
     pub const control_json_bytes: usize = 262144;
     pub const stream_chunk_bytes: usize = 65536;
     pub const automated_message_bytes: usize = 1048576;
+    pub const viewer_queue_bytes: usize = 8388608;
     pub const checkpoint_bytes: usize = 67108864;
     pub const terminal_disk_bytes: u64 = 2147483648;
+    pub const control_rpc_timeout_ms: u64 = 10000;
+    pub const attach_grant_timeout_ms: u64 = 30000;
+    pub const visibility_renewal_ms: u64 = 5000;
+    pub const visibility_expiry_ms: u64 = 15000;
+    pub const connection_ping_interval_ms: u64 = 5000;
+    pub const missed_pong_intervals: u8 = 3;
 };
 
 // Payloads remain schema-driven; no hand-maintained Zig payload structs live here.

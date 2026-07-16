@@ -54,7 +54,7 @@ export type SessionInspection = Readonly<{
   providerRoot: { pid: number; startToken: string; processGroupId: number } | null;
   expectedExecutable: string; executableVerified: boolean;
   outputSeq: string; checkpointSeq: string; checkpointAvailable: boolean;
-  input: { state: "FREE" | "HUMAN_GESTURE" | "HUMAN_OWNED" | "HUMAN_ORPHANED" | "AUTOMATION_BUFFERING" | "AUTOMATION_COMMITTED" | "TERMINATING" | "CLOSED"; ownerViewerId: string | null; claimId: string | null };
+  input: { state: "FREE" | "HUMAN_GESTURE" | "HUMAN_OWNED" | "HUMAN_ORPHANED" | "AUTOMATION_BUFFERING" | "AUTOMATION_COMMITTED" | "TERMINATING" | "CLOSED" | "UNKNOWN"; ownerViewerId: string | null; claimId: string | null };
   viewerCount: number; geometry: TerminalGeometry; resources: Readonly<Record<string, number>>;
   visibility: { state: "attaching" | "visible" | "reconnecting" | "expired";
     workspaceSessionId: string; openTerminalRevision: string; expiresAt: string };

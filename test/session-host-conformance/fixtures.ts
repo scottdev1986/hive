@@ -70,6 +70,12 @@ export const fixtureInspection = {
   evidenceAt: FIXTURE_TIME,
   diagnosticIds: [],
 };
+const fixtureAttachingVisibility = {
+  state: "attaching",
+  workspaceSessionId: "workspace-fixture",
+  openTerminalRevision: "7",
+  expiresAt: "2026-07-16T12:00:30.000Z",
+};
 
 export type WireCorpusCase = Readonly<{
   name: string;
@@ -77,33 +83,150 @@ export type WireCorpusCase = Readonly<{
   value: unknown;
 }>;
 
+const fixtureProtocol = { major: 1, minor: 0 };
+const fixtureHelloCommon = {
+  schemaVersion: 1,
+  buildId: "build-fixture",
+  instanceId: fixtureLocator.instanceId,
+  protocol: { major: 1, minMinor: 0, maxMinor: 0 },
+};
+const fixtureHello = {
+  ...fixtureHelloCommon,
+  clientRole: "viewer",
+  grantToken: "attach-token-fixture",
+};
+const fixtureDaemonControl = {
+  productVersion: "0.0.0-dev",
+  buildHash: "daemon-build-fixture",
+  wireProtocol: { min: 1, max: 1 },
+  schemaEpoch: 1,
+  instanceId: fixtureLocator.instanceId,
+  hiveUuid: "hive-uuid-fixture",
+  identityKey: "project-identity-fixture",
+  repoFamilyKey: null,
+};
+const fixtureDaemonHello = {
+  ...fixtureHelloCommon,
+  clientRole: "daemon",
+  daemonControl: fixtureDaemonControl,
+};
+const fixtureWelcome = {
+  schemaVersion: 1,
+  protocol: fixtureProtocol,
+  instanceId: fixtureLocator.instanceId,
+  endpointRole: "broker",
+  buildId: "build-fixture",
+  engineBuildId: null,
+  connectionId: "1",
+  serverEpoch: "123456789",
+  limits: {
+    controlFrameMaxBytes: TERMINAL_LIMITS.controlJsonBytesPerFrame,
+    streamChunkMaxBytes: TERMINAL_LIMITS.streamChunkBytes,
+    automatedMessageMaxBytes: TERMINAL_LIMITS.automatedMessageBytes,
+    viewerQueueMaxBytes: TERMINAL_LIMITS.viewerUnacknowledgedOutputBytes,
+  },
+};
+const fixtureHostRecord = {
+  locator: fixtureLocator,
+  hostPid: 4100,
+  hostStartToken: "4100:123456",
+  processRoot: { pid: 4101, startToken: "4101:123457", processGroupId: 4101 },
+  expectedExecutable: "/usr/local/bin/codex",
+  executableBuildHash: "executable-build-fixture",
+  engineBuildId: "engine-fixture",
+  protocol: fixtureProtocol,
+  geometry: fixtureGeometry,
+  state: "live",
+  outputSeq: "4096",
+  checkpointSeq: "2048",
+  visibility: fixtureAttachingVisibility,
+};
+const fixtureHostRecordV1 = {
+  schemaVersion: 1,
+  ...fixtureHostRecord,
+  socketRelativePath: "host.sock",
+  createdAt: FIXTURE_TIME,
+};
+const fixtureAdoptRequest = {
+  schemaVersion: 1,
+  adoptionSecretHex: "a".repeat(64),
+  expectedLocator: fixtureLocator,
+  brokerBuildId: "broker-build-fixture",
+  protocol: fixtureProtocol,
+  operation: "adopt",
+};
+const fixtureGrantRegistration = {
+  schemaVersion: 1,
+  grantTokenSha256: `sha256:${"b".repeat(64)}`,
+  viewerId: "viewer-fixture",
+  operations: ["view", "human-input", "resize"],
+  expiresAt: "2026-07-16T12:00:30.000Z",
+  geometry: fixtureGeometry,
+};
+const fixtureSessionSpec = {
+  schemaVersion: 1,
+  locator: fixtureLocator,
+  provider: "codex",
+  toolSessionId: "tool-session-fixture",
+  cwd: "/tmp/hive-fixture",
+  argv: ["/usr/local/bin/codex", "--quiet"],
+  environment: { TERM: "xterm-ghostty" },
+  expectedExecutable: "/usr/local/bin/codex",
+  readOnly: false,
+  capabilityEpoch: 9,
+  geometry: fixtureGeometry,
+  launchGrantId: "grant-fixture",
+  launchGrantRevision: 2,
+};
+const fixtureCreateResult = {
+  locator: fixtureLocator,
+  inspection: { ...fixtureInspection, visibility: fixtureAttachingVisibility },
+  created: true,
+};
+const fixtureAttachRequest = {
+  viewerId: "viewer-fixture",
+  geometry: fixtureGeometry,
+  operations: ["view", "human-input", "resize"],
+};
+const fixtureAttachGrant = {
+  locator: fixtureLocator,
+  endpoint: "/tmp/hive-fixture/session.sock",
+  token: "opaque-token",
+  expiresAt: "2026-07-16T12:00:30.000Z",
+  engineBuildId: "engine-fixture",
+  checkpointSeq: "2048",
+  outputSeq: "4096",
+  operations: ["view", "human-input", "resize"],
+};
+const fixtureVisibilityRequest = {
+  workspaceSessionId: "workspace-fixture",
+  workspacePid: 4000,
+  workspaceStartToken: "4000:123455",
+  openTerminalRevision: "7",
+};
+const fixtureCreateBegin = { ...fixtureSessionSpec, visibility: fixtureVisibilityRequest };
+const fixtureVisibilityLease = {
+  locator: fixtureLocator,
+  state: "active",
+  expiresAt: "2026-07-16T12:00:15.000Z",
+  openTerminalRevision: "7",
+};
+const fixtureTerminationRequest = { mode: "graceful", reason: "terminal closed", requestId: FIXTURE_IDS.request };
+const fixtureTerminationResult = { locator: fixtureLocator, state: "terminated", exit: null, survivors: [], errors: [] };
+
 const validCases: readonly WireCorpusCase[] = [
   { name: "session locator", schema: "sessionLocator", value: fixtureLocator },
   { name: "terminal geometry", schema: "terminalGeometry", value: fixtureGeometry },
   {
     name: "session specification",
     schema: "sessionSpec",
-    value: {
-      schemaVersion: 1,
-      locator: fixtureLocator,
-      provider: "codex",
-      toolSessionId: "tool-session-fixture",
-      cwd: "/tmp/hive-fixture",
-      argv: ["/usr/local/bin/codex", "--quiet"],
-      environment: { TERM: "xterm-ghostty" },
-      expectedExecutable: "/usr/local/bin/codex",
-      readOnly: false,
-      capabilityEpoch: 9,
-      geometry: fixtureGeometry,
-      launchGrantId: "grant-fixture",
-      launchGrantRevision: 2,
-    },
+    value: fixtureSessionSpec,
   },
   { name: "session inspection", schema: "sessionInspection", value: fixtureInspection },
   {
     name: "create result",
     schema: "createResult",
-    value: { locator: fixtureLocator, inspection: fixtureInspection, created: true },
+    value: fixtureCreateResult,
   },
   {
     name: "capture request",
@@ -128,41 +251,22 @@ const validCases: readonly WireCorpusCase[] = [
   {
     name: "attach request",
     schema: "attachRequest",
-    value: { viewerId: "viewer-fixture", geometry: fixtureGeometry, operations: ["view", "human-input", "resize"] },
+    value: fixtureAttachRequest,
   },
   {
     name: "attach grant",
     schema: "attachGrant",
-    value: {
-      locator: fixtureLocator,
-      endpoint: "/tmp/hive-fixture/session.sock",
-      token: "opaque-token",
-      expiresAt: "2026-07-16T12:00:30.000Z",
-      engineBuildId: "engine-fixture",
-      checkpointSeq: "2048",
-      outputSeq: "4096",
-      operations: ["view", "human-input", "resize"],
-    },
+    value: fixtureAttachGrant,
   },
   {
     name: "visibility request",
     schema: "visibilityRequest",
-    value: {
-      workspaceSessionId: "workspace-fixture",
-      workspacePid: 4000,
-      workspaceStartToken: "4000:123455",
-      openTerminalRevision: "7",
-    },
+    value: fixtureVisibilityRequest,
   },
   {
     name: "visibility lease",
     schema: "visibilityLease",
-    value: {
-      locator: fixtureLocator,
-      state: "active",
-      expiresAt: "2026-07-16T12:00:15.000Z",
-      openTerminalRevision: "7",
-    },
+    value: fixtureVisibilityLease,
   },
   {
     name: "resize result",
@@ -199,12 +303,12 @@ const validCases: readonly WireCorpusCase[] = [
   {
     name: "termination request",
     schema: "terminationRequest",
-    value: { mode: "graceful", reason: "terminal closed", requestId: FIXTURE_IDS.request },
+    value: fixtureTerminationRequest,
   },
   {
     name: "termination result",
     schema: "terminationResult",
-    value: { locator: fixtureLocator, state: "terminated", exit: null, survivors: [], errors: [] },
+    value: fixtureTerminationResult,
   },
   {
     name: "session event",
@@ -280,6 +384,55 @@ const validCases: readonly WireCorpusCase[] = [
       evidenceRefs: ["session-event:1"],
     },
   },
+  { name: "HELLO viewer grant", schema: "helloPayload", value: fixtureHello },
+  { name: "HELLO daemon control identity", schema: "helloPayload", value: fixtureDaemonHello },
+  { name: "HELLO broker", schema: "helloPayload", value: { ...fixtureHelloCommon, clientRole: "broker" } },
+  { name: "HELLO host", schema: "helloPayload", value: { ...fixtureHelloCommon, clientRole: "host" } },
+  { name: "complete HostRecordV1", schema: "hostRecordV1", value: fixtureHostRecordV1 },
+  { name: "CREATE_BEGIN session spec and pending visibility", schema: "createBeginPayload", value: fixtureCreateBegin },
+  { name: "CREATE_COMMIT digest", schema: "createCommitPayload", value: { schemaVersion: 1, totalLength: 12, sha256: "a".repeat(64) } },
+  { name: "CREATED result", schema: "createdPayload", value: { schemaVersion: 1, ...fixtureCreateResult } },
+  { name: "LIST instance", schema: "listPayload", value: { schemaVersion: 1, instanceId: fixtureLocator.instanceId } },
+  { name: "LISTED inventory", schema: "listedPayload", value: { schemaVersion: 1, entries: [fixtureInspection], complete: true } },
+  { name: "INSPECT locator", schema: "inspectPayload", value: { schemaVersion: 1, locator: fixtureLocator } },
+  { name: "INSPECTED evidence", schema: "inspectedPayload", value: fixtureInspection },
+  { name: "TERMINATE exact generation", schema: "terminatePayload", value: { schemaVersion: 1, locator: fixtureLocator, ...fixtureTerminationRequest } },
+  { name: "TERMINATED result", schema: "terminatedPayload", value: { schemaVersion: 1, ...fixtureTerminationResult } },
+  { name: "VISIBILITY_RENEW exact generation", schema: "visibilityRenewPayload", value: { schemaVersion: 1, locator: fixtureLocator, ...fixtureVisibilityRequest } },
+  { name: "RENEWED lease", schema: "renewedPayload", value: { schemaVersion: 1, ...fixtureVisibilityLease } },
+  { name: "ATTACH_REQUEST exact generation", schema: "attachRequestPayload", value: { schemaVersion: 1, locator: fixtureLocator, ...fixtureAttachRequest } },
+  { name: "ATTACH_GRANT exact host", schema: "attachGrantPayload", value: { schemaVersion: 1, ...fixtureAttachGrant } },
+  { name: "HOST_ATTACH replay cursor", schema: "hostAttachPayload", value: { schemaVersion: 1, locator: fixtureLocator, token: "opaque-token", geometry: fixtureGeometry, afterSeq: "4096" } },
+  { name: "WELCOME broker", schema: "welcomePayload", value: fixtureWelcome },
+  { name: "typed ERROR", schema: "errorPayload", value: { schemaVersion: 1, code: "UNAUTHENTICATED", message: "grant rejected", diagnosticId: null } },
+  { name: "PING monotonic nanos", schema: "pingPongPayload", value: { schemaVersion: 1, monoNanos: "123456789" } },
+  { name: "HOST_REGISTER readback", schema: "hostRegisterPayload", value: { schemaVersion: 1, record: fixtureHostRecord } },
+  { name: "HOST_REGISTER accepted", schema: "hostRegisterPayload", value: { schemaVersion: 1, accepted: true } },
+  { name: "HOST_ADOPT challenge", schema: "hostAdoptPayload", value: fixtureAdoptRequest },
+  {
+    name: "HOST_ADOPT readback",
+    schema: "hostAdoptPayload",
+    value: {
+      schemaVersion: 1,
+      locator: fixtureLocator,
+      hostPid: fixtureHostRecord.hostPid,
+      hostStartToken: fixtureHostRecord.hostStartToken,
+      executable: fixtureHostRecord.expectedExecutable,
+      executableBuildHash: fixtureHostRecord.executableBuildHash,
+      engineBuildId: fixtureHostRecord.engineBuildId,
+      processRoot: fixtureHostRecord.processRoot,
+      outputSeq: fixtureHostRecord.outputSeq,
+      checkpointSeq: fixtureHostRecord.checkpointSeq,
+      visibility: fixtureInspection.visibility,
+    },
+  },
+  { name: "GRANT_REGISTER request", schema: "grantRegisterPayload", value: fixtureGrantRegistration },
+  { name: "GRANT_REGISTER accepted", schema: "grantRegisterPayload", value: { schemaVersion: 1, registered: true } },
+  {
+    name: "session inspection preserves unknown input observation",
+    schema: "sessionInspection",
+    value: { ...fixtureInspection, input: { ...fixtureInspection.input, state: "UNKNOWN" } },
+  },
 ];
 
 const invalidCases: readonly WireCorpusCase[] = [
@@ -320,6 +473,36 @@ const invalidCases: readonly WireCorpusCase[] = [
   { name: "observation rejects scrollback-sized request", schema: "hiveTerminalObserveInput", value: { sessionId: FIXTURE_IDS.session, generation: 3, include: "visible-text", maxRows: 201 } },
   { name: "terminal attempt rejects recipient acknowledgment", schema: "terminalDeliveryAttempt", value: { ...(validCases[20]!.value as object), evidence: "recipient-acknowledged" } },
   { name: "terminal attempt requires one receipt form", schema: "terminalDeliveryAttempt", value: { ...(validCases[20]!.value as object), byteRange: null, nativeEndpointReceipt: null } },
+  { name: "HELLO rejects unknown field", schema: "helloPayload", value: { ...fixtureHello, authority: "claimed" } },
+  { name: "HELLO rejects daemon without control identity", schema: "helloPayload", value: { ...fixtureHelloCommon, clientRole: "daemon" } },
+  { name: "HELLO rejects daemon grant", schema: "helloPayload", value: { ...fixtureDaemonHello, grantToken: "forbidden" } },
+  { name: "HELLO rejects daemon block from viewer", schema: "helloPayload", value: { ...fixtureHello, daemonControl: fixtureDaemonControl } },
+  { name: "HELLO rejects reversed minor range", schema: "helloPayload", value: { ...fixtureHello, protocol: { major: 1, minMinor: 1, maxMinor: 0 } } },
+  { name: "HostRecordV1 rejects an absolute socket path", schema: "hostRecordV1", value: { ...fixtureHostRecordV1, socketRelativePath: "/tmp/host.sock" } },
+  { name: "CREATE_BEGIN rejects missing locator", schema: "createBeginPayload", value: { ...fixtureCreateBegin, locator: undefined } },
+  { name: "CREATE_BEGIN rejects missing visibility", schema: "createBeginPayload", value: fixtureSessionSpec },
+  { name: "CREATE_BEGIN rejects zero open-terminal revision", schema: "createBeginPayload", value: { ...fixtureCreateBegin, visibility: { ...fixtureVisibilityRequest, openTerminalRevision: "0" } } },
+  { name: "CREATE_COMMIT rejects oversized input", schema: "createCommitPayload", value: { schemaVersion: 1, totalLength: TERMINAL_LIMITS.automatedMessageBytes + 1, sha256: "a".repeat(64) } },
+  { name: "CREATED rejects missing inspection", schema: "createdPayload", value: { schemaVersion: 1, locator: fixtureLocator, created: true } },
+  { name: "LIST rejects missing instance", schema: "listPayload", value: { schemaVersion: 1 } },
+  { name: "LISTED rejects missing completeness", schema: "listedPayload", value: { schemaVersion: 1, entries: [fixtureInspection] } },
+  { name: "INSPECT rejects missing locator", schema: "inspectPayload", value: { schemaVersion: 1 } },
+  { name: "INSPECTED rejects unknown field", schema: "inspectedPayload", value: { ...fixtureInspection, trusted: true } },
+  { name: "TERMINATE rejects missing locator", schema: "terminatePayload", value: { schemaVersion: 1, ...fixtureTerminationRequest } },
+  { name: "TERMINATED rejects missing state", schema: "terminatedPayload", value: { schemaVersion: 1, ...fixtureTerminationResult, state: undefined } },
+  { name: "VISIBILITY_RENEW rejects missing locator", schema: "visibilityRenewPayload", value: { schemaVersion: 1, ...fixtureVisibilityRequest } },
+  { name: "RENEWED rejects missing locator", schema: "renewedPayload", value: { schemaVersion: 1, state: "active", expiresAt: fixtureVisibilityLease.expiresAt, openTerminalRevision: "7" } },
+  { name: "ATTACH_REQUEST rejects missing locator", schema: "attachRequestPayload", value: { schemaVersion: 1, ...fixtureAttachRequest } },
+  { name: "ATTACH_GRANT rejects missing token", schema: "attachGrantPayload", value: { schemaVersion: 1, ...fixtureAttachGrant, token: undefined } },
+  { name: "HOST_ATTACH rejects numeric replay cursor", schema: "hostAttachPayload", value: { schemaVersion: 1, locator: fixtureLocator, token: "opaque-token", geometry: fixtureGeometry, afterSeq: 4096 } },
+  { name: "WELCOME rejects unknown field", schema: "welcomePayload", value: { ...fixtureWelcome, authority: true } },
+  { name: "ERROR rejects unknown field", schema: "errorPayload", value: { schemaVersion: 1, code: "INTERNAL", message: "failure", diagnosticId: null, retry: true } },
+  { name: "PING rejects unknown field", schema: "pingPongPayload", value: { schemaVersion: 1, monoNanos: "1", wallTime: FIXTURE_TIME } },
+  { name: "HOST_REGISTER rejects unknown field", schema: "hostRegisterPayload", value: { schemaVersion: 1, record: fixtureHostRecord, trusted: true } },
+  { name: "HOST_ADOPT rejects unknown field", schema: "hostAdoptPayload", value: { ...fixtureAdoptRequest, trusted: true } },
+  { name: "HOST_ADOPT rejects malformed secret", schema: "hostAdoptPayload", value: { ...fixtureAdoptRequest, adoptionSecretHex: "not-a-secret" } },
+  { name: "GRANT_REGISTER rejects unknown field", schema: "grantRegisterPayload", value: { ...fixtureGrantRegistration, rawToken: "forbidden" } },
+  { name: "GRANT_REGISTER rejects untagged hash", schema: "grantRegisterPayload", value: { ...fixtureGrantRegistration, grantTokenSha256: "b".repeat(64) } },
 ];
 
 export type FrameHeaderFields = Readonly<{

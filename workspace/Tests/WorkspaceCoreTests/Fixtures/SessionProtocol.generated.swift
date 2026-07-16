@@ -164,6 +164,10 @@ func validates(_ value: Any, against schema: [String: Any]) -> Bool {
            let columns = (object["columns"] as? NSNumber)?.intValue,
            let rows = (object["rows"] as? NSNumber)?.intValue,
            columns * rows > maximum.intValue { return false }
+        if schema["x-hive-ordered-minor-range"] as? Bool == true,
+           let minimum = (object["minMinor"] as? NSNumber)?.intValue,
+           let maximum = (object["maxMinor"] as? NSNumber)?.intValue,
+           minimum > maximum { return false }
         if let names = schema["x-hive-exactly-one-of"] as? [String] {
             let present = names.filter { name in
                 guard let item = object[name] else { return false }
@@ -171,6 +175,10 @@ func validates(_ value: Any, against schema: [String: Any]) -> Bool {
             }
             if present.count != 1 { return false }
         }
+        if let field = schema["x-hive-positive-open-terminal-revision"] as? String,
+           let visibility = object[field] as? [String: Any],
+           let revision = visibility["openTerminalRevision"] as? String,
+           (UInt64(revision) ?? 0) == 0 { return false }
     }
     return true
 }

@@ -6,6 +6,4490 @@
     "src/schemas/message-envelope.ts"
   ],
   "schemas": {
+    "helloPayload": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "readOnly": true,
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "schemaVersion": {
+              "type": "number",
+              "const": 1
+            },
+            "buildId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "instanceId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "protocol": {
+              "readOnly": true,
+              "type": "object",
+              "properties": {
+                "major": {
+                  "type": "number",
+                  "const": 1
+                },
+                "minMinor": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 255
+                },
+                "maxMinor": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 255
+                }
+              },
+              "required": [
+                "major",
+                "minMinor",
+                "maxMinor"
+              ],
+              "additionalProperties": false,
+              "x-hive-ordered-minor-range": true
+            },
+            "clientRole": {
+              "type": "string",
+              "const": "viewer"
+            },
+            "grantToken": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "schemaVersion",
+            "buildId",
+            "instanceId",
+            "protocol",
+            "clientRole"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "schemaVersion": {
+              "type": "number",
+              "const": 1
+            },
+            "buildId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "instanceId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "protocol": {
+              "readOnly": true,
+              "type": "object",
+              "properties": {
+                "major": {
+                  "type": "number",
+                  "const": 1
+                },
+                "minMinor": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 255
+                },
+                "maxMinor": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 255
+                }
+              },
+              "required": [
+                "major",
+                "minMinor",
+                "maxMinor"
+              ],
+              "additionalProperties": false,
+              "x-hive-ordered-minor-range": true
+            },
+            "clientRole": {
+              "type": "string",
+              "const": "daemon"
+            },
+            "daemonControl": {
+              "readOnly": true,
+              "type": "object",
+              "properties": {
+                "productVersion": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "buildHash": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "wireProtocol": {
+                  "readOnly": true,
+                  "type": "object",
+                  "properties": {
+                    "min": {
+                      "type": "number"
+                    },
+                    "max": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "min",
+                    "max"
+                  ],
+                  "additionalProperties": false
+                },
+                "schemaEpoch": {
+                  "type": "number"
+                },
+                "instanceId": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "hiveUuid": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "identityKey": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "repoFamilyKey": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "productVersion",
+                "buildHash",
+                "wireProtocol",
+                "schemaEpoch",
+                "instanceId",
+                "hiveUuid",
+                "identityKey",
+                "repoFamilyKey"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "schemaVersion",
+            "buildId",
+            "instanceId",
+            "protocol",
+            "clientRole",
+            "daemonControl"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "schemaVersion": {
+              "type": "number",
+              "const": 1
+            },
+            "buildId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "instanceId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "protocol": {
+              "readOnly": true,
+              "type": "object",
+              "properties": {
+                "major": {
+                  "type": "number",
+                  "const": 1
+                },
+                "minMinor": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 255
+                },
+                "maxMinor": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 255
+                }
+              },
+              "required": [
+                "major",
+                "minMinor",
+                "maxMinor"
+              ],
+              "additionalProperties": false,
+              "x-hive-ordered-minor-range": true
+            },
+            "clientRole": {
+              "type": "string",
+              "const": "broker"
+            }
+          },
+          "required": [
+            "schemaVersion",
+            "buildId",
+            "instanceId",
+            "protocol",
+            "clientRole"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "schemaVersion": {
+              "type": "number",
+              "const": 1
+            },
+            "buildId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "instanceId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "protocol": {
+              "readOnly": true,
+              "type": "object",
+              "properties": {
+                "major": {
+                  "type": "number",
+                  "const": 1
+                },
+                "minMinor": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 255
+                },
+                "maxMinor": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 255
+                }
+              },
+              "required": [
+                "major",
+                "minMinor",
+                "maxMinor"
+              ],
+              "additionalProperties": false,
+              "x-hive-ordered-minor-range": true
+            },
+            "clientRole": {
+              "type": "string",
+              "const": "host"
+            }
+          },
+          "required": [
+            "schemaVersion",
+            "buildId",
+            "instanceId",
+            "protocol",
+            "clientRole"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "welcomePayload": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "readOnly": true,
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "number",
+          "const": 1
+        },
+        "protocol": {
+          "readOnly": true,
+          "type": "object",
+          "properties": {
+            "major": {
+              "type": "number",
+              "const": 1
+            },
+            "minor": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255
+            }
+          },
+          "required": [
+            "major",
+            "minor"
+          ],
+          "additionalProperties": false
+        },
+        "instanceId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "endpointRole": {
+          "type": "string",
+          "enum": [
+            "broker",
+            "host"
+          ]
+        },
+        "buildId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "engineBuildId": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "connectionId": {
+          "type": "string",
+          "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+          "format": "hive-uint64-decimal"
+        },
+        "serverEpoch": {
+          "type": "string",
+          "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+          "format": "hive-uint64-decimal"
+        },
+        "limits": {
+          "readOnly": true,
+          "type": "object",
+          "properties": {
+            "controlFrameMaxBytes": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 262144
+            },
+            "streamChunkMaxBytes": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 65536
+            },
+            "automatedMessageMaxBytes": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 1048576
+            },
+            "viewerQueueMaxBytes": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 8388608
+            }
+          },
+          "required": [
+            "controlFrameMaxBytes",
+            "streamChunkMaxBytes",
+            "automatedMessageMaxBytes",
+            "viewerQueueMaxBytes"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "protocol",
+        "instanceId",
+        "endpointRole",
+        "buildId",
+        "engineBuildId",
+        "connectionId",
+        "serverEpoch",
+        "limits"
+      ],
+      "additionalProperties": false
+    },
+    "errorPayload": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "readOnly": true,
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "number",
+          "const": 1
+        },
+        "code": {
+          "type": "string",
+          "enum": [
+            "PROTOCOL_MISMATCH",
+            "UNSUPPORTED_FRAME",
+            "UNAUTHENTICATED",
+            "FORBIDDEN",
+            "INSTANCE_MISMATCH",
+            "GENERATION_MISMATCH",
+            "NOT_FOUND",
+            "NOT_READY",
+            "ALREADY_EXISTS",
+            "HUMAN_OWNED",
+            "HUMAN_ORPHANED",
+            "INPUT_BUSY",
+            "REBASE_REQUIRED",
+            "SNAPSHOT_REQUIRED",
+            "CHECKPOINT_UNAVAILABLE",
+            "ENGINE_MISMATCH",
+            "PAYLOAD_TOO_LARGE",
+            "FRAME_TOO_LARGE",
+            "MALFORMED_FRAME",
+            "IN_DOUBT",
+            "VERIFICATION_UNKNOWN",
+            "CAPACITY_EXCEEDED",
+            "RESOURCE_EXHAUSTED",
+            "INTERNAL"
+          ]
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1
+        },
+        "diagnosticId": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "code",
+        "message",
+        "diagnosticId"
+      ],
+      "additionalProperties": false
+    },
+    "pingPongPayload": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "readOnly": true,
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "number",
+          "const": 1
+        },
+        "monoNanos": {
+          "type": "string",
+          "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+          "format": "hive-uint64-decimal"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "monoNanos"
+      ],
+      "additionalProperties": false
+    },
+    "hostRegisterPayload": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "readOnly": true,
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "schemaVersion": {
+              "type": "number",
+              "const": 1
+            },
+            "record": {
+              "readOnly": true,
+              "type": "object",
+              "properties": {
+                "locator": {
+                  "readOnly": true,
+                  "type": "object",
+                  "properties": {
+                    "schemaVersion": {
+                      "type": "number",
+                      "const": 1
+                    },
+                    "instanceId": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "subject": {
+                      "readOnly": true,
+                      "oneOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "type": "string",
+                              "const": "root"
+                            }
+                          },
+                          "required": [
+                            "kind"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "type": "string",
+                              "const": "agent"
+                            },
+                            "agentId": {
+                              "type": "string",
+                              "minLength": 1
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "agentId"
+                          ],
+                          "additionalProperties": false
+                        }
+                      ]
+                    },
+                    "generation": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 9007199254740991
+                    },
+                    "sessionId": {
+                      "type": "string",
+                      "pattern": "^ses_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+                    },
+                    "hostKind": {
+                      "type": "string",
+                      "enum": [
+                        "tmux",
+                        "sessiond"
+                      ]
+                    },
+                    "engineBuildId": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "schemaVersion",
+                    "instanceId",
+                    "subject",
+                    "generation",
+                    "sessionId",
+                    "hostKind",
+                    "engineBuildId"
+                  ],
+                  "additionalProperties": false
+                },
+                "hostPid": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "hostStartToken": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "processRoot": {
+                  "type": "object",
+                  "properties": {
+                    "pid": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "startToken": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "processGroupId": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": [
+                    "pid",
+                    "startToken",
+                    "processGroupId"
+                  ],
+                  "additionalProperties": false
+                },
+                "expectedExecutable": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "executableBuildHash": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "engineBuildId": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "protocol": {
+                  "readOnly": true,
+                  "type": "object",
+                  "properties": {
+                    "major": {
+                      "type": "number",
+                      "const": 1
+                    },
+                    "minor": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 255
+                    }
+                  },
+                  "required": [
+                    "major",
+                    "minor"
+                  ],
+                  "additionalProperties": false
+                },
+                "geometry": {
+                  "readOnly": true,
+                  "type": "object",
+                  "properties": {
+                    "columns": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 1000
+                    },
+                    "rows": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 1000
+                    },
+                    "widthPx": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "heightPx": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "cellWidthPx": {
+                      "type": "number",
+                      "exclusiveMinimum": 0
+                    },
+                    "cellHeightPx": {
+                      "type": "number",
+                      "exclusiveMinimum": 0
+                    }
+                  },
+                  "required": [
+                    "columns",
+                    "rows",
+                    "widthPx",
+                    "heightPx",
+                    "cellWidthPx",
+                    "cellHeightPx"
+                  ],
+                  "additionalProperties": false,
+                  "x-hive-max-active-cells": 250000
+                },
+                "state": {
+                  "type": "string",
+                  "enum": [
+                    "starting",
+                    "live",
+                    "exited",
+                    "unknown"
+                  ]
+                },
+                "outputSeq": {
+                  "type": "string",
+                  "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                  "format": "hive-uint64-decimal"
+                },
+                "checkpointSeq": {
+                  "type": "string",
+                  "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                  "format": "hive-uint64-decimal"
+                },
+                "visibility": {
+                  "type": "object",
+                  "properties": {
+                    "state": {
+                      "type": "string",
+                      "enum": [
+                        "attaching",
+                        "visible",
+                        "reconnecting",
+                        "expired"
+                      ]
+                    },
+                    "workspaceSessionId": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "openTerminalRevision": {
+                      "type": "string",
+                      "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                      "format": "hive-uint64-decimal"
+                    },
+                    "expiresAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+                    }
+                  },
+                  "required": [
+                    "state",
+                    "workspaceSessionId",
+                    "openTerminalRevision",
+                    "expiresAt"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "locator",
+                "hostPid",
+                "hostStartToken",
+                "processRoot",
+                "expectedExecutable",
+                "executableBuildHash",
+                "engineBuildId",
+                "protocol",
+                "geometry",
+                "state",
+                "outputSeq",
+                "checkpointSeq",
+                "visibility"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "schemaVersion",
+            "record"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "schemaVersion": {
+              "type": "number",
+              "const": 1
+            },
+            "accepted": {
+              "type": "boolean",
+              "const": true
+            }
+          },
+          "required": [
+            "schemaVersion",
+            "accepted"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "hostAdoptPayload": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "readOnly": true,
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "schemaVersion": {
+              "type": "number",
+              "const": 1
+            },
+            "adoptionSecretHex": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "expectedLocator": {
+              "readOnly": true,
+              "type": "object",
+              "properties": {
+                "schemaVersion": {
+                  "type": "number",
+                  "const": 1
+                },
+                "instanceId": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "subject": {
+                  "readOnly": true,
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "const": "root"
+                        }
+                      },
+                      "required": [
+                        "kind"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "const": "agent"
+                        },
+                        "agentId": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "agentId"
+                      ],
+                      "additionalProperties": false
+                    }
+                  ]
+                },
+                "generation": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 9007199254740991
+                },
+                "sessionId": {
+                  "type": "string",
+                  "pattern": "^ses_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+                },
+                "hostKind": {
+                  "type": "string",
+                  "enum": [
+                    "tmux",
+                    "sessiond"
+                  ]
+                },
+                "engineBuildId": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "schemaVersion",
+                "instanceId",
+                "subject",
+                "generation",
+                "sessionId",
+                "hostKind",
+                "engineBuildId"
+              ],
+              "additionalProperties": false
+            },
+            "brokerBuildId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "protocol": {
+              "readOnly": true,
+              "type": "object",
+              "properties": {
+                "major": {
+                  "type": "number",
+                  "const": 1
+                },
+                "minor": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 255
+                }
+              },
+              "required": [
+                "major",
+                "minor"
+              ],
+              "additionalProperties": false
+            },
+            "operation": {
+              "type": "string",
+              "const": "adopt"
+            }
+          },
+          "required": [
+            "schemaVersion",
+            "adoptionSecretHex",
+            "expectedLocator",
+            "brokerBuildId",
+            "protocol",
+            "operation"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "schemaVersion": {
+              "type": "number",
+              "const": 1
+            },
+            "locator": {
+              "readOnly": true,
+              "type": "object",
+              "properties": {
+                "schemaVersion": {
+                  "type": "number",
+                  "const": 1
+                },
+                "instanceId": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "subject": {
+                  "readOnly": true,
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "const": "root"
+                        }
+                      },
+                      "required": [
+                        "kind"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "const": "agent"
+                        },
+                        "agentId": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "agentId"
+                      ],
+                      "additionalProperties": false
+                    }
+                  ]
+                },
+                "generation": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 9007199254740991
+                },
+                "sessionId": {
+                  "type": "string",
+                  "pattern": "^ses_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+                },
+                "hostKind": {
+                  "type": "string",
+                  "enum": [
+                    "tmux",
+                    "sessiond"
+                  ]
+                },
+                "engineBuildId": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "schemaVersion",
+                "instanceId",
+                "subject",
+                "generation",
+                "sessionId",
+                "hostKind",
+                "engineBuildId"
+              ],
+              "additionalProperties": false
+            },
+            "hostPid": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            "hostStartToken": {
+              "type": "string",
+              "minLength": 1
+            },
+            "executable": {
+              "type": "string",
+              "minLength": 1
+            },
+            "executableBuildHash": {
+              "type": "string",
+              "minLength": 1
+            },
+            "engineBuildId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "processRoot": {
+              "type": "object",
+              "properties": {
+                "pid": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "startToken": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "processGroupId": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                }
+              },
+              "required": [
+                "pid",
+                "startToken",
+                "processGroupId"
+              ],
+              "additionalProperties": false
+            },
+            "outputSeq": {
+              "type": "string",
+              "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+              "format": "hive-uint64-decimal"
+            },
+            "checkpointSeq": {
+              "type": "string",
+              "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+              "format": "hive-uint64-decimal"
+            },
+            "visibility": {
+              "type": "object",
+              "properties": {
+                "state": {
+                  "type": "string",
+                  "enum": [
+                    "attaching",
+                    "visible",
+                    "reconnecting",
+                    "expired"
+                  ]
+                },
+                "workspaceSessionId": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "openTerminalRevision": {
+                  "type": "string",
+                  "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                  "format": "hive-uint64-decimal"
+                },
+                "expiresAt": {
+                  "type": "string",
+                  "format": "date-time",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+                }
+              },
+              "required": [
+                "state",
+                "workspaceSessionId",
+                "openTerminalRevision",
+                "expiresAt"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "schemaVersion",
+            "locator",
+            "hostPid",
+            "hostStartToken",
+            "executable",
+            "executableBuildHash",
+            "engineBuildId",
+            "processRoot",
+            "outputSeq",
+            "checkpointSeq",
+            "visibility"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "grantRegisterPayload": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "readOnly": true,
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "schemaVersion": {
+              "type": "number",
+              "const": 1
+            },
+            "grantTokenSha256": {
+              "type": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$"
+            },
+            "viewerId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "operations": {
+              "readOnly": true,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "view",
+                  "human-input",
+                  "resize"
+                ]
+              }
+            },
+            "expiresAt": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+            },
+            "geometry": {
+              "readOnly": true,
+              "type": "object",
+              "properties": {
+                "columns": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 1000
+                },
+                "rows": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 1000
+                },
+                "widthPx": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "heightPx": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "cellWidthPx": {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                },
+                "cellHeightPx": {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                }
+              },
+              "required": [
+                "columns",
+                "rows",
+                "widthPx",
+                "heightPx",
+                "cellWidthPx",
+                "cellHeightPx"
+              ],
+              "additionalProperties": false,
+              "x-hive-max-active-cells": 250000
+            }
+          },
+          "required": [
+            "schemaVersion",
+            "grantTokenSha256",
+            "viewerId",
+            "operations",
+            "expiresAt",
+            "geometry"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "schemaVersion": {
+              "type": "number",
+              "const": 1
+            },
+            "registered": {
+              "type": "boolean",
+              "const": true
+            }
+          },
+          "required": [
+            "schemaVersion",
+            "registered"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "hostRecordV1": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "readOnly": true,
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "number",
+          "const": 1
+        },
+        "locator": {
+          "readOnly": true,
+          "type": "object",
+          "properties": {
+            "schemaVersion": {
+              "type": "number",
+              "const": 1
+            },
+            "instanceId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "subject": {
+              "readOnly": true,
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "root"
+                    }
+                  },
+                  "required": [
+                    "kind"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "agent"
+                    },
+                    "agentId": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "agentId"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            },
+            "generation": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "sessionId": {
+              "type": "string",
+              "pattern": "^ses_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+            },
+            "hostKind": {
+              "type": "string",
+              "enum": [
+                "tmux",
+                "sessiond"
+              ]
+            },
+            "engineBuildId": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "schemaVersion",
+            "instanceId",
+            "subject",
+            "generation",
+            "sessionId",
+            "hostKind",
+            "engineBuildId"
+          ],
+          "additionalProperties": false
+        },
+        "hostPid": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "hostStartToken": {
+          "type": "string",
+          "minLength": 1
+        },
+        "processRoot": {
+          "type": "object",
+          "properties": {
+            "pid": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            "startToken": {
+              "type": "string",
+              "minLength": 1
+            },
+            "processGroupId": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "pid",
+            "startToken",
+            "processGroupId"
+          ],
+          "additionalProperties": false
+        },
+        "expectedExecutable": {
+          "type": "string",
+          "minLength": 1
+        },
+        "executableBuildHash": {
+          "type": "string",
+          "minLength": 1
+        },
+        "engineBuildId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "protocol": {
+          "readOnly": true,
+          "type": "object",
+          "properties": {
+            "major": {
+              "type": "number",
+              "const": 1
+            },
+            "minor": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255
+            }
+          },
+          "required": [
+            "major",
+            "minor"
+          ],
+          "additionalProperties": false
+        },
+        "geometry": {
+          "readOnly": true,
+          "type": "object",
+          "properties": {
+            "columns": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000
+            },
+            "rows": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000
+            },
+            "widthPx": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            "heightPx": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            "cellWidthPx": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "cellHeightPx": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
+          },
+          "required": [
+            "columns",
+            "rows",
+            "widthPx",
+            "heightPx",
+            "cellWidthPx",
+            "cellHeightPx"
+          ],
+          "additionalProperties": false,
+          "x-hive-max-active-cells": 250000
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "starting",
+            "live",
+            "exited",
+            "unknown"
+          ]
+        },
+        "outputSeq": {
+          "type": "string",
+          "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+          "format": "hive-uint64-decimal"
+        },
+        "checkpointSeq": {
+          "type": "string",
+          "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+          "format": "hive-uint64-decimal"
+        },
+        "visibility": {
+          "type": "object",
+          "properties": {
+            "state": {
+              "type": "string",
+              "enum": [
+                "attaching",
+                "visible",
+                "reconnecting",
+                "expired"
+              ]
+            },
+            "workspaceSessionId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "openTerminalRevision": {
+              "type": "string",
+              "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+              "format": "hive-uint64-decimal"
+            },
+            "expiresAt": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+            }
+          },
+          "required": [
+            "state",
+            "workspaceSessionId",
+            "openTerminalRevision",
+            "expiresAt"
+          ],
+          "additionalProperties": false
+        },
+        "socketRelativePath": {
+          "type": "string",
+          "const": "host.sock"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "locator",
+        "hostPid",
+        "hostStartToken",
+        "processRoot",
+        "expectedExecutable",
+        "executableBuildHash",
+        "engineBuildId",
+        "protocol",
+        "geometry",
+        "state",
+        "outputSeq",
+        "checkpointSeq",
+        "visibility",
+        "socketRelativePath",
+        "createdAt"
+      ],
+      "additionalProperties": false
+    },
+    "createBeginPayload": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "readOnly": true,
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "number",
+          "const": 1
+        },
+        "locator": {
+          "readOnly": true,
+          "type": "object",
+          "properties": {
+            "schemaVersion": {
+              "type": "number",
+              "const": 1
+            },
+            "instanceId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "subject": {
+              "readOnly": true,
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "root"
+                    }
+                  },
+                  "required": [
+                    "kind"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "agent"
+                    },
+                    "agentId": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "agentId"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            },
+            "generation": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "sessionId": {
+              "type": "string",
+              "pattern": "^ses_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+            },
+            "hostKind": {
+              "type": "string",
+              "enum": [
+                "tmux",
+                "sessiond"
+              ]
+            },
+            "engineBuildId": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "schemaVersion",
+            "instanceId",
+            "subject",
+            "generation",
+            "sessionId",
+            "hostKind",
+            "engineBuildId"
+          ],
+          "additionalProperties": false
+        },
+        "provider": {
+          "type": "string",
+          "enum": [
+            "claude",
+            "codex",
+            "grok"
+          ]
+        },
+        "toolSessionId": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "cwd": {
+          "type": "string",
+          "pattern": "^\\/.*"
+        },
+        "argv": {
+          "readOnly": true,
+          "type": "array",
+          "prefixItems": [
+            {
+              "type": "string",
+              "minLength": 1
+            }
+          ],
+          "items": {
+            "type": "string"
+          }
+        },
+        "environment": {
+          "readOnly": true,
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "expectedExecutable": {
+          "type": "string",
+          "minLength": 1
+        },
+        "readOnly": {
+          "type": "boolean"
+        },
+        "capabilityEpoch": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "geometry": {
+          "readOnly": true,
+          "type": "object",
+          "properties": {
+            "columns": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000
+            },
+            "rows": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000
+            },
+            "widthPx": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            "heightPx": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            "cellWidthPx": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "cellHeightPx": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
+          },
+          "required": [
+            "columns",
+            "rows",
+            "widthPx",
+            "heightPx",
+            "cellWidthPx",
+            "cellHeightPx"
+          ],
+          "additionalProperties": false,
+          "x-hive-max-active-cells": 250000
+        },
+        "launchGrantId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "launchGrantRevision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "visibility": {
+          "readOnly": true,
+          "type": "object",
+          "properties": {
+            "workspaceSessionId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "workspacePid": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            "workspaceStartToken": {
+              "type": "string",
+              "minLength": 1
+            },
+            "openTerminalRevision": {
+              "type": "string",
+              "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+              "format": "hive-uint64-decimal"
+            }
+          },
+          "required": [
+            "workspaceSessionId",
+            "workspacePid",
+            "workspaceStartToken",
+            "openTerminalRevision"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "locator",
+        "provider",
+        "toolSessionId",
+        "cwd",
+        "argv",
+        "environment",
+        "expectedExecutable",
+        "readOnly",
+        "capabilityEpoch",
+        "geometry",
+        "launchGrantId",
+        "launchGrantRevision",
+        "visibility"
+      ],
+      "additionalProperties": false,
+      "x-hive-positive-open-terminal-revision": "visibility"
+    },
+    "createCommitPayload": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "readOnly": true,
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "number",
+          "const": 1
+        },
+        "totalLength": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1048576
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "totalLength",
+        "sha256"
+      ],
+      "additionalProperties": false
+    },
+    "createdPayload": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "readOnly": true,
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "number",
+          "const": 1
+        },
+        "locator": {
+          "readOnly": true,
+          "type": "object",
+          "properties": {
+            "schemaVersion": {
+              "type": "number",
+              "const": 1
+            },
+            "instanceId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "subject": {
+              "readOnly": true,
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "root"
+                    }
+                  },
+                  "required": [
+                    "kind"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "agent"
+                    },
+                    "agentId": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "agentId"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            },
+            "generation": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "sessionId": {
+              "type": "string",
+              "pattern": "^ses_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+            },
+            "hostKind": {
+              "type": "string",
+              "enum": [
+                "tmux",
+                "sessiond"
+              ]
+            },
+            "engineBuildId": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "schemaVersion",
+            "instanceId",
+            "subject",
+            "generation",
+            "sessionId",
+            "hostKind",
+            "engineBuildId"
+          ],
+          "additionalProperties": false
+        },
+        "inspection": {
+          "readOnly": true,
+          "type": "object",
+          "properties": {
+            "schemaVersion": {
+              "type": "number",
+              "const": 1
+            },
+            "locator": {
+              "readOnly": true,
+              "type": "object",
+              "properties": {
+                "schemaVersion": {
+                  "type": "number",
+                  "const": 1
+                },
+                "instanceId": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "subject": {
+                  "readOnly": true,
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "const": "root"
+                        }
+                      },
+                      "required": [
+                        "kind"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "const": "agent"
+                        },
+                        "agentId": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "agentId"
+                      ],
+                      "additionalProperties": false
+                    }
+                  ]
+                },
+                "generation": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 9007199254740991
+                },
+                "sessionId": {
+                  "type": "string",
+                  "pattern": "^ses_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+                },
+                "hostKind": {
+                  "type": "string",
+                  "enum": [
+                    "tmux",
+                    "sessiond"
+                  ]
+                },
+                "engineBuildId": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "schemaVersion",
+                "instanceId",
+                "subject",
+                "generation",
+                "sessionId",
+                "hostKind",
+                "engineBuildId"
+              ],
+              "additionalProperties": false
+            },
+            "presence": {
+              "type": "string",
+              "enum": [
+                "present",
+                "exited",
+                "lost",
+                "unknown"
+              ]
+            },
+            "complete": {
+              "type": "boolean"
+            },
+            "hostPid": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "hostStartToken": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "providerRoot": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "pid": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "startToken": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "processGroupId": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": [
+                    "pid",
+                    "startToken",
+                    "processGroupId"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "expectedExecutable": {
+              "type": "string",
+              "minLength": 1
+            },
+            "executableVerified": {
+              "type": "boolean"
+            },
+            "outputSeq": {
+              "type": "string",
+              "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+              "format": "hive-uint64-decimal"
+            },
+            "checkpointSeq": {
+              "type": "string",
+              "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+              "format": "hive-uint64-decimal"
+            },
+            "checkpointAvailable": {
+              "type": "boolean"
+            },
+            "input": {
+              "type": "object",
+              "properties": {
+                "state": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "enum": [
+                        "FREE",
+                        "HUMAN_GESTURE",
+                        "HUMAN_OWNED",
+                        "HUMAN_ORPHANED",
+                        "AUTOMATION_BUFFERING",
+                        "AUTOMATION_COMMITTED",
+                        "TERMINATING",
+                        "CLOSED"
+                      ]
+                    },
+                    {
+                      "type": "string",
+                      "const": "UNKNOWN"
+                    }
+                  ]
+                },
+                "ownerViewerId": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "claimId": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "state",
+                "ownerViewerId",
+                "claimId"
+              ],
+              "additionalProperties": false
+            },
+            "viewerCount": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4
+            },
+            "geometry": {
+              "readOnly": true,
+              "type": "object",
+              "properties": {
+                "columns": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 1000
+                },
+                "rows": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 1000
+                },
+                "widthPx": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "heightPx": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "cellWidthPx": {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                },
+                "cellHeightPx": {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                }
+              },
+              "required": [
+                "columns",
+                "rows",
+                "widthPx",
+                "heightPx",
+                "cellWidthPx",
+                "cellHeightPx"
+              ],
+              "additionalProperties": false,
+              "x-hive-max-active-cells": 250000
+            },
+            "resources": {
+              "readOnly": true,
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {
+                "type": "number"
+              }
+            },
+            "visibility": {
+              "type": "object",
+              "properties": {
+                "state": {
+                  "type": "string",
+                  "enum": [
+                    "attaching",
+                    "visible",
+                    "reconnecting",
+                    "expired"
+                  ]
+                },
+                "workspaceSessionId": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "openTerminalRevision": {
+                  "type": "string",
+                  "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                  "format": "hive-uint64-decimal"
+                },
+                "expiresAt": {
+                  "type": "string",
+                  "format": "date-time",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+                }
+              },
+              "required": [
+                "state",
+                "workspaceSessionId",
+                "openTerminalRevision",
+                "expiresAt"
+              ],
+              "additionalProperties": false
+            },
+            "exit": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "signal": {
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "observedAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "signal",
+                    "observedAt"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "survivors": {
+              "readOnly": true,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "pid": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "startToken": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "reason": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "pid",
+                  "startToken",
+                  "reason"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "evidenceAt": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+            },
+            "diagnosticIds": {
+              "readOnly": true,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          "required": [
+            "schemaVersion",
+            "locator",
+            "presence",
+            "complete",
+            "hostPid",
+            "hostStartToken",
+            "providerRoot",
+            "expectedExecutable",
+            "executableVerified",
+            "outputSeq",
+            "checkpointSeq",
+            "checkpointAvailable",
+            "input",
+            "viewerCount",
+            "geometry",
+            "resources",
+            "visibility",
+            "exit",
+            "survivors",
+            "evidenceAt",
+            "diagnosticIds"
+          ],
+          "additionalProperties": false
+        },
+        "created": {
+          "type": "boolean",
+          "const": true
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "locator",
+        "inspection",
+        "created"
+      ],
+      "additionalProperties": false
+    },
+    "listPayload": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "readOnly": true,
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "number",
+          "const": 1
+        },
+        "instanceId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "instanceId"
+      ],
+      "additionalProperties": false
+    },
+    "listedPayload": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "readOnly": true,
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "number",
+          "const": 1
+        },
+        "entries": {
+          "readOnly": true,
+          "type": "array",
+          "items": {
+            "readOnly": true,
+            "type": "object",
+            "properties": {
+              "schemaVersion": {
+                "type": "number",
+                "const": 1
+              },
+              "locator": {
+                "readOnly": true,
+                "type": "object",
+                "properties": {
+                  "schemaVersion": {
+                    "type": "number",
+                    "const": 1
+                  },
+                  "instanceId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "subject": {
+                    "readOnly": true,
+                    "oneOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "const": "root"
+                          }
+                        },
+                        "required": [
+                          "kind"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "const": "agent"
+                          },
+                          "agentId": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "agentId"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ]
+                  },
+                  "generation": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  },
+                  "sessionId": {
+                    "type": "string",
+                    "pattern": "^ses_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+                  },
+                  "hostKind": {
+                    "type": "string",
+                    "enum": [
+                      "tmux",
+                      "sessiond"
+                    ]
+                  },
+                  "engineBuildId": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "schemaVersion",
+                  "instanceId",
+                  "subject",
+                  "generation",
+                  "sessionId",
+                  "hostKind",
+                  "engineBuildId"
+                ],
+                "additionalProperties": false
+              },
+              "presence": {
+                "type": "string",
+                "enum": [
+                  "present",
+                  "exited",
+                  "lost",
+                  "unknown"
+                ]
+              },
+              "complete": {
+                "type": "boolean"
+              },
+              "hostPid": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "hostStartToken": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "providerRoot": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "pid": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "startToken": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "processGroupId": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991
+                      }
+                    },
+                    "required": [
+                      "pid",
+                      "startToken",
+                      "processGroupId"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "expectedExecutable": {
+                "type": "string",
+                "minLength": 1
+              },
+              "executableVerified": {
+                "type": "boolean"
+              },
+              "outputSeq": {
+                "type": "string",
+                "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                "format": "hive-uint64-decimal"
+              },
+              "checkpointSeq": {
+                "type": "string",
+                "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                "format": "hive-uint64-decimal"
+              },
+              "checkpointAvailable": {
+                "type": "boolean"
+              },
+              "input": {
+                "type": "object",
+                "properties": {
+                  "state": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "enum": [
+                          "FREE",
+                          "HUMAN_GESTURE",
+                          "HUMAN_OWNED",
+                          "HUMAN_ORPHANED",
+                          "AUTOMATION_BUFFERING",
+                          "AUTOMATION_COMMITTED",
+                          "TERMINATING",
+                          "CLOSED"
+                        ]
+                      },
+                      {
+                        "type": "string",
+                        "const": "UNKNOWN"
+                      }
+                    ]
+                  },
+                  "ownerViewerId": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "claimId": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "state",
+                  "ownerViewerId",
+                  "claimId"
+                ],
+                "additionalProperties": false
+              },
+              "viewerCount": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 4
+              },
+              "geometry": {
+                "readOnly": true,
+                "type": "object",
+                "properties": {
+                  "columns": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 1000
+                  },
+                  "rows": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 1000
+                  },
+                  "widthPx": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "heightPx": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "cellWidthPx": {
+                    "type": "number",
+                    "exclusiveMinimum": 0
+                  },
+                  "cellHeightPx": {
+                    "type": "number",
+                    "exclusiveMinimum": 0
+                  }
+                },
+                "required": [
+                  "columns",
+                  "rows",
+                  "widthPx",
+                  "heightPx",
+                  "cellWidthPx",
+                  "cellHeightPx"
+                ],
+                "additionalProperties": false,
+                "x-hive-max-active-cells": 250000
+              },
+              "resources": {
+                "readOnly": true,
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {
+                  "type": "number"
+                }
+              },
+              "visibility": {
+                "type": "object",
+                "properties": {
+                  "state": {
+                    "type": "string",
+                    "enum": [
+                      "attaching",
+                      "visible",
+                      "reconnecting",
+                      "expired"
+                    ]
+                  },
+                  "workspaceSessionId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "openTerminalRevision": {
+                    "type": "string",
+                    "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                    "format": "hive-uint64-decimal"
+                  },
+                  "expiresAt": {
+                    "type": "string",
+                    "format": "date-time",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+                  }
+                },
+                "required": [
+                  "state",
+                  "workspaceSessionId",
+                  "openTerminalRevision",
+                  "expiresAt"
+                ],
+                "additionalProperties": false
+              },
+              "exit": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "code": {
+                        "anyOf": [
+                          {
+                            "type": "integer",
+                            "minimum": -9007199254740991,
+                            "maximum": 9007199254740991
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "signal": {
+                        "anyOf": [
+                          {
+                            "type": "integer",
+                            "minimum": -9007199254740991,
+                            "maximum": 9007199254740991
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "observedAt": {
+                        "type": "string",
+                        "format": "date-time",
+                        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+                      }
+                    },
+                    "required": [
+                      "code",
+                      "signal",
+                      "observedAt"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "survivors": {
+                "readOnly": true,
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "pid": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "startToken": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "reason": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "pid",
+                    "startToken",
+                    "reason"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "evidenceAt": {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+              },
+              "diagnosticIds": {
+                "readOnly": true,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            },
+            "required": [
+              "schemaVersion",
+              "locator",
+              "presence",
+              "complete",
+              "hostPid",
+              "hostStartToken",
+              "providerRoot",
+              "expectedExecutable",
+              "executableVerified",
+              "outputSeq",
+              "checkpointSeq",
+              "checkpointAvailable",
+              "input",
+              "viewerCount",
+              "geometry",
+              "resources",
+              "visibility",
+              "exit",
+              "survivors",
+              "evidenceAt",
+              "diagnosticIds"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "complete": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "entries",
+        "complete"
+      ],
+      "additionalProperties": false
+    },
+    "inspectPayload": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "readOnly": true,
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "number",
+          "const": 1
+        },
+        "locator": {
+          "readOnly": true,
+          "type": "object",
+          "properties": {
+            "schemaVersion": {
+              "type": "number",
+              "const": 1
+            },
+            "instanceId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "subject": {
+              "readOnly": true,
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "root"
+                    }
+                  },
+                  "required": [
+                    "kind"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "agent"
+                    },
+                    "agentId": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "agentId"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            },
+            "generation": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "sessionId": {
+              "type": "string",
+              "pattern": "^ses_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+            },
+            "hostKind": {
+              "type": "string",
+              "enum": [
+                "tmux",
+                "sessiond"
+              ]
+            },
+            "engineBuildId": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "schemaVersion",
+            "instanceId",
+            "subject",
+            "generation",
+            "sessionId",
+            "hostKind",
+            "engineBuildId"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "locator"
+      ],
+      "additionalProperties": false
+    },
+    "inspectedPayload": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "readOnly": true,
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "number",
+          "const": 1
+        },
+        "locator": {
+          "readOnly": true,
+          "type": "object",
+          "properties": {
+            "schemaVersion": {
+              "type": "number",
+              "const": 1
+            },
+            "instanceId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "subject": {
+              "readOnly": true,
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "root"
+                    }
+                  },
+                  "required": [
+                    "kind"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "agent"
+                    },
+                    "agentId": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "agentId"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            },
+            "generation": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "sessionId": {
+              "type": "string",
+              "pattern": "^ses_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+            },
+            "hostKind": {
+              "type": "string",
+              "enum": [
+                "tmux",
+                "sessiond"
+              ]
+            },
+            "engineBuildId": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "schemaVersion",
+            "instanceId",
+            "subject",
+            "generation",
+            "sessionId",
+            "hostKind",
+            "engineBuildId"
+          ],
+          "additionalProperties": false
+        },
+        "presence": {
+          "type": "string",
+          "enum": [
+            "present",
+            "exited",
+            "lost",
+            "unknown"
+          ]
+        },
+        "complete": {
+          "type": "boolean"
+        },
+        "hostPid": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "hostStartToken": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "providerRoot": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "pid": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "startToken": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "processGroupId": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                }
+              },
+              "required": [
+                "pid",
+                "startToken",
+                "processGroupId"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "expectedExecutable": {
+          "type": "string",
+          "minLength": 1
+        },
+        "executableVerified": {
+          "type": "boolean"
+        },
+        "outputSeq": {
+          "type": "string",
+          "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+          "format": "hive-uint64-decimal"
+        },
+        "checkpointSeq": {
+          "type": "string",
+          "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+          "format": "hive-uint64-decimal"
+        },
+        "checkpointAvailable": {
+          "type": "boolean"
+        },
+        "input": {
+          "type": "object",
+          "properties": {
+            "state": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "FREE",
+                    "HUMAN_GESTURE",
+                    "HUMAN_OWNED",
+                    "HUMAN_ORPHANED",
+                    "AUTOMATION_BUFFERING",
+                    "AUTOMATION_COMMITTED",
+                    "TERMINATING",
+                    "CLOSED"
+                  ]
+                },
+                {
+                  "type": "string",
+                  "const": "UNKNOWN"
+                }
+              ]
+            },
+            "ownerViewerId": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "claimId": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "state",
+            "ownerViewerId",
+            "claimId"
+          ],
+          "additionalProperties": false
+        },
+        "viewerCount": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4
+        },
+        "geometry": {
+          "readOnly": true,
+          "type": "object",
+          "properties": {
+            "columns": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000
+            },
+            "rows": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000
+            },
+            "widthPx": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            "heightPx": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            "cellWidthPx": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "cellHeightPx": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
+          },
+          "required": [
+            "columns",
+            "rows",
+            "widthPx",
+            "heightPx",
+            "cellWidthPx",
+            "cellHeightPx"
+          ],
+          "additionalProperties": false,
+          "x-hive-max-active-cells": 250000
+        },
+        "resources": {
+          "readOnly": true,
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "type": "number"
+          }
+        },
+        "visibility": {
+          "type": "object",
+          "properties": {
+            "state": {
+              "type": "string",
+              "enum": [
+                "attaching",
+                "visible",
+                "reconnecting",
+                "expired"
+              ]
+            },
+            "workspaceSessionId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "openTerminalRevision": {
+              "type": "string",
+              "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+              "format": "hive-uint64-decimal"
+            },
+            "expiresAt": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+            }
+          },
+          "required": [
+            "state",
+            "workspaceSessionId",
+            "openTerminalRevision",
+            "expiresAt"
+          ],
+          "additionalProperties": false
+        },
+        "exit": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "code": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "signal": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "observedAt": {
+                  "type": "string",
+                  "format": "date-time",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+                }
+              },
+              "required": [
+                "code",
+                "signal",
+                "observedAt"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "survivors": {
+          "readOnly": true,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "pid": {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              "startToken": {
+                "type": "string",
+                "minLength": 1
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "pid",
+              "startToken",
+              "reason"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "evidenceAt": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+        },
+        "diagnosticIds": {
+          "readOnly": true,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "locator",
+        "presence",
+        "complete",
+        "hostPid",
+        "hostStartToken",
+        "providerRoot",
+        "expectedExecutable",
+        "executableVerified",
+        "outputSeq",
+        "checkpointSeq",
+        "checkpointAvailable",
+        "input",
+        "viewerCount",
+        "geometry",
+        "resources",
+        "visibility",
+        "exit",
+        "survivors",
+        "evidenceAt",
+        "diagnosticIds"
+      ],
+      "additionalProperties": false
+    },
+    "terminatePayload": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "readOnly": true,
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "number",
+          "const": 1
+        },
+        "locator": {
+          "readOnly": true,
+          "type": "object",
+          "properties": {
+            "schemaVersion": {
+              "type": "number",
+              "const": 1
+            },
+            "instanceId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "subject": {
+              "readOnly": true,
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "root"
+                    }
+                  },
+                  "required": [
+                    "kind"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "agent"
+                    },
+                    "agentId": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "agentId"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            },
+            "generation": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "sessionId": {
+              "type": "string",
+              "pattern": "^ses_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+            },
+            "hostKind": {
+              "type": "string",
+              "enum": [
+                "tmux",
+                "sessiond"
+              ]
+            },
+            "engineBuildId": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "schemaVersion",
+            "instanceId",
+            "subject",
+            "generation",
+            "sessionId",
+            "hostKind",
+            "engineBuildId"
+          ],
+          "additionalProperties": false
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "graceful",
+            "immediate"
+          ]
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "requestId": {
+          "type": "string",
+          "pattern": "^req_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "locator",
+        "mode",
+        "reason",
+        "requestId"
+      ],
+      "additionalProperties": false
+    },
+    "terminatedPayload": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "readOnly": true,
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "number",
+          "const": 1
+        },
+        "locator": {
+          "readOnly": true,
+          "type": "object",
+          "properties": {
+            "schemaVersion": {
+              "type": "number",
+              "const": 1
+            },
+            "instanceId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "subject": {
+              "readOnly": true,
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "root"
+                    }
+                  },
+                  "required": [
+                    "kind"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "agent"
+                    },
+                    "agentId": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "agentId"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            },
+            "generation": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "sessionId": {
+              "type": "string",
+              "pattern": "^ses_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+            },
+            "hostKind": {
+              "type": "string",
+              "enum": [
+                "tmux",
+                "sessiond"
+              ]
+            },
+            "engineBuildId": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "schemaVersion",
+            "instanceId",
+            "subject",
+            "generation",
+            "sessionId",
+            "hostKind",
+            "engineBuildId"
+          ],
+          "additionalProperties": false
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "terminated",
+            "survivors",
+            "unknown"
+          ]
+        },
+        "exit": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "code": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "signal": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "observedAt": {
+                  "type": "string",
+                  "format": "date-time",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+                }
+              },
+              "required": [
+                "code",
+                "signal",
+                "observedAt"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "survivors": {
+          "readOnly": true,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "pid": {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              "startToken": {
+                "type": "string",
+                "minLength": 1
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "pid",
+              "startToken",
+              "reason"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "errors": {
+          "readOnly": true,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "phase": {
+                "type": "string",
+                "minLength": 1
+              },
+              "code": {
+                "type": "string",
+                "minLength": 1
+              },
+              "diagnosticId": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "phase",
+              "code",
+              "diagnosticId"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "locator",
+        "state",
+        "exit",
+        "survivors",
+        "errors"
+      ],
+      "additionalProperties": false
+    },
+    "visibilityRenewPayload": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "readOnly": true,
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "number",
+          "const": 1
+        },
+        "locator": {
+          "readOnly": true,
+          "type": "object",
+          "properties": {
+            "schemaVersion": {
+              "type": "number",
+              "const": 1
+            },
+            "instanceId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "subject": {
+              "readOnly": true,
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "root"
+                    }
+                  },
+                  "required": [
+                    "kind"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "agent"
+                    },
+                    "agentId": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "agentId"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            },
+            "generation": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "sessionId": {
+              "type": "string",
+              "pattern": "^ses_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+            },
+            "hostKind": {
+              "type": "string",
+              "enum": [
+                "tmux",
+                "sessiond"
+              ]
+            },
+            "engineBuildId": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "schemaVersion",
+            "instanceId",
+            "subject",
+            "generation",
+            "sessionId",
+            "hostKind",
+            "engineBuildId"
+          ],
+          "additionalProperties": false
+        },
+        "workspaceSessionId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "workspacePid": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "workspaceStartToken": {
+          "type": "string",
+          "minLength": 1
+        },
+        "openTerminalRevision": {
+          "type": "string",
+          "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+          "format": "hive-uint64-decimal"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "locator",
+        "workspaceSessionId",
+        "workspacePid",
+        "workspaceStartToken",
+        "openTerminalRevision"
+      ],
+      "additionalProperties": false
+    },
+    "renewedPayload": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "readOnly": true,
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "number",
+          "const": 1
+        },
+        "locator": {
+          "readOnly": true,
+          "type": "object",
+          "properties": {
+            "schemaVersion": {
+              "type": "number",
+              "const": 1
+            },
+            "instanceId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "subject": {
+              "readOnly": true,
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "root"
+                    }
+                  },
+                  "required": [
+                    "kind"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "agent"
+                    },
+                    "agentId": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "agentId"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            },
+            "generation": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "sessionId": {
+              "type": "string",
+              "pattern": "^ses_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+            },
+            "hostKind": {
+              "type": "string",
+              "enum": [
+                "tmux",
+                "sessiond"
+              ]
+            },
+            "engineBuildId": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "schemaVersion",
+            "instanceId",
+            "subject",
+            "generation",
+            "sessionId",
+            "hostKind",
+            "engineBuildId"
+          ],
+          "additionalProperties": false
+        },
+        "state": {
+          "type": "string",
+          "const": "active"
+        },
+        "expiresAt": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+        },
+        "openTerminalRevision": {
+          "type": "string",
+          "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+          "format": "hive-uint64-decimal"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "locator",
+        "state",
+        "expiresAt",
+        "openTerminalRevision"
+      ],
+      "additionalProperties": false
+    },
+    "attachRequestPayload": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "readOnly": true,
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "number",
+          "const": 1
+        },
+        "locator": {
+          "readOnly": true,
+          "type": "object",
+          "properties": {
+            "schemaVersion": {
+              "type": "number",
+              "const": 1
+            },
+            "instanceId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "subject": {
+              "readOnly": true,
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "root"
+                    }
+                  },
+                  "required": [
+                    "kind"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "agent"
+                    },
+                    "agentId": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "agentId"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            },
+            "generation": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "sessionId": {
+              "type": "string",
+              "pattern": "^ses_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+            },
+            "hostKind": {
+              "type": "string",
+              "enum": [
+                "tmux",
+                "sessiond"
+              ]
+            },
+            "engineBuildId": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "schemaVersion",
+            "instanceId",
+            "subject",
+            "generation",
+            "sessionId",
+            "hostKind",
+            "engineBuildId"
+          ],
+          "additionalProperties": false
+        },
+        "viewerId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "geometry": {
+          "readOnly": true,
+          "type": "object",
+          "properties": {
+            "columns": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000
+            },
+            "rows": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000
+            },
+            "widthPx": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            "heightPx": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            "cellWidthPx": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "cellHeightPx": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
+          },
+          "required": [
+            "columns",
+            "rows",
+            "widthPx",
+            "heightPx",
+            "cellWidthPx",
+            "cellHeightPx"
+          ],
+          "additionalProperties": false,
+          "x-hive-max-active-cells": 250000
+        },
+        "operations": {
+          "readOnly": true,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "view",
+              "human-input",
+              "resize"
+            ]
+          }
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "locator",
+        "viewerId",
+        "geometry",
+        "operations"
+      ],
+      "additionalProperties": false
+    },
+    "attachGrantPayload": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "readOnly": true,
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "number",
+          "const": 1
+        },
+        "locator": {
+          "readOnly": true,
+          "type": "object",
+          "properties": {
+            "schemaVersion": {
+              "type": "number",
+              "const": 1
+            },
+            "instanceId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "subject": {
+              "readOnly": true,
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "root"
+                    }
+                  },
+                  "required": [
+                    "kind"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "agent"
+                    },
+                    "agentId": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "agentId"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            },
+            "generation": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "sessionId": {
+              "type": "string",
+              "pattern": "^ses_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+            },
+            "hostKind": {
+              "type": "string",
+              "enum": [
+                "tmux",
+                "sessiond"
+              ]
+            },
+            "engineBuildId": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "schemaVersion",
+            "instanceId",
+            "subject",
+            "generation",
+            "sessionId",
+            "hostKind",
+            "engineBuildId"
+          ],
+          "additionalProperties": false
+        },
+        "endpoint": {
+          "type": "string",
+          "minLength": 1
+        },
+        "token": {
+          "type": "string",
+          "minLength": 1
+        },
+        "expiresAt": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+        },
+        "engineBuildId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "checkpointSeq": {
+          "type": "string",
+          "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+          "format": "hive-uint64-decimal"
+        },
+        "outputSeq": {
+          "type": "string",
+          "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+          "format": "hive-uint64-decimal"
+        },
+        "operations": {
+          "readOnly": true,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "view",
+              "human-input",
+              "resize"
+            ]
+          }
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "locator",
+        "endpoint",
+        "token",
+        "expiresAt",
+        "engineBuildId",
+        "checkpointSeq",
+        "outputSeq",
+        "operations"
+      ],
+      "additionalProperties": false
+    },
+    "hostAttachPayload": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "readOnly": true,
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "number",
+          "const": 1
+        },
+        "locator": {
+          "readOnly": true,
+          "type": "object",
+          "properties": {
+            "schemaVersion": {
+              "type": "number",
+              "const": 1
+            },
+            "instanceId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "subject": {
+              "readOnly": true,
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "root"
+                    }
+                  },
+                  "required": [
+                    "kind"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "agent"
+                    },
+                    "agentId": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "agentId"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            },
+            "generation": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "sessionId": {
+              "type": "string",
+              "pattern": "^ses_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+            },
+            "hostKind": {
+              "type": "string",
+              "enum": [
+                "tmux",
+                "sessiond"
+              ]
+            },
+            "engineBuildId": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "schemaVersion",
+            "instanceId",
+            "subject",
+            "generation",
+            "sessionId",
+            "hostKind",
+            "engineBuildId"
+          ],
+          "additionalProperties": false
+        },
+        "token": {
+          "type": "string",
+          "minLength": 1
+        },
+        "geometry": {
+          "readOnly": true,
+          "type": "object",
+          "properties": {
+            "columns": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000
+            },
+            "rows": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000
+            },
+            "widthPx": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            "heightPx": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            "cellWidthPx": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "cellHeightPx": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
+          },
+          "required": [
+            "columns",
+            "rows",
+            "widthPx",
+            "heightPx",
+            "cellWidthPx",
+            "cellHeightPx"
+          ],
+          "additionalProperties": false,
+          "x-hive-max-active-cells": 250000
+        },
+        "afterSeq": {
+          "type": "string",
+          "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+          "format": "hive-uint64-decimal"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "locator",
+        "token",
+        "geometry",
+        "afterSeq"
+      ],
+      "additionalProperties": false
+    },
     "sessionLocator": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "readOnly": true,
@@ -551,16 +5035,24 @@
           "type": "object",
           "properties": {
             "state": {
-              "type": "string",
-              "enum": [
-                "FREE",
-                "HUMAN_GESTURE",
-                "HUMAN_OWNED",
-                "HUMAN_ORPHANED",
-                "AUTOMATION_BUFFERING",
-                "AUTOMATION_COMMITTED",
-                "TERMINATING",
-                "CLOSED"
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "FREE",
+                    "HUMAN_GESTURE",
+                    "HUMAN_OWNED",
+                    "HUMAN_ORPHANED",
+                    "AUTOMATION_BUFFERING",
+                    "AUTOMATION_COMMITTED",
+                    "TERMINATING",
+                    "CLOSED"
+                  ]
+                },
+                {
+                  "type": "string",
+                  "const": "UNKNOWN"
+                }
               ]
             },
             "ownerViewerId": {
@@ -1079,16 +5571,24 @@
               "type": "object",
               "properties": {
                 "state": {
-                  "type": "string",
-                  "enum": [
-                    "FREE",
-                    "HUMAN_GESTURE",
-                    "HUMAN_OWNED",
-                    "HUMAN_ORPHANED",
-                    "AUTOMATION_BUFFERING",
-                    "AUTOMATION_COMMITTED",
-                    "TERMINATING",
-                    "CLOSED"
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "enum": [
+                        "FREE",
+                        "HUMAN_GESTURE",
+                        "HUMAN_OWNED",
+                        "HUMAN_ORPHANED",
+                        "AUTOMATION_BUFFERING",
+                        "AUTOMATION_COMMITTED",
+                        "TERMINATING",
+                        "CLOSED"
+                      ]
+                    },
+                    {
+                      "type": "string",
+                      "const": "UNKNOWN"
+                    }
                   ]
                 },
                 "ownerViewerId": {

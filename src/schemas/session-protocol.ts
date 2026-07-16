@@ -325,6 +325,8 @@ export const Rfc3339UtcMillisecondsSchema = z.iso.datetime({
   precision: 3,
 });
 export const Sha256HexSchema = z.string().regex(/^[0-9a-f]{64}$/);
+export const Secret256HexSchema = z.string().regex(/^[0-9a-f]{64}$/);
+export const TaggedSha256Schema = z.string().regex(/^sha256:[0-9a-f]{64}$/);
 
 const UUID_V7_BODY =
   "[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}";
@@ -356,6 +358,17 @@ export const SessionLocatorSchema = z.strictObject({
   engineBuildId: z.string().min(1).nullable(),
 }).readonly();
 export type SessionLocator = z.infer<typeof SessionLocatorSchema>;
+
+const ProtocolMinorSchema = z.number().int().min(0).max(255);
+const SelectedProtocolSchema = z.strictObject({
+  major: z.literal(SESSION_PROTOCOL_VERSION.major),
+  minor: ProtocolMinorSchema,
+}).readonly();
+const ProcessRootSchema = z.strictObject({
+  pid: z.number().int().positive(),
+  startToken: z.string().min(1),
+  processGroupId: z.number().int().positive(),
+});
 
 export const TerminalGeometrySchema = z.strictObject({
   columns: z.number().int().min(TERMINAL_LIMITS.terminalCellsPerDimensionMin)
@@ -399,6 +412,12 @@ const SessionSurvivorsSchema = z.array(z.strictObject({
   startToken: z.string().min(1),
   reason: z.string().min(1),
 })).readonly();
+const SessionVisibilitySchema = z.strictObject({
+  state: z.enum(["attaching", "visible", "reconnecting", "expired"]),
+  workspaceSessionId: z.string().min(1),
+  openTerminalRevision: DecimalUint64Schema,
+  expiresAt: Rfc3339UtcMillisecondsSchema,
+});
 
 export const SessionInspectionSchema = z.strictObject({
   schemaVersion: z.literal(1),
@@ -407,30 +426,23 @@ export const SessionInspectionSchema = z.strictObject({
   complete: z.boolean(),
   hostPid: z.number().int().positive().nullable(),
   hostStartToken: z.string().min(1).nullable(),
-  providerRoot: z.strictObject({
-    pid: z.number().int().positive(),
-    startToken: z.string().min(1),
-    processGroupId: z.number().int().positive(),
-  }).nullable(),
+  providerRoot: ProcessRootSchema.nullable(),
   expectedExecutable: z.string().min(1),
   executableVerified: z.boolean(),
   outputSeq: DecimalUint64Schema,
   checkpointSeq: DecimalUint64Schema,
   checkpointAvailable: z.boolean(),
   input: z.strictObject({
-    state: InputArbiterStateSchema,
+    // UNKNOWN is an observation-only value for hosts that cannot inspect an
+    // arbiter. It is not a §22 arbiter state and the state machine never emits it.
+    state: z.union([InputArbiterStateSchema, z.literal("UNKNOWN")]),
     ownerViewerId: z.string().min(1).nullable(),
     claimId: z.string().min(1).nullable(),
   }),
   viewerCount: z.number().int().min(0).max(TERMINAL_LIMITS.authenticatedViewersPerGeneration),
   geometry: TerminalGeometrySchema,
   resources: z.record(z.string(), z.number()).readonly(),
-  visibility: z.strictObject({
-    state: z.enum(["attaching", "visible", "reconnecting", "expired"]),
-    workspaceSessionId: z.string().min(1),
-    openTerminalRevision: DecimalUint64Schema,
-    expiresAt: Rfc3339UtcMillisecondsSchema,
-  }),
+  visibility: SessionVisibilitySchema,
   exit: SessionExitSchema,
   survivors: SessionSurvivorsSchema,
   evidenceAt: Rfc3339UtcMillisecondsSchema,
@@ -536,6 +548,313 @@ export const TerminationResultSchema = z.strictObject({
     diagnosticId: z.string().min(1),
   })).readonly(),
 }).readonly();
+
+const HelloCommonShape = {
+  /** §20 HELLO carries schemaVersion; the v1 shape fixes it to 1. */
+  schemaVersion: z.literal(1),
+  /** §20 HELLO names the peer build hash; shape adjudicated as buildId. */
+  buildId: z.string().min(1),
+  /** §20 HELLO names the Hive instance. */
+  instanceId: z.string().min(1),
+  /** §20 HELLO names a same-major minor range; shape adjudicated as min/max minor. */
+  protocol: z.strictObject({
+    major: z.literal(SESSION_PROTOCOL_VERSION.major),
+    minMinor: ProtocolMinorSchema,
+    maxMinor: ProtocolMinorSchema,
+  }).refine(({ minMinor, maxMinor }) => minMinor <= maxMinor, "protocol minor range is reversed")
+    .meta({ "x-hive-ordered-minor-range": true }).readonly(),
+};
+const DaemonControlIdentitySchema = z.strictObject({
+  /** src/daemon/handshake.ts DaemonHandshake.productVersion; source checkouts use HIVE_VERSION's 0.0.0-dev fallback. */
+  productVersion: z.string().min(1),
+  /** src/daemon/handshake.ts DaemonHandshake.buildHash; source checkouts carry currentBuildHash(). */
+  buildHash: z.string().min(1),
+  /** src/daemon/handshake.ts DaemonHandshake.wireProtocol and handshakeMismatch's overlapping-range comparison. */
+  wireProtocol: z.strictObject({
+    min: z.number(),
+    max: z.number(),
+  }).refine(({ min, max }) => min <= max, "daemon wire protocol range is reversed").readonly(),
+  /** src/daemon/handshake.ts DaemonHandshake.schemaEpoch is §21's schema identity today; §27 hashes extend both later. */
+  schemaEpoch: z.number(),
+  /** src/daemon/handshake.ts DaemonHandshake.instanceId. */
+  instanceId: z.string().min(1),
+  /** src/daemon/handshake.ts handshakeMismatch treats HiveUUID as project identity. */
+  hiveUuid: z.string().min(1),
+  /** src/daemon/handshake.ts handshakeMismatch treats identityKey as project identity. */
+  identityKey: z.string().min(1),
+  /** src/daemon/handshake.ts handshakeMismatch treats repository family as project identity when present. */
+  repoFamilyKey: z.string().min(1).nullable(),
+}).readonly();
+
+export const HelloPayloadSchema = z.discriminatedUnion("clientRole", [
+  z.strictObject({
+    ...HelloCommonShape,
+    /** §20/§21 connect a viewer; shape adjudicated to the four connecting roles. */
+    clientRole: z.literal("viewer"),
+    /** §20 permits a presented grant; shape adjudicated as optional only for viewers. */
+    grantToken: z.string().min(1).optional(),
+  }),
+  z.strictObject({
+    ...HelloCommonShape,
+    /** §21 authenticates daemon control against kernel identity and the existing daemon handshake. */
+    clientRole: z.literal("daemon"),
+    /** §21's six-way daemon comparison, using the existing handshake's exact field names and semantics. */
+    daemonControl: DaemonControlIdentitySchema,
+  }),
+  z.strictObject({
+    ...HelloCommonShape,
+    /** §20/§21 authenticate broker peers by kernel credentials; they cannot present grants. */
+    clientRole: z.literal("broker"),
+  }),
+  z.strictObject({
+    ...HelloCommonShape,
+    /** §20/§21 authenticate host peers by kernel credentials; they cannot present grants. */
+    clientRole: z.literal("host"),
+  }),
+]).readonly();
+
+export const WelcomePayloadSchema = z.strictObject({
+  /** §20 WELCOME is a v1 control payload. */
+  schemaVersion: z.literal(1),
+  /** §20 WELCOME returns the selected version. */
+  protocol: SelectedProtocolSchema,
+  /** §20 WELCOME returns the endpoint instance ID. */
+  instanceId: z.string().min(1),
+  /** §20 WELCOME names the endpoint; shape adjudicated to broker or host. */
+  endpointRole: z.enum(["broker", "host"]),
+  /** §20 WELCOME returns the endpoint build ID. */
+  buildId: z.string().min(1),
+  /** §20 WELCOME returns an engine ID; shape adjudicated nullable until bound. */
+  engineBuildId: z.string().min(1).nullable(),
+  /** §20 WELCOME returns a connection ID; shape adjudicated as decimal uint64. */
+  connectionId: DecimalUint64Schema,
+  /** §20 WELCOME returns a monotonic server epoch; shape adjudicated as decimal nanos. */
+  serverEpoch: DecimalUint64Schema,
+  /** §20 returns limits; shape adjudicated to the four §18 negotiated transport caps. */
+  limits: z.strictObject({
+    controlFrameMaxBytes: z.number().int().positive().max(TERMINAL_LIMITS.controlJsonBytesPerFrame),
+    streamChunkMaxBytes: z.number().int().positive().max(TERMINAL_LIMITS.streamChunkBytes),
+    automatedMessageMaxBytes: z.number().int().positive().max(TERMINAL_LIMITS.automatedMessageBytes),
+    viewerQueueMaxBytes: z.number().int().positive().max(TERMINAL_LIMITS.viewerUnacknowledgedOutputBytes),
+  }).readonly(),
+}).readonly();
+
+export const ErrorPayloadSchema = z.strictObject({
+  /** §20 ERROR is a v1 control payload. */
+  schemaVersion: z.literal(1),
+  /** §20 ERROR carries one typed code from the normative error table. */
+  code: WireErrorCodeSchema,
+  /** §20 error meanings are surfaced as a nonempty redacted message. */
+  message: z.string().min(1),
+  /** §20 INTERNAL and verification failures may carry a diagnostic ID. */
+  diagnosticId: z.string().min(1).nullable(),
+}).readonly();
+
+export const PingPongPayloadSchema = z.strictObject({
+  /** §20 PING/PONG are v1 control payloads. */
+  schemaVersion: z.literal(1),
+  /** §20 PING/PONG carry sender monotonic nanos; §18 encodes uint64 as decimal text. */
+  monoNanos: DecimalUint64Schema,
+}).readonly();
+
+const HostRecordProjectionSchema = z.strictObject({
+  /** §21 adoption compares the exact locator. */
+  locator: SessionLocatorSchema,
+  /** §21 launch/adoption readback includes host PID. */
+  hostPid: z.number().int().positive(),
+  /** §21 launch/adoption readback includes the PID start token. */
+  hostStartToken: z.string().min(1),
+  /** §21 launch/adoption readback includes the process root. */
+  processRoot: ProcessRootSchema,
+  /** §21 launch/adoption readback includes the expected executable. */
+  expectedExecutable: z.string().min(1),
+  /** §21 launch/adoption compares the executable build. */
+  executableBuildHash: z.string().min(1),
+  /** §21 launch/adoption compares the engine build. */
+  engineBuildId: z.string().min(1),
+  /** §21 launch/adoption compares protocol major/minor. */
+  protocol: SelectedProtocolSchema,
+  /** §21 launch readback includes terminal geometry. */
+  geometry: TerminalGeometrySchema,
+  /** §21 HostRecordV1 preserves exact lifecycle state. */
+  state: z.enum(["starting", "live", "exited", "unknown"]),
+  /** §21 launch/adoption compares the exclusive output sequence. */
+  outputSeq: DecimalUint64Schema,
+  /** §21 HostRecordV1 preserves the newest checkpoint sequence. */
+  checkpointSeq: DecimalUint64Schema,
+  /** §19/§21 launch readback proves the initial attaching visibility lease. */
+  visibility: SessionVisibilitySchema,
+}).readonly();
+
+/** §21 HostRecordV1 is the complete strict on-disk recovery record. */
+export const HostRecordV1Schema = z.strictObject({
+  schemaVersion: z.literal(1),
+  ...HostRecordProjectionSchema.unwrap().shape,
+  socketRelativePath: z.literal("host.sock"),
+  createdAt: Rfc3339UtcMillisecondsSchema,
+}).readonly();
+
+export const HostRegisterPayloadSchema = z.union([
+  z.strictObject({
+    /** §21 host launch registration is a v1 control payload. */
+    schemaVersion: z.literal(1),
+    /** §21 launch readback projects the listed HostRecordV1 identity/evidence fields. */
+    record: HostRecordProjectionSchema,
+  }),
+  z.strictObject({
+    /** §21 registration response is a v1 control payload. */
+    schemaVersion: z.literal(1),
+    /** §21 publication follows exact readback; shape adjudicated as accepted=true. */
+    accepted: z.literal(true),
+  }),
+]).readonly();
+
+export const HostAdoptPayloadSchema = z.union([
+  z.strictObject({
+    /** §21 broker adoption challenge is a v1 control payload. */
+    schemaVersion: z.literal(1),
+    /** §21 challenges with the 32-byte secret; shape adjudicated as 64 lowercase hex. */
+    adoptionSecretHex: Secret256HexSchema,
+    /** §21 challenges the recorded exact locator. */
+    expectedLocator: SessionLocatorSchema,
+    /** §21 host validates the broker build. */
+    brokerBuildId: z.string().min(1),
+    /** §21 host validates broker protocol. */
+    protocol: SelectedProtocolSchema,
+    /** §21 permits only adoption on this challenge; shape adjudicated as a literal. */
+    operation: z.literal("adopt"),
+  }),
+  z.strictObject({
+    /** §21 adoption readback is a v1 control payload. */
+    schemaVersion: z.literal(1),
+    /** §21 adoption compares the exact locator. */
+    locator: SessionLocatorSchema,
+    /** §21 adoption compares host PID. */
+    hostPid: z.number().int().positive(),
+    /** §21 adoption compares the host PID start token. */
+    hostStartToken: z.string().min(1),
+    /** §21 adoption compares the live executable path. */
+    executable: z.string().min(1),
+    /** §21 adoption compares the executable build. */
+    executableBuildHash: z.string().min(1),
+    /** §21 adoption compares the engine build. */
+    engineBuildId: z.string().min(1),
+    /** §21 adoption compares the process root. */
+    processRoot: ProcessRootSchema,
+    /** §21 adoption compares the output sequence. */
+    outputSeq: DecimalUint64Schema,
+    /** §21 readback preserves checkpoint high-water evidence. */
+    checkpointSeq: DecimalUint64Schema,
+    /** §21 adoption verifies the current Workspace open-terminal revision. */
+    visibility: SessionVisibilitySchema,
+  }),
+]).readonly();
+
+export const GrantRegisterPayloadSchema = z.union([
+  z.strictObject({
+    /** §21 one-use viewer grant registration is a v1 control payload. */
+    schemaVersion: z.literal(1),
+    /** §21 stores only the 256-bit hash; shape adjudicated as sha256: plus lowercase hex. */
+    grantTokenSha256: TaggedSha256Schema,
+    /** §19 issueAttach binds a grant to the exact viewer identity. */
+    viewerId: z.string().min(1),
+    /** §19 issueAttach binds the granted operations. */
+    operations: z.array(z.enum(["view", "human-input", "resize"])).readonly(),
+    /** §18/§21 expire unused attach grants after 30 seconds. */
+    expiresAt: Rfc3339UtcMillisecondsSchema,
+    /** §19 issueAttach binds the requested terminal geometry. */
+    geometry: TerminalGeometrySchema,
+  }),
+  z.strictObject({
+    /** §21 grant registration response is a v1 control payload. */
+    schemaVersion: z.literal(1),
+    /** §21 registration succeeds only after the host stores the hash; shape adjudicated true. */
+    registered: z.literal(true),
+  }),
+]).readonly();
+
+/** §19/§20 CREATE_BEGIN is the strict wire projection of SessionSpec. */
+export const CreateBeginPayloadSchema = z.strictObject({
+  ...SessionSpecSchema.unwrap().shape,
+  /** §19 create consumes the daemon's just-revalidated pending open-terminal binding. */
+  visibility: VisibilityRequestSchema,
+}).refine(
+  ({ visibility }) => BigInt(visibility.openTerminalRevision) > 0n,
+  "create visibility revision must be positive",
+).meta({ "x-hive-positive-open-terminal-revision": "visibility" }).readonly();
+/** §20 CREATE_COMMIT authenticates the bounded initial-input byte stream. */
+export const CreateCommitPayloadSchema = z.strictObject({
+  schemaVersion: z.literal(1),
+  totalLength: SafeUintSchema.max(TERMINAL_LIMITS.automatedMessageBytes),
+  sha256: Sha256HexSchema,
+}).readonly();
+/** §19/§20 CREATED is the strict wire projection of CreateResult. */
+export const CreatedPayloadSchema = z.strictObject({
+  schemaVersion: z.literal(1),
+  ...CreateResultSchema.unwrap().shape,
+}).readonly();
+/** §19/§20 LIST scopes enumeration to one exact Hive instance. */
+export const ListPayloadSchema = z.strictObject({
+  schemaVersion: z.literal(1),
+  instanceId: z.string().min(1),
+}).readonly();
+/** §19 LISTED preserves per-entry unknowns and overall enumeration completeness. */
+export const ListedPayloadSchema = z.strictObject({
+  schemaVersion: z.literal(1),
+  entries: z.array(SessionInspectionSchema).readonly(),
+  complete: z.boolean(),
+}).readonly();
+/** §19/§20 INSPECT names one exact locator. */
+export const InspectPayloadSchema = z.strictObject({
+  schemaVersion: z.literal(1),
+  locator: SessionLocatorSchema,
+}).readonly();
+/** §19/§20 INSPECTED is the strict wire projection of SessionInspection. */
+export const InspectedPayloadSchema = z.strictObject({
+  ...SessionInspectionSchema.unwrap().shape,
+}).readonly();
+/** §19/§20 TERMINATE combines the exact locator with TerminationRequest. */
+export const TerminatePayloadSchema = z.strictObject({
+  schemaVersion: z.literal(1),
+  locator: SessionLocatorSchema,
+  ...TerminationRequestSchema.unwrap().shape,
+}).readonly();
+/** §19/§20 TERMINATED is the strict wire projection of TerminationResult. */
+export const TerminatedPayloadSchema = z.strictObject({
+  schemaVersion: z.literal(1),
+  ...TerminationResultSchema.unwrap().shape,
+}).readonly();
+/** §19/§20 VISIBILITY_RENEW combines the exact locator with VisibilityRequest. */
+export const VisibilityRenewPayloadSchema = z.strictObject({
+  schemaVersion: z.literal(1),
+  locator: SessionLocatorSchema,
+  ...VisibilityRequestSchema.unwrap().shape,
+}).readonly();
+/** §19/§20 RENEWED is the strict wire projection of VisibilityLease. */
+export const RenewedPayloadSchema = z.strictObject({
+  schemaVersion: z.literal(1),
+  ...VisibilityLeaseSchema.unwrap().shape,
+}).readonly();
+/** §19/§20 ATTACH_REQUEST combines the exact locator with AttachRequest. */
+export const AttachRequestPayloadSchema = z.strictObject({
+  schemaVersion: z.literal(1),
+  locator: SessionLocatorSchema,
+  ...AttachRequestSchema.unwrap().shape,
+}).readonly();
+/** §19/§20 ATTACH_GRANT is the strict wire projection of AttachGrant. */
+export const AttachGrantPayloadSchema = z.strictObject({
+  schemaVersion: z.literal(1),
+  ...AttachGrantSchema.unwrap().shape,
+}).readonly();
+/** §09/§20 HOST_ATTACH presents the one-use token and replay starting point. */
+export const HostAttachPayloadSchema = z.strictObject({
+  schemaVersion: z.literal(1),
+  locator: SessionLocatorSchema,
+  token: z.string().min(1),
+  geometry: TerminalGeometrySchema,
+  afterSeq: DecimalUint64Schema,
+}).readonly();
+
 export const SessionEventSchema = z.strictObject({
   schemaVersion: z.literal(1),
   eventId: domainUuidV7Schema("evt"),
@@ -548,6 +867,28 @@ export const SessionEventSchema = z.strictObject({
 }).readonly();
 
 export const SESSION_WIRE_SCHEMAS = {
+  helloPayload: HelloPayloadSchema,
+  welcomePayload: WelcomePayloadSchema,
+  errorPayload: ErrorPayloadSchema,
+  pingPongPayload: PingPongPayloadSchema,
+  hostRegisterPayload: HostRegisterPayloadSchema,
+  hostAdoptPayload: HostAdoptPayloadSchema,
+  grantRegisterPayload: GrantRegisterPayloadSchema,
+  hostRecordV1: HostRecordV1Schema,
+  createBeginPayload: CreateBeginPayloadSchema,
+  createCommitPayload: CreateCommitPayloadSchema,
+  createdPayload: CreatedPayloadSchema,
+  listPayload: ListPayloadSchema,
+  listedPayload: ListedPayloadSchema,
+  inspectPayload: InspectPayloadSchema,
+  inspectedPayload: InspectedPayloadSchema,
+  terminatePayload: TerminatePayloadSchema,
+  terminatedPayload: TerminatedPayloadSchema,
+  visibilityRenewPayload: VisibilityRenewPayloadSchema,
+  renewedPayload: RenewedPayloadSchema,
+  attachRequestPayload: AttachRequestPayloadSchema,
+  attachGrantPayload: AttachGrantPayloadSchema,
+  hostAttachPayload: HostAttachPayloadSchema,
   sessionLocator: SessionLocatorSchema,
   terminalGeometry: TerminalGeometrySchema,
   sessionSpec: SessionSpecSchema,
@@ -571,6 +912,9 @@ type Assert<T extends true> = T;
 type Equals<Left, Right> =
   (<T>() => T extends Left ? 1 : 2) extends
   (<T>() => T extends Right ? 1 : 2) ? true : false;
+
+// The §20 transport-only payload schemas above have no §19 SessionHost
+// counterparts and are intentionally exempt from these Equals assertions.
 
 type SessionSubjectSchemaMatchesContract = Assert<Equals<z.infer<typeof SessionSubjectSchema>, SessionHostContract.SessionSubject>>;
 type SessionLocatorSchemaMatchesContract = Assert<Equals<z.infer<typeof SessionLocatorSchema>, SessionHostContract.SessionLocator>>;
