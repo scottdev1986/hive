@@ -360,7 +360,7 @@
           <article class="phase-card">
             <span class="phase-id">P6</span>
             <h3>Close-out</h3>
-            <p>The current owner closes its workers as soon as work merges and reports upward; finalizers and retention run before teardown. Ephemeral branches are deleted; durable lessons are persisted to memory.</p>
+            <p>The current owner closes its workers after promotion or the Task becomes terminal, and reports upward; finalizers and retention run before teardown. Ephemeral branches are deleted; durable lessons are persisted to memory.</p>
           </article>
         </div>
 
@@ -542,7 +542,7 @@
 
             <rect x="446" y="28" width="208" height="74" rx="16" class="node node-engineer"/>
             <text x="550" y="59" text-anchor="middle" class="svg-title">Engineer</text>
-            <text x="550" y="82" text-anchor="middle" class="svg-small svg-muted">periodic + whenever asked</text>
+            <text x="550" y="82" text-anchor="middle" class="svg-small svg-muted">milestones + request</text>
 
             <path d="M550 102 V151" class="connector-strong" marker-start="url(#comms-arrow)" marker-end="url(#comms-arrow)"/>
             <text x="565" y="132" class="svg-small" fill="var(--green)">updates / escalation</text>
@@ -553,8 +553,7 @@
             <path d="M501 264 L236 338" class="connector-strong" marker-start="url(#comms-arrow)" marker-end="url(#comms-arrow)"/>
             <path d="M550 285 V338" class="connector-strong" marker-start="url(#comms-arrow)" marker-end="url(#comms-arrow)"/>
             <path d="M599 264 L864 338" class="connector-strong" marker-start="url(#comms-arrow)" marker-end="url(#comms-arrow)"/>
-            <text x="290" y="277" class="svg-small" fill="var(--green)">status envelopes</text>
-            <text x="290" y="294" class="svg-small svg-muted">periodic + on-demand</text>
+            <text x="290" y="277" class="svg-small" fill="var(--green)">event deltas + request</text>
 
             <rect x="122" y="340" width="228" height="78" rx="16" class="node node-lead"/>
             <rect x="436" y="340" width="228" height="78" rx="16" class="node node-lead"/>
@@ -607,7 +606,7 @@
               <li>Workers return a bounded summary citing references: message overflow travels as MessageContentRef, reusable work products as ArtifactRefs — never periodic transcript relays or arbitrary on-disk paths.</li>
               <li>Peer routes are default-deny; the only exceptions are owner/queen-authorized pair, interface, and review channels with explicit participants, purpose, budget, and expiry, plus the rate-limited crew-worker → queen safety escalation. The hierarchy owns channel authorization; <a href="hive-communication.html">Communication Fabric</a> owns Address, MessageScope, envelope, delivery, and receipts.</li>
             </ul>
-            <div class="callout">The current owner owns normal closure and closes each worker promptly after merge. Daemon safety systems remain the last-resort floor: idle-reap warnings, teardown, and the resource watchdog stay active, and when a lead dies its crew’s ownership returns to the queen while daemon reaping continues.</div>
+            <div class="callout">The current owner owns normal closure and closes each worker promptly after promotion or a terminal Task. Daemon safety systems remain the last-resort floor: idle-reap warnings, teardown, and the resource watchdog stay active, and when a lead dies its crew’s ownership returns to the queen while daemon reaping continues.</div>
           </article>
         </div>
       </div>
@@ -750,7 +749,7 @@
         <div class="split">
           <article class="detail-panel">
             <h3>One failure, one bounded repair</h3>
-            <p>Independent worker failure defaults to one-for-one recovery. A dependency or accepted-interface failure pauses only affected downstream tasks or subtree. Repeated same-cause restarts spend a daemon-owned RecoveryBudget; exhaustion escalates worker → lead worker → queen → engineer instead of looping. No provider restart proves task recovery until state and evidence are re-measured.</p>
+            <p>Independent worker failure defaults to one-for-one recovery. A dependency or accepted-interface failure pauses only affected downstream tasks or subtree. Repeated same-cause restarts spend a daemon-owned RecoveryBudget; exhaustion escalates worker → current owner → queen → engineer instead of looping (in direct and flat runs the current owner is the queen). No provider restart proves task recovery until state and evidence are re-measured.</p>
           </article>
           <article class="detail-panel">
             <h3>Lead-worker loss</h3>
@@ -758,7 +757,7 @@
           </article>
         </div>
 
-        <div class="callout"><strong>Teardown finalizers.</strong> Before cleanup, Hive must capture handoff, persist the final known WorkManifest state to the manifest journal before any destructive step, classify worktree state, preserve unmerged candidates and artifacts, settle quota reservations, revoke grants/channels, and record process reaping. Leads own prompt normal closure; the daemon still owns safe process teardown, the idle/orphan reaper, and crash recovery.</div>
+        <div class="callout"><strong>Teardown finalizers.</strong> Before cleanup, Hive must capture handoff, persist the final known WorkManifest state to the manifest journal before any destructive step, classify worktree state, preserve unmerged candidates and artifacts, settle quota reservations, revoke grants/channels, and record process reaping. The current owner owns prompt normal closure; the daemon still owns safe process teardown, the idle/orphan reaper, and crash recovery.</div>
 
         <h3>Queen succession formalizes today’s backup-root protocol</h3>
         <div class="split">
@@ -867,7 +866,7 @@
           <article class="evidence-card">
             <span class="flag e">E</span> <span class="flag o">O · inference</span>
             <h3>Keep crews small and flat</h3>
-            <p>Claude Code agent-team documentation says to start with 3–5 teammates and does not allow nested teams [E]. Those constraints support keeping leads as a single managed tier [O].</p>
+            <p>External product guidance recommends starting with 3–5 teammates and forbids nested teams [E]. That is an upper operating signal, not Hive architecture [O]: full-hive crews normally stay at 2–3 workers under one lead tier; the overall topology expands only when measured coordination benefit earns the roughly 15× token cost.</p>
           </article>
           <article class="evidence-card">
             <span class="flag e">E</span>
@@ -885,7 +884,7 @@
             <p class="section-label">09 · Platform deltas</p>
             <h2>What Hive must change.</h2>
           </div>
-          <p>Five focused platform changes convert today’s flat orchestration primitives into lead-owned integration without weakening capability controls.</p>
+          <p>Five focused platform changes convert today’s flat orchestration primitives into grant-bound adaptive integration without weakening capability controls.</p>
         </div>
 
         <div class="table-wrap">
@@ -897,27 +896,27 @@
               <tr>
                 <td>01</td>
                 <td><strong>Flat capability graph</strong><span>Exactly operator / orchestrator / writer / reader, with no delegation.</span></td>
-                <td><strong>Add a lead tier</strong><span>Leads can spawn, direct, review-gate, and close their own workers.</span></td>
+                <td><strong>Adaptive hierarchy with attenuation</strong><span>TopologyDecision chooses direct, flat, or full hive; every delegated authority is a strict attenuation, and leads spawn, direct, and close their own crews only when approved.</span></td>
               </tr>
               <tr>
                 <td>02</td>
                 <td><strong>Fixed landing target</strong><span><code>hive_land</code> has no target parameter and merges into the primary checkout HEAD.</span></td>
-                <td><strong>Parameterized merge target</strong><span>Worker branches land into their lead’s integration branch.</span></td>
+                <td><strong>Grant-bound daemon promotion</strong><span>The daemon derives the target IntegrationStage from a PromotionGrant; callers never parameterize a landing ref.</span></td>
               </tr>
               <tr>
                 <td>03</td>
                 <td><strong>Daemon auto-reap</strong><span>Any non-root agent idle for roughly 10 minutes is killed.</span></td>
-                <td><strong>Lead-owned closure, daemon safety floor</strong><span>Lead workers normally close their own crews; daemon idle-reap warnings, teardown, and the watchdog remain as last-resort safety, and a dead lead’s crew returns to queen ownership.</span></td>
+                <td><strong>Current-owner closure, daemon safety floor</strong><span>The current owner normally closes its own workers; daemon idle-reap warnings, teardown, and the watchdog remain as last-resort safety, and a dead lead’s crew returns to queen ownership.</span></td>
               </tr>
               <tr>
                 <td>04</td>
                 <td><strong>Two accounting buckets</strong><span>Token accounting recognizes only orchestrator versus worker.</span></td>
-                <td><strong>Lead-tier attribution</strong><span>Costs roll up distinctly for queen, leads, and workers.</span></td>
+                <td><strong>Node/subtree/run attribution</strong><span>Costs attribute to exact nodes and roll up by subtree and run — not a fixed lead tier.</span></td>
               </tr>
               <tr>
                 <td>05</td>
                 <td><strong>Optional reviewer routing</strong><span>Reviewer = <code>code_review</code> category plus <code>reviewOfTool</code> vendor filter.</span></td>
-                <td><strong>Mandatory merge gate</strong><span>Review becomes a required worker→lead transition — a temporary duty assignment, cross-vendor when providers permit, bound to the candidate’s diff digest.</span></td>
+                <td><strong>Mandatory independent promotion review</strong><span>Every authored candidate requires independent review before promotion to its current owner’s IntegrationStage — a temporary duty assignment, cross-vendor preferred, bound to the candidate’s patch digest and reviewed base.</span></td>
               </tr>
             </tbody>
           </table>
@@ -937,27 +936,27 @@
 
         <div class="failure-list" aria-label="Failure modes and mitigations">
           <div class="failure-row"><strong>Duplicated work</strong><p>Grill-me clarification + dependency DAG + explicit path leases.</p></div>
-          <div class="failure-row"><strong>Merge conflicts</strong><p>File-disjoint leases + hierarchy-wide serialization for shared hot paths + hive-next early composition + event-driven rebase.</p></div>
-          <div class="failure-row"><strong>Drift off-task</strong><p>Lead supervision + regular on-task checks against the written task.</p></div>
-          <div class="failure-row"><strong>Dead agents</strong><p>Lead liveness monitoring; the lead closes workers promptly after merge.</p></div>
-          <div class="failure-row"><strong>Telephone-game context loss</strong><p>Specs, interface contracts, task lists, and results live as artifacts on disk—not chat relay.</p></div>
-          <div class="failure-row"><strong>Cost blowup (~15×) <span class="flag e">E</span></strong><p>Reserve the hierarchy for high-value, parallelizable work. Use a solo agent otherwise; see Evidence.</p></div>
-          <div class="failure-row"><strong>False CI confidence</strong><p>Synthetic merge testing validates exact worker→lead and protected-main merge-result SHAs.</p></div>
-          <div class="failure-row"><strong>Review rubber-stamping</strong><p>Cross-model reviewers + stale-approval dismissal + strict size and file-count limits.</p></div>
+          <div class="failure-row"><strong>Merge conflicts</strong><p>File-disjoint leases + hierarchy-wide serialization for shared hot paths + early composition on the next IntegrationStage + event-driven rebase.</p></div>
+          <div class="failure-row"><strong>Drift off-task</strong><p>Current-owner supervision + checks at task/evidence/promotion events against the typed Task and SpecRevision.</p></div>
+          <div class="failure-row"><strong>Dead agents</strong><p>Current-owner liveness monitoring and prompt closure after promotion; the daemon recovery floor catches what an owner misses.</p></div>
+          <div class="failure-row"><strong>Telephone-game context loss</strong><p>Typed SpecRevision/Task/InterfaceContract records plus ArtifactRef/MessageContentRef/WorkManifest references—not chat relay or loose files on disk.</p></div>
+          <div class="failure-row"><strong>Cost blowup (~15×) <span class="flag e">E</span></strong><p>Adaptive topology: direct queen→one-worker for coherent work, flat for small independent sets, full hive only where domains genuinely separate; see Evidence.</p></div>
+          <div class="failure-row"><strong>False CI confidence</strong><p>The validation train tests exact candidate, lead-stage (where present), run-stage, and main SHAs; no floating-branch confidence.</p></div>
+          <div class="failure-row"><strong>Review rubber-stamping</strong><p>Independent authored-candidate reviewers + invalidation on any candidate/base/revision change + strict size and file-count limits; cross-vendor preferred, not proof.</p></div>
         </div>
 
         <div class="metric-panel" aria-labelledby="metrics-title">
           <div class="metric-panel-head">
             <h3 id="metrics-title">How we’ll know it works</h3>
-            <p>Baseline these measures before rollout, then segment by hierarchy level and work shape. A faster merge is not a win if interference, escapes, or reverts rise.</p>
+            <p>Baseline these measures before rollout, then segment by hierarchy level and work shape. Faster promotion is not a win if interference, escapes, or reverts rise.</p>
           </div>
           <div class="metric-grid">
             <div class="metric-item"><span>01 · INTEGRATION</span><strong>Conflict and semantic-interference rate</strong></div>
-            <div class="metric-item"><span>02 · FRESHNESS</span><strong>Branch age by worker and lead tier</strong></div>
+            <div class="metric-item"><span>02 · FRESHNESS</span><strong>Event and candidate freshness by topology and stage</strong></div>
             <div class="metric-item"><span>03 · REVIEW</span><strong>Revision count versus diff size</strong></div>
             <div class="metric-item"><span>04 · QUALITY</span><strong>Escaped defects per gate</strong></div>
             <div class="metric-item"><span>05 · FLOW</span><strong>Queue wait and flaky-rebuild time</strong></div>
-            <div class="metric-item"><span>06 · APPROVAL</span><strong>Stale-approval invalidations</strong></div>
+            <div class="metric-item"><span>06 · APPROVAL</span><strong>Candidate/base/revision invalidations</strong></div>
             <div class="metric-item"><span>07 · OUTCOME</span><strong>Revert rate by author model and reviewer</strong></div>
           </div>
         </div>
@@ -989,12 +988,12 @@
           <p>Hierarchy is the second major transition. It begins only after Ghostty/sessiond reaches T7 under the flat policy and ends with stable daemon projections that Split Horizon can render.</p>
         </div>
         <div class="phase-grid">
-          <article class="phase-card"><span class="phase-tag">H0 · SCHEMA</span><h3>Shadow records</h3><p>Add Run, Plan, Task, node/binding, grant, budget, decision, checkpoint, review, contract, and promotion records; project current flat assignments without changing their authority.</p></article>
-          <article class="phase-card"><span class="phase-tag">H1 · DIRECT + FLAT</span><h3>New-run control plane</h3><p>Enable G1/G2, DelegationSpec, stable identity, scoped tasks, independent review, budget fencing, and daemon-only promotion for new direct and flat runs.</p></article>
-          <article class="phase-card"><span class="phase-tag">H2 · FULL HIVE</span><h3>Optional lead tier</h3><p>Enable lead-worker delegation, integration refs, interface contracts, pair channels, subtree rollups, recovery, and TopologyDecision under strict attenuation.</p></article>
+          <article class="phase-card"><span class="phase-tag">H0 · SCHEMA</span><h3>Shadow records</h3><p>Add every §06 hierarchy record not already supplied by Communication C0 — SpecRevision, PlanRevision, HierarchyNode/AgentBinding, IntegrationStage, PromotionGrant, Run/Task/TaskDetail, grants, channels, budgets, decisions, checkpoints, reviews, contracts, and ArtifactRef; project legacy flat Assignments without changing their authority.</p></article>
+          <article class="phase-card"><span class="phase-tag">H1 · DIRECT + FLAT</span><h3>New-run control plane</h3><p>Enable typed G1 on the exact proposal package and G2 on the exact run-stage SHA/base/evidence, one queen-owned run IntegrationStage, DelegationSpec, stable identity, scoped tasks, independent authored-candidate review, budget fencing, daemon-only promotion, and WorkManifest recovery for new direct and flat runs — no lead record required.</p></article>
+          <article class="phase-card"><span class="phase-tag">H2 · FULL HIVE</span><h3>Optional lead tier</h3><p>Add lead IntegrationStages, attenuated crew delegation, InterfaceContracts, pair channels, subtree rollups, owner recovery, and TopologyDecision under strict attenuation — full-hive only; direct and flat runs never fabricate the tier.</p></article>
           <article class="phase-card"><span class="phase-tag">H3 · THROUGHPUT</span><h3>Promotion trains</h3><p>Add synthetic predicted states, speculative exact-SHA validation, failure bisect/requeue, and promotion-time contract/policy revalidation.</p></article>
-          <article class="phase-card"><span class="phase-tag">H4 · RECOVERY</span><h3>Succession and run control</h3><p>Exercise lead loss, queen checkpoint/no-checkpoint succession, bounded quiesce, SIGSTOP fallback, abort retention, teardown finalizers, and anomaly circuit breakers.</p></article>
-          <article class="phase-card"><span class="phase-tag">H5 · HANDOFF</span><h3>Stable projections</h3><p>Freeze WorkspaceSnapshot v2, TaskDetail, ArtifactRef, queue/receipt, gate, budget, and incident schemas. Only then begin Split Horizon’s hierarchy rail and workbench UI.</p></article>
+          <article class="phase-card"><span class="phase-tag">H4 · RECOVERY</span><h3>Succession and run control</h3><p>Exercise semantic checkpointing with the absolute-ceiling reserve, WorkManifest-backed ownership transfer and queen succession, lead loss, bounded quiesce, SIGSTOP fallback, abort retention, teardown finalizers, and anomaly circuit breakers.</p></article>
+          <article class="phase-card"><span class="phase-tag">H5 · HANDOFF</span><h3>Stable projections</h3><p>Freeze the topology-neutral identity/projection fields, the Communication queue/receipt/MessageContentRef/WorkManifest recovery projections, and TaskDetail, ArtifactRef, gate, budget, and incident schemas — SessionLocator stays separate from HierarchyNode. Only then begin Split Horizon’s hierarchy rail and workbench UI.</p></article>
         </div>
         <div class="callout"><strong>Migration rule.</strong> New runs opt into one versioned hierarchy contract. Active legacy runs drain flat. No live tree is reparented, no queued message is rebound by name, and no UI feature becomes an authority source.</div>
       </div>
@@ -1061,7 +1060,7 @@
       </div>
       <div class="endnote">
         <span>Hive · Agentic hierarchy redesign</span>
-        <span>The Queen’s Hive · Engineer → Queen → Lead Workers → Workers</span>
+        <span>The Queen’s Hive · Engineer → Queen → current owners → Workers · adaptive direct/flat/full hive</span>
       </div>
     </div>
   </footer>
