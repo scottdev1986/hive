@@ -1,0 +1,16 @@
+#!/bin/sh
+set -eu
+
+# Zig 0.15.2 otherwise adopts the selected Xcode macOS SDK while linking its
+# host build runner. Keep that orchestration-only executable on Zig's bundled
+# Darwin stubs; every other xcrun call still uses the locked Xcode installation.
+parent=$(/bin/ps -p "$PPID" -o comm= | /usr/bin/awk '{ print $1 }')
+if [ "${parent##*/}" = "zig" ] &&
+   [ "$#" -eq 3 ] &&
+   [ "$1" = "--sdk" ] &&
+   [ "$2" = "macosx" ] &&
+   [ "$3" = "--show-sdk-path" ]; then
+  exit 1
+fi
+
+exec /usr/bin/xcrun "$@"

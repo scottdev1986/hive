@@ -1706,7 +1706,7 @@ swift build -c release --arch arm64 --arch x86_64</pre>
           <table>
             <thead><tr><th>Release stage</th><th>Blocking verification</th></tr></thead>
             <tbody>
-              <tr><td>Compile</td><td>Reproducible source/patch/toolchain manifest; bridge ABI test; symbol allowlist; no unexpected dylib; both architectures; min macOS 14; schemas and protocol constants match generated Swift/TypeScript/Zig fixtures.</td></tr>
+              <tr><td>Compile</td><td>Reproducible source/patch/toolchain manifest; bridge ABI test; symbol allowlist; no unexpected dylib; both architectures; macOS 14 product floor—Hive-authored native artifacts have minOS exactly 14.0, while vendored engine members may retain an upstream minOS below 14.0, with every actual macOS value recorded in the artifact manifest and no macOS member above 14.0; schemas and protocol constants match generated Swift/TypeScript/Zig fixtures.</td></tr>
               <tr><td>Assemble</td><td>Place helper in <code>Contents/Helpers</code> and framework in <code>Contents/Frameworks</code>; no writable/executable runtime download; include MIT notices, source pin/patch offer, and CycloneDX/SPDX SBOM.</td></tr>
               <tr><td>Sign</td><td>Sign inner framework/library code, helper, app components, then outer app with hardened runtime and existing entitlements. <code>codesign --verify --deep --strict</code> and designated-requirement checks must pass.</td></tr>
               <tr><td>Notarize</td><td>Notarize the final existing package flow, staple, Gatekeeper-assess a quarantined clean download, launch offline with no Ghostty/Zig/tmux in PATH, and run provider smoke.</td></tr>
