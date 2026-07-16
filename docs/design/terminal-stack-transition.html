@@ -1,235 +1,11 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="doc-terminal">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
   <title>Hive: Native Terminal Foundation</title>
-  <style>
-    :root {
-      --bg: #f4f1e9;
-      --surface: #fffdf8;
-      --surface-2: #ece7dc;
-      --ink: #1c2924;
-      --muted: #52635b;
-      --line: #cbc8bd;
-      --green: #176b4b;
-      --green-2: #d9eadf;
-      --amber: #b35d21;
-      --amber-2: #f4dfbf;
-      --blue: #255a77;
-      --blue-2: #d8e8ef;
-      --red: #a33e35;
-      --red-2: #f1d8d1;
-      --purple: #705486;
-      --purple-2: #e7dded;
-      --shadow: 0 18px 50px rgba(28, 41, 36, .08);
-      --radius-sm: 8px;
-      --radius: 16px;
-      --radius-lg: 28px;
-      --max: 1180px;
-    }
-    @media (prefers-color-scheme: dark) {
-      :root {
-        --bg: #101713;
-        --surface: #17211c;
-        --surface-2: #202c26;
-        --ink: #edf4ef;
-        --muted: #aab8b0;
-        --line: #38453e;
-        --green: #75d6aa;
-        --green-2: #183c2d;
-        --amber: #efaa6d;
-        --amber-2: #4c321f;
-        --blue: #7dc5e6;
-        --blue-2: #203c4a;
-        --red: #ed8e83;
-        --red-2: #482723;
-        --purple: #c4a1dc;
-        --purple-2: #362b3f;
-        --shadow: 0 20px 60px rgba(0, 0, 0, .24);
-      }
-    }
-    * { box-sizing: border-box; }
-    html { scroll-behavior: smooth; background: var(--bg); }
-    body {
-      margin: 0;
-      color: var(--ink);
-      background:
-        radial-gradient(circle at 10% 0%, color-mix(in srgb, var(--green-2) 70%, transparent), transparent 30rem),
-        var(--bg);
-      font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      font-size: 16px;
-      line-height: 1.6;
-      text-rendering: optimizeLegibility;
-    }
-    a { color: var(--green); text-underline-offset: 3px; text-decoration-thickness: 1px; }
-    a:hover { text-decoration-thickness: 2px; }
-    code, pre, .mono { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
-    code { font-size: .9em; }
-    pre {
-      margin: 18px 0 0;
-      padding: 20px;
-      overflow: auto;
-      color: var(--ink);
-      background: var(--surface-2);
-      border: 1px solid var(--line);
-      border-radius: var(--radius-sm);
-      font-size: 12px;
-      line-height: 1.55;
-    }
-    .shell { width: min(calc(100% - 40px), var(--max)); margin-inline: auto; }
-    .topbar {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 20px;
-      min-height: 72px;
-      border-bottom: 1px solid var(--line);
-    }
-    .brand { display: flex; align-items: center; gap: 11px; font-weight: 760; letter-spacing: -.02em; }
-    .brand-mark {
-      display: grid;
-      width: 30px;
-      height: 30px;
-      place-items: center;
-      color: var(--surface);
-      background: var(--green);
-      border-radius: 9px;
-      font-size: 13px;
-    }
-    .doc-meta { color: var(--muted); font: 12px ui-monospace, SFMono-Regular, Consolas, monospace; letter-spacing: .04em; }
-    main { overflow: hidden; }
-    .hero {
-      display: grid;
-      grid-template-columns: minmax(0, 1.2fr) minmax(300px, .8fr);
-      gap: clamp(36px, 6vw, 86px);
-      align-items: end;
-      padding-block: clamp(72px, 10vw, 132px) clamp(64px, 8vw, 104px);
-    }
-    .hero > * { min-width: 0; }
-    .eyebrow, .section-label {
-      display: inline-flex;
-      align-items: center;
-      gap: 9px;
-      margin: 0 0 18px;
-      color: var(--green);
-      font: 750 12px/1.2 ui-monospace, SFMono-Regular, Consolas, monospace;
-      letter-spacing: .12em;
-      text-transform: uppercase;
-    }
-    .eyebrow::before, .section-label::before { width: 22px; height: 2px; background: currentColor; content: ""; }
-    h1, h2, h3, p { margin-top: 0; }
-    h1 { max-width: 800px; margin-bottom: 26px; font-size: clamp(50px, 7.5vw, 92px); font-weight: 780; letter-spacing: -.065em; line-height: .94; }
-    h1 span { display: block; color: var(--green); }
-    .hero-copy { max-width: 720px; margin-bottom: 0; color: var(--muted); font-size: clamp(18px, 2vw, 22px); line-height: 1.55; }
-    .hero-aside {
-      position: relative;
-      padding: 28px;
-      overflow: hidden;
-      background: var(--surface);
-      border: 1px solid var(--line);
-      border-radius: var(--radius-lg);
-      box-shadow: var(--shadow);
-    }
-    .hero-aside::after { position: absolute; top: -34px; right: -28px; width: 130px; height: 130px; background: var(--green-2); border-radius: 50%; content: ""; opacity: .8; }
-    .hero-aside > * { position: relative; z-index: 1; }
-    .hero-aside .kicker { margin-bottom: 8px; color: var(--green); font-size: 12px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
-    .hero-aside h2 { margin-bottom: 12px; font-size: 25px; letter-spacing: -.03em; line-height: 1.15; }
-    .hero-aside p { margin-bottom: 20px; color: var(--muted); }
-    .decision-line { padding-top: 16px; border-top: 1px solid var(--line); font-size: 13px; font-weight: 750; }
-    .principles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; margin-bottom: clamp(80px, 10vw, 132px); overflow: hidden; background: var(--line); border: 1px solid var(--line); border-radius: var(--radius); }
-    .principle { min-height: 170px; padding: 25px; background: var(--surface); }
-    .principle .num { display: block; margin-bottom: 26px; color: var(--green); font: 800 12px ui-monospace, SFMono-Regular, Consolas, monospace; }
-    .principle strong { display: block; margin-bottom: 7px; font-size: 17px; letter-spacing: -.02em; }
-    .principle p { margin: 0; color: var(--muted); font-size: 13px; }
-    section { padding-block: clamp(72px, 9vw, 112px); border-top: 1px solid var(--line); }
-    .section-head { display: grid; grid-template-columns: minmax(0, .95fr) minmax(300px, .65fr); gap: 48px; align-items: end; margin-bottom: 44px; }
-    .section-head h2 { max-width: 800px; margin-bottom: 0; font-size: clamp(38px, 5vw, 62px); letter-spacing: -.05em; line-height: 1.02; }
-    .section-head > p { margin-bottom: 0; color: var(--muted); font-size: 17px; }
-    .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-block: 0 28px; }
-    .stat { min-height: 142px; padding: 22px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); }
-    .stat strong { display: block; margin: 12px 0 7px; color: var(--green); font-size: 34px; letter-spacing: -.05em; line-height: 1; }
-    .stat p { margin: 0; color: var(--muted); font-size: 13px; }
-    .flag { display: inline-block; padding: 4px 8px; color: var(--green); background: var(--green-2); border-radius: 999px; font: 900 10px ui-monospace, SFMono-Regular, Consolas, monospace; letter-spacing: .05em; }
-    .flag.warn { color: var(--amber); background: var(--amber-2); }
-    .flag.stop { color: var(--red); background: var(--red-2); }
-    .flag.info { color: var(--blue); background: var(--blue-2); }
-    .split { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
-    .panel, .phase-card { padding: 28px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); }
-    .panel.wide { grid-column: 1 / -1; }
-    .panel h3, .phase-card h3 { margin-bottom: 9px; font-size: 21px; letter-spacing: -.025em; }
-    .panel > p, .phase-card > p { color: var(--muted); }
-    .callout { margin-top: 18px; padding: 18px 20px; color: var(--muted); background: var(--surface-2); border-left: 3px solid var(--green); border-radius: 0 var(--radius-sm) var(--radius-sm) 0; font-size: 14px; }
-    .callout.warn { border-left-color: var(--amber); }
-    .callout.stop { border-left-color: var(--red); }
-    .architecture {
-      display: grid;
-      grid-template-columns: 1fr auto 1.1fr auto 1fr;
-      gap: 14px;
-      align-items: stretch;
-      margin: 30px 0 40px;
-    }
-    .arch-node { min-height: 205px; padding: 23px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); }
-    .arch-node.core { background: var(--green-2); border-color: var(--green); }
-    .arch-node.substrate { background: var(--blue-2); border-color: var(--blue); }
-    .arch-node .mono { display: block; margin-bottom: 25px; color: var(--green); font-size: 11px; font-weight: 850; letter-spacing: .08em; }
-    .arch-node h3 { margin-bottom: 8px; font-size: 20px; line-height: 1.2; }
-    .arch-node p { margin: 0; color: var(--muted); font-size: 13px; }
-    .arrow { display: grid; place-items: center; color: var(--green); font-size: 28px; font-weight: 900; }
-    .state-flow { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-top: 22px; }
-    .state { padding: 18px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 12px; }
-    .state.human { background: var(--amber-2); border-color: var(--amber); }
-    .state strong { display: block; margin-bottom: 6px; font: 850 12px ui-monospace, SFMono-Regular, Consolas, monospace; }
-    .state p { margin: 0; color: var(--muted); font-size: 12px; }
-    .table-wrap { margin-top: 22px; overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); }
-    table { width: 100%; min-width: 820px; border-collapse: collapse; font-size: 13px; }
-    th, td { padding: 18px 20px; vertical-align: top; border-bottom: 1px solid var(--line); text-align: left; }
-    th { color: var(--muted); background: var(--surface-2); font: 800 10px ui-monospace, SFMono-Regular, Consolas, monospace; letter-spacing: .08em; text-transform: uppercase; }
-    tbody tr:last-child td { border-bottom: 0; }
-    td:first-child { color: var(--green); font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-weight: 850; white-space: nowrap; }
-    td strong { display: block; margin-bottom: 4px; }
-    td span, .muted { color: var(--muted); }
-    .compact td, .compact th { padding: 14px 16px; }
-    .phase-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
-    .phase-card { position: relative; min-height: 330px; }
-    .phase-id { display: inline-grid; width: 44px; height: 44px; place-items: center; margin-bottom: 24px; color: var(--green); background: var(--green-2); border-radius: 12px; font: 850 12px ui-monospace, SFMono-Regular, Consolas, monospace; }
-    .criteria { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 18px; }
-    .criteria div { padding: 13px; background: var(--surface-2); border-radius: 10px; font-size: 12px; }
-    .criteria b { display: block; margin-bottom: 4px; color: var(--green); font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 10px; text-transform: uppercase; }
-    ul.clean { display: grid; gap: 9px; margin: 16px 0 0; padding: 0; list-style: none; }
-    ul.clean li { position: relative; padding-left: 20px; font-size: 13px; }
-    ul.clean li::before { position: absolute; top: .62em; left: 0; width: 7px; height: 7px; background: var(--green); border-radius: 50%; content: ""; }
-    .sources { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 28px; margin: 0; padding: 0; list-style: none; }
-    .sources li { padding-bottom: 12px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
-    .sources time { display: block; margin-bottom: 2px; color: var(--ink); font: 800 11px ui-monospace, SFMono-Regular, Consolas, monospace; }
-    footer { padding-block: 80px 48px; border-top: 1px solid var(--line); }
-    .footer-grid { display: grid; grid-template-columns: .45fr 1.55fr; gap: 50px; }
-    .endnote { display: flex; justify-content: space-between; gap: 20px; margin-top: 56px; padding-top: 22px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; }
-    @media (max-width: 900px) {
-      .hero, .section-head, .footer-grid { grid-template-columns: 1fr; }
-      .principles, .stats { grid-template-columns: repeat(2, 1fr); }
-      .architecture { grid-template-columns: 1fr; }
-      .arrow { transform: rotate(90deg); }
-      .state-flow { grid-template-columns: repeat(2, 1fr); }
-    }
-    @media (max-width: 640px) {
-      .shell { width: min(calc(100% - 24px), var(--max)); }
-      .topbar { min-height: 60px; }
-      .doc-meta { display: none; }
-      h1 { font-size: clamp(44px, 14vw, 60px); }
-      .principles, .stats, .split, .phase-grid, .criteria, .state-flow, .sources { grid-template-columns: 1fr; }
-      .panel.wide { grid-column: auto; }
-      .endnote { flex-direction: column; }
-    }
-    @media print {
-      :root { color-scheme: light; }
-      body { background: #fff; }
-      .shell { width: 100%; max-width: none; }
-      section { break-inside: avoid; }
-      a { color: inherit; }
-    }
-  </style>
+  <link rel="stylesheet" href="hive-design.css">
 </head>
 <body>
   <header class="shell topbar">
@@ -271,8 +47,8 @@
         <div class="stats" aria-label="Plan summary">
           <div class="stat"><span class="flag">PLATFORM</span><strong>1</strong><p>macOS product target, with universal arm64 and x86_64 release artifacts.</p></div>
           <div class="stat"><span class="flag info">PLANES</span><strong>3</strong><p>Terminal bytes, agent control/state, and native presentation stay independent.</p></div>
-          <div class="stat"><span class="flag">SCALE</span><strong>19+</strong><p>Ordinary Foreman hierarchy capacity before transient reviewers and recovery.</p></div>
-          <div class="stat"><span class="flag warn">GATES</span><strong>9</strong><p>Ordered phases with measured exits and admission-only rollback.</p></div>
+          <div class="stat"><span class="flag">SCALE</span><strong>19+</strong><p>Concurrent ordinary generations as a forward capacity and load target, before transient and recovery sessions.</p></div>
+          <div class="stat"><span class="flag warn">GATES</span><strong>8</strong><p>Ordered phases with measured exits and admission-only rollback.</p></div>
         </div>
 
         <div class="split">
@@ -329,8 +105,8 @@
               <tr><td>Lifecycle</td><td><strong>Bun daemon owns admission, recovery, landing, and shutdown</strong><span>Provider adapters launch Claude, Codex, and Grok.</span></td><td>Control-daemon authority and provider adapters.</td><td>Move PTY/process mechanics behind <code>SessionHost</code>; never let the Workspace own the vendor process.</td></tr>
               <tr><td>Terminal</td><td><strong>One SwiftTerm child per visible pane</strong><span>The child runs the workspace orchestrator or attaches to a tmux session.</span></td><td>Real vendor TUI, native focus, keyboard, mouse, and geometry.</td><td>Use a Ghostty Metal surface attached to sessiond. Pane closure becomes detach, not agent kill.</td></tr>
               <tr><td>Messaging</td><td><strong>Durable ledger plus tmux paste</strong><span>Priorities, idempotency, composer lease, tool-boundary delivery, acknowledgements.</span></td><td>Message envelope, priority semantics, acknowledgement evidence, provider-specific delivery.</td><td>Route all bytes through the session arbiter; bind authority to the hierarchy; remove command-argument and tmux-buffer dependence.</td></tr>
-              <tr><td>Status</td><td><strong>Structured provider hooks and polled feed</strong><span>Working, idle, approval, paused, stuck, done, failed, unknown; context and model where available.</span></td><td>The rule that terminal pixels are not status truth.</td><td>Add event subscriptions, explicit agent progress reports, source/freshness/confidence, workflow state, and scoped hierarchy rollups.</td></tr>
-              <tr><td>Workspace</td><td><strong>Native AppKit multi-pane window</strong><span>Focus, attention, layout, terminal tabs, control center, settings.</span></td><td>Native shell, first-responder truth, menus, accessibility, release packaging.</td><td>Evolve to one selected workbench plus hierarchy rail; create only a bounded number of hot GPU surfaces.</td></tr>
+              <tr><td>Status</td><td><strong>Structured provider hooks and polled feed</strong><span>Working, idle, approval, paused, stuck, done, failed, unknown; context and model where available.</span></td><td>The rule that terminal pixels are not status truth.</td><td>Add event subscriptions, explicit agent progress reports, and source/freshness/confidence. Workflow state and hierarchy rollups arrive with the later hierarchy transition.</td></tr>
+              <tr><td>Workspace</td><td><strong>Native AppKit multi-pane window</strong><span>Focus, attention, layout, terminal tabs, control center, settings.</span></td><td>Native shell, first-responder truth, menus, accessibility, release packaging.</td><td>Keep the current native topology on the new terminal engine; bound hot GPU surfaces. The Split Horizon redesign follows the hierarchy transition and is owned by <a href="split-horizon.html">its own document</a>.</td></tr>
             </tbody>
           </table>
         </div>
@@ -562,7 +338,7 @@ to detached hosts; a host crash can lose only its own generation.</pre>
             <tbody>
               <tr><td>sessionState</td><td><strong>creating · live · exited · replacing · lost</strong></td><td>sessiond PTY/process identity and control-daemon generation records.</td><td>Connection dot, attach availability, recovery action.</td></tr>
               <tr><td>turnState</td><td><strong>unknown · ready · working · idle · awaiting_approval · paused · stuck · done · failed</strong></td><td>Provider hooks/app server first; process/session evidence second. Never terminal text.</td><td>Agent activity badge and attention priority.</td></tr>
-              <tr><td>workflowState</td><td><strong>unassigned · planning · building · testing · reviewing · gated · landing · completed · blocked</strong></td><td>Task/review/gate records; explicit reports may describe progress but cannot approve gates.</td><td>Hierarchy rollups, phase progress, next action.</td></tr>
+              <tr><td>workflowState</td><td><strong>Reserved dimension — defined by The Queen's Hive</strong></td><td>Authoritative task/review/gate/land records belong to the hierarchy transition (<a href="agentic-hierarchy.html">agentic-hierarchy.html</a>); the terminal foundation reserves the discriminator and never requires those records to exit T0–T7.</td><td>Populated after the hierarchy transition ships its records.</td></tr>
               <tr><td>inputState</td><td><strong>free · human_owned · human_orphaned · automation</strong></td><td>Sessiond arbiter transaction.</td><td>Composer lock, owner label, queued-delivery count.</td></tr>
               <tr><td>healthState</td><td><strong>healthy · delayed · stale · disconnected · unknown</strong></td><td>Event heartbeat, provider adapter, attach lag, process liveness, queue/backpressure metrics.</td><td>Freshness ring and diagnostic inspector.</td></tr>
               <tr><td>attention</td><td><strong>none · info · action · approval · failure</strong></td><td>Derived by control daemon from typed events and policy.</td><td>Rail decoration and ordered inbox; never focus.</td></tr>
@@ -579,7 +355,6 @@ to detached hosts; a host crash can lose only its own generation.</pre>
   "revision": 381,
   "sessionState": { "value": "live", "source": "sessiond" },
   "turnState": { "value": "working", "source": "codex_app_server" },
-  "workflowState": { "value": "testing", "source": "agent_report" },
   "inputState": { "value": "free", "source": "sessiond" },
   "observedAt": "2026-07-15T18:10:44Z",
   "freshUntil": "2026-07-15T18:11:14Z",
@@ -615,12 +390,12 @@ to detached hosts; a host crash can lose only its own generation.</pre>
             </ol>
           </article>
           <article class="panel">
-            <h3>Event delivery and hierarchy rollup</h3>
+            <h3>Event delivery and the rollup seam</h3>
             <ul class="clean">
               <li>Replace Workspace feed polling with a resumable event subscription plus periodic snapshot reconciliation.</li>
               <li>Sequence every event per tenant and include entity revision for idempotent Swift reducers.</li>
-              <li>Workers report upward to their lead; leads receive scoped rollups and exceptions, not terminal transcripts.</li>
-              <li>Queen receives lead summaries, gate state, critical blockers, cost/capacity, and cross-lead contract conflicts.</li>
+              <li>The subscription and reducers ship against today's flat queen→workers policy; no reducer requires a lead or reviewer to exist.</li>
+              <li>The Queen's Hive later adds parent/edge/rollup reducers on the same envelope — scoped summaries instead of terminal transcripts.</li>
               <li>Engineer sees an honest aggregate with drill-down to the source evidence.</li>
             </ul>
           </article>
@@ -676,7 +451,7 @@ to detached hosts; a host crash can lose only its own generation.</pre>
             <thead><tr><th>Contract</th><th>Required behavior</th><th>Proof</th></tr></thead>
             <tbody>
               <tr><td>MessageEnvelope</td><td><strong>Immutable sender, recipient, intent, priority, task scope, capability epoch, idempotency key, body digest, creation revision.</strong></td><td>Forgery, stale-epoch, duplicate, wrong-edge, and replay tests fail closed.</td></tr>
-              <tr><td>Hierarchy edges</td><td><strong>Engineer↔queen; queen↔leads; lead↔own workers; cross-lead only through written interface contracts; no worker↔worker or worker↔queen.</strong></td><td>Policy table is shared by MCP, CLI, daemon, and UI tests. UI visibility does not grant authority.</td></tr>
+              <tr><td>Hierarchy edges</td><td><strong>Edge policy is supplied by The Queen's Hive and evaluated by the daemon; transport treats the authorization decision as opaque.</strong> Today's flat queen↔workers policy is the shipping baseline; the transport carries an authorization event ID either way.</td><td>One policy hook is shared by MCP, CLI, daemon, and UI tests. UI visibility does not grant authority. Edge rules live in <a href="agentic-hierarchy.html">agentic-hierarchy.html</a> and the communication contract.</td></tr>
               <tr><td>Priority</td><td><strong>normal, steer, urgent, critical keep existing semantics.</strong></td><td>Provider matrix verifies normal/steer boundaries, urgent cancellation, critical write revocation/recovery.</td></tr>
               <tr><td>Human claim</td><td><strong>Acquired before first input byte; released only on submit, cancel, or explicit discard/recovery.</strong></td><td>Crash at every claim transition produces no interleave and no timed unlock.</td></tr>
               <tr><td>Delivery lifecycle</td><td><strong>queued → authorized → injected → provider_acknowledged → agent_acknowledged → applied, with rejected and in_doubt terminals.</strong></td><td>No stage is inferred from elapsed time. UI distinguishes unheard from injected and applied.</td></tr>
@@ -775,7 +550,7 @@ to detached hosts; a host crash can lose only its own generation.</pre>
               <tr><td>Session lifecycle</td><td>Create, readiness, exact locate, attach, detach, reconnect, resize, snapshot, inspect, exit diagnostics, recovery/new generation, resource limits, positive terminate, Stop Hive.</td><td>Crash/restart matrix for Workspace, renderer, control daemon, provider, and sessiond with honest state after each fault.</td></tr>
               <tr><td>Input ownership</td><td>Single writer, persistent human claim, orphan recovery, ordered automation queue, idempotency, cancellation, backpressure, receipt stages, priority semantics, no payload in argv/logs.</td><td>Fault injection at every transaction boundary yields no lost, duplicate, interleaved, or wrong-target bytes.</td></tr>
               <tr><td>Status</td><td>Session/turn/workflow/input/health/attention dimensions; provider adapters; explicit reports; source/freshness/confidence; snapshots plus events; honest unknown/stale; drill-down evidence.</td><td>Provider conformance fixtures and stale/out-of-order event tests reduce identically in Bun and Swift.</td></tr>
-              <tr><td>Hierarchy</td><td>Stable hierarchical locator, scoped tree list/inspect, separate focus/view/authority, authorized immutable envelopes, lifecycle ownership, lead capacity/cost accounting, reviewer gate, cross-lead interface artifacts.</td><td>Foreman policy fixtures cover ordinary 13–19 agent teams, transient reviewers, denial paths, and lead-only views.</td></tr>
+              <tr><td>Hierarchy seam</td><td>Extension seam only: stable locators and generations, scoped list/inspect, separate focus/view/authority, immutable envelopes carrying opaque authorization IDs, and event/capacity primitives ready for the hierarchy transition. The terminal transition defines no parentage, roles, edge policy, review, or land rules.</td><td>Seam fixtures cover today's flat policy at 13–19 concurrent agents, denial paths, and scoped views; The Queen's Hive supplies the hierarchy fixtures that extend them.</td></tr>
               <tr><td>Security</td><td>Private socket, peer credentials, short-lived capabilities, exact generations, path canonicalization, clipboard/OSC 52 policy, hyperlink trust, escape-sequence limits, image limits, secret redaction, no renderer privilege.</td><td>Same-user confusion, locator forgery, token replay, stale viewer, hostile output, symlink, clipboard, and oversized-frame tests fail closed.</td></tr>
               <tr><td>Operations</td><td>Structured metrics, private diagnostic bundles, sampling/redaction, release provenance, SBOM/notices, universal binaries, signing/notarization, update compatibility, protocol downgrade refusal.</td><td>Clean-machine install runs with tmux/Ghostty/Zig absent; Gatekeeper accepts every nested executable and framework.</td></tr>
               <tr><td>Performance</td><td>Bounded hot surfaces, 19+ headless sessions, responsive selected TUI, output burst absorption, fast switch/replay, bounded RSS/disk/GPU, no background render loop.</td><td>§28 budgets are validated and may only tighten from T1/T3 evidence; CI load test and Instruments trace stay below them.</td></tr>
@@ -860,7 +635,7 @@ to detached hosts; a host crash can lose only its own generation.</pre>
           <article class="phase-card">
             <span class="phase-id">T5</span>
             <h3>Move messaging and status to the new spine</h3>
-            <p>Route all human and automated input through sessiond. Enable provider receipts, hierarchy authorization, explicit reports, event subscriptions, attention, and scoped lead/queen rollups.</p>
+            <p>Route all human and automated input through sessiond. Enable provider receipts, the daemon authorization seam, explicit reports, event subscriptions, and attention — all against today's flat queen→workers policy. Hierarchy rollup reducers arrive later on the same envelope; no part of this phase requires a lead or reviewer to exist.</p>
             <ul class="clean">
               <li>Retire filesystem composer lease after transaction migration.</li>
               <li>Verify normal/steer/urgent/critical for every provider.</li>
@@ -896,19 +671,9 @@ to detached hosts; a host crash can lose only its own generation.</pre>
             <div class="criteria"><div><b>Exit</b>No production source or package depends on tmux or SwiftTerm.</div><div><b>Rollback</b>Before deletion, admission flag; after deletion, forward fix only.</div></div>
           </article>
 
-          <article class="phase-card">
-            <span class="phase-id">T8</span>
-            <h3>Build native Split Horizon on the foundation</h3>
-            <p>Move from today’s grid toward a persistent hierarchy rail and one selected Ghostty workbench. Add task, review, artifact, session, message, and settings inspectors using the typed contracts already shipped.</p>
-            <ul class="clean">
-              <li>Keep focus, view, and authority separate.</li>
-              <li>Virtualize off-screen workbenches without touching their sessions.</li>
-              <li>Use event reducers and snapshots, not per-pane polling.</li>
-              <li>Make Foreman gates and cross-lead artifacts first-class native views.</li>
-            </ul>
-            <div class="criteria"><div><b>Exit</b>19-agent hierarchy is navigable, bounded, accessible, and does not steal focus.</div><div><b>Rollback</b>Native grid remains available while layout migrates; same terminal/session contracts.</div></div>
-          </article>
         </div>
+
+        <div class="callout"><strong>Where the transition ends.</strong> T7 completes the terminal foundation with today's workspace topology running on Ghostty and today's flat queen→workers policy — nothing in T0–T7 requires a lead, reviewer, task record, or gate to exist. The hierarchy redesign (<a href="agentic-hierarchy.html">The Queen's Hive</a>) builds on these contracts next, and the production one-workbench UI belongs to <a href="split-horizon.html">Split Horizon</a> after it.</div>
       </div>
     </section>
 
@@ -1043,16 +808,16 @@ test/terminal-corpus/                   # VT traces + provider workflows</pre>
 
         <div class="split">
           <article class="panel">
-            <h3>Agentic hierarchy can assume</h3>
+            <h3>The Queen's Hive can assume</h3>
             <ul class="clean">
-              <li>Stable hierarchical locators and exact generations.</li>
+              <li>Stable agent locators and exact generations.</li>
               <li>Scoped list, inspect, status, capacity, cost, and event subscriptions.</li>
-              <li>Lead-owned worker lifecycle and parameterized land targets.</li>
-              <li>Authorized message edges with immutable envelopes and receipts.</li>
-              <li>Reviewer gates and artifact references independent of terminals.</li>
-              <li>At least 19 ordinary live sessions plus transient capacity.</li>
+              <li>Immutable message envelopes, staged delivery receipts, and an opaque daemon authorization seam — edge policy itself is the hierarchy's to define.</li>
+              <li>Session, status, and message transport primitives that never read terminal pixels.</li>
+              <li>Measured capacity: 19 concurrent ordinary generations as a load target inside the 32-session cap.</li>
               <li>Focus, view, authority, lifecycle ownership, and input ownership as separate state.</li>
             </ul>
+            <div class="callout warn"><strong>Not supplied here.</strong> Hierarchy records, lead-owned worker lifecycle, reviewer duty gates, grant-bound land targets, and edge policy are deliverables of <a href="agentic-hierarchy.html">The Queen's Hive</a>, not assumptions it inherits.</div>
           </article>
           <article class="panel">
             <h3>Split Horizon must change</h3>
@@ -1178,7 +943,7 @@ test/terminal-corpus/                   # VT traces + provider workflows</pre>
       <div class="shell">
         <div class="section-head">
           <div><p class="section-label">19 · SessionHost API</p><h2>One interface replaces every direct tmux dependency.</h2></div>
-          <p>The TypeScript interface is the control-plane contract. The tmux and sessiond implementations run the same black-box suite. Swift uses the wire protocol in §20, not this TypeScript module, but observes identical postconditions.</p>
+          <p>The TypeScript interface is the control-plane contract. The tmux and sessiond implementations run the same black-box suite. Swift uses the wire protocol in §20, not this TypeScript module, but observes identical postconditions. SessionSpec deliberately carries no organizational role: sessiond needs authority posture (<code>readOnly</code>), exact identity, and resources — a later HierarchyNode record from The Queen's Hive binds a locator to role and purpose, and only the daemon's read model joins it.</p>
         </div>
 
         <pre aria-label="Normative SessionHost TypeScript contract">export type SessionLocator = Readonly&lt;{
@@ -1195,7 +960,6 @@ test/terminal-corpus/                   # VT traces + provider workflows</pre>
 export type SessionSpec = Readonly&lt;{
   schemaVersion: 1;
   locator: SessionLocator;
-  role: "queen" | "lead" | "worker" | "reviewer";
   provider: "claude" | "codex" | "grok";
   toolSessionId: string | null;
   cwd: string;                    // canonical absolute worktree/repository path
@@ -1674,7 +1438,7 @@ ghostty_result_e hive_ghostty_terminal_checkpoint_import_v1(
               <tr><td>process / terminal health</td><td><strong>sessiond host evidence only</strong><span>Alive, PTY open, attach health, backpressure, output high-water, exit/survivor evidence.</span></td><td>Heartbeat every 5 s; show delayed after 10 s and disconnected/unknown after 15 s. Never infer dead from a missing viewer.</td></tr>
               <tr><td>provider lifecycle</td><td><strong>structured app-server, then provider hooks, then transcript telemetry</strong><span>Terminal hints are low-confidence diagnostics and cannot create a turn boundary.</span></td><td>Source freshness becomes stale after 30 s, but staleness does not rewrite the last proven state to idle or dead.</td></tr>
               <tr><td>phase / progress / summary / blocker</td><td><strong>authenticated agent report, bounded by live task revision</strong><span>Provider lifecycle may contradict and visually annotate; it does not silently overwrite agent intent.</span></td><td>Agent chooses 30–600 s, default 120 s. After expiry, show stale and exclude from rollup counts that claim current work.</td></tr>
-              <tr><td>task, gate, approval, land result</td><td><strong>daemon task/review/landing records only</strong><span>An agent can report evidence but cannot make these authoritative transitions.</span></td><td>No timer. Superseded by a higher entity revision or explicit invalidation.</td></tr>
+              <tr><td>task, gate, approval, land result</td><td><strong>daemon records only</strong><span>Today that means the flat assignment and landing records; The Queen's Hive defines the task/review/gate records that extend them. An agent can report evidence but cannot make these authoritative transitions, and no T0–T7 exit requires the future records to exist.</span></td><td>No timer. Superseded by a higher entity revision or explicit invalidation.</td></tr>
               <tr><td>message receipt</td><td><strong>delivery ledger under §25</strong><span>Transport, provider, agent acknowledgment, and applied evidence remain separate fields.</span></td><td>Durable until terminal message state; provider evidence must occur after injection.</td></tr>
               <tr><td>attention</td><td><strong>union of unhandled authoritative/provider/agent signals</strong><span>Higher severity wins; acknowledgment records viewer+revision and never deletes the cause.</span></td><td>Clears only when its cause revision resolves or an authorized actor acknowledges that exact revision.</td></tr>
             </tbody>
@@ -1756,19 +1520,7 @@ ghostty_result_e hive_ghostty_terminal_checkpoint_import_v1(
           </table>
         </div>
 
-        <pre aria-label="Normative durable message envelope">type MessageEnvelopeV2 = Readonly&lt;{
-  schemaVersion: 2; messageId: string; revision: string;
-  sender: { agentId: string; generation: number; capabilityEpoch: number };
-  recipient: { agentId: string; generation: number; capabilityEpoch: number };
-  task: { taskId: string; revision: string } | null;
-  intent: "instruction" | "pause" | "stop" | "cancel" | "restrict-writes";
-  priority: "normal" | "steer" | "urgent" | "critical";
-  body: { mediaType: "text/plain"; utf8Length: number; sha256: string; value: string };
-  idempotencyKey: string; createdAt: string; expiresAt: string | null;
-  authorizationEventId: string;
-}&gt;;</pre>
-
-        <div class="callout"><strong>Existing MCP migration.</strong> Keep <code>hive_send</code>, <code>hive_inbox</code>, <code>hive_read_message</code>, and <code>hive_ack_message</code>. The daemon—not tool arguments—resolves names to stable agent ID/generation, binds sender/capability epoch, validates the hierarchy edge/task, computes body metadata, and creates v2. Extend <code>hive_ack_message</code> with <code>bodySha256</code>, <code>applied</code>, and up to 16 evidence references; <code>message:ack</code> remains epoch-checked and self-scoped. The current name-based v1 row is dual-read only during migration.</div>
+        <div class="callout"><strong>Envelope and MCP surface live in the communication contract.</strong> The canonical MessageEnvelope v2 schema, the <code>hive_send</code>/<code>hive_inbox</code>/<code>hive_read_message</code>/<code>hive_ack_message</code> surface, the record-per-stage delivery model, and the staged migration away from today's name-keyed v1 rows are owned by <a href="hive-communication.html">hive-communication.html</a> — one schema, one owner. This section binds only what the terminal foundation must prove: provider readiness evidence, injection transactions, and the receipt ladder below, implemented first against today's flat queen→workers policy and extended by hierarchy routing later.</div>
 
         <div class="table-wrap compact">
           <table>
@@ -1790,7 +1542,7 @@ ghostty_result_e hive_ghostty_terminal_checkpoint_import_v1(
           <article class="panel">
             <h3>Busy, idle, and priority</h3>
             <ul class="clean">
-              <li><strong>normal:</strong> ordinary guidance at the next proven ready turn boundary. <strong>steer:</strong> non-destructive guidance at the next supported tool boundary; Claude/Codex use hooks/app-server and Grok honestly degrades to next turn. <strong>urgent:</strong> cancel the in-flight provider turn, which is never resumed, then inject when input is free; it never deletes/interleaves a human draft or guesses through an unknown modal. <strong>critical:</strong> immediately revoke write/landing authority, terminate the old provider generation under lifecycle policy, restart it read-only, and deliver to the new exact generation. These preserve Hive’s current semantics.</li>
+              <li><strong>normal:</strong> ordinary guidance at the next proven ready turn boundary. <strong>steer:</strong> non-destructive guidance at the next supported tool boundary; Claude/Codex use hooks/app-server and Grok honestly degrades to next turn. <strong>urgent:</strong> cancel the in-flight provider turn, which is never resumed, then inject when input is free; it never deletes/interleaves a human draft or guesses through an unknown modal. <strong>critical:</strong> immediately and durably revoke write/landing authority; the message <em>intent</em> then decides the process action — <code>pause</code> is a non-destructive SIGSTOP of the same captured process tree, daemon-measured applied when the row is control-paused against this control message and resumed by SIGCONT as the exact same process, while <code>stop</code>/<code>cancel</code>/<code>restrict-writes</code> terminate the old provider generation under lifecycle policy, restart it read-only, and deliver to the new exact generation. Priority and intent are separate axes; these preserve Hive’s current measured semantics.</li>
               <li>For Claude/Codex terminal delivery, wait up to 5 seconds after injection for a later turn-start proof. Absence does not cause reinjection; state remains injected and shows delayed provider acknowledgment.</li>
               <li>Messages delivered while a provider turn is busy can be transport-injected only if the adapter version explicitly proves queued-input behavior. Otherwise they stay queued until the next safe boundary.</li>
               <li>Grok never gets a fabricated hook receipt. Transcript activity can reconcile later; stalled injected messages raise typed attention without duplicate writes.</li>
@@ -2044,7 +1796,7 @@ swift build -c release --arch arm64 --arch x86_64</pre>
             <ul class="clean">
               <li>All normative schemas, frame constants, state enums, limits, paths, permissions, build pins, shortcuts, settings, and postconditions in §§18–28 have one canonical machine-readable source in WP0/WP1.</li>
               <li>Open Ghostty questions are isolated to G1 complete manual I/O and G2 complete checkpoint. Until both pass, tmux/SwiftTerm remain the admission fallback and no direct-session claim ships.</li>
-              <li>Hierarchy-specific delegation, review routing, and artifact UI belong to the next two design documents but consume these locators, capabilities, events, statuses, message receipts, and one-workbench renderer without changing terminal ownership.</li>
+              <li>Hierarchy-specific delegation, review routing, artifact records, and the production one-workbench UI belong to the next two design documents. They <em>extend</em> these locators, capabilities, events, statuses, and message receipts; nothing in T0–T7 consumes an implemented role, task, or gate record, and terminal ownership does not change when they arrive.</li>
               <li>A package is done only when its evidence is automated in CI or an explicitly named clean-machine release gate. “Works manually” and elapsed soak without bounds do not satisfy an exit criterion.</li>
             </ul>
           </article>
@@ -2067,7 +1819,7 @@ swift build -c release --arch arm64 --arch x86_64</pre>
           <li><time datetime="2026-07-15">Hive source</time><a href="../../README.md">Current product and macOS architecture</a></li>
           <li><time datetime="2026-07-15">Hive inventory</time><a href="../../raw/research/zellij-transition/01-tmux-capability-inventory.md">65-capability tmux inventory</a></li>
           <li><time datetime="2026-07-15">Hierarchy groundwork</time><a href="../../raw/research/zellij-transition/03-agentic-hierarchy-groundwork.md">Terminal prerequisites for agent hierarchy</a></li>
-          <li><time datetime="2026-07">Sibling design</time><a href="agentic-hierarchy.html">The Foreman Model</a></li>
+          <li><time datetime="2026-07">Sibling design</time><a href="agentic-hierarchy.html">The Queen's Hive</a></li>
           <li><time datetime="2026-07">Sibling design</time><a href="split-horizon.html">Split Horizon workspace</a></li>
           <li><time datetime="2026-07-15">Pinned engine</time><a href="https://github.com/ghostty-org/ghostty/tree/73534c4680a809398b396c94ac7f12fcccb7963d">Ghostty production-baseline source commit</a></li>
           <li><time datetime="2026-07-15">Official architecture</time><a href="https://ghostty.org/docs/about">Ghostty architecture and embedding status</a></li>

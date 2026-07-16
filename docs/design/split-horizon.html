@@ -1,941 +1,11 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="doc-split-horizon">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light">
   <title>Hive Split Horizon — Grounded Product and Build Specification</title>
-  <style>
-    :root {
-      --page: #e8ece8;
-      --paper: #fbfaf6;
-      --paper-2: #f1f2ed;
-      --ink: #17201c;
-      --muted: #64716a;
-      --line: #cbd2cc;
-      --line-strong: #aab5ad;
-      --green: #20734d;
-      --green-soft: #dcece2;
-      --blue: #2d718e;
-      --blue-soft: #dcebf1;
-      --violet: #73578f;
-      --violet-soft: #e9e1ef;
-      --amber: #ba6a2e;
-      --amber-soft: #f4e1ce;
-      --red: #b64c43;
-      --red-soft: #f2ddd9;
-      --gray-soft: #e5e8e4;
-      --shadow: 0 26px 76px rgba(24, 34, 29, .13);
-      --radius: 18px;
-      --radius-sm: 10px;
-      --max: 1460px;
-    }
-
-    * { box-sizing: border-box; }
-
-    html {
-      scroll-behavior: smooth;
-      background: var(--page);
-    }
-
-    body {
-      margin: 0;
-      color: var(--ink);
-      background:
-        radial-gradient(circle at 9% 0%, rgba(32, 115, 77, .11), transparent 34rem),
-        linear-gradient(#eef1ed 0, var(--page) 48rem);
-      font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      line-height: 1.5;
-      text-rendering: optimizeLegibility;
-    }
-
-    button,
-    input { font: inherit; }
-
-    button { color: inherit; }
-
-    button:focus-visible,
-    a:focus-visible {
-      outline: 3px solid #e8a959;
-      outline-offset: 3px;
-    }
-
-    a {
-      color: inherit;
-      text-underline-offset: 3px;
-    }
-
-    code,
-    .mono {
-      font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
-    }
-
-    .shell {
-      width: min(calc(100% - 36px), var(--max));
-      margin-inline: auto;
-    }
-
-    .doc-nav {
-      position: sticky;
-      z-index: 100;
-      top: 0;
-      border-bottom: 1px solid rgba(170, 181, 173, .8);
-      background: rgba(238, 241, 237, .91);
-      backdrop-filter: blur(18px);
-    }
-
-    .doc-nav-inner {
-      display: flex;
-      min-height: 66px;
-      align-items: center;
-      justify-content: space-between;
-      gap: 20px;
-    }
-
-    .brand,
-    .app-brand,
-    .status-inline,
-    .menu-row,
-    .top-actions,
-    .crumbs,
-    .identity,
-    .control-item,
-    .tab-row,
-    .section-tagline {
-      display: flex;
-      align-items: center;
-    }
-
-    .brand { gap: 10px; }
-
-    .brand-icon {
-      width: 31px;
-      height: 31px;
-      border-radius: 8px;
-      box-shadow: 0 3px 9px rgba(30, 13, 49, .22);
-    }
-
-    .brand strong { display: block; font-size: 13px; }
-    .brand small { display: block; color: var(--muted); font: 9px "SFMono-Regular", Consolas, monospace; letter-spacing: .08em; text-transform: uppercase; }
-
-    .doc-links {
-      display: flex;
-      gap: 3px;
-      padding: 4px;
-      border: 1px solid var(--line);
-      border-radius: 11px;
-      background: rgba(251, 250, 246, .76);
-    }
-
-    .doc-links a {
-      padding: 7px 10px;
-      border-radius: 7px;
-      color: var(--muted);
-      font-size: 11px;
-      font-weight: 730;
-      text-decoration: none;
-    }
-
-    .doc-links a:hover { color: var(--ink); background: white; }
-
-    .hero {
-      display: grid;
-      grid-template-columns: minmax(0, 1.25fr) minmax(340px, .75fr);
-      gap: clamp(42px, 7vw, 112px);
-      align-items: end;
-      padding-block: clamp(74px, 9vw, 132px) 70px;
-    }
-
-    .eyebrow,
-    .section-label,
-    .micro-label {
-      margin: 0 0 17px;
-      color: var(--green);
-      font: 830 10px/1.2 "SFMono-Regular", Consolas, monospace;
-      letter-spacing: .12em;
-      text-transform: uppercase;
-    }
-
-    h1,
-    h2,
-    h3,
-    p { margin-top: 0; }
-
-    h1 {
-      max-width: 920px;
-      margin-bottom: 24px;
-      font-size: clamp(60px, 8vw, 116px);
-      font-weight: 760;
-      letter-spacing: -.073em;
-      line-height: .86;
-    }
-
-    h1 span { display: block; color: var(--green); }
-
-    .hero-copy {
-      max-width: 800px;
-      margin-bottom: 0;
-      color: var(--muted);
-      font-size: clamp(18px, 2vw, 23px);
-      line-height: 1.55;
-    }
-
-    .decision-card {
-      padding: 29px;
-      border: 1px solid var(--green);
-      border-radius: 23px;
-      background: var(--paper);
-      box-shadow: var(--shadow);
-    }
-
-    .decision-card .badge {
-      display: inline-block;
-      margin-bottom: 17px;
-      padding: 6px 9px;
-      border-radius: 999px;
-      color: var(--green);
-      background: var(--green-soft);
-      font: 820 9px "SFMono-Regular", Consolas, monospace;
-      letter-spacing: .08em;
-      text-transform: uppercase;
-    }
-
-    .decision-card h2 {
-      margin-bottom: 12px;
-      font-size: 30px;
-      letter-spacing: -.045em;
-      line-height: 1.02;
-    }
-
-    .decision-card p { margin-bottom: 19px; color: var(--muted); font-size: 14px; }
-
-    .assumption {
-      padding-top: 17px;
-      border-top: 1px solid var(--line);
-      font-size: 12px;
-      font-weight: 690;
-    }
-
-    .truth-grid {
-      display: grid;
-      grid-template-columns: repeat(6, 1fr);
-      gap: 1px;
-      margin-bottom: 100px;
-      overflow: hidden;
-      border: 1px solid var(--line);
-      border-radius: var(--radius);
-      background: var(--line);
-    }
-
-    .truth-item {
-      min-height: 175px;
-      padding: 23px;
-      background: var(--paper);
-    }
-
-    .truth-item strong { display: block; margin: 26px 0 7px; font-size: 15px; letter-spacing: -.02em; }
-    .truth-item p { margin: 0; color: var(--muted); font-size: 12px; }
-
-    .state-badge {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      padding: 5px 8px;
-      border-radius: 999px;
-      font: 820 8px "SFMono-Regular", Consolas, monospace;
-      letter-spacing: .06em;
-      text-transform: uppercase;
-      white-space: nowrap;
-    }
-
-    .state-badge.current { color: var(--green); background: var(--green-soft); }
-    .state-badge.flow { color: var(--blue); background: var(--blue-soft); }
-    .state-badge.terminal { color: var(--violet); background: var(--violet-soft); }
-    .state-badge.ui { color: var(--amber); background: var(--amber-soft); }
-    .state-badge.gap { color: var(--red); background: var(--red-soft); }
-    .state-badge.remove { color: #8f382f; background: #f0d4cf; }
-    .state-badge.cut { color: #5f6963; background: var(--gray-soft); }
-
-    .state-badge::before {
-      width: 6px;
-      height: 6px;
-      border-radius: 50%;
-      background: currentColor;
-      content: "";
-    }
-
-    section.doc-section {
-      padding-block: 96px;
-      border-top: 1px solid var(--line);
-      scroll-margin-top: 66px;
-    }
-
-    .section-head {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) minmax(310px, .52fr);
-      gap: 58px;
-      align-items: end;
-      margin-bottom: 40px;
-    }
-
-    .section-head h2 {
-      max-width: 980px;
-      margin-bottom: 0;
-      font-size: clamp(40px, 5vw, 70px);
-      font-weight: 750;
-      letter-spacing: -.058em;
-      line-height: .96;
-    }
-
-    .section-head > p { margin: 0; color: var(--muted); font-size: 16px; }
-
-    .dependency-map {
-      display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 14px;
-    }
-
-    .dependency-card {
-      position: relative;
-      min-height: 245px;
-      padding: 24px;
-      border: 1px solid var(--line);
-      border-radius: var(--radius);
-      background: var(--paper);
-    }
-
-    .dependency-card::after {
-      position: absolute;
-      top: 50%;
-      right: -23px;
-      z-index: 2;
-      width: 31px;
-      height: 31px;
-      border: 1px solid var(--line);
-      border-radius: 50%;
-      color: var(--muted);
-      background: var(--page);
-      content: "→";
-      font-size: 17px;
-      line-height: 29px;
-      text-align: center;
-      transform: translateY(-50%);
-    }
-
-    .dependency-card:last-child::after { display: none; }
-
-    .dependency-card h3 { margin: 22px 0 9px; font-size: 22px; letter-spacing: -.035em; }
-    .dependency-card p { color: var(--muted); font-size: 13px; }
-
-    .dependency-list { display: grid; gap: 7px; margin: 15px 0 0; padding: 0; list-style: none; }
-    .dependency-list li { position: relative; padding-left: 16px; font-size: 11px; }
-    .dependency-list li::before { position: absolute; top: .62em; left: 0; width: 6px; height: 6px; border-radius: 50%; background: var(--green); content: ""; }
-
-    /* App prototype */
-    .prototype-frame {
-      overflow: hidden;
-      border: 1px solid #83918a;
-      border-radius: 22px;
-      background: #0b1419;
-      box-shadow: var(--shadow);
-    }
-
-    .prototype-scroll { overflow-x: auto; overscroll-behavior-inline: contain; }
-
-    .app {
-      --app-bg: #091217;
-      --app-top: #101a20;
-      --app-panel: #101c23;
-      --app-panel-2: #172630;
-      --app-line: #263a45;
-      --app-ink: #eef5f6;
-      --app-muted: #8498a2;
-      --app-accent: #73d8e8;
-      --app-good: #69d49f;
-      --app-warn: #efb161;
-      --app-bad: #ec7770;
-      --app-violet: #c1a0dd;
-      position: relative;
-      min-width: 1220px;
-      height: 850px;
-      overflow: hidden;
-      color: var(--app-ink);
-      background: var(--app-bg);
-      font-size: 11px;
-      line-height: 1.35;
-    }
-
-    .native-menu {
-      position: relative;
-      z-index: 25;
-      display: flex;
-      height: 31px;
-      align-items: center;
-      justify-content: space-between;
-      padding: 0 12px;
-      border-bottom: 1px solid #26363e;
-      background: #151e23;
-    }
-
-    .menu-row { gap: 2px; }
-
-    .menu-trigger {
-      padding: 4px 7px;
-      border: 0;
-      border-radius: 5px;
-      color: #c9d4d8;
-      background: transparent;
-      cursor: pointer;
-      font-size: 9px;
-    }
-
-    .menu-trigger:hover,
-    .menu-trigger.active { color: white; background: #2a3941; }
-
-    .native-status { color: var(--app-muted); font: 8px "SFMono-Regular", Consolas, monospace; }
-
-    .menu-popover {
-      position: absolute;
-      z-index: 40;
-      display: none;
-      min-width: 238px;
-      padding: 6px;
-      border: 1px solid #53636b;
-      border-radius: 8px;
-      background: rgba(29, 40, 46, .98);
-      box-shadow: 0 18px 45px rgba(0, 0, 0, .38);
-    }
-
-    .menu-popover.open { display: block; }
-
-    .menu-popover { top: 27px; left: 12px; }
-    .menu-popover[data-menu-panel="edit"] { left: 62px; }
-    .menu-popover[data-menu-panel="view"] { left: 98px; }
-    .menu-popover[data-menu-panel="navigate"] { left: 140px; }
-    .menu-popover[data-menu-panel="agent"] { left: 207px; }
-    .menu-popover[data-menu-panel="run"] { left: 253px; }
-    .menu-popover[data-menu-panel="window"] { left: 286px; }
-
-    .menu-item {
-      display: grid;
-      width: 100%;
-      grid-template-columns: 1fr auto;
-      gap: 16px;
-      padding: 7px 9px;
-      border: 0;
-      border-radius: 5px;
-      color: #e7eef0;
-      background: transparent;
-      cursor: pointer;
-      font-size: 9px;
-      text-align: left;
-    }
-
-    .menu-item:hover { background: #3a6172; }
-    .menu-item .key { color: #98aab2; }
-    .menu-separator { height: 1px; margin: 5px 3px; background: #405058; }
-
-    .titlebar {
-      position: relative;
-      z-index: 20;
-      display: flex;
-      height: 58px;
-      align-items: center;
-      justify-content: space-between;
-      gap: 20px;
-      padding: 0 14px;
-      border-bottom: 1px solid var(--app-line);
-      background: var(--app-top);
-    }
-
-    .app-brand { gap: 9px; }
-    .app-icon { width: 29px; height: 29px; border-radius: 7px; box-shadow: 0 3px 10px rgba(0, 0, 0, .35); }
-    .app-brand strong { display: block; font-size: 11px; }
-    .app-brand small { display: block; color: var(--app-muted); font: 7px "SFMono-Regular", Consolas, monospace; letter-spacing: .07em; text-transform: uppercase; }
-
-    .project-context,
-    .app-button,
-    .icon-button,
-    .rail-button,
-    .tree-button,
-    .detail-tab,
-    .settings-nav-button,
-    .seg-button {
-      border: 0;
-      cursor: pointer;
-    }
-
-    .project-context,
-    .app-button,
-    .icon-button {
-      border: 1px solid var(--app-line);
-      color: var(--app-ink);
-      background: var(--app-panel);
-    }
-
-    .project-context {
-      min-width: 248px;
-      padding: 8px 11px;
-      border-radius: 8px;
-      cursor: default;
-      text-align: left;
-    }
-
-    .project-context strong { display: block; font-size: 9px; }
-    .project-context span { display: block; color: var(--app-muted); font: 7px "SFMono-Regular", Consolas, monospace; }
-
-    .run-context { text-align: center; }
-    .run-context strong { display: block; font-size: 10px; }
-    .run-context span { color: var(--app-muted); font: 7px "SFMono-Regular", Consolas, monospace; letter-spacing: .05em; text-transform: uppercase; }
-
-    .top-actions { gap: 6px; }
-    .app-button { padding: 7px 9px; border-radius: 7px; font-size: 8px; font-weight: 720; }
-    .app-button.accent { border-color: transparent; color: #071216; background: var(--app-accent); }
-    .app-button.warn { border-color: #6d552e; color: var(--app-warn); background: #211d16; }
-    .icon-button { display: grid; width: 30px; height: 30px; place-items: center; border-radius: 7px; }
-
-    .app-route {
-      display: none;
-      height: calc(100% - 89px);
-    }
-
-    .app-route.active { display: grid; }
-
-    .run-route { grid-template-columns: 232px minmax(650px, 1fr) 304px; }
-
-    .hierarchy-rail {
-      display: flex;
-      min-width: 0;
-      flex-direction: column;
-      border-right: 1px solid var(--app-line);
-      background: #0d171c;
-    }
-
-    .rail-section {
-      padding: 13px 10px;
-      border-bottom: 1px solid var(--app-line);
-    }
-
-    .rail-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 10px;
-      padding: 4px 7px 10px;
-    }
-
-    .app-label { color: var(--app-muted); font: 790 7px "SFMono-Regular", Consolas, monospace; letter-spacing: .08em; text-transform: uppercase; }
-    .count-chip { padding: 3px 6px; border-radius: 999px; color: var(--app-accent); background: rgba(115, 216, 232, .12); font: 730 7px "SFMono-Regular", Consolas, monospace; }
-
-    .tree-list { flex: 1; padding: 8px; overflow: hidden; }
-
-    .tree-button {
-      display: grid;
-      width: 100%;
-      grid-template-columns: auto minmax(0, 1fr) auto;
-      gap: 8px;
-      align-items: center;
-      padding: 7px 8px;
-      border-radius: 7px;
-      color: var(--app-muted);
-      background: transparent;
-      text-align: left;
-    }
-
-    .tree-button:hover { background: var(--app-panel); }
-    .tree-button.selected { color: var(--app-ink); background: var(--app-panel-2); box-shadow: inset 2px 0 var(--app-accent); }
-    .tree-button.depth-1 { padding-left: 21px; }
-    .tree-button.depth-2 { padding-left: 37px; }
-
-    .status-dot {
-      width: 6px;
-      height: 6px;
-      border-radius: 50%;
-      background: var(--app-good);
-      box-shadow: 0 0 0 3px rgba(105, 212, 159, .13);
-    }
-
-    .status-dot.warn { background: var(--app-warn); box-shadow: 0 0 0 3px rgba(239, 177, 97, .13); }
-    .status-dot.bad { background: var(--app-bad); box-shadow: 0 0 0 3px rgba(236, 119, 112, .13); }
-    .status-dot.idle { background: #95a39c; box-shadow: 0 0 0 3px rgba(149, 163, 156, .13); }
-
-    .tree-copy { min-width: 0; }
-    .tree-copy strong,
-    .tree-copy span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .tree-copy strong { color: inherit; font-size: 9px; font-weight: 680; }
-    .tree-copy span { margin-top: 1px; color: #61747e; font-size: 7px; }
-
-    .role-badge {
-      padding: 3px 5px;
-      border-radius: 999px;
-      color: var(--app-muted);
-      background: var(--app-panel-2);
-      font: 720 6px "SFMono-Regular", Consolas, monospace;
-      letter-spacing: .05em;
-      text-transform: uppercase;
-    }
-
-    .role-badge.queen { color: var(--app-warn); }
-    .role-badge.lead { color: #83c8ec; }
-    .role-badge.reviewer { color: var(--app-violet); }
-    .attention-count { min-width: 16px; padding: 2px 4px; border-radius: 999px; color: #201306; background: var(--app-warn); font: 790 7px "SFMono-Regular", Consolas, monospace; text-align: center; }
-
-    .rail-footer { padding: 10px; border-top: 1px solid var(--app-line); }
-    .safety-card { padding: 10px; border: 1px solid #5d4d32; border-radius: 8px; background: #1b1914; }
-    .safety-card strong { display: block; color: var(--app-warn); font-size: 9px; }
-    .safety-card span { color: var(--app-muted); font-size: 7px; }
-
-    .workbench {
-      display: grid;
-      min-width: 0;
-      grid-template-rows: 47px 58px minmax(0, 1fr) 118px;
-      background: #081015;
-    }
-
-    .control-strip {
-      display: grid;
-      grid-template-columns: 1.2fr 1fr 1fr 1fr;
-      border-bottom: 1px solid var(--app-line);
-      background: #0d171c;
-    }
-
-    .control-item { justify-content: space-between; gap: 8px; padding: 8px 11px; border-right: 1px solid var(--app-line); }
-    .control-item:last-child { border-right: 0; }
-    .control-item span { color: var(--app-muted); font: 700 6px "SFMono-Regular", Consolas, monospace; letter-spacing: .07em; text-transform: uppercase; }
-    .control-item strong { font-size: 8px; white-space: nowrap; }
-    .control-item strong.safe { color: var(--app-good); }
-    .control-item strong.authority { color: var(--app-warn); }
-
-    .agent-head {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 15px;
-      padding: 10px 13px;
-      border-bottom: 1px solid var(--app-line);
-    }
-
-    .identity { gap: 9px; }
-    .identity h3 { margin: 0 0 2px; font-size: 15px; letter-spacing: -.025em; }
-    .identity p { margin: 0; color: var(--app-muted); font-size: 7px; }
-
-    .terminal {
-      position: relative;
-      padding: 16px 18px;
-      overflow: hidden;
-      color: #9cb0b8;
-      background:
-        linear-gradient(rgba(115, 216, 232, .017) 1px, transparent 1px),
-        #060c0f;
-      background-size: 100% 21px;
-      font: 8px/1.67 "SFMono-Regular", Consolas, monospace;
-    }
-
-    .terminal .live-label {
-      position: absolute;
-      top: 11px;
-      right: 12px;
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      padding: 5px 7px;
-      border: 1px solid #2b3b42;
-      border-radius: 6px;
-      color: var(--app-muted);
-      background: rgba(10, 17, 21, .9);
-      font-size: 7px;
-      text-transform: uppercase;
-    }
-
-    .terminal .prompt { color: var(--app-accent); }
-    .terminal .command { color: #eef6f7; }
-    .terminal .good { color: var(--app-good); }
-    .terminal .warn { color: var(--app-warn); }
-    .terminal .dim { color: #52656e; }
-    .cursor { display: inline-block; width: 6px; height: 10px; vertical-align: -2px; background: var(--app-accent); animation: blink 1.15s steps(1) infinite; }
-    @keyframes blink { 50% { opacity: 0; } }
-
-    .evidence-band { display: grid; grid-template-columns: 1fr 1fr; border-top: 1px solid var(--app-line); background: #0d171c; }
-    .evidence-block { padding: 11px 13px; border-right: 1px solid var(--app-line); }
-    .evidence-block:last-child { border-right: 0; }
-    .event-mini { display: grid; grid-template-columns: 36px 1fr; gap: 7px; margin-top: 7px; color: var(--app-muted); font-size: 7px; }
-    .event-mini time { color: #536871; font-family: "SFMono-Regular", Consolas, monospace; }
-    .event-mini b { color: var(--app-ink); font-weight: 620; }
-    .artifact-chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
-    .artifact-chip { padding: 5px 6px; border: 1px solid var(--app-line); border-radius: 5px; color: var(--app-muted); background: var(--app-panel); font: 7px "SFMono-Regular", Consolas, monospace; }
-
-    .inspector {
-      min-width: 0;
-      border-left: 1px solid var(--app-line);
-      background: #0f191e;
-    }
-
-    .tab-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 3px; padding: 7px; border-bottom: 1px solid var(--app-line); }
-    .detail-tab { padding: 7px 3px; border-radius: 5px; color: var(--app-muted); background: transparent; font-size: 7px; font-weight: 680; }
-    .detail-tab.active { color: var(--app-ink); background: var(--app-panel-2); }
-
-    .detail-pane { display: none; padding: 15px; }
-    .detail-pane.active { display: block; }
-    .detail-pane h3 { margin: 8px 0 7px; font-size: 15px; letter-spacing: -.025em; line-height: 1.2; }
-    .detail-pane > p { color: var(--app-muted); font-size: 8px; line-height: 1.55; }
-
-    .fact-row { display: grid; grid-template-columns: 80px 1fr; gap: 8px; padding: 7px 0; border-bottom: 1px solid var(--app-line); font-size: 8px; }
-    .fact-row span { color: var(--app-muted); }
-    .fact-row strong { overflow: hidden; font-weight: 640; text-overflow: ellipsis; white-space: nowrap; }
-    .fact-row strong.good { color: var(--app-good); }
-    .fact-row strong.warn { color: var(--app-warn); }
-
-    .check-row { display: grid; grid-template-columns: 13px 1fr; gap: 7px; padding: 7px 0; border-bottom: 1px solid var(--app-line); color: var(--app-muted); font-size: 8px; }
-    .check-box { display: grid; width: 12px; height: 12px; place-items: center; border: 1px solid var(--app-line); border-radius: 3px; color: var(--app-good); font-size: 7px; }
-    .review-card { margin-top: 11px; padding: 10px; border: 1px solid #574668; border-radius: 8px; background: #18131d; }
-    .review-card strong { display: block; color: var(--app-violet); font-size: 9px; }
-    .review-card p { margin: 4px 0 0; color: var(--app-muted); font-size: 7px; }
-
-    .source-flag { display: inline-flex; margin-top: 10px; padding: 4px 6px; border-radius: 5px; color: var(--app-warn); background: #211b12; font: 690 6px "SFMono-Regular", Consolas, monospace; letter-spacing: .05em; text-transform: uppercase; }
-
-    .attention-drawer {
-      position: absolute;
-      z-index: 35;
-      top: 89px;
-      right: 0;
-      bottom: 0;
-      width: 330px;
-      padding: 14px;
-      border-left: 1px solid #50616a;
-      background: rgba(15, 25, 30, .98);
-      box-shadow: -18px 0 45px rgba(0, 0, 0, .25);
-      transform: translateX(105%);
-      transition: transform .18s ease;
-    }
-
-    .attention-drawer.open { transform: translateX(0); }
-    .drawer-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 13px; }
-    .drawer-head h3 { margin: 0; font-size: 16px; }
-    .attention-item { display: grid; grid-template-columns: auto 1fr; gap: 9px; padding: 11px; margin-bottom: 7px; border: 1px solid var(--app-line); border-radius: 8px; background: var(--app-panel); }
-    .attention-item strong { display: block; font-size: 9px; }
-    .attention-item p { margin: 3px 0 0; color: var(--app-muted); font-size: 7px; }
-    .drawer-empty { padding: 16px; border: 1px dashed #47575f; border-radius: 8px; color: var(--app-muted); font-size: 8px; text-align: center; }
-
-    /* Settings route — same dark Hive application system */
-    .settings-route {
-      grid-template-columns: 208px minmax(0, 1fr);
-      color: var(--app-ink);
-      background:
-        radial-gradient(circle at 82% -20%, rgba(115, 216, 232, .08), transparent 38%),
-        var(--app-bg);
-    }
-
-    .settings-nav {
-      padding: 15px 10px;
-      border-right: 1px solid var(--app-line);
-      background: #111a1f;
-    }
-
-    .settings-nav h3 { margin: 7px 9px 13px; font-size: 16px; }
-    .settings-nav .nav-group { margin: 15px 0 6px; padding: 0 9px; color: var(--app-muted); font: 730 7px "SFMono-Regular", Consolas, monospace; letter-spacing: .08em; text-transform: uppercase; }
-
-    .settings-nav-button {
-      display: grid;
-      width: 100%;
-      grid-template-columns: 18px 1fr;
-      gap: 8px;
-      padding: 9px;
-      border-radius: 7px;
-      color: #9aabb3;
-      background: transparent;
-      text-align: left;
-      font-size: 9px;
-    }
-
-    .settings-nav-button:hover { color: var(--app-ink); background: #17272e; }
-    .settings-nav-button.active { color: var(--app-accent); background: #1d3039; box-shadow: inset 2px 0 var(--app-accent), 0 3px 12px rgba(0, 0, 0, .15); }
-
-    .settings-note { margin: 20px 8px 0; padding: 10px; border: 1px solid #30434c; border-radius: 8px; color: var(--app-muted); background: #152229; font-size: 7px; line-height: 1.5; }
-
-    .settings-content { position: relative; overflow: hidden; background: transparent; }
-    .settings-page { display: none; height: 100%; padding: 24px 30px; overflow-y: auto; }
-    .settings-page.active { display: block; }
-    .settings-page-head { display: flex; align-items: start; justify-content: space-between; gap: 20px; margin-bottom: 20px; }
-    .settings-page-head h2 { margin-bottom: 6px; font-size: 25px; letter-spacing: -.04em; }
-    .settings-page-head p { max-width: 620px; margin: 0; color: var(--app-muted); font-size: 9px; }
-
-    .light-button { padding: 7px 9px; border: 1px solid #3a4d56; border-radius: 7px; color: var(--app-ink); background: #1b2a31; cursor: pointer; font-size: 8px; font-weight: 690; }
-    .light-button:hover { border-color: #58717d; background: #223740; }
-    .light-button.primary { border-color: var(--app-accent); color: #071216; background: var(--app-accent); }
-
-    .settings-banner { margin-bottom: 12px; padding: 10px 12px; border: 1px solid #6d552e; border-radius: 8px; color: var(--app-warn); background: #211d16; font-size: 8px; }
-    .settings-card { margin-bottom: 11px; padding: 15px; border: 1px solid var(--app-line); border-radius: 11px; background: var(--app-panel); box-shadow: 0 5px 16px rgba(0, 0, 0, .13); }
-    .settings-card h3 { margin-bottom: 4px; font-size: 13px; }
-    .settings-card > p { margin-bottom: 11px; color: var(--app-muted); font-size: 8px; }
-
-    .selection-row { display: flex; align-items: center; gap: 9px; }
-    .selection-row strong { margin-right: auto; font-size: 10px; }
-    .fake-select { min-width: 145px; padding: 7px 9px; border: 1px solid #3a4d56; border-radius: 6px; color: var(--app-ink); background: #121d22; font-size: 8px; }
-
-    .chain-row { display: grid; grid-template-columns: 54px 1fr auto auto; gap: 9px; align-items: center; padding: 8px 0; border-top: 1px solid var(--app-line); }
-    .chain-rank { color: var(--app-muted); font: 720 7px "SFMono-Regular", Consolas, monospace; text-transform: uppercase; }
-    .chain-model strong { display: block; font-size: 9px; }
-    .chain-model span { display: block; color: var(--app-muted); font-size: 7px; }
-    .effort-pill { padding: 4px 6px; border-radius: 999px; color: var(--app-violet); background: #271f31; font: 700 7px "SFMono-Regular", Consolas, monospace; }
-    .row-actions { color: var(--app-accent); font-size: 10px; }
-
-    .provider-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
-    .provider-card { padding: 14px; border: 1px solid var(--app-line); border-radius: 11px; background: var(--app-panel); }
-    .provider-head { display: flex; align-items: center; justify-content: space-between; gap: 9px; margin-bottom: 12px; }
-    .provider-head strong { font-size: 11px; }
-    .toggle { width: 27px; height: 15px; padding: 2px; border-radius: 999px; background: #4fa47b; }
-    .toggle::after { display: block; width: 11px; height: 11px; margin-left: auto; border-radius: 50%; background: white; content: ""; }
-    .meter-label { display: flex; align-items: center; justify-content: space-between; color: var(--app-muted); font-size: 7px; }
-    .meter { height: 5px; margin: 6px 0 10px; overflow: hidden; border-radius: 999px; background: #26363e; }
-    .meter i { display: block; height: 100%; background: var(--app-accent); }
-    .meter.unknown { background: repeating-linear-gradient(90deg, #26373f 0 8px, #1a292f 8px 16px); }
-    .model-row { display: grid; grid-template-columns: auto 1fr auto; gap: 8px; align-items: center; padding: 8px 0; border-top: 1px solid var(--app-line); }
-    .model-row strong { display: block; font-size: 8px; }
-    .model-row span { display: block; color: var(--app-muted); font-size: 7px; }
-
-    .usage-summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 12px; }
-    .usage-metric { padding: 12px; border: 1px solid var(--app-line); border-radius: 8px; background: #121e24; }
-    .usage-metric strong { display: block; font-size: 18px; letter-spacing: -.04em; }
-    .usage-metric span { color: var(--app-muted); font-size: 7px; }
-    .usage-agent { display: grid; grid-template-columns: 1fr 1fr auto; gap: 10px; padding: 9px 0; border-top: 1px solid var(--app-line); font-size: 8px; }
-    .usage-agent span { color: var(--app-muted); }
-    .settings-content .callout { color: var(--app-muted); background: #152229; }
-    .settings-content .callout strong { color: var(--app-ink); }
-    .settings-content .state-badge.current { color: var(--app-good); background: #183126; }
-
-    .prototype-caption {
-      display: grid;
-      grid-template-columns: repeat(4, 1fr);
-      gap: 1px;
-      overflow: hidden;
-      border: 1px solid var(--line);
-      border-top: 0;
-      border-radius: 0 0 18px 18px;
-      background: var(--line);
-    }
-
-    .prototype-caption div { min-height: 112px; padding: 18px; background: var(--paper); }
-    .prototype-caption strong { display: block; margin-bottom: 6px; color: var(--green); font: 800 8px "SFMono-Regular", Consolas, monospace; letter-spacing: .08em; text-transform: uppercase; }
-    .prototype-caption p { margin: 0; color: var(--muted); font-size: 11px; }
-
-    /* Feature ledger */
-    .feature-groups { display: grid; gap: 16px; }
-    .feature-group { overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius); background: var(--paper); }
-    .feature-group-head { display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, .5fr); gap: 30px; align-items: end; padding: 22px; border-bottom: 1px solid var(--line); background: var(--paper-2); }
-    .feature-group-head h3 { margin: 0; font-size: 23px; letter-spacing: -.035em; }
-    .feature-group-head p { margin: 0; color: var(--muted); font-size: 12px; }
-
-    .feature-table-wrap { overflow-x: auto; }
-    .feature-table { width: 100%; min-width: 1050px; border-collapse: collapse; table-layout: fixed; font-size: 11px; }
-    .feature-table th,
-    .feature-table td { padding: 15px 17px; vertical-align: top; border-bottom: 1px solid var(--line); text-align: left; }
-    .feature-table th { color: var(--muted); background: #f7f7f3; font: 800 8px "SFMono-Regular", Consolas, monospace; letter-spacing: .07em; text-transform: uppercase; }
-    .feature-table tbody tr:last-child td { border-bottom: 0; }
-    .feature-table .feature-name { width: 18%; }
-    .feature-table .behavior { width: 26%; }
-    .feature-table .reality { width: 26%; }
-    .feature-table .build { width: 30%; }
-    .feature-table td strong { display: block; margin-bottom: 4px; font-size: 12px; }
-    .feature-table td p { margin: 0; color: var(--muted); }
-    .feature-table .state-badge { margin-bottom: 8px; }
-
-    .source-link { display: inline-block; margin-top: 7px; color: var(--green); font: 700 8px "SFMono-Regular", Consolas, monospace; text-decoration: none; }
-    .source-link:hover { text-decoration: underline; }
-
-    /* Menu map */
-    .menu-map { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
-    .menu-card { padding: 22px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--paper); }
-    .menu-card h3 { margin-bottom: 15px; font-size: 21px; letter-spacing: -.03em; }
-    .menu-mapping { display: grid; grid-template-columns: 150px 22px 1fr; gap: 9px; align-items: start; padding: 10px 0; border-top: 1px solid var(--line); font-size: 11px; }
-    .menu-mapping span:first-child { font-weight: 710; }
-    .menu-mapping i { color: var(--green); font-style: normal; }
-    .menu-mapping p { margin: 0; color: var(--muted); }
-
-    .callout {
-      margin-top: 18px;
-      padding: 17px 19px;
-      border-left: 3px solid var(--green);
-      border-radius: 0 9px 9px 0;
-      color: var(--muted);
-      background: var(--paper-2);
-      font-size: 12px;
-    }
-    .callout strong { color: var(--ink); }
-    .callout.warn { border-left-color: var(--amber); }
-    .callout.stop { border-left-color: var(--red); }
-
-    /* Contract and build plan */
-    .contract-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
-    .contract-card { padding: 22px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--paper); }
-    .contract-card h3 { margin: 17px 0 8px; font-size: 20px; letter-spacing: -.03em; }
-    .contract-card > p { color: var(--muted); font-size: 12px; }
-    .field-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 14px; }
-    .field-list code { padding: 5px 7px; border: 1px solid var(--line); border-radius: 6px; color: #415149; background: var(--paper-2); font-size: 9px; }
-
-    .phase-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
-    .phase-card { min-height: 295px; padding: 23px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--paper); }
-    .phase-number { display: grid; width: 40px; height: 40px; place-items: center; border-radius: 11px; color: var(--green); background: var(--green-soft); font: 820 10px "SFMono-Regular", Consolas, monospace; }
-    .phase-card h3 { margin: 20px 0 8px; font-size: 21px; letter-spacing: -.03em; }
-    .phase-card > p { color: var(--muted); font-size: 12px; }
-    .phase-card ul { display: grid; gap: 7px; margin: 14px 0 0; padding: 0; list-style: none; }
-    .phase-card li { position: relative; padding-left: 16px; font-size: 11px; }
-    .phase-card li::before { position: absolute; top: .58em; left: 0; width: 6px; height: 6px; border-radius: 50%; background: var(--green); content: ""; }
-    .phase-exit { margin-top: 16px; padding: 11px; border-radius: 8px; color: var(--muted); background: var(--paper-2); font-size: 10px; }
-    .phase-exit strong { display: block; margin-bottom: 3px; color: var(--green); font: 800 8px "SFMono-Regular", Consolas, monospace; text-transform: uppercase; }
-
-    .non-goals { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
-    .non-goal { min-height: 178px; padding: 21px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--paper); }
-    .non-goal strong { display: block; margin: 21px 0 7px; font-size: 15px; }
-    .non-goal p { margin: 0; color: var(--muted); font-size: 11px; }
-
-    .source-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 28px; margin: 0; padding: 0; list-style: none; }
-    .source-list li { padding: 12px 0; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 11px; }
-    .source-list a { display: block; margin-bottom: 3px; color: var(--ink); font-weight: 700; }
-
-    footer { padding-block: 40px; border-top: 1px solid var(--line); color: var(--muted); font-size: 10px; }
-    .footer-inner { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
-
-    @media (max-width: 980px) {
-      .hero,
-      .section-head,
-      .feature-group-head { grid-template-columns: 1fr; }
-      .truth-grid { grid-template-columns: repeat(2, 1fr); }
-      .dependency-map,
-      .non-goals { grid-template-columns: 1fr; }
-      .dependency-card::after { display: none; }
-      .menu-map,
-      .contract-grid,
-      .phase-grid { grid-template-columns: 1fr; }
-      .prototype-caption { grid-template-columns: repeat(2, 1fr); }
-    }
-
-    @media (max-width: 680px) {
-      .shell { width: min(calc(100% - 22px), var(--max)); }
-      .doc-nav-inner { min-height: 58px; }
-      .brand small,
-      .doc-links a span { display: none; }
-      .doc-links a { padding: 6px 8px; }
-      h1 { font-size: clamp(54px, 17vw, 78px); }
-      .truth-grid,
-      .prototype-caption { grid-template-columns: 1fr; }
-      .truth-item { min-height: 150px; }
-      .prototype-frame { margin-inline: -11px; border-radius: 0; }
-      .source-list { grid-template-columns: 1fr; }
-      .footer-inner { align-items: start; flex-direction: column; }
-    }
-
-    @media (prefers-reduced-motion: reduce) {
-      html { scroll-behavior: auto; }
-      .cursor { animation: none; }
-      .attention-drawer { transition: none; }
-    }
-
-    @media print {
-      .doc-nav { position: static; }
-      .prototype-frame { break-inside: avoid; box-shadow: none; }
-      section.doc-section { break-inside: avoid; }
-    }
-  </style>
+  <link rel="stylesheet" href="hive-design.css">
 </head>
 <body>
   <nav class="doc-nav" aria-label="Document navigation">
@@ -956,21 +26,21 @@
   <main>
     <header class="shell hero">
       <div>
-        <p class="eyebrow">Hive Workspace · Split Horizon · revision 3</p>
+        <p class="eyebrow">Hive Workspace · Split Horizon · revision 4</p>
         <h1>A workspace built on <span>what Hive can prove.</span></h1>
-        <p class="hero-copy">One cohesive control surface for the Foreman workflow and SessionHost terminal stack—grounded in Hive’s current menus, settings, feed, names, status, attention, and daemon ownership.</p>
+        <p class="hero-copy">One cohesive control surface for the Queen's Hive workflow and SessionHost terminal stack—grounded in Hive’s current menus, settings, feed, names, status, attention, and daemon ownership.</p>
       </div>
       <aside class="decision-card">
         <span class="badge">Implementation target</span>
-        <h2>Post-workflow, post-terminal Electron workspace.</h2>
-        <p>The terminal plan’s P6 client is the single target: sandboxed renderer, xterm.js, one selected live attachment, and a narrow main-process bridge. The AppKit/SwiftTerm Workspace is the source for parity requirements, not a second UI to retain.</p>
+        <h2>Third transition: the native AppKit Workspace, evolved.</h2>
+        <p>Split Horizon is built after the terminal foundation (T0–T7) and the Queen's Hive hierarchy, inside the existing native AppKit Workspace: one selected live <code>HiveTerminalKit</code> (Ghostty) workbench attached to <code>hive-sessiond</code>, a persistent hierarchy rail, and typed daemon contracts. SwiftTerm and the pane-grid topology are what get deleted — the native product itself evolves and remains.</p>
         <div class="assumption">This document specifies product behavior, missing contracts, and the legacy deletion boundary. It does not claim the new Workspace already exists.</div>
       </aside>
     </header>
 
     <div class="shell truth-grid" aria-label="Implementation state legend">
       <article class="truth-item"><span class="state-badge current">Current Hive</span><strong>Shipping behavior</strong><p>Backed by today’s Swift Workspace, daemon, config, or CLI contracts.</p></article>
-      <article class="truth-item"><span class="state-badge flow">Foreman</span><strong>Workflow prerequisite</strong><p>Delivered by the hierarchy, lead, reviewer, gate, and merge-flow change.</p></article>
+      <article class="truth-item"><span class="state-badge flow">Queen's Hive</span><strong>Workflow prerequisite</strong><p>Delivered by the hierarchy, lead, reviewer, gate, and merge-flow change.</p></article>
       <article class="truth-item"><span class="state-badge terminal">SessionHost</span><strong>Terminal prerequisite</strong><p>Delivered by generation-safe sessions, events, snapshots, and input arbitration.</p></article>
       <article class="truth-item"><span class="state-badge ui">UI work</span><strong>Presentation work</strong><p>Existing or prerequisite behavior that Split Horizon still must render and connect.</p></article>
       <article class="truth-item"><span class="state-badge gap">Contract gap</span><strong>New backend work</strong><p>Promised by the UI but not owned by either prerequisite until explicitly added.</p></article>
@@ -985,11 +55,12 @@
         </div>
         <div class="dependency-map">
           <article class="dependency-card"><span class="state-badge current">Current Hive</span><h3>Carry forward proven behavior</h3><p>Keep the daemon-owned semantics and data contracts—not the AppKit windows or pane topology that happen to present them today.</p><ul class="dependency-list"><li>Human first names and queen addressing</li><li>Measured agent status and explicit unknown</li><li>Attention ordering and acknowledgement</li><li>Tasks, Models, Usage, and autonomy behavior</li><li>Project identity and daemon-owned mutation</li></ul></article>
-          <article class="dependency-card"><span class="state-badge flow">Foreman + SessionHost</span><h3>Wait for the structural truth</h3><p>The workflow owns hierarchy and gates; the terminal stack owns process/session reality.</p><ul class="dependency-list"><li>Parent, role, owner, run, and generation</li><li>Leads, reviewers, G1/G2, review state</li><li>Snapshot/cursor attach and off-screen detach</li><li>Input ownership and delivery receipts</li><li>Scoped queries and lifecycle events</li></ul></article>
+          <article class="dependency-card"><span class="state-badge flow">Queen's Hive + SessionHost</span><h3>Wait for the structural truth</h3><p>The workflow owns hierarchy and gates; the terminal stack owns process/session reality.</p><ul class="dependency-list"><li>Parent, role, owner, run, and generation</li><li>Leads, reviewers, G1/G2, review state</li><li>Snapshot/cursor attach and off-screen detach</li><li>Input ownership and delivery receipts</li><li>Scoped queries and lifecycle events</li></ul></article>
           <article class="dependency-card"><span class="state-badge ui">Split Horizon</span><h3>Compose one honest workspace</h3><p>The new client makes the two planes legible and actionable without owning either.</p><ul class="dependency-list"><li>Persistent hierarchy rail and attention rollups</li><li>One selected live terminal workbench</li><li>Integrated settings and native menus</li><li>Task, review, event, and evidence inspector</li><li>Explicit target, authority, and destructive previews</li></ul></article>
         </div>
         <div class="callout stop"><strong>Replacement rule.</strong> Split Horizon ships as a hard UI cutover. When a successor meets its acceptance gate, the replaced window, panel, command, shortcut, reducer branch, and tests leave the product in the same release. During development the old app may remain a reference oracle, but Hive does not ship two workspace modes.</div>
-        <div class="callout warn"><strong>Known unowned gap.</strong> The Foreman design says specs, tasks, interface contracts, summaries, and artifacts live on disk, but neither prerequisite currently defines an indexed read contract for the Workspace. This document requires an <code>ArtifactRef</code>/<code>TaskDetail</code> read model before those inspector tabs ship. The renderer must not crawl the repository or fabricate checklist progress.</div>
+        <div class="callout warn"><strong>Owned gap.</strong> The Queen's Hive design says specs, tasks, interface contracts, summaries, and artifacts live on disk; its platform contract owns the indexed <code>ArtifactRef</code>/<code>TaskDetail</code> read model, and this document requires that model before those inspector tabs ship. The view layer must not crawl the repository or fabricate checklist progress.</div>
+        <div class="callout"><strong>Sequence position.</strong> Split Horizon is the third transition. It consumes the terminal foundation (T0–T7: locators, SessionHost, sessiond, HiveTerminalKit, input arbiter, status/event primitives), The Queen's Hive (hierarchy records, delegation, review duty, gates, grant-bound landing), and the communication contract (<a href="hive-communication.html">hive-communication.html</a>). It redesigns none of them.</div>
       </div>
     </section>
 
@@ -1041,9 +112,9 @@
                     <button class="tree-button depth-2" data-agent data-name="sam" data-role="worker" data-task="Persist the human ownership latch" data-model="claude · live model"><i class="status-dot warn"></i><span class="tree-copy"><strong>sam</strong><span>human latch WAL</span></span><span class="attention-count">1</span></button>
                     <button class="tree-button depth-2" data-agent data-name="sarah" data-role="reviewer" data-task="Review david before merge-up" data-model="grok · cross-model review"><i class="status-dot"></i><span class="tree-copy"><strong>sarah</strong><span>reviewing david</span></span><span class="role-badge reviewer">review</span></button>
                     <button class="tree-button depth-1" data-agent data-name="nina" data-role="lead" data-task="Workspace client integration" data-model="codex · live model"><i class="status-dot"></i><span class="tree-copy"><strong>nina</strong><span>workspace · 3 workers</span></span><span class="role-badge lead">lead</span></button>
-                    <button class="tree-button depth-2" data-agent data-name="leo" data-role="worker" data-task="Electron SessionHost bridge" data-model="claude · live model"><i class="status-dot"></i><span class="tree-copy"><strong>leo</strong><span>Electron bridge</span></span><span></span></button>
-                    <button class="tree-button depth-1" data-agent data-name="priya" data-role="lead" data-task="Cross-platform conformance" data-model="grok · live model"><i class="status-dot"></i><span class="tree-copy"><strong>priya</strong><span>conformance · 3 workers</span></span><span class="role-badge lead">lead</span></button>
-                    <button class="tree-button depth-2" data-agent data-name="omar" data-role="worker" data-task="ConPTY crash recovery evidence" data-model="codex · live model"><i class="status-dot bad"></i><span class="tree-copy"><strong>omar</strong><span>blocked · crash UX</span></span><span class="attention-count">1</span></button>
+                    <button class="tree-button depth-2" data-agent data-name="leo" data-role="worker" data-task="HiveTerminalKit attach bridge" data-model="claude · live model"><i class="status-dot"></i><span class="tree-copy"><strong>leo</strong><span>terminal kit bridge</span></span><span></span></button>
+                    <button class="tree-button depth-1" data-agent data-name="priya" data-role="lead" data-task="SessionHost conformance" data-model="grok · live model"><i class="status-dot"></i><span class="tree-copy"><strong>priya</strong><span>conformance · 3 workers</span></span><span class="role-badge lead">lead</span></button>
+                    <button class="tree-button depth-2" data-agent data-name="omar" data-role="worker" data-task="Host-loss recovery evidence" data-model="codex · live model"><i class="status-dot bad"></i><span class="tree-copy"><strong>omar</strong><span>blocked · crash UX</span></span><span class="attention-count">1</span></button>
                   </div>
                   <div class="rail-footer"><div class="safety-card"><strong>Sandboxed autonomy</strong><span>Approvals required · confirmed by daemon feed</span></div></div>
                 </aside>
@@ -1057,24 +128,24 @@
 
                 <aside class="inspector">
                   <div class="tab-row" role="tablist"><button class="detail-tab active" data-detail-tab="task">Task</button><button class="detail-tab" data-detail-tab="review">Review</button><button class="detail-tab" data-detail-tab="events">Events</button><button class="detail-tab" data-detail-tab="session">Session</button></div>
-                  <div class="detail-pane active" data-detail-pane="task"><span class="app-label">Task detail</span><h3 data-selected-task>Cursor-safe attach and replay</h3><p>The assignment summary comes from durable workflow state. Acceptance items require the proposed TaskDetail contract; they are not inferred from terminal output.</p><div class="check-row"><i class="check-box">✓</i><span>Stale locator fails explicitly</span></div><div class="check-row"><i class="check-box">✓</i><span>Snapshot carries lifecycle + ownership</span></div><div class="check-row"><i class="check-box"></i><span>Fault-inject cursor gap recovery</span></div><div class="check-row"><i class="check-box"></i><span>Return summary plus artifacts</span></div><span class="source-flag">Foreman + new TaskDetail read model</span></div>
-                  <div class="detail-pane" data-detail-pane="review"><span class="app-label">Worker → lead gate</span><h3>Review before merge-up</h3><div class="fact-row"><span>Author</span><strong>david · Codex</strong></div><div class="fact-row"><span>Reviewer</span><strong>sarah · Grok</strong></div><div class="fact-row"><span>Diff</span><strong>96 substantive LOC · 2 files</strong></div><div class="fact-row"><span>Synthetic merge</span><strong class="good">green</strong></div><div class="fact-row"><span>Approval</span><strong class="warn">pending</strong></div><div class="review-card"><strong>Cross-model review</strong><p>The Foreman prerequisite must publish author/reviewer identity, approval revision, and CI result. A new push dismisses stale approval.</p></div></div>
+                  <div class="detail-pane active" data-detail-pane="task"><span class="app-label">Task detail</span><h3 data-selected-task>Cursor-safe attach and replay</h3><p>The assignment summary comes from durable workflow state. Acceptance items require the proposed TaskDetail contract; they are not inferred from terminal output.</p><div class="check-row"><i class="check-box">✓</i><span>Stale locator fails explicitly</span></div><div class="check-row"><i class="check-box">✓</i><span>Snapshot carries lifecycle + ownership</span></div><div class="check-row"><i class="check-box"></i><span>Fault-inject cursor gap recovery</span></div><div class="check-row"><i class="check-box"></i><span>Return summary plus artifacts</span></div><span class="source-flag">Queen's Hive + new TaskDetail read model</span></div>
+                  <div class="detail-pane" data-detail-pane="review"><span class="app-label">Worker → lead gate</span><h3>Review before merge-up</h3><div class="fact-row"><span>Author</span><strong>david · Codex</strong></div><div class="fact-row"><span>Reviewer</span><strong>sarah · Grok</strong></div><div class="fact-row"><span>Diff</span><strong>96 substantive LOC · 2 files</strong></div><div class="fact-row"><span>Synthetic merge</span><strong class="good">green</strong></div><div class="fact-row"><span>Approval</span><strong class="warn">pending</strong></div><div class="review-card"><strong>Cross-model review</strong><p>The Queen's Hive prerequisite must publish author/reviewer identity, approval revision, and CI result. A new push dismisses stale approval.</p></div></div>
                   <div class="detail-pane" data-detail-pane="events"><span class="app-label">Typed history</span><h3>Events, not transcript scraping</h3><div class="fact-row"><span>14:37</span><strong>turn-end</strong></div><div class="fact-row"><span>14:35</span><strong>resource.changed</strong></div><div class="fact-row"><span>14:28</span><strong>session.attached</strong></div><div class="fact-row"><span>14:02</span><strong>input.claimed</strong></div><p style="margin-top:12px">Provider lifecycle exists today; SessionHost adds attach, ownership, queue, resource, focus/view, and termination events.</p></div>
-                  <div class="detail-pane" data-detail-pane="session"><span class="app-label">Process reality</span><h3>Generation 3</h3><div class="fact-row"><span>Lifecycle</span><strong class="good">live · working</strong></div><div class="fact-row"><span>Provider</span><strong data-selected-model>codex · live model</strong></div><div class="fact-row"><span>Host</span><strong>sessiond · Unix</strong></div><div class="fact-row"><span>Viewers</span><strong>1 attached</strong></div><div class="fact-row"><span>Input</span><strong class="warn">HUMAN_OWNED</strong></div><div class="fact-row"><span>Queue</span><strong>1 automation waiting</strong></div><div class="fact-row"><span>Branch</span><strong>hive/david-cursor-safe</strong></div></div>
+                  <div class="detail-pane" data-detail-pane="session"><span class="app-label">Process reality</span><h3>Generation 3</h3><div class="fact-row"><span>Lifecycle</span><strong class="good">live · working</strong></div><div class="fact-row"><span>Provider</span><strong data-selected-model>codex · live model</strong></div><div class="fact-row"><span>Host</span><strong>sessiond · macOS</strong></div><div class="fact-row"><span>Viewers</span><strong>1 attached</strong></div><div class="fact-row"><span>Input</span><strong class="warn">HUMAN_OWNED</strong></div><div class="fact-row"><span>Queue</span><strong>1 automation waiting</strong></div><div class="fact-row"><span>Branch</span><strong>hive/david-cursor-safe</strong></div></div>
                 </aside>
               </div>
 
               <div class="app-route settings-route" data-route="settings">
                 <aside class="settings-nav"><button class="settings-nav-button" data-back-run><span>←</span><strong>Back to run</strong></button><h3>Settings</h3><p class="nav-group">Model Control</p><button class="settings-nav-button active" data-settings-page="tasks"><span>☷</span><strong>Tasks</strong></button><button class="settings-nav-button" data-settings-page="models"><span>◫</span><strong>Models</strong></button><button class="settings-nav-button" data-settings-page="usage"><span>▥</span><strong>Usage</strong></button><p class="nav-group">Agent safety</p><button class="settings-nav-button" data-settings-page="autonomy"><span>◇</span><strong>Autonomy</strong></button><div class="settings-note">Tasks, Models, Usage, and autonomy move here as one route. Their daemon-owned behavior remains; the standalone Settings window and old Agents autonomy menu are removed after parity.</div></aside>
                 <section class="settings-content">
-                  <div class="settings-page active" data-settings-panel="tasks"><div class="settings-page-head"><div><h2>Tasks</h2><p>Which enabled models are good enough for each kind of work, and at which effort. Each task runs on one model; preference is ordered fallback, never an ensemble.</p></div><button class="light-button">Refresh</button></div><div class="settings-banner">Provisional Hive suggestions — edit anytime; no outcome data yet.</div><div class="settings-card"><div class="selection-row"><strong>Model selection</strong><span class="fake-select">Preference (choice) ▾</span><button class="light-button">Category override…</button></div></div><div class="settings-card"><h3>Standard coding</h3><p>Exact models come from the live provider catalog. The values below represent the existing chain editor contract.</p><div class="chain-row"><span class="chain-rank">Preferred</span><span class="chain-model"><strong>Claude · exact discovered model</strong><span>Available · enabled by user</span></span><span class="effort-pill">high effort</span><span class="row-actions">↑ ↓ ×</span></div><div class="chain-row"><span class="chain-rank">2nd</span><span class="chain-model"><strong>Codex · exact discovered model</strong><span>Available · enabled by user</span></span><span class="effort-pill">medium effort</span><span class="row-actions">↑ ↓ ×</span></div><button class="light-button" style="margin-top:10px">Add model + effort…</button></div><div class="settings-card"><h3>Code review</h3><p>Used by the Foreman reviewer category. Cross-vendor author/reviewer policy is workflow enforcement, not a new model-routing mode.</p><div class="chain-row"><span class="chain-rank">Preferred</span><span class="chain-model"><strong>Grok · exact discovered model</strong><span>Available · enabled by user</span></span><span class="effort-pill">vendor decides</span><span class="row-actions">↑ ↓ ×</span></div></div></div>
+                  <div class="settings-page active" data-settings-panel="tasks"><div class="settings-page-head"><div><h2>Tasks</h2><p>Which enabled models are good enough for each kind of work, and at which effort. Each task runs on one model; preference is ordered fallback, never an ensemble.</p></div><button class="light-button">Refresh</button></div><div class="settings-banner">Provisional Hive suggestions — edit anytime; no outcome data yet.</div><div class="settings-card"><div class="selection-row"><strong>Model selection</strong><span class="fake-select">Preference (choice) ▾</span><button class="light-button">Category override…</button></div></div><div class="settings-card"><h3>Standard coding</h3><p>Exact models come from the live provider catalog. The values below represent the existing chain editor contract.</p><div class="chain-row"><span class="chain-rank">Preferred</span><span class="chain-model"><strong>Claude · exact discovered model</strong><span>Available · enabled by user</span></span><span class="effort-pill">high effort</span><span class="row-actions">↑ ↓ ×</span></div><div class="chain-row"><span class="chain-rank">2nd</span><span class="chain-model"><strong>Codex · exact discovered model</strong><span>Available · enabled by user</span></span><span class="effort-pill">medium effort</span><span class="row-actions">↑ ↓ ×</span></div><button class="light-button" style="margin-top:10px">Add model + effort…</button></div><div class="settings-card"><h3>Code review</h3><p>Used by the Queen's Hive reviewer category. Cross-vendor author/reviewer policy is workflow enforcement, not a new model-routing mode.</p><div class="chain-row"><span class="chain-rank">Preferred</span><span class="chain-model"><strong>Grok · exact discovered model</strong><span>Available · enabled by user</span></span><span class="effort-pill">vendor decides</span><span class="row-actions">↑ ↓ ×</span></div></div></div>
                   <div class="settings-page" data-settings-panel="models"><div class="settings-page-head"><div><h2>Models</h2><p>Provider and model enablement is spend consent. Quota is percent plus reset time only; unknown never renders as zero.</p></div><button class="light-button">Refresh</button></div><div class="provider-grid"><div class="provider-card"><div class="provider-head"><strong>Claude</strong><i class="toggle"></i></div><div class="meter-label"><span>Usage unknown</span><span>—</span></div><div class="meter unknown"></div><div class="model-row"><i class="toggle"></i><span><strong>Live discovered model</strong><span>Effort levels from vendor</span></span><span class="effort-pill">high</span></div><div class="model-row"><i class="toggle"></i><span><strong>Live discovered model</strong><span>Enabled</span></span><span class="effort-pill">vendor</span></div></div><div class="provider-card"><div class="provider-head"><strong>Codex</strong><i class="toggle"></i></div><div class="meter-label"><span>5 hour window · example</span><span>61% used</span></div><div class="meter"><i style="width:61%"></i></div><div class="model-row"><i class="toggle"></i><span><strong>Live discovered model</strong><span>Enabled · available</span></span><span class="effort-pill">medium</span></div></div><div class="provider-card"><div class="provider-head"><strong>Grok</strong><i class="toggle"></i></div><div class="meter-label"><span>Weekly gauge · example</span><span>22% used</span></div><div class="meter"><i style="width:22%"></i></div><div class="model-row"><i class="toggle"></i><span><strong>Live discovered model</strong><span>Enabled · available</span></span><span class="effort-pill">vendor</span></div></div></div><div class="callout" style="margin-top:14px"><strong>Existing transport.</strong> The main process runs <code>hive model-control-snapshot</code> and the existing <code>hive routing …</code> mutations off the UI thread. The renderer gets a typed, narrow result.</div></div>
                   <div class="settings-page" data-settings-panel="usage"><div class="settings-page-head"><div><h2>Usage</h2><p>Provider-reported session tokens. New work and cache re-reads stay separate; unknown subjects remain visibly excluded.</p></div><button class="light-button">Refresh</button></div><div class="settings-card"><div class="selection-row"><strong>Current session</strong><span class="state-badge current">Known subtotal</span></div><div class="usage-summary"><div class="usage-metric"><strong>42,680</strong><span>Tokens used · representative</span></div><div class="usage-metric"><strong>36,140</strong><span>New input</span></div><div class="usage-metric"><strong>6,540</strong><span>Output</span></div></div><p>118,420 cache reads are counted separately. Exact figures come from the current Model Control snapshot; these values are illustrative UI data.</p><div class="usage-agent"><strong>queen</strong><span>Hive control · exact</span><b>8,930</b></div><div class="usage-agent"><strong>maya</strong><span>Claude · live model</span><b>7,420</b></div><div class="usage-agent"><strong>david</strong><span>Codex · live model</span><b>6,180</b></div><div class="usage-agent"><strong>sam</strong><span>Claude · live model</span><b>Unknown</b></div></div></div>
-                  <div class="settings-page" data-settings-panel="autonomy"><div class="settings-page-head"><div><h2>Autonomy</h2><p>The existing two-position autonomy dial has one editing home. The titlebar reports confirmed posture; Agent → Autonomy Settings opens this page rather than duplicating the mutation.</p></div></div><div class="settings-card"><h3>Agent permissions</h3><p>The checkmark changes only after <code>hive autonomy</code> names the confirmed daemon mode. The feed reconciles it afterward.</p><div class="selection-row"><strong>Current mode</strong><span class="fake-select">Sandboxed · approvals required ▾</span></div></div><div class="settings-card"><h3>Full autonomy is consequential</h3><p>No permission prompts. This changes agent execution posture; it does not give queen landing rights or weaken the Foreman G1/G2 gates.</p><button class="light-button">Review full autonomy…</button></div></div>
+                  <div class="settings-page" data-settings-panel="autonomy"><div class="settings-page-head"><div><h2>Autonomy</h2><p>The existing two-position autonomy dial has one editing home. The titlebar reports confirmed posture; Agent → Autonomy Settings opens this page rather than duplicating the mutation.</p></div></div><div class="settings-card"><h3>Agent permissions</h3><p>The checkmark changes only after <code>hive autonomy</code> names the confirmed daemon mode. The feed reconciles it afterward.</p><div class="selection-row"><strong>Current mode</strong><span class="fake-select">Sandboxed · approvals required ▾</span></div></div><div class="settings-card"><h3>Full autonomy is consequential</h3><p>No permission prompts. This changes agent execution posture; it does not give queen landing rights or weaken the Queen's Hive G1/G2 gates.</p><button class="light-button">Review full autonomy…</button></div></div>
                 </section>
               </div>
 
-              <aside class="attention-drawer" data-attention-drawer><div class="drawer-head"><h3>Attention</h3><button class="icon-button" data-toggle-attention aria-label="Close Attention">×</button></div><p class="app-label">Severity, then age · focus never clears</p><div class="attention-item"><i class="status-dot bad"></i><div><strong>omar blocked</strong><p>ConPTY crash recovery needs a policy decision · priya’s crew</p></div></div><div class="attention-item"><i class="status-dot warn"></i><div><strong>sam needs input</strong><p>Human latch WAL failure path · maya’s crew</p></div></div><div class="drawer-empty">When clear, this explicit empty state remains visible.</div></aside>
+              <aside class="attention-drawer" data-attention-drawer><div class="drawer-head"><h3>Attention</h3><button class="icon-button" data-toggle-attention aria-label="Close Attention">×</button></div><p class="app-label">Severity, then age · focus never clears</p><div class="attention-item"><i class="status-dot bad"></i><div><strong>omar blocked</strong><p>Session-host loss recovery needs a policy decision · priya’s crew</p></div></div><div class="attention-item"><i class="status-dot warn"></i><div><strong>sam needs input</strong><p>Human latch WAL failure path · maya’s crew</p></div></div><div class="drawer-empty">When clear, this explicit empty state remains visible.</div></aside>
             </div>
           </div>
         </div>
@@ -1089,39 +160,39 @@
         <div class="feature-groups">
           <article class="feature-group"><div class="feature-group-head"><h3>A · Run awareness and hierarchy</h3><p>The outer horizon: scan the system without attaching to every terminal.</p></div><div class="feature-table-wrap"><table class="feature-table"><thead><tr><th class="feature-name">Feature</th><th class="behavior">What it does</th><th class="reality">Grounded reality</th><th class="build">Split Horizon implementation</th></tr></thead><tbody>
             <tr><td><strong>Project + instance header</strong></td><td><p>Names the current repository and runtime instance; never implies a global fleet.</p></td><td><span class="state-badge current">Current Hive</span><p>Project display name, instance home, port, and identity already exist. One Workspace process owns one project window.</p><a class="source-link" href="../../workspace/Sources/HiveWorkspace/AppDelegate.swift">AppDelegate.swift</a></td><td><p>Render the existing identity as context, not a switcher. Remove Show Projects and <code>ProjectSwitcherController</code>; cross-project supervision is outside this product.</p></td></tr>
-            <tr><td><strong>Run phase + G1/G2</strong></td><td><p>Shows where the Foreman process is and pins human approval gates.</p></td><td><span class="state-badge flow">Foreman</span><p>No run/phase/gate model exists today. The workflow prerequisite owns P0–P6 and G1/G2 state.</p><a class="source-link" href="agentic-hierarchy.html#process">Foreman process</a></td><td><p>Read only from durable workflow state. Approval requires target run, gate revision, engineer authority, and a confirmation showing what becomes authorized.</p></td></tr>
-            <tr><td><strong>Hierarchy rail</strong></td><td><p>Shows queen → leads → workers/reviewers with role and parent ownership.</p></td><td><span class="state-badge flow">Foreman</span> <span class="state-badge terminal">SessionHost</span><p>Today’s feed is flat. Foreman adds lead/reviewer semantics; terminal groundwork adds locator parent/role/run/generation and scoped queries.</p></td><td><p>Virtualized tree keyed by stable locator, not name. Preserve expansion and level focus history. Human can see all; leads are scope-limited by authorization.</p></td></tr>
+            <tr><td><strong>Run phase + G1/G2</strong></td><td><p>Shows where the Queen's Hive process is and pins human approval gates.</p></td><td><span class="state-badge flow">Queen's Hive</span><p>No run/phase/gate model exists today. The workflow prerequisite owns P0–P6 and G1/G2 state.</p><a class="source-link" href="agentic-hierarchy.html#process">Queen's Hive process</a></td><td><p>Read only from durable workflow state. Approval requires target run, gate revision, engineer authority, and a confirmation showing what becomes authorized.</p></td></tr>
+            <tr><td><strong>Hierarchy rail</strong></td><td><p>Shows queen → leads → workers/reviewers with role and parent ownership.</p></td><td><span class="state-badge flow">Queen's Hive</span> <span class="state-badge terminal">SessionHost</span><p>Today’s feed is flat. Queen's Hive adds lead/reviewer semantics; terminal groundwork adds locator parent/role/run/generation and scoped queries.</p></td><td><p>Virtualized tree keyed by stable locator, not name. Preserve expansion and level focus history. Human can see all; leads are scope-limited by authorization.</p></td></tr>
             <tr><td><strong>Real agent names</strong></td><td><p>Displays conversational names such as maya, david, sam, and priya.</p></td><td><span class="state-badge current">Current Hive</span><p>Hive already allocates curated first names, refuses live reuse, and never appends numeric suffixes. queen is the preferred root address.</p><a class="source-link" href="../../src/daemon/spawner-impl.ts">NAME_POOL · spawner-impl.ts</a></td><td><p>Display <code>name</code> with a separate role badge. Historical holders use the existing closed-time disambiguation; names never encode hierarchy.</p></td></tr>
             <tr><td><strong>Measured status legend</strong></td><td><p>Shows working, idle, needs user, spawning, done, failed, disconnected, and unknown with words/symbols.</p></td><td><span class="state-badge current">Current Hive</span><p>AgentActivity is the single color/symbol/border table. Dashed means unseen. Unknown never becomes healthy.</p><a class="source-link" href="../../workspace/Sources/WorkspaceCore/AgentFeed.swift">AgentFeed.swift</a></td><td><p>Port the same semantic mapping. Expand only when prerequisite schemas add a state; unrecognized values remain unknown/dashed.</p></td></tr>
-            <tr><td><strong>Attention rollups</strong></td><td><p>Raises worker attention to its lead and queen without stealing focus.</p></td><td><span class="state-badge current">Current base</span> <span class="state-badge flow">Foreman delta</span><p>A severity+age queue and explicit acknowledgement exist; hierarchical rollup does not.</p><a class="source-link" href="../../workspace/Sources/WorkspaceCore/Attention.swift">Attention.swift</a></td><td><p>Reuse queue ordering. Add ancestor rollup counts from hierarchy events. Selecting focuses; only explicit resolution clears.</p></td></tr>
+            <tr><td><strong>Attention rollups</strong></td><td><p>Raises worker attention to its lead and queen without stealing focus.</p></td><td><span class="state-badge current">Current base</span> <span class="state-badge flow">Queen's Hive delta</span><p>A severity+age queue and explicit acknowledgement exist; hierarchical rollup does not.</p><a class="source-link" href="../../workspace/Sources/WorkspaceCore/Attention.swift">Attention.swift</a></td><td><p>Reuse queue ordering. Add ancestor rollup counts from hierarchy events. Selecting focuses; only explicit resolution clears.</p></td></tr>
             <tr><td><strong>Branch and authority facts</strong></td><td><p>Shows branch age, category, read-only posture, live model, and write revocation.</p></td><td><span class="state-badge current">Data exists</span><p>AgentRecord already carries category, branch, worktree, liveModel, timestamps, readOnly, writeRevoked, and graphifyCalls; Swift ignores most fields.</p><a class="source-link" href="../../src/schemas/agent.ts">AgentRecord · agent.ts</a></td><td><p>Expand the client decoder/feed view model. Branch age is derived from a real timestamp, never guessed from terminal activity.</p></td></tr>
           </tbody></table></div></article>
 
           <article class="feature-group"><div class="feature-group-head"><h3>B · Terminal workbench and input safety</h3><p>The inner horizon: attach deeply to one agent without making terminal layout the product.</p></div><div class="feature-table-wrap"><table class="feature-table"><thead><tr><th class="feature-name">Feature</th><th class="behavior">What it does</th><th class="reality">Grounded reality</th><th class="build">Split Horizon implementation</th></tr></thead><tbody>
-            <tr><td><strong>One selected live terminal</strong></td><td><p>Renders the real provider TUI and sends ordinary shortcuts unchanged.</p></td><td><span class="state-badge terminal">SessionHost</span><p>Today every pane is a live SwiftTerm/tmux attachment. The transition makes viewers disposable and Electron/xterm.js a separately gated client.</p><a class="source-link" href="terminal-stack-transition.html#attach-recovery">Attach protocol</a></td><td><p>Electron main owns the authenticated attach. Renderer receives framed output/input/resize only; no Node, bearer token, PTY, or filesystem authority.</p></td></tr>
+            <tr><td><strong>One selected live terminal</strong></td><td><p>Renders the real provider TUI and sends ordinary shortcuts unchanged.</p></td><td><span class="state-badge terminal">SessionHost</span><p>Today every pane is a live SwiftTerm/tmux attachment. The transition makes viewers disposable and the Ghostty surface a checkpoint-plus-replay client.</p><a class="source-link" href="terminal-stack-transition.html#session-protocol">Attach protocol</a></td><td><p>The Workspace obtains a one-use attach grant from the daemon; the <code>HiveTerminalKit</code> surface receives ordered frames and encodes input through the arbiter. The view layer holds no PTY, bearer token, or lifecycle authority.</p></td></tr>
             <tr><td><strong>Off-screen snapshot</strong></td><td><p>Shows a coherent selected-agent preview before live attachment.</p></td><td><span class="state-badge terminal">SessionHost</span><p><code>capture()</code> returns screen cells, dimensions, buffer mode, revision, and generation. It is not a transcript.</p></td><td><p>Unselected agents consume inspections/events, not renderers. Snapshot is visibly read-only; Attach is the explicit transition to live input.</p></td></tr>
             <tr><td><strong>Focus / scope / authority bar</strong></td><td><p>Separately names keyboard focus, viewed subtree, and input ownership.</p></td><td><span class="state-badge current">Focus base</span> <span class="state-badge terminal">New states</span><p>Current Workspace has honest first-responder focus. Viewed scope and authority are explicit terminal/hierarchy groundwork requirements.</p></td><td><p>Pin all three above the terminal. Output and attention can change none of them. A viewed descendant grants no write token.</p></td></tr>
             <tr><td><strong>Human draft protection</strong></td><td><p>Blocks automation while a human draft may exist, including after viewer loss.</p></td><td><span class="state-badge current">Current base</span> <span class="state-badge terminal">Hardened contract</span><p>Composer marker leases already block delivery. SessionHost replaces the timing/grace shape with durable HUMAN_OWNED/HUMAN_ORPHANED states and no timeout.</p><a class="source-link" href="../../workspace/Sources/HiveWorkspace/ComposerLeaseStore.swift">ComposerLeaseStore.swift</a></td><td><p>Show claimed/orphaned state and queued automation. Release only on submit, cancel, or explicit handoff; never focus loss, silence, output, or disconnect.</p></td></tr>
             <tr><td><strong>Automation queue receipts</strong></td><td><p>Shows queue depth/age and whether a message is queued, writing, accepted, acknowledged, cancelled, or in doubt.</p></td><td><span class="state-badge terminal">SessionHost</span><p>Current delivery has durable messages and composer blocking but not the proposed end-to-end terminal receipt vocabulary.</p></td><td><p>Render receipt state without prompt content. “Transport accepted” never says “applied.” In-doubt requires visible reconciliation, never blind replay.</p></td></tr>
-            <tr><td><strong>Generation-safe recovery</strong></td><td><p>Distinguishes reattached, replaced, revived, host-lost, stale, and unknown sessions.</p></td><td><span class="state-badge terminal">SessionHost</span><p>Current panes attach by tmux session. New locators bind tenant, run, role, agent, parent, and generation.</p></td><td><p>Show exact generation in the control bar. Stale views fail and never follow a reused name. A Windows resume becomes a new generation.</p></td></tr>
+            <tr><td><strong>Generation-safe recovery</strong></td><td><p>Distinguishes reattached, replaced, revived, host-lost, stale, and unknown sessions.</p></td><td><span class="state-badge terminal">SessionHost</span><p>Current panes attach by tmux session. New locators bind tenant, run, role, agent, parent, and generation.</p></td><td><p>Show exact generation in the control bar. Stale views fail and never follow a reused name. A lost host becomes a new generation.</p></td></tr>
             <tr><td><strong>Detach vs terminate</strong></td><td><p>Closing a view leaves the agent alive; ending an agent is separately authorized.</p></td><td><span class="state-badge current">Current mismatch</span> <span class="state-badge terminal">New rule</span><p>Today Close Pane calls <code>hive kill</code>, and quitting stops Hive. The terminal plan changes ordinary UI quit to detach and adds explicit Stop Hive.</p></td><td><p>Remove destructive meaning from view close. Put Close Agent/Stop Run behind explicit target and result readback. Keep Detach immediate and ordinary.</p></td></tr>
           </tbody></table></div></article>
 
           <article class="feature-group"><div class="feature-group-head"><h3>C · Task, review, lifecycle, and evidence</h3><p>The inspector must distinguish data already stored from workflow facts that still need a read contract.</p></div><div class="feature-table-wrap"><table class="feature-table"><thead><tr><th class="feature-name">Feature</th><th class="behavior">What it does</th><th class="reality">Grounded reality</th><th class="build">Split Horizon implementation</th></tr></thead><tbody>
-            <tr><td><strong>Assignment summary</strong></td><td><p>Shows the immutable task, category, parent, and owner for the selected agent.</p></td><td><span class="state-badge current">Partial current</span> <span class="state-badge flow">Hierarchy delta</span><p><code>taskDescription</code> and category exist now. Parent, lead owner, task ID, run ID, and acceptance criteria do not.</p></td><td><p>Display current fields now; consume Foreman task identity after migration. Never describe task text as live status.</p></td></tr>
-            <tr><td><strong>Acceptance checklist</strong></td><td><p>Shows verifiable task criteria and completion evidence.</p></td><td><span class="state-badge gap">Contract gap</span><p>Foreman says the living spec/task list is durable, but defines no Workspace read schema for criteria or evidence.</p></td><td><p>Add versioned <code>TaskDetail</code> with criteria IDs, status, evidence references, revision, and owner. UI is read-only unless workflow defines mutation rights.</p></td></tr>
-            <tr><td><strong>Artifact browser</strong></td><td><p>Opens living spec, task, interface contract, summary, and changed files.</p></td><td><span class="state-badge gap">Contract gap</span><p>Artifacts live on disk by design; no indexed, authorized, renderer-safe listing exists.</p></td><td><p>Add <code>ArtifactRef</code> metadata via the control plane. Electron main opens exact authorized files; renderer never crawls the repo or receives arbitrary paths.</p></td></tr>
-            <tr><td><strong>Review gate</strong></td><td><p>Shows author, reviewer, provider diversity, revision, diff size, approval, and synthetic-merge CI.</p></td><td><span class="state-badge flow">Foreman</span><p>Mandatory worker→lead review and stale-approval dismissal belong to the workflow prerequisite. Today reviewer routing is optional and landing targets main.</p></td><td><p>Consume durable review state. New push invalidates approval on screen. UI cannot derive approval from a message or green tests alone.</p></td></tr>
-            <tr><td><strong>Typed event history</strong></td><td><p>Shows lifecycle, attach, liveness, attention, ownership, queue, focus/view, resource, and termination facts.</p></td><td><span class="state-badge current">Provider base</span> <span class="state-badge terminal">Expanded events</span><p>Hook events exist in the daemon DB but the Workspace feed exposes only snapshots. SessionHost defines a cursor-based event subscription.</p><a class="source-link" href="../../src/schemas/event.ts">HookEvent · event.ts</a></td><td><p>Merge control-plane and SessionHost metadata by cursor in Electron main. No terminal content or prompt text enters the event log.</p></td></tr>
-            <tr><td><strong>Owner lifecycle + cascade preview</strong></td><td><p>Lets an authorized owner close one agent or preview descendants before a cascade.</p></td><td><span class="state-badge flow">Foreman</span> <span class="state-badge terminal">SessionHost</span><p>Current <code>hive kill</code> targets one name. Foreman makes leads own crews and requires explicit descendant preview.</p></td><td><p>Show target locator, live descendants, branches, dirty/unmerged work, and authority before termination. Verify no survivors afterward; report partial failure honestly.</p></td></tr>
-            <tr><td><strong>G1/G2 engineer actions</strong></td><td><p>Approve the exact spec revision and assembled feature revision.</p></td><td><span class="state-badge flow">Foreman</span><p>No current UI or daemon gate model. Native TUI approval prompts are unrelated and remain inside provider TUIs.</p></td><td><p>New control-plane mutation with engineer capability, CAS revision, audit event, and explicit consequence. Never reuse generic “Approve.”</p></td></tr>
+            <tr><td><strong>Assignment summary</strong></td><td><p>Shows the immutable task, category, parent, and owner for the selected agent.</p></td><td><span class="state-badge current">Partial current</span> <span class="state-badge flow">Hierarchy delta</span><p><code>taskDescription</code> and category exist now. Parent, lead owner, task ID, run ID, and acceptance criteria do not.</p></td><td><p>Display current fields now; consume Queen's Hive task identity after migration. Never describe task text as live status.</p></td></tr>
+            <tr><td><strong>Acceptance checklist</strong></td><td><p>Shows verifiable task criteria and completion evidence.</p></td><td><span class="state-badge gap">Contract gap</span><p>Queen's Hive says the living spec/task list is durable, but defines no Workspace read schema for criteria or evidence.</p></td><td><p>Add versioned <code>TaskDetail</code> with criteria IDs, status, evidence references, revision, and owner. UI is read-only unless workflow defines mutation rights.</p></td></tr>
+            <tr><td><strong>Artifact browser</strong></td><td><p>Opens living spec, task, interface contract, summary, and changed files.</p></td><td><span class="state-badge gap">Contract gap</span><p>Artifacts live on disk by design; no indexed, authorized, renderer-safe listing exists.</p></td><td><p>Add <code>ArtifactRef</code> metadata via the control plane. The Workspace opens exact authorized files; the view layer never crawls the repo or receives arbitrary paths.</p></td></tr>
+            <tr><td><strong>Review gate</strong></td><td><p>Shows author, reviewer, provider diversity, revision, diff size, approval, and synthetic-merge CI.</p></td><td><span class="state-badge flow">Queen's Hive</span><p>Mandatory worker→lead review and stale-approval dismissal belong to the workflow prerequisite. Today reviewer routing is optional and landing targets main.</p></td><td><p>Consume durable review state. New push invalidates approval on screen. UI cannot derive approval from a message or green tests alone.</p></td></tr>
+            <tr><td><strong>Typed event history</strong></td><td><p>Shows lifecycle, attach, liveness, attention, ownership, queue, focus/view, resource, and termination facts.</p></td><td><span class="state-badge current">Provider base</span> <span class="state-badge terminal">Expanded events</span><p>Hook events exist in the daemon DB but the Workspace feed exposes only snapshots. SessionHost defines a cursor-based event subscription.</p><a class="source-link" href="../../src/schemas/event.ts">HookEvent · event.ts</a></td><td><p>Merge control-plane and SessionHost metadata by cursor in the Workspace's daemon client. No terminal content or prompt text enters the event log.</p></td></tr>
+            <tr><td><strong>Owner lifecycle + cascade preview</strong></td><td><p>Lets an authorized owner close one agent or preview descendants before a cascade.</p></td><td><span class="state-badge flow">Queen's Hive</span> <span class="state-badge terminal">SessionHost</span><p>Current <code>hive kill</code> targets one name. Queen's Hive makes leads own crews and requires explicit descendant preview.</p></td><td><p>Show target locator, live descendants, branches, dirty/unmerged work, and authority before termination. Verify no survivors afterward; report partial failure honestly.</p></td></tr>
+            <tr><td><strong>G1/G2 engineer actions</strong></td><td><p>Approve the exact spec revision and assembled feature revision.</p></td><td><span class="state-badge flow">Queen's Hive</span><p>No current UI or daemon gate model. Native TUI approval prompts are unrelated and remain inside provider TUIs.</p></td><td><p>New control-plane mutation with engineer capability, CAS revision, audit event, and explicit consequence. Never reuse generic “Approve.”</p></td></tr>
           </tbody></table></div></article>
 
           <article class="feature-group"><div class="feature-group-head"><h3>D · Settings and global controls</h3><p>Port behavior, not just pixels. The daemon remains the sole writer.</p></div><div class="feature-table-wrap"><table class="feature-table"><thead><tr><th class="feature-name">Feature</th><th class="behavior">What it does</th><th class="reality">Grounded reality</th><th class="build">Split Horizon implementation</th></tr></thead><tbody>
             <tr><td><strong>Hive application identity</strong></td><td><p>Brands the product as Hive Agentic Workspace and uses the shipping macOS application icon in navigation and the app titlebar.</p></td><td><span class="state-badge current">Current asset</span><p>The signed macOS Workspace already packages <code>AppIcon.icns</code> and its canonical iconset.</p><a class="source-link" href="../../workspace/Resources/AppIcon.iconset/icon_128x128@2x.png">macOS AppIcon</a></td><td><p>Use “Hive” as the product name and “Agentic Workspace” as the surface name. “Split Horizon” remains the architecture/design concept, not an application sub-brand.</p></td></tr>
             <tr><td><strong>Tasks settings</strong></td><td><p>Edits global/category selection and exact model@effort fallback chains across nine task categories.</p></td><td><span class="state-badge current">Current Hive</span><p>Full AppKit UI and routing CLI mutations ship today with CAS revision handling and explicit unknown/unconfigured states.</p><a class="source-link" href="../../workspace/Sources/HiveWorkspace/Settings/SettingsPageController.swift">TasksSettingsController</a></td><td><p>Rebuild the behavior in the integrated route. Main process invokes existing CLI commands off-thread; after parity, delete the AppKit page and standalone window.</p></td></tr>
             <tr><td><strong>Models settings</strong></td><td><p>Controls provider/model spend consent, effort, availability, billing badges, and honest quota meters.</p></td><td><span class="state-badge current">Current Hive</span><p>Claude, Codex, and Grok provider cards, model switches, effort tri-state, and measured/stale/unknown/not-metered states ship today.</p><a class="source-link" href="../../workspace/Sources/HiveWorkspace/Settings/ProviderCardView.swift">ProviderCardView.swift</a></td><td><p>Rebuild the closed-provider enum and exact copy rules, then delete the AppKit provider views. Never invent counts, model catalogs, or zero-valued unknown bars.</p></td></tr>
-            <tr><td><strong>Usage settings</strong></td><td><p>Shows current/history session tokens, Hive control vs worker buckets, cache reads, per-agent rows, and unknown subjects.</p></td><td><span class="state-badge current">Current Hive</span><p>Provider-reported token presentation already ships in the Settings window.</p><a class="source-link" href="../../workspace/Sources/HiveWorkspace/Settings/UsageSettingsController.swift">UsageSettingsController.swift</a></td><td><p>Rebuild without changing accounting semantics, then delete the AppKit controller. Foreman adds lead-tier attribution; do not keep the old view as a fallback.</p></td></tr>
+            <tr><td><strong>Usage settings</strong></td><td><p>Shows current/history session tokens, Hive control vs worker buckets, cache reads, per-agent rows, and unknown subjects.</p></td><td><span class="state-badge current">Current Hive</span><p>Provider-reported token presentation already ships in the Settings window.</p><a class="source-link" href="../../workspace/Sources/HiveWorkspace/Settings/UsageSettingsController.swift">UsageSettingsController.swift</a></td><td><p>Rebuild without changing accounting semantics, then delete the AppKit controller. Queen's Hive adds lead-tier attribution; do not keep the old view as a fallback.</p></td></tr>
             <tr><td><strong>Autonomy</strong></td><td><p>Chooses sandboxed approvals or dangerous full autonomy.</p></td><td><span class="state-badge current">Current Hive</span><p>Agents menu calls <code>hive autonomy</code>; UI checkmarks only confirmed daemon output and feed reconciliation.</p><a class="source-link" href="../../workspace/Sources/HiveWorkspace/AppDelegate.swift">AppDelegate autonomy</a></td><td><p>Give mutation one home in Settings; the titlebar is read-only and Agent menu opens that page. Delete the old two-item Agents menu. G1/G2 remain independent.</p></td></tr>
             <tr><td><strong>Attention drawer</strong></td><td><p>Integrates today’s floating attention panel into the workspace while preserving ordering and focus behavior.</p></td><td><span class="state-badge current">Current Hive</span><p>AttentionCenter ships. It lacks an empty state today.</p><a class="source-link" href="../../workspace/Sources/HiveWorkspace/AttentionCenter.swift">AttentionCenter.swift</a></td><td><p>Rebuild it as the single drawer with an explicit empty state. Preserve ordering/focus semantics, then delete the floating <code>AttentionCenter</code> panel.</p></td></tr>
           </tbody></table></div></article>
@@ -1134,9 +205,9 @@
         <div class="section-head"><div><p class="section-label">04 · Menu integration</p><h2>Keep command reachability; delete the old topology.</h2></div><p>Clicks, keyboard shortcuts, accessibility actions, and native menu items dispatch the same typed command. Migration means one successor location per behavior—not old and new menus in parallel.</p></div>
         <div class="menu-map">
           <article class="menu-card"><h3>Behavior with one new home</h3><div class="menu-mapping"><span>Hive → Settings…</span><i>→</i><p>Opens the integrated settings route. The standalone Settings window is deleted after parity.</p></div><div class="menu-mapping"><span>Agents → autonomy</span><i>→</i><p>Becomes Agent → Autonomy Settings, which opens the one editing page. The titlebar only reports daemon-confirmed posture.</p></div><div class="menu-mapping"><span>Workspace → Attention</span><i>→</i><p>Becomes View → Attention and the in-shell drawer. The Workspace menu and floating panel are deleted.</p></div><div class="menu-mapping"><span>Pane → Acknowledge</span><i>→</i><p>Becomes Agent → Acknowledge Status and the drawer action.</p></div><div class="menu-mapping"><span>Pane → Close Pane</span><i>→</i><p>Splits into non-destructive Detach and authorized Close Agent with descendant/work preview.</p></div><div class="menu-mapping"><span>Provider approvals</span><i>=</i><p>Remain inside the real vendor TUI. G1/G2 are exact workflow gates, not replacements for provider prompts.</p></div></article>
-          <article class="menu-card"><h3>Commands deleted or introduced</h3><div class="menu-mapping"><span>Promote to Master</span><i>×</i><p>Delete. Split Horizon has one workbench, not a master tile.</p></div><div class="menu-mapping"><span>Return Queen to Master</span><i>×</i><p>Delete. Focus Queen remains; selection never rearranges the workspace.</p></div><div class="menu-mapping"><span>Directional pane focus</span><i>×</i><p>Delete with spatial panes. New Navigate commands address parent, sibling, child, and next attention semantically.</p></div><div class="menu-mapping"><span>Show Projects</span><i>×</i><p>Delete with ProjectSwitcher. One process is one project; there is no replacement fleet panel.</p></div><div class="menu-mapping"><span>Quit stops Hive</span><i>×</i><p>Delete. Ordinary quit detaches; explicit Stop Hive is a separate consequential command.</p></div><div class="menu-mapping"><span>Run menu</span><i>+</i><p>Add after Foreman: inspect/approve G1/G2, redirect through queen, and stop the exact run.</p></div></article>
+          <article class="menu-card"><h3>Commands deleted or introduced</h3><div class="menu-mapping"><span>Promote to Master</span><i>×</i><p>Delete. Split Horizon has one workbench, not a master tile.</p></div><div class="menu-mapping"><span>Return Queen to Master</span><i>×</i><p>Delete. Focus Queen remains; selection never rearranges the workspace.</p></div><div class="menu-mapping"><span>Directional pane focus</span><i>×</i><p>Delete with spatial panes. New Navigate commands address parent, sibling, child, and next attention semantically.</p></div><div class="menu-mapping"><span>Show Projects</span><i>×</i><p>Delete with ProjectSwitcher. One process is one project; there is no replacement fleet panel.</p></div><div class="menu-mapping"><span>Quit stops Hive</span><i>×</i><p>Delete. Ordinary quit detaches; explicit Stop Hive is a separate consequential command.</p></div><div class="menu-mapping"><span>Run menu</span><i>+</i><p>Add after Queen's Hive: inspect/approve G1/G2, redirect through queen, and stop the exact run.</p></div></article>
         </div>
-        <div class="callout"><strong>The pattern survives; the Swift enum does not.</strong> Today’s <code>WorkspaceCommand</code> proves that all input surfaces can share one dispatcher. The Electron client rebuilds that idea as typed <code>ViewCommand</code>, <code>AgentCommand</code>, and <code>RunCommand</code> families, then deletes the layout-centric Swift cases and direct AppKit selectors.</div>
+        <div class="callout"><strong>The pattern survives; the pane-era cases do not.</strong> Today’s <code>WorkspaceCommand</code> proves that all input surfaces can share one dispatcher. Split Horizon evolves that enum in place into typed <code>ViewCommand</code>, <code>AgentCommand</code>, and <code>RunCommand</code> families, then deletes the layout-centric cases and their direct AppKit selectors.</div>
       </div>
     </section>
 
@@ -1146,31 +217,31 @@
         <article class="feature-group">
           <div class="feature-group-head"><h3>Hard cutover manifest</h3><p>No feature flag, “classic workspace,” compatibility panel, or dormant fallback is part of the release.</p></div>
           <div class="feature-table-wrap"><table class="feature-table"><thead><tr><th class="feature-name">Current implementation</th><th class="behavior">Why it does not fit</th><th class="reality">Single successor</th><th class="build">Deletion gate</th></tr></thead><tbody>
-            <tr><td><span class="state-badge remove">Remove</span><strong>Hyperland pane grid</strong><p><code>LayoutContainerView</code>, pane/master layout state, focus rings, transitions, and spatial navigation.</p></td><td><p>It makes terminal placement the system model and becomes unreadable at Foreman scale.</p></td><td><p>Virtualized hierarchy rail + one selected workbench + semantic parent/sibling/child navigation.</p></td><td><p>Delete layout/pane classes and tests when U2 hierarchy navigation and U3 single-terminal focus pass parity.</p></td></tr>
-            <tr><td><span class="state-badge remove">Remove</span><strong>Per-pane SwiftTerm Workspace</strong><p><code>TerminalPaneView</code>, <code>PaneView</code>, SwiftTerm dependency, and AppKit terminal attachment path.</p></td><td><p>Split Horizon has one disposable xterm.js viewer over SessionHost, not a PTY-owning terminal in every tile.</p></td><td><p>Authenticated Electron main-process SessionHost client + one sandboxed renderer attachment.</p></td><td><p>After U3 attach/replay/input/recovery gates, remove the SwiftTerm dependency and its workspace-specific smoke path.</p></td></tr>
+            <tr><td><span class="state-badge remove">Remove</span><strong>Hyperland pane grid</strong><p><code>LayoutContainerView</code>, pane/master layout state, focus rings, transitions, and spatial navigation.</p></td><td><p>It makes terminal placement the system model and becomes unreadable at hive scale.</p></td><td><p>Virtualized hierarchy rail + one selected workbench + semantic parent/sibling/child navigation.</p></td><td><p>Delete layout/pane classes and tests when U2 hierarchy navigation and U3 single-terminal focus pass parity.</p></td></tr>
+            <tr><td><span class="state-badge remove">Remove</span><strong>Per-pane SwiftTerm Workspace</strong><p><code>TerminalPaneView</code>, <code>PaneView</code>, SwiftTerm dependency, and AppKit terminal attachment path.</p></td><td><p>Split Horizon has one disposable <code>HiveTerminalKit</code> (Ghostty) viewer over SessionHost, not a PTY-owning terminal in every tile.</p></td><td><p>One selected checkpoint-plus-replay Ghostty surface attached through a one-use grant; sessions live in <code>hive-sessiond</code>.</p></td><td><p>After U3 attach/replay/input/recovery gates (and the terminal transition's G7), remove the SwiftTerm dependency and its workspace-specific smoke path.</p></td></tr>
             <tr><td><span class="state-badge remove">Remove</span><strong>Standalone AppKit Settings</strong><p><code>SettingsWindowController</code> plus Tasks, Models, Usage, and provider presentation controllers.</p></td><td><p>A separate modal-style product surface fragments the workspace and would create a second implementation to maintain.</p></td><td><p>Integrated Settings route backed by the same daemon/CLI semantics.</p></td><td><p>Golden wire fixtures and mutation reconciliation match at U1; then delete AppKit settings views in the cutover release.</p></td></tr>
             <tr><td><span class="state-badge remove">Remove</span><strong>Floating AttentionCenter</strong><p>Separate attention window and controller.</p></td><td><p>System attention must remain visible beside hierarchy and selected work, not live in another window.</p></td><td><p>One in-shell attention drawer with current severity/age ordering, explicit acknowledge, and an empty state.</p></td><td><p>Delete the panel when U2 behavior and keyboard/accessibility tests pass.</p></td></tr>
             <tr><td><span class="state-badge remove">Remove</span><strong>ProjectSwitcher + Show Projects</strong><p>Sanitized project cards, controller, menu item, and shortcut.</p></td><td><p>Hive launches one Workspace process per project. Retaining a partial switcher suggests a fleet capability the architecture does not have.</p></td><td><p>No successor. A read-only project/instance label supplies local context.</p></td><td><p>Delete at U1 shell cutover. Cross-project supervision would be a separate future product and contract.</p></td></tr>
-            <tr><td><span class="state-badge remove">Remove</span><strong>Pane-era menu and command model</strong><p><code>MainMenuBuilder</code> topology and layout cases in <code>WorkspaceCommand</code>.</p></td><td><p>Promote, Return to Master, directional pane focus, and Close Pane encode the retired mosaic.</p></td><td><p>Hive/Edit/View/Navigate/Agent/Run/Window with one typed Electron dispatcher.</p></td><td><p>Delete all old selectors, shortcuts, reducer branches, and accessibility actions when the corresponding successor commands pass parity.</p></td></tr>
+            <tr><td><span class="state-badge remove">Remove</span><strong>Pane-era menu and command model</strong><p><code>MainMenuBuilder</code> topology and layout cases in <code>WorkspaceCommand</code>.</p></td><td><p>Promote, Return to Master, directional pane focus, and Close Pane encode the retired mosaic.</p></td><td><p>Hive/Edit/View/Navigate/Agent/Run/Window with one typed native dispatcher.</p></td><td><p>Delete all old selectors, shortcuts, reducer branches, and accessibility actions when the corresponding successor commands pass parity.</p></td></tr>
             <tr><td><span class="state-badge remove">Remove</span><strong>Legacy composer lease arbitration</strong><p>Viewer marker/grace behavior in <code>ComposerLeaseStore</code>.</p></td><td><p>Two input-authority systems would create ambiguous ownership and unsafe timeout behavior.</p></td><td><p>SessionHost’s durable HUMAN_OWNED/HUMAN_ORPHANED state and automation receipts.</p></td><td><p>Delete after terminal prerequisite conformance proves submit/cancel/handoff, crash, reconnect, and no-timeout cases.</p></td></tr>
             <tr><td><span class="state-badge remove">Remove</span><strong>Destructive view lifecycle</strong><p>Close Pane → <code>hive kill</code>; application quit → stop Hive.</p></td><td><p>Viewer lifecycle and hosted agent lifecycle are different authorities.</p></td><td><p>Detach/quit leaves sessions alive; Close Agent, Stop Run, and Stop Hive are explicit and read back post-state.</p></td><td><p>Delete the old wiring with SessionHost cutover; verify terminate/stop separately at U5.</p></td></tr>
-            <tr><td><span class="state-badge remove">Remove</span><strong>Swift feed/view fallback</strong><p>The partial <code>AgentSnapshot</code> decoder and any adapter kept only to feed the old app.</p></td><td><p>Maintaining v1/v2 presentation paths doubles state interpretation and lets the two dashboards disagree.</p></td><td><p>One versioned WorkspaceSnapshot client in Electron main. The underlying feed CLI may remain for non-UI consumers.</p></td><td><p>Delete the old UI decoder after v2 golden fixtures cover current, unknown, stale, gated, and replaced states.</p></td></tr>
-            <tr><td><span class="state-badge remove">Remove</span><strong>HiveWorkspace AppKit product</strong><p>App delegate, project window controller, Swift executable target, and release packaging.</p></td><td><p>Keeping both complete apps would turn migration into permanent dual-platform feature work.</p></td><td><p>One Electron Hive Agentic Workspace application after all U0–U5 gates.</p></td><td><p>Final cutover deletion. Daemon, CLI, schemas, and other shared contracts remain; only the superseded Workspace product leaves.</p></td></tr>
+            <tr><td><span class="state-badge remove">Remove</span><strong>Swift feed/view fallback</strong><p>The partial <code>AgentSnapshot</code> decoder and any adapter kept only to feed the old app.</p></td><td><p>Maintaining v1/v2 presentation paths doubles state interpretation and lets the two dashboards disagree.</p></td><td><p>One versioned WorkspaceSnapshot client in the Workspace's daemon-facing core. The underlying feed CLI may remain for non-UI consumers.</p></td><td><p>Delete the old UI decoder after v2 golden fixtures cover current, unknown, stale, gated, and replaced states.</p></td></tr>
           </tbody></table></div>
         </article>
+        <div class="callout"><strong>What is deliberately NOT on this ledger.</strong> The native AppKit HiveWorkspace product itself — app delegate, window controller, executable target, release packaging — is retained and evolved in place. An earlier revision of this document planned an Electron replacement and scheduled the whole AppKit app for deletion; the terminal-stack decision reversed that. Only SwiftTerm, the pane-grid topology, and the surfaces listed above leave.</div>
         <div class="callout stop"><strong>Failure behavior.</strong> If a migrated capability fails, Split Horizon shows its typed error or unavailable state in place. It does not launch the old window or silently route the user back to AppKit.</div>
       </div>
     </section>
 
     <section class="doc-section" id="contracts">
       <div class="shell">
-        <div class="section-head"><div><p class="section-label">06 · Read and mutation contracts</p><h2>The renderer receives facts, never authority.</h2></div><p>The Electron main process is the client of Hive’s local services and subprocesses. The sandboxed renderer receives narrow, typed views and sends explicit intents back.</p></div>
+        <div class="section-head"><div><p class="section-label">06 · Read and mutation contracts</p><h2>The view layer receives facts, never authority.</h2></div><p>The Workspace process is the client of Hive’s local services and subprocesses. Its view layer receives narrow, typed views and sends explicit intents back through one dispatcher.</p></div>
         <div class="contract-grid">
           <article class="contract-card"><span class="state-badge current">Current · migration source</span><h3>Workspace feed v1</h3><p>Today’s NDJSON stream already carries full AgentRecord rows plus autonomy and queen status. Use it to pin current semantics, then retire the old UI decoder; v1 is not a permanent presentation fallback.</p><div class="field-list"><code>name</code><code>tool</code><code>model</code><code>liveModel</code><code>status</code><code>category</code><code>taskDescription</code><code>branch</code><code>worktreePath</code><code>contextPct</code><code>readOnly</code><code>writeRevoked</code><code>autonomy</code><code>orchestrator.status</code></div><a class="source-link" href="../../src/cli/workspace-feed.ts">workspace-feed.ts</a></article>
-          <article class="contract-card"><span class="state-badge flow">Foreman · required</span><h3>WorkspaceSnapshot v2</h3><p>Evolve the consolidated read model after workflow migration. Exact wire name is not settled; the fields are required.</p><div class="field-list"><code>runId</code><code>phase</code><code>gate{revision,state}</code><code>node.locator</code><code>parent</code><code>role</code><code>owner</code><code>taskId</code><code>reviewState</code><code>ciState</code><code>branchFreshness</code><code>attentionRollup</code></div><div class="callout warn"><strong>Do not overload names.</strong> Identity is locator + generation; <code>maya</code> is display/address metadata.</div></article>
-          <article class="contract-card"><span class="state-badge terminal">SessionHost · required</span><h3>Session inspection + events</h3><p>Electron main uses the authenticated SessionHost client. Output content goes only to the selected renderer attachment.</p><div class="field-list"><code>snapshot</code><code>cursor</code><code>lifecycle</code><code>generation</code><code>attention</code><code>attachments</code><code>inputOwnership</code><code>queueDepth</code><code>queueAge</code><code>resourceState</code><code>replacementEvent</code></div><a class="source-link" href="terminal-stack-transition.html#architecture">SessionHost seam</a></article>
-          <article class="contract-card"><span class="state-badge gap">New read contract</span><h3>TaskDetail + ArtifactRef</h3><p>Required before the task checklist and artifact tabs ship. The renderer must never walk arbitrary disk paths.</p><div class="field-list"><code>taskId</code><code>revision</code><code>summary</code><code>criteria[]</code><code>evidenceRefs[]</code><code>artifactId</code><code>kind</code><code>displayName</code><code>owner</code><code>contentRevision</code><code>openCapability</code></div><div class="callout stop"><strong>Release gate.</strong> If this contract is absent, omit the tabs. A disabled mock filled from filenames is not an acceptable intermediate state.</div></article>
-          <article class="contract-card"><span class="state-badge current">Settings · migrate semantics</span><h3>Main-process CLI bridge</h3><p>Keep daemon-owned mutation and existing CAS behavior, not the AppKit views. Do not add renderer HTTP access or a second settings backend.</p><div class="field-list"><code>model-control-snapshot</code><code>routing policy</code><code>set-provider</code><code>set-model</code><code>set-effort</code><code>set-selection</code><code>set-chain</code><code>autonomy</code></div><p>Reads run off the UI thread; controls reconcile only after typed success.</p></article>
+          <article class="contract-card"><span class="state-badge flow">Queen's Hive · required</span><h3>WorkspaceSnapshot v2</h3><p>Evolve the consolidated read model after workflow migration. Exact wire name is not settled; the fields are required.</p><div class="field-list"><code>runId</code><code>phase</code><code>gate{revision,state}</code><code>node.locator</code><code>parent</code><code>role</code><code>owner</code><code>taskId</code><code>reviewState</code><code>ciState</code><code>branchFreshness</code><code>attentionRollup</code></div><div class="callout warn"><strong>Do not overload names.</strong> Identity is locator + generation; <code>maya</code> is display/address metadata.</div></article>
+          <article class="contract-card"><span class="state-badge terminal">SessionHost · required</span><h3>Session inspection + events</h3><p>The Workspace uses the authenticated SessionHost wire client. Output content goes only to the selected workbench attachment.</p><div class="field-list"><code>snapshot</code><code>cursor</code><code>lifecycle</code><code>generation</code><code>attention</code><code>attachments</code><code>inputOwnership</code><code>queueDepth</code><code>queueAge</code><code>resourceState</code><code>replacementEvent</code></div><a class="source-link" href="terminal-stack-transition.html#architecture">SessionHost seam</a></article>
+          <article class="contract-card"><span class="state-badge flow">Queen’s Hive · owns</span><h3>TaskDetail + ArtifactRef</h3><p>Owned by The Queen's Hive platform contract; required before the task checklist and artifact tabs ship. The view layer must never walk arbitrary disk paths.</p><div class="field-list"><code>taskId</code><code>revision</code><code>summary</code><code>criteria[]</code><code>evidenceRefs[]</code><code>artifactId</code><code>kind</code><code>displayName</code><code>owner</code><code>contentRevision</code><code>openCapability</code></div><div class="callout stop"><strong>Release gate.</strong> If this contract is absent, omit the tabs. A disabled mock filled from filenames is not an acceptable intermediate state.</div></article>
+          <article class="contract-card"><span class="state-badge current">Settings · migrate semantics</span><h3>Workspace CLI bridge</h3><p>Keep daemon-owned mutation and existing CAS behavior, not the old standalone-window views. Do not add view-layer HTTP access or a second settings backend.</p><div class="field-list"><code>model-control-snapshot</code><code>routing policy</code><code>set-provider</code><code>set-model</code><code>set-effort</code><code>set-selection</code><code>set-chain</code><code>autonomy</code></div><p>Reads run off the UI thread; controls reconcile only after typed success.</p></article>
           <article class="contract-card"><span class="state-badge flow">New mutations</span><h3>Engineer and owner commands</h3><p>The workflow prerequisite must expose authorized, auditable commands; the UI only sends intent.</p><div class="field-list"><code>approveGate(run,gate,revision)</code><code>redirect(run,reason)</code><code>terminate(locator)</code><code>previewCascade(locator)</code><code>acknowledge(attentionId)</code><code>openArtifact(capability)</code></div><p>Every result includes observed post-state or a structured failure; an exit code alone is not proof.</p></article>
         </div>
       </div>
@@ -1180,12 +251,12 @@
       <div class="shell">
         <div class="section-head"><div><p class="section-label">07 · Build order</p><h2>Ship capabilities in dependency order, then cut over once.</h2></div><p>The new workspace begins only after both prerequisites meet their release gates. Each phase has a falsifiable exit and a corresponding deletion entry; users never choose between old and new dashboards.</p></div>
         <div class="phase-grid">
-          <article class="phase-card"><span class="phase-number">U0</span><h3>Freeze contracts and deletions</h3><p>Turn the ledgers into versioned client types and a hard cutover manifest before drawing production surfaces.</p><ul><li>Freeze WorkspaceSnapshot v2 and hierarchy authorization.</li><li>Freeze SessionHost Electron bridge messages.</li><li>Own TaskDetail/ArtifactRef or explicitly cut those tabs.</li><li>Pin settings fixtures and every legacy path scheduled for deletion.</li></ul><div class="phase-exit"><strong>Exit</strong>Golden fixtures cover current, unknown, stale, disconnected, replaced, gated, and unauthorized states; every migrated surface has one removal owner.</div></article>
-          <article class="phase-card"><span class="phase-number">U1</span><h3>Build the shell and settings</h3><p>Deliver cohesive navigation without depending on terminal rendering.</p><ul><li>Native menus and one typed command dispatcher.</li><li>Read-only project/instance context; no ProjectSwitcher.</li><li>Tasks, Models, Usage, autonomy through the main-process CLI bridge.</li><li>Loading, error, stale, unknown, and not-metered states.</li></ul><div class="phase-exit"><strong>Exit</strong>Settings fixtures match AppKit behavior; old settings and project-switcher paths are deletion-ready; no subprocess blocks the renderer.</div></article>
+          <article class="phase-card"><span class="phase-number">U0</span><h3>Freeze contracts and deletions</h3><p>Turn the ledgers into versioned client types and a hard cutover manifest before drawing production surfaces.</p><ul><li>Freeze WorkspaceSnapshot v2 and hierarchy authorization.</li><li>Freeze the HiveTerminalKit attach-bridge contract.</li><li>Own TaskDetail/ArtifactRef or explicitly cut those tabs.</li><li>Pin settings fixtures and every legacy path scheduled for deletion.</li></ul><div class="phase-exit"><strong>Exit</strong>Golden fixtures cover current, unknown, stale, disconnected, replaced, gated, and unauthorized states; every migrated surface has one removal owner.</div></article>
+          <article class="phase-card"><span class="phase-number">U1</span><h3>Build the shell and settings</h3><p>Deliver cohesive navigation without depending on terminal rendering.</p><ul><li>Native menus and one typed command dispatcher.</li><li>Read-only project/instance context; no ProjectSwitcher.</li><li>Tasks, Models, Usage, autonomy through the Workspace CLI bridge.</li><li>Loading, error, stale, unknown, and not-metered states.</li></ul><div class="phase-exit"><strong>Exit</strong>Settings fixtures match AppKit behavior; old settings and project-switcher paths are deletion-ready; no subprocess blocks the UI thread.</div></article>
           <article class="phase-card"><span class="phase-number">U2</span><h3>Build the outer horizon</h3><p>Render run and hierarchy truth before adding input authority.</p><ul><li>Virtualized hierarchy tree with real names and role badges.</li><li>Run phase, gates, status, branch facts, and attention rollups.</li><li>Tree focus history and semantic keyboard navigation.</li><li>Attention drawer with explicit empty state.</li></ul><div class="phase-exit"><strong>Exit</strong>queen + 3 leads + 15 workers restore with focus/expansion history; output cannot move focus; pane navigation and floating attention are deletion-ready.</div></article>
-          <article class="phase-card"><span class="phase-number">U3</span><h3>Add one live workbench</h3><p>Connect SessionHost only after the surrounding state is trustworthy.</p><ul><li>Snapshot before attach; one selected live xterm.js renderer.</li><li>Focus/scope/authority/generation strip.</li><li>Human claim before every input path.</li><li>Off-screen detach, cursor replay, gap recovery, and replacement UX.</li></ul><div class="phase-exit"><strong>Exit</strong>19 producers remain bounded with one live renderer; viewer crash preserves sessions and human draft state; SwiftTerm panes and legacy leases are deletion-ready.</div></article>
+          <article class="phase-card"><span class="phase-number">U3</span><h3>Add one live workbench</h3><p>Connect SessionHost only after the surrounding state is trustworthy.</p><ul><li>Snapshot before attach; one selected live Ghostty surface.</li><li>Focus/scope/authority/generation strip.</li><li>Human claim before every input path.</li><li>Off-screen detach, cursor replay, gap recovery, and replacement UX.</li></ul><div class="phase-exit"><strong>Exit</strong>19 producers remain bounded with one live surface; viewer crash preserves sessions and human draft state; SwiftTerm panes and legacy leases are deletion-ready.</div></article>
           <article class="phase-card"><span class="phase-number">U4</span><h3>Add inspector evidence</h3><p>Only ship tabs whose read contracts exist.</p><ul><li>Task summary from workflow state.</li><li>Review/CI revision and stale approval behavior.</li><li>Typed event history with cursor recovery.</li><li>Task criteria and artifacts only behind completed U0 contracts.</li></ul><div class="phase-exit"><strong>Exit</strong>No inspector value is derived from terminal text; every displayed revision links to exact evidence.</div></article>
-          <article class="phase-card"><span class="phase-number">U5</span><h3>Actions and hard cutover</h3><p>Consequential mutations arrive last; the release then removes the old Workspace product rather than maintaining it.</p><ul><li>G1/G2 approval with exact revisions.</li><li>Redirect through queen.</li><li>Detach, close-agent, cascade preview, stop-run separation.</li><li>Delete AppKit/SwiftTerm Workspace code, packaging, menus, and compatibility paths.</li></ul><div class="phase-exit"><strong>Exit</strong>Every destructive action reads back final state; the removal ledger is empty; one Hive Agentic Workspace application ships.</div></article>
+          <article class="phase-card"><span class="phase-number">U5</span><h3>Actions and hard cutover</h3><p>Consequential mutations arrive last; the release then removes the pane-era surfaces rather than maintaining them.</p><ul><li>G1/G2 approval with exact revisions.</li><li>Redirect through queen.</li><li>Detach, close-agent, cascade preview, stop-run separation.</li><li>Delete SwiftTerm and pane-era Workspace code, menus, and compatibility paths; the native app itself remains.</li></ul><div class="phase-exit"><strong>Exit</strong>Every destructive action reads back final state; the removal ledger is empty; one Hive Agentic Workspace application ships.</div></article>
         </div>
       </div>
     </section>
@@ -1198,7 +269,7 @@
           <article class="non-goal"><span class="state-badge cut">Cut</span><strong>No cross-project fleet</strong><p>The current process owns one project instance. Project aggregation needs separate authenticated supervisor work.</p></article>
           <article class="non-goal"><span class="state-badge cut">Cut</span><strong>No transcript reconstruction</strong><p>Provider TUIs remain real terminal content. Status and workflow never come from screen scraping.</p></article>
           <article class="non-goal"><span class="state-badge cut">Cut</span><strong>No generic approval button</strong><p>Provider prompts stay in their TUI. G1/G2 name exact workflow gates and revisions.</p></article>
-          <article class="non-goal"><span class="state-badge cut">Cut</span><strong>No fake artifact explorer</strong><p>Without ArtifactRef authorization and indexing, the tab is omitted—not populated by renderer filesystem access.</p></article>
+          <article class="non-goal"><span class="state-badge cut">Cut</span><strong>No fake artifact explorer</strong><p>Without ArtifactRef authorization and indexing, the tab is omitted—not populated by view-layer filesystem access.</p></article>
           <article class="non-goal"><span class="state-badge cut">Cut</span><strong>No invented metrics</strong><p>Unknown remains unknown; quota is percent plus reset; task progress requires explicit criteria state.</p></article>
           <article class="non-goal"><span class="state-badge cut">Cut</span><strong>No classic mode</strong><p>No AppKit fallback, legacy layout toggle, disabled retired commands, or second settings window ships beside Split Horizon.</p></article>
           <article class="non-goal"><span class="state-badge cut">Cut</span><strong>No UI-owned control plane</strong><p>The dashboard does not grow its own hierarchy database, settings service, terminal arbiter, or filesystem crawler to fill contract gaps.</p></article>
@@ -1210,8 +281,8 @@
       <div class="shell">
         <div class="section-head"><div><p class="section-label">Source trail</p><h2>The code and prerequisite designs behind this spec.</h2></div><p>Current claims are sourced to shipping repository code. Future claims are sourced to the two prerequisite documents and explicitly labeled above.</p></div>
         <ul class="source-list">
-          <li><a href="agentic-hierarchy.html">The Foreman Model</a>Hierarchy, roles, phases, human gates, review, git flow, communication, and failure controls.</li>
-          <li><a href="terminal-stack-transition.html">Terminal Stack Transition</a>SessionHost, sessiond, input authority, attach/recovery, hierarchy groundwork, and Electron P6.</li>
+          <li><a href="agentic-hierarchy.html">The Queen's Hive</a>Hierarchy, roles, phases, human gates, review, git flow, communication, and failure controls.</li>
+          <li><a href="terminal-stack-transition.html">Terminal Stack Transition</a>SessionHost, sessiond, input authority, attach/recovery, the extension seams, and the T0–T7 phase plan this workspace builds on.</li>
           <li><a href="../workspace/blueprint.md">Workspace Blueprint</a>Shipping AppKit/SwiftTerm behavior, feed, focus, attention, project identity, and lifecycle.</li>
           <li><a href="../workspace/ui-design-system.md">Workspace UI Design System</a>Honest states, visual grammar, accessibility, responsiveness, and known open work.</li>
           <li><a href="../routing/model-control-center.md">Model Control Center</a>Tasks, Models, Usage, quota honesty, CLI transport, and shipped status.</li>

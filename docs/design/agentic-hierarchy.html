@@ -1,1062 +1,16 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="doc-hierarchy">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
-  <title>Hive: The Foreman Model</title>
-  <style>
-    :root {
-      --bg: #f4f1e9;
-      --surface: #fffdf8;
-      --surface-2: #ece7dc;
-      --ink: #1c2924;
-      --muted: #52635b;
-      --line: #cbc8bd;
-      --line-strong: #9da79f;
-      --green: #176b4b;
-      --green-2: #d9eadf;
-      --green-3: #b9dac7;
-      --amber: #b35d21;
-      --amber-2: #f4dfbf;
-      --blue: #255a77;
-      --blue-2: #d8e8ef;
-      --red: #a33e35;
-      --red-2: #f1d8d1;
-      --purple: #705486;
-      --purple-2: #e7dded;
-      --shadow: 0 18px 50px rgba(28, 41, 36, 0.08);
-      --radius-sm: 8px;
-      --radius: 16px;
-      --radius-lg: 28px;
-      --max: 1180px;
-    }
-
-    @media (prefers-color-scheme: dark) {
-      :root {
-        --bg: #101713;
-        --surface: #17211c;
-        --surface-2: #202c26;
-        --ink: #edf4ef;
-        --muted: #aab8b0;
-        --line: #38453e;
-        --line-strong: #66766d;
-        --green: #75d6aa;
-        --green-2: #183c2d;
-        --green-3: #285a43;
-        --amber: #efaa6d;
-        --amber-2: #4c321f;
-        --blue: #7dc5e6;
-        --blue-2: #203c4a;
-        --red: #ed8e83;
-        --red-2: #482723;
-        --purple: #c4a1dc;
-        --purple-2: #362b3f;
-        --shadow: 0 20px 60px rgba(0, 0, 0, 0.24);
-      }
-    }
-
-    * { box-sizing: border-box; }
-
-    html {
-      scroll-behavior: smooth;
-      background: var(--bg);
-    }
-
-    body {
-      margin: 0;
-      color: var(--ink);
-      background:
-        radial-gradient(circle at 10% 0%, color-mix(in srgb, var(--green-2) 70%, transparent), transparent 30rem),
-        var(--bg);
-      font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      font-size: 16px;
-      line-height: 1.6;
-      text-rendering: optimizeLegibility;
-    }
-
-    a {
-      color: var(--green);
-      text-underline-offset: 3px;
-      text-decoration-thickness: 1px;
-    }
-
-    a:hover { text-decoration-thickness: 2px; }
-
-    .shell {
-      width: min(calc(100% - 40px), var(--max));
-      margin-inline: auto;
-    }
-
-    .topbar {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 20px;
-      min-height: 72px;
-      border-bottom: 1px solid var(--line);
-    }
-
-    .brand {
-      display: flex;
-      align-items: center;
-      gap: 11px;
-      font-weight: 760;
-      letter-spacing: -0.02em;
-    }
-
-    .brand-mark {
-      display: grid;
-      width: 30px;
-      height: 30px;
-      place-items: center;
-      color: var(--surface);
-      background: var(--green);
-      border-radius: 9px;
-      font-size: 13px;
-      letter-spacing: 0;
-    }
-
-    .doc-meta {
-      color: var(--muted);
-      font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-      font-size: 12px;
-      letter-spacing: 0.04em;
-    }
-
-    main { overflow: hidden; }
-
-    .hero {
-      display: grid;
-      grid-template-columns: minmax(0, 1.25fr) minmax(300px, 0.75fr);
-      gap: clamp(36px, 6vw, 86px);
-      align-items: end;
-      padding-block: clamp(72px, 10vw, 132px) clamp(64px, 8vw, 104px);
-    }
-
-    .hero > * { min-width: 0; }
-
-    .eyebrow,
-    .section-label {
-      display: inline-flex;
-      align-items: center;
-      gap: 9px;
-      margin: 0 0 18px;
-      color: var(--green);
-      font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-      font-size: 12px;
-      font-weight: 750;
-      letter-spacing: 0.12em;
-      line-height: 1.2;
-      text-transform: uppercase;
-    }
-
-    .eyebrow::before,
-    .section-label::before {
-      width: 22px;
-      height: 2px;
-      background: currentColor;
-      content: "";
-    }
-
-    h1,
-    h2,
-    h3,
-    p { margin-top: 0; }
-
-    h1 {
-      max-width: 780px;
-      margin-bottom: 26px;
-      font-size: clamp(54px, 8vw, 102px);
-      font-weight: 780;
-      letter-spacing: -0.065em;
-      line-height: 0.91;
-    }
-
-    h1 span {
-      display: block;
-      color: var(--green);
-    }
-
-    .hero-copy {
-      max-width: 720px;
-      margin-bottom: 0;
-      color: var(--muted);
-      font-size: clamp(18px, 2vw, 22px);
-      line-height: 1.55;
-    }
-
-    .hero-aside {
-      position: relative;
-      padding: 28px;
-      overflow: hidden;
-      background: var(--surface);
-      border: 1px solid var(--line);
-      border-radius: var(--radius-lg);
-      box-shadow: var(--shadow);
-    }
-
-    .hero-aside::after {
-      position: absolute;
-      top: -34px;
-      right: -28px;
-      width: 130px;
-      height: 130px;
-      background: var(--green-2);
-      border-radius: 50%;
-      content: "";
-      opacity: 0.8;
-    }
-
-    .hero-aside > * { position: relative; z-index: 1; }
-
-    .hero-aside .kicker {
-      margin-bottom: 8px;
-      color: var(--green);
-      font-size: 12px;
-      font-weight: 800;
-      letter-spacing: 0.1em;
-      text-transform: uppercase;
-    }
-
-    .hero-aside h2 {
-      margin-bottom: 12px;
-      font-size: 25px;
-      letter-spacing: -0.03em;
-      line-height: 1.15;
-    }
-
-    .hero-aside p {
-      margin-bottom: 22px;
-      color: var(--muted);
-    }
-
-    .authority-line {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      padding-top: 16px;
-      border-top: 1px solid var(--line);
-      font-size: 13px;
-      font-weight: 700;
-    }
-
-    .authority-line::before {
-      width: 9px;
-      height: 9px;
-      flex: 0 0 auto;
-      background: var(--amber);
-      border-radius: 50%;
-      box-shadow: 0 0 0 5px var(--amber-2);
-      content: "";
-    }
-
-    .principles {
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 1px;
-      margin-bottom: clamp(80px, 10vw, 132px);
-      overflow: hidden;
-      background: var(--line);
-      border: 1px solid var(--line);
-      border-radius: var(--radius);
-    }
-
-    .principle {
-      min-height: 150px;
-      padding: 26px;
-      background: var(--surface);
-    }
-
-    .principle .num {
-      display: block;
-      margin-bottom: 28px;
-      color: var(--green);
-      font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-      font-size: 12px;
-      font-weight: 800;
-    }
-
-    .principle strong {
-      display: block;
-      margin-bottom: 7px;
-      font-size: 18px;
-      letter-spacing: -0.02em;
-    }
-
-    .principle p {
-      margin-bottom: 0;
-      color: var(--muted);
-      font-size: 14px;
-    }
-
-    section {
-      padding-block: clamp(72px, 9vw, 112px);
-      border-top: 1px solid var(--line);
-    }
-
-    .section-head {
-      display: grid;
-      grid-template-columns: minmax(0, 0.9fr) minmax(300px, 0.65fr);
-      gap: 48px;
-      align-items: end;
-      margin-bottom: 44px;
-    }
-
-    .section-head h2 {
-      max-width: 750px;
-      margin-bottom: 0;
-      font-size: clamp(38px, 5vw, 62px);
-      letter-spacing: -0.05em;
-      line-height: 1.02;
-    }
-
-    .section-head > p {
-      margin-bottom: 0;
-      color: var(--muted);
-      font-size: 17px;
-    }
-
-    .diagram {
-      margin-block: 34px 46px;
-      overflow-x: auto;
-      background: var(--surface);
-      border: 1px solid var(--line);
-      border-radius: var(--radius-lg);
-      box-shadow: var(--shadow);
-      scrollbar-color: var(--line-strong) transparent;
-    }
-
-    .diagram svg {
-      display: block;
-      width: 100%;
-      height: auto;
-      min-width: 760px;
-    }
-
-    svg text {
-      fill: var(--ink);
-      font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-    }
-
-    svg .svg-muted { fill: var(--muted); }
-    svg .svg-label {
-      font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-      font-size: 12px;
-      font-weight: 800;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-    }
-    svg .svg-title { font-size: 20px; font-weight: 760; }
-    svg .svg-copy { font-size: 13px; }
-    svg .svg-small { font-size: 11px; }
-    svg .node {
-      fill: var(--surface-2);
-      stroke: var(--line-strong);
-      stroke-width: 1.3;
-    }
-    svg .node-engineer { fill: var(--amber-2); stroke: var(--amber); }
-    svg .node-queen { fill: var(--green-2); stroke: var(--green); }
-    svg .node-lead { fill: var(--blue-2); stroke: var(--blue); }
-    svg .node-worker { fill: var(--surface); stroke: var(--line-strong); }
-    svg .node-review { fill: var(--purple-2); stroke: var(--purple); }
-    svg .node-gate { fill: var(--amber-2); stroke: var(--amber); stroke-width: 2; }
-    svg .connector {
-      fill: none;
-      stroke: var(--line-strong);
-      stroke-width: 1.6;
-    }
-    svg .connector-strong {
-      fill: none;
-      stroke: var(--green);
-      stroke-width: 2.2;
-    }
-    svg .connector-dashed {
-      fill: none;
-      stroke: var(--purple);
-      stroke-width: 1.7;
-      stroke-dasharray: 7 7;
-    }
-    svg .lane {
-      fill: none;
-      stroke: var(--line);
-      stroke-width: 2;
-    }
-
-    .role-grid {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 16px;
-    }
-
-    .role-card,
-    .phase-card,
-    .evidence-card {
-      background: var(--surface);
-      border: 1px solid var(--line);
-      border-radius: var(--radius);
-    }
-
-    .role-card {
-      position: relative;
-      min-height: 258px;
-      padding: 28px;
-      overflow: hidden;
-    }
-
-    .role-card::before {
-      position: absolute;
-      top: 0;
-      bottom: 0;
-      left: 0;
-      width: 4px;
-      background: var(--role-color, var(--green));
-      content: "";
-    }
-
-    .role-card.engineer { --role-color: var(--amber); }
-    .role-card.queen { --role-color: var(--green); }
-    .role-card.lead { --role-color: var(--blue); }
-    .role-card.worker { --role-color: var(--line-strong); }
-    .role-card.reviewer {
-      --role-color: var(--purple);
-      grid-column: 1 / -1;
-      min-height: auto;
-    }
-
-    .role-card .role-num {
-      color: var(--role-color);
-      font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-      font-size: 12px;
-      font-weight: 800;
-      text-transform: uppercase;
-    }
-
-    .role-card h3 {
-      margin-block: 14px 12px;
-      font-size: 26px;
-      letter-spacing: -0.03em;
-    }
-
-    .role-card p {
-      margin-bottom: 0;
-      color: var(--muted);
-    }
-
-    .role-card strong { color: var(--ink); }
-
-    .living-spec {
-      display: flex;
-      flex-wrap: wrap;
-      align-items: center;
-      gap: 8px;
-      margin-top: 20px;
-    }
-
-    .living-spec span {
-      padding: 6px 10px;
-      background: var(--green-2);
-      border-radius: 999px;
-      color: var(--green);
-      font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-      font-size: 11px;
-      font-weight: 800;
-    }
-
-    .living-spec i {
-      color: var(--line-strong);
-      font-style: normal;
-    }
-
-    .phase-grid {
-      display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
-      gap: 14px;
-    }
-
-    .phase-card {
-      min-height: 250px;
-      padding: 24px;
-    }
-
-    .phase-card .phase-id {
-      display: inline-grid;
-      width: 42px;
-      height: 42px;
-      place-items: center;
-      margin-bottom: 36px;
-      color: var(--green);
-      background: var(--green-2);
-      border-radius: 12px;
-      font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-      font-size: 12px;
-      font-weight: 800;
-    }
-
-    .phase-card h3 {
-      margin-bottom: 10px;
-      font-size: 18px;
-      letter-spacing: -0.02em;
-      line-height: 1.2;
-    }
-
-    .phase-card p {
-      margin-bottom: 0;
-      color: var(--muted);
-      font-size: 14px;
-    }
-
-    .gate-band {
-      display: grid;
-      grid-template-columns: repeat(2, 1fr);
-      gap: 16px;
-      margin-top: 16px;
-    }
-
-    .gate-card {
-      display: grid;
-      grid-template-columns: auto 1fr;
-      gap: 18px;
-      align-items: center;
-      padding: 22px;
-      background: var(--amber-2);
-      border: 1px solid color-mix(in srgb, var(--amber) 55%, var(--line));
-      border-radius: var(--radius);
-    }
-
-    .gate-card .gate-id {
-      display: grid;
-      width: 52px;
-      height: 52px;
-      place-items: center;
-      color: var(--amber);
-      background: var(--surface);
-      border: 1px solid var(--amber);
-      border-radius: 50%;
-      font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-      font-size: 13px;
-      font-weight: 900;
-    }
-
-    .gate-card strong { display: block; }
-    .gate-card p { margin: 3px 0 0; color: var(--muted); font-size: 13px; }
-
-    .policy-strip {
-      display: grid;
-      grid-template-columns: repeat(4, 1fr);
-      gap: 1px;
-      margin-top: 16px;
-      overflow: hidden;
-      background: var(--line);
-      border: 1px solid var(--line);
-      border-radius: var(--radius);
-    }
-
-    .policy {
-      padding: 22px;
-      background: var(--surface);
-    }
-
-    .policy b {
-      display: block;
-      margin-bottom: 6px;
-      font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-      font-size: 12px;
-      text-transform: uppercase;
-    }
-
-    .policy.green b { color: var(--green); }
-    .policy.amber b { color: var(--amber); }
-    .policy.red b { color: var(--red); }
-    .policy.files b { color: var(--blue); }
-    .policy p { margin: 0; color: var(--muted); font-size: 13px; }
-
-    .split {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 18px;
-    }
-
-    .detail-panel {
-      padding: 28px;
-      background: var(--surface);
-      border: 1px solid var(--line);
-      border-radius: var(--radius);
-    }
-
-    .detail-panel h3 {
-      margin-bottom: 9px;
-      font-size: 21px;
-      letter-spacing: -0.025em;
-    }
-
-    .detail-panel > p { color: var(--muted); }
-
-    .detail-panel.wide { grid-column: 1 / -1; }
-
-    .ci-block {
-      margin-block: 18px 46px;
-    }
-
-    .ci-block-head {
-      display: grid;
-      grid-template-columns: minmax(0, 0.6fr) minmax(300px, 0.8fr);
-      gap: 32px;
-      align-items: end;
-      margin-bottom: 20px;
-    }
-
-    .ci-block-head h3 {
-      margin-bottom: 0;
-      font-size: 28px;
-      letter-spacing: -0.035em;
-    }
-
-    .ci-block-head p {
-      margin-bottom: 0;
-      color: var(--muted);
-      font-size: 14px;
-    }
-
-    .ci-table table { min-width: 760px; }
-    .ci-table th:first-child { width: 170px; }
-
-    .stage-tag {
-      display: inline-block;
-      padding: 5px 9px;
-      color: var(--green);
-      background: var(--green-2);
-      border-radius: 999px;
-      font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-      font-size: 10px;
-      font-weight: 900;
-      letter-spacing: 0.04em;
-      white-space: nowrap;
-    }
-
-    .file-chips {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-      margin-block: 22px 18px;
-    }
-
-    .file-chips code {
-      padding: 6px 10px;
-      color: var(--red);
-      background: var(--red-2);
-      border-radius: 999px;
-      font-size: 12px;
-    }
-
-    .check-list,
-    .decision-list {
-      display: grid;
-      gap: 12px;
-      margin: 22px 0 0;
-      padding: 0;
-      list-style: none;
-    }
-
-    .check-list li,
-    .decision-list li {
-      position: relative;
-      padding-left: 24px;
-      font-size: 14px;
-    }
-
-    .check-list li::before,
-    .decision-list li::before {
-      position: absolute;
-      top: 0.55em;
-      left: 0;
-      width: 8px;
-      height: 8px;
-      background: var(--green);
-      border-radius: 50%;
-      content: "";
-    }
-
-    .callout {
-      margin-top: 18px;
-      padding: 18px 20px;
-      color: var(--muted);
-      background: var(--surface-2);
-      border-left: 3px solid var(--green);
-      border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
-      font-size: 14px;
-    }
-
-    .stats {
-      display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
-      gap: 12px;
-      margin-block: 34px 50px;
-    }
-
-    .stat {
-      min-height: 164px;
-      padding: 22px;
-      background: var(--surface);
-      border: 1px solid var(--line);
-      border-radius: var(--radius);
-    }
-
-    .stat .flag,
-    .evidence-card .flag,
-    .failure-row .flag {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      min-width: 28px;
-      height: 24px;
-      padding-inline: 7px;
-      border-radius: 999px;
-      font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-      font-size: 10px;
-      font-weight: 900;
-      letter-spacing: 0.05em;
-    }
-
-    .flag.e { color: var(--green); background: var(--green-2); }
-    .flag.m { color: var(--amber); background: var(--amber-2); }
-    .flag.o { color: var(--purple); background: var(--purple-2); }
-
-    .stat strong {
-      display: block;
-      margin-block: 14px 8px;
-      color: var(--green);
-      font-size: clamp(28px, 3vw, 40px);
-      letter-spacing: -0.05em;
-      line-height: 1;
-    }
-
-    .stat p {
-      margin-bottom: 0;
-      color: var(--muted);
-      font-size: 13px;
-      line-height: 1.45;
-    }
-
-    .legend {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 9px 16px;
-      align-items: center;
-      margin-bottom: 20px;
-      color: var(--muted);
-      font-size: 12px;
-    }
-
-    .evidence-grid {
-      display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 14px;
-    }
-
-    .evidence-card { padding: 24px; }
-
-    .evidence-card h3 {
-      margin-block: 18px 9px;
-      font-size: 18px;
-      letter-spacing: -0.02em;
-      line-height: 1.25;
-    }
-
-    .evidence-card p {
-      margin-bottom: 0;
-      color: var(--muted);
-      font-size: 14px;
-    }
-
-    .table-wrap {
-      overflow-x: auto;
-      background: var(--surface);
-      border: 1px solid var(--line);
-      border-radius: var(--radius);
-    }
-
-    table {
-      width: 100%;
-      min-width: 820px;
-      border-collapse: collapse;
-      font-size: 14px;
-    }
-
-    th,
-    td {
-      padding: 22px 24px;
-      vertical-align: top;
-      border-bottom: 1px solid var(--line);
-      text-align: left;
-    }
-
-    th {
-      color: var(--muted);
-      background: var(--surface-2);
-      font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-      font-size: 11px;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-    }
-
-    th:first-child { width: 48px; }
-    td:first-child {
-      color: var(--green);
-      font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-      font-weight: 800;
-    }
-
-    tbody tr:last-child td { border-bottom: 0; }
-    td strong { display: block; margin-bottom: 5px; }
-    td span { color: var(--muted); }
-
-    .failure-list {
-      overflow: hidden;
-      background: var(--surface);
-      border: 1px solid var(--line);
-      border-radius: var(--radius);
-    }
-
-    .failure-row {
-      display: grid;
-      grid-template-columns: minmax(190px, 0.6fr) minmax(0, 1.4fr);
-      gap: 28px;
-      padding: 19px 24px;
-      border-bottom: 1px solid var(--line);
-    }
-
-    .failure-row:last-child { border-bottom: 0; }
-    .failure-row strong { color: var(--red); }
-    .failure-row p { margin: 0; color: var(--muted); }
-
-    .metric-panel {
-      margin-top: 26px;
-      padding: clamp(26px, 4vw, 42px);
-      background: var(--surface-2);
-      border: 1px solid var(--line);
-      border-radius: var(--radius-lg);
-    }
-
-    .metric-panel-head {
-      display: grid;
-      grid-template-columns: minmax(0, 0.65fr) minmax(300px, 0.75fr);
-      gap: 32px;
-      align-items: end;
-      margin-bottom: 24px;
-    }
-
-    .metric-panel-head h3 {
-      margin-bottom: 0;
-      font-size: 28px;
-      letter-spacing: -0.035em;
-    }
-
-    .metric-panel-head p {
-      margin-bottom: 0;
-      color: var(--muted);
-      font-size: 14px;
-    }
-
-    .metric-grid {
-      display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
-      gap: 10px;
-    }
-
-    .metric-item {
-      min-height: 118px;
-      padding: 18px;
-      background: var(--surface);
-      border: 1px solid var(--line);
-      border-radius: 12px;
-    }
-
-    .metric-item span {
-      display: block;
-      margin-bottom: 18px;
-      color: var(--green);
-      font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-      font-size: 10px;
-      font-weight: 900;
-      letter-spacing: 0.08em;
-    }
-
-    .metric-item strong {
-      display: block;
-      font-size: 14px;
-      line-height: 1.35;
-    }
-
-    .engineer-panel {
-      position: relative;
-      display: grid;
-      grid-template-columns: 0.75fr 1.25fr;
-      gap: clamp(30px, 6vw, 80px);
-      padding: clamp(32px, 5vw, 62px);
-      overflow: hidden;
-      background: var(--amber-2);
-      border: 1px solid color-mix(in srgb, var(--amber) 50%, var(--line));
-      border-radius: var(--radius-lg);
-    }
-
-    .engineer-panel::after {
-      position: absolute;
-      right: -80px;
-      bottom: -120px;
-      width: 320px;
-      height: 320px;
-      border: 60px solid color-mix(in srgb, var(--amber) 10%, transparent);
-      border-radius: 50%;
-      content: "";
-    }
-
-    .engineer-panel > * { position: relative; z-index: 1; }
-
-    .engineer-panel h2 {
-      margin-bottom: 14px;
-      font-size: clamp(36px, 5vw, 56px);
-      letter-spacing: -0.05em;
-      line-height: 1;
-    }
-
-    .engineer-panel p { margin-bottom: 0; color: var(--muted); }
-
-    .decision-list {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      margin-top: 0;
-    }
-
-    .decision-list li {
-      padding: 15px 16px 15px 42px;
-      background: color-mix(in srgb, var(--surface) 72%, transparent);
-      border: 1px solid color-mix(in srgb, var(--amber) 28%, var(--line));
-      border-radius: 10px;
-      font-weight: 700;
-    }
-
-    .decision-list li::before {
-      top: 21px;
-      left: 19px;
-      background: var(--amber);
-    }
-
-    footer {
-      padding-block: 80px 48px;
-      border-top: 1px solid var(--line);
-    }
-
-    .footer-grid {
-      display: grid;
-      grid-template-columns: 0.45fr 1.55fr;
-      gap: 50px;
-    }
-
-    footer h2 {
-      font-size: 24px;
-      letter-spacing: -0.03em;
-    }
-
-    .sources {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 12px 28px;
-      margin: 0;
-      padding: 0;
-      list-style: none;
-    }
-
-    .sources li {
-      padding-bottom: 12px;
-      border-bottom: 1px solid var(--line);
-      color: var(--muted);
-      font-size: 13px;
-      overflow-wrap: anywhere;
-    }
-
-    .sources time {
-      display: block;
-      margin-bottom: 2px;
-      color: var(--ink);
-      font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-      font-size: 11px;
-      font-weight: 800;
-    }
-
-    .endnote {
-      display: flex;
-      justify-content: space-between;
-      gap: 20px;
-      margin-top: 56px;
-      padding-top: 22px;
-      border-top: 1px solid var(--line);
-      color: var(--muted);
-      font-size: 12px;
-    }
-
-    @media (max-width: 900px) {
-      .hero,
-      .section-head,
-      .engineer-panel,
-      .footer-grid { grid-template-columns: 1fr; }
-
-      .hero { align-items: start; }
-      .hero-aside { max-width: 620px; }
-      .section-head { gap: 22px; }
-      .section-head > p { max-width: 680px; }
-      .phase-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-      .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-      .evidence-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-      .metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-      .ci-block-head,
-      .metric-panel-head { grid-template-columns: 1fr; gap: 10px; }
-    }
-
-    @media (max-width: 640px) {
-      .shell { width: min(calc(100% - 24px), var(--max)); }
-      .topbar { min-height: 60px; }
-      .doc-meta { display: none; }
-      h1 { font-size: clamp(46px, 14vw, 60px); }
-      .principles,
-      .role-grid,
-      .phase-grid,
-      .gate-band,
-      .policy-strip,
-      .split,
-      .stats,
-      .evidence-grid,
-      .decision-list,
-      .sources,
-      .metric-grid { grid-template-columns: 1fr; }
-      .role-card.reviewer { grid-column: auto; }
-      .principles,
-      .policy-strip { gap: 1px; }
-      .diagram {
-        margin-right: -12px;
-        margin-left: -12px;
-        border-right: 0;
-        border-left: 0;
-        border-radius: 0;
-      }
-      .diagram svg { min-width: 1000px; }
-      .failure-row { grid-template-columns: 1fr; gap: 5px; }
-      .endnote { flex-direction: column; }
-    }
-
-    @media print {
-      :root { color-scheme: light; }
-      body { background: #fff; }
-      .shell { width: 100%; max-width: none; }
-      section { break-inside: avoid; }
-      .diagram { box-shadow: none; }
-      a { color: inherit; }
-    }
-  </style>
+  <title>Hive: The Queen's Hive</title>
+  <link rel="stylesheet" href="hive-design.css">
 </head>
 <body>
   <header class="shell topbar">
     <div class="brand"><span class="brand-mark" aria-hidden="true">H</span> Hive</div>
-    <div class="doc-meta">DESIGN DOCUMENT · FOREMAN MODEL · 2026-07</div>
+    <div class="doc-meta">DESIGN DOCUMENT · THE QUEEN’S HIVE · 2026-07</div>
   </header>
 
   <main>
@@ -1064,8 +18,8 @@
       <div class="hero">
         <div>
           <p class="eyebrow">Agentic hierarchy redesign</p>
-          <h1>The Foreman <span>Model</span></h1>
-          <p class="hero-copy">Hive moves from a flat queen-to-workers fan-out to a governed hierarchy: the engineer decides, the queen orchestrates, leads integrate, and workers execute.</p>
+          <h1>The Queen’s <span>Hive</span></h1>
+          <p class="hero-copy">Hive grows from a flat queen-to-workers fan-out into a governed hierarchy the queen scales to the work: the engineer decides, the queen orchestrates, lead workers integrate, and workers execute.</p>
         </div>
         <aside class="hero-aside" aria-label="Core operating principle">
           <p class="kicker">Core operating principle</p>
@@ -1106,7 +60,7 @@
 
         <figure class="diagram" aria-label="Organization chart: Engineer to Queen to Leads to Workers, with reviewers on worker-to-lead merge edges">
           <svg viewBox="0 0 1100 610" role="img" aria-labelledby="org-title org-desc">
-            <title id="org-title">Hive Foreman Model hierarchy</title>
+            <title id="org-title">The Queen’s Hive hierarchy</title>
             <desc id="org-desc">The engineer directs the queen. The queen directs three leads. Each lead directs workers. Reviewers gate worker branch merges into lead branches.</desc>
             <defs>
               <marker id="org-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
@@ -1197,9 +151,9 @@
             </div>
           </article>
           <article class="role-card lead">
-            <span class="role-num">Integration · Foreman</span>
-            <h3>Lead</h3>
-            <p>Owns one <strong>ephemeral integration branch and worktree</strong>. Plans worker-sized tasks; spawns, monitors, and closes its own crew; runs the review gate; and serializes reviewed merges into its branch.</p>
+            <span class="role-num">Integration · Lead worker</span>
+            <h3>Lead Worker</h3>
+            <p>Owns one <strong>ephemeral integration branch</strong> whose ref only the daemon’s serialized promotion queue mutates — the lead coordinates and inspects, never authors on it. Plans worker-sized tasks; spawns, monitors, and closes its own crew; runs the review gate. A lead worker who must code takes an ordinary scoped task branch with independent review, like any worker.</p>
           </article>
           <article class="role-card worker">
             <span class="role-num">Execution · Scoped</span>
@@ -1207,9 +161,9 @@
             <p>Takes one small task in a worktree branched from its lead. Holds a file-disjoint path lease and returns <strong>a 1–2k-token summary plus artifacts on disk</strong>—never a full transcript.</p>
           </article>
           <article class="role-card reviewer">
-            <span class="role-num">Quality · Mandatory</span>
+            <span class="role-num">Quality · Temporary duty</span>
             <h3>Reviewer</h3>
-            <p>Reviews every worker branch before worker→lead merge. When more than one model provider is available, the reviewer must be from a <strong>different vendor than the author</strong>. New pushes dismiss stale approvals.</p>
+            <p>A <strong>temporary assignment, not a hierarchy tier</strong>: reviews every worker branch before worker→lead promotion, with fresh context and no authored commit in the candidate’s diff range (merge-base..head). When more than one model provider is available, the reviewer is from a <strong>different vendor than the author</strong>. Any diff change dismisses the stale approval; reviewer sessions are transient capacity charged to the assigning run.</p>
           </article>
         </div>
       </div>
@@ -1227,7 +181,7 @@
 
         <figure class="diagram" aria-label="Seven-phase pipeline with engineer approval gates G1 and G2">
           <svg viewBox="0 0 1100 410" role="img" aria-labelledby="pipeline-title pipeline-desc">
-            <title id="pipeline-title">The seven-phase Foreman Model pipeline</title>
+            <title id="pipeline-title">The seven-phase Queen’s Hive pipeline</title>
             <desc id="pipeline-desc">P0 Intake and Grill passes engineer gate G1, followed by P1 Decompose and Route, P2 Build, P3 Review and Merge-up, P4 Cross-lead Integration, engineer gate G2, P5 Land, and P6 Close-out.</desc>
             <defs>
               <marker id="pipe-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
@@ -1362,7 +316,7 @@
 
         <figure class="diagram" aria-label="Git topology for main, lead integration branches, worker branches, and hive-next">
           <svg viewBox="0 0 1100 620" role="img" aria-labelledby="git-title git-desc">
-            <title id="git-title">Foreman Model Git branch topology</title>
+            <title id="git-title">The Queen’s Hive Git branch topology</title>
             <desc id="git-desc">Worker branches merge into ephemeral lead integration branches. Lead branches enter the protected main merge queue. Lead tips also continuously compose into the throwaway hive-next branch for CI only.</desc>
             <defs>
               <marker id="git-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
@@ -1499,7 +453,7 @@
 
         <figure class="diagram" aria-label="Hub-and-spoke communication topology with peer lead interface contracts">
           <svg viewBox="0 0 1100 540" role="img" aria-labelledby="comms-title comms-desc">
-            <title id="comms-title">Foreman Model communication topology</title>
+            <title id="comms-title">The Queen’s Hive communication topology</title>
             <desc id="comms-desc">The engineer connects to the queen, which serves as a status hub for leads. Leads have dashed peer links for written interface contracts. Each worker speaks only with its own lead. Escalations rise worker to lead to queen to engineer.</desc>
             <defs>
               <marker id="comms-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
@@ -1573,9 +527,9 @@
               <li>Living spec and shared task list stay on disk.</li>
               <li>Cross-lead interfaces are versioned files.</li>
               <li>Workers return a 1–2k-token summary plus artifacts.</li>
-              <li>No worker-to-worker or worker-to-queen side channels.</li>
+              <li>Peer routes are default-deny; the only exceptions are owner/queen-authorized task-scoped channels with explicit participants, purpose, budget, and expiry, plus a rate-limited worker→queen emergency escalation — see <a href="hive-communication.html">the communication fabric</a>.</li>
             </ul>
-            <div class="callout">The lead owns crew lifecycle. There is no daemon auto-reaping its workers; the lead closes each worker promptly after merge.</div>
+            <div class="callout">The lead worker owns normal crew closure and closes each worker promptly after merge. Daemon safety systems remain the last-resort floor: idle-reap warnings, teardown, and the resource watchdog stay active, and when a lead dies its crew’s ownership returns to the queen while daemon reaping continues.</div>
           </article>
         </div>
       </div>
@@ -1671,7 +625,7 @@
         <div class="table-wrap">
           <table>
             <thead>
-              <tr><th>#</th><th>Current · verified in repo</th><th>Future · Foreman Model</th></tr>
+              <tr><th>#</th><th>Current · verified in repo</th><th>Future · The Queen's Hive</th></tr>
             </thead>
             <tbody>
               <tr>
@@ -1687,7 +641,7 @@
               <tr>
                 <td>03</td>
                 <td><strong>Daemon auto-reap</strong><span>Any non-root agent idle for roughly 10 minutes is killed.</span></td>
-                <td><strong>Lead-owned lifecycle</strong><span>Leads are exempt; each lead explicitly decides when to close its crew.</span></td>
+                <td><strong>Lead-owned closure, daemon safety floor</strong><span>Lead workers normally close their own crews; daemon idle-reap warnings, teardown, and the watchdog remain as last-resort safety, and a dead lead’s crew returns to queen ownership.</span></td>
               </tr>
               <tr>
                 <td>04</td>
@@ -1697,7 +651,7 @@
               <tr>
                 <td>05</td>
                 <td><strong>Optional reviewer routing</strong><span>Reviewer = <code>code_review</code> category plus <code>reviewOfTool</code> vendor filter.</span></td>
-                <td><strong>Mandatory merge gate</strong><span>Review becomes a required worker→lead transition, cross-model when providers permit.</span></td>
+                <td><strong>Mandatory merge gate</strong><span>Review becomes a required worker→lead transition — a temporary duty assignment, cross-vendor when providers permit, bound to the candidate’s diff digest.</span></td>
               </tr>
             </tbody>
           </table>
@@ -1796,7 +750,7 @@
       </div>
       <div class="endnote">
         <span>Hive · Agentic hierarchy redesign</span>
-        <span>Foreman Model · Engineer → Queen → Leads → Workers</span>
+        <span>The Queen’s Hive · Engineer → Queen → Lead Workers → Workers</span>
       </div>
     </div>
   </footer>
